@@ -7,26 +7,24 @@ use web_sys::{DragEvent, HtmlInputElement};
 use super::clock::{Age, Countdown};
 use super::*;
 use crate::composer_drafts::{ComposerDraft, compose};
-use crate::watchband::{self, OrgTaskSectionState, Standing};
+use crate::watchband::{self, Standing, TeamTaskSectionState};
 
 mod command_preview;
 mod composer;
 mod controls;
 mod fleet;
-mod lineage_menu;
 mod mosaic_view;
 mod state;
+mod team_menu;
 
 pub(super) use command_preview::use_command_modifier_preview;
 use composer::{
     AgentMessageCard, agent_message_source_id, drop_on_lane, keyboard_submit, paste_images,
     primary_textarea_id, render_image_indicators, render_quote_shards, update_body,
 };
-pub(super) use controls::{LineageControlAction, LineageControls, LineageSpeech};
-use controls::{LineageLife, render_lineage_controls};
-use fleet::{
-    FleetRender, LineageMode, carries_lineage, render_empty_fleet, render_populated_fleet,
-};
+pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
+use controls::{TeamLife, render_team_controls};
+use fleet::{FleetRender, TeamMode, carries_team, render_empty_fleet, render_populated_fleet};
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
 
@@ -51,23 +49,23 @@ pub(super) struct BroadcastTarget {
     epoch: CanonicalUuid,
 }
 
-/// Render every live lineage as one packed surface.
+/// Render every live team as one packed surface.
 ///
-/// This is the sole Lanes conversation path: each lineage owns exactly one
+/// This is the sole Lanes conversation path: each team owns exactly one
 /// composer and activity plane, however many independently steerable members
-/// the lineage contains.
-pub(super) fn render_lineage(
+/// the team contains.
+pub(super) fn render_team(
     surface: &SurfaceData,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
-    lineage_fleet: &NodeRef,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    team_fleet: &NodeRef,
+    team_controls: &UseReducerHandle<TeamControls>,
     controls: &view::AgentControls,
 ) -> Html {
     let surface = surface.read();
     let Some(runtime) = surface.as_ref() else {
-        return empty("No admitted live organization is available.");
+        return empty("No admitted live team is available.");
     };
     let Some(lanes) = runtime.lanes() else {
         return empty("No agent snapshot is available.");
@@ -91,18 +89,12 @@ pub(super) fn render_lineage(
     }
     let can_send = runtime.offers(CommandKind::SteerSend);
     let can_wake = runtime.offers(CommandKind::LaneState) && runtime.offers(CommandKind::LaneRead);
-    let can_configure = runtime.offers(CommandKind::LineageConfigure);
+    let can_configure = runtime.offers(CommandKind::TeamConfigure);
     let can_arrange_lanes = runtime.offers(CommandKind::LaneArrange);
-    let can_arrange_lineages = runtime.offers(CommandKind::LineageArrange);
+    let can_arrange_teams = runtime.offers(CommandKind::TeamArrange);
     let topology = watchband::topology(&lanes.lanes);
     if lanes.lanes.is_empty() {
-        return render_empty_fleet(
-            runtime,
-            lanes.epoch,
-            lineage_fleet,
-            lineage_controls,
-            controls,
-        );
+        return render_empty_fleet(runtime, lanes.epoch, team_fleet, team_controls, controls);
     }
     let render = FleetRender {
         runtime,
@@ -111,21 +103,21 @@ pub(super) fn render_lineage(
         can_send,
         can_wake,
         can_arrange_lanes,
-        can_arrange_lineages,
+        can_arrange_teams,
         can_configure,
         topology,
         sender,
         drafts,
         submissions,
-        lineage_controls,
+        team_controls,
         controls,
     };
-    render_populated_fleet(&lanes.lanes, &standings, lineage_fleet, &render)
+    render_populated_fleet(&lanes.lanes, &standings, team_fleet, &render)
 }
 
 #[hook]
-pub(super) fn use_lineage_fleet_right_edge(host: NodeRef, lineage_count: usize) {
-    use_effect_with((host, lineage_count), move |(host, _)| {
+pub(super) fn use_team_fleet_right_edge(host: NodeRef, team_count: usize) {
+    use_effect_with((host, team_count), move |(host, _)| {
         let registration = host.cast::<web_sys::HtmlElement>().and_then(|element| {
             element.set_scroll_left(element.scroll_width());
             let observed = element.clone();
@@ -147,11 +139,11 @@ pub(super) fn use_lineage_fleet_right_edge(host: NodeRef, lineage_count: usize) 
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "one lineage render owns its controls"
+    reason = "one team render owns its controls"
 )]
 fn render_compose(
     runtime: &CanvasRuntime,
-    lineage: &crate::runtime::LaneRow,
+    team: &crate::runtime::LaneRow,
     standings: &[Standing],
     epoch: CanonicalUuid,
     topology_revision: u64,
@@ -161,60 +153,60 @@ fn render_compose(
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    team_controls: &UseReducerHandle<TeamControls>,
     can_configure: bool,
     controls: &view::AgentControls,
 ) -> Html {
-    if lineage.members.is_empty() {
+    if team.members.is_empty() {
         return empty("No agents are assigned. Open Team to add one.");
     }
-    let authoritative_life = lineage.subscription;
-    let control = lineage_controls.current(lineage.lane, authoritative_life);
-    let submit = submit_lineage_callback(
-        &lineage.members,
+    let authoritative_life = team.subscription;
+    let control = team_controls.current(team.lane, authoritative_life);
+    let submit = submit_team_callback(
+        &team.members,
         epoch,
         can_wake,
         sender.clone(),
         drafts.clone(),
         submissions.clone(),
     );
-    let broadcast_targets = broadcast_targets(&lineage.members, epoch, can_send);
-    let broadcast_help = format!("composer-broadcast-help-{}", lineage.lane);
+    let broadcast_targets = broadcast_targets(&team.members, epoch, can_send);
+    let broadcast_help = format!("composer-broadcast-help-{}", team.lane);
     let ready = can_send
         && control.pending_life.is_none()
-        && lineage.members.iter().any(|member| {
+        && team.members.iter().any(|member| {
             (member.occupant.is_some() || (member.bound && can_wake))
                 && drafts
                     .get(&member.lane.to_string())
                     .is_some_and(|draft| !compose(draft).trim().is_empty())
         });
-    let cards = activity_cards(runtime, lineage);
+    let cards = activity_cards(runtime, team);
     let dismiss_agent_menus = Callback::from(dismiss_other_agent_action_menus);
-    let history_targets = lineage
+    let history_targets = team
         .members
         .iter()
         .filter_map(|member| history_target(runtime, member.lane))
         .collect();
     html! {
-        <div class="organization-compose" onclick={dismiss_agent_menus}>
-            <form class="organization-composer" onsubmit={submit.clone()}>
-                <div class="organization-agents">
-                    {for lineage.members.iter().zip(standings.iter()).map(|(member, standing)| {
+        <div class="team-compose" onclick={dismiss_agent_menus}>
+            <form class="team-composer" onsubmit={submit.clone()}>
+                <div class="team-agents">
+                    {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
                         let header = primary_composer_header(
                             &cards,
-                            lineage,
+                            team,
                             member.lane,
                             standing,
                         );
                         render_agent_composer(
-                            lineage.lane,
+                            team.lane,
                             member,
                             standing,
                             epoch,
                             topology_revision,
                             runtime
                                 .lanes()
-                                .and_then(|lanes| lanes.renewal(lineage.lane, member.lane)),
+                                .and_then(|lanes| lanes.renewal(team.lane, member.lane)),
                             standing.pending,
                             can_send,
                             can_wake,
@@ -229,12 +221,12 @@ fn render_compose(
                         )
                     })}
                 </div>
-                {render_lineage_controls(
-                    lineage.lane,
+                {render_team_controls(
+                    team.lane,
                     authoritative_life,
                     topology_revision,
                     &control,
-                    lineage_controls,
+                    team_controls,
                     &controls.suppress_automatic_speech,
                     sender,
                     can_configure,
@@ -245,7 +237,7 @@ fn render_compose(
                 </span>
             </form>
             {render_activity(
-                lineage,
+                team,
                 &cards,
                 drafts,
                 controls,
@@ -293,25 +285,25 @@ fn broadcast_targets(
         .collect()
 }
 
-/// Every stable assistant-authored record the lineage can render in total chronology.
+/// Every stable assistant-authored record the team can render in total chronology.
 /// Observation time is the primary display order. The admitted lane and source
 /// locus break equal-time ties without parsing a rendered DOM identity. The
 /// persistent plane uses this complete order to distinguish edge additions
 /// from structural middle insertions during staged hydration.
-fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) -> Vec<ActivityCard> {
+fn activity_cards(runtime: &CanvasRuntime, team: &crate::runtime::LaneRow) -> Vec<ActivityCard> {
     let mut cards = runtime
         .messages()
         .iter()
         .filter_map(|message| {
-            let (position, member) = lineage
+            let (position, member) = team
                 .members
                 .iter()
                 .enumerate()
                 .find(|(_, member)| member.lane == message.lane)?;
             Some(ActivityCard::Agent {
-                accent: watchband::accent(lineage.members.len(), position),
+                accent: watchband::accent(team.members.len(), position),
                 member: member.clone(),
-                quote_lane: crate::composer_drafts::quote_lane(&lineage.members, message),
+                quote_lane: crate::composer_drafts::quote_lane(&team.members, message),
                 message: Rc::clone(message),
             })
         })
@@ -321,13 +313,13 @@ fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) ->
             .lifecycle_boundaries()
             .iter()
             .filter_map(|boundary| {
-                let (position, member) = lineage
+                let (position, member) = team
                     .members
                     .iter()
                     .enumerate()
                     .find(|(_, member)| member.lane == boundary.lane())?;
                 Some(ActivityCard::Lifecycle {
-                    accent: watchband::accent(lineage.members.len(), position),
+                    accent: watchband::accent(team.members.len(), position),
                     member: member.clone(),
                     boundary: boundary.clone(),
                 })
@@ -338,12 +330,12 @@ fn activity_cards(runtime: &CanvasRuntime, lineage: &crate::runtime::LaneRow) ->
 }
 
 fn render_activity(
-    lineage: &crate::runtime::LaneRow,
+    team: &crate::runtime::LaneRow,
     cards: &[ActivityCard],
     drafts: &UseReducerHandle<ComposerDrafts>,
     controls: &view::AgentControls,
-    speech: LineageSpeech,
-    life: LineageLife,
+    speech: TeamSpeech,
+    life: TeamLife,
     history: HistoryPaging<'_>,
 ) -> Html {
     let empty = cards.is_empty();
@@ -351,8 +343,8 @@ fn render_activity(
     let history_sender = HistorySender::new(history.sender.clone());
     html! {
         <div
-            id={format!("lineage-stream-{}", lineage.lane)}
-            class="organization-activity-grid"
+            id={format!("team-stream-{}", team.lane)}
+            class="team-activity-grid"
             aria-live="polite"
             aria-label="Live agent activity"
             data-empty={empty.to_string()}
@@ -361,10 +353,10 @@ fn render_activity(
                 <div class="mosaic-message-empty">{"No pending direction."}</div>
             }
             <MosaicPlane
-                key={lineage.lane.to_string()}
-                lane={lineage.lane}
+                key={team.lane.to_string()}
+                lane={team.lane}
                 {life}
-                members={lineage.members.len()}
+                members={team.members.len()}
                 cards={cards.to_vec()}
                 quote_dispatcher={drafts.dispatcher()}
                 speak={controls.speak.clone()}
@@ -387,22 +379,22 @@ struct HistoryPaging<'a> {
 
 fn render_details(
     runtime: &CanvasRuntime,
-    lineage: &crate::runtime::LaneRow,
+    team: &crate::runtime::LaneRow,
     standings: &[Standing],
-    mode: LineageMode,
+    mode: TeamMode,
     controls: &view::AgentControls,
 ) -> Html {
     html! {
         <div class={classes!(
-            "organization-detail-pane",
-            (mode == LineageMode::Org).then_some("with-seat")
+            "team-detail-pane",
+            (mode == TeamMode::Team).then_some("with-seat")
         )}>
-            <div class="organization-detail-grid">
-                {for lineage.members.iter().zip(standings.iter()).map(|(member, standing)| {
+            <div class="team-detail-grid">
+                {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
                     render_agent_details(member, standing, mode)
                 })}
             </div>
-            if mode == LineageMode::Org {
+            if mode == TeamMode::Team {
                 {view::render_seat_panel(Some(runtime), controls)}
             }
         </div>
@@ -411,7 +403,7 @@ fn render_details(
 
 fn render_tasks(
     runtime: &CanvasRuntime,
-    lineage: &crate::runtime::LaneRow,
+    team: &crate::runtime::LaneRow,
     standings: &[Standing],
 ) -> Html {
     let active = standings
@@ -422,22 +414,22 @@ fn render_tasks(
         .iter()
         .filter(|standing| standing.pending > 0)
         .collect::<Vec<_>>();
-    let active_state = OrgTaskSectionState::active(runtime.board().is_some(), active.len());
-    let direction_state = OrgTaskSectionState::direction(runtime.inbox().is_some(), queued.len());
-    let policy = LineageLife::from(lineage.subscription).label();
+    let active_state = TeamTaskSectionState::active(runtime.board().is_some(), active.len());
+    let direction_state = TeamTaskSectionState::direction(runtime.inbox().is_some(), queued.len());
+    let policy = TeamLife::from(team.subscription).label();
     let active_summary = runtime.board().map_or_else(
         || "Task state unavailable".to_owned(),
         |_| format!("{} active", active.len()),
     );
     html! {
-        <main class="organization-task-workspace" aria-label="Organization tasks">
-            <header class="organization-task-summary">
+        <main class="team-task-workspace" aria-label="Team tasks">
+            <header class="team-task-summary">
                 <div>
-                    <span class="organization-task-eyebrow">{"Team work"}</span>
+                    <span class="team-task-eyebrow">{"Team work"}</span>
                     <strong>{active_summary}</strong>
                 </div>
                 <div
-                    class="organization-task-policy"
+                    class="team-task-policy"
                     data-task-policy-extension=""
                     aria-label={format!("Task policy: {policy}")}
                 >
@@ -445,32 +437,32 @@ fn render_tasks(
                     <strong>{policy}</strong>
                 </div>
             </header>
-            <section class="organization-task-section" aria-labelledby={format!("active-tasks-{}", lineage.lane)}>
+            <section class="team-task-section" aria-labelledby={format!("active-tasks-{}", team.lane)}>
                 <header>
-                    <h3 id={format!("active-tasks-{}", lineage.lane)}>{"Active tasks"}</h3>
+                    <h3 id={format!("active-tasks-{}", team.lane)}>{"Active tasks"}</h3>
                     if !active.is_empty() {
                         <span>{active.len()}</span>
                     }
                 </header>
                 if let Some(message) = active_state.message() {
-                    <p class="organization-task-empty" role={active_state.unavailable().then_some("status")}>{message}</p>
+                    <p class="team-task-empty" role={active_state.unavailable().then_some("status")}>{message}</p>
                 } else {
-                    <ol class="organization-task-list">
+                    <ol class="team-task-list">
                         {for active.into_iter().map(render_task_row)}
                     </ol>
                 }
             </section>
-            <section class="organization-task-section" aria-labelledby={format!("direction-queue-{}", lineage.lane)}>
+            <section class="team-task-section" aria-labelledby={format!("direction-queue-{}", team.lane)}>
                 <header>
-                    <h3 id={format!("direction-queue-{}", lineage.lane)}>{"Direction queue"}</h3>
+                    <h3 id={format!("direction-queue-{}", team.lane)}>{"Direction queue"}</h3>
                     if !queued.is_empty() {
                         <span>{queued.iter().map(|standing| standing.pending).sum::<usize>()}</span>
                     }
                 </header>
                 if let Some(message) = direction_state.message() {
-                    <p class="organization-task-empty" role={direction_state.unavailable().then_some("status")}>{message}</p>
+                    <p class="team-task-empty" role={direction_state.unavailable().then_some("status")}>{message}</p>
                 } else {
-                    <ol class="organization-direction-list">
+                    <ol class="team-direction-list">
                         {for queued.into_iter().map(render_direction_row)}
                     </ol>
                 }
@@ -489,25 +481,25 @@ fn render_task_row(standing: &Standing) -> Html {
         .phase
         .clone()
         .unwrap_or_else(|| "unknown".to_owned());
-    let expiry = lease_countdown(standing.expires_at, "organization-task-age", "unavailable");
+    let expiry = lease_countdown(standing.expires_at, "team-task-age", "unavailable");
     html! {
         <li
-            class="organization-task-row"
+            class="team-task-row"
             data-task-handle={handle.clone()}
             data-agent-lane={standing.lane.to_string()}
             data-accent={standing.accent.to_string()}
         >
-            <div class="organization-task-row-main">
+            <div class="team-task-row-main">
                 <code>{handle}</code>
-                <strong class="organization-task-title">{title}</strong>
+                <strong class="team-task-title">{title}</strong>
             </div>
-            <div class="organization-task-row-meta">
-                <span class="organization-task-member">
+            <div class="team-task-row-meta">
+                <span class="team-task-member">
                     <span class="agent-presence" aria-hidden="true"></span>
-                    <span class="organization-task-member-name">{standing.label.clone()}</span>
+                    <span class="team-task-member-name">{standing.label.clone()}</span>
                 </span>
-                <span class="organization-task-phase">{phase}</span>
-                <span class="organization-task-renewed">{"expires "}{expiry}</span>
+                <span class="team-task-phase">{phase}</span>
+                <span class="team-task-renewed">{"expires "}{expiry}</span>
             </div>
         </li>
     }
@@ -520,16 +512,16 @@ fn render_direction_row(standing: &Standing) -> Html {
         .unwrap_or_else(|| "Preview unavailable".to_owned());
     html! {
         <li
-            class="organization-direction-row"
+            class="team-direction-row"
             data-agent-lane={standing.lane.to_string()}
             data-accent={standing.accent.to_string()}
         >
-            <span class="organization-task-member">
+            <span class="team-task-member">
                 <span class="agent-presence" aria-hidden="true"></span>
-                <strong class="organization-task-member-name">{standing.label.clone()}</strong>
+                <strong class="team-task-member-name">{standing.label.clone()}</strong>
             </span>
-            <span class="organization-direction-preview">{preview}</span>
-            <span class="organization-direction-count">{format!("{} pending", standing.pending)}</span>
+            <span class="team-direction-preview">{preview}</span>
+            <span class="team-direction-count">{format!("{} pending", standing.pending)}</span>
         </li>
     }
 }
@@ -564,7 +556,7 @@ fn lease_countdown(expiry: Option<i64>, class: &'static str, vacant: &'static st
 fn render_agent_details(
     member: &crate::runtime::LaneMember,
     standing: &Standing,
-    mode: LineageMode,
+    mode: TeamMode,
 ) -> Html {
     let occupant = member
         .occupant
@@ -572,7 +564,7 @@ fn render_agent_details(
         .unwrap_or_else(|| "vacant".to_owned());
     html! {
         <article
-            class="organization-detail-card"
+            class="team-detail-card"
             data-accent={standing.accent.to_string()}
             title={watchband::standing_title(standing)}
         >
@@ -582,7 +574,7 @@ fn render_agent_details(
                 <span>{standing.vendor.clone()}</span>
             </header>
             {match mode {
-                LineageMode::Org => html! {
+                TeamMode::Team => html! {
                     <dl>
                         <div><dt>{"Agent channel"}</dt><dd>{standing.lane.to_string()}</dd></div>
                         <div><dt>{"Occupant"}</dt><dd>{occupant}</dd></div>
@@ -601,7 +593,7 @@ fn render_agent_details(
                         </div>
                     </dl>
                 },
-                LineageMode::Lanes | LineageMode::Tasks => Html::default(),
+                TeamMode::Lanes | TeamMode::Tasks => Html::default(),
             }}
         </article>
     }
@@ -626,7 +618,7 @@ struct ComposerHeader {
 /// labels.
 fn primary_composer_header(
     cards: &[ActivityCard],
-    lineage: &crate::runtime::LaneRow,
+    team: &crate::runtime::LaneRow,
     lane: CanonicalUuid,
     standing: &Standing,
 ) -> ComposerHeader {
@@ -644,8 +636,8 @@ fn primary_composer_header(
     source.map_or_else(
         || ComposerHeader {
             stream: ComposerStreamLink {
-                target: format!("lineage-stream-{}", lineage.lane),
-                label: "Jump to lineage activity".to_owned(),
+                target: format!("team-stream-{}", team.lane),
+                label: "Jump to team activity".to_owned(),
                 display_millis: None,
             },
             prose: "No agent prose yet".to_owned(),
@@ -656,7 +648,7 @@ fn primary_composer_header(
                 label: if is_own_source {
                     format!("Jump to latest {} message", standing.label)
                 } else {
-                    "Jump to latest lineage message".to_owned()
+                    "Jump to latest team message".to_owned()
                 },
                 display_millis: Some(crate::runtime::agent_message_display_millis(message)),
             },
@@ -684,7 +676,7 @@ fn visible_agent_prose(
 
 fn renewal_callback(
     topology_revision: u64,
-    lineage: CanonicalUuid,
+    team: CanonicalUuid,
     lane: CanonicalUuid,
     requested: bool,
     sender: &SenderHandle,
@@ -695,7 +687,7 @@ fn renewal_callback(
             &sender,
             ClientAction::RenewLane {
                 topology_revision,
-                lineage,
+                team,
                 lane,
                 requested,
             },
@@ -708,9 +700,9 @@ fn renewal_callback(
 fn copy_dragover() -> Callback<DragEvent> {
     Callback::from(move |event: DragEvent| {
         if let Some(transfer) = event.data_transfer() {
-            // An organization in flight is passing over on its way to an organization surface;
-            // claiming it here would drop a whole organization onto one composer.
-            if carries_lineage(&transfer) {
+            // A team in flight is passing over on its way to a team surface;
+            // claiming it here would drop a whole team onto one composer.
+            if carries_team(&transfer) {
                 return;
             }
             transfer.set_drop_effect("copy");
@@ -807,10 +799,10 @@ fn primary_composer_dragging(
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "one member composer needs its standing and shared lineage interaction handles"
+    reason = "one member composer needs its standing and shared team interaction handles"
 )]
 fn render_agent_composer(
-    lineage: CanonicalUuid,
+    team: CanonicalUuid,
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     epoch: CanonicalUuid,
@@ -846,7 +838,7 @@ fn render_agent_composer(
         watchband::agent_renewal_control(&standing.label, occupant.is_some(), can_send, renewal);
     let renew = renewal_callback(
         topology_revision,
-        lineage,
+        team,
         lane_id,
         renewal.next_requested,
         sender,
@@ -875,8 +867,8 @@ fn render_agent_composer(
         <section
             key={lane_key.clone()}
             class={classes!(
-                "organization-agent",
-                occupant.is_none().then_some("organization-agent--vacant"),
+                "team-agent",
+                occupant.is_none().then_some("team-agent--vacant"),
             )}
             data-agent-lane={lane_id.to_string()}
             data-wake-and-send={wake.to_string()}
@@ -1068,7 +1060,7 @@ fn render_composer_heading(
                         aria-pressed={renewal.pressed.to_string()}
                         title={renewal.title.clone()}
                         data-renewal-state={renewal.state}
-                        data-renewal-lineage={standing.lineage_id.to_string()}
+                        data-renewal-team={standing.team.to_string()}
                         data-renewal-lane={lane.to_string()}
                         data-renewal-requested={renewal.pressed.to_string()}
                         data-renewal-next-requested={renewal.next_requested.to_string()}
@@ -1204,7 +1196,7 @@ fn render_omp_mark(lane: CanonicalUuid) -> Html {
     }
 }
 
-fn submit_lineage_callback(
+fn submit_team_callback(
     members: &[crate::runtime::LaneMember],
     epoch: CanonicalUuid,
     can_wake: bool,

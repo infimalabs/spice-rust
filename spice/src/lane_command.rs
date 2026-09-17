@@ -119,10 +119,10 @@ fn add(
         }
     };
     let lane = new_uuid();
-    let lineage_id = match matches.get_one::<String>("lineage") {
-        Some(lineage) => match lineage.parse::<wire::CanonicalUuid>() {
-            Ok(lineage_id) => lineage_id,
-            Err(error) => return protocol_fault("lane::lineage-invalid", &error.to_string()),
+    let team = match matches.get_one::<String>("team") {
+        Some(team) => match team.parse::<wire::CanonicalUuid>() {
+            Ok(team) => team,
+            Err(error) => return protocol_fault("lane::team-invalid", &error.to_string()),
         },
         None => lane,
     };
@@ -134,7 +134,7 @@ fn add(
         matches,
         topology_revision,
         lane,
-        lineage_id,
+        team,
         worktree.worktree_root().display().to_string(),
         life,
         vendor,
@@ -146,7 +146,7 @@ fn lane_seat_body(
     matches: &ArgMatches,
     topology_revision: u64,
     lane: CanonicalUuid,
-    lineage_id: CanonicalUuid,
+    team: CanonicalUuid,
     worktree: String,
     life: String,
     vendor: wire::Name,
@@ -154,7 +154,7 @@ fn lane_seat_body(
     LaneSeat {
         topology_revision,
         lane,
-        lineage_id,
+        team,
         name: matches
             .get_one::<String>("name")
             .map(|name| name.trim().to_owned())
@@ -389,12 +389,12 @@ mod tests {
             .subcommand()
             .expect("lane add subcommand exists");
         let lane = CanonicalUuid::new(uuid::Uuid::from_u128(1));
-        let lineage = CanonicalUuid::new(uuid::Uuid::from_u128(2));
+        let team = CanonicalUuid::new(uuid::Uuid::from_u128(2));
         let body = lane_seat_body(
             add_matches,
             7,
             lane,
-            lineage,
+            team,
             "/tmp/spice-lane".to_owned(),
             "drive".to_owned(),
             "codex".parse().expect("fixture vendor parses"),
@@ -402,7 +402,7 @@ mod tests {
 
         assert_eq!(body.topology_revision, 7);
         assert_eq!(body.lane, lane);
-        assert_eq!(body.lineage_id, lineage);
+        assert_eq!(body.team, team);
         assert_eq!(body.name.as_deref(), Some("reviewer"));
         assert_eq!(body.worktree, "/tmp/spice-lane");
         assert_eq!(body.life, "drive");

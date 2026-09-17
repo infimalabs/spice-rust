@@ -73,7 +73,7 @@ export async function assertPersistentMosaic(
 ) {
   await waitForMosaicReady(page);
   const firstCard = console.locator('.mosaic-message-card[data-layout-phase="committed"]').first();
-  const life = console.locator('.organization-lifetime input[type="range"]');
+  const life = console.locator('.team-lifetime input[type="range"]');
   const presentationProbe = await armPlacementProbe(plane);
   await life.fill("1");
   await console.getByRole("button", { name: "Drive", exact: true }).waitFor();

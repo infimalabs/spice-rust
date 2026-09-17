@@ -414,7 +414,7 @@ fn seat_residency(write: &mut JournalWrite, fact: journal::PendingFact) {
         topology_revision: 0,
         lanes: vec![LaneResidency {
             lane: uuid(20),
-            lineage_id: uuid(20),
+            team: uuid(20),
             name: None,
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
@@ -427,9 +427,9 @@ fn seat_residency(write: &mut JournalWrite, fact: journal::PendingFact) {
             session: None,
             disposition: "occupied".to_owned(),
         }],
-        subscriptions: vec![wire::LineageSubscription {
-            lineage_id: uuid(20),
-            policy: wire::intent::LineageLife::Drain,
+        subscriptions: vec![wire::TeamSubscription {
+            team: uuid(20),
+            policy: wire::intent::TeamLife::Drain,
         }],
         renewals: Vec::new(),
     });

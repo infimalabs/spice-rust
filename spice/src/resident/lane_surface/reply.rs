@@ -51,7 +51,7 @@ fn answer_at(
             let liveness = liveness(row, activity(row.lane), now)?;
             Ok(wire::intent::LaneAnswerRow {
                 lane: row.lane,
-                lineage_id: row.lineage_id,
+                team: row.team,
                 name: row.name.clone(),
                 worktree: row.worktree.clone(),
                 life: row.life.clone(),
@@ -87,17 +87,17 @@ fn answer_at(
             })
         })
         .collect::<CommandResult<Vec<_>>>()?;
-    let lineage_ids = lanes
+    let team_ids = lanes
         .iter()
-        .map(|row| row.lineage_id)
+        .map(|row| row.team)
         .collect::<std::collections::BTreeSet<_>>();
-    let subscriptions = lineage_ids
+    let subscriptions = team_ids
         .into_iter()
-        .map(|lineage_id| {
-            subscription_row(head, lineage_id)?.cloned().ok_or_else(|| {
+        .map(|team| {
+            subscription_row(head, team)?.cloned().ok_or_else(|| {
                 store_fault(
-                    "lineage::subscription-missing",
-                    "a returned lineage has no task-allocation lifetime",
+                    "team::subscription-missing",
+                    "a returned team has no task-allocation lifetime",
                 )
             })
         })
@@ -327,7 +327,7 @@ fn recall_live_steering_provenance(
                 None,
             ))
         }
-        // A reminder opens a lineage, so history reads it as the send it is.
+        // A reminder opens a team, so history reads it as the send it is.
         //
         // Its transcript locus is deliberately dropped here: this row's locus
         // means where a lane answered, and a reminder's locus means where the
@@ -556,7 +556,7 @@ mod tests {
     fn occupied() -> wire::LaneResidency {
         wire::LaneResidency {
             lane: uuid(1),
-            lineage_id: uuid(1),
+            team: uuid(1),
             name: Some("Ava".to_owned()),
             worktree: "/worktrees/main-a".to_owned(),
             life: "drive".to_owned(),
@@ -603,16 +603,16 @@ mod tests {
         row
     }
 
-    fn subscriptions() -> Vec<wire::LineageSubscription> {
-        vec![wire::LineageSubscription {
-            lineage_id: uuid(1),
-            policy: wire::intent::LineageLife::Drive,
+    fn subscriptions() -> Vec<wire::TeamSubscription> {
+        vec![wire::TeamSubscription {
+            team: uuid(1),
+            policy: wire::intent::TeamLife::Drive,
         }]
     }
 
     fn renewal() -> wire::LaneRenewalRecord {
         wire::LaneRenewalRecord {
-            lineage_id: uuid(1),
+            team: uuid(1),
             lane: uuid(1),
             revision: 7,
             state: wire::LaneRenewalState::HandoffPending {
@@ -621,7 +621,7 @@ mod tests {
                     session: "private-session".to_owned(),
                     thread: "thread-predecessor".to_owned(),
                 },
-                org_slot: 0,
+                team_slot: 0,
             },
         }
     }

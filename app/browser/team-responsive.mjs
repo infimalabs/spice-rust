@@ -73,13 +73,13 @@ async function fleetGeometry(fleet) {
   return fleet.evaluate((element) => {
     const bounds = element.getBoundingClientRect();
     const style = getComputedStyle(element);
-    const minimumToken = style.getPropertyValue("--lineage-surface-min-inline").trim();
-    const surfaces = [...element.querySelectorAll(":scope > .organization-surface")];
+    const minimumToken = style.getPropertyValue("--team-surface-min-inline").trim();
+    const surfaces = [...element.querySelectorAll(":scope > .team-surface")];
     const surfaceGeometry = surfaces.map((surface) => {
       const rect = surface.getBoundingClientRect();
       const surfaceStyle = getComputedStyle(surface);
       const controls = [...surface.querySelectorAll("button, textarea, table")]
-        .filter((control) => control.closest('.organization-mode-pane[data-active="false"]') === null);
+        .filter((control) => control.closest('.team-mode-pane[data-active="false"]') === null);
       const clippedControls = controls.flatMap((control) => {
         const controlRect = control.getBoundingClientRect();
         if (controlRect.left >= rect.left - 1 && controlRect.right <= rect.right + 1) return [];
@@ -115,13 +115,13 @@ async function fleetGeometry(fleet) {
       lastRight: surfaceGeometry.at(-1)?.right,
       pageOverflowX: document.documentElement.scrollWidth - innerWidth,
       pageOverflowY: document.documentElement.scrollHeight - innerHeight,
-      ids: surfaces.map((surface) => surface.dataset.lineageId),
-      modes: surfaces.map((surface) => surface.querySelector(".organization-pane")?.dataset.organizationMode),
+      ids: surfaces.map((surface) => surface.dataset.team),
+      modes: surfaces.map((surface) => surface.querySelector(".team-pane")?.dataset.teamMode),
       drafts: surfaces.flatMap((surface) => [...surface.querySelectorAll("textarea")]
         .map((draft) => draft.value)),
       laneScrolls: surfaces.flatMap((surface) => [...surface.querySelectorAll(".lane-mosaic-plane")]
         .map((lane) => lane.scrollTop)),
-      tabLabels: surfaces.map((surface) => [...surface.querySelectorAll(".organization-mode-label")]
+      tabLabels: surfaces.map((surface) => [...surface.querySelectorAll(".team-mode-label")]
         .map((label) => label.textContent.trim())),
       surfaces: surfaceGeometry,
     };
@@ -142,7 +142,7 @@ function assertTrack(geometry, label, overflow) {
     geometry.tabLabels.every((labels) => (
       JSON.stringify(labels) === JSON.stringify(["Team", "Board", "Agents"])
     )),
-    `${label} keeps only retained destinations in every responsive organization tablist: ${JSON.stringify(geometry)}`,
+    `${label} keeps only retained destinations in every responsive team tablist: ${JSON.stringify(geometry)}`,
   );
   assert.ok(geometry.surfaces.every(({ width, minWidth, minWidthToken, height, direction, overflow, clipped }) => (
     width >= minWidth - 0.5
@@ -154,7 +154,7 @@ function assertTrack(geometry, label, overflow) {
   )), `${label} surfaces remain readable: ${JSON.stringify(geometry)}`);
 }
 
-export async function assertLineageResponsiveLayout(page, console_) {
+export async function assertTeamResponsiveLayout(page, console_) {
   const originalViewport = page.viewportSize();
   const fleet = console_;
   await fleet.locator(".lane-mosaic-plane").evaluateAll((lanes) => {
@@ -189,9 +189,9 @@ export async function assertLineageResponsiveLayout(page, console_) {
     assertTrack(await fleetGeometry(fleet), "600px two-lane floor overflow", true);
 
     const restored = await fleetGeometry(fleet);
-    assert.deepEqual(restored.ids, original.ids, "resize retains lineage identity and order");
-    assert.deepEqual(restored.modes, original.modes, "resize retains each selected lineage mode");
-    assert.deepEqual(restored.drafts, original.drafts, "resize retains lineage drafts");
+    assert.deepEqual(restored.ids, original.ids, "resize retains team identity and order");
+    assert.deepEqual(restored.modes, original.modes, "resize retains each selected team mode");
+    assert.deepEqual(restored.drafts, original.drafts, "resize retains team drafts");
     assert.deepEqual(restored.laneScrolls, original.laneScrolls, "resize retains lane scroll positions");
   } finally {
     if (cloned) await fleet.evaluate((element) => element.lastElementChild.remove());

@@ -276,18 +276,3 @@ fn release_carriers(connection: &Connection) -> ReleaseCarriers {
         request,
     }
 }
-
-fn version_records(connection: &Connection) -> (u32, u32) {
-    (
-        connection
-            .query_row(
-                "SELECT version FROM journal_schema WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .expect("read schema row version"),
-        connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .expect("read schema pragma version"),
-    )
-}

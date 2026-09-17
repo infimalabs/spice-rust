@@ -75,8 +75,8 @@ fn every_command_names_the_witnesses_it_requires() {
                 | CommandKind::LaneState
                 | CommandKind::LaneRenewal
                 | CommandKind::LaneArrange
-                | CommandKind::LineageConfigure
-                | CommandKind::LineageArrange
+                | CommandKind::TeamConfigure
+                | CommandKind::TeamArrange
         );
         assert_eq!(
             law.required.is_empty(),
@@ -125,7 +125,7 @@ fn lane_lifecycle_is_admitted_for_the_operator_alone() {
         CommandKind::LaneSeat,
         CommandKind::LaneState,
         CommandKind::LaneArrange,
-        CommandKind::LineageConfigure,
+        CommandKind::TeamConfigure,
     ] {
         assert_eq!(
             kind.law().authority,

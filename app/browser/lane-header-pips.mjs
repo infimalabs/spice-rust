@@ -14,8 +14,8 @@ function close(actual, expected, label) {
 async function snapshot(stack) {
   return stack.evaluate((node) => {
     const bounds = node.getBoundingClientRect();
-    const toolbar = node.closest(".organization-toolbar")?.getBoundingClientRect();
-    const rail = node.parentElement?.querySelector(":scope > .organization-mode-rail")
+    const toolbar = node.closest(".team-toolbar")?.getBoundingClientRect();
+    const rail = node.parentElement?.querySelector(":scope > .team-mode-rail")
       ?.getBoundingClientRect();
     return {
       bounds: { height: bounds.height, left: bounds.left, right: bounds.right, width: bounds.width },
@@ -27,15 +27,15 @@ async function snapshot(stack) {
       dragHandle: node.hasAttribute("data-lane-drag-handle"),
       draggable: node.getAttribute("draggable"),
       expanded: node.getAttribute("aria-expanded"),
-      firstToolbarElement: node.closest(".organization-toolbar")?.firstElementChild === node,
+      firstToolbarElement: node.closest(".team-toolbar")?.firstElementChild === node,
       hasPopup: node.getAttribute("aria-haspopup"),
-      legacyHandles: node.closest(".organization-toolbar")?.querySelectorAll(":scope > .organization-drag-handle").length,
+      legacyHandles: node.closest(".team-toolbar")?.querySelectorAll(":scope > .team-drag-handle").length,
       role: node.getAttribute("role"),
       scrollWidth: node.scrollWidth,
       tabIndex: node.tabIndex,
       toolbarHeight: toolbar?.height,
       railLeft: rail?.left,
-      pips: [...node.querySelectorAll(":scope > .organization-pip-column > .organization-light")].map((pip) => {
+      pips: [...node.querySelectorAll(":scope > .team-pip-column > .team-light")].map((pip) => {
         const box = pip.getBoundingClientRect();
         const style = getComputedStyle(pip);
         return {
@@ -74,7 +74,7 @@ function expectedPositions(count) {
 }
 
 function assertStack(actual, single, label, arrangeable) {
-  assert.ok(actual.pips.length >= 2, `${label}: fixture carries a multi-pip organization`);
+  assert.ok(actual.pips.length >= 2, `${label}: fixture carries a multi-pip team`);
   const rows = Math.min(2, actual.pips.length);
   const columns = Math.ceil(actual.pips.length / 2);
   close(actual.bounds.width, Math.max(18, columns * 9 + (columns - 1) * 5), `${label} width`);
@@ -90,7 +90,7 @@ function assertStack(actual, single, label, arrangeable) {
   assert.equal(
     actual.description,
     arrangeable
-      ? "Press Enter or Space, or tap, to choose where to move or join this organization."
+      ? "Press Enter or Space, or tap, to choose where to move or join this team."
       : null,
     `${label}: actionable pips expose keyboard and touch instructions`,
   );
@@ -135,19 +135,19 @@ function assertStack(actual, single, label, arrangeable) {
 async function assertSinglePip(stack, label) {
   const actual = await stack.evaluate((node) => {
     const witness = node.cloneNode(true);
-    const pips = [...witness.querySelectorAll(":scope > .organization-pip-column > .organization-light")];
+    const pips = [...witness.querySelectorAll(":scope > .team-pip-column > .team-light")];
     for (const pip of pips.slice(1)) pip.remove();
-    for (const column of witness.querySelectorAll(":scope > .organization-pip-column")) {
-      if (!column.querySelector(".organization-light")) column.remove();
+    for (const column of witness.querySelectorAll(":scope > .team-pip-column")) {
+      if (!column.querySelector(".team-light")) column.remove();
     }
     witness.classList.add("single");
-    const pip = witness.querySelector(":scope > .organization-pip-column > .organization-light");
+    const pip = witness.querySelector(":scope > .team-pip-column > .team-light");
     pip.dataset.pipColumn = "1";
     pip.dataset.pipRow = "1";
     node.replaceWith(witness);
     const stackBox = witness.getBoundingClientRect();
     const pipBox = pip.getBoundingClientRect();
-    const toolbarBox = witness.closest(".organization-toolbar")?.getBoundingClientRect();
+    const toolbarBox = witness.closest(".team-toolbar")?.getBoundingClientRect();
     witness.replaceWith(node);
     return {
       stackWidth: stackBox.width,
@@ -171,7 +171,7 @@ async function assertThreePipTransition(stack, single, label, screenshot) {
     const witness = node.cloneNode(true);
     witness.setAttribute("data-pip-transition-witness", "three");
     const removed = witness.querySelector(
-      ':scope > .organization-pip-column > .organization-light[data-pip-column="1"][data-pip-row="1"]',
+      ':scope > .team-pip-column > .team-light[data-pip-column="1"][data-pip-row="1"]',
     );
     if (!removed) throw new Error("four-pip stack has no upper-left transition member");
     removed.remove();
@@ -206,7 +206,7 @@ async function assertThreePipTransition(stack, single, label, screenshot) {
       rightEdge,
       `${label}: the right-edge identity and status remain at lower-right`,
     );
-    await stack.locator("xpath=ancestor::header[contains(@class, 'organization-toolbar')]")
+    await stack.locator("xpath=ancestor::header[contains(@class, 'team-toolbar')]")
       .screenshot({ path: screenshot });
   } finally {
     await stack.evaluate((witness) => {
@@ -224,10 +224,10 @@ export async function assertLaneHeaderPipMatrix(page, scope, artifacts, engine, 
   const originalViewport = page.viewportSize();
   assert.ok(originalViewport, `${engine}: pip matrix requires a fixed viewport`);
   const stack = scope
-    .locator(".organization-lights:has(> .organization-pip-column > .organization-light:nth-of-type(2))")
+    .locator(".team-lights:has(> .team-pip-column > .team-light:nth-of-type(2))")
     .first();
   await stack.waitFor();
-  const arrangeable = await scope.locator(".organization-surface").count() > 1;
+  const arrangeable = await scope.locator(".team-surface").count() > 1;
   try {
     for (const scheme of SCHEMES) {
       await page.emulateMedia({ colorScheme: scheme });
@@ -243,7 +243,7 @@ export async function assertLaneHeaderPipMatrix(page, scope, artifacts, engine, 
           label,
           join(artifacts, `${engine}-lane-pips-three-${scheme}-${viewport}.png`),
         );
-        await stack.locator("xpath=ancestor::header[contains(@class, 'organization-toolbar')]").screenshot({
+        await stack.locator("xpath=ancestor::header[contains(@class, 'team-toolbar')]").screenshot({
           path: join(artifacts, `${engine}-lane-pips-${scheme}-${viewport}.png`),
         });
       }

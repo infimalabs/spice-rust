@@ -132,7 +132,7 @@ fn lane_creation_guard_refuses_when_the_accounted_source_moves_before_commit() {
     let capture = task_creation_capture(&bus, &command, &snapshot)
         .expect("exact lane creation context admits");
     assert_eq!(
-        capture.creator_lineage(),
+        capture.creator_team(),
         Some(seats[0].lane),
         "the same guarded residency observation captures creator-team ownership",
     );
@@ -204,7 +204,7 @@ fn lane_creation_guard_refuses_when_the_accounted_source_moves_before_commit() {
 
 #[test]
 fn lane_creation_guard_refuses_when_creator_team_moves_before_commit() {
-    let (root, bus, epoch, seats) = fixture("creation-context-lineage-race", 1);
+    let (root, bus, epoch, seats) = fixture("creation-context-team-race", 1);
     authorize_lane_creation(&bus, epoch, &seats[0]);
     let lane = seats[0].lane;
     let command = add_command(epoch, lane);
@@ -217,13 +217,13 @@ fn lane_creation_guard_refuses_when_creator_team_moves_before_commit() {
     .expect("fixture snapshot validates");
     let capture = task_creation_capture(&bus, &command, &snapshot)
         .expect("exact lane creation context admits");
-    assert_eq!(capture.creator_lineage(), Some(lane));
+    assert_eq!(capture.creator_team(), Some(lane));
 
-    super::subscription::move_fixture_lane_to_lineage(&bus, epoch, &seats[0], uuid(9_999));
+    super::subscription::move_fixture_lane_to_team(&bus, epoch, &seats[0], uuid(9_999));
 
     let mut guarded = JournalWrite::new(
         Actor::Lane(lane),
-        "fixture:creation-lineage-guard"
+        "fixture:creation-team-guard"
             .parse()
             .expect("fixture origin"),
         Instant::new(jiff::Timestamp::now()).expect("current fixture instant"),
@@ -233,7 +233,7 @@ fn lane_creation_guard_refuses_when_creator_team_moves_before_commit() {
     guarded
         .fact(
             body::TaskNoted {
-                task: stamp("creation-lineage-guard"),
+                task: stamp("creation-team-guard"),
                 note: "must never commit".to_owned(),
             },
             FactCause::Root,

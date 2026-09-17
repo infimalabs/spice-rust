@@ -1,5 +1,5 @@
 use serde::Serialize;
-use wire::intent::LineageLife;
+use wire::intent::TeamLife;
 
 use super::*;
 
@@ -126,18 +126,18 @@ pub(in crate::board_command) fn actor_rows<'a>(
         .collect()
 }
 
-/// What one lineage policy lets the allocator hand this lane on its own.
+/// What one team policy lets the allocator hand this lane on its own.
 ///
-/// The predecessor had no such gate. Here `Steer` admits no creator lineage
+/// The predecessor had no such gate. Here `Steer` admits no creator team
 /// at all, so under it every drain is empty by construction, and a lane that
 /// is not told so concludes the board is broken.
-fn lineage_policy_gloss(policy: LineageLife) -> &'static str {
+fn team_policy_gloss(policy: TeamLife) -> &'static str {
     match policy {
-        LineageLife::Steer => {
+        TeamLife::Steer => {
             "the operator hands out work explicitly; the allocator selects nothing on its own"
         }
-        LineageLife::Drive => "the allocator selects only work created for this lineage",
-        LineageLife::Drain => "the allocator selects from all assignable work",
+        TeamLife::Drive => "the allocator selects only work created for this team",
+        TeamLife::Drain => "the allocator selects from all assignable work",
     }
 }
 
@@ -147,18 +147,18 @@ fn lineage_policy_gloss(policy: LineageLife) -> &'static str {
 pub(crate) struct DrainReadout {
     pub(crate) text: String,
     pub(crate) board: ParkedCounts,
-    pub(crate) lineage: LineageLife,
+    pub(crate) team: TeamLife,
 }
 
 impl DrainReadout {
-    fn new(board: ParkedCounts, lineage: LineageLife) -> Self {
+    fn new(board: ParkedCounts, team: TeamLife) -> Self {
         let text = [
             "no available tasks".to_owned(),
             board.board_line(),
             format!(
-                "lineage policy: {} ({})",
-                lineage.as_str(),
-                lineage_policy_gloss(lineage)
+                "team policy: {} ({})",
+                team.as_str(),
+                team_policy_gloss(team)
             ),
             concat!(
                 "allocator scope: no allocator-selected task is available to this lane. ",
@@ -180,11 +180,7 @@ impl DrainReadout {
             .to_owned(),
         ]
         .join("\n");
-        Self {
-            text,
-            board,
-            lineage,
-        }
+        Self { text, board, team }
     }
 }
 

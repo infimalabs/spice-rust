@@ -48,7 +48,7 @@ pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, Canonical
         .enumerate()
         .map(|(index, seat)| wire::LaneResidency {
             lane: seat.lane,
-            lineage_id: seat.lane,
+            team: seat.lane,
             name: None,
             worktree: "/fixture".to_owned(),
             life: "drive".to_owned(),
@@ -64,9 +64,9 @@ pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, Canonical
         .collect::<Vec<_>>();
     let subscriptions = lanes
         .iter()
-        .map(|lane| wire::LineageSubscription {
-            lineage_id: lane.lineage_id,
-            policy: wire::intent::LineageLife::Drain,
+        .map(|lane| wire::TeamSubscription {
+            team: lane.team,
+            policy: wire::intent::TeamLife::Drain,
         })
         .collect::<Vec<_>>();
     let origin = format!("resident:{epoch}")

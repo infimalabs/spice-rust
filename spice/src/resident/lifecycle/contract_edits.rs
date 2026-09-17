@@ -563,7 +563,7 @@ mod tests {
             .expect("fixture bus starts");
         let row = LaneResidency {
             lane: fixture.lane,
-            lineage_id: fixture.lane,
+            team: fixture.lane,
             name: Some("claimant".to_owned()),
             worktree: fixture.root.display().to_string(),
             life: "drive".to_owned(),
@@ -606,7 +606,7 @@ mod tests {
             &task,
             &LaneResidency {
                 lane: fixture.lane,
-                lineage_id: fixture.lane,
+                team: fixture.lane,
                 name: Some("claimant".to_owned()),
                 worktree: fixture.root.display().to_string(),
                 life: "drive".to_owned(),

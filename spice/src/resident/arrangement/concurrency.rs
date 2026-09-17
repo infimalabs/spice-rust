@@ -36,12 +36,12 @@ impl Arranged {
         &self,
         id: u8,
         topology_revision: u64,
-        lineage_id: CanonicalUuid,
-        life: wire::intent::LineageLife,
+        team: CanonicalUuid,
+        life: wire::intent::TeamLife,
     ) -> Outcome<CommandAnswer> {
-        let request = wire::intent::LineageConfigure {
+        let request = wire::intent::TeamConfigure {
             topology_revision,
-            lineage_id,
+            team,
             member: None,
             life: Some(life),
         };
@@ -49,16 +49,16 @@ impl Arranged {
             v: wire::WireVersion::CURRENT,
             id: test_uuid(id),
             epoch: self.epoch,
-            kind: CommandKind::LineageConfigure,
+            kind: CommandKind::TeamConfigure,
             expected: Vec::new(),
-            body: serde_json::to_value(&request).expect("lineage configuration encodes"),
+            body: serde_json::to_value(&request).expect("team configuration encodes"),
         }
         .admit(&wire::Accepted {
             wire: wire::WireVersion::CURRENT,
             actor: Actor::Operator,
             epoch: self.epoch,
         })
-        .expect("operator lineage configuration admits");
+        .expect("operator team configuration admits");
         lane_surface::configure(&self.bus, self.epoch, &self.seats, &command, &request)
     }
 
@@ -66,12 +66,12 @@ impl Arranged {
         &self,
         id: u8,
         topology_revision: u64,
-        lineage_id: CanonicalUuid,
+        team: CanonicalUuid,
         member: CanonicalUuid,
     ) -> Outcome<CommandAnswer> {
-        let request = wire::intent::LineageConfigure {
+        let request = wire::intent::TeamConfigure {
             topology_revision,
-            lineage_id,
+            team,
             member: Some(member),
             life: None,
         };
@@ -79,16 +79,16 @@ impl Arranged {
             v: wire::WireVersion::CURRENT,
             id: test_uuid(id),
             epoch: self.epoch,
-            kind: CommandKind::LineageConfigure,
+            kind: CommandKind::TeamConfigure,
             expected: Vec::new(),
-            body: serde_json::to_value(&request).expect("lineage membership encodes"),
+            body: serde_json::to_value(&request).expect("team membership encodes"),
         }
         .admit(&wire::Accepted {
             wire: wire::WireVersion::CURRENT,
             actor: Actor::Operator,
             epoch: self.epoch,
         })
-        .expect("operator lineage membership admits");
+        .expect("operator team membership admits");
         lane_surface::configure(&self.bus, self.epoch, &self.seats, &command, &request)
     }
 
@@ -113,9 +113,9 @@ impl Arranged {
         &self,
         id: u8,
         topology_revision: u64,
-        lineages: Vec<wire::intent::LineageArrangement>,
+        teams: Vec<wire::intent::TeamArrangement>,
     ) -> Box<wire::intent::LaneAnswer> {
-        committed_lane_answer(self.arrange_at(id, topology_revision, lineages))
+        committed_lane_answer(self.arrange_at(id, topology_revision, teams))
     }
 }
 
@@ -130,7 +130,7 @@ impl Arranged {
 #[test]
 fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
     let fixture = Arranged::seat("topology-revision-concurrency", &[0, 0, 1, 1]);
-    let [first_org, second_org] = fixture.organizations;
+    let [first_org, second_org] = fixture.teams;
     let lanes = fixture.lanes.clone();
 
     let shared = fixture.head().topology_revision;
@@ -213,17 +213,12 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
         47,
         policy_shared,
         first_org,
-        wire::intent::LineageLife::Drain,
+        wire::intent::TeamLife::Drain,
     ));
     assert_eq!(configured.topology_revision, policy_shared + 1);
     let after_policy = fixture.head();
     Arranged::stale(
-        fixture.configure_at(
-            48,
-            policy_shared,
-            second_org,
-            wire::intent::LineageLife::Steer,
-        ),
+        fixture.configure_at(48, policy_shared, second_org, wire::intent::TeamLife::Steer),
         policy_shared,
         after_policy.topology_revision,
     );
@@ -232,10 +227,10 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
         after_policy
             .subscriptions
             .iter()
-            .find(|subscription| subscription.lineage_id == second_org)
-            .expect("second organization keeps a subscription")
+            .find(|subscription| subscription.team == second_org)
+            .expect("second team keeps a subscription")
             .policy,
-        wire::intent::LineageLife::Drive,
+        wire::intent::TeamLife::Drive,
     );
 
     fixture.retire();
@@ -244,13 +239,13 @@ fn two_clients_share_one_revision_authority_across_every_topology_mutation() {
 #[test]
 fn membership_only_configuration_preserves_existing_lifetimes() {
     let fixture = Arranged::seat("membership-configuration-preserves-life", &[0, 0, 1, 1]);
-    let [first_org, second_org] = fixture.organizations;
+    let [first_org, second_org] = fixture.teams;
     let lanes = fixture.lanes.clone();
     let configured = Arranged::committed(fixture.configure_at(
         49,
         fixture.head().topology_revision,
         first_org,
-        wire::intent::LineageLife::Drain,
+        wire::intent::TeamLife::Drain,
     ));
     let moved = Arranged::committed(fixture.configure_member_at(
         50,
@@ -264,27 +259,27 @@ fn membership_only_configuration_preserves_existing_lifetimes() {
             .iter()
             .find(|row| row.lane == lanes[2])
             .expect("moved member remains seated")
-            .lineage_id,
+            .team,
         first_org,
     );
     assert_eq!(
         moved
             .subscriptions
             .iter()
-            .find(|subscription| subscription.lineage_id == first_org)
-            .expect("configured organization keeps a subscription")
+            .find(|subscription| subscription.team == first_org)
+            .expect("configured team keeps a subscription")
             .policy,
-        wire::intent::LineageLife::Drain,
+        wire::intent::TeamLife::Drain,
         "a membership-only patch cannot restate a stale lifetime",
     );
     assert_eq!(
         moved
             .subscriptions
             .iter()
-            .find(|subscription| subscription.lineage_id == second_org)
-            .expect("source organization keeps a subscription")
+            .find(|subscription| subscription.team == second_org)
+            .expect("source team keeps a subscription")
             .policy,
-        wire::intent::LineageLife::Drive,
+        wire::intent::TeamLife::Drive,
     );
 
     fixture.retire();

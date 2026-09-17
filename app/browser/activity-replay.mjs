@@ -363,7 +363,7 @@ export async function installActivityReplay(
     async restoreProseSnapshot(page, targetSocket = activeSocket) {
       canonicalProseFrames ??= [...proseFrames.values()];
       const current = [...proseFrames.values()];
-      assert.ok(canonicalProseFrames.length > 1, "the route retained the lineage prose snapshot");
+      assert.ok(canonicalProseFrames.length > 1, "the route retained the team prose snapshot");
       assert.ok(current.length > 1, "the route retained current message transport authority");
       assert.ok(targetSocket, "the route retains the requested browser WebSocket");
       activeSocket = targetSocket;
@@ -378,7 +378,7 @@ export async function installActivityReplay(
       })));
       await waitForPageFunction(
         page,
-        "the original lineage prose snapshot is restored",
+        "the original team prose snapshot is restored",
         TRANSITION_MS * 4,
         (expected) => document.querySelectorAll(
           '[data-card-kind="agent-message"]',
@@ -402,7 +402,7 @@ export async function installActivityReplay(
           prose: observedProse,
           cards: await cards.count(),
           tickers: await console.locator(".ticker").allTextContents(),
-          members: await console.locator(".organization-agent").evaluateAll((nodes) => nodes.map(
+          members: await console.locator(".team-agent").evaluateAll((nodes) => nodes.map(
             (node) => ({ lane: node.dataset.agentLane, text: node.textContent }),
           )),
         };
@@ -416,7 +416,7 @@ export async function installActivityReplay(
         "four live agent messages remain visible before the capacity snapshot arrives",
       );
     },
-    async assertOlderToolIgnored(page, organization) {
+    async assertOlderToolIgnored(page, console) {
       assert.ok(captured, "the route captured the production tool activity frame");
       assert.equal(replayed, false, "the older tool activity is replayed exactly once");
       replayed = true;
@@ -424,7 +424,7 @@ export async function installActivityReplay(
         lane: captured.frame.message.lane,
         locus: captured.frame.message.locus,
       };
-      const ticker = organization.locator(".ticker");
+      const ticker = console.locator(".ticker");
       const before = await ticker.evaluate(tickerIdentity);
       await page.evaluate((expected) => {
         const socket = window.__canvasSockets.at(-1);

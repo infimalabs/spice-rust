@@ -716,67 +716,67 @@ tbody tr:last-child td { border-bottom: 0; }
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-/* Whole-organization actions ported from the predecessor lane menu. */
-.canvas-organization > header {
+/* Whole-team actions ported from the predecessor lane menu. */
+.canvas-team > header {
   align-items: center;
   justify-content: space-between;
 }
-.canvas-organization > header > div { display: grid; min-width: 0; gap: 2px; }
-.canvas-menu-panel .canvas-organization-member {
+.canvas-team > header > div { display: grid; min-width: 0; gap: 2px; }
+.canvas-menu-panel .canvas-team-member {
   grid-template-columns: 24px minmax(0, 1fr) 16px auto;
 }
 
-/* Keep organization overlays inside their own stacking context, below global chrome. */
-.organization-surface {
+/* Keep team overlays inside their own stacking context, below global chrome. */
+.team-surface {
   position: relative;
   z-index: 0;
 }
-.organization-lights {
+.team-lights {
   align-items: flex-end;
   display: flex;
   gap: 5px;
   justify-content: center;
   min-width: 18px;
 }
-.organization-pip-column {
+.team-pip-column {
   display: grid;
   gap: 4px;
   grid-template-rows: repeat(2, 9px);
 }
-.organization-lights.single .organization-pip-column { grid-template-rows: 9px; }
-.organization-light[data-pip-row="1"] { grid-row: 1; }
-.organization-light[data-pip-row="2"] { grid-row: 2; }
-.organization-surface .mosaic-message-card.final {
+.team-lights.single .team-pip-column { grid-template-rows: 9px; }
+.team-light[data-pip-row="1"] { grid-row: 1; }
+.team-light[data-pip-row="2"] { grid-row: 2; }
+.team-surface .mosaic-message-card.final {
   background: color-mix(in srgb, var(--accent-1) 8%, var(--panel));
   border-color: var(--accent-1);
   box-shadow: inset 0 3px 0 var(--accent-1);
 }
-.organization-surface .mosaic-message-card.now-playing {
+.team-surface .mosaic-message-card.now-playing {
   border-color: color-mix(in srgb, var(--warning) 70%, var(--line));
   box-shadow: inset 3px 0 0 var(--warning);
 }
-.organization-surface .mosaic-message-card.final.now-playing {
+.team-surface .mosaic-message-card.final.now-playing {
   box-shadow: inset 3px 0 0 var(--warning), inset 0 3px 0 var(--accent-1);
 }
-.organization-surface .mosaic-message-card.final .message-footer {
+.team-surface .mosaic-message-card.final .message-footer {
   grid-template-columns: max-content minmax(0, 1fr);
 }
-.organization-surface .mosaic-message-card.final .message-footer-left {
+.team-surface .mosaic-message-card.final .message-footer-left {
   width: auto;
 }
-.organization-surface .message-badge.message-badge--final {
+.team-surface .message-badge.message-badge--final {
   --message-badge-accent: var(--accent-1);
 }
-.organization-surface .mosaic-message-card[data-accent-slot] {
+.team-surface .mosaic-message-card[data-accent-slot] {
   border-right-color: var(--accent-slot, var(--accent));
 }
-.organization-menu[aria-expanded="true"] {
+.team-menu[aria-expanded="true"] {
   border-color: color-mix(in srgb, var(--accent) 54%, var(--line));
   background: color-mix(in srgb, var(--control-surface-soft) 82%, var(--accent) 18%);
   color: var(--ink);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
 }
-.organization-menu-icon {
+.team-menu-icon {
   display: block;
   width: 12px;
   height: 8px;
@@ -785,7 +785,7 @@ tbody tr:last-child td { border-bottom: 0; }
     linear-gradient(currentColor, currentColor) 0 50% / 100% 1.5px no-repeat,
     linear-gradient(currentColor, currentColor) 0 100% / 100% 1.5px no-repeat;
 }
-.organization-action-menu {
+.team-action-menu {
   position: absolute;
   z-index: 6;
   inset: 44px 0 0;
@@ -799,8 +799,8 @@ tbody tr:last-child td { border-bottom: 0; }
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 94%, var(--control));
 }
-.organization-action,
-.organization-import-choice {
+.team-action,
+.team-import-choice {
   container-type: inline-size;
   display: flex;
   min-width: 0;
@@ -817,20 +817,20 @@ tbody tr:last-child td { border-bottom: 0; }
   color: var(--ink);
   text-align: center;
 }
-.organization-action:hover,
-.organization-action:focus-visible,
-.organization-import-choice:hover,
-.organization-import-choice:focus-visible { border-color: var(--accent); }
-.organization-action:disabled { cursor: not-allowed; opacity: .52; }
-.organization-action-menu:not(.organization-import-menu, .organization-arrangement-menu) {
+.team-action:hover,
+.team-action:focus-visible,
+.team-import-choice:hover,
+.team-import-choice:focus-visible { border-color: var(--accent); }
+.team-action:disabled { cursor: not-allowed; opacity: .52; }
+.team-action-menu:not(.team-import-menu, .team-arrangement-menu) {
   grid-template-columns: repeat(auto-fit, minmax(min(136px, 100%), 1fr));
   grid-auto-rows: auto;
   align-content: start;
 }
-.organization-action-menu:not(.organization-import-menu, .organization-arrangement-menu) > .organization-action {
+.team-action-menu:not(.team-import-menu, .team-arrangement-menu) > .team-action {
   aspect-ratio: 1;
 }
-.organization-action-label {
+.team-action-label {
   max-width: 100%;
   overflow-wrap: anywhere;
   font-size: clamp(12px, 7cqi, 16px);
@@ -838,22 +838,22 @@ tbody tr:last-child td { border-bottom: 0; }
   line-height: 1.14;
   text-wrap: balance;
 }
-.organization-action-detail {
+.team-action-detail {
   width: 100%;
   color: var(--muted);
   font: clamp(10px, 5.25cqi, 13px)/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
   text-wrap: pretty;
 }
-.organization-import-menu { align-content: start; grid-auto-rows: minmax(44px, auto); }
-.organization-arrangement-menu { align-content: start; grid-auto-rows: minmax(48px, auto); }
-.organization-import-menu > header {
+.team-import-menu { align-content: start; grid-auto-rows: minmax(44px, auto); }
+.team-arrangement-menu { align-content: start; grid-auto-rows: minmax(48px, auto); }
+.team-import-menu > header {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
-.organization-import-menu > header button { min-height: 30px; }
-.organization-import-empty { grid-column: 1 / -1; color: var(--muted); text-align: center; }
-.canvas-organization-open { min-height: 30px; white-space: nowrap; }
+.team-import-menu > header button { min-height: 30px; }
+.team-import-empty { grid-column: 1 / -1; color: var(--muted); text-align: center; }
+.canvas-team-open { min-height: 30px; white-space: nowrap; }

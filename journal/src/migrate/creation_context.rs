@@ -45,7 +45,8 @@ fn migrate_facts(
     let mut contexts = BTreeMap::new();
     for (seq, indexed_kind, bytes) in rows {
         let row = seq.to_string();
-        let envelope: Envelope<AnyFact> = wire::decode(&bytes).map_err(|error| {
+        let current = super::team::respell(&bytes);
+        let envelope: Envelope<AnyFact> = wire::decode(&current).map_err(|error| {
             invalid(
                 "fact_envelopes",
                 &row,
@@ -53,7 +54,7 @@ fn migrate_facts(
             )
         })?;
         if envelope.seq.get() != u64::try_from(seq).unwrap_or_default()
-            || envelope.fact.kind().as_str() != indexed_kind
+            || envelope.fact.kind().as_str() != super::team::name(&indexed_kind)
         {
             return Err(invalid(
                 "fact_envelopes",
@@ -255,7 +256,7 @@ impl History {
         TaskCreationContext::Transcript {
             session: session.identity.clone(),
             boundary: (**boundary).clone(),
-            creator_lineage: None,
+            creator_team: None,
         }
     }
 }
@@ -315,7 +316,7 @@ fn migrate_task_heads(
         let mut document = decode("task_heads", &stamp, &bytes)?;
         let body = object("task_heads", &stamp, &mut document)?;
         insert_or_match("task_heads", &stamp, body, "creation", context)?;
-        let intermediate = serde_json::to_vec(&document).map_err(|error| {
+        let intermediate = super::team::current(&document).map_err(|error| {
             invalid(
                 "task_heads",
                 &stamp,
@@ -347,7 +348,7 @@ fn migrate_task_heads(
 }
 
 fn canonical_envelope(row: &str, document: &Value) -> Result<Vec<u8>, OpenError> {
-    let intermediate = serde_json::to_vec(document).map_err(|error| {
+    let intermediate = super::team::current(document).map_err(|error| {
         invalid(
             "fact_envelopes",
             row,

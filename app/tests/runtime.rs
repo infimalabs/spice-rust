@@ -257,7 +257,7 @@ fn board_task(
     wire::intent::BoardTask {
         visibility,
         origin_thread: "operator".to_owned(),
-        creator_lineage: None,
+        creator_team: None,
         presentation_title: title.to_owned(),
         statement: wire::intent::Positioned {
             position: seq(1),
@@ -363,7 +363,7 @@ fn board_response(
         .expect("board response is admitted")
 }
 
-/// One admitted safe lane roster, one row per `(lane, lineage, occupant, bound)` tuple.
+/// One admitted safe lane roster, one row per `(lane, team, occupant, bound)` tuple.
 ///
 /// The display session identity crosses; capabilities remain outside this DTO.
 fn lane_response(rows: &[(&str, &str, Option<&str>, bool)]) -> Vec<u8> {
@@ -376,13 +376,13 @@ fn lane_response_with_renewals(
 ) -> Vec<u8> {
     let subscriptions = rows
         .iter()
-        .map(|(_, lineage_id, _, _)| {
-            let lineage_id = uuid(lineage_id);
+        .map(|(_, team, _, _)| {
+            let team = uuid(team);
             (
-                lineage_id,
-                wire::LineageSubscription {
-                    lineage_id,
-                    policy: wire::intent::LineageLife::Steer,
+                team,
+                wire::TeamSubscription {
+                    team,
+                    policy: wire::intent::TeamLife::Steer,
                 },
             )
         })
@@ -392,9 +392,9 @@ fn lane_response_with_renewals(
     let lanes = rows
         .iter()
         .map(
-            |(lane, lineage_id, occupant, bound)| wire::intent::LaneAnswerRow {
+            |(lane, team, occupant, bound)| wire::intent::LaneAnswerRow {
                 lane: uuid(lane),
-                lineage_id: uuid(lineage_id),
+                team: uuid(team),
                 name: None,
                 worktree: format!("/tmp/worktree-{}", &lane[..8]),
                 life: "steer".to_owned(),
@@ -883,13 +883,13 @@ fn paired_tool_capture_becomes_one_media_card_while_distinct_tape_events_stay_di
 }
 
 #[test]
-fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() {
-    let runtime = lineage_runtime_with_activity_and_receipts();
+fn team_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() {
+    let runtime = team_runtime_with_activity_and_receipts();
     let lanes = runtime.lanes().expect("refreshed lane snapshot");
-    let organization = runtime
-        .newest_lineage_activity(&lanes.lanes[0])
-        .expect("organization activity survives receipts");
-    assert_eq!(organization.lane(), uuid(SECOND_LANE));
+    let team = runtime
+        .newest_team_activity(&lanes.lanes[0])
+        .expect("team activity survives receipts");
+    assert_eq!(team.lane(), uuid(SECOND_LANE));
     assert_eq!(
         runtime
             .newest_lane_activity(uuid(SECOND_LANE))
@@ -897,18 +897,18 @@ fn lineage_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() 
             .display_millis(),
         instant_ms("2030-04-12T18:44:10.271Z")
     );
-    assert_eq!(organization.class(), "prose");
-    assert_eq!(organization.title(), "assistant");
-    assert_eq!(organization.detail(), "newer organization member prose");
+    assert_eq!(team.class(), "prose");
+    assert_eq!(team.title(), "assistant");
+    assert_eq!(team.detail(), "newer team member prose");
     let other = runtime
-        .newest_lineage_activity(&lanes.lanes[1])
-        .expect("other lineage keeps its own activity");
+        .newest_team_activity(&lanes.lanes[1])
+        .expect("other team keeps its own activity");
     assert_eq!(other.lane(), uuid(THIRD_LANE));
     assert_eq!(other.class(), "tool");
     assert_eq!(other.detail(), "Read");
 }
 
-fn lineage_runtime_with_activity_and_receipts() -> CanvasRuntime {
+fn team_runtime_with_activity_and_receipts() -> CanvasRuntime {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -932,9 +932,9 @@ fn lineage_runtime_with_activity_and_receipts() -> CanvasRuntime {
         "Bash",
     );
     runtime.apply_stream(&admitted_stream(&session, &tool));
-    let lineage = &runtime.lanes().expect("lane snapshot").lanes[0];
+    let team = &runtime.lanes().expect("lane snapshot").lanes[0];
     let activity = runtime
-        .newest_lineage_activity(lineage)
+        .newest_team_activity(team)
         .expect("transcript tool becomes activity");
     assert_eq!(activity.lane(), uuid(LANE));
     assert_eq!(
@@ -956,7 +956,7 @@ fn lineage_runtime_with_activity_and_receipts() -> CanvasRuntime {
         0,
         "2030-04-12T18:44:10.271Z",
         None,
-        "newer organization member prose",
+        "newer team member prose",
     );
     runtime.apply_stream(&admitted_stream(&session, &prose));
 
@@ -981,7 +981,7 @@ fn apply_receipt_noise(
     admitted_lanes: &app::Admitted<Response<wire::intent::LaneAnswer>>,
 ) {
     // Snapshot receipts still belong to the command-outcome chronology, but
-    // none can enter the lineage activity chronology or displace its prose.
+    // none can enter the team activity chronology or displace its prose.
     runtime.apply_lanes(admitted_lanes);
     runtime.apply_board(&board_response(session, "hidden receipt witness"));
     let inbox = support::response(
@@ -1031,7 +1031,7 @@ fn synthetic_agent_activity_retains_provenance_and_gains_a_display_time() {
     runtime.apply_stream(&admitted_stream(&session, &synthetic));
 
     let activity = runtime
-        .newest_lineage_activity(&runtime.lanes().expect("lane snapshot").lanes[0])
+        .newest_team_activity(&runtime.lanes().expect("lane snapshot").lanes[0])
         .expect("synthetic prose remains visible as activity");
     assert_eq!(
         activity.detail(),
@@ -1080,7 +1080,7 @@ fn redelivered_older_activity_does_not_displace_newer_lane_activity() {
     }
 
     let activity = runtime
-        .newest_lineage_activity(&runtime.lanes().expect("lane snapshot").lanes[0])
+        .newest_team_activity(&runtime.lanes().expect("lane snapshot").lanes[0])
         .expect("lane keeps its newest activity");
     assert_eq!(
         activity.detail(),

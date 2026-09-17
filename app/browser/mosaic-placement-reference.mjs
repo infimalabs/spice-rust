@@ -114,15 +114,15 @@ export async function assertMosaicScrollInputs(page, plane) {
     };
     return {
       diagnostics: {
-        activity: describe(element.closest(".organization-activity-grid")),
-        compose: describe(element.closest(".organization-compose")),
+        activity: describe(element.closest(".team-activity-grid")),
+        compose: describe(element.closest(".team-compose")),
         content: describe(element.closest(".content")),
-        fleet: describe(element.closest(".lineage-fleet")),
-        mode: describe(element.closest(".organization-mode-pane")),
-        pane: describe(element.closest(".organization-pane")),
+        fleet: describe(element.closest(".team-fleet")),
+        mode: describe(element.closest(".team-mode-pane")),
+        pane: describe(element.closest(".team-pane")),
         plane: describe(element),
         shell: describe(element.closest(".shell")),
-        surface: describe(element.closest(".organization-surface")),
+        surface: describe(element.closest(".team-surface")),
         viewport: { height: innerHeight, width: innerWidth },
         workspace: describe(element.closest(".workspace")),
       },

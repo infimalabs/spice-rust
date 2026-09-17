@@ -5,7 +5,7 @@
 //! write, so a boundary reaching two of the three facts would leave the third
 //! transition's spend unattributable with nothing anywhere to report it. The
 //! three facts are asserted elsewhere for the standings they carry, but no case
-//! reads their `sources` back, and the one lineage configuration case that
+//! reads their `sources` back, and the one team configuration case that
 //! exists moves no member -- the single shape whose moved list is already empty
 //! before the filter is ever consulted.
 //!
@@ -222,7 +222,7 @@ fn seed_active_claim(
     commit(bus, write).expect("fixture claim commits");
 }
 
-/// Configure one lineage while moving a member into it.
+/// Configure one team while moving a member into it.
 ///
 /// The member is what distinguishes this from the configuration case already
 /// proven elsewhere: that one states a policy and moves nobody, so its moved
@@ -230,12 +230,12 @@ fn seed_active_claim(
 fn configure_member(
     fixture: &Arranged,
     id: CanonicalUuid,
-    lineage: CanonicalUuid,
+    team: CanonicalUuid,
     member: CanonicalUuid,
 ) {
-    let request = wire::intent::LineageConfigure {
+    let request = wire::intent::TeamConfigure {
         topology_revision: fixture.head().topology_revision,
-        lineage_id: lineage,
+        team,
         member: Some(member),
         life: None,
     };
@@ -243,16 +243,16 @@ fn configure_member(
         v: wire::WireVersion::CURRENT,
         id,
         epoch: fixture.epoch,
-        kind: CommandKind::LineageConfigure,
+        kind: CommandKind::TeamConfigure,
         expected: Vec::new(),
-        body: serde_json::to_value(&request).expect("lineage configuration encodes"),
+        body: serde_json::to_value(&request).expect("team configuration encodes"),
     }
     .admit(&wire::Accepted {
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch: fixture.epoch,
     })
-    .expect("operator lineage configuration admits");
+    .expect("operator team configuration admits");
     let outcome = lane_surface::configure(
         &fixture.bus,
         fixture.epoch,
@@ -261,24 +261,24 @@ fn configure_member(
         &request,
     );
     let Outcome::Reply(reply) = outcome else {
-        panic!("lineage configuration must commit rather than refuse: {outcome:?}");
+        panic!("team configuration must commit rather than refuse: {outcome:?}");
     };
     assert!(matches!(reply.position, ReplyPosition::Committed(_)));
 }
 
 /// Move one lane through all three membership transitions, in order.
 ///
-/// The lane leaves its organization by lane arrangement, is brought back by lineage
-/// configuration, and leaves again by lineage rearrangement, so every step
+/// The lane leaves its team by lane arrangement, is brought back by team
+/// configuration, and leaves again by team rearrangement, so every step
 /// genuinely relocates it and every step writes its own fact. `stay` is the
-/// organization-mate that keeps the source lineage populated, which is what stops a
+/// team-mate that keeps the source team populated, which is what stops a
 /// step from also retiring a subscription and changing what the next one moves.
 fn transition_sources(
     fixture: &Arranged,
     moved: CanonicalUuid,
     stay: CanonicalUuid,
 ) -> [Option<serde_json::Value>; 3] {
-    let [first_org, second_org] = fixture.organizations;
+    let [first_org, second_org] = fixture.teams;
     let anchor = fixture.lanes[2];
     arrange_lane_for_test(
         &fixture.bus,
@@ -290,7 +290,7 @@ fn transition_sources(
     );
     let arranged = recorded_sources(&fixture.bus, wire::FactKind::LaneArranged);
     configure_member(fixture, test_uuid(42), first_org, moved);
-    let configured = recorded_sources(&fixture.bus, wire::FactKind::LineageConfigured);
+    let configured = recorded_sources(&fixture.bus, wire::FactKind::TeamConfigured);
     fixture.commit(
         43,
         vec![
@@ -298,14 +298,14 @@ fn transition_sources(
             standing(first_org, &[stay]),
         ],
     );
-    let rearranged = recorded_sources(&fixture.bus, wire::FactKind::LineageArranged);
+    let rearranged = recorded_sources(&fixture.bus, wire::FactKind::TeamArranged);
     [arranged, configured, rearranged]
 }
 
 /// Every membership transition records the boundary of the claimed lane it moves.
 ///
 /// One test covers all three because the property is one property: the spend a
-/// lane accrued before the move belongs to the lineage it left, and the only
+/// lane accrued before the move belongs to the team it left, and the only
 /// thing that lets a reducer split it is a boundary travelling with the fact.
 /// A transition that moved a worked lane and recorded nothing would not fail
 /// anywhere -- it would silently produce attribution that cannot be divided.
@@ -333,11 +333,11 @@ fn every_membership_transition_records_the_boundary_of_the_claimed_lane_it_moves
     );
     assert_eq!(
         configured, expected,
-        "a lineage configuration moved a claimed lane without recording its boundary",
+        "a team configuration moved a claimed lane without recording its boundary",
     );
     assert_eq!(
         rearranged, expected,
-        "a lineage rearrangement moved a claimed lane without recording its boundary",
+        "a team rearrangement moved a claimed lane without recording its boundary",
     );
 
     fixture.retire();
@@ -350,7 +350,7 @@ fn every_membership_transition_records_the_boundary_of_the_claimed_lane_it_moves
 /// touches, and the lane they do move has its own accounted transcript -- so
 /// the only reason its boundary is absent is that nobody is working it. A
 /// boundary for an unworked lane is attribution noise a reducer would have to
-/// filter back out, and it would name a lineage split that never happened.
+/// filter back out, and it would name a team split that never happened.
 ///
 /// Absence here is the omitted key, which is also what a producer that never
 /// recorded the field at all would leave behind. That is why this case is not
@@ -379,11 +379,11 @@ fn a_membership_transition_moving_no_claimed_lane_records_no_boundary() {
     );
     assert_eq!(
         configured, None,
-        "a lineage configuration recorded a boundary for a lane no claim is bound to",
+        "a team configuration recorded a boundary for a lane no claim is bound to",
     );
     assert_eq!(
         rearranged, None,
-        "a lineage rearrangement recorded a boundary for a lane no claim is bound to",
+        "a team rearrangement recorded a boundary for a lane no claim is bound to",
     );
 
     fixture.retire();

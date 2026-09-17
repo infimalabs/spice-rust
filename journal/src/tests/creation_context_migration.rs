@@ -154,7 +154,7 @@ fn seed_creation_history(
     let expected = TaskCreationContext::Transcript {
         session: identity.to_owned(),
         boundary: boundary.clone(),
-        creator_lineage: None,
+        creator_team: None,
     };
     let mut history = crate::JournalWrite::new(
         Actor::Spice,

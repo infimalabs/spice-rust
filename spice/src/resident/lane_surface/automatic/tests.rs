@@ -246,7 +246,7 @@ fn seed_vacant_lane(bus: &Bus, fixture: &AdvisoryRtkFixture, life: &str) {
         topology_revision: 1,
         lanes: vec![wire::LaneResidency {
             lane,
-            lineage_id: lane,
+            team: lane,
             name: None,
             worktree: root,
             life,
@@ -259,9 +259,9 @@ fn seed_vacant_lane(bus: &Bus, fixture: &AdvisoryRtkFixture, life: &str) {
             session: None,
             disposition: VACANT.to_owned(),
         }],
-        subscriptions: vec![wire::LineageSubscription {
-            lineage_id: lane,
-            policy: wire::intent::LineageLife::Drive,
+        subscriptions: vec![wire::TeamSubscription {
+            team: lane,
+            policy: wire::intent::TeamLife::Drive,
         }],
         renewals: Vec::new(),
     });

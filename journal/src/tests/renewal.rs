@@ -3,7 +3,7 @@ use wire::{LaneRenewalRecord, LaneRenewalState, RenewalIdentity};
 
 use super::*;
 
-const LINEAGE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
+const TEAM: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
 const PREDECESSOR: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
 const SUCCESSOR: &str = "018f82d4-6f59-7d06-92e3-bce913116304";
@@ -28,20 +28,20 @@ fn states() -> Vec<LaneRenewalState> {
     vec![
         LaneRenewalState::Requested {
             predecessor: predecessor(),
-            org_slot: 0,
+            team_slot: 0,
         },
         LaneRenewalState::HandoffPending {
             predecessor: predecessor(),
-            org_slot: 0,
+            team_slot: 0,
         },
         LaneRenewalState::SuccessorStarted {
             predecessor: predecessor(),
             successor: successor(),
-            org_slot: 0,
+            team_slot: 0,
         },
         LaneRenewalState::LaunchRefused {
             predecessor: predecessor(),
-            org_slot: 0,
+            team_slot: 0,
             reason: "selected vendor refused launch".to_owned(),
         },
     ]
@@ -61,7 +61,7 @@ fn renewal_absence_and_every_durable_state_replay_after_reopen() {
 
     for state in states() {
         let expected = LaneRenewalRecord {
-            lineage_id: uuid(LINEAGE),
+            team: uuid(TEAM),
             lane: uuid(LANE),
             revision: 41,
             state,

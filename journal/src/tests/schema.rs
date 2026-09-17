@@ -265,7 +265,7 @@ fn large_schema_nineteen_requires_restart_safe_offline_index_activation() {
         .expect("offline activation transaction begins");
     crate::migrate::advance_for_reindex(&transaction).expect("offline activation advances");
     assert_eq!(
-        version_records_connection(&transaction),
+        version_records(&transaction),
         (SCHEMA_VERSION, SCHEMA_VERSION)
     );
     assert!(fact_indexes_exist(&transaction));
@@ -290,7 +290,7 @@ fn large_schema_nineteen_requires_restart_safe_offline_index_activation() {
 
 fn assert_schema_nineteen_without_fact_indexes(path: &Path) {
     let connection = Connection::open(path).expect("schema-nineteen authority opens directly");
-    assert_eq!(version_records_connection(&connection), (19, 19));
+    assert_eq!(version_records(&connection), (19, 19));
     assert!(!fact_indexes_exist(&connection));
 }
 
@@ -408,20 +408,6 @@ fn fact_indexes_exist(connection: &Connection) -> bool {
                 )
                 .expect("fact index identity reads")
         })
-}
-
-fn version_records_connection(connection: &Connection) -> (u32, u32) {
-    let row = connection
-        .query_row(
-            "SELECT version FROM journal_schema WHERE singleton = 1",
-            [],
-            |row| row.get(0),
-        )
-        .expect("schema row version reads");
-    let pragma = connection
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .expect("schema pragma version reads");
-    (row, pragma)
 }
 
 #[test]
@@ -710,6 +696,7 @@ fn schema_one_authority(path: &Path) {
     let journal = authority_file_fixture(path);
     drop_steering_index(&journal.connection);
     downgrade_task_identity_to_five(&journal.connection);
+    spell_lineage(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -791,7 +778,9 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
     }
     // Compared one table at a time so a failure prints the unrelated table
     // that lost a row. Task identity carriers are deliberately rewritten by
-    // schema 4 and have their own byte- and rollback-level migration cases.
+    // schema 4 and have their own byte- and rollback-level migration cases;
+    // schema 26 respells the lane group in the residency head, which
+    // otherwise survives byte for byte.
     let mut expected = before;
     expected.remove("journal_schema");
     assert_eq!(
@@ -813,6 +802,13 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
         {
             continue;
         }
+        let rows = if table == "residency_head" {
+            rows.into_iter()
+                .map(|row| row.into_iter().map(team_spelt).collect())
+                .collect()
+        } else {
+            rows
+        };
         assert_eq!(
             after[&table], rows,
             "unrelated table {table} must survive byte for byte across the chained migration"
@@ -822,6 +818,16 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
     admit_empty_steering_fold(&mut journal);
     let verified = journal.verify().expect("the migrated authority verifies");
     assert_eq!(verified.facts, 2);
+}
+
+/// A census value as schema 26 spells it.
+fn team_spelt(value: rusqlite::types::Value) -> rusqlite::types::Value {
+    match value {
+        rusqlite::types::Value::Blob(carrier) => {
+            rusqlite::types::Value::Blob(team_spelling(&carrier))
+        }
+        other => other,
+    }
 }
 
 /// Whether the fixture already carries the table the step under test creates.
@@ -834,25 +840,6 @@ fn before_has_table(connection: &Connection, table: &str) -> bool {
         )
         .expect("probe the fixture for a table")
         > 0
-}
-
-/// The two records a migration advances together, read as one pair.
-///
-/// Read together because the failure this guards against is a disagreement
-/// between them, and asserting one without the other cannot see it.
-fn version_records(connection: &Connection) -> (u32, u32) {
-    (
-        connection
-            .query_row(
-                "SELECT version FROM journal_schema WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .expect("read the stored schema version"),
-        connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .expect("read the pragma version"),
-    )
 }
 
 /// A migration abandoned after both version records are written strands nothing.

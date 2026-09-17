@@ -56,7 +56,7 @@ pub enum TaskCreationContext {
             skip_serializing_if = "Option::is_none",
             deserialize_with = "crate::optional::present"
         )]
-        creator_lineage: Option<CanonicalUuid>,
+        creator_team: Option<CanonicalUuid>,
     },
     /// No authoritative transcript coordinate exists for this task.
     Unavailable {
@@ -93,11 +93,9 @@ impl TaskCreationContext {
 
     /// Immutable creator team, absent for non-lane and migrated task creation.
     #[must_use]
-    pub const fn creator_lineage(&self) -> Option<CanonicalUuid> {
+    pub const fn creator_team(&self) -> Option<CanonicalUuid> {
         match self {
-            Self::Transcript {
-                creator_lineage, ..
-            } => *creator_lineage,
+            Self::Transcript { creator_team, .. } => *creator_team,
             Self::Unavailable { .. } => None,
         }
     }

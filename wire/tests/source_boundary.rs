@@ -133,15 +133,15 @@ const CLAIM_CARRIED: &str = r#"{
 const LANE_ARRANGED: &str = r#"{
   "kind": "lane::arranged",
   "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
-  "from_lineage_id": "018f82d4-6f59-7d06-92e3-bce913116307",
-  "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116308",
+  "from_team": "018f82d4-6f59-7d06-92e3-bce913116307",
+  "team": "018f82d4-6f59-7d06-92e3-bce913116308",
   "before": "018f82d4-6f59-7d06-92e3-bce913116304"
 }"#;
 
-const LINEAGE_ARRANGED: &str = r#"{
-  "kind": "lineage::arranged",
+const TEAM_ARRANGED: &str = r#"{
+  "kind": "team::arranged",
   "from": [],
-  "lineages": []
+  "teams": []
 }"#;
 
 /// Read a stored body back through the registry the journal decodes with.
@@ -291,7 +291,7 @@ fn membership_transitions_stored_before_boundaries_read_with_no_lanes() {
             .is_empty()
     );
     assert!(
-        registered::<body::LineageArranged>(LINEAGE_ARRANGED)
+        registered::<body::TeamArranged>(TEAM_ARRANGED)
             .sources
             .is_empty()
     );
@@ -306,8 +306,8 @@ fn a_recorded_membership_boundary_survives_the_registry() {
     let lane = uuid("018f82d4-6f59-7d06-92e3-bce913116302");
     let arranged = body::LaneArranged {
         lane,
-        from_lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116307"),
-        lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116308"),
+        from_team: uuid("018f82d4-6f59-7d06-92e3-bce913116307"),
+        team: uuid("018f82d4-6f59-7d06-92e3-bce913116308"),
         before: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
         sources: vec![body::LaneSourceBoundary {
             lane,

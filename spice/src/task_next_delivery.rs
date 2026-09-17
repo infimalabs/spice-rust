@@ -38,7 +38,7 @@ fn expected_empty(outcome: &Outcome<CommandAnswer>, steered: bool) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use wire::intent::LineageLife;
+    use wire::intent::TeamLife;
     use wire::{Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition, Seq};
 
     use super::{DrainReadout, TaskNext, expected_empty, steered_drain};
@@ -56,7 +56,7 @@ mod tests {
     fn fault() -> Outcome<wire::intent::CommandAnswer> {
         Outcome::Fault(Fault {
             class: FaultClass::Store,
-            reason: "lineage::subscription-missing".to_owned(),
+            reason: "team::subscription-missing".to_owned(),
             detail: "allocator state is incomplete".to_owned(),
         })
     }
@@ -73,7 +73,7 @@ mod tests {
                     waiting: 0,
                     oops: 0,
                 },
-                lineage: LineageLife::Steer,
+                team: TeamLife::Steer,
             },
         }
     }

@@ -19,12 +19,12 @@
   }
   .mosaic-workspace,
   .mosaic-workspace .content,
-  .lineage-fleet,
-  .organization-pane,
-  .organization-compose,
-  .organization-activity-grid { flex: 0 0 auto; min-height: auto; }
-  .organization-mode-pane[data-active="true"] { position: relative; inset: auto; }
-  .organization-pane > .empty { flex: 0 0 auto; }
+  .team-fleet,
+  .team-pane,
+  .team-compose,
+  .team-activity-grid { flex: 0 0 auto; min-height: auto; }
+  .team-mode-pane[data-active="true"] { position: relative; inset: auto; }
+  .team-pane > .empty { flex: 0 0 auto; }
   .lane-mosaic-plane {
     flex: 0 1 auto;
     max-height: max(12rem, calc(100vh - 20rem));
@@ -70,23 +70,23 @@
   .status-copy { display: none; }
   .refresh { min-width: 36px; padding: 0 8px; }
   .content { padding: 18px 14px 28px; }
-  .organization-toolbar { grid-template-columns: max-content minmax(0, 1fr) 30px; padding-inline: 4px; }
-  .organization-mode { padding-inline: 4px; }
-  .organization-mode-badge { display: none; }
-  .organization-task-workspace { padding-inline: 8px; }
-  .organization-task-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
-  .organization-task-row-meta {
+  .team-toolbar { grid-template-columns: max-content minmax(0, 1fr) 30px; padding-inline: 4px; }
+  .team-mode { padding-inline: 4px; }
+  .team-mode-badge { display: none; }
+  .team-task-workspace { padding-inline: 8px; }
+  .team-task-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .team-task-row-meta {
     grid-template-columns: minmax(0, 1fr) auto auto;
     justify-items: start;
   }
-  .organization-task-member { max-width: 100%; }
-  .organization-task-renewed { grid-column: auto; justify-self: end; }
-  .organization-direction-row {
+  .team-task-member { max-width: 100%; }
+  .team-task-renewed { grid-column: auto; justify-self: end; }
+  .team-direction-row {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px 8px;
   }
-  .organization-direction-preview { grid-column: 1 / -1; grid-row: 2; }
-  .organization-detail-grid { grid-template-columns: 1fr; }
+  .team-direction-preview { grid-column: 1 / -1; grid-row: 2; }
+  .team-detail-grid { grid-template-columns: 1fr; }
   .seat-panel { padding: 16px; }
   .page-heading { align-items: start; }
   .page-heading h1 { font-size: 1.35rem; }

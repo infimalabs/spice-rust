@@ -245,7 +245,7 @@ fn task_show_prints_creation_context_as_one_shell_executable_current_command() {
                 offset: 512,
             },
         },
-        creator_lineage: None,
+        creator_team: None,
     };
     let shown = task_show(&answer, &row, &[]);
     let command = shown

@@ -73,7 +73,7 @@
 | <a id="conduct-prefer-the-good-property-never-block-on-it"></a>**Prefer the good property, never block on it** | Prefer the good property, never block on it: cross-review, launch advance, rewriting, and adjudication are each attempted and none is required. |
 | <a id="conduct-one-visible-path"></a>**One visible path** | One visible current path — no parallel user-facing compatibility behavior. Each durable authority declares a finite historical set and one unambiguous forward route from every admitted shape to current, whether sequential or direct; no historical runtime remains parallel. |
 | <a id="conduct-the-agent-is-a-user-with-its-own-surface"></a>**The agent is a user with its own surface** | The agent is a user with its own surface, and its tone is a stated requirement: capability, not restriction. |
-| <a id="conduct-observation-initializes-nothing"></a>**Observation initializes nothing** | Observation initializes nothing — no repository, worktree, organization state, claim, hook, or steering. |
+| <a id="conduct-observation-initializes-nothing"></a>**Observation initializes nothing** | Observation initializes nothing — no repository, worktree, team state, claim, hook, or steering. |
 | <a id="conduct-each-capability-tier-is-independently-usable"></a>**Each capability tier is independently usable** | Each capability tier is independently usable; a user may stop at any rung. |
 | <a id="conduct-unknown-is-not-the-same-as-clear"></a>**Unknown is not the same as clear** | Unknown is not the same as clear. A check that could not run does not report what a check that ran and found nothing reports. |
 

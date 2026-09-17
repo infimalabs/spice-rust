@@ -145,7 +145,7 @@ fn handoff_pending_launches_one_fresh_successor_with_context() {
         wire::LaneRenewalState::SuccessorStarted {
             predecessor,
             successor: next,
-            org_slot: 0,
+            team_slot: 0,
         } if predecessor.occupant == fixture.occupant && next.occupant == successor
     ));
     assert_eq!(controls(&bus, fixture.lane), [CONTEXT_CONTROL]);
@@ -387,7 +387,7 @@ fn assert_invalid_requests(
         Outcome::Refusal(refusal) if refusal.reason() == "lane::renewal-topology-moved"
     ));
     let mut moved = renewal_request;
-    moved.lineage_id = fixture_uuid(99);
+    moved.team = fixture_uuid(99);
     assert!(matches!(
         set(
             bus,
@@ -398,7 +398,7 @@ fn assert_invalid_requests(
             &command(fixture, 9, &moved),
             &moved,
         ),
-        Outcome::Refusal(refusal) if refusal.reason() == "lane::renewal-lineage-moved"
+        Outcome::Refusal(refusal) if refusal.reason() == "lane::renewal-team-moved"
     ));
     assert!(controls(bus, fixture.lane).is_empty());
 }
@@ -423,7 +423,7 @@ fn assert_first_request(
     let head = current_residency(bus, fixture.epoch).expect("requested head reads");
     assert!(matches!(
         head.body().renewals[0].state,
-        wire::LaneRenewalState::Requested { org_slot: 0, .. }
+        wire::LaneRenewalState::Requested { team_slot: 0, .. }
     ));
     assert_eq!(controls(bus, fixture.lane), [HANDOFF_CONTROL]);
 }
@@ -557,7 +557,7 @@ fn refuse_launch_config(fixture: &AdvisoryRtkFixture) -> String {
 fn request(fixture: &AdvisoryRtkFixture, requested: bool) -> wire::intent::LaneRenewal {
     wire::intent::LaneRenewal {
         topology_revision: 1,
-        lineage_id: fixture.lane,
+        team: fixture.lane,
         lane: fixture.lane,
         requested,
     }
@@ -591,18 +591,18 @@ fn requested(fixture: &AdvisoryRtkFixture, handoff_pending: bool) -> wire::LaneR
         thread: SESSION.to_owned(),
     };
     wire::LaneRenewalRecord {
-        lineage_id: fixture.lane,
+        team: fixture.lane,
         lane: fixture.lane,
         revision: 1,
         state: if handoff_pending {
             wire::LaneRenewalState::HandoffPending {
                 predecessor,
-                org_slot: 0,
+                team_slot: 0,
             }
         } else {
             wire::LaneRenewalState::Requested {
                 predecessor,
-                org_slot: 0,
+                team_slot: 0,
             }
         },
     }
@@ -651,7 +651,7 @@ fn seeded(fixture: &AdvisoryRtkFixture, renewal: Option<wire::LaneRenewalRecord>
         topology_revision: 1,
         lanes: vec![wire::LaneResidency {
             lane,
-            lineage_id: lane,
+            team: lane,
             name: None,
             worktree,
             life: "drive".to_owned(),
@@ -664,9 +664,9 @@ fn seeded(fixture: &AdvisoryRtkFixture, renewal: Option<wire::LaneRenewalRecord>
             session: Some(session),
             disposition: if occupied { OCCUPIED } else { VACANT }.to_owned(),
         }],
-        subscriptions: vec![wire::LineageSubscription {
-            lineage_id: lane,
-            policy: wire::intent::LineageLife::Drive,
+        subscriptions: vec![wire::TeamSubscription {
+            team: lane,
+            policy: wire::intent::TeamLife::Drive,
         }],
         renewals: renewal.into_iter().collect(),
     });

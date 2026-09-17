@@ -26,7 +26,7 @@ impl SpeechRequest {
         }
     }
 
-    /// Automatic narration from one rendered lineage.
+    /// Automatic narration from one rendered team.
     #[must_use]
     pub fn narration(lane: String, message_key: String, text: String) -> Self {
         Self {
@@ -133,7 +133,7 @@ impl SpeechQueue {
     /// Preserve the active head and queue one request behind it.
     ///
     /// Automatic bursts retain only their newest not-yet-started entry per
-    /// lineage. Manual requests remain explicit FIFO acts.
+    /// team. Manual requests remain explicit FIFO acts.
     pub fn enqueue(&mut self, request: SpeechRequest) -> Enqueue {
         let entry = SpeechEntry {
             id: self.next_identity(),
@@ -209,7 +209,7 @@ impl SpeechQueue {
             .map_or(SuppressAutomatic::Idle, SuppressAutomatic::Start)
     }
 
-    /// Remove only queued work from one lineage, preserving the committed head.
+    /// Remove only queued work from one team, preserving the committed head.
     pub fn abandon_lane(&mut self, lane: &str) {
         self.pending
             .retain(|entry| entry.lane().is_none_or(|candidate| candidate != lane));
@@ -288,7 +288,7 @@ impl NarrationCursors {
         cursors
     }
 
-    /// Observe one rendered lineage and return only messages newer than every
+    /// Observe one rendered team and return only messages newer than every
     /// known per-agent cursor. A materialization never narrates its history.
     pub fn observe(
         &mut self,

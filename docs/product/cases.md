@@ -27,14 +27,14 @@ product contract; failing any of them disproves it.
 | Claim exclusivity | concurrent `next`; distinct rows |
 | Claim lapse and steal | accept a lapse transaction; then explicitly steal an exact live claim and observe ownership refusal at the displaced claimant |
 | Priority inheritance | critical blocked by trivial; trivial is handed out first |
-| Lane persistence | renew mid-draft; draft and history survive, and the unchanged lineage retains its task policy |
+| Lane persistence | renew mid-draft; draft and history survive, and the unchanged team retains its task policy |
 | Discovery fails closed | fail enumeration; zero lanes close |
 | Stream resumption | interrupt the authenticated stream; resume the exact cursor once, or replace state with one authoritative snapshot after an epoch change |
 | Overlay discipline | open every menu; no layout box changes |
 | Projection loudness | corrupt a projection; the answer differs from a healthy empty |
 | Repair-first refusals | every refusal with a way out leads with the exact repair action; commands are runnable as printed |
 | Provenance | every effective config value names its source |
-| Observer inertness | run observation; assert no repo, organization, claim, or hook writes |
+| Observer inertness | run observation; assert no repo, team, claim, or hook writes |
 
 ---
 

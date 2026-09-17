@@ -1,18 +1,18 @@
-//! Lanes-page lineage content for the global Spice menu.
+//! Lanes-page team content for the global Spice menu.
 
 use web_sys::DragEvent;
 
 use super::*;
 use crate::watchband;
 
-const MEMBER_MIME: &str = "application/x-spice-lineage-member";
+const MEMBER_MIME: &str = "application/x-spice-team-member";
 
 pub(super) struct Context<'a> {
     pub(super) cursor: &'a str,
     pub(super) identity: Option<&'a CanvasIdentity>,
     pub(super) update: Option<&'a CanvasUpdate>,
     pub(super) sender: &'a SenderHandle,
-    pub(super) lineage_controls: &'a UseReducerHandle<LineageControls>,
+    pub(super) team_controls: &'a UseReducerHandle<TeamControls>,
 }
 
 pub(super) fn render(
@@ -40,8 +40,8 @@ fn render_axis(
             "Board follows ready, active, deferred, and completed work across projects.",
         ),
         Axis::Topology => (
-            "lineages",
-            "Team connects resident organizations, seats, capabilities, and current ownership.",
+            "teams",
+            "Team connects resident teams, seats, capabilities, and current ownership.",
         ),
     };
     html! {
@@ -65,7 +65,7 @@ fn render_lanes(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html 
         return html! {
             <div class="canvas-menu-page" data-menu-page="lanes">
                 {render_global_settings(None, context.sender)}
-                <p>{"Waiting for resident organizations…"}</p>
+                <p>{"Waiting for resident teams…"}</p>
                 {render_version_footer(context.cursor, context.identity, context.update)}
             </div>
         };
@@ -83,53 +83,52 @@ fn render_lanes(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html 
         .inbox()
         .map(|inbox| inbox.lanes.as_slice())
         .unwrap_or(&[]);
-    let can_configure = runtime.offers(CommandKind::LineageConfigure);
-    let grouped_lineages = lanes
+    let can_configure = runtime.offers(CommandKind::TeamConfigure);
+    let grouped_teams = lanes
         .lanes
         .iter()
-        .filter(|lineage| is_grouped_lineage(lineage))
+        .filter(|team| is_grouped_team(team))
         .collect::<Vec<_>>();
     let solo_members = lanes
         .lanes
         .iter()
-        .filter(|lineage| !is_grouped_lineage(lineage))
-        .flat_map(|lineage| &lineage.members)
+        .filter(|team| !is_grouped_team(team))
+        .flat_map(|team| &team.members)
         .collect::<Vec<_>>();
     let solo_member_ids = solo_members
         .iter()
         .map(|member| member.lane)
         .collect::<Vec<_>>();
-    let new_lineage =
-        super::super::random_uuid().expect("browser crypto mints a new lineage identity");
+    let new_team = super::super::random_uuid().expect("browser crypto mints a new team identity");
     let solo_render = SoloDropRender {
         waiting,
         sender: context.sender,
         can_configure,
         topology_revision: lanes.topology_revision,
-        lineage_controls: context.lineage_controls,
+        team_controls: context.team_controls,
     };
     html! {
         <div class="canvas-menu-page" data-menu-page="lanes">
             {render_global_settings(Some(runtime), context.sender)}
-            <section class="canvas-menu-section canvas-open-organizations">
+            <section class="canvas-menu-section canvas-open-teams">
                 <h2>{"Open Team"}</h2>
-                if grouped_lineages.is_empty() {
-                    <p class="canvas-menu-empty">{"No open organizations"}</p>
+                if grouped_teams.is_empty() {
+                    <p class="canvas-menu-empty">{"No open teams"}</p>
                 } else {
-                    {for grouped_lineages.into_iter().map(|lineage| {
-                        render_lineage(
-                            lineage,
+                    {for grouped_teams.into_iter().map(|team| {
+                        render_team(
+                            team,
                             waiting,
                             context.sender,
                             can_configure,
                             lanes.topology_revision,
-                            context.lineage_controls,
+                            context.team_controls,
                         )
                     })}
                 }
             </section>
-            {render_new_lineage_drop(
-                new_lineage,
+            {render_new_team_drop(
+                new_team,
                 context.sender,
                 can_configure,
                 lanes.topology_revision,
@@ -348,73 +347,70 @@ fn render_theme_selector() -> Html {
     }
 }
 
-fn is_grouped_lineage(lineage: &crate::runtime::LaneRow) -> bool {
-    lineage.members.len() > 1
-        || lineage
-            .host()
-            .is_some_and(|member| member.lane != lineage.lane)
+fn is_grouped_team(team: &crate::runtime::LaneRow) -> bool {
+    team.members.len() > 1 || team.host().is_some_and(|member| member.lane != team.lane)
 }
 
-fn render_lineage(
-    lineage: &crate::runtime::LaneRow,
+fn render_team(
+    team: &crate::runtime::LaneRow,
     waiting: &[wire::intent::LaneInbox],
     sender: &SenderHandle,
     can_configure: bool,
     topology_revision: u64,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    team_controls: &UseReducerHandle<TeamControls>,
 ) -> Html {
-    let target = lineage.lane;
-    let current = lineage
+    let target = team.lane;
+    let current = team
         .members
         .iter()
         .map(|member| member.lane)
         .collect::<Vec<_>>();
     let ondragover = allow_drop(can_configure);
-    let ondrop = drop_into_lineage(
+    let ondrop = drop_into_team(
         sender.clone(),
         target,
         current,
         can_configure,
         topology_revision,
     );
-    let closed = lineage_controls.is_closed(lineage.lane);
-    let reopen = lineage_controls.clone();
+    let closed = team_controls.is_closed(team.lane);
+    let reopen = team_controls.clone();
     html! {
         <article
-            class="canvas-organization"
-            data-organization-lineage={lineage.lane.to_string()}
+            class="canvas-team"
+            data-team={team.lane.to_string()}
             {ondragover}
             {ondrop}
         >
             <header>
                 <div>
-                    <strong>{format!("Team {}", watchband::short(lineage.lane))}</strong>
+                    <strong>{format!("Team {}", watchband::short(team.lane))}</strong>
                     <span>{format!(
                         "open any member; {} agents open together",
-                        lineage.members.len()
+                        team.members.len()
                     )}</span>
                 </div>
                 if closed {
                     <button
                         type="button"
-                        class="canvas-organization-open"
+                        class="canvas-team-open"
                         onclick={Callback::from(move |_| {
-                            reopen.dispatch(LineageControlAction::OpenLineage {
-                                lineage: target,
+                            reopen.dispatch(TeamControlAction::OpenTeam {
+                                team: target,
                             });
                         })}
                     >{"Open team"}</button>
                 }
             </header>
-            <div class="canvas-organization-members">
-                {for lineage.members.iter().enumerate().map(|(position, member)| {
+            <div class="canvas-team-members">
+                {for team.members.iter().enumerate().map(|(position, member)| {
                     render_member(
                         member,
-                        watchband::accent(lineage.members.len(), position),
+                        watchband::accent(team.members.len(), position),
                         waiting,
-                        lineage.lane,
+                        team.lane,
                         can_configure,
-                        lineage_controls,
+                        team_controls,
                         false,
                     )
                 })}
@@ -429,7 +425,7 @@ fn render_member(
     waiting: &[wire::intent::LaneInbox],
     source: CanonicalUuid,
     can_configure: bool,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    team_controls: &UseReducerHandle<TeamControls>,
     show_reopen: bool,
 ) -> Html {
     let pending = waiting
@@ -443,15 +439,15 @@ fn render_member(
         .unwrap_or_else(|| watchband::leaf(&member.worktree).to_owned());
     let worktree = watchband::leaf(&member.worktree).to_owned();
     let ondragstart = begin_drag(member.lane, can_configure);
-    let closed = lineage_controls.is_closed(source);
-    let reopen = lineage_controls.clone();
+    let closed = team_controls.is_closed(source);
+    let reopen = team_controls.clone();
     html! {
         <article
-            class="canvas-organization-member"
+            class="canvas-team-member"
             draggable={can_configure.to_string()}
             aria-disabled={(!can_configure).to_string()}
-            data-organization-member={member.lane.to_string()}
-            data-source-lineage={source.to_string()}
+            data-team-member={member.lane.to_string()}
+            data-source-team={source.to_string()}
             data-accent={accent.to_string()}
             {ondragstart}
         >
@@ -469,9 +465,9 @@ fn render_member(
             if closed && show_reopen {
                 <button
                     type="button"
-                    class="canvas-organization-open"
+                    class="canvas-team-open"
                     onclick={Callback::from(move |_| {
-                        reopen.dispatch(LineageControlAction::OpenLineage { lineage: source });
+                        reopen.dispatch(TeamControlAction::OpenTeam { team: source });
                     })}
                 >{"Open team"}</button>
             }
@@ -479,18 +475,18 @@ fn render_member(
     }
 }
 
-fn render_new_lineage_drop(
+fn render_new_team_drop(
     target: CanonicalUuid,
     sender: &SenderHandle,
     can_configure: bool,
     topology_revision: u64,
 ) -> Html {
     let ondragover = allow_drop(can_configure);
-    let ondrop = drop_into_new_lineage(sender.clone(), target, can_configure, topology_revision);
+    let ondrop = drop_into_new_team(sender.clone(), target, can_configure, topology_revision);
     html! {
-        <section class="canvas-menu-section canvas-organization-drop" {ondragover} {ondrop}>
+        <section class="canvas-menu-section canvas-team-drop" {ondragover} {ondrop}>
             <header><h2>{"New Team"}</h2><span>{"drop agent to create"}</span></header>
-            <div class="canvas-drop-target" data-organization-drop="new">{"Drop agent here"}</div>
+            <div class="canvas-drop-target" data-team-drop="new">{"Drop agent here"}</div>
         </section>
     }
 }
@@ -500,7 +496,7 @@ struct SoloDropRender<'a> {
     sender: &'a SenderHandle,
     can_configure: bool,
     topology_revision: u64,
-    lineage_controls: &'a UseReducerHandle<LineageControls>,
+    team_controls: &'a UseReducerHandle<TeamControls>,
 }
 
 fn render_solo_members_drop(
@@ -509,7 +505,7 @@ fn render_solo_members_drop(
     render: &SoloDropRender<'_>,
 ) -> Html {
     let ondragover = allow_drop(render.can_configure);
-    let ondrop = drop_into_solo_lineage(
+    let ondrop = drop_into_solo_team(
         render.sender.clone(),
         current,
         render.can_configure,
@@ -521,7 +517,7 @@ fn render_solo_members_drop(
                 <h2>{"Agents Without Team"}</h2>
                 <span>{"drop here to remove from team"}</span>
             </header>
-            <div class="canvas-organization-members" data-organization-drop="unassigned">
+            <div class="canvas-team-members" data-team-drop="unassigned">
                 if members.is_empty() {
                     <p class="canvas-menu-empty">{"No unassigned agents"}</p>
                 } else {
@@ -532,7 +528,7 @@ fn render_solo_members_drop(
                             render.waiting,
                             member.lane,
                             render.can_configure,
-                            render.lineage_controls,
+                            render.team_controls,
                             true,
                         )
                     })}
@@ -577,7 +573,7 @@ fn dragged_member(event: &DragEvent) -> Option<CanonicalUuid> {
         .ok()
 }
 
-fn drop_into_lineage(
+fn drop_into_team(
     sender: SenderHandle,
     target: CanonicalUuid,
     current: Vec<CanonicalUuid>,
@@ -598,7 +594,7 @@ fn drop_into_lineage(
     })
 }
 
-fn drop_into_new_lineage(
+fn drop_into_new_team(
     sender: SenderHandle,
     target: CanonicalUuid,
     enabled: bool,
@@ -615,7 +611,7 @@ fn drop_into_new_lineage(
     })
 }
 
-fn drop_into_solo_lineage(
+fn drop_into_solo_team(
     sender: SenderHandle,
     current: Vec<CanonicalUuid>,
     enabled: bool,
@@ -637,15 +633,15 @@ fn drop_into_solo_lineage(
 
 fn send_member(
     sender: &SenderHandle,
-    lineage: CanonicalUuid,
+    team: CanonicalUuid,
     member: CanonicalUuid,
     topology_revision: u64,
 ) -> bool {
     admit_action(
         sender,
-        ClientAction::ConfigureLineage {
+        ClientAction::ConfigureTeam {
             topology_revision,
-            lineage,
+            team,
             member: Some(member),
             life: None,
         },

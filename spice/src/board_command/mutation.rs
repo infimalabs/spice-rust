@@ -241,7 +241,7 @@ where
         projects,
     )
     .expect("prepared task already passed entry validation")
-    .with_creator_lineage(prepared.creation.creator_lineage());
+    .with_creator_team(prepared.creation.creator_team());
     let next = next_action(snapshot, &post);
     let mut write = JournalWrite::new(
         command.actor().clone(),

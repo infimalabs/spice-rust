@@ -172,7 +172,7 @@ fn seed_creation_stream(bus: &Bus, lane: CanonicalUuid, stream: &str) -> body::T
             source,
             next,
         },
-        creator_lineage: None,
+        creator_team: None,
     }
 }
 
@@ -188,14 +188,14 @@ fn authorize_lane_creation(
     let mut context = seed_creation_transcript(bus, seat.lane);
     let body::TaskCreationContext::Transcript {
         session,
-        creator_lineage,
+        creator_team,
         ..
     } = &mut context
     else {
         unreachable!("fixture transcript helper returns transcript authority")
     };
     *session = identity.to_string();
-    *creator_lineage = Some(seat.lane);
+    *creator_team = Some(seat.lane);
     context
 }
 

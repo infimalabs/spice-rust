@@ -1,4 +1,4 @@
-//! Lane, lineage, session, and taste lifecycle fact bodies.
+//! Lane, team, session, and taste lifecycle fact bodies.
 
 use serde::{Deserialize, Serialize};
 
@@ -11,8 +11,8 @@ use super::{Release, SourceBoundary, TranscriptLocus};
 pub struct LaneSeated {
     /// Created independently steerable member seat.
     pub lane: CanonicalUuid,
-    /// Canvas lineage whose lane contains the member.
-    pub lineage_id: CanonicalUuid,
+    /// Canvas team whose lane contains the member.
+    pub team: CanonicalUuid,
     /// Capability minted with the lane.
     pub capability: CanonicalUuid,
     /// Operator-configured agent display name, absent on pre-field facts.
@@ -46,26 +46,26 @@ pub struct LaneSeated {
     pub effort: Option<String>,
 }
 
-/// One Canvas lineage adopted a task-allocation lifetime.
+/// One Canvas team adopted a task-allocation lifetime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LineageConfigured {
-    /// Stable Canvas lineage identifying the configured group.
-    pub lineage_id: CanonicalUuid,
-    /// Member moved into the configured lineage, absent for policy-only changes.
+pub struct TeamConfigured {
+    /// Stable Canvas team identifying the configured group.
+    pub team: CanonicalUuid,
+    /// Member moved into the configured team, absent for policy-only changes.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     pub member: Option<CanonicalUuid>,
-    /// Lineage the moved member occupied before this transaction.
+    /// Team the moved member occupied before this transaction.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub from_lineage: Option<CanonicalUuid>,
-    /// Replacement identity assigned to a source organization when its host left.
+    pub from_team: Option<CanonicalUuid>,
+    /// Replacement identity assigned to a source team when its host left.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -73,9 +73,9 @@ pub struct LineageConfigured {
     )]
     pub source_rekeyed_to: Option<CanonicalUuid>,
     /// Prior task-allocation lifetime before this transaction.
-    pub from: crate::intent::LineageLife,
+    pub from: crate::intent::TeamLife,
     /// Authoritative task-allocation lifetime after this transaction.
-    pub life: crate::intent::LineageLife,
+    pub life: crate::intent::TeamLife,
     /// Boundary for the moved member, when one moved and is actively claimed.
     ///
     /// Empty for a policy-only change, which moves no member and so crosses no
@@ -84,12 +84,12 @@ pub struct LineageConfigured {
     pub sources: Vec<LaneSourceBoundary>,
 }
 
-/// One Canvas lineage and the lanes it holds after an arrangement.
+/// One Canvas team and the lanes it holds after an arrangement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LineageStanding {
-    /// Stable Canvas lineage identifying the group.
-    pub lineage_id: CanonicalUuid,
-    /// Every lane this lineage holds, in the order the operator arranged them.
+pub struct TeamStanding {
+    /// Stable Canvas team identifying the group.
+    pub team: CanonicalUuid,
+    /// Every lane this team holds, in the order the operator arranged them.
     pub lanes: Vec<CanonicalUuid>,
 }
 
@@ -98,8 +98,8 @@ pub struct LineageStanding {
 /// A membership transition names the lanes it moves rather than carrying a
 /// single lane of its own, so the boundary travels beside the lane it belongs
 /// to. This is what lets a reducer split attribution across the move: the spend
-/// before this locus belongs to the lineage the lane left, and the spend after
-/// it to the lineage the lane joined.
+/// before this locus belongs to the team the lane left, and the spend after
+/// it to the team the lane joined.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneSourceBoundary {
@@ -109,32 +109,32 @@ pub struct LaneSourceBoundary {
     pub source: SourceBoundary,
 }
 
-/// The operator rearranged the Canvas lineages.
+/// The operator rearranged the Canvas teams.
 ///
 /// Both sides are recorded because the gesture is not recoverable from the
 /// result alone: a reorder and a join leave different `from` standings behind,
 /// and a reader that only saw the outcome could not tell which one the
 /// operator performed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct LineageArranged {
-    /// Lineage standings before this transaction, in their prior order.
-    pub from: Vec<LineageStanding>,
-    /// Lineage standings after this transaction, in the arranged order.
-    pub lineages: Vec<LineageStanding>,
+pub struct TeamArranged {
+    /// Team standings before this transaction, in their prior order.
+    pub from: Vec<TeamStanding>,
+    /// Team standings after this transaction, in the arranged order.
+    pub teams: Vec<TeamStanding>,
     /// Boundaries for the actively claimed lanes this arrangement moved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sources: Vec<LaneSourceBoundary>,
 }
 
-/// One seated member moved to a durable position, possibly in another lineage.
+/// One seated member moved to a durable position, possibly in another team.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LaneArranged {
     /// Stable member identity that moved.
     pub lane: CanonicalUuid,
-    /// Lineage the member occupied before the move.
-    pub from_lineage_id: CanonicalUuid,
-    /// Lineage owned by the target member after the move.
-    pub lineage_id: CanonicalUuid,
+    /// Team the member occupied before the move.
+    pub from_team: CanonicalUuid,
+    /// Team owned by the target member after the move.
+    pub team: CanonicalUuid,
     /// Stable member identity immediately following the moved member.
     pub before: CanonicalUuid,
     /// Boundary for the moved lane, when it is actively claimed.
@@ -497,8 +497,8 @@ pub struct LaneImported {
 pub struct LaneRemoved {
     /// Lane removed from the resident topology.
     pub lane: CanonicalUuid,
-    /// Lineage the removed member occupied.
-    pub lineage_id: CanonicalUuid,
+    /// Team the removed member occupied.
+    pub team: CanonicalUuid,
     /// Worktree the lane had been bound to.
     pub worktree: String,
 }
@@ -583,8 +583,8 @@ pub struct LaneRenewed {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "LaneRenewalChangedWire", into = "LaneRenewalChangedWire")]
 pub struct LaneRenewalChanged {
-    /// Canvas lineage whose member retains its original slot.
-    pub lineage_id: CanonicalUuid,
+    /// Canvas team whose member retains its original slot.
+    pub team: CanonicalUuid,
     /// Independently steerable member whose renewal state changed.
     pub lane: CanonicalUuid,
     /// Current state, absent only when a requested intent was cleared.
@@ -599,7 +599,7 @@ pub struct LaneRenewalChanged {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LaneRenewalChangedWire {
-    lineage_id: CanonicalUuid,
+    team: CanonicalUuid,
     lane: CanonicalUuid,
     #[serde(
         default,
@@ -613,13 +613,15 @@ impl TryFrom<LaneRenewalChangedWire> for LaneRenewalChanged {
     type Error = &'static str;
 
     fn try_from(wire: LaneRenewalChangedWire) -> Result<Self, Self::Error> {
-        if wire.renewal.as_ref().is_some_and(|renewal| {
-            renewal.lineage_id != wire.lineage_id || renewal.lane != wire.lane
-        }) {
-            return Err("renewal state does not match the addressed lineage member");
+        if wire
+            .renewal
+            .as_ref()
+            .is_some_and(|renewal| renewal.team != wire.team || renewal.lane != wire.lane)
+        {
+            return Err("renewal state does not match the addressed team member");
         }
         Ok(Self {
-            lineage_id: wire.lineage_id,
+            team: wire.team,
             lane: wire.lane,
             renewal: wire.renewal,
         })
@@ -629,7 +631,7 @@ impl TryFrom<LaneRenewalChangedWire> for LaneRenewalChanged {
 impl From<LaneRenewalChanged> for LaneRenewalChangedWire {
     fn from(changed: LaneRenewalChanged) -> Self {
         Self {
-            lineage_id: changed.lineage_id,
+            team: changed.team,
             lane: changed.lane,
             renewal: changed.renewal,
         }

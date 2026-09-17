@@ -61,12 +61,12 @@ fn admit_set(
     else {
         return Err(missing_lane(request.lane));
     };
-    if row.lineage_id != request.lineage_id {
+    if row.team != request.team {
         return Err(lane_refusal(
-            "lane::renewal-lineage-moved",
-            Some(row.lineage_id.to_string()),
-            Some(request.lineage_id.to_string()),
-            "read lane state and retry with the member's current lineage",
+            "lane::renewal-team-moved",
+            Some(row.team.to_string()),
+            Some(request.team.to_string()),
+            "read lane state and retry with the member's current team",
         ));
     }
     let current = renewal_for(observed.body(), request.lane)
@@ -124,17 +124,17 @@ fn resolve_request(
             state:
                 wire::LaneRenewalState::LaunchRefused {
                     predecessor,
-                    org_slot,
+                    team_slot,
                     ..
                 },
             ..
         }) => Ok(Some(wire::LaneRenewalRecord {
-            lineage_id: request.lineage_id,
+            team: request.team,
             lane: request.lane,
             revision: request.topology_revision,
             state: wire::LaneRenewalState::HandoffPending {
                 predecessor,
-                org_slot,
+                team_slot,
             },
         })),
         Some(record) => Err(unit_outcome(lane_refusal(
@@ -195,7 +195,7 @@ fn commit_set(
     };
     guard_residency(&mut proposal, &observed);
     let changed = wire::body::LaneRenewalChanged {
-        lineage_id: request.lineage_id,
+        team: request.team,
         lane: request.lane,
         renewal: transition.record.clone(),
     };
@@ -207,7 +207,7 @@ fn commit_set(
     };
     proposal.residency_head(head, move |_| next);
     let answer = wire::intent::LaneRenewalAnswer {
-        lineage_id: request.lineage_id,
+        team: request.team,
         lane: request.lane,
         topology_revision: request.topology_revision,
         renewal: transition.record.clone(),
@@ -317,10 +317,10 @@ fn requested_record(
             "the durable session does not identify the current lane occupant",
         ));
     }
-    let org_slot = head
+    let team_slot = head
         .lanes
         .iter()
-        .filter(|candidate| candidate.lineage_id == row.lineage_id)
+        .filter(|candidate| candidate.team == row.team)
         .position(|candidate| candidate.lane == row.lane)
         .and_then(|slot| u64::try_from(slot).ok())
         .ok_or_else(|| {
@@ -330,12 +330,12 @@ fn requested_record(
             )
         })?;
     Ok(wire::LaneRenewalRecord {
-        lineage_id: row.lineage_id,
+        team: row.team,
         lane: row.lane,
         revision: head.topology_revision,
         state: wire::LaneRenewalState::Requested {
             predecessor: identity(occupant, session),
-            org_slot,
+            team_slot,
         },
     })
 }
@@ -384,7 +384,7 @@ pub(super) fn advance_exit(
     };
     let wire::LaneRenewalState::Requested {
         predecessor,
-        org_slot,
+        team_slot,
     } = current.state
     else {
         return Ok(cause);
@@ -401,19 +401,19 @@ pub(super) fn advance_exit(
         return Ok(cause);
     }
     let renewal = wire::LaneRenewalRecord {
-        lineage_id: current.lineage_id,
+        team: current.team,
         lane,
         revision: next.topology_revision,
         state: wire::LaneRenewalState::HandoffPending {
             predecessor,
-            org_slot,
+            team_slot,
         },
     };
     replace_renewal(next, lane, Some(renewal.clone()));
     proposal
         .fact(
             wire::body::LaneRenewalChanged {
-                lineage_id: renewal.lineage_id,
+                team: renewal.team,
                 lane,
                 renewal: Some(renewal),
             },
@@ -463,10 +463,10 @@ pub(in crate::resident) fn reconcile(
                 "a handoff-pending renewal names no current lane member",
             )
         })?;
-    if row.lineage_id != renewal.lineage_id {
+    if row.team != renewal.team {
         return Err(store_fault(
-            "lane::renewal-lineage-moved",
-            "a handoff-pending renewal no longer belongs to its recorded lineage",
+            "lane::renewal-team-moved",
+            "a handoff-pending renewal no longer belongs to its recorded team",
         ));
     }
     if row.occupant.is_some() || seats.occupied(row.lane) {
@@ -625,7 +625,7 @@ pub(super) fn mark_launch_refused(
 ) -> CommandResult<()> {
     let wire::LaneRenewalState::HandoffPending {
         predecessor,
-        org_slot,
+        team_slot,
     } = &renewal.state
     else {
         return Ok(());
@@ -640,12 +640,12 @@ pub(super) fn mark_launch_refused(
         Outcome::Reply(_) => unreachable!("a successful launch is not a refusal"),
     };
     let refused = wire::LaneRenewalRecord {
-        lineage_id: renewal.lineage_id,
+        team: renewal.team,
         lane: renewal.lane,
         revision: observed.body().topology_revision,
         state: wire::LaneRenewalState::LaunchRefused {
             predecessor: predecessor.clone(),
-            org_slot: *org_slot,
+            team_slot: *team_slot,
             reason,
         },
     };
@@ -656,7 +656,7 @@ pub(super) fn mark_launch_refused(
     let fact = proposal
         .fact(
             wire::body::LaneRenewalChanged {
-                lineage_id: renewal.lineage_id,
+                team: renewal.team,
                 lane: renewal.lane,
                 renewal: Some(refused),
             },
@@ -674,7 +674,7 @@ pub(super) fn successor_record(
 ) -> CommandResult<wire::LaneRenewalRecord> {
     let wire::LaneRenewalState::HandoffPending {
         predecessor,
-        org_slot,
+        team_slot,
     } = &renewal.state
     else {
         return Err(store_fault(
@@ -683,13 +683,13 @@ pub(super) fn successor_record(
         ));
     };
     Ok(wire::LaneRenewalRecord {
-        lineage_id: renewal.lineage_id,
+        team: renewal.team,
         lane: renewal.lane,
         revision,
         state: wire::LaneRenewalState::SuccessorStarted {
             predecessor: predecessor.clone(),
             successor: identity(session.occupant, session),
-            org_slot: *org_slot,
+            team_slot: *team_slot,
         },
     })
 }
@@ -703,7 +703,7 @@ pub(super) fn replace_renewal(
     if let Some(renewal) = renewal {
         head.renewals.push(renewal);
         head.renewals
-            .sort_by_key(|record| (record.lineage_id, record.lane));
+            .sort_by_key(|record| (record.team, record.lane));
     }
 }
 

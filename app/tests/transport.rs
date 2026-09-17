@@ -239,7 +239,7 @@ fn a_pre_clock_lane_decoder_reproduces_the_topology_revision_failure() {
         epoch: CanonicalUuid,
         state: wire::ResidentState,
         lanes: Vec<wire::intent::LaneAnswerRow>,
-        subscriptions: Vec<wire::LineageSubscription>,
+        subscriptions: Vec<wire::TeamSubscription>,
     }
 
     let prior = PriorLaneAnswer {

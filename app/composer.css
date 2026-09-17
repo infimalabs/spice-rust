@@ -130,12 +130,12 @@
 .composer-vendor-icon--omp { opacity: .9; }
 .composer-shard--primary:has(.agent-action-menu[open]) .composer-vendor-icon { display: none; }
 
-.organization-surface .mosaic-composer {
+.team-surface .mosaic-composer {
   gap: 0;
   height: auto;
   padding: 0;
 }
-.organization-surface .mosaic-composer textarea {
+.team-surface .mosaic-composer textarea {
   height: 100%;
   min-height: 0;
   padding: 7px 9px;
@@ -146,8 +146,8 @@
   font-size: 14px;
   line-height: 1.35;
 }
-.organization-surface .mosaic-composer textarea:focus-visible { outline: none; }
-.organization-surface .composer-shard--primary textarea {
+.team-surface .mosaic-composer textarea:focus-visible { outline: none; }
+.team-surface .composer-shard--primary textarea {
   padding-right: 32px;
   padding-bottom: 28px;
 }

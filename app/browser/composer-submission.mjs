@@ -67,7 +67,7 @@ async function setTextareaValue(textbox, value) {
 }
 
 /// Exercise both submission doors against complete target documents. Keyboard
-/// submission sends only the focused agent; the lineage button sends every
+/// submission sends only the focused agent; the team button sends every
 /// nonempty agent draft. Both must preserve each composer's text-then-upload
 /// order and keep uploads bound to the target whose heading showed them.
 export async function assertCompleteComposerSubmission({
@@ -90,7 +90,7 @@ export async function assertCompleteComposerSubmission({
   const primaryTextbox = composer.getByRole("textbox");
   const quotedTextbox = quotedComposer.getByRole("textbox");
   const form = lane.locator("xpath=ancestor::form[1]");
-  const send = form.locator(".organization-send");
+  const send = form.locator(".team-send");
   await primaryTextbox.fill("canvas primary body");
   await primaryTextbox.focus();
   const previewTargets = form.locator(
@@ -189,7 +189,7 @@ export async function assertCompleteComposerSubmission({
   await assertCommandPreview(send, false, "a disabled action cannot retain the preview");
   await send.evaluate((button) => { button.disabled = false; });
   await assertCommandPreview(send, true, "reenabling the eligible action restores the held preview");
-  await form.locator(".organization-lifetime input").focus();
+  await form.locator(".team-lifetime input").focus();
   await assertCommandPreview(send, false, "leaving the draft composer clears the preview");
   await page.keyboard.up("Control");
 
@@ -355,7 +355,7 @@ export async function assertCompleteComposerSubmission({
   await pasteImages(composer, ["all-first.png"]);
   await composer.getByRole("img", { name: "all-first.png" }).waitFor();
 
-  await lane.locator("xpath=ancestor::form[1]").locator(".organization-send").click();
+  await lane.locator("xpath=ancestor::form[1]").locator(".team-send").click();
   await firstAllQuote.waitFor({ state: "detached", timeout: 10_000 });
   await secondAllQuote.waitFor({ state: "detached", timeout: 10_000 });
   const allFirstInbox = await reply(fixture, ["inbox", seeded.lane]);

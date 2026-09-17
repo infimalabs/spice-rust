@@ -86,7 +86,7 @@ fn command_emits_stable_text_and_json_without_external_runtime_lookup() {
     let text = String::from_utf8(text.stdout).expect("text migration is UTF-8");
     assert!(text.contains("source_release = \"0.31.0\""));
     assert!(text.contains("hidden_stems = [\n    \"oops\""));
-    assert!(text.contains("lineage = \"alpha\""));
+    assert!(text.contains("team = \"alpha\""));
 
     let json = fixture.invoke(&export, true);
     assert!(json.status.success(), "JSON migration: {json:?}");
@@ -131,7 +131,7 @@ fn refusal_is_typed_and_never_mutates_the_export_directory() {
         .and_then(wire::RefusalDiagnostic::witness)
         .expect("refusal carries source witness");
     assert!(witness.contains("release=0.31.0"));
-    assert!(witness.contains("lineage=red"));
+    assert!(witness.contains("team=red"));
     assert!(witness.contains("field=teams[0].shellSettings.taskRc[1]"));
     assert!(witness.contains("index=1"));
     assert!(witness.contains("token=\"rc.report.next.filter=project:x\""));

@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use wire::{Actor, ClaimCell, ClaimDisposition, LineageSubscription, TaskStamp};
+use wire::{Actor, ClaimCell, ClaimDisposition, TaskStamp, TeamSubscription};
 
 use crate::task::Entry;
 use crate::urgency::{Urgency, declared_priority};
@@ -52,7 +52,7 @@ impl<'a> Selection<'a> {
 pub fn select<'a>(
     entries: &'a [Entry],
     actor: &Actor,
-    subscription: &LineageSubscription,
+    subscription: &TeamSubscription,
     band: u64,
     recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
@@ -270,7 +270,7 @@ fn unsettled_public(entry: &Entry) -> bool {
 /// Whether this lane may be *handed* the entry.
 ///
 /// Allocation is lifetime scoped: Steer admits none, Drive admits work created
-/// for the same immutable lineage, and Drain admits every otherwise workable
+/// for the same immutable team, and Drain admits every otherwise workable
 /// public task.
 ///
 /// Reading is deliberately wider, and stem scoped rather than lifetime scoped
@@ -285,11 +285,10 @@ fn unsettled_public(entry: &Entry) -> bool {
 fn selectable(
     entry: &Entry,
     actor: &Actor,
-    subscription: &LineageSubscription,
+    subscription: &TeamSubscription,
     completed: &BTreeSet<TaskStamp>,
 ) -> bool {
-    subscription.admits_creator_lineage(entry.creator_lineage())
-        && eligible(entry, actor, completed)
+    subscription.admits_creator_team(entry.creator_team()) && eligible(entry, actor, completed)
 }
 
 fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
@@ -396,13 +395,13 @@ pub fn capturable_entry(
     (public || oops) && environment_satisfied(entry, environment) && unheld(entry)
 }
 
-/// Whether one named entry is eligible through the lineage's current task scope.
+/// Whether one named entry is eligible through the team's current task scope.
 #[must_use]
 pub fn selectable_entry(
     entries: &[Entry],
     entry: &Entry,
     actor: &Actor,
-    subscription: &LineageSubscription,
+    subscription: &TeamSubscription,
     environment: &wire::Environment,
 ) -> bool {
     selectable(entry, actor, subscription, &satisfied_tasks(entries))

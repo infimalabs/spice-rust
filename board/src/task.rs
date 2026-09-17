@@ -450,7 +450,7 @@ pub struct Entry {
     workflow: WorkflowHead,
     claim: Option<ClaimHead>,
     lease: Option<LeaseHead>,
-    creator_lineage: Option<wire::CanonicalUuid>,
+    creator_team: Option<wire::CanonicalUuid>,
     project: Project,
     family: Family,
 }
@@ -509,7 +509,7 @@ impl Entry {
             workflow,
             claim,
             lease,
-            creator_lineage: None,
+            creator_team: None,
             project,
             family,
         })
@@ -553,14 +553,14 @@ impl Entry {
 
     /// Immutable creator team captured by the task-added fact.
     #[must_use]
-    pub const fn creator_lineage(&self) -> Option<wire::CanonicalUuid> {
-        self.creator_lineage
+    pub const fn creator_team(&self) -> Option<wire::CanonicalUuid> {
+        self.creator_team
     }
 
     /// Attach creator-team projection derived from the immutable creation fact.
     #[must_use]
-    pub fn with_creator_lineage(mut self, creator_lineage: Option<wire::CanonicalUuid>) -> Self {
-        self.creator_lineage = creator_lineage;
+    pub fn with_creator_team(mut self, creator_team: Option<wire::CanonicalUuid>) -> Self {
+        self.creator_team = creator_team;
         self
     }
 

@@ -24,7 +24,7 @@ export async function assertRenewalRefusalReason(page, surface) {
   const lane = await renew.getAttribute("data-renewal-lane");
   assert.ok(lane, "the renewal control names its lane");
   const composer = surface.locator(
-    `.organization-agent[data-agent-lane="${lane}"] .composer-shard--primary`,
+    `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary`,
   );
   const issue = composer.locator(".composer-issue");
   assert.equal(await issue.count(), 0, "the composer starts without an issue line");
@@ -41,7 +41,7 @@ export async function assertRenewalRefusalReason(page, surface) {
       TRANSITION_MS * 4,
       ({ lane, prefix }) => document
         .querySelector(
-          `.organization-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-issue`,
+          `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-issue`,
         )
         ?.textContent?.startsWith(prefix) === true,
       { lane, prefix: RENEWAL_ISSUE },
@@ -70,7 +70,7 @@ export async function assertRenewalRefusalReason(page, surface) {
     "an accepted renewal clears the refusal it retried",
     TRANSITION_MS * 4,
     (lane) => {
-      const agent = document.querySelector(`.organization-agent[data-agent-lane="${lane}"]`);
+      const agent = document.querySelector(`.team-agent[data-agent-lane="${lane}"]`);
       return agent?.querySelector(".agent-renew-request")?.dataset.renewalState === "requested"
         && agent.querySelector(".composer-shard--primary .composer-issue") === null;
     },

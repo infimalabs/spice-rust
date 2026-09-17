@@ -190,7 +190,7 @@ const BODIES: &[(CommandKind, &str)] = &[
         r#"{
   "topology_revision": 9,
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
-  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "worktree": "worktrees/h",
   "life": "drive",
   "vendor": "claude"
@@ -208,7 +208,7 @@ const BODIES: &[(CommandKind, &str)] = &[
         CommandKind::LaneRenewal,
         r#"{
   "topology_revision": 9,
-  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "requested": true
 }"#,
@@ -222,27 +222,27 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
-        CommandKind::LineageConfigure,
+        CommandKind::TeamConfigure,
         r#"{
   "topology_revision": 9,
-  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "life": "drain"
 }"#,
     ),
     (
-        CommandKind::LineageArrange,
+        CommandKind::TeamArrange,
         r#"{
   "topology_revision": 9,
-  "lineages": [
+  "teams": [
     {
-      "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+      "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
       "lanes": [
         "018f82d4-6f59-7d06-92e3-bce9131163c3",
         "018f82d4-6f59-7d06-92e3-bce9131163c4"
       ]
     },
     {
-      "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+      "team": "018f82d4-6f59-7d06-92e3-bce9131163c5",
       "lanes": ["018f82d4-6f59-7d06-92e3-bce9131163c6"]
     }
   ]
@@ -524,7 +524,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
     let task = BoardTask {
         visibility: ProjectVisibility::Public,
         origin_thread: "operator".to_owned(),
-        creator_lineage: None,
+        creator_team: None,
         presentation_title: "Bind a board task".to_owned(),
         statement: Positioned {
             position: seq(2),
@@ -814,8 +814,8 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::LaneState,
     BodyShape::LaneRenewal,
     BodyShape::LaneArrange,
-    BodyShape::LineageConfigure,
-    BodyShape::LineageArrange,
+    BodyShape::TeamConfigure,
+    BodyShape::TeamArrange,
     BodyShape::LaneRecall,
     BodyShape::TasteRecord,
     BodyShape::Recognize,
@@ -857,18 +857,18 @@ fn the_union_reports_the_shape_it_carries() {
 }
 
 #[test]
-fn lineage_lifetimes_close_over_creator_team_scope() {
-    use wire::intent::LineageLife;
+fn team_lifetimes_close_over_creator_team_scope() {
+    use wire::intent::TeamLife;
 
     let team = uuid("018f82d4-6f59-7d06-92e3-bce913116301");
     let peer = uuid("018f82d4-6f59-7d06-92e3-bce913116302");
-    assert!(!LineageLife::Steer.admits_creator_lineage(Some(team), team));
-    assert!(LineageLife::Drive.admits_creator_lineage(Some(team), team));
-    assert!(!LineageLife::Drive.admits_creator_lineage(Some(peer), team));
-    assert!(!LineageLife::Drive.admits_creator_lineage(None, team));
-    assert!(LineageLife::Drain.admits_creator_lineage(None, team));
-    for policy in [LineageLife::Steer, LineageLife::Drive, LineageLife::Drain] {
-        assert_eq!(LineageLife::from_wire(policy.as_str()), Some(policy));
+    assert!(!TeamLife::Steer.admits_creator_team(Some(team), team));
+    assert!(TeamLife::Drive.admits_creator_team(Some(team), team));
+    assert!(!TeamLife::Drive.admits_creator_team(Some(peer), team));
+    assert!(!TeamLife::Drive.admits_creator_team(None, team));
+    assert!(TeamLife::Drain.admits_creator_team(None, team));
+    for policy in [TeamLife::Steer, TeamLife::Drive, TeamLife::Drain] {
+        assert_eq!(TeamLife::from_wire(policy.as_str()), Some(policy));
     }
 }
 

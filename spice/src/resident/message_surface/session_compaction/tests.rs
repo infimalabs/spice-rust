@@ -767,7 +767,7 @@ fn session_residency_for(
         topology_revision: 1,
         lanes: vec![wire::LaneResidency {
             lane,
-            lineage_id: lane,
+            team: lane,
             name: None,
             worktree: "/tmp/session-compaction".to_owned(),
             life: "drive".to_owned(),

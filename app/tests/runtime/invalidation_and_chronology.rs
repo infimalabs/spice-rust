@@ -53,7 +53,7 @@ fn lane_rows() -> Vec<StaleRow> {
             serde_json::json!({
                 "kind": "lane::seated",
                 "lane": LANE,
-                "lineage_id": LANE,
+                "team": LANE,
                 "worktree": "/tmp/lane",
                 "life": "continuous",
                 "vendor": "codex",
@@ -106,9 +106,9 @@ fn task_and_claim_rows() -> Vec<StaleRow> {
     ]
 }
 
-/// Facts from `journal::*` and `lineage::*`, which do not move these cached reads.
+/// Facts from `journal::*` and `team::*`, which do not move these cached reads.
 /// These rows separate a per-read mapping from one that widens every read together.
-fn journal_and_lineage_rows() -> Vec<StaleRow> {
+fn journal_and_team_rows() -> Vec<StaleRow> {
     vec![
         (
             serde_json::json!({
@@ -131,8 +131,8 @@ fn journal_and_lineage_rows() -> Vec<StaleRow> {
         ),
         (
             serde_json::json!({
-                "kind": "lineage::configured",
-                "lineage_id": LANE,
+                "kind": "team::configured",
+                "team": LANE,
                 "member": REQUEST,
                 "from": "steer",
                 "life": "drive",
@@ -141,9 +141,9 @@ fn journal_and_lineage_rows() -> Vec<StaleRow> {
         ),
         (
             serde_json::json!({
-                "kind": "lineage::arranged",
-                "from": [{"lineage_id": LANE, "lanes": [LANE]}],
-                "lineages": [{"lineage_id": LANE, "lanes": []}],
+                "kind": "team::arranged",
+                "from": [{"team": LANE, "lanes": [LANE]}],
+                "teams": [{"team": LANE, "lanes": []}],
             }),
             [false, false, false],
         ),
@@ -183,7 +183,7 @@ fn staleness_inventory() -> Vec<StaleRow> {
         .into_iter()
         .chain(lane_rows())
         .chain(task_and_claim_rows())
-        .chain(journal_and_lineage_rows())
+        .chain(journal_and_team_rows())
         .chain(unread_namespace_rows())
         .collect()
 }
@@ -389,9 +389,9 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         .clone();
     let [never_seated, occupied, seated_before] = <[_; 3]>::try_from(lanes)
         .unwrap_or_else(|rows| panic!("three rows survive admission, got {}", rows.len()));
-    let never_seated = never_seated.host().expect("lineage has one member");
-    let occupied = occupied.host().expect("lineage has one member");
-    let seated_before = seated_before.host().expect("lineage has one member");
+    let never_seated = never_seated.host().expect("team has one member");
+    let occupied = occupied.host().expect("team has one member");
+    let seated_before = seated_before.host().expect("team has one member");
     assert_eq!(never_seated.status(0), LaneStatus::Unbound);
     assert_eq!(
         seated_before.status(0),
@@ -439,7 +439,7 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
 }
 
 #[test]
-fn one_lineage_groups_multiple_steerable_worktrees_without_losing_member_order() {
+fn one_team_groups_multiple_steerable_worktrees_without_losing_member_order() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -450,7 +450,7 @@ fn one_lineage_groups_multiple_steerable_worktrees_without_losing_member_order()
     ]);
     let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
         .admit_frame(&bytes)
-        .expect("plural lineage answer is admitted");
+        .expect("plural team answer is admitted");
 
     runtime.apply_lanes(&admitted);
 
@@ -466,12 +466,12 @@ fn one_lineage_groups_multiple_steerable_worktrees_without_losing_member_order()
     assert!(
         lanes
             .iter()
-            .all(|lineage| lineage.subscription == wire::intent::LineageLife::Steer)
+            .all(|team| team.subscription == wire::intent::TeamLife::Steer)
     );
 }
 
 #[test]
-fn every_distinct_lineage_forms_one_console_even_when_members_have_no_name() {
+fn every_distinct_team_forms_one_console_even_when_members_have_no_name() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -482,24 +482,17 @@ fn every_distinct_lineage_forms_one_console_even_when_members_have_no_name() {
     ]);
     let admitted: app::Admitted<Response<wire::intent::LaneAnswer>> = session
         .admit_frame(&bytes)
-        .expect("distinct lineage answer is admitted");
+        .expect("distinct team answer is admitted");
 
     runtime.apply_lanes(&admitted);
 
-    let lineages = &runtime.lanes().expect("the roster is retained").lanes;
+    let teams = &runtime.lanes().expect("the roster is retained").lanes;
+    assert_eq!(teams.len(), 3, "distinct team keys never share a console");
     assert_eq!(
-        lineages.len(),
-        3,
-        "distinct lineage keys never share a console"
-    );
-    assert_eq!(
-        lineages
-            .iter()
-            .map(|lineage| lineage.lane)
-            .collect::<Vec<_>>(),
+        teams.iter().map(|team| team.lane).collect::<Vec<_>>(),
         vec![uuid(LANE), uuid(SECOND_LANE), uuid(THIRD_LANE)]
     );
-    assert!(lineages.iter().all(|lineage| {
-        lineage.members.len() == 1 && lineage.host().is_some_and(|member| member.name.is_none())
+    assert!(teams.iter().all(|team| {
+        team.members.len() == 1 && team.host().is_some_and(|member| member.name.is_none())
     }));
 }

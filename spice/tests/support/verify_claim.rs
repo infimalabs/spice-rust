@@ -80,7 +80,7 @@ fn install_residency(journal: &mut Journal, repository: &Repository, authority: 
         topology_revision: 0,
         lanes: vec![LaneResidency {
             lane,
-            lineage_id: lane,
+            team: lane,
             name: None,
             worktree,
             life: "drive".to_owned(),

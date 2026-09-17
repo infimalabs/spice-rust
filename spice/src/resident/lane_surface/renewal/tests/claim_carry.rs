@@ -4,7 +4,7 @@ const TASK: &str = "1kQpV9Gt";
 const SUCCESSOR_SESSION: &str = "018f8888-8888-7444-8888-999999999999";
 
 #[test]
-fn renewal_carries_one_claim_through_the_same_org_slot() {
+fn renewal_carries_one_claim_through_the_same_team_slot() {
     let fixture = AdvisoryRtkFixture::new();
     fixture.set_next_session(SUCCESSOR_SESSION);
     let seeded = seed_claimed_org(&fixture);
@@ -83,7 +83,7 @@ fn renewal_carries_one_claim_through_the_same_org_slot() {
 }
 
 fn assert_successor_observations(
-    seeded: &SeededOrg,
+    seeded: &SeededTeam,
     fixture: &AdvisoryRtkFixture,
     surface: &super::super::super::super::StartupSurface,
     seats: &mut Seats,
@@ -156,7 +156,7 @@ fn assert_successor_observations(
 }
 
 fn assert_successor_command(
-    seeded: &SeededOrg,
+    seeded: &SeededTeam,
     fixture: &AdvisoryRtkFixture,
     surface: &super::super::super::super::StartupSurface,
     seats: &Seats,
@@ -247,17 +247,17 @@ fn reconcile(
         .expect("renewal reconciliation succeeds");
 }
 
-struct SeededOrg {
+struct SeededTeam {
     bus: Bus,
     task: wire::TaskStamp,
     phase: wire::Phase,
     expiry: wire::Instant,
     maximum: wire::Instant,
     lanes: Vec<wire::LaneResidency>,
-    subscription: wire::LineageSubscription,
+    subscription: wire::TeamSubscription,
 }
 
-fn seed_claimed_org(fixture: &AdvisoryRtkFixture) -> SeededOrg {
+fn seed_claimed_org(fixture: &AdvisoryRtkFixture) -> SeededTeam {
     let task: wire::TaskStamp = TASK.parse().expect("fixture task");
     let phase: wire::Phase = "todo".parse().expect("fixture phase");
     let now = wire::Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
@@ -265,9 +265,9 @@ fn seed_claimed_org(fixture: &AdvisoryRtkFixture) -> SeededOrg {
     let expiry = shifted(now, 60 * 60);
     let maximum = shifted(now, 2 * 60 * 60);
     let lanes = org_rows(fixture);
-    let subscription = wire::LineageSubscription {
-        lineage_id: fixture.lane,
-        policy: wire::intent::LineageLife::Drive,
+    let subscription = wire::TeamSubscription {
+        team: fixture.lane,
+        policy: wire::intent::TeamLife::Drive,
     };
     let renewal = handoff(fixture);
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
@@ -293,7 +293,7 @@ fn seed_claimed_org(fixture: &AdvisoryRtkFixture) -> SeededOrg {
         subscriptions: vec![next_subscription],
         renewals: vec![renewal],
     });
-    commit(&bus, proposal).expect("claimed organization authority commits");
+    commit(&bus, proposal).expect("claimed team authority commits");
     let mut claimed = lanes[1].clone();
     claimed.occupant = Some(fixture.occupant);
     super::super::super::propose::tests::seed_task_claim(
@@ -305,7 +305,7 @@ fn seed_claimed_org(fixture: &AdvisoryRtkFixture) -> SeededOrg {
         expiry,
         maximum,
     );
-    SeededOrg {
+    SeededTeam {
         bus,
         task,
         phase,
@@ -325,7 +325,7 @@ fn org_rows(fixture: &AdvisoryRtkFixture) -> Vec<wire::LaneResidency> {
         sibling_row(fixture, west_lane, west_occupant, fixture_uuid(105), "west"),
         wire::LaneResidency {
             lane: fixture.lane,
-            lineage_id: fixture.lane,
+            team: fixture.lane,
             name: Some("renewed".to_owned()),
             worktree: fixture.root.display().to_string(),
             life: "drive".to_owned(),
@@ -351,7 +351,7 @@ fn sibling_row(
 ) -> wire::LaneResidency {
     wire::LaneResidency {
         lane,
-        lineage_id: fixture.lane,
+        team: fixture.lane,
         name: Some(name.to_owned()),
         worktree: format!("{}-{name}", fixture.root.display()),
         life: "drive".to_owned(),
@@ -386,7 +386,7 @@ fn predecessor_session(fixture: &AdvisoryRtkFixture) -> wire::LaneSession {
 
 fn handoff(fixture: &AdvisoryRtkFixture) -> wire::LaneRenewalRecord {
     wire::LaneRenewalRecord {
-        lineage_id: fixture.lane,
+        team: fixture.lane,
         lane: fixture.lane,
         revision: 1,
         state: wire::LaneRenewalState::HandoffPending {
@@ -395,12 +395,12 @@ fn handoff(fixture: &AdvisoryRtkFixture) -> wire::LaneRenewalRecord {
                 session: SESSION.to_owned(),
                 thread: SESSION.to_owned(),
             },
-            org_slot: 1,
+            team_slot: 1,
         },
     }
 }
 
-fn assert_carried(seeded: &SeededOrg, fixture: &AdvisoryRtkFixture) -> CanonicalUuid {
+fn assert_carried(seeded: &SeededTeam, fixture: &AdvisoryRtkFixture) -> CanonicalUuid {
     let snapshot = seeded.bus.task_snapshot().expect("carried task heads read");
     let heads = snapshot.tasks().first().expect("fixture task remains");
     let claim = heads.claim().expect("claim remains active");
@@ -445,7 +445,7 @@ fn assert_carried(seeded: &SeededOrg, fixture: &AdvisoryRtkFixture) -> Canonical
         wire::LaneRenewalState::SuccessorStarted {
             predecessor,
             successor: next,
-            org_slot: 1,
+            team_slot: 1,
         } if predecessor.occupant == fixture.occupant && next.occupant == successor
     ));
 

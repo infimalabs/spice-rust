@@ -1,4 +1,4 @@
-//! The derived task and organization view axes and the panes standing on them.
+//! The derived task and team view axes and the panes standing on them.
 //!
 //! Flow and topology are the complete analytical view vocabulary. A new plane
 //! becomes a pane on one of these two rather than a third view,
@@ -67,36 +67,36 @@ impl Axis {
 /// User-facing Canvas destinations in their shared navigation order.
 ///
 /// Internal axes and lane vocabulary remain stable; this registry is the
-/// presentation boundary for global Canvas controls. Org controls select
-/// their closed, scoped subset through `LineageMode` in the browser shell.
+/// presentation boundary for global Canvas controls. Team controls select
+/// their closed, scoped subset through `TeamMode` in the browser shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanvasDestination {
-    Org,
+    Team,
     Tasks,
     Agents,
 }
 
-/// Canvas destinations that are meaningful inside one organization surface.
+/// Canvas destinations that are meaningful inside one team surface.
 ///
 /// This type is intentionally distinct from [`CanvasDestination`]: adding a
-/// global destination cannot make it appear in an organization tablist without an
+/// global destination cannot make it appear in a team tablist without an
 /// explicit scoped variant and mapping here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrgDestination {
-    Org,
+pub enum TeamDestination {
+    Team,
     Tasks,
     Agents,
 }
 
-impl OrgDestination {
-    /// Every organization-scoped destination, left to right.
-    pub const ALL: [Self; 3] = [Self::Org, Self::Tasks, Self::Agents];
+impl TeamDestination {
+    /// Every team-scoped destination, left to right.
+    pub const ALL: [Self; 3] = [Self::Team, Self::Tasks, Self::Agents];
 
     /// Corresponding destination in the global Canvas vocabulary.
     #[must_use]
     pub const fn canvas(self) -> CanvasDestination {
         match self {
-            Self::Org => CanvasDestination::Org,
+            Self::Team => CanvasDestination::Team,
             Self::Tasks => CanvasDestination::Tasks,
             Self::Agents => CanvasDestination::Agents,
         }
@@ -111,13 +111,13 @@ impl OrgDestination {
 
 impl CanvasDestination {
     /// Every global destination, left to right.
-    pub const ALL: [Self; 3] = [Self::Org, Self::Tasks, Self::Agents];
+    pub const ALL: [Self; 3] = [Self::Team, Self::Tasks, Self::Agents];
 
     /// Presentation label independent of internal protocol spelling.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Org => "Team",
+            Self::Team => "Team",
             Self::Tasks => "Board",
             Self::Agents => "Agents",
         }
@@ -127,7 +127,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn for_axis(axis: Axis) -> Self {
         match axis {
-            Axis::Topology => Self::Org,
+            Axis::Topology => Self::Team,
             Axis::Flow => Self::Tasks,
         }
     }
@@ -136,7 +136,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn axis(self) -> Option<Axis> {
         match self {
-            Self::Org => Some(Axis::Topology),
+            Self::Team => Some(Axis::Topology),
             Self::Tasks => Some(Axis::Flow),
             Self::Agents => None,
         }
@@ -146,9 +146,9 @@ impl CanvasDestination {
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
-            Self::Org => "Resident organizations, agents, capabilities, and possession",
+            Self::Team => "Resident teams, agents, capabilities, and possession",
             Self::Tasks => "Board of tasks, claims, deferrals, and reviews",
-            Self::Agents => "Converse across persistent organization agents",
+            Self::Agents => "Converse across persistent team agents",
         }
     }
 }
@@ -255,9 +255,9 @@ mod tests {
             ["Team", "Board", "Agents"],
         );
         assert_eq!(
-            OrgDestination::ALL.map(OrgDestination::canvas),
+            TeamDestination::ALL.map(TeamDestination::canvas),
             [
-                CanvasDestination::Org,
+                CanvasDestination::Team,
                 CanvasDestination::Tasks,
                 CanvasDestination::Agents,
             ],

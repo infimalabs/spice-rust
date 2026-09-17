@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 
-/** Prove two complete lineage consoles tile one viewport and scroll alone. */
+/** Prove two complete team consoles tile one viewport and scroll alone. */
 export async function assertTiledWorkspace(page, fleet, screenshot) {
-  const surfaces = fleet.locator(".organization-surface");
-  assert.equal(await surfaces.count(), 2, "two lineages render two organization consoles");
+  const surfaces = fleet.locator(".team-surface");
+  assert.equal(await surfaces.count(), 2, "two teams render two team consoles");
   const geometry = await surfaces.evaluateAll((nodes) => ({
     viewport: document.documentElement.clientWidth,
     consoles: nodes.map((node) => {
@@ -13,14 +13,14 @@ export async function assertTiledWorkspace(page, fleet, screenshot) {
         right: bounds.right,
         top: bounds.top,
         width: bounds.width,
-        weight: Number(node.dataset.lineageWeight),
-        toolbars: node.querySelectorAll(".organization-toolbar").length,
+        weight: Number(node.dataset.teamWeight),
+        toolbars: node.querySelectorAll(".team-toolbar").length,
         tabs: node.querySelectorAll('[role="tab"]').length,
-        agents: node.querySelectorAll(".organization-agent").length,
-        lifetimes: node.querySelectorAll(".organization-lifetime").length,
-        sends: node.querySelectorAll(".organization-send").length,
+        agents: node.querySelectorAll(".team-agent").length,
+        lifetimes: node.querySelectorAll(".team-lifetime").length,
+        sends: node.querySelectorAll(".team-send").length,
         tickers: node.querySelectorAll(".ticker").length,
-        activity: node.querySelectorAll(".organization-activity-grid").length,
+        activity: node.querySelectorAll(".team-activity-grid").length,
       };
     }),
   }));
@@ -33,7 +33,7 @@ export async function assertTiledWorkspace(page, fleet, screenshot) {
   assert.deepEqual(
     geometry.consoles.map(({ agents, weight }) => weight === agents),
     [true, true],
-    "each lineage's flex weight remains its independent admitted agent count",
+    "each team's flex weight remains its independent admitted agent count",
   );
   const [left, right] = geometry.consoles;
   assert.ok(
@@ -44,11 +44,11 @@ export async function assertTiledWorkspace(page, fleet, screenshot) {
   assert.ok(Math.abs(left.top - right.top) <= 1, "sibling consoles share one tile row");
   assert.ok(
     Math.abs(left.width / left.weight - right.width / right.weight) <= 1,
-    "sibling console widths remain proportional to lineage weight",
+    "sibling console widths remain proportional to team weight",
   );
   await page.screenshot({ path: screenshot, fullPage: false });
 
-  const scrollers = fleet.locator(".organization-compose");
+  const scrollers = fleet.locator(".team-compose");
   await scrollers.first().evaluate((node) => {
     node.style.maxHeight = "120px";
     node.scrollTop = node.scrollHeight;

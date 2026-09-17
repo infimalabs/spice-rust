@@ -52,11 +52,16 @@ fn current_rows_cross_schema_two_without_an_alternate_rewrite() {
     let scratch = Scratch::new();
     let path = scratch.path().join("current.sqlite3");
     schema_two_lineage_authority(&path, [StoredLineage::Current; 3]);
-    let before = lineage_payloads(&Connection::open(&path).expect("open current fixture"));
+    let before = lineage_payloads(
+        carrier_bytes(&Connection::open(&path).expect("open current fixture"))
+            .iter()
+            .map(|bytes| team_spelling(bytes))
+            .collect(),
+    );
 
     let journal = Journal::open(&path).expect("the current authority migrates");
 
-    let mut after = lineage_payloads(&journal.connection);
+    let mut after = lineage_payloads(carrier_bytes(&journal.connection));
     after[2]
         .as_object_mut()
         .expect("lane seat request body")
@@ -131,7 +136,7 @@ fn schema_two_lineage_authority(path: &Path, shapes: [StoredLineage; 3]) {
             FactKind::LaneSeated,
             json!({
                 "lane": LANE,
-                "lineage_id": LINEAGE,
+                "team": LINEAGE,
                 "capability": "018f82d4-6f59-7d06-92e3-bce913116313",
                 "worktree": "/worktrees/lineage",
                 "life": "drive",
@@ -140,6 +145,7 @@ fn schema_two_lineage_authority(path: &Path, shapes: [StoredLineage; 3]) {
         ),
     );
     insert_lane_seat_receipt(&journal);
+    spell_lineage(&journal.connection);
     reshape_row(
         &journal.connection,
         "SELECT body FROM residency_head WHERE singleton = 1",
@@ -207,7 +213,7 @@ fn remove_head_topology_revision(connection: &Connection) {
 fn seed_head_identity(connection: &Connection) {
     let mut head = residency_head();
     head.lanes[0].lane = uuid(LANE);
-    head.lanes[0].lineage_id = uuid(LINEAGE);
+    head.lanes[0].team = uuid(LINEAGE);
     connection
         .execute(
             "UPDATE residency_head SET body = ?1 WHERE singleton = 1",
@@ -227,7 +233,7 @@ fn insert_lane_seat_receipt(journal: &Journal) {
         expected: Vec::new(),
         body: json!({
             "lane": LANE,
-            "lineage_id": LINEAGE,
+            "team": LINEAGE,
             "worktree": "/worktrees/lineage",
             "life": "drive",
             "vendor": "codex"
@@ -308,13 +314,13 @@ fn reshape_row(
 fn assert_all_carriers(connection: &Connection, expected: &str) {
     let bytes = carrier_bytes(connection);
     let head: ResidencyHead = wire::decode(&bytes[0]).expect("migrated head decodes");
-    assert_eq!(head.lanes[0].lineage_id, uuid(expected));
+    assert_eq!(head.lanes[0].team, uuid(expected));
     let fact: Envelope<AnyFact> = wire::decode(&bytes[1]).expect("migrated fact decodes");
     assert_eq!(fact.fact.kind(), FactKind::LaneSeated);
     let request: Command<wire::intent::LaneSeat> =
         wire::decode(&bytes[2]).expect("migrated request decodes");
     assert_eq!(request.kind, CommandKind::LaneSeat);
-    assert_eq!(request.body.lineage_id, uuid(expected));
+    assert_eq!(request.body.team, uuid(expected));
     assert_eq!(
         wire::encode(&head).expect("canonical head"),
         bytes[0],
@@ -346,13 +352,10 @@ fn assert_all_carriers(connection: &Connection, expected: &str) {
             .pointer(pointer)
             .and_then(Value::as_object)
             .expect("migrated lineage object");
-        assert_eq!(
-            object.get("lineage_id").and_then(Value::as_str),
-            Some(expected)
-        );
+        assert_eq!(object.get("team").and_then(Value::as_str), Some(expected));
         assert!(
-            !object.contains_key("team"),
-            "carrier {index} retained team"
+            !object.contains_key("lineage_id"),
+            "carrier {index} retained lineage_id"
         );
     }
 }
@@ -372,8 +375,8 @@ fn carrier_bytes(connection: &Connection) -> Vec<Vec<u8>> {
         .collect()
 }
 
-fn lineage_payloads(connection: &Connection) -> Vec<Value> {
-    carrier_bytes(connection)
+fn lineage_payloads(carriers: Vec<Vec<u8>>) -> Vec<Value> {
+    carriers
         .into_iter()
         .zip(["/lanes/0", "/fact", "/body"])
         .map(|(bytes, pointer)| {
@@ -395,19 +398,4 @@ fn residency_head_from(connection: &Connection) -> ResidencyHead {
         )
         .expect("read migrated residency head");
     wire::decode(&bytes).expect("migrated residency head decodes")
-}
-
-fn version_records(connection: &Connection) -> (u32, u32) {
-    (
-        connection
-            .query_row(
-                "SELECT version FROM journal_schema WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .expect("read schema row version"),
-        connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .expect("read schema pragma version"),
-    )
 }

@@ -729,7 +729,7 @@ fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value
     };
     let crate::body::LaneSeated {
         lane,
-        lineage_id,
+        team,
         capability: _,
         name,
         worktree,
@@ -740,7 +740,7 @@ fn stream_fact_body(fact: &AnyFact) -> serde_json::Map<String, serde_json::Value
     } = durable;
     let visible = StreamLaneSeated {
         lane,
-        lineage_id,
+        team,
         name,
         worktree,
         life,
@@ -795,7 +795,7 @@ impl<'de> Deserialize<'de> for StreamFactBody {
 #[serde(deny_unknown_fields)]
 struct StreamLaneSeated {
     lane: CanonicalUuid,
-    lineage_id: CanonicalUuid,
+    team: CanonicalUuid,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

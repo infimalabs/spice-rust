@@ -152,9 +152,9 @@ mod tests {
 
     fn renewal(state: LaneRenewalState) -> LaneRenewalRecord {
         LaneRenewalRecord {
-            lineage_id: "11111111-1111-4111-8111-111111111111"
+            team: "11111111-1111-4111-8111-111111111111"
                 .parse()
-                .expect("fixture lineage is canonical"),
+                .expect("fixture team is canonical"),
             lane: "22222222-2222-4222-8222-222222222222"
                 .parse()
                 .expect("fixture lane is canonical"),
@@ -183,7 +183,7 @@ mod tests {
 
         let requested_record = renewal(LaneRenewalState::Requested {
             predecessor: predecessor.clone(),
-            org_slot: 2,
+            team_slot: 2,
         });
         let requested = agent_renewal_control("Ada", true, true, Some(&requested_record));
         assert_eq!(
@@ -199,7 +199,7 @@ mod tests {
 
         let handoff_record = renewal(LaneRenewalState::HandoffPending {
             predecessor: predecessor.clone(),
-            org_slot: 2,
+            team_slot: 2,
         });
         let handoff = agent_renewal_control("Ada", false, true, Some(&handoff_record));
         assert_eq!(
@@ -210,7 +210,7 @@ mod tests {
         let succeeded_record = renewal(LaneRenewalState::SuccessorStarted {
             predecessor,
             successor,
-            org_slot: 2,
+            team_slot: 2,
         });
         let succeeded = agent_renewal_control("Ada", true, true, Some(&succeeded_record));
         assert_eq!(
@@ -228,7 +228,7 @@ mod tests {
     fn retains_exact_launch_refusal_and_authority() {
         let refused_record = renewal(LaneRenewalState::LaunchRefused {
             predecessor: identity("33333333-3333-4333-8333-333333333333"),
-            org_slot: 2,
+            team_slot: 2,
             reason: "configured executable is unavailable".to_owned(),
         });
         let refused = agent_renewal_control("Ada", false, true, Some(&refused_record));
@@ -281,7 +281,7 @@ mod tests {
         let predecessor = identity("33333333-3333-4333-8333-333333333333");
         let handoff_record = renewal(LaneRenewalState::HandoffPending {
             predecessor: predecessor.clone(),
-            org_slot: 2,
+            team_slot: 2,
         });
         let handoff = agent_renewal_control("Ada", true, true, Some(&handoff_record));
         assert_eq!(handoff.blocked, Some(HANDOFF_BLOCK));
@@ -293,7 +293,7 @@ mod tests {
 
         let requested_record = renewal(LaneRenewalState::Requested {
             predecessor: predecessor.clone(),
-            org_slot: 2,
+            team_slot: 2,
         });
         let cancel = agent_renewal_control("Ada", false, false, Some(&requested_record));
         assert_eq!(
@@ -305,7 +305,7 @@ mod tests {
 
         let refused_record = renewal(LaneRenewalState::LaunchRefused {
             predecessor,
-            org_slot: 2,
+            team_slot: 2,
             reason: "configured executable is unavailable".to_owned(),
         });
         let refused = agent_renewal_control("Ada", false, false, Some(&refused_record));
@@ -325,20 +325,20 @@ mod tests {
             None,
             Some(renewal(LaneRenewalState::Requested {
                 predecessor: predecessor.clone(),
-                org_slot: 1,
+                team_slot: 1,
             })),
             Some(renewal(LaneRenewalState::HandoffPending {
                 predecessor: predecessor.clone(),
-                org_slot: 1,
+                team_slot: 1,
             })),
             Some(renewal(LaneRenewalState::SuccessorStarted {
                 predecessor: predecessor.clone(),
                 successor,
-                org_slot: 1,
+                team_slot: 1,
             })),
             Some(renewal(LaneRenewalState::LaunchRefused {
                 predecessor,
-                org_slot: 1,
+                team_slot: 1,
                 reason: "refused".to_owned(),
             })),
         ];

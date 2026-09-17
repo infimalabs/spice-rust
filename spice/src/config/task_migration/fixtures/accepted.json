@@ -71,7 +71,7 @@
       "source_kind": "export",
       "decision": "selected-empty",
       "source_file": "/exports/release-0.31.0-tasks.json",
-      "lineage": "alpha",
+      "team": "alpha",
       "field": "teams[0].shellSettings.taskRc"
     },
     {
@@ -79,7 +79,7 @@
       "source_kind": "export",
       "decision": "selected-empty",
       "source_file": "/exports/release-0.31.0-tasks.json",
-      "lineage": "beta",
+      "team": "beta",
       "field": "teams[1].shellSettings.rc"
     },
     {
@@ -87,7 +87,7 @@
       "source_kind": "export",
       "decision": "selected-empty",
       "source_file": "/exports/release-0.31.0-tasks.json",
-      "lineage": "gamma",
+      "team": "gamma",
       "field": "teams[2].shellSettings.taskRc[0]",
       "list_index": 0
     }

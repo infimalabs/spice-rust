@@ -1,4 +1,4 @@
-// Per-organization watchband and reference-viewport proofs for the real Canvas fixture.
+// Per-team watchband and reference-viewport proofs for the real Canvas fixture.
 import assert from "node:assert/strict";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -11,11 +11,11 @@ import {
 import { primaryDestination } from "./composer-shards.mjs";
 import { assertPrimaryComposerDragging } from "./composer-dragging.mjs";
 import {
-  assertReferenceOrgActions,
+  assertReferenceTeamActions,
   captureReferenceControls,
 } from "./control-reference.mjs";
-import { assertLineageResponsiveLayout } from "./lineage-responsive.mjs";
-import { assertOrgNavigation, ORG_DESTINATION_LABELS } from "./organization-navigation.mjs";
+import { assertTeamResponsiveLayout } from "./team-responsive.mjs";
+import { assertTeamNavigation, TEAM_DESTINATION_LABELS } from "./team-navigation.mjs";
 import {
   chooseCanvasView,
   reply,
@@ -51,8 +51,8 @@ async function clickRangeMaximum(range) {
   });
 }
 
-async function installLifetimeCommandProbe(page, missingLineage) {
-  await page.evaluate((missingLineage) => {
+async function installLifetimeCommandProbe(page, missingTeam) {
+  await page.evaluate((missingTeam) => {
     window.__canvasLifetimeCommands = [];
     window.__holdCanvasLifetimeCommand = false;
     window.__releaseCanvasLifetimeCommand = null;
@@ -62,12 +62,12 @@ async function installLifetimeCommandProbe(page, missingLineage) {
     let intercepted = false;
     const rewrite = (bytes) => {
       const command = JSON.parse(new TextDecoder().decode(bytes));
-      const policy = command.kind === "lineage::configure"
+      const policy = command.kind === "team::configure"
         && Object.hasOwn(command.body, "life");
       if (policy) window.__canvasLifetimeCommands.push(command.body.life);
       if (!intercepted && policy) {
         intercepted = true;
-        command.body.lineage_id = missingLineage;
+        command.body.team = missingTeam;
         bytes = new TextEncoder().encode(JSON.stringify(command));
       }
       return { bytes, policy };
@@ -94,10 +94,10 @@ async function installLifetimeCommandProbe(page, missingLineage) {
         transmit(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength), false);
       }
     };
-  }, missingLineage);
+  }, missingTeam);
 }
 
-async function assertFinalLifetimePointerChoice(page, range, lineage) {
+async function assertFinalLifetimePointerChoice(page, range, team) {
   const commandsBeforeGesture = await page.evaluate(() => window.__canvasLifetimeCommands.length);
   await page.evaluate(() => { window.__holdCanvasLifetimeCommand = true; });
   await dragRangeToMinimum(page, range);
@@ -105,11 +105,11 @@ async function assertFinalLifetimePointerChoice(page, range, lineage) {
     page,
     "the final lifetime choice is held while pending",
     TRANSITION_MS,
-    (lineage) => document
-      .querySelector(`.organization-surface[data-lineage-id="${lineage}"] .organization-composer-controls`)
+    (team) => document
+      .querySelector(`.team-surface[data-team="${team}"] .team-composer-controls`)
       ?.dataset.lifetimePending === "true"
       && typeof window.__releaseCanvasLifetimeCommand === "function",
-    lineage,
+    team,
   );
   assert.equal(await range.isDisabled(), true, "the pending final choice disables the range");
   assert.deepEqual(
@@ -200,7 +200,7 @@ async function waitForNarrationCursor(surface, key) {
   ), { key, deadlineMs: TRANSITION_MS });
 }
 
-export async function assertPerOrgWatchbands(
+export async function assertPerTeamWatchbands(
   page,
   fixture,
   worktrees,
@@ -208,71 +208,71 @@ export async function assertPerOrgWatchbands(
 ) {
   const before = await reply(fixture, ["lane"]);
   const primary = before.body.lanes.find((lane) => lane.worktree === worktrees[0]);
-  assert.ok(primary, "the primary organization remains seated for watchband proof");
+  assert.ok(primary, "the primary team remains seated for watchband proof");
   const added = await reply(fixture, [
     "lane", "add", worktrees[4],
     "--life", "Drive",
     "--vendor", "claude",
   ]);
   const awakened = await reply(fixture, ["lane", "wake", added.body.lane]);
-  assert.equal(awakened.body.to, "occupied", "the secondary organization starts a live vendor");
+  assert.equal(awakened.body.to, "occupied", "the secondary team starts a live vendor");
   await page.reload({ waitUntil: "networkidle" });
   await chooseCanvasView(page, "Lanes");
   const console = page.locator('[data-pane="agent-console"]');
   await console.getByRole("tab", { name: /^Agents/ }).first().click();
-  await waitForElement(page, "second organization renders after reload", CONNECT_MS,
-    console.locator(".organization-surface").nth(1));
+  await waitForElement(page, "second team renders after reload", CONNECT_MS,
+    console.locator(".team-surface").nth(1));
 
   const lanes = await reply(fixture, ["lane"]);
   const secondary = lanes.body.lanes.find((lane) => lane.worktree === worktrees[4]);
-  assert.ok(secondary, "the second organization is independently seated");
+  assert.ok(secondary, "the second team is independently seated");
   const primarySurface = console.locator(
-    `.organization-surface[data-lineage-id="${primary.lineage_id}"]`,
+    `.team-surface[data-team="${primary.team}"]`,
   );
   const secondarySurface = console.locator(
-    `.organization-surface[data-lineage-id="${secondary.lineage_id}"]`,
+    `.team-surface[data-team="${secondary.team}"]`,
   );
   for (const [surface, label] of [
     [primarySurface, "primary"],
     [secondarySurface, "secondary"],
   ]) {
-    await assertOrgNavigation(surface, `${label} populated organization`);
+    await assertTeamNavigation(surface, `${label} populated team`);
   }
   const primaryTabs = primarySurface.getByRole("tab");
   await primaryTabs.first().focus();
-  for (const [index, label] of ORG_DESTINATION_LABELS.entries()) {
+  for (const [index, label] of TEAM_DESTINATION_LABELS.entries()) {
     assert.match(
       (await page.locator(":focus").innerText()).trim(),
       new RegExp(`^${label}`),
-      `organization keyboard traversal follows visible order at ${label}`,
+      `team keyboard traversal follows visible order at ${label}`,
     );
-    if (index < ORG_DESTINATION_LABELS.length - 1) await page.keyboard.press("Tab");
+    if (index < TEAM_DESTINATION_LABELS.length - 1) await page.keyboard.press("Tab");
   }
-  const selectedMode = (surface) => surface.locator(".organization-pane").getAttribute("data-organization-mode");
+  const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
     ["Lanes", "Lanes"],
-    "each newly rendered organization begins in Lanes",
+    "each newly rendered team begins in Lanes",
   );
   await primarySurface.getByRole("tab", { name: /^Team/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Org", "Lanes"],
-    "switching the primary organization to Org leaves its sibling in Lanes",
+    ["Team", "Lanes"],
+    "switching the primary team to Team leaves its sibling in Lanes",
   );
   await secondarySurface.getByRole("tab", { name: /^Team/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Org", "Org"],
-    "two organizations retain different selected views simultaneously",
+    ["Team", "Team"],
+    "two teams retain different selected views simultaneously",
   );
   await primarySurface.getByRole("tab", { name: /^Board/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Tasks", "Org"],
+    ["Tasks", "Team"],
     "a subsequent primary switch preserves the secondary selection",
   );
-  await assertLineageResponsiveLayout(page, console);
+  await assertTeamResponsiveLayout(page, console);
   await secondarySurface.getByRole("tab", { name: /^Agents/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
@@ -284,9 +284,9 @@ export async function assertPerOrgWatchbands(
   assert.equal(
     noCardDestination.rendered.length,
     0,
-    "the freshly seated secondary agent exercises the primary lineage default before any card",
+    "the freshly seated secondary agent exercises the primary team default before any card",
   );
-  const firstSecondaryDirection = "the lineage default precedes this first rendered card";
+  const firstSecondaryDirection = "the team default precedes this first rendered card";
   await secondarySurface.getByRole("textbox").fill(firstSecondaryDirection);
   await secondarySurface.getByRole("button", { name: "Drive", exact: true }).click();
   const firstSecondaryInbox = await reply(fixture, ["inbox", secondary.lane]);
@@ -304,41 +304,41 @@ export async function assertPerOrgWatchbands(
   );
   await secondarySurface.getByRole("tab", { name: /^Board/ }).click();
   assert.equal(
-    await secondarySurface.locator(".organization-task-eyebrow").innerText(),
+    await secondarySurface.locator(".team-task-eyebrow").innerText(),
     "Team work",
     "the empty Board workspace uses the Team presentation name",
   );
   const queuedDirection = secondarySurface.locator(
-    `.organization-direction-row[data-agent-lane="${secondary.lane}"]`,
+    `.team-direction-row[data-agent-lane="${secondary.lane}"]`,
   );
   await queuedDirection.waitFor({ timeout: TRANSITION_MS });
   assert.equal(
-    (await queuedDirection.locator(".organization-direction-preview").innerText()).trim(),
+    (await queuedDirection.locator(".team-direction-preview").innerText()).trim(),
     firstSecondaryDirection,
     "Board shows the admitted newest direction preview without parsing authored text",
   );
   assert.equal(
-    (await queuedDirection.locator(".organization-direction-count").innerText()).trim(),
+    (await queuedDirection.locator(".team-direction-count").innerText()).trim(),
     "1 pending",
     "Board keeps queued direction separate from active task count",
   );
   assert.equal(
-    await secondarySurface.locator(".organization-task-row").count(),
+    await secondarySurface.locator(".team-task-row").count(),
     0,
     "queued direction is not presented as allocator-eligible work",
   );
   const secondaryTaskSections = secondarySurface.locator(
-    ".organization-task-workspace > .organization-task-section",
+    ".team-task-workspace > .team-task-section",
   );
   assert.deepEqual(
     await secondaryTaskSections.getByRole("heading", { level: 3 }).allTextContents(),
     ["Active tasks", "Direction queue"],
     "active ownership remains ahead of queued direction",
   );
-  const emptyActive = secondaryTaskSections.first().locator(".organization-task-empty");
+  const emptyActive = secondaryTaskSections.first().locator(".team-task-empty");
   assert.equal(
     (await emptyActive.innerText()).trim(),
-    "No active tasks for this organization.",
+    "No active tasks for this team.",
     "the production empty active state remains explicit",
   );
   assert.equal(
@@ -347,12 +347,12 @@ export async function assertPerOrgWatchbands(
     "ordinary emptiness is not announced as an unavailable snapshot",
   );
   await secondarySurface.getByRole("tab", { name: /^Agents/ }).click();
-  assert.equal(await console.locator(".organization-surface").count(), 2);
-  assert.equal(await console.locator(".organization-speech").count(), 2);
-  assert.equal(await console.locator(".organization-lifetime").count(), 2);
-  const weightedWidths = await console.locator(".organization-surface").evaluateAll((surfaces) =>
+  assert.equal(await console.locator(".team-surface").count(), 2);
+  assert.equal(await console.locator(".team-speech").count(), 2);
+  assert.equal(await console.locator(".team-lifetime").count(), 2);
+  const weightedWidths = await console.locator(".team-surface").evaluateAll((surfaces) =>
     surfaces.map((surface) => ({
-      weight: Number(surface.dataset.lineageWeight),
+      weight: Number(surface.dataset.teamWeight),
       width: surface.getBoundingClientRect().width,
     })),
   );
@@ -360,16 +360,16 @@ export async function assertPerOrgWatchbands(
   assert.deepEqual(
     widthsByWeight.map(({ weight }) => weight),
     [1, 4],
-    "lineage weights remain the admitted member counts",
+    "team weights remain the admitted member counts",
   );
   assert.ok(
     widthsByWeight[1].width > widthsByWeight[0].width,
-    "the four-agent lineage remains wider than its one-agent sibling",
+    "the four-agent team remains wider than its one-agent sibling",
   );
-  const modeGeometry = await console.locator(".organization-surface").evaluateAll((surfaces) =>
+  const modeGeometry = await console.locator(".team-surface").evaluateAll((surfaces) =>
     surfaces.map((surface) => ({
       width: surface.getBoundingClientRect().width,
-      labels: [...surface.querySelectorAll(".organization-mode > span:first-child")].map((label) => {
+      labels: [...surface.querySelectorAll(".team-mode > span:first-child")].map((label) => {
         const button = label.parentElement.getBoundingClientRect();
         const rect = label.getBoundingClientRect();
         return {
@@ -384,19 +384,19 @@ export async function assertPerOrgWatchbands(
   assert.ok(
     modeGeometry.every(({ labels }) => labels.every((label, index) =>
       label.contained && (index === 0 || labels[index - 1].right <= label.left))),
-    `organization-local tabs fit without overlapping at every lineage width: ${JSON.stringify(modeGeometry)}`,
+    `team-local tabs fit without overlapping at every team width: ${JSON.stringify(modeGeometry)}`,
   );
 
-  const primaryLife = primarySurface.locator('.organization-lifetime input[type="range"]');
+  const primaryLife = primarySurface.locator('.team-lifetime input[type="range"]');
   const primarySeatLives = new Map(
     lanes.body.lanes
-      .filter((lane) => lane.lineage_id === primary.lineage_id)
+      .filter((lane) => lane.team === primary.team)
       .map((lane) => [lane.lane, lane.life]),
   );
   const initialPrimaryPolicy = lanes.body.subscriptions.find(
-    (subscription) => subscription.lineage_id === primary.lineage_id,
+    (subscription) => subscription.team === primary.team,
   )?.policy;
-  assert.ok(initialPrimaryPolicy, "the primary organization has one authoritative task policy");
+  assert.ok(initialPrimaryPolicy, "the primary team has one authoritative task policy");
   const initialPrimaryLabel = `${initialPrimaryPolicy[0].toUpperCase()}${initialPrimaryPolicy.slice(1)}`;
   const initialPrimaryIndex = { steer: "0", drive: "1", drain: "2" }[initialPrimaryPolicy];
   await installLifetimeCommandProbe(page, staleEpoch);
@@ -405,39 +405,39 @@ export async function assertPerOrgWatchbands(
     page,
     "rejected lifetime command settles",
     TRANSITION_MS,
-    (lineage) => document
-      .querySelector(`.organization-surface[data-lineage-id="${lineage}"] .organization-composer-controls`)
+    (team) => document
+      .querySelector(`.team-surface[data-team="${team}"] .team-composer-controls`)
       ?.dataset.lifetimePending === "false",
-    primary.lineage_id,
+    primary.team,
   );
   await primarySurface
     .getByRole("button", { name: initialPrimaryLabel, exact: true })
     .waitFor();
   assert.equal(await primaryLife.inputValue(), initialPrimaryIndex);
-  assert.match(await primarySurface.locator(".organization-control-issue").innerText(), /lineage::missing/);
+  assert.match(await primarySurface.locator(".team-control-issue").innerText(), /team::missing/);
 
   await primaryLife.press("End");
   await waitForPage(
     page,
     "accepted lifetime command settles",
     TRANSITION_MS,
-    (lineage) => document
-      .querySelector(`.organization-surface[data-lineage-id="${lineage}"] .organization-composer-controls`)
+    (team) => document
+      .querySelector(`.team-surface[data-team="${team}"] .team-composer-controls`)
       ?.dataset.lifetimePending === "false",
-    primary.lineage_id,
+    primary.team,
   );
   await primarySurface.getByRole("button", { name: "Drain", exact: true }).waitFor();
   const configured = await reply(fixture, ["lane"]);
   const primaryRows = configured.body.lanes.filter(
-    (lane) => lane.lineage_id === primary.lineage_id,
+    (lane) => lane.team === primary.team,
   );
   const primarySubscription = configured.body.subscriptions.find(
-    (subscription) => subscription.lineage_id === primary.lineage_id,
+    (subscription) => subscription.team === primary.team,
   );
-  assert.equal(primaryRows.length, 4, "the first organization retains all four worktrees");
+  assert.equal(primaryRows.length, 4, "the first team retains all four worktrees");
   assert.equal(primarySubscription?.policy, "drain");
   const primaryNarrator = primaryRows.find((lane) => lane.worktree === worktrees[0]);
-  assert.ok(primaryNarrator, "the first organization exposes a real narrator worktree");
+  assert.ok(primaryNarrator, "the first team exposes a real narrator worktree");
   const primaryNarrationCards = primarySurface.locator(
     `[data-card-kind="agent-message"][data-agent-lane="${primaryNarrator.lane}"]`,
   );
@@ -451,9 +451,9 @@ export async function assertPerOrgWatchbands(
   );
   await primarySurface.getByRole("tab", { name: /^Board/ }).click();
   assert.equal(
-    await primarySurface.locator('.organization-task-policy[aria-label="Task policy: Drain"]').count(),
+    await primarySurface.locator('.team-task-policy[aria-label="Task policy: Drain"]').count(),
     1,
-    "Board reports the authoritative organization task policy once",
+    "Board reports the authoritative team task policy once",
   );
   assert.equal(
     await primarySurface.getByText("Life", { exact: true }).count(),
@@ -464,18 +464,18 @@ export async function assertPerOrgWatchbands(
     assert.equal(
       await primarySurface.getByText(seatLife, { exact: true }).count(),
       0,
-      `Board does not present seat policy ${seatLife} as organization task state`,
+      `Board does not present seat policy ${seatLife} as team task state`,
     );
   }
-  const taskWorkspace = primarySurface.locator(".organization-task-workspace");
+  const taskWorkspace = primarySurface.locator(".team-task-workspace");
   const taskGeometry = async () => taskWorkspace.evaluate((workspace) => {
     const bounds = workspace.getBoundingClientRect();
-    const rows = [...workspace.querySelectorAll(".organization-task-row, .organization-direction-row")]
+    const rows = [...workspace.querySelectorAll(".team-task-row, .team-direction-row")]
       .map((row) => {
         const rect = row.getBoundingClientRect();
-        const title = row.querySelector(".organization-task-title");
+        const title = row.querySelector(".team-task-title");
         return {
-          card: row.classList.contains("organization-task-row"),
+          card: row.classList.contains("team-task-row"),
           borderRadius: getComputedStyle(row).borderRadius,
           left: rect.left,
           right: rect.right,
@@ -486,14 +486,14 @@ export async function assertPerOrgWatchbands(
       });
     return {
       clientWidth: workspace.clientWidth,
-      eyebrow: workspace.querySelector(".organization-task-eyebrow").textContent,
+      eyebrow: workspace.querySelector(".team-task-eyebrow").textContent,
       scrollWidth: workspace.scrollWidth,
       left: bounds.left,
       right: bounds.right,
       rows,
-      lists: [...workspace.querySelectorAll(".organization-task-list, .organization-direction-list")]
+      lists: [...workspace.querySelectorAll(".team-task-list, .team-direction-list")]
         .map((list) => ({ className: list.className, tagName: list.tagName })),
-      sections: [...workspace.querySelectorAll(":scope > .organization-task-section h3")]
+      sections: [...workspace.querySelectorAll(":scope > .team-task-section h3")]
         .map((heading) => heading.textContent),
     };
   });
@@ -526,14 +526,14 @@ export async function assertPerOrgWatchbands(
   };
   assertTaskGeometry(await taskGeometry(), "desktop");
   await page.screenshot({
-    path: join(artifacts, "canvas-tasks-organization-desktop.png"),
+    path: join(artifacts, "canvas-tasks-team-desktop.png"),
     fullPage: true,
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
   assertTaskGeometry(await taskGeometry(), "narrow");
   await page.screenshot({
-    path: join(artifacts, "canvas-tasks-organization-narrow.png"),
+    path: join(artifacts, "canvas-tasks-team-narrow.png"),
     fullPage: true,
   });
   await page.setViewportSize({ width: 1440, height: 900 });
@@ -542,15 +542,15 @@ export async function assertPerOrgWatchbands(
   assert.equal(
     await secondarySurface.getByRole("button", { name: "Drive", exact: true }).count(),
     1,
-    "the sibling organization keeps its own authoritative lifetime",
+    "the sibling team keeps its own authoritative lifetime",
   );
   const secondaryCards = secondarySurface.locator(
     `[data-card-kind="agent-message"][data-agent-lane="${secondary.lane}"]`,
   );
   await triggerAgentProse(secondary.worktree, secondaryCards);
 
-  const primarySpeech = primarySurface.locator('.organization-speech input[type="range"]');
-  const secondarySpeech = secondarySurface.locator('.organization-speech input[type="range"]');
+  const primarySpeech = primarySurface.locator('.team-speech input[type="range"]');
+  const secondarySpeech = secondarySurface.locator('.team-speech input[type="range"]');
   assert.deepEqual(
     [await primarySpeech.inputValue(), await secondarySpeech.inputValue()],
     ["0", "0"],
@@ -560,14 +560,14 @@ export async function assertPerOrgWatchbands(
   await secondarySpeech.fill("2");
   assert.equal(await primarySpeech.inputValue(), "0");
   assert.equal(await secondarySpeech.inputValue(), "2");
-  assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
-  assert.equal(await secondarySurface.locator(".organization-speech span").innerText(), "narrate");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
   await console.getByRole("tab", { name: /^Team/ }).first().click();
   await console.getByRole("tab", { name: /^Agents/ }).first().click();
-  assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives an organization redraw");
-  assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives an organization redraw");
-  assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
-  assert.equal(await secondarySurface.locator(".organization-speech span").innerText(), "narrate");
+  assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a team redraw");
+  assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a team redraw");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
 
   await page.evaluate(() => {
     window.__speechLog = [];
@@ -602,7 +602,7 @@ export async function assertPerOrgWatchbands(
     "Quiet hands an acked ACK to neither speechSynthesis nor an audio element",
   );
   await primarySpeech.fill("1");
-  assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "speak");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "speak");
   const spokenFinal = await streamAgentProse(
     primaryNarrator.worktree,
     primaryNarrationCards,
@@ -649,7 +649,7 @@ export async function assertPerOrgWatchbands(
   await waitForPage(page, "the spoken acknowledgement releases the global head", TRANSITION_MS,
     () => window.__speechActive === 0);
   await primarySpeech.fill("0");
-  assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
 
   await page.evaluate(() => { window.__speechLog = []; });
   const quietManual = primarySurface.getByLabel("Speak this message").first();
@@ -682,7 +682,7 @@ export async function assertPerOrgWatchbands(
   );
   const secondaryCardsBeforeBurst = await secondaryNarrationCards.count();
   await triggerAgentProse(primaryNarrator.worktree, primaryNarrationCards);
-  await waitForPage(page, "the first lineage owns the global narration head", CONNECT_MS,
+  await waitForPage(page, "the first team owns the global narration head", CONNECT_MS,
     () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
   await streamAgentProse(secondary.worktree, secondaryNarrationCards, "older queued narration");
   const newestNarration = await streamAgentProse(
@@ -706,17 +706,17 @@ export async function assertPerOrgWatchbands(
   assert.equal(
     await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length),
     1,
-    "a two-lineage burst preserves the active head and queues its tail",
+    "a two-team burst preserves the active head and queues its tail",
   );
   const transcriptCards = await console.locator('.mosaic-message-card[data-card-kind="agent-message"]')
     .count();
   await settleLatestSystemSpeech(page, "error");
-  await waitForPage(page, "a failed head advances to the coalesced lineage tail", TRANSITION_MS,
+  await waitForPage(page, "a failed head advances to the coalesced team tail", TRANSITION_MS,
     () => window.__speechLog.filter((row) => row.action === "speak").length === 2);
   assert.equal(
     await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").at(-1)?.text),
     "newest queued narration",
-    "the rapid same-lineage burst advances to its newest tail",
+    "the rapid same-team burst advances to its newest tail",
   );
   assert.equal(
     await console.locator('.mosaic-message-card[data-card-kind="agent-message"]').count(),
@@ -741,18 +741,18 @@ export async function assertPerOrgWatchbands(
   assert.equal(
     await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length),
     2,
-    "two stale entries from one queued lineage coalesce to one successor",
+    "two stale entries from one queued team coalesce to one successor",
   );
   await primarySpeech.fill("0");
-  await assertReferenceOrgActions(page, primarySurface);
+  await assertReferenceTeamActions(page, primarySurface);
 
   const policyMessage = "drain lifetime is task policy, not occupant teardown";
-  await primarySurface.locator(".organization-agent").first().getByRole("textbox").fill(policyMessage);
+  await primarySurface.locator(".team-agent").first().getByRole("textbox").fill(policyMessage);
   await primarySurface.getByRole("button", { name: "Drain", exact: true }).click();
   const inbox = await reply(fixture, ["inbox", primaryRows[0].lane]);
   assert.ok(
     inbox.body.lanes[0].pending.some((directive) => directive.text === policyMessage),
-    "the Drain-labelled submit follows the configured organization policy into real steering",
+    "the Drain-labelled submit follows the configured team policy into real steering",
   );
   assert.equal(
     await primarySurface.locator(".mosaic-message-card").filter({ hasText: policyMessage }).count(),
@@ -761,10 +761,10 @@ export async function assertPerOrgWatchbands(
   );
   assert.equal(await primarySpeech.inputValue(), "0", "Quiet survives a streamed refresh");
   assert.equal(await secondarySpeech.inputValue(), "2", "Narrate survives a streamed refresh");
-  assert.equal(await primarySurface.locator(".organization-speech span").innerText(), "quiet");
-  assert.equal(await secondarySurface.locator(".organization-speech span").innerText(), "narrate");
+  assert.equal(await primarySurface.locator(".team-speech span").innerText(), "quiet");
+  assert.equal(await secondarySurface.locator(".team-speech span").innerText(), "narrate");
 
-  const renderedPrimaryMembers = await primarySurface.locator(".organization-agent").evaluateAll(
+  const renderedPrimaryMembers = await primarySurface.locator(".team-agent").evaluateAll(
     (members) => members.map((member) => member.dataset.agentLane),
   );
   assert.equal(renderedPrimaryMembers.length, 4, "the quote fixture has four ordered members");
@@ -783,25 +783,25 @@ export async function assertPerOrgWatchbands(
 
   // Two lifecycle authorities can consume a vacancy: Drain assigns eligible
   // task work, and any pending directive wakes its target regardless of task
-  // policy. Hold the lineage in Steer and retire only this lane's test-owned
+  // policy. Hold the team in Steer and retire only this lane's test-owned
   // pending directions while proving the exact manual transition, then restore
   // Drain after the existing explicit wake. This makes vacancy observable
   // without weakening either the drain reply or the durable lane snapshot.
-  await assertFinalLifetimePointerChoice(page, primaryLife, primary.lineage_id);
+  await assertFinalLifetimePointerChoice(page, primaryLife, primary.team);
   await waitForPage(
     page,
     "temporary Steer policy settles before manual drain",
     TRANSITION_MS,
-    (lineage) => document
-      .querySelector(`.organization-surface[data-lineage-id="${lineage}"] .organization-composer-controls`)
+    (team) => document
+      .querySelector(`.team-surface[data-team="${team}"] .team-composer-controls`)
       ?.dataset.lifetimePending === "false",
-    primary.lineage_id,
+    primary.team,
   );
   await primarySurface.getByRole("button", { name: "Steer", exact: true }).waitFor();
   const steered = await reply(fixture, ["lane"]);
   assert.equal(
     steered.body.subscriptions.find(
-      (subscription) => subscription.lineage_id === primary.lineage_id,
+      (subscription) => subscription.team === primary.team,
     )?.policy,
     "steer",
     "the task allocator is paused before vacancy is created",
@@ -831,15 +831,15 @@ export async function assertPerOrgWatchbands(
     false,
     "the author of the second member's retained cards is seated in no lane",
   );
-  await assertOrgNavigation(primarySurface, "the organization with a vacant member");
+  await assertTeamNavigation(primarySurface, "the team with a vacant member");
   await waitForPage(page, "departed author cards retain their lane", TRANSITION_MS,
-    ({ lineage, lane }) => {
+    ({ team, lane }) => {
     const cards = [...document.querySelectorAll(
-      `.organization-surface[data-lineage-id="${lineage}"] `
+      `.team-surface[data-team="${team}"] `
         + `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
     )];
     return cards.length > 0 && cards.every((card) => card.dataset.producerTargetId === lane);
-  }, { lineage: primary.lineage_id, lane: lifecycleLane.lane });
+  }, { team: primary.team, lane: lifecycleLane.lane });
   assert.deepEqual(
     new Set(await departedCards.evaluateAll(
       (cards) => cards.map((card) => card.dataset.producerTargetId),
@@ -849,7 +849,7 @@ export async function assertPerOrgWatchbands(
   );
   assert.equal(
     vacantSnapshot.body.subscriptions.find(
-      (subscription) => subscription.lineage_id === primary.lineage_id,
+      (subscription) => subscription.team === primary.team,
     )?.policy,
     "steer",
     "Steer keeps the proved vacancy stable until the explicit wake",
@@ -872,30 +872,30 @@ export async function assertPerOrgWatchbands(
     page,
     "configured Drain policy is restored after manual wake",
     TRANSITION_MS,
-    (lineage) => document
-      .querySelector(`.organization-surface[data-lineage-id="${lineage}"] .organization-composer-controls`)
+    (team) => document
+      .querySelector(`.team-surface[data-team="${team}"] .team-composer-controls`)
       ?.dataset.lifetimePending === "false",
-    primary.lineage_id,
+    primary.team,
   );
   await primarySurface.getByRole("button", { name: "Drain", exact: true }).waitFor();
   const restored = await reply(fixture, ["lane"]);
   assert.equal(
     restored.body.subscriptions.find(
-      (subscription) => subscription.lineage_id === primary.lineage_id,
+      (subscription) => subscription.team === primary.team,
     )?.policy,
     "drain",
-    "the vacancy proof restores the configured organization policy",
+    "the vacancy proof restores the configured team policy",
   );
   await assertPrimaryComposerDragging(
     page,
     fixture,
     console,
-    primary.lineage_id,
-    secondary.lineage_id,
+    primary.team,
+    secondary.team,
     join(artifacts, "canvas-primary-composer-dragging.png"),
   );
   await page.screenshot({
-    path: join(artifacts, "canvas-light-watchband-organizations.png"),
+    path: join(artifacts, "canvas-light-watchband-teams.png"),
     fullPage: true,
   });
   await secondarySpeech.fill("1");
@@ -930,18 +930,18 @@ export async function assertPerOrgWatchbands(
   const reconnected = page.locator('[data-pane="agent-console"]');
   await reconnected.getByRole("tab", { name: /^Agents/ }).first().click();
   const restoredPrimary = reconnected.locator(
-    `.organization-surface[data-lineage-id="${primary.lineage_id}"]`,
+    `.team-surface[data-team="${primary.team}"]`,
   );
   const restoredSecondary = reconnected.locator(
-    `.organization-surface[data-lineage-id="${secondary.lineage_id}"]`,
+    `.team-surface[data-team="${secondary.team}"]`,
   );
-  await assertOrgNavigation(reconnected, "the reloaded organization selection");
-  const restoredPrimarySpeech = restoredPrimary.locator('.organization-speech input[type="range"]');
-  const restoredSecondarySpeech = restoredSecondary.locator('.organization-speech input[type="range"]');
+  await assertTeamNavigation(reconnected, "the reloaded team selection");
+  const restoredPrimarySpeech = restoredPrimary.locator('.team-speech input[type="range"]');
+  const restoredSecondarySpeech = restoredSecondary.locator('.team-speech input[type="range"]');
   assert.deepEqual(
     [await restoredPrimarySpeech.inputValue(), await restoredSecondarySpeech.inputValue()],
     ["0", "2"],
-    "a full reload restores each organization's browser-local speech mode",
+    "a full reload restores each team's browser-local speech mode",
   );
   process.stdout.write(
     `canvas retained speech-mode reload proof elapsed_ms=${Date.now() - reloadSpeechStarted}\n`,
@@ -966,34 +966,34 @@ export async function assertPerOrgWatchbands(
   await settleLatestSystemSpeech(page);
   await waitForPage(page, "post-reconnect narration drains", TRANSITION_MS,
     () => window.__speechActive === 0);
-  return { lineage: primary.lineage_id, policy: "drain" };
+  return { team: primary.team, policy: "drain" };
 }
 
 export async function captureReferenceViewport(page, artifacts) {
   await chooseCanvasView(page, "Lanes");
-  const organization = page.locator('[data-pane="agent-console"]');
-  await organization.getByRole("tab", { name: /^Team/ }).click();
+  const console = page.locator('[data-pane="agent-console"]');
+  await console.getByRole("tab", { name: /^Team/ }).click();
   for (const name of agentNames) {
-    await organization.locator(".organization-detail-card").getByText(name, { exact: true }).waitFor();
+    await console.locator(".team-detail-card").getByText(name, { exact: true }).waitFor();
   }
-  await organization.getByText("0 pending", { exact: true }).waitFor();
-  await organization.getByText("running", { exact: true }).first().waitFor();
+  await console.getByText("0 pending", { exact: true }).waitFor();
+  await console.getByText("running", { exact: true }).first().waitFor();
   await page.screenshot({
     path: join(artifacts, "canvas-reference-agent-details-dark.png"),
     fullPage: false,
   });
-  await organization.getByRole("tab", { name: /^Agents/ }).click();
-  await organization.locator(".mosaic-message-card").nth(3).waitFor({ timeout: 10_000 });
+  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await console.locator(".mosaic-message-card").nth(3).waitFor({ timeout: 10_000 });
   assert.equal(
     await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches),
     true,
     "the reference capture explicitly exercises dark mode",
   );
-  await assertFourAgentDensity(organization);
+  await assertFourAgentDensity(console);
   assert.equal(
-    await organization.locator(".organization-surface").getAttribute("data-lineage-weight"),
+    await console.locator(".team-surface").getAttribute("data-team-weight"),
     "4",
-    "the reference viewport retains the four-agent lineage weight",
+    "the reference viewport retains the four-agent team weight",
   );
   await assertMosaicLattice(page, false);
   const pixels = await page.evaluate(() => ({
@@ -1006,13 +1006,13 @@ export async function captureReferenceViewport(page, artifacts) {
   assert.equal(
     await page.locator(".mosaic-workspace > .topbar").count(),
     0,
-    "the live lineage has no redundant operator control bar",
+    "the live team has no redundant operator control bar",
   );
   assert.equal(pixels.bodyWidth, 1000, "the reference viewport has no horizontal overflow");
   assert.equal(pixels.background, "rgb(16, 20, 17)", "the captured surface uses the dark palette");
   await captureReferenceControls(
     page,
-    organization,
+    console,
     join(artifacts, "canvas-reference-four-agent-dark.png"),
   );
 }

@@ -34,7 +34,7 @@
     {
       "name": "resilience",
       "timeout_ms": 120000,
-      "scenarios": ["variant-surfaces", "socket-resilience", "organization-lifecycle"]
+      "scenarios": ["variant-surfaces", "socket-resilience", "team-lifecycle"]
     },
     {
       "name": "restart",

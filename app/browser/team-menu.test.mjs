@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { captureCursorFailureArtifact } from "./organization-menu.mjs";
+import { captureCursorFailureArtifact } from "./team-menu.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -78,7 +78,7 @@ test("the theme authority resolves before styles and exposes one current prefere
   const [index, style, renderer] = await Promise.all([
     readFile(resolve(root, "app/index.html"), "utf8"),
     readFile(resolve(root, "app/style.css"), "utf8"),
-    readFile(resolve(root, "app/src/browser/view/lineage_menu.rs"), "utf8"),
+    readFile(resolve(root, "app/src/browser/view/team_menu.rs"), "utf8"),
   ]);
   const prepaint = "<script data-canvas-theme>";
   assert.ok(
@@ -96,7 +96,7 @@ test("the theme authority resolves before styles and exposes one current prefere
 
 test("the product version and retained action payload each keep one owner", async () => {
   const [renderer, connection, mailbox, browser, compatibility, chrome, responsive] = await Promise.all([
-    readFile(resolve(root, "app/src/browser/view/lineage_menu.rs"), "utf8"),
+    readFile(resolve(root, "app/src/browser/view/team_menu.rs"), "utf8"),
     readFile(resolve(root, "app/src/browser/connection.rs"), "utf8"),
     readFile(resolve(root, "app/src/browser/action_mailbox.rs"), "utf8"),
     readFile(resolve(root, "app/src/browser.rs"), "utf8"),

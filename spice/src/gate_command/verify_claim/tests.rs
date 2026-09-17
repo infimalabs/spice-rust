@@ -88,7 +88,7 @@ impl Fixture {
             topology_revision: 0,
             lanes: vec![wire::LaneResidency {
                 lane,
-                lineage_id: lane,
+                team: lane,
                 name: None,
                 worktree: WORKTREE.to_owned(),
                 life: "drive".to_owned(),

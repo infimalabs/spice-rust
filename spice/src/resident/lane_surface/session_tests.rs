@@ -75,7 +75,7 @@ fn paths(fixture: &Fixture) -> RuntimePaths {
 fn row(fixture: &Fixture) -> wire::LaneResidency {
     wire::LaneResidency {
         lane: fixture.lane,
-        lineage_id: fixture.lane,
+        team: fixture.lane,
         name: None,
         worktree: WORKTREE.into(),
         life: "drive".into(),
@@ -268,7 +268,7 @@ fn resume_refuses_a_session_head_declared_by_another_vendor() {
 /// Reached only from the seat and recall surfaces: predecessor import faults on
 /// an empty lineage of its own before it ever asks for a resume.
 #[test]
-fn resume_refuses_a_durable_row_that_lost_its_occupant_lineage() {
+fn resume_refuses_a_durable_row_that_lost_its_occupant_team() {
     let fixture = fixture();
     let mut row = row(&fixture);
     row.lineage.clear();

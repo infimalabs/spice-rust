@@ -226,7 +226,7 @@ fn seat_reviewers(
         author_row(fixture, author_live),
         LaneResidency {
             lane: reviewer_lane,
-            lineage_id: reviewer_lane,
+            team: reviewer_lane,
             name: Some("reviewer".to_owned()),
             worktree: fixture.root.display().to_string(),
             life: "drive".to_owned(),
@@ -267,7 +267,7 @@ fn seat_reviewers(
 fn author_row(fixture: &AdvisoryRtkFixture, live: bool) -> LaneResidency {
     LaneResidency {
         lane: fixture.lane,
-        lineage_id: fixture.lane,
+        team: fixture.lane,
         name: Some("author".to_owned()),
         worktree: fixture.root.display().to_string(),
         life: "drive".to_owned(),

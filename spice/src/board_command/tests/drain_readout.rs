@@ -1,6 +1,6 @@
 use super::*;
 
-use wire::intent::LineageLife;
+use wire::intent::TeamLife;
 
 // The empty-drain readout counts the parked board with the definitions
 // task status uses, so one board holding one row of every parked kind has
@@ -65,8 +65,8 @@ fn parked_board(seats: &[Seat], bus: &Bus, epoch: CanonicalUuid) -> (BoardAnswer
 
 fn steered(mut answer: BoardAnswer, lane: CanonicalUuid) -> BoardAnswer {
     for subscription in &mut answer.residency.body.subscriptions {
-        if subscription.lineage_id == lane {
-            subscription.policy = LineageLife::Steer;
+        if subscription.team == lane {
+            subscription.policy = TeamLife::Steer;
         }
     }
     answer
@@ -89,7 +89,7 @@ fn empty_drain_readout_counts_the_parked_board_like_task_status() {
             &answer.environment(),
         )
         .is_none(),
-        "a steered lineage drains empty by construction",
+        "a steered team drains empty by construction",
     );
 
     let reply = drain_reply(&answer).expect("drained snapshot renders");
@@ -105,7 +105,7 @@ fn empty_drain_readout_counts_the_parked_board_like_task_status() {
             oops: 1,
         }
     );
-    assert_eq!(readout.lineage, LineageLife::Steer);
+    assert_eq!(readout.team, TeamLife::Steer);
     assert_eq!(
         readout.text,
         concat!(
@@ -115,7 +115,7 @@ fn empty_drain_readout_counts_the_parked_board_like_task_status() {
             "1 blocked (waiting on their dependencies), ",
             "1 waiting (deferred until their scheduled time), ",
             "1 oops (parked on the deferred triage board)\n",
-            "lineage policy: steer (the operator hands out work explicitly; ",
+            "team policy: steer (the operator hands out work explicitly; ",
             "the allocator selects nothing on its own)\n",
             "allocator scope: no allocator-selected task is available to this lane. ",
             "Parked rows are expected, not missed work. This result does not decide ",
@@ -141,7 +141,7 @@ fn empty_drain_readout_omits_zero_categories_and_names_each_policy() {
     let (root, bus, epoch, seats) = fixture("drain-readout-quiet", 1);
     let quiet = board(&bus, epoch, Actor::Lane(seats[0].lane));
     let readout = drain_reply(&quiet).expect("quiet snapshot renders").body;
-    assert_eq!(readout.lineage, LineageLife::Drain);
+    assert_eq!(readout.team, TeamLife::Drain);
     let mut lines = readout.text.lines();
     assert_eq!(lines.next(), Some("no available tasks"));
     assert_eq!(
@@ -150,18 +150,18 @@ fn empty_drain_readout_omits_zero_categories_and_names_each_policy() {
     );
     assert_eq!(
         lines.next(),
-        Some("lineage policy: drain (the allocator selects from all assignable work)")
+        Some("team policy: drain (the allocator selects from all assignable work)")
     );
     assert_eq!(lines.count(), 3, "three boundary sentences follow");
 
     let mut lanes = quiet.clone();
     for subscription in &mut lanes.residency.body.subscriptions {
-        subscription.policy = LineageLife::Drive;
+        subscription.policy = TeamLife::Drive;
     }
     let driven = drain_reply(&lanes).expect("driven snapshot renders").body;
     assert!(
         driven.text.lines().any(|line| {
-            line == "lineage policy: drive (the allocator selects only work created for this lineage)"
+            line == "team policy: drive (the allocator selects only work created for this team)"
         }),
         "{}",
         driven.text

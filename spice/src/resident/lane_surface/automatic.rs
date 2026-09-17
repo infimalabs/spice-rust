@@ -572,7 +572,7 @@ fn commit_automatic_wake(
         head = write
             .fact(
                 wire::body::LaneRenewalChanged {
-                    lineage_id: successor.lineage_id,
+                    team: successor.team,
                     lane: successor.lane,
                     renewal: Some(successor),
                 },

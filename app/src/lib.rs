@@ -82,7 +82,7 @@ pub(crate) enum PendingKind {
     LaneSeat,
     LaneArrange,
     LaneRenewal {
-        lineage: wire::CanonicalUuid,
+        team: wire::CanonicalUuid,
         lane: wire::CanonicalUuid,
         requested: bool,
     },
@@ -90,11 +90,11 @@ pub(crate) enum PendingKind {
         lane: wire::CanonicalUuid,
         submission: wire::CanonicalUuid,
     },
-    LineageConfigure {
-        lineage: wire::CanonicalUuid,
-        life: Option<wire::intent::LineageLife>,
+    TeamConfigure {
+        team: wire::CanonicalUuid,
+        life: Option<wire::intent::TeamLife>,
     },
-    LineageArrange,
+    TeamArrange,
     Steer,
     SteerSubmission {
         lane: wire::CanonicalUuid,
@@ -111,4 +111,4 @@ pub use runtime::{
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};
-pub use view::{Axis, CanvasDestination, OrgDestination, Pane};
+pub use view::{Axis, CanvasDestination, Pane, TeamDestination};

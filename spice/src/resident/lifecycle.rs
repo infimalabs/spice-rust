@@ -437,7 +437,7 @@ impl Runtime {
         false
     }
 
-    /// A topology command can change which organization policy governs any parked
+    /// A topology command can change which team policy governs any parked
     /// member, so it makes every local startup refusal eligible for retry.
     pub(super) fn observe_topology(&mut self, command: &wire::AdmittedCommand) -> bool {
         if self.observe_command(command.actor()) {
@@ -445,11 +445,11 @@ impl Runtime {
         }
         if matches!(
             command.body(),
-            wire::intent::Intent::LineageConfigure(_)
-                | wire::intent::Intent::LineageArrange(_)
+            wire::intent::Intent::TeamConfigure(_)
+                | wire::intent::Intent::TeamArrange(_)
                 | wire::intent::Intent::LaneArrange(_)
         ) {
-            // A deliberate topology or organization-policy change is new startup
+            // A deliberate topology or team-policy change is new startup
             // authority. Retry every member against the committed shape rather
             // than retaining a refusal parked under the preceding policy.
             self.backoff.release_all();
@@ -749,7 +749,7 @@ fn available_deadline(
     entries: &[Entry],
     ready_at: &BTreeMap<TaskStamp, Instant>,
     actor: &Actor,
-    subscription: &wire::LineageSubscription,
+    subscription: &wire::TeamSubscription,
     allocation: &board::NextConfig,
 ) -> CommandResult<Available> {
     available_from_selected(selected_ready(
@@ -766,7 +766,7 @@ fn drain_available(
     entries: &[Entry],
     ready_at: &BTreeMap<TaskStamp, Instant>,
     actor: &Actor,
-    subscription: &wire::LineageSubscription,
+    subscription: &wire::TeamSubscription,
     allocation: &board::NextConfig,
     first_member: bool,
 ) -> CommandResult<Available> {
@@ -781,7 +781,7 @@ fn selected_ready(
     entries: &[Entry],
     ready_at: &BTreeMap<TaskStamp, Instant>,
     actor: &Actor,
-    subscription: &wire::LineageSubscription,
+    subscription: &wire::TeamSubscription,
     allocation: &board::NextConfig,
 ) -> CommandResult<Option<SelectedReady>> {
     let recent_cell =

@@ -74,7 +74,7 @@ pub(in crate::board_command) fn taste_proposal_add(
                 "expected={expected_depends:?} supplied={:?}",
                 add.depends
             )),
-            "mine again against the current completed proposal lineage",
+            "mine again against the current completed proposal team",
         );
     }
     let normalized = TaskAdd {

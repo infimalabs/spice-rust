@@ -30,7 +30,7 @@ pub(super) struct CommandBarRender<'a> {
     pub(super) cursor: &'a str,
     pub(super) sender: &'a SenderHandle,
     pub(super) submissions: &'a SubmissionStatus,
-    pub(super) lineage_controls: &'a UseReducerHandle<LineageControls>,
+    pub(super) team_controls: &'a UseReducerHandle<TeamControls>,
 }
 
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
@@ -159,17 +159,17 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
             </summary>
             <div class="canvas-menu-frame">
                 <div class="canvas-menu-panel">
-                    {super::lineage_menu::render(
+                    {super::team_menu::render(
                         **render.mosaic,
                         render.active_axis,
                         axis_count(render.active_axis, runtime),
                         runtime,
-                        &super::lineage_menu::Context {
+                        &super::team_menu::Context {
                             cursor: render.cursor,
                             identity: (**render.identity).as_ref(),
                             update,
                             sender: render.sender,
-                            lineage_controls: render.lineage_controls,
+                            team_controls: render.team_controls,
                         },
                     )}
                 </div>
@@ -281,13 +281,13 @@ fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
     }
 }
 
-/// Newest activity from any member of one lineage.
-pub(in crate::browser) fn render_lineage_ticker(
+/// Newest activity from any member of one team.
+pub(in crate::browser) fn render_team_ticker(
     runtime: &CanvasRuntime,
-    lineage: &crate::runtime::LaneRow,
+    team: &crate::runtime::LaneRow,
     standings: &[watchband::Standing],
 ) -> Html {
-    let Some(activity) = runtime.newest_lineage_activity(lineage) else {
+    let Some(activity) = runtime.newest_team_activity(team) else {
         return html! {
             <div class="ticker" aria-live="polite" data-empty="true"></div>
         };
@@ -295,10 +295,10 @@ pub(in crate::browser) fn render_lineage_ticker(
     let standing = standings
         .iter()
         .find(|standing| standing.lane == activity.lane())
-        .expect("a lineage activity belongs to one rendered standing");
-    let member = lineage
+        .expect("a team activity belongs to one rendered standing");
+    let member = team
         .member(activity.lane())
-        .expect("a lineage activity belongs to one rendered member");
+        .expect("a team activity belongs to one rendered member");
     ticker(activity, standing, member.status(standing.pending))
 }
 

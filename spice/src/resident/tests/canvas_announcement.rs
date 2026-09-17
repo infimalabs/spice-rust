@@ -48,14 +48,14 @@ pub(super) fn seed_lane(
     occupant: CanonicalUuid,
     worktree: &std::path::Path,
 ) {
-    seed_lane_in_lineage(bus, epoch, lane, lane, occupant, worktree);
+    seed_lane_in_team(bus, epoch, lane, lane, occupant, worktree);
 }
 
-pub(super) fn seed_lane_in_lineage(
+pub(super) fn seed_lane_in_team(
     bus: &Bus,
     epoch: CanonicalUuid,
     lane: CanonicalUuid,
-    lineage_id: CanonicalUuid,
+    team: CanonicalUuid,
     occupant: CanonicalUuid,
     worktree: &std::path::Path,
 ) {
@@ -64,7 +64,7 @@ pub(super) fn seed_lane_in_lineage(
         .expect("fixture worktree canonicalizes")
         .to_string_lossy()
         .into_owned();
-    seed_lane_in_lineage_at(bus, epoch, lane, lineage_id, occupant, &worktree);
+    seed_lane_in_team_at(bus, epoch, lane, team, occupant, &worktree);
 }
 
 pub(super) fn seed_lane_in_worktree(
@@ -74,14 +74,14 @@ pub(super) fn seed_lane_in_worktree(
     occupant: CanonicalUuid,
     worktree: &str,
 ) {
-    seed_lane_in_lineage_at(bus, epoch, lane, lane, occupant, worktree);
+    seed_lane_in_team_at(bus, epoch, lane, lane, occupant, worktree);
 }
 
-fn seed_lane_in_lineage_at(
+fn seed_lane_in_team_at(
     bus: &Bus,
     epoch: CanonicalUuid,
     lane: CanonicalUuid,
-    lineage_id: CanonicalUuid,
+    team: CanonicalUuid,
     occupant: CanonicalUuid,
     worktree: &str,
 ) {
@@ -93,7 +93,7 @@ fn seed_lane_in_lineage_at(
         .expect("fixture topology revision advances");
     head.lanes.push(wire::LaneResidency {
         lane,
-        lineage_id,
+        team,
         name: None,
         worktree: worktree.to_owned(),
         life: "drive".to_owned(),
@@ -109,14 +109,14 @@ fn seed_lane_in_lineage_at(
     if !head
         .subscriptions
         .iter()
-        .any(|subscription| subscription.lineage_id == lineage_id)
+        .any(|subscription| subscription.team == team)
     {
-        head.subscriptions.push(wire::LineageSubscription {
-            lineage_id,
-            policy: wire::intent::LineageLife::Drive,
+        head.subscriptions.push(wire::TeamSubscription {
+            team,
+            policy: wire::intent::TeamLife::Drive,
         });
         head.subscriptions
-            .sort_by_key(|subscription| subscription.lineage_id);
+            .sort_by_key(|subscription| subscription.team);
     }
     head.lanes.sort_by_key(|lane| lane.lane);
     let mut write =
@@ -125,7 +125,7 @@ fn seed_lane_in_lineage_at(
         .fact(
             wire::body::LaneSeated {
                 lane,
-                lineage_id,
+                team,
                 capability: test_uuid(9),
                 name: None,
                 worktree: worktree.to_owned(),
@@ -706,7 +706,7 @@ fn seed_capture_residency(
         topology_revision: 1,
         lanes: vec![wire::LaneResidency {
             lane,
-            lineage_id: lane,
+            team: lane,
             name: None,
             worktree,
             life: "drive".to_owned(),
@@ -1089,7 +1089,7 @@ pub(super) fn seat_ingestion_residency(bus: &Bus, lane: CanonicalUuid, epoch: Ca
         topology_revision: 0,
         lanes: vec![wire::LaneResidency {
             lane,
-            lineage_id: lane,
+            team: lane,
             name: None,
             worktree: "/ingestion/worktree".to_owned(),
             life: "drive".to_owned(),

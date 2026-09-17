@@ -789,7 +789,7 @@ fn gate_finding_mainline(
         (None, None) => Err(gate_finding_source_refusal(
             entry,
             "mainline",
-            "missing gate-finding-mainline-v1 lineage tags",
+            "missing gate-finding-mainline-v1 team tags",
         )),
         (Some(reference), Some(merge_base)) => Ok(wire::intent::GateFindingMainline {
             reference: reference.to_owned(),
@@ -798,7 +798,7 @@ fn gate_finding_mainline(
         _ => Err(gate_finding_source_refusal(
             entry,
             "mainline",
-            "expected both canonical lineage tags or neither",
+            "expected both canonical team tags or neither",
         )),
     }
 }

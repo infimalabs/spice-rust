@@ -36,7 +36,7 @@ const VACANT: &str = "vacant";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Seat {
     lane: CanonicalUuid,
-    lineage_id: CanonicalUuid,
+    team: CanonicalUuid,
     capability: CanonicalUuid,
     name: Option<String>,
     worktree: String,
@@ -54,10 +54,10 @@ impl Seat {
         self.lane
     }
 
-    /// The Canvas lineage whose lane contains this seat.
+    /// The Canvas team whose lane contains this seat.
     #[must_use]
-    pub const fn lineage_id(&self) -> CanonicalUuid {
-        self.lineage_id
+    pub const fn team(&self) -> CanonicalUuid {
+        self.team
     }
 
     /// The capability minted with the lane.
@@ -119,7 +119,7 @@ impl Seat {
     pub fn residency(&self) -> LaneResidency {
         LaneResidency {
             lane: self.lane,
-            lineage_id: self.lineage_id,
+            team: self.team,
             name: self.name.clone(),
             worktree: self.worktree.clone(),
             life: self.life.clone(),
@@ -254,12 +254,12 @@ pub enum Refusal {
         observed: CanonicalUuid,
     },
     /// An import had no retained occupant lineage to descend from.
-    LineageMissing {
+    TeamMissing {
         /// Lane lacking its predecessor occupant.
         lane: CanonicalUuid,
     },
     /// An import named another predecessor than the retained lineage.
-    Lineage {
+    Team {
         /// Lane being transferred.
         lane: CanonicalUuid,
         /// Latest occupant retained by the seat.
@@ -335,10 +335,10 @@ impl fmt::Display for Refusal {
                 formatter,
                 "lane {lane} session belongs to {expected}, not {observed}"
             ),
-            Self::LineageMissing { lane } => {
+            Self::TeamMissing { lane } => {
                 write!(formatter, "lane {lane} has no predecessor occupant lineage")
             }
-            Self::Lineage {
+            Self::Team {
                 lane,
                 expected,
                 observed,
@@ -436,7 +436,7 @@ impl Table {
             fact.lane,
             Seat {
                 lane: fact.lane,
-                lineage_id: fact.lineage_id,
+                team: fact.team,
                 capability: fact.capability,
                 name: fact.name.clone(),
                 worktree: fact.worktree.clone(),
@@ -579,9 +579,9 @@ impl Table {
             .lineage
             .last()
             .copied()
-            .ok_or(Refusal::LineageMissing { lane })?;
+            .ok_or(Refusal::TeamMissing { lane })?;
         if ancestor != fact.ancestor {
-            return Err(Refusal::Lineage {
+            return Err(Refusal::Team {
                 lane,
                 expected: ancestor,
                 observed: fact.ancestor,
@@ -620,11 +620,11 @@ impl Table {
         if let Some(sitting) = seat.occupant {
             return Err(Refusal::Occupied { lane, sitting });
         }
-        if seat.lineage_id != fact.lineage_id {
-            return Err(Refusal::Lineage {
+        if seat.team != fact.team {
+            return Err(Refusal::Team {
                 lane,
-                expected: seat.lineage_id,
-                observed: fact.lineage_id,
+                expected: seat.team,
+                observed: fact.team,
             });
         }
         if seat.worktree != fact.worktree {
@@ -713,7 +713,7 @@ mod tests {
     fn seated() -> LaneSeated {
         LaneSeated {
             lane: uuid(1),
-            lineage_id: uuid(1),
+            team: uuid(1),
             capability: uuid(2),
             name: Some("Ava".to_owned()),
             worktree: "/worktrees/lane-a".to_owned(),
@@ -821,7 +821,7 @@ mod tests {
     }
 
     #[test]
-    fn import_moves_one_vacant_seat_only_after_reproving_its_session_lineage() {
+    fn import_moves_one_vacant_seat_only_after_reproving_its_session_team() {
         let mut table = table();
         start(&mut table, uuid(3));
         table
@@ -872,7 +872,7 @@ mod tests {
         start(&mut table, uuid(3));
         let removed = LaneRemoved {
             lane: uuid(1),
-            lineage_id: uuid(1),
+            team: uuid(1),
             worktree: "/worktrees/lane-a".to_owned(),
         };
 
@@ -1022,9 +1022,9 @@ mod tests {
         );
     }
 
-    /// A successor names the occupant it descends from, and the lineage grows.
+    /// A successor names the occupant it descends from, and the team grows.
     #[test]
-    fn renewal_succeeds_the_sitting_occupant_and_records_the_lineage() {
+    fn renewal_succeeds_the_sitting_occupant_and_records_the_team() {
         let mut table = table();
         start(&mut table, uuid(3));
         table
@@ -1075,7 +1075,7 @@ mod tests {
         assert_eq!(
             table.seat(uuid(1)).expect("seated").lineage(),
             [uuid(3)],
-            "a refused renewal still grew the lineage",
+            "a refused renewal still grew the team",
         );
     }
 
@@ -1208,7 +1208,7 @@ mod tests {
         assert_eq!(head.lanes.len(), 1);
         let row = &head.lanes[0];
         assert_eq!(row.lane, uuid(1));
-        assert_eq!(row.lineage_id, uuid(1));
+        assert_eq!(row.team, uuid(1));
         assert_eq!(row.name.as_deref(), Some("Ava"));
         assert_eq!(row.occupant, Some(uuid(3)));
         assert_eq!(row.lineage, vec![uuid(3)]);

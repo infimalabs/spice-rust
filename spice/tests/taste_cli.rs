@@ -941,7 +941,7 @@ fn publish_reminder(
 fn seated(vendor: &str) -> LaneSeated {
     LaneSeated {
         lane: uuid(0x20),
-        lineage_id: uuid(0x20),
+        team: uuid(0x20),
         capability: uuid(0x2e),
         name: Some("Ava".to_owned()),
         worktree: "/worktrees/lane-a".to_owned(),

@@ -226,7 +226,7 @@ struct PreTopologyResidencyHead {
     state: wire::ResidentState,
     lanes: Vec<wire::LaneResidency>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    subscriptions: Vec<wire::LineageSubscription>,
+    subscriptions: Vec<wire::TeamSubscription>,
 }
 
 fn encode_fact(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
@@ -272,7 +272,7 @@ fn encode_command(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
 #[serde(deny_unknown_fields)]
 struct PreTopologyLaneSeat {
     lane: wire::CanonicalUuid,
-    lineage_id: wire::CanonicalUuid,
+    team: wire::CanonicalUuid,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     name: Option<String>,
     worktree: String,
@@ -283,7 +283,7 @@ struct PreTopologyLaneSeat {
 }
 
 fn intermediate(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    serde_json::to_vec(value)
+    super::team::current(value)
         .map_err(|error| invalid(table, row, &format!("migrated JSON cannot encode: {error}")))
 }
 

@@ -117,7 +117,7 @@ pub(super) struct AgentMessageCardProps {
     pub(super) message: Rc<wire::AgentMessage>,
     pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
     pub(super) speech_queue: Callback<SpeechRequest>,
-    pub(super) speech: LineageSpeech,
+    pub(super) speech: TeamSpeech,
     pub(super) speaking: bool,
     pub(super) lane: CanonicalUuid,
     pub(super) order: u64,

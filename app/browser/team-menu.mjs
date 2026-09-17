@@ -7,7 +7,7 @@ import {
   TRANSITION_MS,
   waitForPageFunction,
 } from "./canvas-fixture.mjs";
-import { assertGlobalNavigation } from "./organization-navigation.mjs";
+import { assertGlobalNavigation } from "./team-navigation.mjs";
 
 async function assertCanvasIdentity(page, panel, label) {
   const version = panel.locator(".canvas-menu-version");
@@ -138,14 +138,14 @@ export async function assertCursorRelocation(page, artifacts, engine) {
         node.dataset.menuIdentity = crypto.randomUUID();
         return node.dataset.menuIdentity;
       });
-      const laneGeometry = () => page.locator(".organization-surface").evaluateAll((lanes) => (
+      const laneGeometry = () => page.locator(".team-surface").evaluateAll((lanes) => (
         lanes.map((lane) => {
           const box = lane.getBoundingClientRect();
           return {
             height: box.height,
             left: box.left,
             right: box.right,
-            scrollLeft: lane.closest(".lineage-fleet")?.scrollLeft ?? 0,
+            scrollLeft: lane.closest(".team-fleet")?.scrollLeft ?? 0,
             scrollTop: lane.querySelector(".lane-mosaic-plane")?.scrollTop ?? 0,
             top: box.top,
           };
@@ -411,7 +411,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       assert.ok(
         Math.abs(expandedGeometry.frame.right - expandedGeometry.disclosure.right) <= 0.5
           && Math.abs(expandedGeometry.frame.top - expandedGeometry.workspaceTop) <= 0.5,
-        `${label} anchors the menu at the organization top below the trigger row`,
+        `${label} anchors the menu at the team top below the trigger row`,
       );
       assert.ok(
         Math.abs(
@@ -1056,33 +1056,33 @@ async function assertAxisMenu(page, view, copy) {
     view.toLowerCase(),
     `${view} opens its own Spice panel rather than the Lanes panel`,
   );
-  assert.equal(await panel.locator(".canvas-organization").count(), 0, `${view} renders no organization manager`);
+  assert.equal(await panel.locator(".canvas-team").count(), 0, `${view} renders no team manager`);
   await panel.getByRole("heading", { name: visibleView, exact: true }).waitFor();
   assert.match(await menuPage.innerText(), copy, `${view} describes its own page context`);
 }
 
 async function waitForMemberIn(scope, lane) {
-  const member = scope.locator(`.canvas-organization-member[data-organization-member="${lane}"]`);
+  const member = scope.locator(`.canvas-team-member[data-team-member="${lane}"]`);
   await member.waitFor({ timeout: TRANSITION_MS });
   return member;
 }
 
 async function assertMemberAccents(scope, expected, message) {
   assert.deepEqual(
-    await scope.locator(":scope > .canvas-organization-members > .canvas-organization-member")
+    await scope.locator(":scope > .canvas-team-members > .canvas-team-member")
       .evaluateAll((members) => members.map((member) => member.dataset.accent)),
     expected,
     message,
   );
 }
 
-async function assertResidentLineage(fixture, lane, lineage, policyLineage, reason) {
+async function assertResidentTeam(fixture, lane, team, policyTeam, reason) {
   const answer = await reply(fixture, ["lane"]);
   const member = answer.body.lanes.find((row) => row.lane === lane);
   assert.ok(member, `${reason}: moved member remains in the authoritative lane answer`);
-  assert.equal(member.lineage_id, lineage, `${reason}: resident committed the target lineage`);
+  assert.equal(member.team, team, `${reason}: resident committed the target team`);
   const subscription = answer.body.subscriptions.find(
-    (candidate) => candidate.lineage_id === policyLineage,
+    (candidate) => candidate.team === policyTeam,
   );
   assert.equal(
     subscription?.policy,
@@ -1091,8 +1091,8 @@ async function assertResidentLineage(fixture, lane, lineage, policyLineage, reas
   );
 }
 
-/** Exercise the Lanes-page Spice panel, shared navigation, and durable organization moves. */
-export async function assertOrgMenu(page, fixture, artifacts) {
+/** Exercise the Lanes-page Spice panel, shared navigation, and durable team moves. */
+export async function assertTeamMenu(page, fixture, artifacts) {
   await chooseCanvasView(page, "Lanes");
   await assertCursorRelocation(page, artifacts, "chromium");
   await assertPepperDisclosure(page);
@@ -1105,7 +1105,7 @@ export async function assertOrgMenu(page, fixture, artifacts) {
     1,
     "the analytics pages keep the same route back to live Agents",
   );
-  await assertAxisMenu(page, "Topology", /resident organizations, seats, capabilities/i);
+  await assertAxisMenu(page, "Topology", /resident teams, seats, capabilities/i);
   await chooseCanvasView(page, "Lanes");
 
   let panel = await openSpiceMenu(page);
@@ -1207,17 +1207,17 @@ export async function assertOrgMenu(page, fixture, artifacts) {
   } finally {
     await peerContext.close();
   }
-  assert.equal(await panel.locator(".canvas-organization").count(), 1, "the four agents begin together");
-  assert.equal(await panel.locator(".canvas-organization-member").count(), 4);
+  assert.equal(await panel.locator(".canvas-team").count(), 1, "the four agents begin together");
+  assert.equal(await panel.locator(".canvas-team-member").count(), 4);
   await panel.getByRole("heading", { name: "Open Team", exact: true }).waitFor();
   await panel.getByRole("heading", { name: "New Team", exact: true }).waitFor();
   assert.match(
-    (await panel.locator(".canvas-organization > header strong").innerText()).trim(),
+    (await panel.locator(".canvas-team > header strong").innerText()).trim(),
     /^Team [0-9a-f]{8}$/,
-    "the live team card presents its short internal identity without exposing Org vocabulary",
+    "the live team card presents its short internal identity",
   );
   assert.equal(
-    await panel.locator('[data-organization-drop="new"]').innerText(),
+    await panel.locator('[data-team-drop="new"]').innerText(),
     "DROP AGENT HERE",
   );
   assert.match(
@@ -1226,35 +1226,35 @@ export async function assertOrgMenu(page, fixture, artifacts) {
   );
 
   const initial = await reply(fixture, ["lane"]);
-  const host = initial.body.lanes[0].lineage_id;
+  const host = initial.body.lanes[0].team;
   const moved = initial.body.lanes.at(-1).lane;
-  const surface = page.locator(`.organization-surface[data-lineage-id="${host}"]`);
-  await surface.locator('.organization-lifetime input[type="range"]').fill("2");
+  const surface = page.locator(`.team-surface[data-team="${host}"]`);
+  await surface.locator('.team-lifetime input[type="range"]').fill("2");
   await waitForPageFunction(
     page,
-    "organization lifetime command settles before membership edits",
+    "team lifetime command settles before membership edits",
     TRANSITION_MS,
-    (lineage) => document
-      .querySelector(`.organization-surface[data-lineage-id="${lineage}"] .organization-composer-controls`)
+    (team) => document
+      .querySelector(`.team-surface[data-team="${team}"] .team-composer-controls`)
       ?.dataset.lifetimePending === "false",
     host,
   );
   await surface.getByRole("button", { name: "Drain", exact: true }).waitFor();
   const drained = await reply(fixture, ["lane"]);
   assert.equal(
-    drained.body.subscriptions.find((subscription) => subscription.lineage_id === host)?.policy,
+    drained.body.subscriptions.find((subscription) => subscription.team === host)?.policy,
     "drain",
-    "the organization begins membership edits with a committed Drain policy",
+    "the team begins membership edits with a committed Drain policy",
   );
   await page.evaluate(() => {
-    window.__orgMenuLineageCommands = [];
+    window.__orgMenuTeamCommands = [];
     const socket = window.__canvasSockets.at(-1);
     if (!socket) throw new Error("canvas WebSocket was not captured");
     const send = socket.send.bind(socket);
     const record = (bytes) => {
       const command = JSON.parse(new TextDecoder().decode(bytes));
-      if (command.kind === "lineage::configure") {
-        window.__orgMenuLineageCommands.push(command.body);
+      if (command.kind === "team::configure") {
+        window.__orgMenuTeamCommands.push(command.body);
       }
     };
     socket.send = (data) => {
@@ -1271,71 +1271,71 @@ export async function assertOrgMenu(page, fixture, artifacts) {
     };
   });
   panel = await openSpiceMenu(page);
-  let originalOrg = panel.locator(`.canvas-organization[data-organization-lineage="${host}"]`);
+  let originalTeam = panel.locator(`.canvas-team[data-team="${host}"]`);
   await assertMemberAccents(
-    originalOrg,
+    originalTeam,
     ["3", "2", "1", "0"],
-    "the organization menu deals accents from the right control edge",
+    "the team menu deals accents from the right control edge",
   );
-  let member = await waitForMemberIn(originalOrg, moved);
-  await member.dragTo(panel.locator('[data-organization-drop="unassigned"]'));
+  let member = await waitForMemberIn(originalTeam, moved);
+  await member.dragTo(panel.locator('[data-team-drop="unassigned"]'));
 
   panel = await openSpiceMenu(page);
   member = await waitForMemberIn(panel.locator(".canvas-unassigned"), moved);
   assert.equal(await member.getAttribute("data-accent"), "0", "a solo member starts at green");
-  assert.equal(await panel.locator(".canvas-organization").count(), 1);
-  assert.equal(await panel.locator(".canvas-organization").locator(".canvas-organization-member").count(), 3);
+  assert.equal(await panel.locator(".canvas-team").count(), 1);
+  assert.equal(await panel.locator(".canvas-team").locator(".canvas-team-member").count(), 3);
   await assertMemberAccents(
-    panel.locator(`.canvas-organization[data-organization-lineage="${host}"]`),
+    panel.locator(`.canvas-team[data-team="${host}"]`),
     ["2", "1", "0"],
     "removing a member keeps green anchored to the surviving right edge",
   );
-  await assertResidentLineage(fixture, moved, moved, host, "removing an agent from its organization");
+  await assertResidentTeam(fixture, moved, moved, host, "removing an agent from its team");
 
-  originalOrg = panel.locator(`.canvas-organization[data-organization-lineage="${host}"]`);
-  await member.dragTo(originalOrg);
+  originalTeam = panel.locator(`.canvas-team[data-team="${host}"]`);
+  await member.dragTo(originalTeam);
   panel = await openSpiceMenu(page);
-  originalOrg = panel.locator(`.canvas-organization[data-organization-lineage="${host}"]`);
-  member = await waitForMemberIn(originalOrg, moved);
-  assert.equal(await originalOrg.locator(".canvas-organization-member").count(), 4);
+  originalTeam = panel.locator(`.canvas-team[data-team="${host}"]`);
+  member = await waitForMemberIn(originalTeam, moved);
+  assert.equal(await originalTeam.locator(".canvas-team-member").count(), 4);
   await assertMemberAccents(
-    originalOrg,
+    originalTeam,
     ["3", "2", "1", "0"],
     "returning the member redeals the sequence from the right edge",
   );
-  await assertResidentLineage(fixture, moved, host, host, "returning an agent to its organization");
+  await assertResidentTeam(fixture, moved, host, host, "returning an agent to its team");
 
-  await member.dragTo(panel.locator('[data-organization-drop="new"]'));
+  await member.dragTo(panel.locator('[data-team-drop="new"]'));
   panel = await openSpiceMenu(page);
-  const createdOrg = panel.locator(
-    `.canvas-organization:not([data-organization-lineage="${host}"])`
-      + `:has(.canvas-organization-member[data-organization-member="${moved}"])`,
+  const createdTeam = panel.locator(
+    `.canvas-team:not([data-team="${host}"])`
+      + `:has(.canvas-team-member[data-team-member="${moved}"])`,
   );
-  await createdOrg.waitFor({ timeout: TRANSITION_MS });
-  const created = await createdOrg.getAttribute("data-organization-lineage");
-  assert.notEqual(created, host, "the New Team target mints a distinct lineage identity");
-  assert.notEqual(created, moved, "a new one-agent organization stays distinct from an unassigned agent");
-  assert.equal(await panel.locator(".canvas-organization").count(), 2);
-  await assertResidentLineage(fixture, moved, created, host, "creating an organization by drop");
+  await createdTeam.waitFor({ timeout: TRANSITION_MS });
+  const created = await createdTeam.getAttribute("data-team");
+  assert.notEqual(created, host, "the New Team target mints a distinct team identity");
+  assert.notEqual(created, moved, "a new one-agent team stays distinct from an unassigned agent");
+  assert.equal(await panel.locator(".canvas-team").count(), 2);
+  await assertResidentTeam(fixture, moved, created, host, "creating a team by drop");
 
-  member = await waitForMemberIn(createdOrg, moved);
-  originalOrg = panel.locator(`.canvas-organization[data-organization-lineage="${host}"]`);
-  await member.dragTo(originalOrg);
+  member = await waitForMemberIn(createdTeam, moved);
+  originalTeam = panel.locator(`.canvas-team[data-team="${host}"]`);
+  await member.dragTo(originalTeam);
   panel = await openSpiceMenu(page);
-  originalOrg = panel.locator(`.canvas-organization[data-organization-lineage="${host}"]`);
-  await waitForMemberIn(originalOrg, moved);
-  assert.equal(await panel.locator(".canvas-organization").count(), 1, "the empty created organization disappears");
-  assert.equal(await originalOrg.locator(".canvas-organization-member").count(), 4);
-  await assertResidentLineage(fixture, moved, host, host, "restoring the original four-agent organization");
+  originalTeam = panel.locator(`.canvas-team[data-team="${host}"]`);
+  await waitForMemberIn(originalTeam, moved);
+  assert.equal(await panel.locator(".canvas-team").count(), 1, "the empty created team disappears");
+  assert.equal(await originalTeam.locator(".canvas-team-member").count(), 4);
+  await assertResidentTeam(fixture, moved, host, host, "restoring the original four-agent team");
   await waitForPageFunction(
     page,
     "membership commands cross the browser socket",
     TRANSITION_MS,
-    () => window.__orgMenuLineageCommands?.length >= 4,
+    () => window.__orgMenuTeamCommands?.length >= 4,
     undefined,
   );
-  const membershipCommands = await page.evaluate(() => window.__orgMenuLineageCommands);
-  assert.equal(membershipCommands.length, 4, "each drag emits one lineage membership command");
+  const membershipCommands = await page.evaluate(() => window.__orgMenuTeamCommands);
+  assert.equal(membershipCommands.length, 4, "each drag emits one team membership command");
   for (const body of membershipCommands) {
     assert.ok(Object.hasOwn(body, "member"), "membership command identifies the moved agent");
     assert.equal(
@@ -1344,21 +1344,21 @@ export async function assertOrgMenu(page, fixture, artifacts) {
       "membership command omits unrelated lifetime state",
     );
   }
-  await surface.locator('.organization-lifetime input[type="range"]').fill("0");
+  await surface.locator('.team-lifetime input[type="range"]').fill("0");
   await waitForPageFunction(
     page,
-    "organization lifetime returns to the scenario baseline",
+    "team lifetime returns to the scenario baseline",
     TRANSITION_MS,
-    (lineage) => document
-      .querySelector(`.organization-surface[data-lineage-id="${lineage}"] .organization-composer-controls`)
+    (team) => document
+      .querySelector(`.team-surface[data-team="${team}"] .team-composer-controls`)
       ?.dataset.lifetimePending === "false",
     host,
   );
   await surface.getByRole("button", { name: "Steer", exact: true }).waitFor();
   const restored = await reply(fixture, ["lane"]);
   assert.equal(
-    restored.body.subscriptions.find((subscription) => subscription.lineage_id === host)?.policy,
+    restored.body.subscriptions.find((subscription) => subscription.team === host)?.policy,
     "steer",
-    "the organization-menu scenario restores its incoming lifetime",
+    "the team-menu scenario restores its incoming lifetime",
   );
 }

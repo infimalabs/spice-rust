@@ -7,7 +7,7 @@ import {
   TRANSITION_MS,
   waitForPageFunction,
 } from "./canvas-fixture.mjs";
-import { assertOrgActions } from "./organization-actions.mjs";
+import { assertTeamActions } from "./team-actions.mjs";
 
 const darkPalette = {
   quiet: "rgb(142, 162, 255)",
@@ -24,20 +24,20 @@ const TASK_CHIP_FIXTURE = '[data-task-chip-fixture="matrix"]';
 const GENERATED_MAX_TASK_HANDLE = "CONTROL-1kKbC3j4";
 const LONG_ADMITTED_TASK_HANDLE = "EXTRAORDINARILYLONGTASKSTEM-1kKbC3j4";
 
-async function selectLifetime(page, lineage, input, value, label) {
+async function selectLifetime(page, team, input, value, label) {
   await input.fill(value);
   await waitForPageFunction(
     page,
     `reference lifetime reaches ${label}`,
     TRANSITION_MS,
-    ({ lineageId, expected }) => {
+    ({ teamId, expected }) => {
       const current = document.querySelector(
-        `.organization-surface[data-lineage-id="${lineageId}"] .organization-composer-controls`,
+        `.team-surface[data-team="${teamId}"] .team-composer-controls`,
       );
       return current?.dataset.lifetimePending === "false"
         && current.dataset.lifetime === expected;
     },
-    { lineageId: lineage, expected: label },
+    { teamId: team, expected: label },
   );
 }
 
@@ -71,11 +71,11 @@ function measureReference(surface) {
   };
   const rect = (selector, root = surface) => measured(root.querySelector(selector), selector);
   const taskStrip = rect(".task-pill-strip", document);
-  const toolbar = rect(".organization-toolbar");
-  const rail = rect(".organization-mode-rail");
-  const composer = rect(".organization-composer");
-  const controls = rect(".organization-composer-controls");
-  const activity = rect(".organization-activity-grid");
+  const toolbar = rect(".team-toolbar");
+  const rail = rect(".team-mode-rail");
+  const composer = rect(".team-composer");
+  const controls = rect(".team-composer-controls");
+  const activity = rect(".team-activity-grid");
   // The armed and maxed sliders carry the state accent blended 70% into the
   // resting line, the way the predecessor mixes it, so the hue role has to be
   // read back through the same mix rather than through the raw token.
@@ -121,12 +121,12 @@ function measureReference(surface) {
     composer,
     controls,
     activity,
-    selected: rect(".organization-mode.selected"),
-    menu: rect(".organization-menu"),
-    speech: rect(".organization-speech"),
-    lifetime: rect(".organization-lifetime"),
-    send: rect(".organization-send"),
-    badges: [...surface.querySelectorAll(".organization-mode-badge")].map((badge) => ({
+    selected: rect(".team-mode.selected"),
+    menu: rect(".team-menu"),
+    speech: rect(".team-speech"),
+    lifetime: rect(".team-lifetime"),
+    send: rect(".team-send"),
+    badges: [...surface.querySelectorAll(".team-mode-badge")].map((badge) => ({
       text: badge.textContent,
       background: getComputedStyle(badge).backgroundColor,
       width: badge.getBoundingClientRect().width,
@@ -135,11 +135,11 @@ function measureReference(surface) {
       paddingTop: getComputedStyle(badge).paddingTop,
       boxShadow: getComputedStyle(badge).boxShadow,
     })),
-    lights: [...surface.querySelectorAll(".organization-light")].map((light) => ({
+    lights: [...surface.querySelectorAll(".team-light")].map((light) => ({
       width: light.getBoundingClientRect().width,
       height: light.getBoundingClientRect().height,
     })),
-    agents: [...surface.querySelectorAll(".organization-agent")].map((agent) => {
+    agents: [...surface.querySelectorAll(".team-agent")].map((agent) => {
       const box = agent.getBoundingClientRect();
       return {
         left: box.left,
@@ -149,17 +149,17 @@ function measureReference(surface) {
         width: box.width,
       };
     }),
-    labels: [...surface.querySelectorAll(".organization-slider span")].map((label) => ({
+    labels: [...surface.querySelectorAll(".team-slider span")].map((label) => ({
       text: label.textContent,
       clientWidth: label.clientWidth,
       scrollWidth: label.scrollWidth,
       textAlign: getComputedStyle(label).textAlign,
       textTransform: getComputedStyle(label).textTransform,
     })),
-    modes: [...surface.querySelectorAll(".organization-mode")].map((mode) => ({
+    modes: [...surface.querySelectorAll(".team-mode")].map((mode) => ({
       label: mode.firstElementChild?.textContent,
       selected: mode.classList.contains("selected"),
-      badge: mode.querySelector(".organization-mode-badge")?.textContent ?? null,
+      badge: mode.querySelector(".team-mode-badge")?.textContent ?? null,
       background: getComputedStyle(mode).backgroundColor,
       border: getComputedStyle(mode).borderColor,
       borderWidth: getComputedStyle(mode).borderWidth,
@@ -448,7 +448,7 @@ async function installTaskChipFixture(page, surface) {
     const review = () => '<span class="message-review-pill" data-message-classification="review"'
       + ' aria-label="Review classification">REVIEW</span>';
     const host = document.createElement("div");
-    host.className = "organization-surface";
+    host.className = "team-surface";
     host.dataset.taskChipFixture = "matrix";
     Object.assign(host.style, {
       position: "fixed",
@@ -1021,21 +1021,21 @@ export async function assertTaskChipTypographyMatrix(page, surface, artifactPath
 /// The operator agent card carries its own control: renewing this agent has to
 /// name both the action and the request it sends, stay on the exact agent lane
 /// it was drawn for, and reach the resident rather than only the message list.
-export async function assertReferenceOrgActions(page, surface) {
-  const surfaces = page.locator('[data-pane="agent-console"] .organization-surface');
+export async function assertReferenceTeamActions(page, surface) {
+  const surfaces = page.locator('[data-pane="agent-console"] .team-surface');
   if ((await surfaces.count()) === 2) {
-    const primaryLineage = await surface.getAttribute("data-lineage-id");
-    assert.ok(primaryLineage, "the primary control surface names its lineage");
+    const primaryTeam = await surface.getAttribute("data-team");
+    assert.ok(primaryTeam, "the primary control surface names its team");
     const first = surfaces.first();
-    const secondaryRow = await first.getAttribute("data-lineage-id") === primaryLineage
+    const secondaryRow = await first.getAttribute("data-team") === primaryTeam
       ? surfaces.nth(1)
       : first;
-    const secondaryLineage = await secondaryRow.getAttribute("data-lineage-id");
-    assert.ok(secondaryLineage, "the sibling control surface names its lineage");
+    const secondaryTeam = await secondaryRow.getAttribute("data-team");
+    assert.ok(secondaryTeam, "the sibling control surface names its team");
     const secondary = page.locator(
-      `[data-pane="agent-console"] .organization-surface[data-lineage-id="${secondaryLineage}"]`,
+      `[data-pane="agent-console"] .team-surface[data-team="${secondaryTeam}"]`,
     );
-    await assertOrgActions(page, surface, secondary, primaryLineage);
+    await assertTeamActions(page, surface, secondary, primaryTeam);
   }
 }
 
@@ -1123,7 +1123,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     true,
     "the open drawer receives interaction across the composer's covered interior",
   );
-  const siblingEditor = surface.locator(".organization-agent").first().getByRole("textbox");
+  const siblingEditor = surface.locator(".team-agent").first().getByRole("textbox");
   await siblingEditor.click();
   assert.equal(
     await menu.getAttribute("open"),
@@ -1138,13 +1138,13 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     "the renewal action names both the command and its request",
   );
   const renewalLane = await renew.evaluate(
-    (button) => button.closest(".organization-agent")?.dataset.agentLane,
+    (button) => button.closest(".team-agent")?.dataset.agentLane,
   );
   assert.ok(renewalLane, "the renewal control retains its exact agent lane");
-  const renewalLineage = await surface.getAttribute("data-lineage-id");
-  assert.ok(renewalLineage, "the renewal control surface retains its exact lineage");
+  const renewalTeam = await surface.getAttribute("data-team");
+  assert.ok(renewalTeam, "the renewal control surface retains its exact team");
   assert.equal(await renew.getAttribute("data-renewal-lane"), renewalLane);
-  assert.equal(await renew.getAttribute("data-renewal-lineage"), renewalLineage);
+  assert.equal(await renew.getAttribute("data-renewal-team"), renewalTeam);
   assert.equal(await renew.getAttribute("data-renewal-state"), "none");
   assert.equal(await renew.getAttribute("data-renewal-requested"), "false");
   assert.equal(await renew.getAttribute("data-renewal-next-requested"), "true");
@@ -1171,7 +1171,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
     .locator(`.agent-renew-request[data-renewal-lane="${renewalLane}"]`)
     .getAttribute("data-renewal-state");
   assert.equal(durableState, "requested", "typed renewal exposes its requested lifecycle state");
-  await assertRenewalCommand(page, renewalLane, renewalLineage, true);
+  await assertRenewalCommand(page, renewalLane, renewalTeam, true);
   await assertRenewalClaimUnchanged(fixture, renewalLane, surface, claim, "request");
   const renewalInbox = await reply(fixture, ["inbox", renewalLane]);
   assert.equal(
@@ -1202,7 +1202,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
   );
   await restoredRenew.waitFor({ state: "attached" });
   assert.equal(await restoredRenew.getAttribute("data-renewal-lane"), renewalLane);
-  assert.equal(await restoredRenew.getAttribute("data-renewal-lineage"), renewalLineage);
+  assert.equal(await restoredRenew.getAttribute("data-renewal-team"), renewalTeam);
   assert.equal(await restoredRenew.getAttribute("data-renewal-state"), "requested");
   assert.equal(await restoredRenew.getAttribute("data-renewal-requested"), "true");
   assert.equal(await restoredRenew.getAttribute("data-renewal-next-requested"), "false");
@@ -1225,7 +1225,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
       ?.dataset.renewalState === "none",
     renewalLane,
   );
-  await assertRenewalCommand(page, renewalLane, renewalLineage, false);
+  await assertRenewalCommand(page, renewalLane, renewalTeam, false);
   await assertRenewalClaimUnchanged(fixture, renewalLane, surface, claim, "cancel");
 
   await page.reload({ waitUntil: "networkidle" });
@@ -1236,7 +1236,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
   );
   await canceledRenew.waitFor({ state: "attached" });
   assert.equal(await canceledRenew.getAttribute("data-renewal-lane"), renewalLane);
-  assert.equal(await canceledRenew.getAttribute("data-renewal-lineage"), renewalLineage);
+  assert.equal(await canceledRenew.getAttribute("data-renewal-team"), renewalTeam);
   assert.equal(await canceledRenew.getAttribute("data-renewal-state"), "none");
   assert.equal(await canceledRenew.getAttribute("data-renewal-requested"), "false");
   assert.equal(await canceledRenew.getAttribute("data-renewal-next-requested"), "true");
@@ -1247,7 +1247,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
 
 async function claimRenewalWitness(fixture, lane, surface) {
   const taskTab = surface.getByRole("tab", { name: /^Board/ });
-  const badge = taskTab.locator(".organization-mode-badge");
+  const badge = taskTab.locator(".team-mode-badge");
   const priorCount = await badge.count() === 0 ? 0 : Number(await badge.innerText());
   assert.ok(Number.isInteger(priorCount), "renewal fixture reads the prior task badge");
   const added = await replyAsLane(fixture, lane, [
@@ -1262,19 +1262,19 @@ async function claimRenewalWitness(fixture, lane, surface) {
   assert.equal(claimed.body.task, handle, "renewal lane claims the critical fixture task");
   await waitForPageFunction(
     surface.page(),
-    "the renewal witness increments the exact organization task badge",
+    "the renewal witness increments the exact team task badge",
     TRANSITION_MS * 4,
-    ({ lineage, expected }) => {
+    ({ team, expected }) => {
       const tabs = document.querySelectorAll(
-        `.organization-surface[data-lineage-id="${lineage}"] [role="tab"]`,
+        `.team-surface[data-team="${team}"] [role="tab"]`,
       );
       const tasks = [...tabs].find(
-        (tab) => tab.querySelector(".organization-mode-label")?.textContent === "Board",
+        (tab) => tab.querySelector(".team-mode-label")?.textContent === "Board",
       );
-      return Number(tasks?.querySelector(".organization-mode-badge")?.textContent) === expected;
+      return Number(tasks?.querySelector(".team-mode-badge")?.textContent) === expected;
     },
     {
-      lineage: await surface.getAttribute("data-lineage-id"),
+      team: await surface.getAttribute("data-team"),
       expected: priorCount + 1,
     },
   );
@@ -1304,7 +1304,7 @@ async function renewalClaimState(fixture, lane, handle) {
 
 async function renewalComposerProvenance(surface, lane) {
   return surface.locator(
-    `.organization-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
+    `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
   ).evaluate((age) => ({
     href: age.getAttribute("href"),
     authored: age.dataset.ageAuthored,
@@ -1320,7 +1320,7 @@ async function assertRenewalClaimUnchanged(fixture, lane, surface, expected, lab
   );
   assert.equal(
     Number(await surface.getByRole("tab", { name: /^Board/ })
-      .locator(".organization-mode-badge").innerText()),
+      .locator(".team-mode-badge").innerText()),
     expected.badge,
     `${label} preserves the active-task badge count`,
   );
@@ -1356,7 +1356,7 @@ async function installRenewalCommandRecorder(page) {
   });
 }
 
-async function assertRenewalCommand(page, lane, lineage, requested) {
+async function assertRenewalCommand(page, lane, team, requested) {
   await waitForPageFunction(
     page,
     `one ${requested ? "request" : "cancel"} renewal command crosses the browser socket`,
@@ -1372,21 +1372,21 @@ async function assertRenewalCommand(page, lane, lineage, requested) {
   );
   assert.deepEqual(commands[0].body, {
     topology_revision: commands[0].body.topology_revision,
-    lineage_id: lineage,
+    team: team,
     lane,
     requested,
   });
 }
 
-export async function captureReferenceControls(page, organization, artifactPath) {
-  const surface = organization.locator('.organization-surface[data-lineage-weight="4"]').first();
+export async function captureReferenceControls(page, console, artifactPath) {
+  const surface = console.locator('.team-surface[data-team-weight="4"]').first();
   await surface.waitFor();
-  const controls = surface.locator(".organization-composer-controls");
-  const lineage = await surface.getAttribute("data-lineage-id");
-  assert.ok(lineage, "the reference controls belong to an identified lineage");
-  const speech = controls.locator('.organization-speech input[type="range"]');
-  const lifetime = controls.locator('.organization-lifetime input[type="range"]');
-  const textarea = surface.locator(".organization-agent textarea").first();
+  const controls = surface.locator(".team-composer-controls");
+  const team = await surface.getAttribute("data-team");
+  assert.ok(team, "the reference controls belong to an identified team");
+  const speech = controls.locator('.team-speech input[type="range"]');
+  const lifetime = controls.locator('.team-lifetime input[type="range"]');
+  const textarea = surface.locator(".team-agent textarea").first();
   const initial = {
     speech: await speech.inputValue(),
     lifetime: await lifetime.inputValue(),
@@ -1402,9 +1402,9 @@ export async function captureReferenceControls(page, organization, artifactPath)
       "the native speech range updates the rendered control state",
     );
     if (initial.lifetime === "2") {
-      await selectLifetime(page, lineage, lifetime, "1", "Drive");
+      await selectLifetime(page, team, lifetime, "1", "Drive");
     }
-    await selectLifetime(page, lineage, lifetime, "2", "Drain");
+    await selectLifetime(page, team, lifetime, "2", "Drain");
     await textarea.fill("Reference control geometry");
     const drain = controls.getByRole("button", { name: "Drain", exact: true });
     await drain.waitFor();
@@ -1420,7 +1420,7 @@ export async function captureReferenceControls(page, organization, artifactPath)
     if (await lifetime.inputValue() !== initial.lifetime) {
       await selectLifetime(
         page,
-        lineage,
+        team,
         lifetime,
         initial.lifetime,
         lifeLabels[Number(initial.lifetime)],

@@ -68,7 +68,7 @@ fn migrate_lineage_facts(connection: &Connection) -> Result<(), OpenError> {
             )
         })?;
         if u64::try_from(seq).ok() != Some(envelope.seq.get())
-            || envelope.fact.kind() != wire::FactKind::LineageConfigured
+            || envelope.fact.kind() != wire::FactKind::TeamConfigured
         {
             return Err(invalid(
                 "fact_envelopes",
@@ -117,7 +117,7 @@ fn migrate_receipts(connection: &Connection) -> Result<(), OpenError> {
         let request = if retire_fields(&mut request) == 0 {
             None
         } else if kind == "lineage::configure" {
-            Some(canonical_request::<wire::intent::LineageConfigure>(
+            Some(canonical_request::<wire::intent::TeamConfigure>(
                 &command, &request,
             )?)
         } else {
@@ -247,7 +247,7 @@ fn decode(table: &'static str, row: &str, bytes: &[u8]) -> Result<Value, OpenErr
 }
 
 fn intermediate(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    serde_json::to_vec(value).map_err(|error| {
+    super::team::current(value).map_err(|error| {
         invalid(
             table,
             row,
@@ -284,13 +284,13 @@ mod tests {
             v: wire::WireVersion::CURRENT,
             id: uuid("bce913116301"),
             epoch: uuid("bce913116302"),
-            kind: wire::CommandKind::LineageConfigure,
+            kind: wire::CommandKind::TeamConfigure,
             expected: Vec::new(),
-            body: wire::intent::LineageConfigure {
+            body: wire::intent::TeamConfigure {
                 topology_revision: 3,
-                lineage_id: uuid("bce913116303"),
+                team: uuid("bce913116303"),
                 member: None,
-                life: Some(wire::intent::LineageLife::Drive),
+                life: Some(wire::intent::TeamLife::Drive),
             },
         };
         let mut legacy = serde_json::to_value(request).expect("request becomes JSON");
@@ -300,11 +300,11 @@ mod tests {
             .insert("manual_projects".to_owned(), json!(["task.allocation"]));
 
         assert_eq!(retire_fields(&mut legacy), 1);
-        let canonical = canonical_request::<wire::intent::LineageConfigure>("fixture", &legacy)
+        let canonical = canonical_request::<wire::intent::TeamConfigure>("fixture", &legacy)
             .expect("retired request normalizes");
-        let decoded: wire::Command<wire::intent::LineageConfigure> =
+        let decoded: wire::Command<wire::intent::TeamConfigure> =
             wire::decode(&canonical).expect("normalized request is current typed wire");
-        assert_eq!(decoded.body.life, Some(wire::intent::LineageLife::Drive));
+        assert_eq!(decoded.body.life, Some(wire::intent::TeamLife::Drive));
         assert_eq!(decoded.body.topology_revision, 3);
     }
 }

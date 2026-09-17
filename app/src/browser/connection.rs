@@ -330,7 +330,7 @@ async fn send_topology_as(
                 BorrowedLaneSeat {
                     topology_revision: *topology_revision,
                     lane: *lane,
-                    lineage_id: *lane,
+                    team: *lane,
                     name: name.as_deref(),
                     worktree,
                     life,
@@ -363,7 +363,7 @@ async fn send_topology_as(
         }
         ClientAction::RenewLane {
             topology_revision,
-            lineage,
+            team,
             lane,
             requested,
         } => {
@@ -375,33 +375,33 @@ async fn send_topology_as(
                 vec![],
                 LaneRenewal {
                     topology_revision: *topology_revision,
-                    lineage_id: *lineage,
+                    team: *team,
                     lane: *lane,
                     requested: *requested,
                 },
             )
             .await
         }
-        ClientAction::ArrangeLineages {
+        ClientAction::ArrangeTeams {
             topology_revision,
-            lineages,
+            teams,
         } => {
             send_untracked_as(
                 principal,
                 writer,
                 id,
-                CommandKind::LineageArrange,
+                CommandKind::TeamArrange,
                 vec![],
-                BorrowedLineageArrange {
+                BorrowedTeamArrange {
                     topology_revision: *topology_revision,
-                    lineages,
+                    teams,
                 },
             )
             .await
         }
-        ClientAction::ConfigureLineage {
+        ClientAction::ConfigureTeam {
             topology_revision,
-            lineage,
+            team,
             member,
             life,
         } => {
@@ -409,11 +409,11 @@ async fn send_topology_as(
                 principal,
                 writer,
                 id,
-                CommandKind::LineageConfigure,
+                CommandKind::TeamConfigure,
                 vec![],
-                LineageConfigure {
+                TeamConfigure {
                     topology_revision: *topology_revision,
-                    lineage_id: *lineage,
+                    team: *team,
                     member: *member,
                     life: *life,
                 },
@@ -429,20 +429,20 @@ fn topology_pending_kind(action: &ClientAction) -> PendingKind {
         ClientAction::Seat { .. } => PendingKind::LaneSeat,
         ClientAction::ArrangeLane { .. } => PendingKind::LaneArrange,
         ClientAction::RenewLane {
-            lineage,
+            team,
             lane,
             requested,
             ..
         } => PendingKind::LaneRenewal {
-            lineage: *lineage,
+            team: *team,
             lane: *lane,
             requested: *requested,
         },
-        ClientAction::ConfigureLineage { lineage, life, .. } => PendingKind::LineageConfigure {
-            lineage: *lineage,
+        ClientAction::ConfigureTeam { team, life, .. } => PendingKind::TeamConfigure {
+            team: *team,
             life: *life,
         },
-        ClientAction::ArrangeLineages { .. } => PendingKind::LineageArrange,
+        ClientAction::ArrangeTeams { .. } => PendingKind::TeamArrange,
         _ => unreachable!("only topology mutations have scheduler response state"),
     }
 }
@@ -684,8 +684,8 @@ async fn dispatch_action(
         ClientAction::Seat { .. }
         | ClientAction::ArrangeLane { .. }
         | ClientAction::RenewLane { .. }
-        | ClientAction::ArrangeLineages { .. }
-        | ClientAction::ConfigureLineage { .. } => {
+        | ClientAction::ArrangeTeams { .. }
+        | ClientAction::ConfigureTeam { .. } => {
             unreachable!("topology mutation dispatch is partitioned")
         }
         action @ (ClientAction::Note { .. } | ClientAction::Steer { .. }) => {
@@ -909,7 +909,7 @@ struct BorrowedTaskNote<'a> {
 struct BorrowedLaneSeat<'a> {
     topology_revision: u64,
     lane: CanonicalUuid,
-    lineage_id: CanonicalUuid,
+    team: CanonicalUuid,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<&'a str>,
     worktree: &'a str,
@@ -924,9 +924,9 @@ struct BorrowedLaneSeat<'a> {
 }
 
 #[derive(Serialize)]
-struct BorrowedLineageArrange<'a> {
+struct BorrowedTeamArrange<'a> {
     topology_revision: u64,
-    lineages: &'a [LineageArrangement],
+    teams: &'a [TeamArrangement],
 }
 
 #[derive(Serialize)]

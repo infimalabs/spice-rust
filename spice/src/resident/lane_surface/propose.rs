@@ -14,34 +14,34 @@ pub(super) fn propose_seat(
 ) -> CommandResult<JournalWrite> {
     let mut next = observed.body().clone();
     next.topology_revision = answer.topology_revision;
-    if subscription_policy(observed.body(), request.lineage_id)?.is_none() {
+    if subscription_policy(observed.body(), request.team)?.is_none() {
         if observed
             .body()
             .lanes
             .iter()
-            .any(|row| row.lineage_id == request.lineage_id)
+            .any(|row| row.team == request.team)
         {
             return Err(store_fault(
-                "lineage::subscription-missing",
-                "an existing lineage has no durable task-allocation lifetime",
+                "team::subscription-missing",
+                "an existing team has no durable task-allocation lifetime",
             ));
         }
-        let policy = LineageLife::from_wire(&request.life).ok_or_else(|| {
+        let policy = TeamLife::from_wire(&request.life).ok_or_else(|| {
             store_fault(
-                "lineage::subscription-invalid",
+                "team::subscription-invalid",
                 "a seated lane has no closed task-allocation lifetime",
             )
         })?;
-        next.subscriptions.push(wire::LineageSubscription {
-            lineage_id: request.lineage_id,
+        next.subscriptions.push(wire::TeamSubscription {
+            team: request.team,
             policy,
         });
         next.subscriptions
-            .sort_by_key(|subscription| subscription.lineage_id);
+            .sort_by_key(|subscription| subscription.team);
     }
     next.lanes.push(wire::LaneResidency {
         lane: request.lane,
-        lineage_id: request.lineage_id,
+        team: request.team,
         name: request.name.clone(),
         worktree: request.worktree.clone(),
         life: request.life.clone(),
@@ -65,7 +65,7 @@ pub(super) fn propose_seat(
         .fact(
             wire::body::LaneSeated {
                 lane: request.lane,
-                lineage_id: request.lineage_id,
+                team: request.team,
                 capability,
                 name: request.name.clone(),
                 worktree: request.worktree.clone(),
@@ -179,15 +179,11 @@ pub(super) fn propose_remove(
 ) -> CommandResult<JournalWrite> {
     let mut next = observed.body().clone();
     next.topology_revision = answer.topology_revision;
-    let removed_lineage = row.lineage_id;
+    let removed_team = row.team;
     next.lanes.retain(|lane| lane.lane != request.lane);
-    if !next
-        .lanes
-        .iter()
-        .any(|lane| lane.lineage_id == removed_lineage)
-    {
+    if !next.lanes.iter().any(|lane| lane.team == removed_team) {
         next.subscriptions
-            .retain(|subscription| subscription.lineage_id != removed_lineage);
+            .retain(|subscription| subscription.team != removed_team);
     }
     let mut write = write(
         command.actor().clone(),
@@ -199,7 +195,7 @@ pub(super) fn propose_remove(
         .fact(
             wire::body::LaneRemoved {
                 lane: row.lane,
-                lineage_id: row.lineage_id,
+                team: row.team,
                 worktree: row.worktree.clone(),
             },
             FactCause::Existing(observed.position()),

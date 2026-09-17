@@ -672,7 +672,7 @@ fn encode_task_head(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
 }
 
 fn intermediate(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    serde_json::to_vec(value)
+    super::team::current(value)
         .map_err(|error| invalid(table, row, &format!("migrated JSON cannot encode: {error}")))
 }
 

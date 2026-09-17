@@ -49,10 +49,10 @@ fn projects() -> board::ProjectPolicy {
     .expect("fixture project policy")
 }
 
-fn drain() -> wire::LineageSubscription {
-    wire::LineageSubscription {
-        lineage_id: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
-        policy: wire::intent::LineageLife::Drain,
+fn drain() -> wire::TeamSubscription {
+    wire::TeamSubscription {
+        team: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
+        policy: wire::intent::TeamLife::Drain,
     }
 }
 

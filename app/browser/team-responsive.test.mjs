@@ -5,7 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { launchBrowser } from "./headless-launch.mjs";
-import { observeStableRightEdge, settleFleetScroll } from "./lineage-responsive.mjs";
+import { observeStableRightEdge, settleFleetScroll } from "./team-responsive.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const TASK_HANDLES = [
@@ -78,7 +78,7 @@ async function productionTaskContract() {
     return match[1];
   };
   const missingLease = renderer.match(
-    /lease_countdown\(standing\.expires_at, "organization-task-age", "([^"]+)"\)/,
+    /lease_countdown\(standing\.expires_at, "team-task-age", "([^"]+)"\)/,
   );
   assert.ok(missingLease, "production task card exposes missing-lease copy");
   assert.match(
@@ -103,32 +103,32 @@ async function responsiveDocument(taskContract) {
     body { margin: 0; }
     .mosaic-workspace { width: 932px; height: 600px; }
     .mosaic-workspace .content { padding: 0; }
-    .lineage-fleet { height: 600px; }
+    .team-fleet { height: 600px; }
   </style><main class="mosaic-workspace"><div class="content">
-    <div class="lineage-fleet" tabindex="0" aria-label="Lineage lanes">${surface(1, taskContract)}${surface(4, taskContract)}</div>
+    <div class="team-fleet" tabindex="0" aria-label="Team lanes">${surface(1, taskContract)}${surface(4, taskContract)}</div>
   </div></main>`;
 }
 
 function surface(weight, taskContract) {
-  return `<section class="organization-surface" data-lineage-weight="${weight}">
-    <header class="organization-toolbar">
-      <span class="organization-lights"><span class="organization-light"></span></span>
-      <nav class="organization-mode-rail" role="tablist">
-        ${["Team", "Board", "Agents"].map((label) => `<button class="organization-mode">
-          <span class="organization-mode-label">${label}</span><span class="organization-mode-badge">88</span>
+  return `<section class="team-surface" data-team-weight="${weight}">
+    <header class="team-toolbar">
+      <span class="team-lights"><span class="team-light"></span></span>
+      <nav class="team-mode-rail" role="tablist">
+        ${["Team", "Board", "Agents"].map((label) => `<button class="team-mode">
+          <span class="team-mode-label">${label}</span><span class="team-mode-badge">88</span>
         </button>`).join("")}
       </nav>
-      <button class="organization-menu" aria-label="Organization details">•••</button>
+      <button class="team-menu" aria-label="Team details">•••</button>
     </header>
-    <main class="organization-task-workspace" aria-label="Organization tasks">
-      <section class="organization-task-section"><header><h3>Active tasks</h3></header>
-        <ol class="organization-task-list">
+    <main class="team-task-workspace" aria-label="Team tasks">
+      <section class="team-task-section"><header><h3>Active tasks</h3></header>
+        <ol class="team-task-list">
           ${taskCard(TASK_HANDLES[0], "A long active task title wraps without hiding its operational meaning", "Extraordinarily long agent identity", "review", "19m")}
           ${taskCard(TASK_HANDLES[1], "Renewal countdown geometry", "Agent two", "todo", "999d+", "expiring")}
           ${taskCard(TASK_HANDLES[2], "Missing lease remains explicit", "Agent three", "plan", taskContract.missingLease, "missing")}
         </ol>
-      </section><section class="organization-task-section"><header><h3>Direction queue</h3></header>
-        <p class="organization-task-empty">No queued direction.</p></section>
+      </section><section class="team-task-section"><header><h3>Direction queue</h3></header>
+        <p class="team-task-empty">No queued direction.</p></section>
     </main>
     <div class="composer-shard-heading">
       <span class="composer-shard-link">48m</span>
@@ -140,12 +140,12 @@ function surface(weight, taskContract) {
 }
 
 function taskCard(handle, title, agent, phase, lease, state = "ordinary") {
-  return `<li class="organization-task-row" data-accent="0" data-task-handle="${handle}">
-    <div class="organization-task-row-main"><code>${handle}</code>
-      <strong class="organization-task-title">${title}</strong></div>
-    <div class="organization-task-row-meta"><span class="organization-task-member">
-      <span class="agent-presence"></span><span class="organization-task-member-name">${agent}</span></span>
-      <span class="organization-task-phase">${phase}</span><span class="organization-task-renewed">expires <span class="organization-task-age" data-test-lease="${state}">${lease}</span></span></div>
+  return `<li class="team-task-row" data-accent="0" data-task-handle="${handle}">
+    <div class="team-task-row-main"><code>${handle}</code>
+      <strong class="team-task-title">${title}</strong></div>
+    <div class="team-task-row-meta"><span class="team-task-member">
+      <span class="agent-presence"></span><span class="team-task-member-name">${agent}</span></span>
+      <span class="team-task-phase">${phase}</span><span class="team-task-renewed">expires <span class="team-task-age" data-test-lease="${state}">${lease}</span></span></div>
   </li>`;
 }
 
@@ -157,27 +157,27 @@ async function setWidth(page, width) {
 }
 
 async function geometry(page) {
-  return page.locator(".lineage-fleet").evaluate((fleet) => {
+  return page.locator(".team-fleet").evaluate((fleet) => {
     const bounds = fleet.getBoundingClientRect();
     const style = getComputedStyle(fleet);
-    const minimumToken = style.getPropertyValue("--lineage-surface-min-inline").trim();
+    const minimumToken = style.getPropertyValue("--team-surface-min-inline").trim();
     const surfaces = [...fleet.children].map((surface) => {
       const rect = surface.getBoundingClientRect();
       const surfaceStyle = getComputedStyle(surface);
-      const toolbar = surface.querySelector(".organization-toolbar");
+      const toolbar = surface.querySelector(".team-toolbar");
       const toolbarStyle = getComputedStyle(toolbar);
-      const modeRail = toolbar.querySelector(".organization-mode-rail");
+      const modeRail = toolbar.querySelector(".team-mode-rail");
       const modeRailBounds = modeRail.getBoundingClientRect();
       const modeRailStyle = getComputedStyle(modeRail);
       const identity = surface.querySelector(".composer-shard-heading strong");
-      const workspace = surface.querySelector(".organization-task-workspace");
+      const workspace = surface.querySelector(".team-task-workspace");
       const workspaceBounds = workspace.getBoundingClientRect();
-      const taskRows = [...surface.querySelectorAll(".organization-task-row")];
+      const taskRows = [...surface.querySelectorAll(".team-task-row")];
       const tasks = taskRows.map((task) => {
         const taskBounds = task.getBoundingClientRect();
-        const age = task.querySelector(".organization-task-age");
-        const metadata = task.querySelector(".organization-task-row-meta");
-        const title = task.querySelector(".organization-task-title");
+        const age = task.querySelector(".team-task-age");
+        const metadata = task.querySelector(".team-task-row-meta");
+        const title = task.querySelector(".team-task-title");
         return {
           bottom: taskBounds.bottom,
           ageOverflow: age.scrollWidth - age.clientWidth,
@@ -199,7 +199,7 @@ async function geometry(page) {
         return controlRect.left < rect.left - 1 || controlRect.right > rect.right + 1;
       });
       return {
-        weight: Number(surface.dataset.lineageWeight),
+        weight: Number(surface.dataset.teamWeight),
         minWidth: Number.parseFloat(minimumToken) * Number.parseFloat(surfaceStyle.fontSize),
         minWidthToken: minimumToken,
         top: Math.round(rect.top),
@@ -232,7 +232,7 @@ async function geometry(page) {
           textOverflow: getComputedStyle(identity).textOverflow,
           whiteSpace: getComputedStyle(identity).whiteSpace,
         },
-        labels: [...surface.querySelectorAll(".organization-mode-label")].map((label) => ({
+        labels: [...surface.querySelectorAll(".team-mode-label")].map((label) => ({
           box: label.getBoundingClientRect().toJSON(),
           button: label.parentElement.getBoundingClientRect().toJSON(),
           overflow: getComputedStyle(label).overflow,
@@ -243,7 +243,7 @@ async function geometry(page) {
         tasks: {
           borderRadius: getComputedStyle(taskRows[0]).borderRadius,
           handles: tasks.map(({ handle }) => handle),
-          listTag: surface.querySelector(".organization-task-list")?.tagName,
+          listTag: surface.querySelector(".team-task-list")?.tagName,
           rows: tasks,
           workspaceOverflow: workspace.scrollWidth - workspace.clientWidth,
         },
@@ -315,7 +315,7 @@ function assertTrack(layout, label, overflow) {
         && Math.abs(surface.modeRail.buttons[0].left - surface.modeRail.contentLeft) <= 0.5
         && Math.abs(surface.modeRail.buttons.at(-1).right - surface.modeRail.contentRight) <= 0.5
         && Math.max(...modeWidths) - Math.min(...modeWidths) <= 1,
-      `${label} current organization modes fill their rail evenly: ${JSON.stringify(surface.modeRail)}`,
+      `${label} current team modes fill their rail evenly: ${JSON.stringify(surface.modeRail)}`,
     );
     assert.ok(surface.labels.every(({ box, button, overflow: inner, fontSize, textOverflow, whiteSpace }) => (
       box.left >= button.left - 0.5
@@ -361,7 +361,7 @@ function assertTrack(layout, label, overflow) {
 }
 
 async function expectRightEdge(page, label, overflow = true) {
-  await page.locator(".lineage-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });
+  await page.locator(".team-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });
   const layout = await geometry(page);
   assertTrack(layout, label, overflow);
   assert.ok(Math.abs(layout.scrollLeft - layout.maxScroll) <= 1, `${label} reaches the right edge`);
@@ -373,7 +373,7 @@ async function expectRightEdge(page, label, overflow = true) {
 }
 
 async function setCount(page, count) {
-  await page.locator(".lineage-fleet").evaluate((fleet, nextCount) => {
+  await page.locator(".team-fleet").evaluate((fleet, nextCount) => {
     while (fleet.childElementCount > nextCount) fleet.lastElementChild.remove();
     while (fleet.childElementCount < nextCount) {
       fleet.append(fleet.firstElementChild.cloneNode(true));
@@ -384,9 +384,9 @@ async function setCount(page, count) {
 
 async function setWeights(page, weights) {
   await setCount(page, weights.length);
-  await page.locator(".lineage-fleet").evaluate((fleet, values) => {
+  await page.locator(".team-fleet").evaluate((fleet, values) => {
     [...fleet.children].forEach((surface, index) => {
-      surface.dataset.lineageWeight = String(values[index]);
+      surface.dataset.teamWeight = String(values[index]);
     });
   }, weights);
   await page.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(resolveFrame)));
@@ -405,7 +405,7 @@ async function assertTaskCardMatrix(page, engine, width, taskContract) {
   const label = `${engine} ${width}px three-card matrix`;
   const before = await geometry(page);
   assertTrack(before, label, false);
-  const surface = page.locator(".organization-surface").first();
+  const surface = page.locator(".team-surface").first();
   assert.equal(
     (await surface.locator('[data-test-lease="missing"]').innerText()).trim(),
     taskContract.missingLease,
@@ -428,11 +428,11 @@ async function assertTaskCardMatrix(page, engine, width, taskContract) {
 }
 
 async function assertTaskSectionStates(page, engine, taskContract) {
-  const workspace = page.locator(".organization-task-workspace").first();
-  const active = workspace.locator(":scope > .organization-task-section").first();
+  const workspace = page.locator(".team-task-workspace").first();
+  const active = workspace.locator(":scope > .team-task-section").first();
   const original = await active.innerHTML();
   assert.deepEqual(
-    await workspace.locator(":scope > .organization-task-section h3").allTextContents(),
+    await workspace.locator(":scope > .team-task-section h3").allTextContents(),
     ["Active tasks", "Direction queue"],
     `${engine} keeps active ownership before queued direction`,
   );
@@ -441,11 +441,11 @@ async function assertTaskSectionStates(page, engine, taskContract) {
     { copy: taskContract.unavailable, role: "status" },
   ]) {
     await active.evaluate((section, next) => {
-      section.innerHTML = `<header><h3>Active tasks</h3></header><p class="organization-task-empty"${
+      section.innerHTML = `<header><h3>Active tasks</h3></header><p class="team-task-empty"${
         next.role ? ` role="${next.role}"` : ""
       }>${next.copy}</p>`;
     }, state);
-    const message = active.locator(".organization-task-empty");
+    const message = active.locator(".team-task-empty");
     assert.equal((await message.innerText()).trim(), state.copy);
     assert.equal(await message.getAttribute("role"), state.role);
     assert.ok(
@@ -490,7 +490,7 @@ async function imageDensityDocument() {
   return `<!doctype html><style>${style}\n${mosaic}
     body { margin: 0; }
     .image-density-fixture { width: var(--fixture-width); min-width: 0; max-width: none; }
-  </style><main class="organization-surface image-density-fixture">
+  </style><main class="team-surface image-density-fixture">
     ${[1, 2, 3, 4, 5].map(card).join("")}
     ${[1, 2, 3].flatMap((depth) => [1, 2, 3].map((count) => quotedCard(depth, count))).join("")}
   </main>`;
@@ -617,7 +617,7 @@ async function assertQuotedImageDensity(page, engine, document) {
   }
 }
 
-test("lineage minima govern weighted fleet layout in Chromium and Firefox", async (t) => {
+test("team minima govern weighted fleet layout in Chromium and Firefox", async (t) => {
   const taskContract = await productionTaskContract();
   const document = await responsiveDocument(taskContract);
   const imageDocument = await imageDensityDocument();
@@ -687,23 +687,23 @@ test("lineage minima govern weighted fleet layout in Chromium and Firefox", asyn
           await expectRightEdge(page, `${engine} ${count}-lane desktop track`);
         }
 
-        await page.locator(".lineage-fleet").focus();
+        await page.locator(".team-fleet").focus();
         await settleFleetScroll(
           page,
-          page.locator(".lineage-fleet"),
+          page.locator(".team-fleet"),
           `${engine} keyboard traversal`,
           () => page.keyboard.press("ArrowLeft"),
         );
         let traversed = await geometry(page);
         assert.ok(traversed.scrollLeft < traversed.maxScroll, `${engine} keyboard traverses west`);
-        await page.locator(".lineage-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });
-        await page.locator(".lineage-fleet").hover();
+        await page.locator(".team-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });
+        await page.locator(".team-fleet").hover();
         await page.mouse.wheel(-300, 0);
         await page.waitForTimeout(50);
         traversed = await geometry(page);
         assert.ok(traversed.scrollLeft < traversed.maxScroll, `${engine} horizontal wheel traverses west`);
 
-        await page.locator(".lineage-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });
+        await page.locator(".team-fleet").evaluate((fleet) => { fleet.scrollLeft = fleet.scrollWidth; });
         await setWeights(page, [1, 3, 6]);
         await expectRightEdge(page, `${engine} added lane remains at east edge`);
         await setCount(page, 2);

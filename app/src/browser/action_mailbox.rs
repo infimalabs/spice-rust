@@ -170,8 +170,8 @@ impl PendingKind {
             | Self::LaneArrange
             | Self::LaneRenewal { .. }
             | Self::WakeSubmission { .. }
-            | Self::LineageConfigure { .. }
-            | Self::LineageArrange
+            | Self::TeamConfigure { .. }
+            | Self::TeamArrange
             | Self::Steer
             | Self::SteerSubmission { .. }
             | Self::Note => None,
@@ -255,7 +255,7 @@ struct TopologyAction {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct RenewalKey {
-    lineage: CanonicalUuid,
+    team: CanonicalUuid,
     lane: CanonicalUuid,
     requested: bool,
 }
@@ -361,11 +361,11 @@ impl ClientAction {
                     + life.len()
                     + vendor.as_str().len()
             }
-            Self::ArrangeLineages { lineages, .. } => lineages.iter().fold(
-                lineages.len() * std::mem::size_of::<wire::intent::LineageArrangement>(),
-                |bytes, lineage| {
+            Self::ArrangeTeams { teams, .. } => teams.iter().fold(
+                teams.len() * std::mem::size_of::<wire::intent::TeamArrangement>(),
+                |bytes, team| {
                     bytes.saturating_add(
-                        lineage.lanes.len() * std::mem::size_of::<wire::CanonicalUuid>(),
+                        team.lanes.len() * std::mem::size_of::<wire::CanonicalUuid>(),
                     )
                 },
             ),
@@ -386,7 +386,7 @@ impl ClientAction {
             | Self::MessageHistory { .. }
             | Self::ArrangeLane { .. }
             | Self::RenewLane { .. }
-            | Self::ConfigureLineage { .. } => 0,
+            | Self::ConfigureTeam { .. } => 0,
         }
     }
 
@@ -400,20 +400,20 @@ impl ClientAction {
             Self::Seat { .. }
                 | Self::ArrangeLane { .. }
                 | Self::RenewLane { .. }
-                | Self::ConfigureLineage { .. }
-                | Self::ArrangeLineages { .. }
+                | Self::ConfigureTeam { .. }
+                | Self::ArrangeTeams { .. }
         )
     }
 
     fn renewal_key(&self) -> Option<RenewalKey> {
         match self {
             Self::RenewLane {
-                lineage,
+                team,
                 lane,
                 requested,
                 ..
             } => Some(RenewalKey {
-                lineage: *lineage,
+                team: *team,
                 lane: *lane,
                 requested: *requested,
             }),
@@ -432,10 +432,10 @@ impl ClientAction {
             | Self::RenewLane {
                 topology_revision, ..
             }
-            | Self::ConfigureLineage {
+            | Self::ConfigureTeam {
                 topology_revision, ..
             }
-            | Self::ArrangeLineages {
+            | Self::ArrangeTeams {
                 topology_revision, ..
             } => *topology_revision = revision,
             _ => unreachable!("only topology mutations are prepared by the scheduler"),
@@ -960,7 +960,7 @@ mod tests {
 
         let renewal = || ClientAction::RenewLane {
             topology_revision: 9,
-            lineage: id(30),
+            team: id(30),
             lane: id(31),
             requested: true,
         };

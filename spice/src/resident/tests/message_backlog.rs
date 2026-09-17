@@ -794,7 +794,7 @@ fn seat_backlog_residency(
             .into_iter()
             .map(|lane| wire::LaneResidency {
                 lane,
-                lineage_id: lane,
+                team: lane,
                 name: None,
                 worktree: worktree.clone(),
                 life: "steer".to_owned(),

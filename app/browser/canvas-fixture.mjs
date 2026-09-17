@@ -861,12 +861,12 @@ export async function assertResidentRestart(fixture, page, previous, options = {
   const before = await page.evaluate(() => {
     document.documentElement.dataset.restartDocument = crypto.randomUUID();
     document.querySelector("#app").dataset.restartRoot = crypto.randomUUID();
-    window.__restartMinimumSurfaces = document.querySelectorAll(".organization-surface").length;
+    window.__restartMinimumSurfaces = document.querySelectorAll(".team-surface").length;
     window.__restartPlaceholderSeen = false;
     window.__restartObserver = new MutationObserver(() => {
       window.__restartMinimumSurfaces = Math.min(
         window.__restartMinimumSurfaces,
-        document.querySelectorAll(".organization-surface").length,
+        document.querySelectorAll(".team-surface").length,
       );
       window.__restartPlaceholderSeen ||= document.body.textContent
         .includes("No agent snapshot is available.");
@@ -875,8 +875,8 @@ export async function assertResidentRestart(fixture, page, previous, options = {
     return {
       document: document.documentElement.dataset.restartDocument,
       root: document.querySelector("#app").dataset.restartRoot,
-      surfaces: [...document.querySelectorAll(".organization-surface")].map((surface) => ({
-        lineage: surface.dataset.lineageId,
+      surfaces: [...document.querySelectorAll(".team-surface")].map((surface) => ({
+        team: surface.dataset.team,
         right: surface.getBoundingClientRect().right,
       })),
     };
@@ -896,7 +896,7 @@ export async function assertResidentRestart(fixture, page, previous, options = {
   );
   assert.equal(
     restarted.body.subscriptions.find(
-      (subscription) => subscription.lineage_id === previous.policy.lineage,
+      (subscription) => subscription.team === previous.policy.team,
     )?.policy,
     previous.policy.policy,
     "restart preserves the configured task policy instead of deriving it from lane life",
@@ -915,8 +915,8 @@ export async function assertResidentRestart(fixture, page, previous, options = {
       root: document.querySelector("#app").dataset.restartRoot,
       minimumSurfaces: window.__restartMinimumSurfaces,
       placeholderSeen: window.__restartPlaceholderSeen,
-      surfaces: [...document.querySelectorAll(".organization-surface")].map((surface) => ({
-        lineage: surface.dataset.lineageId,
+      surfaces: [...document.querySelectorAll(".team-surface")].map((surface) => ({
+        team: surface.dataset.team,
         right: surface.getBoundingClientRect().right,
       })),
     };
@@ -933,15 +933,15 @@ export async function assertResidentRestart(fixture, page, previous, options = {
     "resident restart never publishes a partial surface without its agent snapshot",
   );
   assert.deepEqual(
-    after.surfaces.map(({ lineage }) => lineage),
-    before.surfaces.map(({ lineage }) => lineage),
-    "resident restart preserves visible lineage order",
+    after.surfaces.map(({ team }) => team),
+    before.surfaces.map(({ team }) => team),
+    "resident restart preserves visible team order",
   );
   assert.ok(
     after.surfaces.every((surface, index) => (
       Math.abs(surface.right - before.surfaces[index].right) <= 0.5
     )),
-    "resident restart preserves the right-origin lineage edge",
+    "resident restart preserves the right-origin team edge",
   );
   return resident;
 }

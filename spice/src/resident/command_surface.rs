@@ -197,10 +197,10 @@ impl<'a> Surface<'a> {
                 command,
                 renewal,
             )),
-            (CommandKind::LineageArrange, Intent::LineageArrange(arrange)) => Some(
-                lane_surface::arrange_lineages(self.bus, self.epoch, seats, command, arrange),
+            (CommandKind::TeamArrange, Intent::TeamArrange(arrange)) => Some(
+                lane_surface::arrange_teams(self.bus, self.epoch, seats, command, arrange),
             ),
-            (CommandKind::LineageConfigure, Intent::LineageConfigure(configure)) => Some(
+            (CommandKind::TeamConfigure, Intent::TeamConfigure(configure)) => Some(
                 lane_surface::configure(self.bus, self.epoch, seats, command, configure),
             ),
             (CommandKind::LaneRecall, Intent::LaneRecall(recall)) => Some(lane_surface::recall(

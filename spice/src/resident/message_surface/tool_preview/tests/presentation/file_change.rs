@@ -20,7 +20,7 @@ fn file_change_summary_keeps_the_session_worktree_when_the_lane_row_moves() {
         topology_revision: 0,
         lanes: vec![wire::LaneResidency {
             lane: record.lane,
-            lineage_id: record.lane,
+            team: record.lane,
             name: None,
             worktree: "/workspace".to_owned(),
             life: "drive".to_owned(),

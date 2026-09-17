@@ -222,7 +222,7 @@ fn client_reclaim_without_handle_routes_a_missing_claim_through_status() {
 }
 
 #[test]
-fn reclaim_refuses_residency_outside_the_claim_lineage_without_mutation() {
+fn reclaim_refuses_residency_outside_the_claim_team_without_mutation() {
     let (root, bus, epoch, seats) = fixture("reclaim-moved-residency", 1);
     let lane = Actor::Lane(seats[0].lane);
     let task = add(

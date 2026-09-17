@@ -32,17 +32,17 @@ pub use renewal::{AgentRenewalControl, agent_renewal_control};
 /// from color.
 pub const ACCENTS: usize = 6;
 
-/// Largest member-count weight the organization console assigns to layout.
+/// Largest member-count weight the team console assigns to layout.
 ///
-/// Membership itself is unbounded by presentation. Above this ceiling an organization
+/// Membership itself is unbounded by presentation. Above this ceiling a team
 /// keeps the widest admitted console instead of falling through CSS to a
 /// narrower default.
-pub const MAX_LINEAGE_VISUAL_WEIGHT: usize = 6;
+pub const MAX_TEAM_VISUAL_WEIGHT: usize = 6;
 
-/// Visual flex/grid weight for one lineage's member count.
+/// Visual flex/grid weight for one team's member count.
 #[must_use]
-pub fn lineage_visual_weight(members: usize) -> usize {
-    members.clamp(1, MAX_LINEAGE_VISUAL_WEIGHT)
+pub fn team_visual_weight(members: usize) -> usize {
+    members.clamp(1, MAX_TEAM_VISUAL_WEIGHT)
 }
 
 /// Characters of a lane identity the band shows.
@@ -50,16 +50,16 @@ pub const SHORT_LEN: usize = 8;
 
 /// Characters a band card allows one field.
 ///
-/// A card is one column of a band that has to fit a full lineage across the
+/// A card is one column of a band that has to fit a full team across the
 /// screen, so the width is the band's property rather than the renderer's.
 pub const FIELD_BUDGET: usize = 22;
 
 /// Stable bounded identity when neither configured name nor worktree leaf exists.
 pub const UNKNOWN_AGENT_LABEL: &str = "Unknown agent";
 
-/// Render state for one independently admitted section of the organization Board view.
+/// Render state for one independently admitted section of the team Board view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OrgTaskSectionState {
+pub enum TeamTaskSectionState {
     TaskSnapshotUnavailable,
     NoActiveTasks,
     ActiveTasks,
@@ -68,7 +68,7 @@ pub enum OrgTaskSectionState {
     QueuedDirection,
 }
 
-impl OrgTaskSectionState {
+impl TeamTaskSectionState {
     /// State of the board-backed active-task section.
     #[must_use]
     pub const fn active(board_available: bool, count: usize) -> Self {
@@ -98,7 +98,7 @@ impl OrgTaskSectionState {
     pub const fn message(self) -> Option<&'static str> {
         match self {
             Self::TaskSnapshotUnavailable => Some("Task snapshot unavailable."),
-            Self::NoActiveTasks => Some("No active tasks for this organization."),
+            Self::NoActiveTasks => Some("No active tasks for this team."),
             Self::DirectionSnapshotUnavailable => Some("Direction snapshot unavailable."),
             Self::NoQueuedDirection => Some("No queued direction."),
             Self::ActiveTasks | Self::QueuedDirection => None,
@@ -120,8 +120,8 @@ impl OrgTaskSectionState {
 pub struct Standing {
     /// Independently steerable member the row describes.
     pub lane: CanonicalUuid,
-    /// Canvas lineage whose lane contains the member.
-    pub lineage_id: CanonicalUuid,
+    /// Canvas team whose lane contains the member.
+    pub team: CanonicalUuid,
     /// Lane identity abbreviated to what a card has room for.
     pub name: String,
     /// Worktree the lane runs in.
@@ -213,34 +213,34 @@ pub fn composer_vendor_icon_class(vendor: &str) -> Option<&'static str> {
     }
 }
 
-/// The fraction of an organization's width, at either edge, that joins rather than
+/// The fraction of a team's width, at either edge, that joins rather than
 /// reorders.
 ///
 /// The predecessor's lane drag reads the same gutter: the outer fifth of the
-/// organization under the pointer fuses the two organizations, and the middle three fifths
-/// moves the dragged organization into that position. Keeping the fraction identical
+/// team under the pointer fuses the two teams, and the middle three fifths
+/// moves the dragged team into that position. Keeping the fraction identical
 /// keeps the muscle memory identical, which is the whole reason a number this
 /// arbitrary is stated once rather than chosen twice.
-pub const LINEAGE_JOIN_GUTTER: f64 = 0.2;
+pub const TEAM_JOIN_GUTTER: f64 = 0.2;
 
-/// What a drop on an organization states, decided by where in that organization it landed.
+/// What a drop on a team states, decided by where in that team it landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LineageDrop {
-    /// Insert the dragged organization immediately before the target organization.
+pub enum TeamDrop {
+    /// Insert the dragged team immediately before the target team.
     ///
     /// Stated as "before the target" rather than "into the target's position"
-    /// because those coincide only when the dragged organization came from later in
+    /// because those coincide only when the dragged team came from later in
     /// the row. Dragging one forward lands it one place ahead of where the
     /// target stood, since removing it first shifts the target back.
     Reorder,
-    /// Insert the dragged organization immediately after the target organization.
+    /// Insert the dragged team immediately after the target team.
     ReorderAfter,
-    /// Give the dragged organization's agents to the target organization.
+    /// Give the dragged team's agents to the target team.
     Join,
 }
 
-impl LineageDrop {
-    /// Read the gesture out of a drop's position across the target organization.
+impl TeamDrop {
+    /// Read the gesture out of a drop's position across the target team.
     ///
     /// `offset` is the pointer's distance from the target's left edge and
     /// `width` the target's width, both in the same units; a target with no
@@ -251,7 +251,7 @@ impl LineageDrop {
             return Self::Reorder;
         }
         let fraction = offset / width;
-        if fraction <= LINEAGE_JOIN_GUTTER || fraction >= 1.0 - LINEAGE_JOIN_GUTTER {
+        if fraction <= TEAM_JOIN_GUTTER || fraction >= 1.0 - TEAM_JOIN_GUTTER {
             Self::Join
         } else {
             Self::Reorder
@@ -259,7 +259,7 @@ impl LineageDrop {
     }
 }
 
-/// Every organization and the agents it holds, in the order the surface drew them.
+/// Every team and the agents it holds, in the order the surface drew them.
 ///
 /// This is the same grouping the canvas renders from, read back out as bare
 /// identities: a drag has to answer with the arrangement it *saw*, so the
@@ -268,11 +268,10 @@ impl LineageDrop {
 pub fn topology(lanes: &[LaneRow]) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
     lanes
         .iter()
-        .map(|lineage| {
+        .map(|team| {
             (
-                lineage.lane,
-                lineage
-                    .members
+                team.lane,
+                team.members
                     .iter()
                     .map(|member| member.lane)
                     .collect::<Vec<_>>(),
@@ -281,78 +280,72 @@ pub fn topology(lanes: &[LaneRow]) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
         .collect()
 }
 
-/// State the whole organization arrangement one drop produces.
+/// State the whole team arrangement one drop produces.
 ///
 /// The resident admits an arrangement only as a complete restatement of the
-/// lane table, so this returns every organization and every agent rather than the
-/// delta: the operator dragged one organization, but what the canvas knows and the
+/// lane table, so this returns every team and every agent rather than the
+/// delta: the operator dragged one team, but what the canvas knows and the
 /// resident must agree on is where all of them now stand.
 ///
-/// A join appends the dragged organization's agents *after* the target's, never
+/// A join appends the dragged team's agents *after* the target's, never
 /// before. The target's first agent is its primary composer, so prepending
-/// would silently hand the composer to whichever organization was dragged in.
+/// would silently hand the composer to whichever team was dragged in.
 ///
 /// A drop that states nothing returns `None` rather than a no-op command, and
-/// the arrangement it would have stated is what decides that. Dropping an organization
+/// the arrangement it would have stated is what decides that. Dropping a team
 /// on itself and dropping one that is no longer on the surface are the cases
-/// that can be recognised up front; an organization dropped on the neighbour it already
-/// sits in front of is not, because that gesture is a real drag of a live organization
-/// onto a different live organization and only the result gives it away. Every one of
+/// that can be recognised up front; a team dropped on the neighbour it already
+/// sits in front of is not, because that gesture is a real drag of a live team
+/// onto a different live team and only the result gives it away. Every one of
 /// them would otherwise commit a complete restatement of the table the canvas
 /// is already showing, writing a durable fact that records no change.
 #[must_use]
 pub fn arrangement(
-    lineages: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     dragged: CanonicalUuid,
     target: CanonicalUuid,
-    drop: LineageDrop,
+    drop: TeamDrop,
 ) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
     if dragged == target {
         return None;
     }
-    let mut arranged = lineages.to_vec();
-    let dragged_at = arranged
-        .iter()
-        .position(|(lineage, _)| *lineage == dragged)?;
-    if !arranged.iter().any(|(lineage, _)| *lineage == target) {
+    let mut arranged = teams.to_vec();
+    let dragged_at = arranged.iter().position(|(team, _)| *team == dragged)?;
+    if !arranged.iter().any(|(team, _)| *team == target) {
         return None;
     }
     let (_, moved) = arranged.remove(dragged_at);
     let target_at = arranged
         .iter()
-        .position(|(lineage, _)| *lineage == target)
-        .expect("the target survives removing a different organization");
+        .position(|(team, _)| *team == target)
+        .expect("the target survives removing a different team");
     match drop {
-        LineageDrop::Reorder => arranged.insert(target_at, (dragged, moved)),
-        LineageDrop::ReorderAfter => arranged.insert(target_at + 1, (dragged, moved)),
-        LineageDrop::Join => arranged[target_at].1.extend(moved),
+        TeamDrop::Reorder => arranged.insert(target_at, (dragged, moved)),
+        TeamDrop::ReorderAfter => arranged.insert(target_at + 1, (dragged, moved)),
+        TeamDrop::Join => arranged[target_at].1.extend(moved),
     }
-    (arranged != lineages).then_some(arranged)
+    (arranged != teams).then_some(arranged)
 }
 
-/// Replace one multi-agent organization with one organization per agent.
+/// Replace one multi-agent team with one team per agent.
 ///
-/// The first agent keeps the source organization's identity so browser-local state can
+/// The first agent keeps the source team's identity so browser-local state can
 /// offer a one-click restore after the resident returns the split topology.
-/// Every later agent becomes an individual organization under its own stable lane
+/// Every later agent becomes an individual team under its own stable lane
 /// identity. Orgs outside the target keep both their identity and order.
 #[must_use]
-pub fn split_lineage(
-    lineages: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+pub fn split_team(
+    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     target: CanonicalUuid,
 ) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
-    let members = lineages
-        .iter()
-        .find(|(lineage, _)| *lineage == target)?
-        .1
-        .as_slice();
+    let members = teams.iter().find(|(team, _)| *team == target)?.1.as_slice();
     if members.len() < 2 {
         return None;
     }
-    let mut split = Vec::with_capacity(lineages.len() + members.len() - 1);
-    for (lineage, lanes) in lineages {
-        if *lineage != target {
-            split.push((*lineage, lanes.clone()));
+    let mut split = Vec::with_capacity(teams.len() + members.len() - 1);
+    for (team, lanes) in teams {
+        if *team != target {
+            split.push((*team, lanes.clone()));
             continue;
         }
         split.extend(
@@ -376,19 +369,18 @@ pub fn split_lineage(
 pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) -> Vec<Standing> {
     lanes
         .iter()
-        .flat_map(|lineage| {
-            lineage
-                .members
+        .flat_map(|team| {
+            team.members
                 .iter()
                 .enumerate()
-                .map(move |(position, member)| (lineage, position, member))
+                .map(move |(position, member)| (team, position, member))
         })
-        .map(|(lineage, position, member)| {
+        .map(|(team, position, member)| {
             let waiting = inbox.iter().find(|row| row.lane == member.lane);
             let held = held_task(tasks, member.lane);
             Standing {
                 lane: member.lane,
-                lineage_id: lineage.lane,
+                team: team.lane,
                 name: short(member.lane),
                 worktree: member.worktree.clone(),
                 label: agent_message_label(&member.worktree, member.name.as_deref()).to_owned(),
@@ -409,7 +401,7 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                 phase: held.map(|task| task.workflow.body.phase.to_string()),
                 held_since: held.and_then(|task| lease_instant(task, |lease| lease.start)),
                 expires_at: held.and_then(|task| lease_instant(task, |lease| lease.expiry)),
-                accent: accent(lineage.members.len(), position),
+                accent: accent(team.members.len(), position),
             }
         })
         .collect()
@@ -451,11 +443,11 @@ fn lease_instant(
 /// ordinal preserves Rust's geometry while keeping its right-handed deal.
 #[must_use]
 pub const fn right_edge_ordinal(members: usize, position: usize) -> usize {
-    assert!(position < members, "member position belongs to its lineage");
+    assert!(position < members, "member position belongs to its team");
     members - position - 1
 }
 
-/// The accent slot dealt to one canonical lineage-member position.
+/// The accent slot dealt to one canonical team-member position.
 ///
 /// The rightmost member is green. Moving left advances through the six slots,
 /// and a seventh member intentionally returns to green. Color decorates visible
@@ -855,9 +847,9 @@ pub fn truncate(text: &str, budget: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        MAX_LINEAGE_VISUAL_WEIGHT, agent_activity_name, agent_boundary_label, agent_card_kind,
+        MAX_TEAM_VISUAL_WEIGHT, agent_activity_name, agent_boundary_label, agent_card_kind,
         agent_message_attribution, agent_message_label, composer_vendor_icon_class,
-        lineage_visual_weight, ticker_accessible_label, ticker_chunks,
+        team_visual_weight, ticker_accessible_label, ticker_chunks,
     };
 
     #[test]
@@ -936,12 +928,12 @@ mod tests {
     }
 
     #[test]
-    fn lineage_visual_weight_has_a_nonzero_six_share_ceiling() {
-        assert_eq!(lineage_visual_weight(0), 1);
-        assert_eq!(lineage_visual_weight(1), 1);
-        assert_eq!(lineage_visual_weight(MAX_LINEAGE_VISUAL_WEIGHT), 6);
-        assert_eq!(lineage_visual_weight(7), 6);
-        assert_eq!(lineage_visual_weight(usize::MAX), 6);
+    fn team_visual_weight_has_a_nonzero_six_share_ceiling() {
+        assert_eq!(team_visual_weight(0), 1);
+        assert_eq!(team_visual_weight(1), 1);
+        assert_eq!(team_visual_weight(MAX_TEAM_VISUAL_WEIGHT), 6);
+        assert_eq!(team_visual_weight(7), 6);
+        assert_eq!(team_visual_weight(usize::MAX), 6);
     }
 
     #[test]

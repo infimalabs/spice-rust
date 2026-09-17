@@ -228,7 +228,7 @@ export async function captureQuoteBlockDensity(page, cards, artifacts, prefix) {
     const token = await card.evaluate((element) => {
       const id = crypto.randomUUID();
       const host = document.createElement("section");
-      host.className = "organization-surface";
+      host.className = "team-surface";
       host.dataset.quoteCaptureHost = id;
       host.style.width = `${Math.min(element.getBoundingClientRect().width, window.innerWidth)}px`;
       host.style.maxWidth = "none";

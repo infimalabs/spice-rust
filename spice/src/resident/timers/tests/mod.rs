@@ -1194,9 +1194,9 @@ fn attach_heads(
     });
     let subscriptions = lanes
         .iter()
-        .map(|lane| wire::LineageSubscription {
-            lineage_id: lane.lineage_id,
-            policy: wire::intent::LineageLife::Drive,
+        .map(|lane| wire::TeamSubscription {
+            team: lane.team,
+            policy: wire::intent::TeamLife::Drive,
         })
         .collect();
     write.residency_head(seated, move |_| ResidencyHead {
@@ -1212,7 +1212,7 @@ fn attach_heads(
 fn lane_residency(authority: &Authority) -> LaneResidency {
     LaneResidency {
         lane: authority.lane,
-        lineage_id: authority.lane,
+        team: authority.lane,
         name: None,
         worktree: authority.worktree.clone(),
         life: "drive".to_owned(),

@@ -37,9 +37,7 @@ pub(super) fn project_targets(
         let (held_claim, trust_blocked) = held_claim(entries, row, &environment, now)?;
         let subscription = subscription(projected_residency, row)?;
         let first_drain_member = !projected_residency.lanes.iter().any(|member| {
-            member.lineage_id == row.lineage_id
-                && member.occupant.is_some()
-                && member.disposition == "occupied"
+            member.team == row.team && member.occupant.is_some() && member.disposition == "occupied"
         });
         let (drain_queue, available) = if trust_blocked {
             (Available::None, Available::None)
@@ -105,11 +103,11 @@ fn held_claim(
 fn subscription<'a>(
     residency: &'a wire::ResidencyHead,
     row: &wire::LaneResidency,
-) -> CommandResult<Option<&'a wire::LineageSubscription>> {
+) -> CommandResult<Option<&'a wire::TeamSubscription>> {
     let mut subscriptions = residency
         .subscriptions
         .iter()
-        .filter(|subscription| subscription.lineage_id == row.lineage_id);
+        .filter(|subscription| subscription.team == row.team);
     let subscription = subscriptions.next();
     if subscriptions.next().is_some() {
         return Err(store_fault(
@@ -125,13 +123,13 @@ fn work_availability(
     entries: &[Entry],
     ready_at: &BTreeMap<TaskStamp, Instant>,
     row: &wire::LaneResidency,
-    subscription: Option<&wire::LineageSubscription>,
+    subscription: Option<&wire::TeamSubscription>,
     allocation: &board::NextConfig,
     first_drain_member: bool,
 ) -> CommandResult<(Available, Available)> {
     let actor = Actor::Lane(row.lane);
     match subscription {
-        Some(subscription) if subscription.policy == wire::intent::LineageLife::Drain => Ok((
+        Some(subscription) if subscription.policy == wire::intent::TeamLife::Drain => Ok((
             drain_available(
                 snapshot,
                 entries,
@@ -143,7 +141,7 @@ fn work_availability(
             )?,
             Available::None,
         )),
-        Some(subscription) if subscription.policy == wire::intent::LineageLife::Drive => Ok((
+        Some(subscription) if subscription.policy == wire::intent::TeamLife::Drive => Ok((
             Available::None,
             available_deadline(
                 snapshot,

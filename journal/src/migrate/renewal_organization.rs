@@ -14,8 +14,6 @@ use super::{MigrationError, OpenError};
 
 const FROM: u32 = 16;
 const TO: u32 = 17;
-const CURRENT_SLOT: &[u8] = br#""org_slot":"#;
-const RETIRED_SLOT: &[u8] = br#""team_slot":"#;
 const RECEIPT_KINDS: &[&str] = &[
     "board::read",
     "lane::read",
@@ -268,8 +266,7 @@ fn changed_bytes(
     canonical: Vec<u8>,
     retired: &[bool],
 ) -> Result<Option<Vec<u8>>, OpenError> {
-    let predecessor = predecessor_bytes(table, row, &canonical, retired)?;
-    if predecessor != original {
+    if *super::team::respell(original) != *canonical {
         return Err(invalid(
             table,
             row,
@@ -277,48 +274,6 @@ fn changed_bytes(
         ));
     }
     Ok(retired.iter().any(|value| *value).then_some(canonical))
-}
-
-fn predecessor_bytes(
-    table: &'static str,
-    row: &str,
-    canonical: &[u8],
-    retired: &[bool],
-) -> Result<Vec<u8>, OpenError> {
-    let mut output = Vec::with_capacity(canonical.len() + retired.len());
-    let mut cursor = 0;
-    for &was_retired in retired {
-        let Some(relative) = find(&canonical[cursor..], CURRENT_SLOT) else {
-            return Err(invalid(
-                table,
-                row,
-                "typed renewal state has no current slot key",
-            ));
-        };
-        let start = cursor + relative;
-        output.extend_from_slice(&canonical[cursor..start]);
-        output.extend_from_slice(if was_retired {
-            RETIRED_SLOT
-        } else {
-            CURRENT_SLOT
-        });
-        cursor = start + CURRENT_SLOT.len();
-    }
-    if find(&canonical[cursor..], CURRENT_SLOT).is_some() {
-        return Err(invalid(
-            table,
-            row,
-            "typed carrier contains an unvisited renewal slot",
-        ));
-    }
-    output.extend_from_slice(&canonical[cursor..]);
-    Ok(output)
-}
-
-fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
 }
 
 fn canonical_fact(
@@ -493,7 +448,7 @@ fn decode(table: &'static str, row: &str, bytes: &[u8]) -> Result<Value, OpenErr
 }
 
 fn intermediate(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    serde_json::to_vec(value)
+    super::team::current(value)
         .map_err(|error| invalid(table, row, &format!("migrated JSON cannot encode: {error}")))
 }
 

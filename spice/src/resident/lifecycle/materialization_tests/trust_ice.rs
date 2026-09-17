@@ -58,7 +58,7 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
 }
 
 fn iced_fixture(digest: &wire::Digest) -> (Bus, ProjectPolicy, Projection) {
-    let (bus, projects, mut projection) = policy_fixture(wire::intent::LineageLife::Drive, false);
+    let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
     committed(
         bus.commit(iced_claim_write(&bus, digest))
             .expect("iced claim commits"),

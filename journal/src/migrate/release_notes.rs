@@ -35,7 +35,7 @@ fn migrate_facts(connection: &Connection) -> Result<(), OpenError> {
             &row,
             object("fact_envelopes", &row, body)?,
         )?;
-        let intermediate = serde_json::to_vec(&document).map_err(|error| {
+        let intermediate = super::team::current(&document).map_err(|error| {
             invalid(
                 "fact_envelopes",
                 &row,
@@ -94,7 +94,7 @@ fn migrate_receipts(connection: &Connection) -> Result<(), OpenError> {
             &command,
             object("command_receipts", &command, body)?,
         )?;
-        let intermediate = serde_json::to_vec(&document).map_err(|error| {
+        let intermediate = super::team::current(&document).map_err(|error| {
             invalid(
                 "command_receipts",
                 &command,

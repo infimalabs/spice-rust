@@ -292,9 +292,9 @@ pub use lane::{
     LaneArranged, LaneCancelled, LaneCompacted, LaneDegraded, LaneDrained, LaneExited, LaneHeld,
     LaneImported, LaneKilled, LaneLaunchIdentity, LaneRemoved, LaneRenewalChanged, LaneRenewed,
     LaneResumed, LaneSeated, LaneSessionDeclared, LaneSignalled, LaneSourceBoundary, LaneStarted,
-    LaneTimedOut, LineageArranged, LineageConfigured, LineageStanding, RtkHealth, RtkHealthState,
-    RtkHookState, TasteCleared, TasteConfirmed, TasteDecision, TasteJudgeAttempt, TasteJudgeReply,
-    TasteJudged, TasteReminded,
+    LaneTimedOut, RtkHealth, RtkHealthState, RtkHookState, TasteCleared, TasteConfirmed,
+    TasteDecision, TasteJudgeAttempt, TasteJudgeReply, TasteJudged, TasteReminded, TeamArranged,
+    TeamConfigured, TeamStanding,
 };
 
 /// An expected listening event remained absent past its armed window.

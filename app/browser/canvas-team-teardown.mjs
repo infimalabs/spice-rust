@@ -1,7 +1,7 @@
-// Focused proof for the non-throwing lineage teardown boundary.
+// Focused proof for the non-throwing team teardown boundary.
 import assert from "node:assert/strict";
 
-import { cleanupLineageFixture } from "./canvas-lineage-life.mjs";
+import { cleanupTeamFixture } from "./canvas-team-life.mjs";
 
 const liveResident = () => ({ child: { exitCode: null, signalCode: null } });
 
@@ -21,7 +21,7 @@ async function captureStderr(run) {
 }
 
 async function teardownWhilePrimaryFails(request) {
-  const primary = new Error("injected primary lineage scenario failure");
+  const primary = new Error("injected primary team scenario failure");
   let observed;
   let cleanupCalls = 0;
   const diagnostics = await captureStderr(async () => {
@@ -29,8 +29,8 @@ async function teardownWhilePrimaryFails(request) {
       try {
         throw primary;
       } finally {
-        await cleanupLineageFixture({
-          fixture: "focused-lineage-fixture",
+        await cleanupTeamFixture({
+          fixture: "focused-team-fixture",
           resident: liveResident(),
           owner: { async cleanup() { cleanupCalls += 1; } },
           request,
@@ -48,13 +48,13 @@ function assertPrimaryAndCleanup(result) {
   assert.equal(result.cleanupCalls, 1, "owner cleanup runs once after the drain failure");
 }
 
-export async function assertLineageDrainFailureTeardown() {
-  const snapshotFailure = new Error("injected lineage snapshot failure");
+export async function assertTeamDrainFailureTeardown() {
+  const snapshotFailure = new Error("injected team snapshot failure");
   const snapshot = await teardownWhilePrimaryFails(async () => { throw snapshotFailure; });
   assertPrimaryAndCleanup(snapshot);
   assert.equal(
     snapshot.diagnostics,
-    `canvas lineage teardown could not drain lanes: ${snapshotFailure}\n`,
+    `canvas team teardown could not drain lanes: ${snapshotFailure}\n`,
     "a lane snapshot failure is reported exactly once",
   );
 
@@ -79,14 +79,14 @@ export async function assertLineageDrainFailureTeardown() {
   );
   assert.equal(
     drain.diagnostics,
-    `canvas lineage teardown could not drain lanes: ${drainFailure}\n`,
+    `canvas team teardown could not drain lanes: ${drainFailure}\n`,
     "a lane drain failure retains its original error",
   );
 
   const vacancyRequests = [];
   let vacancyCleanupCalls = 0;
-  await cleanupLineageFixture({
-    fixture: "vacant-lineage-fixture",
+  await cleanupTeamFixture({
+    fixture: "vacant-team-fixture",
     resident: liveResident(),
     owner: { async cleanup() { vacancyCleanupCalls += 1; } },
     request: async (_fixture, args) => {
@@ -108,8 +108,8 @@ export async function assertLineageDrainFailureTeardown() {
 
   let cleanupCalls = 0;
   let queries = 0;
-  const diagnostics = await captureStderr(() => cleanupLineageFixture({
-    fixture: "signal-exited-lineage-fixture",
+  const diagnostics = await captureStderr(() => cleanupTeamFixture({
+    fixture: "signal-exited-team-fixture",
     resident: { child: { exitCode: null, signalCode: "SIGTERM" } },
     owner: { async cleanup() { cleanupCalls += 1; } },
     request: async () => { queries += 1; },

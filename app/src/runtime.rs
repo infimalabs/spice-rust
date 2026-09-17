@@ -94,7 +94,7 @@ pub struct LaneView {
     pub epoch: CanonicalUuid,
     /// Current resident state.
     pub state: wire::ResidentState,
-    /// Monotonic authority for these exact organization rows and policies.
+    /// Monotonic authority for these exact team rows and policies.
     pub topology_revision: u64,
     /// Safe current lane rows.
     pub lanes: Vec<LaneRow>,
@@ -103,26 +103,26 @@ pub struct LaneView {
 }
 
 impl LaneView {
-    /// Current durable renewal state for one exact organization member.
+    /// Current durable renewal state for one exact team member.
     #[must_use]
     pub fn renewal(
         &self,
-        lineage: CanonicalUuid,
+        team: CanonicalUuid,
         lane: CanonicalUuid,
     ) -> Option<&wire::LaneRenewalRecord> {
         self.renewals
             .get(&lane)
-            .filter(|renewal| renewal.lineage_id == lineage)
+            .filter(|renewal| renewal.team == team)
     }
 }
 
-/// One Canvas lane: a lineage and every independently steerable member in it.
+/// One Canvas lane: a team and every independently steerable member in it.
 #[derive(Clone, PartialEq, Eq)]
 pub struct LaneRow {
-    /// Stable lineage identity.
+    /// Stable team identity.
     pub lane: CanonicalUuid,
-    /// Authoritative task-allocation lifetime for this lineage.
-    pub subscription: wire::intent::LineageLife,
+    /// Authoritative task-allocation lifetime for this team.
+    pub subscription: wire::intent::TeamLife,
     /// Members in canonical resident seat order.
     pub members: Vec<LaneMember>,
 }
@@ -217,13 +217,13 @@ impl LaneMember {
 }
 
 impl LaneRow {
-    /// The lineage host, which is the first member in canonical seat order.
+    /// The team host, which is the first member in canonical seat order.
     #[must_use]
     pub fn host(&self) -> Option<&LaneMember> {
         self.members.first()
     }
 
-    /// Resolve one independently steerable member of this lineage.
+    /// Resolve one independently steerable member of this team.
     #[must_use]
     pub fn member(&self, lane: CanonicalUuid) -> Option<&LaneMember> {
         self.members.iter().find(|member| member.lane == lane)
@@ -236,9 +236,9 @@ impl From<&LaneAnswer> for LaneView {
         for subscription in &answer.subscriptions {
             assert!(
                 subscriptions
-                    .insert(subscription.lineage_id, subscription.policy)
+                    .insert(subscription.team, subscription.policy)
                     .is_none(),
-                "an admitted lane answer names one policy per lineage"
+                "an admitted lane answer names one policy per team"
             );
         }
         let mut renewals = BTreeMap::new();
@@ -248,7 +248,7 @@ impl From<&LaneAnswer> for LaneView {
                 "an admitted lane answer names one renewal state per member"
             );
         }
-        let mut lineages = Vec::<LaneRow>::new();
+        let mut teams = Vec::<LaneRow>::new();
         for lane in &answer.lanes {
             let member = LaneMember {
                 lane: lane.lane,
@@ -264,31 +264,28 @@ impl From<&LaneAnswer> for LaneView {
                 liveness: lane.liveness,
                 bound: lane.bound,
             };
-            if let Some(lineage) = lineages
-                .iter_mut()
-                .find(|lineage| lineage.lane == lane.lineage_id)
-            {
-                lineage.members.push(member);
+            if let Some(team) = teams.iter_mut().find(|team| team.lane == lane.team) {
+                team.members.push(member);
             } else {
-                lineages.push(LaneRow {
-                    lane: lane.lineage_id,
+                teams.push(LaneRow {
+                    lane: lane.team,
                     subscription: *subscriptions
-                        .get(&lane.lineage_id)
-                        .expect("an admitted lane answer names every lineage policy"),
+                        .get(&lane.team)
+                        .expect("an admitted lane answer names every team policy"),
                     members: vec![member],
                 });
             }
         }
         assert_eq!(
             subscriptions.len(),
-            lineages.len(),
-            "an admitted lane answer names no orphan lineage policy"
+            teams.len(),
+            "an admitted lane answer names no orphan team policy"
         );
         Self {
             epoch: answer.epoch,
             state: answer.state,
             topology_revision: answer.topology_revision,
-            lanes: lineages,
+            lanes: teams,
             renewals,
         }
     }
@@ -323,7 +320,7 @@ impl<T> ScopedValue<T> {
     }
 }
 
-/// One agent-authored activity retained for a lineage status strip.
+/// One agent-authored activity retained for a team status strip.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaneActivity {
     lane: CanonicalUuid,
@@ -610,16 +607,16 @@ impl CanvasRuntime {
         self.settings.get(&self.principal)
     }
 
-    /// Newest retained activity produced by any member of `lineage`.
+    /// Newest retained activity produced by any member of `team`.
     ///
     /// Activity is retained in arrival order across the resident's captured
     /// transcript feed. Filtering that one chronology by membership is
-    /// what makes a fused organization show whichever of its agents acted last.
+    /// what makes a fused team show whichever of its agents acted last.
     #[must_use]
-    pub fn newest_lineage_activity(&self, lineage: &LaneRow) -> Option<&LaneActivity> {
+    pub fn newest_team_activity(&self, team: &LaneRow) -> Option<&LaneActivity> {
         self.activities
             .iter()
-            .find(|activity| lineage.member(activity.lane).is_some())
+            .find(|activity| team.member(activity.lane).is_some())
     }
 
     /// Newest retained activity produced by one independently steerable lane.

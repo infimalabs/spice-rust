@@ -7,7 +7,7 @@ import { assertAgentWorkspaceGeometry } from "./canvas-readiness.mjs";
 
 export async function assertIntegratedMosaicProof(
   page,
-  organization,
+  console,
   artifacts,
   expectedLabels,
   hydration,
@@ -25,7 +25,7 @@ export async function assertIntegratedMosaicProof(
 
   const placements = await assertMosaicLattice(page, true);
   const workspace = await assertAgentWorkspaceGeometry(page, "integrated 2018x1728 Mosaic");
-  const cards = await organization.locator(".mosaic-message-card").evaluateAll((elements) => (
+  const cards = await console.locator(".mosaic-message-card").evaluateAll((elements) => (
     elements.map((card) => {
       const box = card.getBoundingClientRect();
       const footer = card.querySelector(".message-footer");

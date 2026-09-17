@@ -497,7 +497,7 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
             workflow.assignment = assignment;
             admitted(statement, workflow, None, None)
                 .expect("scoped fixture entry")
-                .with_creator_lineage(creator)
+                .with_creator_team(creator)
         };
     let entries = vec![
         entry("SCOPE-same001", "task.same", Some(lane), None),
@@ -513,7 +513,7 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
     let same = entries[0].handle().to_string();
     let cross = entries[1].handle().to_string();
     let unknown = entries[2].handle().to_string();
-    let handles = |subscription: &wire::LineageSubscription| {
+    let handles = |subscription: &wire::TeamSubscription| {
         entries
             .iter()
             .filter(|entry| {
@@ -522,28 +522,25 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
             .map(|entry| entry.handle().to_string())
             .collect::<BTreeSet<_>>()
     };
-    let subscription = |policy| wire::LineageSubscription {
-        lineage_id: lane,
-        policy,
-    };
+    let subscription = |policy| wire::TeamSubscription { team: lane, policy };
 
     assert_eq!(
-        handles(&subscription(wire::intent::LineageLife::Steer)),
+        handles(&subscription(wire::intent::TeamLife::Steer)),
         BTreeSet::new(),
     );
     assert_eq!(
-        handles(&subscription(wire::intent::LineageLife::Drive)),
+        handles(&subscription(wire::intent::TeamLife::Drive)),
         BTreeSet::from([same.clone()]),
     );
     assert_eq!(
-        handles(&subscription(wire::intent::LineageLife::Drain)),
+        handles(&subscription(wire::intent::TeamLife::Drain)),
         BTreeSet::from([cross, same, unknown]),
     );
     assert!(
         select(
             &entries,
             &actor,
-            &subscription(wire::intent::LineageLife::Steer),
+            &subscription(wire::intent::TeamLife::Steer),
             2,
         )
         .is_none(),
@@ -553,7 +550,7 @@ fn allocation_lifetimes_yield_exact_creator_team_sets() {
         select(
             &entries,
             &actor,
-            &subscription(wire::intent::LineageLife::Drain),
+            &subscription(wire::intent::TeamLife::Drain),
             2,
         )
         .expect("Drain has all assignable work")

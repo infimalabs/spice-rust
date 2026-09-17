@@ -21,7 +21,7 @@ fn schema_sixteen_renames_every_renewal_state_across_all_durable_carriers_once()
     for (offset, state) in states.iter().cloned().enumerate() {
         let position = u64::try_from(offset).expect("offset fits") + 3;
         let changed = LaneRenewalChanged {
-            lineage_id: uuid(LINEAGE),
+            team: uuid(LINEAGE),
             lane: uuid(LANE),
             renewal: Some(record(state)),
         };
@@ -64,7 +64,7 @@ fn schema_sixteen_renames_every_renewal_state_across_all_durable_carriers_once()
              UPDATE steering_index SET indexed_seq = 6;",
         )
         .expect("fixture cursor advances");
-    retire_slots(&journal.connection);
+    spell_lineage(&journal.connection);
     set_schema_sixteen(&journal.connection);
     drop(journal);
 
@@ -111,8 +111,8 @@ fn ambiguous_renewal_slot_rolls_back_carriers_and_both_schema_versions() {
     let state = document["renewals"][0]["state"]
         .as_object_mut()
         .expect("renewal state object");
-    state.insert("team_slot".to_owned(), json!(0));
-    let planted = serde_json::to_vec(&document).expect("conflict encodes");
+    state.insert("org_slot".to_owned(), json!(0));
+    let planted = lineage_spelling(&serde_json::to_vec(&document).expect("conflict encodes"));
     journal
         .connection
         .execute(
@@ -152,20 +152,20 @@ fn states() -> Vec<LaneRenewalState> {
     vec![
         LaneRenewalState::Requested {
             predecessor: predecessor(),
-            org_slot: 0,
+            team_slot: 0,
         },
         LaneRenewalState::HandoffPending {
             predecessor: predecessor(),
-            org_slot: 1,
+            team_slot: 1,
         },
         LaneRenewalState::SuccessorStarted {
             predecessor: predecessor(),
             successor: successor(),
-            org_slot: 2,
+            team_slot: 2,
         },
         LaneRenewalState::LaunchRefused {
             predecessor: predecessor(),
-            org_slot: 3,
+            team_slot: 3,
             reason: "fixture refusal".to_owned(),
         },
     ]
@@ -173,7 +173,7 @@ fn states() -> Vec<LaneRenewalState> {
 
 fn record(state: LaneRenewalState) -> LaneRenewalRecord {
     LaneRenewalRecord {
-        lineage_id: uuid(LINEAGE),
+        team: uuid(LINEAGE),
         lane: uuid(LANE),
         revision: 0,
         state,
@@ -207,7 +207,7 @@ fn insert_renewal_receipt(journal: &Journal, renewal: LaneRenewalRecord) {
         expected: Vec::new(),
         body: wire::intent::LaneRenewal {
             topology_revision: 0,
-            lineage_id: uuid(LINEAGE),
+            team: uuid(LINEAGE),
             lane: uuid(LANE),
             requested: true,
         },
@@ -222,7 +222,7 @@ fn insert_renewal_receipt(journal: &Journal, renewal: LaneRenewalRecord) {
                 last: seq(6),
             }),
             body: serde_json::to_value(wire::intent::LaneRenewalAnswer {
-                lineage_id: uuid(LINEAGE),
+                team: uuid(LINEAGE),
                 lane: uuid(LANE),
                 topology_revision: 0,
                 renewal: Some(renewal),
@@ -249,56 +249,6 @@ fn insert_renewal_receipt(journal: &Journal, renewal: LaneRenewalRecord) {
             ],
         )
         .expect("renewal receipt inserts");
-}
-
-fn retire_slots(connection: &Connection) {
-    for (select, update) in [
-        (
-            "SELECT CAST(seq AS TEXT), envelope FROM fact_envelopes WHERE kind = 'lane::renewal'",
-            "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2",
-        ),
-        (
-            "SELECT CAST(singleton AS TEXT), body FROM residency_head",
-            "UPDATE residency_head SET body = ?1 WHERE singleton = ?2",
-        ),
-        (
-            "SELECT command_id, response FROM command_receipts WHERE command_kind = 'lane::renewal'",
-            "UPDATE command_receipts SET response = ?1 WHERE command_id = ?2",
-        ),
-    ] {
-        let mut statement = connection.prepare(select).expect("carrier query prepares");
-        let rows = statement
-            .query_map([], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-            })
-            .expect("carrier rows query")
-            .collect::<Result<Vec<_>, _>>()
-            .expect("carrier rows collect");
-        drop(statement);
-        for (key, bytes) in rows {
-            connection
-                .execute(update, params![retire_slot_bytes(&bytes), key])
-                .expect("retired carrier writes");
-        }
-    }
-}
-
-fn retire_slot_bytes(bytes: &[u8]) -> Vec<u8> {
-    let current = br#""org_slot":"#;
-    let retired = br#""team_slot":"#;
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut cursor = 0;
-    while let Some(relative) = bytes[cursor..]
-        .windows(current.len())
-        .position(|window| window == current)
-    {
-        let start = cursor + relative;
-        output.extend_from_slice(&bytes[cursor..start]);
-        output.extend_from_slice(retired);
-        cursor = start + current.len();
-    }
-    output.extend_from_slice(&bytes[cursor..]);
-    output
 }
 
 fn set_schema_sixteen(connection: &Connection) {
@@ -331,7 +281,7 @@ fn assert_no_retired_slots(connection: &Connection) {
         ("command_receipts", "response"),
     ] {
         let sql = format!(
-            "SELECT count(*) FROM {table} WHERE instr(CAST({column} AS TEXT), 'team_slot') > 0"
+            "SELECT count(*) FROM {table} WHERE instr(CAST({column} AS TEXT), 'org_slot') > 0"
         );
         let count: u32 = connection.query_row(&sql, [], |row| row.get(0)).unwrap();
         assert_eq!(count, 0, "{table}.{column} retains no retired slot key");

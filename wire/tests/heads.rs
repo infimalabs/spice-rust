@@ -97,12 +97,12 @@ const RESIDENCY: &str = r#"{
   "state": "seated",
   "topology_revision": 9,
   "subscriptions": [{
-    "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116302",
+    "team": "018f82d4-6f59-7d06-92e3-bce913116302",
     "policy": "drive"
   }],
   "lanes": [{
     "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
-    "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116302",
+    "team": "018f82d4-6f59-7d06-92e3-bce913116302",
     "worktree": "/worktrees/lane-a",
     "life": "drive",
     "vendor": "claude",
@@ -136,12 +136,12 @@ const RESIDENCY_WITH_UNRECORDED_LAUNCH: &str = r#"{
   "state": "seated",
   "topology_revision": 0,
   "subscriptions": [{
-    "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116302",
+    "team": "018f82d4-6f59-7d06-92e3-bce913116302",
     "policy": "drive"
   }],
   "lanes": [{
     "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
-    "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116302",
+    "team": "018f82d4-6f59-7d06-92e3-bce913116302",
     "worktree": "/worktrees/lane-a",
     "life": "drive",
     "vendor": "claude",
@@ -237,14 +237,14 @@ fn every_authority_head_round_trips_the_wire_table_fields() {
             "lane",
             "life",
             "lineage",
-            "lineage_id",
             "occupant",
             "session",
+            "team",
             "vendor",
             "worktree",
         ],
     );
-    assert_value_fields(&residency["subscriptions"][0], &["lineage_id", "policy"]);
+    assert_value_fields(&residency["subscriptions"][0], &["policy", "team"]);
 }
 
 #[test]

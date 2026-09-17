@@ -675,7 +675,7 @@ fn assert_lanes(lanes: &LaneAnswer) {
             .iter()
             .find(|lane| lane.lane == uuid(seed.lane))
             .expect("each simulated demo lane is visible");
-        assert_eq!(lane.lineage_id, uuid(DEMO_LANE));
+        assert_eq!(lane.team, uuid(DEMO_LANE));
         assert_eq!(lane.vendor.as_str(), crate::resident::SIMULATED_VENDOR);
         assert_eq!(lane.disposition, crate::resident::SIMULATED_DISPOSITION);
         assert_eq!(lane.occupant, Some(uuid(seed.occupant)));

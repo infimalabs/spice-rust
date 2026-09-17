@@ -79,7 +79,7 @@ impl Fixture {
             .fact(
                 wire::body::LaneSeated {
                     lane,
-                    lineage_id: lane,
+                    team: lane,
                     capability,
                     name: None,
                     worktree: worktree.clone(),
@@ -109,7 +109,7 @@ impl Fixture {
             topology_revision: 1,
             lanes: vec![wire::LaneResidency {
                 lane,
-                lineage_id: lane,
+                team: lane,
                 name: None,
                 worktree: head_worktree,
                 life: "drive".to_owned(),
@@ -122,9 +122,9 @@ impl Fixture {
                 session: None,
                 disposition: "occupied".to_owned(),
             }],
-            subscriptions: vec![wire::LineageSubscription {
-                lineage_id: lane,
-                policy: wire::intent::LineageLife::Drive,
+            subscriptions: vec![wire::TeamSubscription {
+                team: lane,
+                policy: wire::intent::TeamLife::Drive,
             }],
             renewals: Vec::new(),
         });

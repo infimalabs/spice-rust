@@ -32,6 +32,7 @@ mod identity_migration;
 mod lane_compaction;
 mod lineage_migration;
 mod page_budget;
+mod predecessor;
 mod read;
 mod release_notes_migration;
 mod renewal;
@@ -41,10 +42,13 @@ mod schema;
 mod steering_index;
 mod steering_verification;
 mod task_creator_scope_migration;
+mod team_migration;
 mod topology_revision_migration;
 mod transcript;
 mod vocabulary_migration;
 mod wal;
+
+use predecessor::*;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -1172,7 +1176,7 @@ fn residency_head() -> ResidencyHead {
         topology_revision: 0,
         lanes: vec![LaneResidency {
             lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
-            lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+            team: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
             name: None,
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
@@ -1185,9 +1189,9 @@ fn residency_head() -> ResidencyHead {
             session: None,
             disposition: "active".to_owned(),
         }],
-        subscriptions: vec![wire::LineageSubscription {
-            lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
-            policy: wire::intent::LineageLife::Drive,
+        subscriptions: vec![wire::TeamSubscription {
+            team: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
+            policy: wire::intent::TeamLife::Drive,
         }],
         renewals: Vec::new(),
     }
@@ -1409,32 +1413,6 @@ fn expected_tables() -> BTreeSet<String> {
     .into_iter()
     .map(str::to_owned)
     .collect()
-}
-
-/// Remove indexes introduced after schema 6 when constructing an older authority.
-fn drop_steering_index(connection: &Connection) {
-    connection
-        .execute_batch(
-            "DROP TABLE IF EXISTS claim_index;
-             DROP TABLE steering_index;
-             DROP TABLE steering_misses;
-             DROP TABLE steering_heads;",
-        )
-        .expect("remove post-schema-6 indexes from older fixture");
-}
-
-fn admit_empty_steering_fold(journal: &mut Journal) {
-    let snapshot = journal.fact_snapshot().expect("migration snapshot");
-    assert!(
-        snapshot.facts().iter().all(|envelope| {
-            crate::guard::steering_fact_identity(&envelope.fact).is_none()
-                && envelope.fact.kind() != FactKind::SteerMissed
-        }),
-        "only a fixture with no steering history may publish an empty fold"
-    );
-    journal
-        .rebuild_steering_index(snapshot.horizon(), &[], &[])
-        .expect("publish migrated empty steering fold");
 }
 
 fn uuid(text: &str) -> CanonicalUuid {

@@ -74,14 +74,16 @@ fn topology_positions(connection: &Connection) -> Result<Vec<u64>, OpenError> {
                 )
             })?;
             let envelope: wire::Envelope<wire::AnyFact> =
-                wire::decode(&bytes).map_err(|error| {
+                wire::decode(&super::team::respell(&bytes)).map_err(|error| {
                     invalid(
                         "fact_envelopes",
                         &seq.to_string(),
                         &format!("topology envelope is not current wire: {error}"),
                     )
                 })?;
-            if envelope.seq.get() != position || envelope.fact.kind().as_str() != kind {
+            if envelope.seq.get() != position
+                || envelope.fact.kind().as_str() != super::team::name(&kind)
+            {
                 return Err(invalid(
                     "fact_envelopes",
                     &seq.to_string(),
@@ -346,8 +348,8 @@ fn canonical_request(row: &str, kind: &str, value: &Value) -> Result<Vec<u8>, Op
     match kind {
         "lane::arrange" => encode_command::<wire::intent::LaneArrange>(row, &bytes),
         "lane::seat" => encode_command::<wire::intent::LaneSeat>(row, &bytes),
-        "lineage::arrange" => encode_command::<wire::intent::LineageArrange>(row, &bytes),
-        "lineage::configure" => encode_command::<wire::intent::LineageConfigure>(row, &bytes),
+        "lineage::arrange" => encode_command::<wire::intent::TeamArrange>(row, &bytes),
+        "lineage::configure" => encode_command::<wire::intent::TeamConfigure>(row, &bytes),
         _ => Err(invalid(
             "command_receipts",
             row,
@@ -424,7 +426,7 @@ where
 }
 
 fn intermediate(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    serde_json::to_vec(value)
+    super::team::current(value)
         .map_err(|error| invalid(table, row, &format!("migrated JSON cannot encode: {error}")))
 }
 

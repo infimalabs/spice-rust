@@ -352,7 +352,7 @@ fn current_head<T>(table: &'static str, row: &str, value: &Value) -> Result<Vec<
 where
     T: serde::de::DeserializeOwned + serde::Serialize,
 {
-    let bytes = serde_json::to_vec(value)
+    let bytes = super::team::current(value)
         .map_err(|error| invalid(table, row, &format!("migrated JSON cannot encode: {error}")))?;
     let head: T = wire::decode(&bytes).map_err(|error| {
         invalid(

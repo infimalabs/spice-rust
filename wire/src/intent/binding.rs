@@ -10,11 +10,11 @@ use super::{
     ConsentRead, DeliveryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger,
     GateFindings, GlobalSettingsAnswer, GlobalSettingsRead, GlobalSettingsSet, InboxAnswer,
     LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal,
-    LaneRenewalAnswer, LaneSeat, LaneState, LineageArrange, LineageConfigure, RecallAnswer,
-    RecognitionAnswer, Recognize, ReleasePublish, StateAnswer, SteerDispose, SteerInbox,
-    SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends,
-    TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TaskWake,
-    TasteAnswer, TasteProposalAdd, TasteRecord, TextAnswer, TrustAnswer, TrustRef, UpChange,
+    LaneRenewalAnswer, LaneSeat, LaneState, RecallAnswer, RecognitionAnswer, Recognize,
+    ReleasePublish, StateAnswer, SteerDispose, SteerInbox, SteerRepair, SteerSend, TaskAdd,
+    TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote,
+    TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TaskWake, TasteAnswer, TasteProposalAdd,
+    TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -98,10 +98,10 @@ pub enum BodyShape {
     LaneState,
     /// [`LaneRenewal`]
     LaneRenewal,
-    /// [`LineageConfigure`]
-    LineageConfigure,
-    /// [`LineageArrange`]
-    LineageArrange,
+    /// [`TeamConfigure`]
+    TeamConfigure,
+    /// [`TeamArrange`]
+    TeamArrange,
     /// [`LaneRecall`]
     LaneRecall,
     /// [`TasteRecord`]
@@ -369,8 +369,8 @@ impl CommandKind {
             | Self::LaneArrange
             | Self::LaneState
             | Self::LaneRenewal
-            | Self::LineageConfigure
-            | Self::LineageArrange
+            | Self::TeamConfigure
+            | Self::TeamArrange
             | Self::LaneRecall
             | Self::GlobalSettingsRead
             | Self::GlobalSettingsSet
@@ -439,8 +439,8 @@ impl CommandKind {
             Self::LaneArrange => Binding::of(B::LaneArrange, A::Lane),
             Self::LaneState => Binding::of(B::LaneState, A::LaneChange),
             Self::LaneRenewal => Binding::of(B::LaneRenewal, A::LaneRenewal),
-            Self::LineageConfigure => Binding::of(B::LineageConfigure, A::Lane),
-            Self::LineageArrange => Binding::of(B::LineageArrange, A::Lane),
+            Self::TeamConfigure => Binding::of(B::TeamConfigure, A::Lane),
+            Self::TeamArrange => Binding::of(B::TeamArrange, A::Lane),
             Self::LaneRecall => Binding::of(B::LaneRecall, A::Recall),
             Self::GlobalSettingsRead | Self::GlobalSettingsSet => Binding::of(
                 if matches!(self, Self::GlobalSettingsRead) {
@@ -547,10 +547,10 @@ pub enum Intent {
     LaneState(LaneState),
     /// [`BodyShape::LaneRenewal`]
     LaneRenewal(LaneRenewal),
-    /// [`BodyShape::LineageConfigure`]
-    LineageConfigure(LineageConfigure),
-    /// [`BodyShape::LineageArrange`]
-    LineageArrange(LineageArrange),
+    /// [`BodyShape::TeamConfigure`]
+    TeamConfigure(TeamConfigure),
+    /// [`BodyShape::TeamArrange`]
+    TeamArrange(TeamArrange),
     /// [`BodyShape::LaneRecall`]
     LaneRecall(LaneRecall),
     /// [`BodyShape::TasteRecord`]
@@ -605,8 +605,8 @@ impl Intent {
             | Self::LaneArrange(_)
             | Self::LaneState(_)
             | Self::LaneRenewal(_)
-            | Self::LineageConfigure(_)
-            | Self::LineageArrange(_)
+            | Self::TeamConfigure(_)
+            | Self::TeamArrange(_)
             | Self::LaneRecall(_)
             | Self::GlobalSettingsRead(_)
             | Self::GlobalSettingsSet(_)
@@ -662,8 +662,8 @@ impl Intent {
             Self::LaneArrange(_) => BodyShape::LaneArrange,
             Self::LaneState(_) => BodyShape::LaneState,
             Self::LaneRenewal(_) => BodyShape::LaneRenewal,
-            Self::LineageConfigure(_) => BodyShape::LineageConfigure,
-            Self::LineageArrange(_) => BodyShape::LineageArrange,
+            Self::TeamConfigure(_) => BodyShape::TeamConfigure,
+            Self::TeamArrange(_) => BodyShape::TeamArrange,
             Self::LaneRecall(_) => BodyShape::LaneRecall,
             Self::GlobalSettingsRead(_) => BodyShape::GlobalSettingsRead,
             Self::GlobalSettingsSet(_) => BodyShape::GlobalSettingsSet,
@@ -823,8 +823,8 @@ impl BodyShape {
             Self::LaneArrange => Intent::LaneArrange(crate::decode(bytes)?),
             Self::LaneState => Intent::LaneState(crate::decode(bytes)?),
             Self::LaneRenewal => Intent::LaneRenewal(crate::decode(bytes)?),
-            Self::LineageConfigure => Intent::LineageConfigure(crate::decode(bytes)?),
-            Self::LineageArrange => Intent::LineageArrange(crate::decode(bytes)?),
+            Self::TeamConfigure => Intent::TeamConfigure(crate::decode(bytes)?),
+            Self::TeamArrange => Intent::TeamArrange(crate::decode(bytes)?),
             Self::LaneRecall => Intent::LaneRecall(crate::decode(bytes)?),
             Self::TasteRecord => Intent::TasteRecord(crate::decode(bytes)?),
             Self::Recognize => Intent::Recognize(crate::decode(bytes)?),

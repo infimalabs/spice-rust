@@ -11,7 +11,7 @@ const NON_LINKED_RELATIMES = Object.freeze([
   ".message-age",
   ".mosaic-compaction-age",
   ".claim-age",
-  ".organization-task-age",
+  ".team-task-age",
 ]);
 
 function withoutStatus(className) {
@@ -262,7 +262,7 @@ async function assertComposerTargets(primary, quoted, placeholder) {
   );
   assert.match(lines[1] || "", /^\d+ pending, /, "placeholder retains pending and liveness");
   const targetLines = await primary
-    .locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' organization-surface ')][1]")
+    .locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' team-surface ')][1]")
     .locator(".composer-shard--primary textarea")
     .evaluateAll((textareas) => textareas.map((textarea) => textarea.placeholder.split("\n")[0]));
   assert.ok(
@@ -285,7 +285,7 @@ function readPrimaryIdentity(primary) {
   return primary.evaluate((band) => {
     const icon = band.querySelector(".composer-vendor-icon");
     const menuIcon = band.querySelector(".composer-menu-icon");
-    const parent = band.closest(".organization-agent");
+    const parent = band.closest(".team-agent");
     if (!icon || !menuIcon || !parent) throw new Error("primary identity chrome is incomplete");
     const iconBox = icon.getBoundingClientRect();
     const bandBox = band.getBoundingClientRect();

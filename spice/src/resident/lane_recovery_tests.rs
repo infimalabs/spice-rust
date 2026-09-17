@@ -57,7 +57,7 @@ const SUCCESSOR: &str = "/worktrees/successor";
 const PRE_EXTENSION_RESIDENCY: &[u8] = concat!(
     r#"{"epoch":"018f82d4-6f59-7d06-92e3-000000000001","state":"seated","topology_revision":1,"lanes":[{"#,
     r#""lane":"018f82d4-6f59-7d06-92e3-000000000003","#,
-    r#""lineage_id":"018f82d4-6f59-7d06-92e3-000000000003","name":"Ava","#,
+    r#""team":"018f82d4-6f59-7d06-92e3-000000000003","name":"Ava","#,
     r#""worktree":"/worktrees/predecessor","life":"drive","vendor":"claude","#,
     r#""occupant":"018f82d4-6f59-7d06-92e3-000000000004","#,
     r#""lineage":["018f82d4-6f59-7d06-92e3-000000000004"],"#,
@@ -74,7 +74,7 @@ const PRE_EXTENSION_RESIDENCY: &[u8] = concat!(
 fn occupied_row(fixture: &Fixture) -> wire::LaneResidency {
     wire::LaneResidency {
         lane: fixture.lane,
-        lineage_id: fixture.lane,
+        team: fixture.lane,
         name: Some("Ava".to_owned()),
         worktree: PREDECESSOR.into(),
         life: "drive".into(),
@@ -548,7 +548,7 @@ fn import_refuses_a_lane_absent_from_the_current_residency() {
 }
 
 #[test]
-fn import_refuses_a_durable_lane_carrying_no_predecessor_lineage() {
+fn import_refuses_a_durable_lane_carrying_no_predecessor_team() {
     let fixture = fixture();
     let (worktree, common) = real_worktree(&fixture);
     seed_lanes(
@@ -665,9 +665,9 @@ fn watchband_drain_does_not_end_a_drive_lanes_import_life() {
         state: wire::ResidentState::Seated,
         topology_revision: 0,
         lanes: vec![row.clone()],
-        subscriptions: vec![wire::LineageSubscription {
-            lineage_id: row.lineage_id,
-            policy: wire::intent::LineageLife::Drain,
+        subscriptions: vec![wire::TeamSubscription {
+            team: row.team,
+            policy: wire::intent::TeamLife::Drain,
         }],
         renewals: Vec::new(),
     };
@@ -694,7 +694,7 @@ fn import_refuses_a_worktree_already_bound_to_another_lane() {
     let row = vacant_row(&fixture);
     let neighbour = wire::LaneResidency {
         lane: uuid(9),
-        lineage_id: uuid(9),
+        team: uuid(9),
         worktree: SUCCESSOR.into(),
         ..vacant_row(&fixture)
     };
@@ -1146,7 +1146,7 @@ fn assert_imported_facts(fixture: &Fixture) {
 }
 
 #[test]
-fn import_moves_seat_lineage_session_and_claim_into_the_successor_worktree() {
+fn import_moves_seat_team_session_and_claim_into_the_successor_worktree() {
     let fixture = fixture();
     seed_lanes(&fixture, vec![vacant_row(&fixture)]);
     reseat(&fixture);

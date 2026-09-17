@@ -37,7 +37,7 @@ erDiagram
     AGENT ||--o{ STEERING_ITEM : "must answer"
 ```
 
-Read it as: a **organization** groups **lanes**; each lane is an independently steerable
+Read it as: a **team** groups **lanes**; each lane is an independently steerable
 worktree seat and hosts an **agent** as its
 occupant, which claims a **task** and emits **messages**; the operator forms a
 **draft** in that lane, which becomes a **steering item** the agent must answer.
@@ -356,43 +356,43 @@ burst at once: occupants still come up one decision at a time.
 ## L-LANE — the place
 
 **Intent.** A lane is an independently steerable worktree seat, not the agent.
-It is the stable address for attention, drafts, and history; an organization or lineage
+It is the stable address for attention, drafts, and history; a team
 groups one or more lanes into one console and owns their shared task policy.
 
 ```mermaid
 flowchart LR
-  C["organization created"] --> E["empty"]
+  C["team created"] --> E["empty"]
   E -->|"agent imported or started"| O["occupied"]
   O -->|"renewal"| OR["occupied<br/>(successor replaces occupant)"]
-  O -->|"organization merged"| F["fused"]
-  F -->|"organization split"| OS["occupied"]
+  O -->|"team merged"| F["fused"]
+  F -->|"team split"| OS["occupied"]
   O -.->|"Close team"| H["hidden<br/>(this browser only)"]
   F -.->|"Close team"| H
-  H -.->|"Agents → Open organization"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
+  H -.->|"Agents → Open team"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
 ```
 
 **Invariants**
 
 - Lane is not agent. Renewal replaces the occupant; history, drafts, and scroll
-   position survive. The lineage and its shared task policy also remain because
-   renewal does not move the lane. Moving a lane to another lineage subjects it
-   to that lineage's policy; policy never follows the lane across that move.
-- A lane names exactly one worktree seat. An organization may hold one or many lanes;
-   the singular organization is the degenerate topology, not a different type.
+   position survive. The team and its shared task policy also remain because
+   renewal does not move the lane. Moving a lane to another team subjects it
+   to that team's policy; policy never follows the lane across that move.
+- A lane names exactly one worktree seat. A team may hold one or many lanes;
+   the singular team is the degenerate topology, not a different type.
 - Topology is server truth. The client never mounts a lane from local storage;
    local storage holds only bounded narration cursors, while in-memory reducers
    hold presentation preferences.
-- A fused organization renders one merged stream on one host; every member
+- A fused team renders one merged stream on one host; every member
    remains its own concrete send address.
 - Member order controls composer order only. Message chronology, accent, and
    attribution do not derive from position. Accent derives from stable lane
    identity, may repeat, and never substitutes for explicit lane attribution. A
    member that momentarily fails to resolve keeps its seat rather than
    re-entering at the tail.
-- `Close team` only inserts the lineage into that browser reducer's hidden set.
+- `Close team` only inserts the team into that browser reducer's hidden set.
    It sends no authority command, changes no membership, and neither inspects
-   nor erases a draft. A closed grouped lineage remains restorable during that
-   mount through **Agents → Open organization**; a fresh mount independently renders the
+   nor erases a draft. A closed grouped team remains restorable during that
+   mount through **Agents → Open team**; a fresh mount independently renders the
    authoritative subscription set again.
 - Message order is a pure function of the messages, never of member
    order. Reordering composers must not reorder the stream.
@@ -410,7 +410,7 @@ composers: no card moves. Kill the server: the topology returns identically.
 ## L-DRAFT — the watchband
 
 **Intent.** One strip that is simultaneously the *status face* of every agent in
-the organization and the *writing surface* for all of them. You read it like a watch and
+the team and the *writing surface* for all of them. You read it like a watch and
 you write into it without leaving it.
 
 ```mermaid
@@ -435,7 +435,7 @@ stateDiagram-v2
 
 - One horizontal composer column per member, in member order; the strip owns
    east/west overflow. Each shard is a concrete send address. Nothing is ever
-   broadcast to an organization.
+   broadcast to a team.
 - A draft is detached at submit. A typed wake, residency, or write refusal or
    fault restores it intact — including attachments and quote drafts,
    concatenated newest-last. Transport loss requeues in memory instead.
@@ -463,7 +463,7 @@ and the age, run-state, pending-count, and claimed-task field set are fixed.
 **Acceptance** — after the browser accepts the submission action, a transport
 loss requeues the submission for socket replay rather than returning it to the
 composer. A typed wake, residency, or write refusal restores the affected text.
-Submit a fused organization with several nonempty shards: the gesture enqueues one
+Submit a fused team with several nonempty shards: the gesture enqueues one
 concrete-addressed submission per nonempty shard. Each resulting message
 reaches exactly one worktree and is never broadcast. Reorder shards: neither
 the stream nor existing accents change.
@@ -562,7 +562,7 @@ flowchart LR
    digit-width change may resize it.
 - **Presentation changes do not directly touch card identity or style.**
    Recolouring and attribution toggles do not force a re-measure. Member count
-   remains outside card identity and style, but it changes lineage weight; when
+   remains outside card identity and style, but it changes team weight; when
    that changes the settled host width, one full geometry replay is the
    legitimate correction.
 - **Programmatic scroll is not a gesture.** Compensation and restore must
@@ -590,8 +590,8 @@ What the operator actually manipulates, stated as a component contract.
 block-beta
   columns 1
   G["CANVAS VIEW RAIL, agents | flow | topology"]
-  C["AGENTS VIEW, one console per live organization"]
-  R["organization mode rail, compose | tasks | info, badges are live counts"]
+  C["AGENTS VIEW, one console per live team"]
+  R["team mode rail, compose | tasks | info, badges are live counts"]
   W["COMPOSE, one member shard per lane, status face + composer"]
   A["AUTONOMY, speech | lifetime | submit, submit names the lifetime"]
   S["status line, age + latest action"]
@@ -603,14 +603,14 @@ block-beta
 - **The Canvas rail is the global view vocabulary.** Agents is the conversation
    surface; Flow and Topology are the complete closed analytical axes. A pane
    belongs to one of those axes rather than inventing a third.
-- **The organization console is the unit of tiling in Agents.** Consoles sit side by
-   side; each is the complete operator surface for one live lineage containing
-   one or more member lanes. Adding an agent widens its organization console through the
+- **The team console is the unit of tiling in Agents.** Consoles sit side by
+   side; each is the complete operator surface for one live team containing
+   one or more member lanes. Adding an agent widens its team console through the
    six-share visual ceiling; later members retain that maximum rather than
    narrowing it. Membership never adds another peer console.
-- **The organization rail's badges are the summary.** Compose shows pending direction,
+- **The team rail's badges are the summary.** Compose shows pending direction,
    Tasks shows active work, and Info shows member count. A badge is only present when its
-   count is non-zero, so an empty rail means a quiet organization.
+   count is non-zero, so an empty rail means a quiet team.
 - **The member shards are the identity and composer-address summary.** Across
    Compose and Info they expose the concrete lane/worktree address, agent label,
    vendor identity, liveness or age, pending direction, and held task as

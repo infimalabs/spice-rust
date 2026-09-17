@@ -6,7 +6,7 @@ use wire::intent::{LaneAnswer, LaneRenewal, LaneRenewalAnswer};
 use wire::{CanonicalUuid, LaneRenewalRecord, LaneRenewalState, RenewalIdentity, ResidentState};
 
 const EPOCH: &str = "018f82d4-6f59-7d06-92e3-bce913116301";
-const LINEAGE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
+const TEAM: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
 const PREDECESSOR: &str = "018f82d4-6f59-7d06-92e3-bce913116304";
 const SUCCESSOR: &str = "018f82d4-6f59-7d06-92e3-bce913116305";
@@ -36,20 +36,20 @@ fn states() -> Vec<LaneRenewalState> {
     vec![
         LaneRenewalState::Requested {
             predecessor: predecessor(),
-            org_slot: 2,
+            team_slot: 2,
         },
         LaneRenewalState::HandoffPending {
             predecessor: predecessor(),
-            org_slot: 2,
+            team_slot: 2,
         },
         LaneRenewalState::SuccessorStarted {
             predecessor: predecessor(),
             successor: successor(),
-            org_slot: 2,
+            team_slot: 2,
         },
         LaneRenewalState::LaunchRefused {
             predecessor: predecessor(),
-            org_slot: 2,
+            team_slot: 2,
             reason: "vendor launch refused the selected model".to_owned(),
         },
     ]
@@ -57,7 +57,7 @@ fn states() -> Vec<LaneRenewalState> {
 
 fn record(state: LaneRenewalState) -> LaneRenewalRecord {
     LaneRenewalRecord {
-        lineage_id: uuid(LINEAGE),
+        team: uuid(TEAM),
         lane: uuid(LANE),
         revision: 41,
         state,
@@ -86,7 +86,7 @@ fn every_renewal_state_round_trips_with_its_original_slot_and_identities() {
 
         let encoded: Value = serde_json::from_slice(&wire::encode(&observed).unwrap()).unwrap();
         assert_eq!(encoded["state"]["state"], spelling);
-        assert_eq!(encoded["state"]["org_slot"], 2);
+        assert_eq!(encoded["state"]["team_slot"], 2);
         assert_eq!(encoded["state"]["predecessor"]["occupant"], PREDECESSOR);
         assert_eq!(
             encoded["state"]["predecessor"]["session"],
@@ -119,20 +119,20 @@ fn every_renewal_state_round_trips_with_its_original_slot_and_identities() {
 fn the_revision_bound_command_is_strict_and_carries_the_exact_member() {
     let command = json!({
         "topology_revision": 40,
-        "lineage_id": LINEAGE,
+        "team": TEAM,
         "lane": LANE,
         "requested": true
     });
     let decoded: LaneRenewal = wire::decode(&serde_json::to_vec(&command).unwrap()).unwrap();
     assert_eq!(decoded.topology_revision, 40);
-    assert_eq!(decoded.lineage_id, uuid(LINEAGE));
+    assert_eq!(decoded.team, uuid(TEAM));
     assert_eq!(decoded.lane, uuid(LANE));
     assert!(decoded.requested);
 
     for malformed in [
-        json!({"topology_revision": 40, "lineage_id": LINEAGE, "lane": LANE}),
-        json!({"topology_revision": 40, "lineage_id": LINEAGE, "lane": LANE, "requested": "true"}),
-        json!({"topology_revision": 40, "lineage_id": LINEAGE, "lane": LANE, "requested": true, "capability": OTHER}),
+        json!({"topology_revision": 40, "team": TEAM, "lane": LANE}),
+        json!({"topology_revision": 40, "team": TEAM, "lane": LANE, "requested": "true"}),
+        json!({"topology_revision": 40, "team": TEAM, "lane": LANE, "requested": true, "capability": OTHER}),
     ] {
         assert!(wire::decode::<LaneRenewal>(&serde_json::to_vec(&malformed).unwrap()).is_err());
     }
@@ -141,7 +141,7 @@ fn the_revision_bound_command_is_strict_and_carries_the_exact_member() {
 #[test]
 fn clear_state_is_omitted_and_null_is_refused() {
     let answer = LaneRenewalAnswer {
-        lineage_id: uuid(LINEAGE),
+        team: uuid(TEAM),
         lane: uuid(LANE),
         topology_revision: 41,
         renewal: None,
@@ -151,7 +151,7 @@ fn clear_state_is_omitted_and_null_is_refused() {
     assert_eq!(round_trip(&answer), answer);
 
     let changed = LaneRenewalChanged {
-        lineage_id: uuid(LINEAGE),
+        team: uuid(TEAM),
         lane: uuid(LANE),
         renewal: None,
     };
@@ -159,10 +159,9 @@ fn clear_state_is_omitted_and_null_is_refused() {
     assert!(encoded.get("renewal").is_none());
     assert_eq!(round_trip(&changed), changed);
 
-    let answer_null =
-        json!({"lineage_id": LINEAGE, "lane": LANE, "topology_revision": 41, "renewal": null});
+    let answer_null = json!({"team": TEAM, "lane": LANE, "topology_revision": 41, "renewal": null});
     assert!(wire::decode::<LaneRenewalAnswer>(&serde_json::to_vec(&answer_null).unwrap()).is_err());
-    let changed_null = json!({"lineage_id": LINEAGE, "lane": LANE, "renewal": null});
+    let changed_null = json!({"team": TEAM, "lane": LANE, "renewal": null});
     assert!(
         wire::decode::<LaneRenewalChanged>(&serde_json::to_vec(&changed_null).unwrap()).is_err()
     );
@@ -201,7 +200,7 @@ fn nested_unknown_fields_and_mismatched_addresses_are_refused() {
     );
 
     let mismatched_transition = json!({
-        "lineage_id": OTHER,
+        "team": OTHER,
         "lane": LANE,
         "renewal": renewal
     });
@@ -211,7 +210,7 @@ fn nested_unknown_fields_and_mismatched_addresses_are_refused() {
     );
 
     let mismatched_reply = json!({
-        "lineage_id": LINEAGE,
+        "team": TEAM,
         "lane": LANE,
         "topology_revision": 42,
         "renewal": record(states().remove(0))

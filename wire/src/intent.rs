@@ -171,8 +171,8 @@ pub struct LaneSeat {
     pub topology_revision: u64,
     /// Independently steerable member seat being created.
     pub lane: CanonicalUuid,
-    /// Canvas lineage whose lane receives the member.
-    pub lineage_id: CanonicalUuid,
+    /// Canvas team whose lane receives the member.
+    pub team: CanonicalUuid,
     /// Operator-configured agent display name, absent when unconfigured.
     #[serde(
         default,
@@ -211,22 +211,22 @@ pub struct LaneSeat {
     pub resume: Option<String>,
 }
 
-/// The closed task-allocation lifetime selected for a Canvas lineage.
+/// The closed task-allocation lifetime selected for a Canvas team.
 ///
 /// This is task-allocation policy. It is deliberately distinct from
 /// [`LaneAction::Drain`], which tears down an occupant process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum LineageLife {
+pub enum TeamLife {
     /// The operator steers task selection explicitly.
     Steer,
-    /// The lineage follows work created for the same immutable creator team.
+    /// The team follows work created for the same immutable creator team.
     Drive,
-    /// The lineage can draw from all assignable work.
+    /// The team can draw from all assignable work.
     Drain,
 }
 
-impl LineageLife {
+impl TeamLife {
     /// Stable wire spelling retained by the Canvas control.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -237,17 +237,13 @@ impl LineageLife {
         }
     }
 
-    /// Whether this policy admits one task's immutable creator lineage.
+    /// Whether this policy admits one task's immutable creator team.
     #[must_use]
-    pub fn admits_creator_lineage(
-        self,
-        creator: Option<CanonicalUuid>,
-        lineage: CanonicalUuid,
-    ) -> bool {
+    pub fn admits_creator_team(self, creator: Option<CanonicalUuid>, team: CanonicalUuid) -> bool {
         match self {
             Self::Steer => false,
             Self::Drive => match creator {
-                Some(creator) => creator == lineage,
+                Some(creator) => creator == team,
                 None => false,
             },
             Self::Drain => true,
@@ -266,18 +262,18 @@ impl LineageLife {
     }
 }
 
-/// Change the task-allocation lifetime shared by one Canvas lineage.
+/// Change the task-allocation lifetime shared by one Canvas team.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LineageConfigure {
+pub struct TeamConfigure {
     /// Topology revision observed before this configuration was requested.
     pub topology_revision: u64,
-    /// Stable Canvas lineage identifying the group.
-    pub lineage_id: CanonicalUuid,
-    /// One seated member to move into this lineage, or absent to preserve membership.
+    /// Stable Canvas team identifying the group.
+    pub team: CanonicalUuid,
+    /// One seated member to move into this team, or absent to preserve membership.
     ///
-    /// Moving a member to a fresh lineage creates an organization. Moving it to its own
-    /// lane identity removes it from an organization. The resident keeps every other
+    /// Moving a member to a fresh team creates a team. Moving it to its own
+    /// lane identity removes it from a team. The resident keeps every other
     /// member and subscription authoritative in the same transaction.
     #[serde(
         default,
@@ -291,22 +287,22 @@ pub struct LineageConfigure {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub life: Option<LineageLife>,
+    pub life: Option<TeamLife>,
 }
 
-/// One Canvas lineage and the seated lanes it holds, in operator order.
+/// One Canvas team and the seated lanes it holds, in operator order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LineageArrangement {
-    /// Stable Canvas lineage identifying the group.
-    pub lineage_id: CanonicalUuid,
-    /// Every lane this lineage holds after the arrangement commits.
+pub struct TeamArrangement {
+    /// Stable Canvas team identifying the group.
+    pub team: CanonicalUuid,
+    /// Every lane this team holds after the arrangement commits.
     pub lanes: Vec<CanonicalUuid>,
 }
 
-/// Rearrange every Canvas lineage: their order, and which lanes each holds.
+/// Rearrange every Canvas team: their order, and which lanes each holds.
 ///
-/// The operator drags one organization lane to reorder the organizations, or drops one organization
+/// The operator drags one team lane to reorder the teams, or drops one team
 /// lane onto another to join them. Both gestures are the same durable
 /// commitment -- a complete restatement of the topology -- so the authority
 /// never has to reconcile a reorder against a concurrent join. Stating the
@@ -315,17 +311,17 @@ pub struct LineageArrangement {
 /// refused as a whole rather than half-applied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct LineageArrange {
+pub struct TeamArrange {
     /// Topology revision of the complete arrangement being restated.
     pub topology_revision: u64,
-    /// Every surviving lineage, in the order the operator arranged them.
-    pub lineages: Vec<LineageArrangement>,
+    /// Every surviving team, in the order the operator arranged them.
+    pub teams: Vec<TeamArrangement>,
 }
 
 /// Place one seated lane immediately before another seated lane.
 ///
 /// The target lane supplies both the durable insertion point and the target
-/// lineage. Naming one target instead of a client-computed index keeps the
+/// team. Naming one target instead of a client-computed index keeps the
 /// command meaningful when UUID order and visual order differ.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -367,14 +363,14 @@ pub struct LaneState {
     pub worktree: Option<String>,
 }
 
-/// Request or clear agent succession for one exact Canvas lineage member.
+/// Request or clear agent succession for one exact Canvas team member.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneRenewal {
     /// Topology revision observed before this intent was requested.
     pub topology_revision: u64,
-    /// Canvas lineage whose member retains its original organization slot.
-    pub lineage_id: CanonicalUuid,
+    /// Canvas team whose member retains its original team slot.
+    pub team: CanonicalUuid,
     /// Independently steerable member whose occupant is renewed.
     pub lane: CanonicalUuid,
     /// True requests succession; false clears only a pre-handoff request.
@@ -765,8 +761,8 @@ impl LaneLiveness {
 pub struct LaneAnswerRow {
     /// Stable independently steerable member identity.
     pub lane: CanonicalUuid,
-    /// Canvas lineage whose lane contains this member.
-    pub lineage_id: CanonicalUuid,
+    /// Canvas team whose lane contains this member.
+    pub team: CanonicalUuid,
     /// Operator-configured agent display name, absent when unconfigured.
     #[serde(
         default,
@@ -844,9 +840,9 @@ pub struct LaneAnswer {
     pub topology_revision: u64,
     /// Current lane rows in stable lane order.
     pub lanes: Vec<LaneAnswerRow>,
-    /// One authoritative task-allocation lifetime per returned lineage.
-    pub subscriptions: Vec<crate::LineageSubscription>,
-    /// Current capability-free agent renewal state in lineage/member order.
+    /// One authoritative task-allocation lifetime per returned team.
+    pub subscriptions: Vec<crate::TeamSubscription>,
+    /// Current capability-free agent renewal state in team/member order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub renewals: Vec<crate::LaneRenewalRecord>,
 }
@@ -855,8 +851,8 @@ pub struct LaneAnswer {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(try_from = "LaneRenewalAnswerWire", into = "LaneRenewalAnswerWire")]
 pub struct LaneRenewalAnswer {
-    /// Canvas lineage whose member was addressed.
-    pub lineage_id: CanonicalUuid,
+    /// Canvas team whose member was addressed.
+    pub team: CanonicalUuid,
     /// Independently steerable member whose intent was set.
     pub lane: CanonicalUuid,
     /// Topology authority after the transaction committed.
@@ -873,7 +869,7 @@ pub struct LaneRenewalAnswer {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LaneRenewalAnswerWire {
-    lineage_id: CanonicalUuid,
+    team: CanonicalUuid,
     lane: CanonicalUuid,
     topology_revision: u64,
     #[serde(
@@ -889,14 +885,14 @@ impl TryFrom<LaneRenewalAnswerWire> for LaneRenewalAnswer {
 
     fn try_from(wire: LaneRenewalAnswerWire) -> Result<Self, Self::Error> {
         if wire.renewal.as_ref().is_some_and(|renewal| {
-            renewal.lineage_id != wire.lineage_id
+            renewal.team != wire.team
                 || renewal.lane != wire.lane
                 || renewal.revision != wire.topology_revision
         }) {
             return Err("renewal state does not match the addressed topology revision");
         }
         Ok(Self {
-            lineage_id: wire.lineage_id,
+            team: wire.team,
             lane: wire.lane,
             topology_revision: wire.topology_revision,
             renewal: wire.renewal,
@@ -907,7 +903,7 @@ impl TryFrom<LaneRenewalAnswerWire> for LaneRenewalAnswer {
 impl From<LaneRenewalAnswer> for LaneRenewalAnswerWire {
     fn from(answer: LaneRenewalAnswer) -> Self {
         Self {
-            lineage_id: answer.lineage_id,
+            team: answer.team,
             lane: answer.lane,
             topology_revision: answer.topology_revision,
             renewal: answer.renewal,

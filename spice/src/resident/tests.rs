@@ -42,8 +42,7 @@ mod supervisor_notices;
 mod sweep_publish;
 
 use canvas_announcement::{
-    process_spec, resident_fixture, seed_lane, seed_lane_in_lineage, seed_lane_in_worktree,
-    test_uuid,
+    process_spec, resident_fixture, seed_lane, seed_lane_in_team, seed_lane_in_worktree, test_uuid,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
@@ -530,11 +529,11 @@ fn failed_pending_inbox_start_parks_key_and_reports_exact_requeue() {
 
 #[test]
 fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_authority() {
-    let lineage = test_uuid(2);
+    let team = test_uuid(2);
     let sibling = test_uuid(5);
-    let row = |lane, lineage_id, life: &str| wire::LaneResidency {
+    let row = |lane, team, life: &str| wire::LaneResidency {
         lane,
-        lineage_id,
+        team,
         name: None,
         worktree: format!("/fixture/{lane}"),
         life: life.to_owned(),
@@ -548,8 +547,8 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
         disposition: "vacant".to_owned(),
     };
     let lanes = vec![
-        row(test_uuid(3), lineage, "drive"),
-        row(test_uuid(4), lineage, "drive"),
+        row(test_uuid(3), team, "drive"),
+        row(test_uuid(4), team, "drive"),
         row(test_uuid(6), sibling, "steer"),
     ];
 
@@ -558,13 +557,13 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
     assert_eq!(
         migrated,
         vec![
-            wire::LineageSubscription {
-                lineage_id: lineage,
-                policy: wire::intent::LineageLife::Drive,
+            wire::TeamSubscription {
+                team,
+                policy: wire::intent::TeamLife::Drive,
             },
-            wire::LineageSubscription {
-                lineage_id: sibling,
-                policy: wire::intent::LineageLife::Steer,
+            wire::TeamSubscription {
+                team: sibling,
+                policy: wire::intent::TeamLife::Steer,
             },
         ]
     );
@@ -580,14 +579,14 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
     else {
         panic!("a partial current subscription table must fault")
     };
-    assert_eq!(fault.reason, "lineage::subscription-misaligned");
+    assert_eq!(fault.reason, "team::subscription-misaligned");
 
     let mut mixed = lanes.clone();
     mixed[1].life = "steer".to_owned();
     let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&mixed, Vec::new()) else {
         panic!("mixed legacy lives must not choose an implicit policy")
     };
-    assert_eq!(fault.reason, "lineage::subscription-ambiguous");
+    assert_eq!(fault.reason, "team::subscription-ambiguous");
 
     let duplicated = vec![
         migrated[0].clone(),
@@ -597,19 +596,19 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
     let Err(Outcome::Fault(fault)) = super::startup_subscriptions(&lanes, duplicated) else {
         panic!("duplicate current subscription authority must fault")
     };
-    assert_eq!(fault.reason, "lineage::subscription-ambiguous");
+    assert_eq!(fault.reason, "team::subscription-ambiguous");
 }
 
-fn assert_lineage_configuration_fact(bus: &Bus, lineage: CanonicalUuid) {
+fn assert_team_configuration_fact(bus: &Bus, team: CanonicalUuid) {
     let facts = bus.fact_snapshot().expect("configured journal reads");
     let configured = facts
         .facts()
         .iter()
-        .find(|fact| fact.fact.kind() == wire::FactKind::LineageConfigured)
-        .expect("lineage configuration is durable");
+        .find(|fact| fact.fact.kind() == wire::FactKind::TeamConfigured)
+        .expect("team configuration is durable");
     assert_eq!(
-        configured.fact.body().get("lineage_id"),
-        Some(&serde_json::Value::String(lineage.to_string())),
+        configured.fact.body().get("team"),
+        Some(&serde_json::Value::String(team.to_string())),
     );
     assert_eq!(
         configured.fact.body().get("from"),
@@ -622,8 +621,8 @@ fn assert_lineage_configuration_fact(bus: &Bus, lineage: CanonicalUuid) {
 }
 
 #[test]
-fn lineage_configuration_changes_only_the_typed_lifetime() {
-    let (root, paths) = resident_fixture("lineage-configuration");
+fn team_configuration_changes_only_the_typed_lifetime() {
+    let (root, paths) = resident_fixture("team-configuration");
     let repository = Repository::discover(&root).expect("fixture repository resolves");
     let surface =
         crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
@@ -631,7 +630,7 @@ fn lineage_configuration_changes_only_the_typed_lifetime() {
     let bus = Bus::start(journal).expect("fixture bus starts");
     let epoch = test_uuid(1);
     commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    let lineage = test_uuid(2);
+    let team = test_uuid(2);
     let first_lane = test_uuid(3);
     let first_occupant = test_uuid(4);
     let second_lane = test_uuid(5);
@@ -651,51 +650,51 @@ fn lineage_configuration_changes_only_the_typed_lifetime() {
             process_spec("sleep 0.05", Duration::from_secs(5)),
         )
         .expect("second supervised occupant starts");
-    seed_lane_in_lineage(&bus, epoch, first_lane, lineage, first_occupant, &root);
-    seed_lane_in_lineage(&bus, epoch, second_lane, lineage, second_occupant, &root);
+    seed_lane_in_team(&bus, epoch, first_lane, team, first_occupant, &root);
+    seed_lane_in_team(&bus, epoch, second_lane, team, second_occupant, &root);
 
-    let request = wire::intent::LineageConfigure {
+    let request = wire::intent::TeamConfigure {
         topology_revision: current_residency(&bus, epoch)
             .expect("fixture residency reads")
             .body()
             .topology_revision,
-        lineage_id: lineage,
+        team,
         member: None,
-        life: Some(wire::intent::LineageLife::Drain),
+        life: Some(wire::intent::TeamLife::Drain),
     };
     let command = Command {
         v: wire::WireVersion::CURRENT,
         id: test_uuid(7),
         epoch,
-        kind: CommandKind::LineageConfigure,
+        kind: CommandKind::TeamConfigure,
         expected: Vec::new(),
-        body: serde_json::to_value(&request).expect("lineage configuration encodes"),
+        body: serde_json::to_value(&request).expect("team configuration encodes"),
     }
     .admit(&wire::Accepted {
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch,
     })
-    .expect("operator lineage configuration admits");
+    .expect("operator team configuration admits");
 
     let Outcome::Reply(reply) =
         super::lane_surface::configure(&bus, epoch, &seats, &command, &request)
     else {
-        panic!("lineage configuration replies");
+        panic!("team configuration replies");
     };
     let committed_reply = reply.clone();
     assert!(matches!(reply.position, ReplyPosition::Committed(_)));
     let CommandAnswer::Lane(answer) = reply.body else {
-        panic!("lineage configuration returns the authoritative lane table");
+        panic!("team configuration returns the authoritative lane table");
     };
     assert_eq!(answer.lanes.len(), 2);
-    assert!(answer.lanes.iter().all(|row| row.lineage_id == lineage));
+    assert!(answer.lanes.iter().all(|row| row.team == team));
     assert!(answer.lanes.iter().all(|row| row.life == "drive"));
     assert_eq!(
         answer.subscriptions,
-        vec![wire::LineageSubscription {
-            lineage_id: lineage,
-            policy: wire::intent::LineageLife::Drain,
+        vec![wire::TeamSubscription {
+            team,
+            policy: wire::intent::TeamLife::Drain,
         }]
     );
     assert_eq!(answer.lanes[0].occupant, Some(first_occupant));
@@ -711,8 +710,8 @@ fn lineage_configuration_changes_only_the_typed_lifetime() {
         .into_body();
     assert!(durable.lanes.iter().all(|row| row.life == "drive"));
     assert_eq!(durable.subscriptions, answer.subscriptions);
-    assert_lineage_configuration_fact(&bus, lineage);
-    assert_lineage_command_replay(&bus, &command, &request, epoch, &committed_reply);
+    assert_team_configuration_fact(&bus, team);
+    assert_team_command_replay(&bus, &command, &request, epoch, &committed_reply);
     for lane in [first_lane, second_lane] {
         seats
             .vacate(lane)
@@ -722,14 +721,14 @@ fn lineage_configuration_changes_only_the_typed_lifetime() {
     }
     bus.verify().expect("configured authority verifies");
     bus.shutdown().expect("fixture bus stops");
-    assert_lineage_command_replay_after_restart(&paths, &command, request, committed_reply);
+    assert_team_command_replay_after_restart(&paths, &command, request, committed_reply);
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
-fn assert_lineage_command_replay(
+fn assert_team_command_replay(
     bus: &Bus,
     command: &wire::AdmittedCommand,
-    request: &wire::intent::LineageConfigure,
+    request: &wire::intent::TeamConfigure,
     epoch: CanonicalUuid,
     committed_reply: &Reply<CommandAnswer>,
 ) {
@@ -739,12 +738,12 @@ fn assert_lineage_command_replay(
         "an exact retry resolves from its durable command receipt",
     );
     let mut conflicting_request = request.clone();
-    conflicting_request.life = Some(wire::intent::LineageLife::Steer);
+    conflicting_request.life = Some(wire::intent::TeamLife::Steer);
     let conflicting = Command {
         v: wire::WireVersion::CURRENT,
         id: command.id(),
         epoch,
-        kind: CommandKind::LineageConfigure,
+        kind: CommandKind::TeamConfigure,
         expected: Vec::new(),
         body: serde_json::to_value(conflicting_request).expect("conflicting request encodes"),
     }
@@ -762,10 +761,10 @@ fn assert_lineage_command_replay(
     assert_eq!(conflict.reason(), "command::identity-reused");
 }
 
-fn assert_lineage_command_replay_after_restart(
+fn assert_team_command_replay_after_restart(
     paths: &RuntimePaths,
     command: &wire::AdmittedCommand,
-    request: wire::intent::LineageConfigure,
+    request: wire::intent::TeamConfigure,
     committed_reply: Reply<CommandAnswer>,
 ) {
     let reopened = Bus::start(
@@ -777,7 +776,7 @@ fn assert_lineage_command_replay_after_restart(
         v: wire::WireVersion::CURRENT,
         id: command.id(),
         epoch: next_epoch,
-        kind: CommandKind::LineageConfigure,
+        kind: CommandKind::TeamConfigure,
         expected: Vec::new(),
         body: serde_json::to_value(request).expect("restart retry encodes"),
     }
@@ -857,15 +856,15 @@ fn assert_transferred_arrangement(
     let transferred_row = &transferred.lanes[1];
     assert_eq!(transferred_row.lane, test_uuid(9));
     assert_eq!(transferred_row.occupant, Some(test_uuid(10)));
-    assert_eq!(transferred_row.lineage_id, destination);
+    assert_eq!(transferred_row.team, destination);
     assert_eq!(
         transferred
             .subscriptions
             .iter()
-            .map(|subscription| subscription.lineage_id)
+            .map(|subscription| subscription.team)
             .collect::<Vec<_>>(),
         vec![destination],
-        "moving the last member removes the empty source lineage subscription",
+        "moving the last member removes the empty source team subscription",
     );
 }
 
@@ -873,8 +872,8 @@ fn assert_durable_arrangement(
     bus: &Bus,
     epoch: CanonicalUuid,
     transferred: &wire::intent::LaneAnswer,
-    source_lineage: CanonicalUuid,
-    destination_lineage: CanonicalUuid,
+    source_team: CanonicalUuid,
+    destination_team: CanonicalUuid,
 ) {
     let durable = current_residency(bus, epoch)
         .expect("arranged residency reads")
@@ -882,13 +881,13 @@ fn assert_durable_arrangement(
     let identities = |lanes: &[wire::intent::LaneAnswerRow]| {
         lanes
             .iter()
-            .map(|row| (row.lane, row.lineage_id, row.occupant))
+            .map(|row| (row.lane, row.team, row.occupant))
             .collect::<Vec<_>>()
     };
     let durable_identities = durable
         .lanes
         .iter()
-        .map(|row| (row.lane, row.lineage_id, row.occupant))
+        .map(|row| (row.lane, row.team, row.occupant))
         .collect::<Vec<_>>();
     assert_eq!(durable_identities, identities(&transferred.lanes));
     let arranged = bus
@@ -901,14 +900,8 @@ fn assert_durable_arrangement(
         .collect::<Vec<_>>();
     assert_eq!(arranged.len(), 2);
     assert_eq!(arranged[1]["lane"], serde_json::json!(test_uuid(9)));
-    assert_eq!(
-        arranged[1]["from_lineage_id"],
-        serde_json::json!(source_lineage)
-    );
-    assert_eq!(
-        arranged[1]["lineage_id"],
-        serde_json::json!(destination_lineage)
-    );
+    assert_eq!(arranged[1]["from_team"], serde_json::json!(source_team));
+    assert_eq!(arranged[1]["team"], serde_json::json!(destination_team));
     assert_eq!(arranged[1]["before"], serde_json::json!(test_uuid(3)));
 }
 
@@ -922,16 +915,16 @@ fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
     let bus = Bus::start(journal).expect("fixture bus starts");
     let epoch = test_uuid(1);
     commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-    let first_lineage = test_uuid(2);
-    let second_lineage = test_uuid(12);
+    let first_team = test_uuid(2);
+    let second_team = test_uuid(12);
     let members = [
-        (test_uuid(3), test_uuid(4), first_lineage),
-        (test_uuid(5), test_uuid(6), first_lineage),
-        (test_uuid(7), test_uuid(8), first_lineage),
-        (test_uuid(9), test_uuid(10), second_lineage),
+        (test_uuid(3), test_uuid(4), first_team),
+        (test_uuid(5), test_uuid(6), first_team),
+        (test_uuid(7), test_uuid(8), first_team),
+        (test_uuid(9), test_uuid(10), second_team),
     ];
     let mut seats = Seats::new();
-    for (lane, occupant, lineage) in members {
+    for (lane, occupant, team) in members {
         seats
             .seat(
                 lane,
@@ -939,7 +932,7 @@ fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
                 process_spec("sleep 0.05", Duration::from_secs(5)),
             )
             .expect("supervised member starts");
-        seed_lane_in_lineage(&bus, epoch, lane, lineage, occupant, &root);
+        seed_lane_in_team(&bus, epoch, lane, team, occupant, &root);
     }
 
     let same_org = arrange_lane_for_test(
@@ -953,9 +946,9 @@ fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
     assert_eq!(
         lane_order(&same_org),
         vec![test_uuid(7), test_uuid(3), test_uuid(5), test_uuid(9)],
-        "the moved member is inserted immediately before its same-organization target",
+        "the moved member is inserted immediately before its same-team target",
     );
-    assert_eq!(same_org.lanes[0].lineage_id, first_lineage);
+    assert_eq!(same_org.lanes[0].team, first_team);
 
     let transferred = arrange_lane_for_test(
         &bus,
@@ -965,8 +958,8 @@ fn lane_arrangement_durably_reorders_and_transfers_the_existing_member() {
         test_uuid(9),
         test_uuid(3),
     );
-    assert_transferred_arrangement(&transferred, first_lineage);
-    assert_durable_arrangement(&bus, epoch, &transferred, second_lineage, first_lineage);
+    assert_transferred_arrangement(&transferred, first_team);
+    assert_durable_arrangement(&bus, epoch, &transferred, second_team, first_team);
 
     for (lane, _, _) in members {
         seats

@@ -120,10 +120,10 @@ pub enum CommandKind {
     LaneState,
     /// Request or clear agent succession for one exact lane member.
     LaneRenewal,
-    /// Change the shared task-allocation lifetime of one Canvas lineage.
-    LineageConfigure,
-    /// Rearrange the order of every Canvas lineage and the lanes each holds.
-    LineageArrange,
+    /// Change the shared task-allocation lifetime of one Canvas team.
+    TeamConfigure,
+    /// Rearrange the order of every Canvas team and the lanes each holds.
+    TeamArrange,
     /// Build one bounded continuity account from the current resident barrier.
     LaneRecall,
 
@@ -595,8 +595,8 @@ impl CommandKind {
         Self::LaneArrange,
         Self::LaneState,
         Self::LaneRenewal,
-        Self::LineageConfigure,
-        Self::LineageArrange,
+        Self::TeamConfigure,
+        Self::TeamArrange,
         Self::LaneRecall,
         Self::TasteRecord,
         Self::CanaryRecognize,
@@ -657,8 +657,8 @@ impl CommandKind {
             | Self::LaneArrange
             | Self::LaneState
             | Self::LaneRenewal
-            | Self::LineageConfigure
-            | Self::LineageArrange
+            | Self::TeamConfigure
+            | Self::TeamArrange
             | Self::LaneRecall
             | Self::GlobalSettingsRead
             | Self::GlobalSettingsSet
@@ -728,8 +728,8 @@ impl CommandKind {
             Self::LaneArrange => "lane::arrange",
             Self::LaneState => "lane::state",
             Self::LaneRenewal => "lane::renewal",
-            Self::LineageConfigure => "lineage::configure",
-            Self::LineageArrange => "lineage::arrange",
+            Self::TeamConfigure => "team::configure",
+            Self::TeamArrange => "team::arrange",
             Self::LaneRecall => "lane::recall",
             Self::GlobalSettingsRead => "settings::read",
             Self::GlobalSettingsSet => "settings::set",
@@ -876,8 +876,8 @@ impl CommandKind {
             | Self::LaneArrange
             | Self::LaneState
             | Self::LaneRenewal
-            | Self::LineageConfigure
-            | Self::LineageArrange => Law::LANE,
+            | Self::TeamConfigure
+            | Self::TeamArrange => Law::LANE,
             Self::LaneRecall => Law::LANE_RECALL,
             Self::TasteRecord => Law::TASTE,
             Self::CanaryRecognize

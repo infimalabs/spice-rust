@@ -15,7 +15,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use syn::punctuated::Punctuated;
 use syn::{Meta, Token};
-use wire::intent::{LineageConfigure, PendingDirective};
+use wire::intent::{PendingDirective, TeamConfigure};
 use wire::{AnyFact, CursorHead, LaneResidency, Packed, RefusalDiagnostic, WorkflowHead, body};
 
 const WORKFLOW: &str = r#"{
@@ -27,7 +27,7 @@ const WORKFLOW: &str = r#"{
 
 const LANE: &str = r#"{
   "lane": "018f82d4-6f59-7d06-92e3-bce913116302",
-  "lineage_id": "018f82d4-6f59-7d06-92e3-bce913116302",
+  "team": "018f82d4-6f59-7d06-92e3-bce913116302",
   "worktree": "/worktrees/lane-a",
   "life": "drive",
   "vendor": "claude",
@@ -81,9 +81,9 @@ const DIRECTIVE: &str = r#"{
   "expires": "2026-08-01T07:07:19.000Z"
 }"#;
 
-const LINEAGE_MEMBERSHIP: &str = r#"{
+const TEAM_MEMBERSHIP: &str = r#"{
   "topology_revision": 9,
-  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "member": "018f82d4-6f59-7d06-92e3-bce9131163c3"
 }"#;
 
@@ -102,7 +102,7 @@ fn absent_non_head_fields_are_omitted_and_null_is_refused() {
         &["witness", "expected", "observed", "detail"],
     );
     assert_canonical_absence::<PendingDirective>(DIRECTIVE, &["preview", "control"]);
-    assert_canonical_absence::<LineageConfigure>(LINEAGE_MEMBERSHIP, &["life"]);
+    assert_canonical_absence::<TeamConfigure>(TEAM_MEMBERSHIP, &["life"]);
 }
 
 /// An accounted counter is required, and the one optional counter is not zero.

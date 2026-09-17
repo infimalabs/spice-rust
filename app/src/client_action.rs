@@ -1,5 +1,5 @@
 use wire::body::DirectiveAttachment;
-use wire::intent::{LineageArrangement, LineageLife};
+use wire::intent::{TeamArrangement, TeamLife};
 use wire::{CanonicalUuid, TaskHandle};
 
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
@@ -30,24 +30,24 @@ pub(crate) enum ClientAction {
     },
     RenewLane {
         topology_revision: u64,
-        lineage: CanonicalUuid,
+        team: CanonicalUuid,
         lane: CanonicalUuid,
         requested: bool,
     },
-    ConfigureLineage {
+    ConfigureTeam {
         topology_revision: u64,
-        lineage: CanonicalUuid,
+        team: CanonicalUuid,
         member: Option<CanonicalUuid>,
-        life: Option<LineageLife>,
+        life: Option<TeamLife>,
     },
-    /// Where every organization and every agent stands after one organization drag.
+    /// Where every team and every agent stands after one team drag.
     ///
     /// The whole topology travels because that is the only thing the resident
     /// admits: a drop states an arrangement, not a move, so the surface that
-    /// drew the organizations is the one that says where they all now stand.
-    ArrangeLineages {
+    /// drew the teams is the one that says where they all now stand.
+    ArrangeTeams {
         topology_revision: u64,
-        lineages: Vec<LineageArrangement>,
+        teams: Vec<TeamArrangement>,
     },
     Note {
         id: CanonicalUuid,

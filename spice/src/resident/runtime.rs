@@ -794,53 +794,50 @@ pub(super) struct StartupCommit {
 /// authority is refused instead of repaired through a second path.
 pub(super) fn startup_subscriptions(
     lanes: &[wire::LaneResidency],
-    stored: Vec<wire::LineageSubscription>,
-) -> CommandResult<Vec<wire::LineageSubscription>> {
-    let lineage_ids = lanes
+    stored: Vec<wire::TeamSubscription>,
+) -> CommandResult<Vec<wire::TeamSubscription>> {
+    let team_ids = lanes
         .iter()
-        .map(|row| row.lineage_id)
+        .map(|row| row.team)
         .collect::<std::collections::BTreeSet<_>>();
     if stored.is_empty() {
-        return lineage_ids
+        return team_ids
             .into_iter()
-            .map(|lineage_id| {
+            .map(|team| {
                 let row = lanes
                     .iter()
-                    .find(|row| row.lineage_id == lineage_id)
-                    .expect("a collected lineage has one lane row");
+                    .find(|row| row.team == team)
+                    .expect("a collected team has one lane row");
                 if lanes
                     .iter()
-                    .filter(|candidate| candidate.lineage_id == lineage_id)
+                    .filter(|candidate| candidate.team == team)
                     .any(|candidate| candidate.life != row.life)
                 {
                     return Err(store_fault(
-                        "lineage::subscription-ambiguous",
+                        "team::subscription-ambiguous",
                         concat!(
-                            "a legacy lineage has mixed lane lives and no authoritative ",
+                            "a legacy team has mixed lane lives and no authoritative ",
                             "task-allocation lifetime"
                         ),
                     ));
                 }
-                let policy = wire::intent::LineageLife::from_wire(&row.life).ok_or_else(|| {
+                let policy = wire::intent::TeamLife::from_wire(&row.life).ok_or_else(|| {
                     store_fault(
-                        "lineage::subscription-invalid",
-                        "a legacy lineage lane has no closed task-allocation lifetime",
+                        "team::subscription-invalid",
+                        "a legacy team lane has no closed task-allocation lifetime",
                     )
                 })?;
-                Ok(wire::LineageSubscription { lineage_id, policy })
+                Ok(wire::TeamSubscription { team, policy })
             })
             .collect();
     }
 
     let mut indexed = std::collections::BTreeMap::new();
     for subscription in stored {
-        if indexed
-            .insert(subscription.lineage_id, subscription)
-            .is_some()
-        {
+        if indexed.insert(subscription.team, subscription).is_some() {
             return Err(store_fault(
-                "lineage::subscription-ambiguous",
-                "one lineage has more than one durable task-allocation lifetime",
+                "team::subscription-ambiguous",
+                "one team has more than one durable task-allocation lifetime",
             ));
         }
     }
@@ -848,11 +845,11 @@ pub(super) fn startup_subscriptions(
         .keys()
         .copied()
         .collect::<std::collections::BTreeSet<_>>()
-        != lineage_ids
+        != team_ids
     {
         return Err(store_fault(
-            "lineage::subscription-misaligned",
-            "the durable task-allocation lifetime table does not match the resident lineages",
+            "team::subscription-misaligned",
+            "the durable task-allocation lifetime table does not match the resident teams",
         ));
     }
     Ok(indexed.into_values().collect())

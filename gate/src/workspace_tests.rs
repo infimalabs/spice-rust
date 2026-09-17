@@ -593,7 +593,7 @@ fn run_selected_at_mode(
     let inventory =
         acquire_selected_inventory(root, roots.base, &environment, changed_sources, output)?;
     let report = selected_report(&inventory, root, source, changed_sources, output)?;
-    let routine = selection::routine_selection(changed_sources);
+    let routine = selection::routine_selection(changed_sources, report.tests().len());
     let (selection_class, target_limit, shard_limit) = if routine {
         let limit = selection::ROUTINE_TEST_TARGET_LIMIT.to_string();
         ("routine", limit.clone(), limit)
@@ -619,7 +619,7 @@ fn run_selected_at_mode(
             environment,
             &inventory,
             report.tests(),
-            changed_sources,
+            routine,
             &mut policy,
             prebuild_budget,
             output,
@@ -740,7 +740,7 @@ fn execute_selected_tests(
     environment: Environment,
     inventory: &Inventory,
     tests: &[String],
-    changed_sources: &[String],
+    routine: bool,
     policy: &mut RunPolicy,
     prebuild_budget: Option<WorkspaceTestBudget>,
     output: &mut impl Write,
@@ -784,8 +784,7 @@ fn execute_selected_tests(
         } else {
             policy.shared_outputs = true;
         }
-        let partitions_per_target =
-            selected_partitions_per_target(changed_sources, policy.concurrency);
+        let partitions_per_target = selected_partitions_per_target(routine, policy.concurrency);
         let prebuilt = partition_largest_prebuilt_tests(
             prebuilt,
             &environment,
@@ -893,11 +892,8 @@ fn prepare_selected_execution(
     Ok((environment, selected, shards))
 }
 
-fn selected_partitions_per_target(
-    changed_sources: &[String],
-    execution_concurrency: usize,
-) -> usize {
-    if selection::routine_selection(changed_sources) {
+fn selected_partitions_per_target(routine: bool, execution_concurrency: usize) -> usize {
+    if routine {
         ROUTINE_PARTITIONS_PER_TARGET
     } else {
         execution_concurrency

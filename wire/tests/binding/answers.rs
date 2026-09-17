@@ -135,7 +135,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
       "topology_revision": 0,
       "lanes": [{
         "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
-        "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+        "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
         "name": "Ava",
         "worktree": "/worktrees/lane-a",
         "life": "drive",
@@ -264,15 +264,15 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
   "state": "seated",
   "topology_revision": 9,
   "subscriptions": [{
-    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
     "policy": "drive"
   }, {
-    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+    "team": "018f82d4-6f59-7d06-92e3-bce9131163c6",
     "policy": "steer"
   }],
   "lanes": [{
     "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
-    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
     "name": "Ava",
     "worktree": "/worktrees/lane-a",
     "life": "drive",
@@ -284,7 +284,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     "liveness": "running"
   }, {
     "lane": "018f82d4-6f59-7d06-92e3-bce9131163c6",
-    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+    "team": "018f82d4-6f59-7d06-92e3-bce9131163c6",
     "worktree": "/worktrees/lane-b",
     "life": "steer",
     "vendor": "codex",
@@ -307,11 +307,11 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     (
         AnswerShape::LaneRenewal,
         r#"{
-  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c3",
   "topology_revision": 9,
   "renewal": {
-    "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+    "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
     "lane": "018f82d4-6f59-7d06-92e3-bce9131163c3",
     "revision": 9,
     "state": {
@@ -321,7 +321,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
         "session": "session-old",
         "thread": "thread-old"
       },
-      "org_slot": 2
+      "team_slot": 2
     }
   }
 }"#,
@@ -341,7 +341,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     "topology_revision": 9,
     "lanes": [{
       "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
-      "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+      "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
       "name": "Ava",
       "worktree": "/worktrees/lane-a",
       "life": "drive",
@@ -353,7 +353,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
       "liveness": "running"
     }],
     "subscriptions": [{
-      "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+      "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
       "policy": "drive"
     }]
   },

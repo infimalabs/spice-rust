@@ -63,7 +63,7 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             task: ungrounded_stamp,
         }],
         &TaskAdd {
-            title: "Refuse synthetic lineage".to_owned(),
+            title: "Refuse synthetic team".to_owned(),
             project: Some("board.origin".to_owned()),
             description: None,
             acceptance: Vec::new(),

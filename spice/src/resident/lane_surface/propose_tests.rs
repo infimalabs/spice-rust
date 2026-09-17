@@ -28,7 +28,7 @@ fn adoption_rebinds_claim_epoch_without_restarting_the_occupant() {
     let maximum = shifted(now, 2 * 60 * 60);
     let durable = wire::LaneResidency {
         lane,
-        lineage_id: lane,
+        team: lane,
         name: Some("Adopted lane".to_owned()),
         worktree: "/worktrees/adopted".to_owned(),
         life: "drive".to_owned(),
@@ -94,7 +94,7 @@ fn startup_seating_carries_claim_without_an_observable_epoch_gap() {
     let maximum = shifted(now, 2 * 60 * 60);
     let durable = wire::LaneResidency {
         lane,
-        lineage_id: lane,
+        team: lane,
         name: Some("Atomic restart lane".to_owned()),
         worktree: "/worktrees/atomic-restart".to_owned(),
         life: "drive".to_owned(),

@@ -590,7 +590,7 @@ fn recall_lanes(
     vec![
         LaneResidency {
             lane,
-            lineage_id: lane,
+            team: lane,
             name: None,
             worktree: "/fixture".to_owned(),
             life: "drive".to_owned(),
@@ -619,7 +619,7 @@ fn recall_lanes(
         },
         LaneResidency {
             lane: peer_lane,
-            lineage_id: peer_lane,
+            team: peer_lane,
             name: None,
             worktree: "/fixture-peer".to_owned(),
             life: "drive".to_owned(),

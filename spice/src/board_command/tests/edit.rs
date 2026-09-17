@@ -508,7 +508,7 @@ pub(super) fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Optio
     let answer = board(bus, epoch, actor.clone());
     let entries = actor_entries(&answer).expect("allocation board entries validate");
     let subscription = allocation_subscription(&answer.residency.body, actor)
-        .expect("allocation board has one lineage subscription");
+        .expect("allocation board has one team subscription");
     board::select(
         &entries,
         actor,
@@ -828,7 +828,7 @@ fn a_corrected_project_keeps_creator_team_allocation() {
     let (_root, bus, epoch, seats) = fixture("task-edit-project-scope", 1);
     let lane = Actor::Lane(seats[0].lane);
     authorize_lane_creation(&bus, epoch, &seats[0]);
-    subscription::configure_subscription(&bus, epoch, &seats[0], wire::intent::LineageLife::Drive);
+    subscription::configure_subscription(&bus, epoch, &seats[0], wire::intent::TeamLife::Drive);
     let task = add(
         &bus,
         epoch,

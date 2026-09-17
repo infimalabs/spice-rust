@@ -15,8 +15,8 @@ use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction, LaneArrange, LaneRead,
-    LaneRenewal, LaneState, LineageArrangement, LineageConfigure, LineageLife, SteerInbox,
-    SteerSend, TaskAnswer,
+    LaneRenewal, LaneState, SteerInbox, SteerSend, TaskAnswer, TeamArrangement, TeamConfigure,
+    TeamLife,
 };
 use wire::{CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness};
 use yew::prelude::*;
@@ -30,8 +30,8 @@ use crate::speech_queue::{
     SpeechRequest, SuppressAutomatic,
 };
 use crate::{
-    Axis, CanvasDestination, CanvasRuntime, OrgDestination, Principal, Session, SteerPane,
-    StreamDirective, stale_reads,
+    Axis, CanvasDestination, CanvasRuntime, Principal, Session, SteerPane, StreamDirective,
+    TeamDestination, stale_reads,
 };
 
 mod clock;
@@ -44,7 +44,7 @@ use crate::action_mailbox::{self, ActionLease, ActionQueue};
 use connection::{request_external_speech, run_surface};
 use view::{CanvasRender, render_canvas};
 use watchband::ComposerAction;
-use watchband::{ComposerDrafts, LineageControlAction, LineageControls, LineageSpeech};
+use watchband::{ComposerDrafts, TeamControlAction, TeamControls, TeamSpeech};
 
 /// Source identity injected by installed Spice `dev xtask -- app` and verified before publish.
 const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY") {
@@ -103,7 +103,7 @@ struct SurfaceHandles {
     speech: UseStateHandle<wire::SpeechPlayback>,
     identity: UseStateHandle<Option<CanvasIdentity>>,
     canvas_update: UseStateHandle<Option<CanvasUpdate>>,
-    lineage_controls: UseReducerHandle<LineageControls>,
+    team_controls: UseReducerHandle<TeamControls>,
     composer_drafts: UseReducerHandle<ComposerDrafts>,
     submissions: SubmissionHandle,
 }
@@ -140,9 +140,9 @@ enum SpeechStatus {
 
 #[derive(Clone, PartialEq)]
 struct NarrationBatch {
-    lineage: String,
+    team: String,
     materialization: bool,
-    mode: LineageSpeech,
+    mode: TeamSpeech,
     messages: Vec<NarrationMessage>,
 }
 
@@ -374,8 +374,8 @@ fn canvas_app() -> Html {
     let canvas_menu_open = use_state(|| false);
     let identity = use_state(|| None::<CanvasIdentity>);
     let canvas_update = use_state(|| None::<CanvasUpdate>);
-    let lineage_controls = use_reducer(LineageControls::restore);
-    let lineage_fleet = use_node_ref();
+    let team_controls = use_reducer(TeamControls::restore);
+    let team_fleet = use_node_ref();
     let composer_drafts = use_reducer(ComposerDrafts::default);
     let submission_status = use_state(SubmissionStatus::default);
     let submissions = SubmissionHandle {
@@ -417,23 +417,23 @@ fn canvas_app() -> Html {
             speech: speech.clone(),
             identity: identity.clone(),
             canvas_update: canvas_update.clone(),
-            lineage_controls: lineage_controls.clone(),
+            team_controls: team_controls.clone(),
             composer_drafts: composer_drafts.clone(),
             submissions: submissions.clone(),
         },
     );
-    use_lineage_speech_abandonment(&surface, speech_runtime.clone());
+    use_team_speech_abandonment(&surface, speech_runtime.clone());
     use_speech_reset(speech.clone(), speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime.clone());
     use_mosaic_root_scroll(*mosaic);
     use_canvas_menu_dismissal(canvas_menu_open.clone());
     watchband::use_command_modifier_preview();
-    let lineage_count = surface
+    let team_count = surface
         .read()
         .as_ref()
         .and_then(CanvasRuntime::lanes)
         .map_or(0, |lanes| lanes.lanes.len());
-    watchband::use_lineage_fleet_right_edge(lineage_fleet.clone(), lineage_count);
+    watchband::use_team_fleet_right_edge(team_fleet.clone(), team_count);
 
     let refresh = refresh_callback(sender.clone(), axis.clone());
     let submit_note = note_submit_callback(
@@ -450,10 +450,10 @@ fn canvas_app() -> Html {
         canvas_menu_open: &canvas_menu_open,
         identity: &identity,
         canvas_update: &canvas_update,
-        lineage_controls: &lineage_controls,
+        team_controls: &team_controls,
         composer_drafts: &composer_drafts,
         submissions: &submissions,
-        lineage_fleet: &lineage_fleet,
+        team_fleet: &team_fleet,
         unsafe_intent,
         sender: &sender,
         agents: &agents,
@@ -642,11 +642,11 @@ fn use_page_hide_speech_stop(speech_runtime: SpeechRuntime) {
 }
 
 #[hook]
-fn use_lineage_speech_abandonment(
+fn use_team_speech_abandonment(
     surface: &UseStateHandle<SurfaceData>,
     speech_runtime: SpeechRuntime,
 ) {
-    let lineages = surface
+    let teams = surface
         .read()
         .as_ref()
         .and_then(CanvasRuntime::lanes)
@@ -654,12 +654,12 @@ fn use_lineage_speech_abandonment(
             lanes
                 .lanes
                 .iter()
-                .map(|lineage| lineage.lane.to_string())
+                .map(|team| team.lane.to_string())
                 .collect::<BTreeSet<_>>()
         });
     let previous = use_mut_ref(|| None::<BTreeSet<String>>);
-    use_effect_with(lineages, move |lineages| {
-        let Some(current) = lineages else {
+    use_effect_with(teams, move |teams| {
+        let Some(current) = teams else {
             return;
         };
         if let Some(previous) = previous.borrow().as_ref() {
@@ -913,27 +913,23 @@ fn narration_callback(
         };
         for line in lines {
             let text = match batch.mode {
-                LineageSpeech::Quiet => None,
-                LineageSpeech::Speak => line.automatic_speech,
-                LineageSpeech::Narrate => Some(line.text),
+                TeamSpeech::Quiet => None,
+                TeamSpeech::Speak => line.automatic_speech,
+                TeamSpeech::Narrate => Some(line.text),
             };
             if let Some(text) = text {
-                speak.emit(SpeechRequest::narration(
-                    batch.lineage.clone(),
-                    line.key,
-                    text,
-                ));
+                speak.emit(SpeechRequest::narration(batch.team.clone(), line.key, text));
             }
         }
     })
 }
 
-fn apply_lineage_configuration(
+fn apply_team_configuration(
     session: &Session,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    team_controls: &UseReducerHandle<TeamControls>,
     runtime: &mut CanvasRuntime,
-    lineage: CanonicalUuid,
-    life: Option<LineageLife>,
+    team: CanonicalUuid,
+    life: Option<TeamLife>,
     bytes: &[u8],
 ) -> Result<(bool, bool), String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
@@ -942,29 +938,29 @@ fn apply_lineage_configuration(
     let applied = runtime.apply_lanes(&admitted);
     match &admitted.get().outcome {
         wire::Outcome::Reply(reply) if applied => {
-            lineage_controls.dispatch(LineageControlAction::SyncLanes {
+            team_controls.dispatch(TeamControlAction::SyncLanes {
                 answer: reply.body.clone(),
-                settle: life.map(|life| (lineage, life.into())),
+                settle: life.map(|life| (team, life.into())),
             });
         }
         wire::Outcome::Reply(_) => {
             if let Some(life) = life {
-                lineage_controls.dispatch(LineageControlAction::SettleStaleLife {
-                    lineage,
+                team_controls.dispatch(TeamControlAction::SettleStaleLife {
+                    team,
                     life: life.into(),
                 });
             }
         }
         wire::Outcome::Refusal(refusal) => {
-            lineage_controls.dispatch(LineageControlAction::SettleIssue {
-                lineage,
+            team_controls.dispatch(TeamControlAction::SettleIssue {
+                team,
                 life: life.map(Into::into),
                 issue: format!("{}: {}", refusal.reason(), refusal.explanation()),
             });
         }
         wire::Outcome::Fault(fault) => {
-            lineage_controls.dispatch(LineageControlAction::SettleIssue {
-                lineage,
+            team_controls.dispatch(TeamControlAction::SettleIssue {
+                team,
                 life: life.map(Into::into),
                 issue: format!("{}: {}", fault.reason, fault.detail),
             });

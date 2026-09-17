@@ -4,7 +4,7 @@ fn lane_response_at(
     rows: &[(&str, &str, Option<&str>, bool)],
     position: ReplyPosition,
     topology_revision: u64,
-    policy: wire::intent::LineageLife,
+    policy: wire::intent::TeamLife,
 ) -> Vec<u8> {
     let mut response: Response<wire::intent::LaneAnswer> =
         wire::decode(&lane_response(rows)).expect("base lane response decodes");
@@ -32,13 +32,13 @@ fn an_older_lane_snapshot_cannot_replace_a_newer_committed_policy() {
             last: seq(50),
         }),
         10,
-        wire::intent::LineageLife::Drain,
+        wire::intent::TeamLife::Drain,
     );
     let stale = lane_response_at(
         &rows,
         ReplyPosition::Snapshot(seq(41)),
         9,
-        wire::intent::LineageLife::Steer,
+        wire::intent::TeamLife::Steer,
     );
     let committed = session
         .admit_frame(&committed)
@@ -51,10 +51,7 @@ fn an_older_lane_snapshot_cannot_replace_a_newer_committed_policy() {
     assert!(!runtime.apply_lanes(&stale));
     let lanes = runtime.lanes().expect("committed lane table remains");
     assert_eq!(lanes.topology_revision, 10);
-    assert_eq!(
-        lanes.lanes[0].subscription,
-        wire::intent::LineageLife::Drain
-    );
+    assert_eq!(lanes.lanes[0].subscription, wire::intent::TeamLife::Drain);
 }
 
 #[test]
@@ -70,7 +67,7 @@ fn an_older_committed_lane_result_cannot_replace_a_later_commit() {
             last: seq(51),
         }),
         11,
-        wire::intent::LineageLife::Steer,
+        wire::intent::TeamLife::Steer,
     );
     let older = lane_response_at(
         &rows,
@@ -79,7 +76,7 @@ fn an_older_committed_lane_result_cannot_replace_a_later_commit() {
             last: seq(50),
         }),
         10,
-        wire::intent::LineageLife::Drain,
+        wire::intent::TeamLife::Drain,
     );
     let later = session
         .admit_frame(&later)
@@ -92,10 +89,7 @@ fn an_older_committed_lane_result_cannot_replace_a_later_commit() {
     assert!(!runtime.apply_lanes(&older));
     let lanes = runtime.lanes().expect("later lane table remains");
     assert_eq!(lanes.topology_revision, 11);
-    assert_eq!(
-        lanes.lanes[0].subscription,
-        wire::intent::LineageLife::Steer
-    );
+    assert_eq!(lanes.lanes[0].subscription, wire::intent::TeamLife::Steer);
 }
 
 #[test]
@@ -107,7 +101,7 @@ fn a_positionless_lane_reply_is_not_authority() {
         &[(LANE, LANE, Some(LANE_CAPABILITY), true)],
         ReplyPosition::Direct {},
         10,
-        wire::intent::LineageLife::Drain,
+        wire::intent::TeamLife::Drain,
     );
     let direct = session
         .admit_frame(&direct)

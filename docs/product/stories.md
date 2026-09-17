@@ -19,7 +19,7 @@ user with its own surface: a briefing on arrival, a live state line on its own
 command output, reminders while it works, refusals that tell it what to run
 next. That surface has a required tone — capability, not restriction.
 
-**The Fleet** — emergent rather than personal: organizations, allocation, cross-worktree
+**The Fleet** — emergent rather than personal: teams, allocation, cross-worktree
 claims, coordinated pressure on shared files. Its stories are about agents not
 colliding.
 
@@ -109,18 +109,18 @@ expected answer here rather than work that was missed.
 
 *As the operator, I want the lane to be mine, so replacing the agent costs me
 nothing.* — Renewal swaps the occupant; lane history, drafts, and scroll
-survive, while the organization's shared task policy remains because the lineage is
+survive, while the team's shared task policy remains because the team is
 unchanged.
 
 *As the operator, I want to compose lanes into one surface by direct
-manipulation.* — Fusing lanes merges organizations; every message retains its exact
+manipulation.* — Fusing lanes merges teams; every message retains its exact
 occupant author and stable lane attribution while every member remains its own
 send address.
 
 *As the operator, I want two browsers to agree.* — Membership, ordering, and
-topology revision are server truth. A browser may independently hide an organization
+topology revision are server truth. A browser may independently hide a team
 with `Close team`; that presentation choice does not mutate topology, and the
-same mount can restore a closed grouped lineage through **Agents → Open organization**.
+same mount can restore a closed grouped team through **Agents → Open team**.
 
 ### Reading
 
@@ -217,7 +217,7 @@ flowchart LR
 | A refresh launches an occupant in every vacant lane | a read path was allowed to run lifecycle | only lifecycle authority launches or renews occupants |
 | Cards jitter sideways as content resolves | still-settling cards re-chose their column | columns and spans stay latched until a geometry replay; content resolution settles only vertically |
 | A whole batch of cards is removed and reinserted | the container was rebuilt rather than reconciled | retain every still-admitted keyed node and reconcile it in place; content and changed placement properties may still update, while a card trimmed from the visible window may leave |
-| Cards flash one by one when an agent joins | member count entered per-card identity and forced individual remeasurement | member count stays out of card identity and style; a changed lineage weight may instead settle a new host width and trigger one full geometry replay |
+| Cards flash one by one when an agent joins | member count entered per-card identity and forced individual remeasurement | member count stays out of card identity and style; a changed team weight may instead settle a new host width and trigger one full geometry replay |
 | A card is buried under its neighbours | a reservation counted a placeholder without the body around it | measure the whole card, placeholder included |
 | A failed image remains indistinguishable from loading | the load/error observer did not publish its outcome | image error is a distinct state and remeasures the whole card |
 | The board slides in by its own height on open | a fresh surface animated from a synthetic origin | first paint writes the real target with motion suppressed |

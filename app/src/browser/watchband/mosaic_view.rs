@@ -1,4 +1,4 @@
-//! Browser measurement and Rust-lattice rendering for lineage activity.
+//! Browser measurement and Rust-lattice rendering for team activity.
 
 use super::*;
 
@@ -377,13 +377,13 @@ fn activity_measurement<'a>(
 #[derive(Properties, PartialEq)]
 pub(super) struct MosaicPlaneProps {
     pub(super) lane: CanonicalUuid,
-    pub(super) life: LineageLife,
+    pub(super) life: TeamLife,
     pub(super) members: usize,
     pub(super) cards: Vec<ActivityCard>,
     pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
     pub(super) speak: Callback<SpeechRequest>,
     pub(super) narrate: Callback<NarrationBatch>,
-    pub(super) speech: LineageSpeech,
+    pub(super) speech: TeamSpeech,
     pub(super) speech_message: Option<String>,
     pub(super) history_targets: BTreeMap<CanonicalUuid, (Option<wire::MessageLocus>, u64)>,
     pub(super) history_revision: u64,
@@ -439,8 +439,8 @@ impl MosaicPlaneView<'_> {
                 ref={host}
                 class="lane-mosaic-plane"
                 data-agent-plane={self.properties.lane.to_string()}
-                data-lineage-policy={self.properties.life.label()}
-                data-lineage-members={self.properties.members.to_string()}
+                data-team-policy={self.properties.life.label()}
+                data-team-members={self.properties.members.to_string()}
                 data-lanes={self.geometry.lane_count.to_string()}
                 data-plane-rows={plane_rows.to_string()}
                 data-max-row={self.max_row.unwrap_or_default().to_string()}
@@ -459,7 +459,7 @@ impl MosaicPlaneView<'_> {
                 data-narration-cursor={self.narration_cursor}
                 tabindex="0"
                 aria-label={format!(
-                    "Packed lineage plane: {} policy, {} {}",
+                    "Packed team plane: {} policy, {} {}",
                     self.properties.life.label(),
                     self.properties.members,
                     if self.properties.members == 1 { "member" } else { "members" },
@@ -483,9 +483,9 @@ fn committed_spans(
         .collect()
 }
 
-/// One component per lineage lane is deliberate: every lane owns one width,
+/// One component per team lane is deliberate: every lane owns one width,
 /// candidate stream, engine call, and row floor for all of its worktree
-/// members. Sibling lineages can never carry a skyline into one another.
+/// members. Sibling teams can never carry a skyline into one another.
 #[function_component(MosaicPlane)]
 pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let host = use_node_ref();
@@ -662,9 +662,9 @@ fn scroll_anchor_offset(scroller: &web_sys::Element, key: &str) -> Option<f64> {
 
 #[hook]
 fn use_narration(
-    lineage: CanonicalUuid,
+    team: CanonicalUuid,
     cards: Vec<ActivityCard>,
-    speech: LineageSpeech,
+    speech: TeamSpeech,
     narrate: Callback<NarrationBatch>,
     narration_cursor: UseStateHandle<Option<String>>,
 ) {
@@ -688,7 +688,7 @@ fn use_narration(
         let first = !*materialized.borrow();
         *materialized.borrow_mut() = true;
         narrate.emit(NarrationBatch {
-            lineage: lineage.to_string(),
+            team: team.to_string(),
             materialization: first,
             mode: *speech,
             messages: messages.clone(),

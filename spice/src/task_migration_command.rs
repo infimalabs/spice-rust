@@ -37,8 +37,8 @@ pub(crate) fn run(matches: &ArgMatches) -> Outcome<TaskMigrationReport> {
 
 fn refusal(error: &TaskMigrationError) -> Refusal {
     let mut witness = format!("release=0.31.0 source={}", error.source_file());
-    if let Some(lineage) = error.lineage() {
-        witness.push_str(&format!(" lineage={lineage}"));
+    if let Some(team) = error.team() {
+        witness.push_str(&format!(" team={team}"));
     }
     witness.push_str(&format!(" field={}", error.field()));
     if let Some(index) = error.list_index() {

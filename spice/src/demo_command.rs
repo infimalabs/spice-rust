@@ -720,7 +720,7 @@ fn seed_turns(
 
 fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
     let epoch = uuid(DEMO_EPOCH);
-    let lineage_id = uuid(DEMO_LANE);
+    let team = uuid(DEMO_LANE);
     let mut write = JournalWrite::new(
         Actor::Spice,
         format!("resident:{epoch}")
@@ -736,7 +736,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
             .fact(
                 body::LaneSeated {
                     lane: uuid(seed.lane),
-                    lineage_id,
+                    team,
                     capability: uuid(seed.capability),
                     name: Some(seed.name.to_owned()),
                     worktree: root.display().to_string(),
@@ -775,7 +775,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                 .into_iter()
                 .map(|seed| wire::LaneResidency {
                     lane: uuid(seed.lane),
-                    lineage_id,
+                    team,
                     name: Some(seed.name.to_owned()),
                     worktree: worktree.clone(),
                     life: "drive".to_owned(),
@@ -791,9 +791,9 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                     disposition: crate::resident::SIMULATED_DISPOSITION.to_owned(),
                 })
                 .collect(),
-            subscriptions: vec![wire::LineageSubscription {
-                lineage_id,
-                policy: wire::intent::LineageLife::Drive,
+            subscriptions: vec![wire::TeamSubscription {
+                team,
+                policy: wire::intent::TeamLife::Drive,
             }],
             renewals: Vec::new(),
         },
@@ -848,7 +848,7 @@ fn validate_seeded_journal(state: &spice::repository::StatePaths) -> DemoResult<
             && DEMO_LANES.iter().all(|seed| {
                 head.body().lanes.iter().any(|lane| {
                     lane.lane == uuid(seed.lane)
-                        && lane.lineage_id == uuid(DEMO_LANE)
+                        && lane.team == uuid(DEMO_LANE)
                         && lane.capabilities == [uuid(seed.capability)]
                         && lane.occupant == Some(uuid(seed.occupant))
                         && lane.lineage == [uuid(seed.occupant)]

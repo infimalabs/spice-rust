@@ -150,14 +150,14 @@ fn available_lane(
 fn available_subscription<'a>(
     snapshot: &'a ValidatedSnapshot,
     row: &wire::LaneResidency,
-) -> Result<&'a wire::LineageSubscription, Outcome<CommandAnswer>> {
+) -> Result<&'a wire::TeamSubscription, Outcome<CommandAnswer>> {
     let mut subscriptions = snapshot
         .answer
         .residency
         .body
         .subscriptions
         .iter()
-        .filter(|subscription| subscription.lineage_id == row.lineage_id);
+        .filter(|subscription| subscription.team == row.team);
     let subscription = subscriptions.next().ok_or_else(|| {
         store_fault(
             "lifecycle::available-work-subscription-missing",
@@ -170,11 +170,11 @@ fn available_subscription<'a>(
             "the vacant lane lineage has more than one durable task-allocation lifetime",
         ));
     }
-    if subscription.policy == wire::intent::LineageLife::Steer {
+    if subscription.policy == wire::intent::TeamLife::Steer {
         return Err(refusal(
             "lifecycle::available-work-scope",
             Some(subscription.policy.as_str().to_owned()),
-            "use a drive or drain organization policy for capacity-following wake",
+            "use a drive or drain team policy for capacity-following wake",
         ));
     }
     Ok(subscription)
@@ -183,7 +183,7 @@ fn available_subscription<'a>(
 fn select_task(
     snapshot: &ValidatedSnapshot,
     actor: &Actor,
-    subscription: &wire::LineageSubscription,
+    subscription: &wire::TeamSubscription,
 ) -> Result<Entry, Outcome<CommandAnswer>> {
     let environment = snapshot.answer.environment();
     board::select(

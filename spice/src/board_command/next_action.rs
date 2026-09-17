@@ -35,7 +35,7 @@ pub(super) fn next_action(snapshot: &ValidatedSnapshot, post: &Entry) -> Option<
         .find(|entry| entry.born() == post.born())
         .map_or_else(
             || post.clone(),
-            |entry| post.clone().with_creator_lineage(entry.creator_lineage()),
+            |entry| post.clone().with_creator_team(entry.creator_team()),
         );
     let entries = snapshot
         .entries
@@ -101,7 +101,7 @@ fn allocator_continuation(
     let subscription = allocation_subscription(residency, principal).ok()?;
     // A drain lane asks the allocator even when this row is no longer
     // selectable; the typed allocator-empty response closes that drain pass.
-    (subscription.policy == wire::intent::LineageLife::Drain
+    (subscription.policy == wire::intent::TeamLife::Drain
         || board::selectable_entry(entries, entry, principal, subscription, environment))
     .then_some(NextTransition::Next)
 }

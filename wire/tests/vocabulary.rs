@@ -133,7 +133,7 @@ const LANE_KILLED: &str = r#"{
 const LANE_REMOVED: &str = r#"{
   "kind": "lane::removed",
   "lane": "018f82d4-6f59-7d06-92e3-bce9131163c3",
-  "lineage_id": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+  "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "worktree": "/worktrees/spice-rust-l"
 }"#;
 

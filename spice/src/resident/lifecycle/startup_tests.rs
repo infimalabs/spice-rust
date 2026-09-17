@@ -6,7 +6,7 @@ fn resident_startup_leaves_a_vacant_drain_org_idle_without_work() {
     let fixture = AdvisoryRtkFixture::new();
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
-    seed_vacant_org(&bus, &fixture, wire::intent::LineageLife::Drain);
+    seed_vacant_org(&bus, &fixture, wire::intent::TeamLife::Drain);
     let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
     let surface =
         super::super::load_startup_surface(&repository).expect("fixture startup policy resolves");
@@ -62,7 +62,7 @@ fn changing_org_policy_to_drain_waits_until_work_arrives() {
     seed_vacant_org_members(
         &bus,
         &fixture,
-        wire::intent::LineageLife::Drive,
+        wire::intent::TeamLife::Drive,
         &[fixture.lane, sibling],
     );
     let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
@@ -103,7 +103,7 @@ fn changing_org_policy_to_drain_waits_until_work_arrives() {
     assert!(runtime.observe_topology(&command));
     assert!(
         runtime.backoff.parked.is_empty(),
-        "organization policy change re-enables members parked under prior authority"
+        "team policy change re-enables members parked under prior authority"
     );
     assert!(matches!(
         lane_surface::configure(&bus, fixture.epoch, &seats, &command, &request,),
@@ -121,7 +121,7 @@ fn changing_org_policy_to_drain_waits_until_work_arrives() {
             &surface.config,
             &mut Vec::new(),
         )
-        .expect("updated Drain organization reconciles");
+        .expect("updated Drain team reconciles");
     assert!(
         !seats.occupied(fixture.lane),
         "changing policy without work remains idle"
@@ -223,18 +223,18 @@ fn assert_fresh_drain_settle_then_launch(
 
 fn drain_configuration(
     fixture: &AdvisoryRtkFixture,
-) -> (wire::intent::LineageConfigure, wire::AdmittedCommand) {
-    let request = wire::intent::LineageConfigure {
+) -> (wire::intent::TeamConfigure, wire::AdmittedCommand) {
+    let request = wire::intent::TeamConfigure {
         topology_revision: 1,
-        lineage_id: fixture.lane,
+        team: fixture.lane,
         member: None,
-        life: Some(wire::intent::LineageLife::Drain),
+        life: Some(wire::intent::TeamLife::Drain),
     };
     let command = wire::Command {
         v: wire::WireVersion::CURRENT,
         id: fixture.occupant,
         epoch: fixture.epoch,
-        kind: wire::CommandKind::LineageConfigure,
+        kind: wire::CommandKind::TeamConfigure,
         expected: Vec::new(),
         body: serde_json::to_value(&request).expect("configuration encodes"),
     }
@@ -384,14 +384,14 @@ fn initialize_git(root: &std::path::Path) {
     crate::test_repository::commit(root, "fixture opening");
 }
 
-fn seed_vacant_org(bus: &Bus, fixture: &AdvisoryRtkFixture, policy: wire::intent::LineageLife) {
+fn seed_vacant_org(bus: &Bus, fixture: &AdvisoryRtkFixture, policy: wire::intent::TeamLife) {
     seed_vacant_org_members(bus, fixture, policy, &[fixture.lane]);
 }
 
 fn seed_vacant_org_members(
     bus: &Bus,
     fixture: &AdvisoryRtkFixture,
-    policy: wire::intent::LineageLife,
+    policy: wire::intent::TeamLife,
     lanes: &[CanonicalUuid],
 ) {
     let mut proposal =
@@ -408,12 +408,12 @@ fn seed_vacant_org_members(
     let vendor = fixture.vendor.clone();
     let epoch = fixture.epoch;
     let capability = fixture.capability;
-    let lineage = fixture.lane;
+    let team = fixture.lane;
     let lanes = lanes
         .iter()
         .map(|lane| wire::LaneResidency {
             lane: *lane,
-            lineage_id: lineage,
+            team,
             name: None,
             worktree: root.clone(),
             life: "drive".to_owned(),
@@ -432,10 +432,7 @@ fn seed_vacant_org_members(
         state: wire::ResidentState::Seated,
         topology_revision: 1,
         lanes,
-        subscriptions: vec![wire::LineageSubscription {
-            lineage_id: lineage,
-            policy,
-        }],
+        subscriptions: vec![wire::TeamSubscription { team, policy }],
         renewals: Vec::new(),
     });
     commit(bus, proposal).expect("fixture residency commits");

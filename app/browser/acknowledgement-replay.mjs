@@ -34,7 +34,7 @@ function readAcknowledgementRender(page, lane, replyText) {
     const card = [...document.querySelectorAll(
       `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
     )].find((candidate) => candidate.textContent?.includes(replyText));
-    const pip = document.querySelector(`.organization-light[data-lane-light-target-id="${lane}"]`);
+    const pip = document.querySelector(`.team-light[data-lane-light-target-id="${lane}"]`);
     return {
       acknowledged: card?.dataset.messageAckCount ?? null,
       pending: card?.dataset.messagePendingCount ?? null,

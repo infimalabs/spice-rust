@@ -77,7 +77,7 @@ flowchart TD
   B --> C["run selected repository checks"]
   C --> D["steer one lane"]
   D --> E["admit another worktree lane"]
-  E --> F["group lanes into one organization console"]
+  E --> F["group lanes into one team console"]
 ```
 
 **Story.** *As a newcomer, I want the first thing I run to show me something
@@ -136,7 +136,7 @@ sequenceDiagram
   P->>N: ClaimCarried fact, disposition remains active
   N->>L: occupant swapped
   Note over L: lane history, drafts, and scroll survive
-  Note over L,N: lineage unchanged, so its shared task policy remains
+  Note over L,N: team unchanged, so its shared task policy remains
 ```
 
 ### The board goes empty
@@ -154,7 +154,7 @@ sequenceDiagram
   F->>B: claims one, leaves one
 ```
 
-### Reading a fused organization
+### Reading a fused team
 
 **Story.** *As a reader, I want four agents' output in one stream, attributed,
 newest first, without cards hopping sideways, and with my off-top reading
@@ -175,9 +175,9 @@ The vocabulary is deliberate. These words carry contracts.
 
 | Term | Means | Not |
 | --- | --- | --- |
-| **lane** | independently steerable worktree seat | the agent or an organization |
+| **lane** | independently steerable worktree seat | the agent or a team |
 | **occupant** | the agent thread currently inhabiting a lane | the lane |
-| **organization** | server-side grouping of one or more lanes rendered in one console | a lane or client-only view |
+| **team** | server-side grouping of one or more lanes rendered in one console | a lane or client-only view |
 | **watchband** | the per-agent status-and-compose strip | a toolbar |
 | **mosaic** | the placed, newest-first message lattice | a feed |
 | **shard** | one member's concrete send address | a broadcast |

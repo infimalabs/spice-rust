@@ -4,7 +4,7 @@ use super::*;
 fn drive_guidance_preserves_creator_team_on_claim_release() {
     let (root, bus, epoch, seats) = fixture("drive-continuation", 1);
     authorize_lane_creation(&bus, epoch, &seats[0]);
-    subscription::configure_subscription(&bus, epoch, &seats[0], wire::intent::LineageLife::Drive);
+    subscription::configure_subscription(&bus, epoch, &seats[0], wire::intent::TeamLife::Drive);
     let lane = Actor::Lane(seats[0].lane);
     let task = add(
         &bus,

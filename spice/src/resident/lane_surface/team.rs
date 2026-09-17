@@ -1,14 +1,14 @@
-//! The two writes that address Canvas lineages rather than the seats in them.
+//! The two writes that address Canvas teams rather than the seats in them.
 //!
-//! [`configure`] names one lineage and changes it: its task-allocation
-//! lifetime, and at most one member's home. [`arrange`] names no lineage in
+//! [`configure`] names one team and changes it: its task-allocation
+//! lifetime, and at most one member's home. [`arrange`] names no team in
 //! particular and restates the whole topology at once, rewriting both the order
-//! lineages stand in and which lineage each lane belongs to, since dropping a
-//! organization onto another is the same durable write as reordering two.
+//! teams stand in and which team each lane belongs to, since dropping a
+//! team onto another is the same durable write as reordering two.
 //!
 //! The asymmetry is deliberate. A partial configuration is a change; a partial
-//! arrangement is a loss, because the head's lane order *is* the durable organization
-//! order, so a lane the operator failed to restate would vanish from every organization
+//! arrangement is a loss, because the head's lane order *is* the durable team
+//! order, so a lane the operator failed to restate would vanish from every team
 //! while still being seated. [`arrange`] therefore admits only a faithful
 //! restatement of the current lane table and repairs nothing by inference.
 //!
@@ -23,14 +23,14 @@ mod tests;
 
 struct MembershipChange {
     member: CanonicalUuid,
-    from_lineage: CanonicalUuid,
+    from_team: CanonicalUuid,
     source_rekeyed_to: Option<CanonicalUuid>,
 }
 
-struct ConfiguredLineage {
+struct ConfiguredTeam {
     membership: Option<MembershipChange>,
-    previous: wire::LineageSubscription,
-    life: wire::intent::LineageLife,
+    previous: wire::TeamSubscription,
+    life: wire::intent::TeamLife,
     sources: Vec<wire::body::LaneSourceBoundary>,
     next: wire::ResidencyHead,
     answer: LaneAnswer,
@@ -46,7 +46,7 @@ pub(in crate::resident) fn configure(
     epoch: CanonicalUuid,
     seats: &Seats,
     command: &wire::AdmittedCommand,
-    request: &LineageConfigure,
+    request: &TeamConfigure,
 ) -> Outcome<CommandAnswer> {
     let observed = match current_residency(bus, epoch) {
         Ok(head) => head,
@@ -64,7 +64,7 @@ pub(in crate::resident) fn configure(
     let mut next = observed.body().clone();
     next.topology_revision = topology_revision;
     let membership = match request.member {
-        Some(member) => match move_member(&mut next, member, request.lineage_id) {
+        Some(member) => match move_member(&mut next, member, request.team) {
             Ok(change) => Some(change),
             Err(outcome) => return outcome,
         },
@@ -73,11 +73,11 @@ pub(in crate::resident) fn configure(
     let Some(subscription) = next
         .subscriptions
         .iter_mut()
-        .find(|subscription| subscription.lineage_id == request.lineage_id)
+        .find(|subscription| subscription.team == request.team)
     else {
         return typed_store_fault(
-            "lineage::subscription-missing",
-            "the configured lineage has no task-allocation lifetime after membership moved",
+            "team::subscription-missing",
+            "the configured team has no task-allocation lifetime after membership moved",
         );
     };
     if let Some(life) = request.life {
@@ -93,7 +93,7 @@ pub(in crate::resident) fn configure(
     let sources = match bus.lane_source_boundaries(&moved) {
         Ok(sources) => sources,
         Err(error) => {
-            return typed_store_fault("lineage::boundary-unreadable", &error.to_string());
+            return typed_store_fault("team::boundary-unreadable", &error.to_string());
         }
     };
     commit_configured(
@@ -102,7 +102,7 @@ pub(in crate::resident) fn configure(
         command,
         request,
         &observed,
-        ConfiguredLineage {
+        ConfiguredTeam {
             membership,
             previous,
             life: configured_life,
@@ -117,9 +117,9 @@ fn commit_configured(
     bus: &Bus,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
-    request: &LineageConfigure,
+    request: &TeamConfigure,
     observed: &journal::JournalHead<wire::ResidencyHead>,
-    configured: ConfiguredLineage,
+    configured: ConfiguredTeam,
 ) -> Outcome<CommandAnswer> {
     let mut write = match write(
         command.actor().clone(),
@@ -131,13 +131,13 @@ fn commit_configured(
     };
     guard_residency(&mut write, observed);
     let fact = match write.fact(
-        wire::body::LineageConfigured {
-            lineage_id: request.lineage_id,
+        wire::body::TeamConfigured {
+            team: request.team,
             member: configured.membership.as_ref().map(|change| change.member),
-            from_lineage: configured
+            from_team: configured
                 .membership
                 .as_ref()
-                .map(|change| change.from_lineage),
+                .map(|change| change.from_team),
             source_rekeyed_to: configured
                 .membership
                 .and_then(|change| change.source_rekeyed_to),
@@ -148,7 +148,7 @@ fn commit_configured(
         FactCause::Existing(observed.position()),
     ) {
         Ok(fact) => fact,
-        Err(error) => return typed_store_fault("lineage::fact-invalid", &error.to_string()),
+        Err(error) => return typed_store_fault("team::fact-invalid", &error.to_string()),
     };
     write.residency_head(fact, move |_| configured.next);
     if let Err(error) = write.command_result(
@@ -163,7 +163,7 @@ fn commit_configured(
         epoch,
         configured.answer.clone(),
     ) {
-        return typed_store_fault("lineage::receipt-invalid", &error.to_string());
+        return typed_store_fault("team::receipt-invalid", &error.to_string());
     }
     match commit(bus, write) {
         Ok(committed) => Outcome::Reply(Reply {
@@ -179,37 +179,34 @@ fn commit_configured(
 
 fn previous_subscription(
     head: &wire::ResidencyHead,
-    request: &LineageConfigure,
-) -> Result<wire::LineageSubscription, Outcome<CommandAnswer>> {
-    let target_exists = head
-        .lanes
-        .iter()
-        .any(|row| row.lineage_id == request.lineage_id);
+    request: &TeamConfigure,
+) -> Result<wire::TeamSubscription, Outcome<CommandAnswer>> {
+    let target_exists = head.lanes.iter().any(|row| row.team == request.team);
     let baseline = if target_exists {
-        request.lineage_id
+        request.team
     } else if let Some(member) = request.member {
         let Some(row) = head.lanes.iter().find(|row| row.lane == member) else {
             return Err(lane_refusal(
-                "lineage::member-missing",
+                "team::member-missing",
                 Some("one current Canvas member".to_owned()),
                 Some(member.to_string()),
                 "read lane state and retry with a current member identity",
             ));
         };
-        row.lineage_id
+        row.team
     } else {
         return Err(lane_refusal(
-            "lineage::missing",
-            Some("one current Canvas lineage".to_owned()),
-            Some(request.lineage_id.to_string()),
-            "read lane state and retry with a current lineage identity",
+            "team::missing",
+            Some("one current Canvas team".to_owned()),
+            Some(request.team.to_string()),
+            "read lane state and retry with a current team identity",
         ));
     };
     match subscription_row(head, baseline) {
         Ok(Some(subscription)) => Ok(subscription.clone()),
         Ok(None) => Err(typed_store_fault(
-            "lineage::subscription-missing",
-            "a current lineage has no task-allocation lifetime",
+            "team::subscription-missing",
+            "a current team has no task-allocation lifetime",
         )),
         Err(outcome) => Err(typed_outcome(outcome)),
     }
@@ -222,26 +219,26 @@ fn move_member(
 ) -> Result<MembershipChange, Outcome<CommandAnswer>> {
     let Some(member_index) = head.lanes.iter().position(|row| row.lane == member) else {
         return Err(lane_refusal(
-            "lineage::member-missing",
+            "team::member-missing",
             Some("one current Canvas member".to_owned()),
             Some(member.to_string()),
             "read lane state and retry with a current member identity",
         ));
     };
-    let source = head.lanes[member_index].lineage_id;
+    let source = head.lanes[member_index].team;
     let source_members = head
         .lanes
         .iter()
-        .filter(|row| row.lineage_id == source)
+        .filter(|row| row.team == source)
         .map(|row| row.lane)
         .collect::<Vec<_>>();
     if source == target {
         if member != target || source_members.len() == 1 {
             return Err(lane_refusal(
-                "lineage::member-unchanged",
-                Some("a different target lineage".to_owned()),
+                "team::member-unchanged",
+                Some("a different target team".to_owned()),
                 Some(target.to_string()),
-                "drop the member on another organization or on Agents Without Org",
+                "drop the member on another team or on Agents Without Team",
             ));
         }
         return split_host_member(head, member, source, &source_members);
@@ -250,39 +247,39 @@ fn move_member(
         Ok(Some(subscription)) => subscription.clone(),
         Ok(None) => {
             return Err(typed_store_fault(
-                "lineage::subscription-missing",
+                "team::subscription-missing",
                 "the moved member source has no task-allocation lifetime",
             ));
         }
         Err(outcome) => return Err(typed_outcome(outcome)),
     };
-    let target_exists = head.lanes.iter().any(|row| row.lineage_id == target);
+    let target_exists = head.lanes.iter().any(|row| row.team == target);
     if target_exists {
         match subscription_row(head, target) {
             Ok(Some(_)) => {}
             Ok(None) => {
                 return Err(typed_store_fault(
-                    "lineage::subscription-missing",
-                    "the target lineage has no task-allocation lifetime",
+                    "team::subscription-missing",
+                    "the target team has no task-allocation lifetime",
                 ));
             }
             Err(outcome) => return Err(typed_outcome(outcome)),
         }
     } else {
         let mut subscription = source_subscription;
-        subscription.lineage_id = target;
+        subscription.team = target;
         head.subscriptions.push(subscription);
     }
-    head.lanes[member_index].lineage_id = target;
-    if !head.lanes.iter().any(|row| row.lineage_id == source) {
+    head.lanes[member_index].team = target;
+    if !head.lanes.iter().any(|row| row.team == source) {
         head.subscriptions
-            .retain(|subscription| subscription.lineage_id != source);
+            .retain(|subscription| subscription.team != source);
     }
     head.subscriptions
-        .sort_by_key(|subscription| subscription.lineage_id);
+        .sort_by_key(|subscription| subscription.team);
     Ok(MembershipChange {
         member,
-        from_lineage: source,
+        from_team: source,
         source_rekeyed_to: None,
     })
 }
@@ -301,32 +298,32 @@ fn split_host_member(
             !head
                 .lanes
                 .iter()
-                .any(|row| row.lineage_id == *candidate && row.lineage_id != source)
+                .any(|row| row.team == *candidate && row.team != source)
         })
-        .unwrap_or_else(|| first_free_derived_lineage(head, source));
+        .unwrap_or_else(|| first_free_derived_team(head, source));
     let source_subscription = match subscription_row(head, source) {
         Ok(Some(subscription)) => subscription.clone(),
         Ok(None) => {
             return Err(typed_store_fault(
-                "lineage::subscription-missing",
+                "team::subscription-missing",
                 "the split source has no task-allocation lifetime",
             ));
         }
         Err(outcome) => return Err(typed_outcome(outcome)),
     };
     for row in &mut head.lanes {
-        if row.lineage_id == source && row.lane != member {
-            row.lineage_id = rekeyed;
+        if row.team == source && row.lane != member {
+            row.team = rekeyed;
         }
     }
     let mut remainder = source_subscription;
-    remainder.lineage_id = rekeyed;
+    remainder.team = rekeyed;
     head.subscriptions.push(remainder);
     head.subscriptions
-        .sort_by_key(|subscription| subscription.lineage_id);
+        .sort_by_key(|subscription| subscription.team);
     Ok(MembershipChange {
         member,
-        from_lineage: source,
+        from_team: source,
         source_rekeyed_to: Some(rekeyed),
     })
 }
@@ -335,8 +332,8 @@ fn split_host_member(
 ///
 /// Member lane identities win in their resident order above. Only a collision
 /// on every member reaches this deterministic suffix space, where the first
-/// identity absent from lanes, lineages, and subscriptions wins.
-fn first_free_derived_lineage(head: &wire::ResidencyHead, source: CanonicalUuid) -> CanonicalUuid {
+/// identity absent from lanes, teams, and subscriptions wins.
+fn first_free_derived_team(head: &wire::ResidencyHead, source: CanonicalUuid) -> CanonicalUuid {
     let mut ordinal = 1_u128;
     loop {
         let mut bytes = source.get().as_u128().wrapping_add(ordinal).to_be_bytes();
@@ -346,11 +343,11 @@ fn first_free_derived_lineage(head: &wire::ResidencyHead, source: CanonicalUuid)
         let names_lane = head
             .lanes
             .iter()
-            .any(|row| row.lane == candidate || row.lineage_id == candidate);
+            .any(|row| row.lane == candidate || row.team == candidate);
         let names_subscription = head
             .subscriptions
             .iter()
-            .any(|subscription| subscription.lineage_id == candidate);
+            .any(|subscription| subscription.team == candidate);
         if !names_lane && !names_subscription {
             return candidate;
         }
@@ -360,33 +357,33 @@ fn first_free_derived_lineage(head: &wire::ResidencyHead, source: CanonicalUuid)
     }
 }
 
-/// Group the head's lanes into lineage standings in first-appearance order.
+/// Group the head's lanes into team standings in first-appearance order.
 ///
 /// First appearance is not an arbitrary choice: it is exactly how the Canvas
-/// groups the lane answer into organization surfaces, so the head's lane order *is* the
-/// durable organization order. Rewriting that order below is what makes a drag durable
+/// groups the lane answer into team surfaces, so the head's lane order *is* the
+/// durable team order. Rewriting that order below is what makes a drag durable
 /// without teaching the canvas a second ordering to disagree with.
-/// Lanes this arrangement moved between lineages, in arranged order.
+/// Lanes this arrangement moved between teams, in arranged order.
 ///
-/// Reordering lanes inside one lineage moves no lane between lineages and so
-/// splits no attribution; only a lane whose owning lineage differs across the
+/// Reordering lanes inside one team moves no lane between teams and so
+/// splits no attribution; only a lane whose owning team differs across the
 /// transaction crosses a boundary a reducer has to account for. Narrowing to
 /// those keeps the recorded boundaries the exact set the gesture changed rather
 /// than a snapshot of every seated lane.
 fn moved_lanes(
-    from: &[wire::body::LineageStanding],
-    to: &[wire::body::LineageStanding],
+    from: &[wire::body::TeamStanding],
+    to: &[wire::body::TeamStanding],
 ) -> Vec<CanonicalUuid> {
-    let owner = |standings: &[wire::body::LineageStanding], lane: &CanonicalUuid| {
+    let owner = |standings: &[wire::body::TeamStanding], lane: &CanonicalUuid| {
         standings
             .iter()
             .find(|standing| standing.lanes.contains(lane))
-            .map(|standing| standing.lineage_id)
+            .map(|standing| standing.team)
     };
     let mut moved = Vec::new();
     for standing in to {
         for lane in &standing.lanes {
-            if owner(from, lane) != Some(standing.lineage_id) {
+            if owner(from, lane) != Some(standing.team) {
                 moved.push(*lane);
             }
         }
@@ -394,17 +391,17 @@ fn moved_lanes(
     moved
 }
 
-fn standings(lanes: &[wire::LaneResidency]) -> Vec<wire::body::LineageStanding> {
-    let mut standings = Vec::<wire::body::LineageStanding>::new();
+fn standings(lanes: &[wire::LaneResidency]) -> Vec<wire::body::TeamStanding> {
+    let mut standings = Vec::<wire::body::TeamStanding>::new();
     for row in lanes {
         if let Some(standing) = standings
             .iter_mut()
-            .find(|standing| standing.lineage_id == row.lineage_id)
+            .find(|standing| standing.team == row.team)
         {
             standing.lanes.push(row.lane);
         } else {
-            standings.push(wire::body::LineageStanding {
-                lineage_id: row.lineage_id,
+            standings.push(wire::body::TeamStanding {
+                team: row.team,
                 lanes: vec![row.lane],
             });
         }
@@ -416,56 +413,53 @@ fn standings(lanes: &[wire::LaneResidency]) -> Vec<wire::body::LineageStanding> 
 ///
 /// Every rule here is stated over the arrangement as a whole. A partial
 /// arrangement is never repaired by inference: a lane the operator forgot would
-/// otherwise be silently dropped from every organization, which is a lane that exists
+/// otherwise be silently dropped from every team, which is a lane that exists
 /// in the resident and appears nowhere on the canvas.
 fn admit_arrangement(
     head: &wire::ResidencyHead,
-    request: &LineageArrange,
+    request: &TeamArrange,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let current = standings(&head.lanes);
-    if request.lineages.is_empty() {
+    if request.teams.is_empty() {
         return Err(lane_refusal(
-            "lineage::arrangement-empty",
-            Some("at least one lineage".to_owned()),
+            "team::arrangement-empty",
+            Some("at least one team".to_owned()),
             Some("0".to_owned()),
-            "state every surviving lineage; an arrangement never removes a lane",
+            "state every surviving team; an arrangement never removes a lane",
         ));
     }
-    let mut seen_lineages = Vec::<CanonicalUuid>::new();
+    let mut seen_teams = Vec::<CanonicalUuid>::new();
     let mut seen_lanes = Vec::<CanonicalUuid>::new();
-    for lineage in &request.lineages {
-        if !current
-            .iter()
-            .any(|standing| standing.lineage_id == lineage.lineage_id)
-        {
+    for team in &request.teams {
+        if !current.iter().any(|standing| standing.team == team.team) {
             return Err(lane_refusal(
-                "lineage::arrangement-unknown-lineage",
-                Some("one current Canvas lineage".to_owned()),
-                Some(lineage.lineage_id.to_string()),
-                "join organizations by naming the surviving lineage; a new lineage is created by seating",
+                "team::arrangement-unknown-team",
+                Some("one current Canvas team".to_owned()),
+                Some(team.team.to_string()),
+                "join teams by naming the surviving team; a new team is created by seating",
             ));
         }
-        if seen_lineages.contains(&lineage.lineage_id) {
+        if seen_teams.contains(&team.team) {
             return Err(lane_refusal(
-                "lineage::arrangement-duplicate-lineage",
-                Some("each lineage stated once".to_owned()),
-                Some(lineage.lineage_id.to_string()),
-                "state one arrangement per lineage",
+                "team::arrangement-duplicate-team",
+                Some("each team stated once".to_owned()),
+                Some(team.team.to_string()),
+                "state one arrangement per team",
             ));
         }
-        seen_lineages.push(lineage.lineage_id);
-        if lineage.lanes.is_empty() {
+        seen_teams.push(team.team);
+        if team.lanes.is_empty() {
             return Err(lane_refusal(
-                "lineage::arrangement-vacant-lineage",
+                "team::arrangement-vacant-team",
                 Some("at least one lane".to_owned()),
-                Some(lineage.lineage_id.to_string()),
-                "omit an emptied lineage entirely rather than arranging it with no lanes",
+                Some(team.team.to_string()),
+                "omit an emptied team entirely rather than arranging it with no lanes",
             ));
         }
-        for lane in &lineage.lanes {
+        for lane in &team.lanes {
             if !head.lanes.iter().any(|row| row.lane == *lane) {
                 return Err(lane_refusal(
-                    "lineage::arrangement-unknown-lane",
+                    "team::arrangement-unknown-lane",
                     Some("one current lane".to_owned()),
                     Some(lane.to_string()),
                     "read lane state and retry with the current lane table",
@@ -473,10 +467,10 @@ fn admit_arrangement(
             }
             if seen_lanes.contains(lane) {
                 return Err(lane_refusal(
-                    "lineage::arrangement-duplicate-lane",
+                    "team::arrangement-duplicate-lane",
                     Some("each lane held once".to_owned()),
                     Some(lane.to_string()),
-                    "hold every lane in exactly one lineage",
+                    "hold every lane in exactly one team",
                 ));
             }
             seen_lanes.push(*lane);
@@ -488,7 +482,7 @@ fn admit_arrangement(
         .find(|row| !seen_lanes.contains(&row.lane))
     {
         return Err(lane_refusal(
-            "lineage::arrangement-incomplete",
+            "team::arrangement-incomplete",
             Some(format!("{} arranged lanes", head.lanes.len())),
             Some(missing.lane.to_string()),
             "state every current lane; an arrangement moves lanes, it never drops them",
@@ -497,9 +491,9 @@ fn admit_arrangement(
     Ok(())
 }
 
-/// Commit one complete Canvas lineage arrangement.
+/// Commit one complete Canvas team arrangement.
 ///
-/// This is the durable end of both drag gestures. Reordering the organizations and
+/// This is the durable end of both drag gestures. Reordering the teams and
 /// joining two of them differ only in the arrangement the operator sends, so
 /// they commit through one law and one fact rather than racing two.
 pub(in crate::resident) fn arrange(
@@ -507,7 +501,7 @@ pub(in crate::resident) fn arrange(
     epoch: CanonicalUuid,
     seats: &Seats,
     command: &wire::AdmittedCommand,
-    request: &LineageArrange,
+    request: &TeamArrange,
 ) -> Outcome<CommandAnswer> {
     let observed = match current_residency(bus, epoch) {
         Ok(head) => head,
@@ -525,38 +519,38 @@ pub(in crate::resident) fn arrange(
     let mut next = observed.body().clone();
     next.topology_revision = topology_revision;
     let mut arranged = Vec::with_capacity(next.lanes.len());
-    for lineage in &request.lineages {
-        for lane in &lineage.lanes {
+    for team in &request.teams {
+        for lane in &team.lanes {
             let Some(row) = next.lanes.iter().find(|row| row.lane == *lane) else {
                 return typed_store_fault(
-                    "lineage::arrangement-lane-lost",
+                    "team::arrangement-lane-lost",
                     "an admitted arrangement named a lane the residency head no longer holds",
                 );
             };
             let mut row = row.clone();
-            row.lineage_id = lineage.lineage_id;
+            row.team = team.team;
             arranged.push(row);
         }
     }
     next.lanes = arranged;
-    // A lineage the arrangement emptied keeps no durable subscription: leaving
+    // A team the arrangement emptied keeps no durable subscription: leaving
     // one behind would silently re-apply that policy to a later lineage seated
     // under the same identity.
     next.subscriptions.retain(|subscription| {
         request
-            .lineages
+            .teams
             .iter()
-            .any(|lineage| lineage.lineage_id == subscription.lineage_id)
+            .any(|team| team.team == subscription.team)
     });
-    let lineages = standings(&next.lanes);
+    let teams = standings(&next.lanes);
     let lane_answer = match answer(&next, None, seats) {
         Ok(answer) => answer,
         Err(outcome) => return typed_outcome(outcome),
     };
-    let sources = match bus.lane_source_boundaries(&moved_lanes(&from, &lineages)) {
+    let sources = match bus.lane_source_boundaries(&moved_lanes(&from, &teams)) {
         Ok(sources) => sources,
         Err(error) => {
-            return typed_store_fault("lineage::arrange-boundary-unreadable", &error.to_string());
+            return typed_store_fault("team::arrange-boundary-unreadable", &error.to_string());
         }
     };
     let mut write = match write(
@@ -569,16 +563,16 @@ pub(in crate::resident) fn arrange(
     };
     guard_residency(&mut write, &observed);
     let fact = match write.fact(
-        wire::body::LineageArranged {
+        wire::body::TeamArranged {
             from,
-            lineages,
+            teams,
             sources,
         },
         FactCause::Existing(observed.position()),
     ) {
         Ok(fact) => fact,
         Err(error) => {
-            return typed_store_fault("lineage::fact-invalid", &error.to_string());
+            return typed_store_fault("team::fact-invalid", &error.to_string());
         }
     };
     write.residency_head(fact, move |_| next);
@@ -594,7 +588,7 @@ pub(in crate::resident) fn arrange(
         epoch,
         lane_answer.clone(),
     ) {
-        return typed_store_fault("lineage::receipt-invalid", &error.to_string());
+        return typed_store_fault("team::receipt-invalid", &error.to_string());
     }
     match commit(bus, write) {
         Ok(committed) => Outcome::Reply(Reply {

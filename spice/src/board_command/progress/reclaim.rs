@@ -1,4 +1,4 @@
-//! Exact renewal and same-lineage recovery for one active task claim.
+//! Exact renewal and same-team recovery for one active task claim.
 
 use super::*;
 

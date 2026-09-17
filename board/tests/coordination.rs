@@ -50,17 +50,17 @@ fn environment() -> wire::Environment {
         .expect("the compiled journal schema is positive")
 }
 
-fn all_projects() -> wire::LineageSubscription {
-    wire::LineageSubscription {
-        lineage_id: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
-        policy: wire::intent::LineageLife::Drain,
+fn all_projects() -> wire::TeamSubscription {
+    wire::TeamSubscription {
+        team: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
+        policy: wire::intent::TeamLife::Drain,
     }
 }
 
 fn select<'a>(
     entries: &'a [Entry],
     actor: &Actor,
-    subscription: &wire::LineageSubscription,
+    subscription: &wire::TeamSubscription,
     band: u64,
 ) -> Option<board::Selection<'a>> {
     board::select(entries, actor, subscription, band, None, &environment())

@@ -503,7 +503,7 @@ fn lane_add_seats_a_vacant_lane_without_starting_an_occupant() {
     let body = wire::intent::LaneSeat {
         topology_revision: 0,
         lane,
-        lineage_id: lane,
+        team: lane,
         name: Some("new lane".to_owned()),
         worktree: repository.worktree_root().display().to_string(),
         life: "drive".to_owned(),

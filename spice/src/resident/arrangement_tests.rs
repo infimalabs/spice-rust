@@ -1,25 +1,25 @@
 //! One drag, one durable arrangement.
 //!
-//! Every gesture the canvas offers -- dragging an organization into another's place,
+//! Every gesture the canvas offers -- dragging a team into another's place,
 //! dropping one onto another's edge to join them -- arrives here as the same
 //! whole restatement of the lane table. These tests share one fixture because
 //! the law under them is shared: an arrangement is admitted entire or refused
 //! entire, and the standing it leaves behind is read from the durable head
-//! rather than the reply, which only ever describes the lineages it returned.
+//! rather than the reply, which only ever describes the teams it returned.
 //! Child modules cover the boundary and concurrent write cases for that same law.
 
 use super::*;
 
 // The source boundary law spans all three membership transitions rather than
 // the arrangement alone, so it is proven beside this fixture rather than inside
-// it: the cases there drive the lineage configuration surface too, which this
+// it: the cases there drive the team configuration surface too, which this
 // module otherwise never touches.
 #[path = "arrangement/boundary.rs"]
 mod boundary;
 #[path = "arrangement/concurrency.rs"]
 mod concurrency;
 
-/// Supervised lanes standing in two organizations, the shape an arrangement starts from.
+/// Supervised lanes standing in two teams, the shape an arrangement starts from.
 struct Arranged {
     root: PathBuf,
     paths: RuntimePaths,
@@ -27,13 +27,13 @@ struct Arranged {
     reads: read_materializations::CurrentReads,
     epoch: CanonicalUuid,
     seats: Seats,
-    organizations: [CanonicalUuid; 2],
+    teams: [CanonicalUuid; 2],
     lanes: Vec<CanonicalUuid>,
     occupants: Vec<CanonicalUuid>,
 }
 
 impl Arranged {
-    /// Seat one supervised lane per entry, in the organization that entry names.
+    /// Seat one supervised lane per entry, in the team that entry names.
     fn seat(name: &str, membership: &[usize]) -> Self {
         let (root, paths) = resident_fixture(name);
         let repository = Repository::discover(&root).expect("fixture repository resolves");
@@ -44,11 +44,11 @@ impl Arranged {
         let epoch = test_uuid(1);
         commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
         let reads = read_materializations::CurrentReads::start_queueing(&bus, &paths);
-        let organizations = [test_uuid(2), test_uuid(8)];
+        let teams = [test_uuid(2), test_uuid(8)];
         let mut seats = Seats::new();
         let mut lanes = Vec::new();
         let mut occupants = Vec::new();
-        for (index, organization) in membership.iter().enumerate() {
+        for (index, team) in membership.iter().enumerate() {
             let step = u8::try_from(index).expect("fixture lane count");
             let lane = test_uuid(30 + step * 2);
             let occupant = test_uuid(31 + step * 2);
@@ -59,14 +59,7 @@ impl Arranged {
                     process_spec("sleep 0.05", Duration::from_secs(5)),
                 )
                 .expect("supervised occupant starts");
-            seed_lane_in_lineage(
-                &bus,
-                epoch,
-                lane,
-                organizations[*organization],
-                occupant,
-                &root,
-            );
+            seed_lane_in_team(&bus, epoch, lane, teams[*team], occupant, &root);
             lanes.push(lane);
             occupants.push(occupant);
         }
@@ -77,7 +70,7 @@ impl Arranged {
             reads,
             epoch,
             seats,
-            organizations,
+            teams,
             lanes,
             occupants,
         }
@@ -127,35 +120,31 @@ impl Arranged {
     }
 
     /// State a whole arrangement the way one drag states it.
-    fn arrange(
-        &self,
-        id: u8,
-        lineages: Vec<wire::intent::LineageArrangement>,
-    ) -> Outcome<CommandAnswer> {
-        self.arrange_at(id, self.head().topology_revision, lineages)
+    fn arrange(&self, id: u8, teams: Vec<wire::intent::TeamArrangement>) -> Outcome<CommandAnswer> {
+        self.arrange_at(id, self.head().topology_revision, teams)
     }
 
     fn arrange_at(
         &self,
         id: u8,
         topology_revision: u64,
-        lineages: Vec<wire::intent::LineageArrangement>,
+        teams: Vec<wire::intent::TeamArrangement>,
     ) -> Outcome<CommandAnswer> {
-        let request = wire::intent::LineageArrange {
+        let request = wire::intent::TeamArrange {
             topology_revision,
-            lineages,
+            teams,
         };
         let command = arrange_command(self.epoch, test_uuid(id), &request);
-        lane_surface::arrange_lineages(&self.bus, self.epoch, &self.seats, &command, &request)
+        lane_surface::arrange_teams(&self.bus, self.epoch, &self.seats, &command, &request)
     }
 
     /// The authoritative lane table a committed arrangement replies with.
     fn commit(
         &self,
         id: u8,
-        lineages: Vec<wire::intent::LineageArrangement>,
+        teams: Vec<wire::intent::TeamArrangement>,
     ) -> Box<wire::intent::LaneAnswer> {
-        committed_lane_answer(self.arrange(id, lineages))
+        committed_lane_answer(self.arrange(id, teams))
     }
 
     /// The standing the resident would restart from.
@@ -165,21 +154,21 @@ impl Arranged {
             .into_body()
     }
 
-    /// The lineage every seated lane now belongs to, in durable lane order.
+    /// The team every seated lane now belongs to, in durable lane order.
     fn durable_membership(&self) -> Vec<(CanonicalUuid, CanonicalUuid)> {
         self.head()
             .lanes
             .iter()
-            .map(|row| (row.lane, row.lineage_id))
+            .map(|row| (row.lane, row.team))
             .collect()
     }
 
-    /// Every lineage the durable head still holds an allocation lifetime for.
+    /// Every team the durable head still holds an allocation lifetime for.
     fn durable_subscriptions(&self) -> Vec<CanonicalUuid> {
         self.head()
             .subscriptions
             .iter()
-            .map(|subscription| subscription.lineage_id)
+            .map(|subscription| subscription.team)
             .collect()
     }
 
@@ -378,13 +367,10 @@ fn committed_lane_change(outcome: Outcome<CommandAnswer>) -> Box<wire::intent::L
     answer
 }
 
-/// One arranged lineage, stated as the operator's canvas states it.
-fn standing(
-    lineage_id: CanonicalUuid,
-    lanes: &[CanonicalUuid],
-) -> wire::intent::LineageArrangement {
-    wire::intent::LineageArrangement {
-        lineage_id,
+/// One arranged team, stated as the operator's canvas states it.
+fn standing(team: CanonicalUuid, lanes: &[CanonicalUuid]) -> wire::intent::TeamArrangement {
+    wire::intent::TeamArrangement {
+        team,
         lanes: lanes.to_vec(),
     }
 }
@@ -392,22 +378,22 @@ fn standing(
 fn arrange_command(
     epoch: CanonicalUuid,
     id: CanonicalUuid,
-    request: &wire::intent::LineageArrange,
+    request: &wire::intent::TeamArrange,
 ) -> wire::AdmittedCommand {
     Command {
         v: wire::WireVersion::CURRENT,
         id,
         epoch,
-        kind: CommandKind::LineageArrange,
+        kind: CommandKind::TeamArrange,
         expected: Vec::new(),
-        body: serde_json::to_value(request).expect("lineage arrangement encodes"),
+        body: serde_json::to_value(request).expect("team arrangement encodes"),
     }
     .admit(&wire::Accepted {
         wire: wire::WireVersion::CURRENT,
         actor: Actor::Operator,
         epoch,
     })
-    .expect("operator lineage arrangement admits")
+    .expect("operator team arrangement admits")
 }
 
 fn state_command(
@@ -444,8 +430,8 @@ fn arranged_fact(bus: &Bus, field: &str) -> serde_json::Value {
     let arranged = facts
         .facts()
         .iter()
-        .rfind(|fact| fact.fact.kind() == wire::FactKind::LineageArranged)
-        .expect("lineage arrangement is durable");
+        .rfind(|fact| fact.fact.kind() == wire::FactKind::TeamArranged)
+        .expect("team arrangement is durable");
     arranged
         .fact
         .body()
@@ -457,15 +443,15 @@ fn arranged_fact(bus: &Bus, field: &str) -> serde_json::Value {
 /// Both drag gestures commit through one arrangement.
 ///
 /// The reorder and the join are asserted in a single arrangement because that
-/// is the only shape the canvas can send: a drag states where every organization and
+/// is the only shape the canvas can send: a drag states where every team and
 /// every lane stands afterwards, so a test that moved one lane at a time would
-/// be proving a law this resident does not offer. The occupant, its lineage,
+/// be proving a law this resident does not offer. The occupant, its team,
 /// and its supervised seat are asserted across the move because a joined lane
 /// that lost them would be a new lane wearing an old identity.
 #[test]
 fn one_arrangement_reorders_orgs_and_joins_lanes_without_losing_composer_identity() {
-    let fixture = Arranged::seat("lineage-arrangement", &[0, 0, 1]);
-    let [first_org, second_org] = fixture.organizations;
+    let fixture = Arranged::seat("team-arrangement", &[0, 0, 1]);
+    let [first_org, second_org] = fixture.teams;
     let lanes = fixture.lanes.clone();
     let occupants = fixture.occupants.clone();
 
@@ -483,13 +469,9 @@ fn one_arrangement_reorders_orgs_and_joins_lanes_without_losing_composer_identit
         "the arranged order is the durable lane order",
     );
     assert_eq!(
-        answer
-            .lanes
-            .iter()
-            .map(|row| row.lineage_id)
-            .collect::<Vec<_>>(),
+        answer.lanes.iter().map(|row| row.team).collect::<Vec<_>>(),
         vec![second_org, second_org, first_org],
-        "the joined lane holds the target organization",
+        "the joined lane holds the target team",
     );
     assert_eq!(
         answer
@@ -509,10 +491,10 @@ fn one_arrangement_reorders_orgs_and_joins_lanes_without_losing_composer_identit
         answer
             .subscriptions
             .iter()
-            .map(|subscription| subscription.lineage_id)
+            .map(|subscription| subscription.team)
             .collect::<Vec<_>>(),
         vec![first_org, second_org],
-        "both surviving organizations keep their allocation lifetime",
+        "both surviving teams keep their allocation lifetime",
     );
     assert_eq!(
         fixture
@@ -527,38 +509,38 @@ fn one_arrangement_reorders_orgs_and_joins_lanes_without_losing_composer_identit
         arranged_fact(&fixture.bus, "from"),
         serde_json::json!([
             {
-                "lineage_id": first_org.to_string(),
+                "team": first_org.to_string(),
                 "lanes": [lanes[0].to_string(), lanes[1].to_string()],
             },
-            { "lineage_id": second_org.to_string(), "lanes": [lanes[2].to_string()] },
+            { "team": second_org.to_string(), "lanes": [lanes[2].to_string()] },
         ]),
         "the fact records the standing the arrangement replaced",
     );
     assert_eq!(
-        arranged_fact(&fixture.bus, "lineages"),
+        arranged_fact(&fixture.bus, "teams"),
         serde_json::json!([
             {
-                "lineage_id": second_org.to_string(),
+                "team": second_org.to_string(),
                 "lanes": [lanes[2].to_string(), lanes[1].to_string()],
             },
-            { "lineage_id": first_org.to_string(), "lanes": [lanes[0].to_string()] },
+            { "team": first_org.to_string(), "lanes": [lanes[0].to_string()] },
         ]),
     );
 
     fixture.retire();
 }
 
-/// Joining the last lane out of an organization retires that organization's subscription.
+/// Joining the last lane out of a team retires that team's subscription.
 ///
-/// A policy left behind would be inherited by whichever lineage next carried
+/// A policy left behind would be inherited by whichever team next carried
 /// that id, so this cannot be read off the reply: the answer states one
-/// subscription per lineage it returned, and an emptied lineage is returned by
+/// subscription per team it returned, and an emptied team is returned by
 /// nobody. Only the durable head can show the orphan, and a stale row there
 /// faults the next startup as a misaligned subscription table.
 #[test]
-fn emptying_a_lineage_retires_the_task_subscription_it_left_behind() {
-    let fixture = Arranged::seat("lineage-arrangement-emptied", &[0, 0, 1]);
-    let [_, second_org] = fixture.organizations;
+fn emptying_a_team_retires_the_task_subscription_it_left_behind() {
+    let fixture = Arranged::seat("team-arrangement-emptied", &[0, 0, 1]);
+    let [_, second_org] = fixture.teams;
     let lanes = fixture.lanes.clone();
 
     let answer = fixture.commit(
@@ -566,19 +548,19 @@ fn emptying_a_lineage_retires_the_task_subscription_it_left_behind() {
         vec![standing(second_org, &[lanes[2], lanes[1], lanes[0]])],
     );
 
-    assert!(answer.lanes.iter().all(|row| row.lineage_id == second_org));
+    assert!(answer.lanes.iter().all(|row| row.team == second_org));
     assert_eq!(
         answer
             .subscriptions
             .iter()
-            .map(|subscription| subscription.lineage_id)
+            .map(|subscription| subscription.team)
             .collect::<Vec<_>>(),
         vec![second_org],
     );
     assert_eq!(
         fixture.durable_subscriptions(),
         vec![second_org],
-        "an emptied organization keeps no durable allocation lifetime",
+        "an emptied team keeps no durable allocation lifetime",
     );
 
     fixture.retire();
@@ -613,8 +595,8 @@ fn removing_a_lane_requires_a_vacant_claim_free_seat() {
     );
     assert_eq!(
         fixture.durable_subscriptions(),
-        vec![fixture.organizations[1]],
-        "the emptied lineage subscription is removed with its last lane",
+        vec![fixture.teams[1]],
+        "the emptied team subscription is removed with its last lane",
     );
     let facts = fixture.bus.fact_snapshot().expect("removal facts read");
     let removed_fact = facts
@@ -676,7 +658,7 @@ fn removing_a_vacant_lane_with_an_active_claim_is_refused() {
     fixture.retire();
 }
 
-/// Org membership is not capped by the Canvas's six-slot accent palette.
+/// Team membership is not capped by the Canvas's six-slot accent palette.
 ///
 /// Colour is presentation continuity rather than identity: every member keeps
 /// its lane, occupant, worktree, and independent send address when colours
@@ -684,19 +666,19 @@ fn removing_a_vacant_lane_with_an_active_claim_is_refused() {
 /// complete-arrangement law instead of turning a display palette into topology
 /// authority.
 #[test]
-fn a_lineage_may_hold_more_members_than_the_six_slot_accent_palette() {
-    let fixture = Arranged::seat("lineage-arrangement-seven-members", &[0, 1, 1, 1, 1, 1, 1]);
-    let target = fixture.organizations[0];
+fn a_team_may_hold_more_members_than_the_six_slot_accent_palette() {
+    let fixture = Arranged::seat("team-arrangement-seven-members", &[0, 1, 1, 1, 1, 1, 1]);
+    let target = fixture.teams[0];
     let lanes = fixture.lanes.clone();
 
     let answer = fixture.commit(13, vec![standing(target, &lanes)]);
 
     assert_eq!(answer.lanes.len(), 7);
-    assert!(answer.lanes.iter().all(|row| row.lineage_id == target));
+    assert!(answer.lanes.iter().all(|row| row.team == target));
     assert_eq!(
         answer.lanes.iter().map(|row| row.lane).collect::<Vec<_>>(),
         lanes,
-        "an unbounded organization keeps every independently addressed lane",
+        "an unbounded team keeps every independently addressed lane",
     );
     assert_eq!(fixture.durable_subscriptions(), vec![target]);
 
@@ -708,60 +690,60 @@ fn a_lineage_may_hold_more_members_than_the_six_slot_accent_palette() {
 /// Each case below is built to trip exactly one rule, because a fixture that
 /// broke two would only ever prove the first. The durable head is read after
 /// every refusal: a partially applied arrangement would leave a lane holding a
-/// organization the operator never stated.
+/// team the operator never stated.
 #[test]
 fn an_arrangement_that_is_not_a_faithful_restatement_of_the_lane_table_is_refused() {
-    let fixture = Arranged::seat("lineage-arrangement-refusals", &[0, 1]);
-    let [first_org, second_org] = fixture.organizations;
+    let fixture = Arranged::seat("team-arrangement-refusals", &[0, 1]);
+    let [first_org, second_org] = fixture.teams;
     let lanes = fixture.lanes.clone();
     let stranger = test_uuid(99);
     let seated = vec![(lanes[0], first_org), (lanes[1], second_org)];
 
     let cases = [
-        ("lineage::arrangement-empty", Vec::new()),
+        ("team::arrangement-empty", Vec::new()),
         (
-            "lineage::arrangement-unknown-lineage",
+            "team::arrangement-unknown-team",
             vec![
                 standing(stranger, &[lanes[0]]),
                 standing(second_org, &[lanes[1]]),
             ],
         ),
         (
-            "lineage::arrangement-duplicate-lineage",
+            "team::arrangement-duplicate-team",
             vec![
                 standing(first_org, &[lanes[0]]),
                 standing(first_org, &[lanes[1]]),
             ],
         ),
         (
-            "lineage::arrangement-vacant-lineage",
+            "team::arrangement-vacant-team",
             vec![
                 standing(first_org, &[]),
                 standing(second_org, &[lanes[0], lanes[1]]),
             ],
         ),
         (
-            "lineage::arrangement-unknown-lane",
+            "team::arrangement-unknown-lane",
             vec![
                 standing(first_org, &[lanes[0]]),
                 standing(second_org, &[lanes[1], stranger]),
             ],
         ),
         (
-            "lineage::arrangement-duplicate-lane",
+            "team::arrangement-duplicate-lane",
             vec![
                 standing(first_org, &[lanes[0], lanes[0]]),
                 standing(second_org, &[lanes[1]]),
             ],
         ),
         (
-            "lineage::arrangement-incomplete",
+            "team::arrangement-incomplete",
             vec![standing(first_org, &[lanes[0]])],
         ),
     ];
-    for (index, (reason, lineages)) in cases.into_iter().enumerate() {
+    for (index, (reason, teams)) in cases.into_iter().enumerate() {
         let id = 20 + u8::try_from(index).expect("fixture case count");
-        let outcome = fixture.arrange(id, lineages);
+        let outcome = fixture.arrange(id, teams);
         let Outcome::Refusal(refusal) = outcome else {
             panic!("{reason} must refuse rather than commit: {outcome:?}");
         };

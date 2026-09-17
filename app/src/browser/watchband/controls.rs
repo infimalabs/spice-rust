@@ -1,16 +1,16 @@
 use super::*;
 
-const LINEAGE_SPEECH_STORAGE: &str = "spice:lineage-speech:v1";
+const TEAM_SPEECH_STORAGE: &str = "spice:team-speech:v1";
 
 /// One policy shared by every agent member in the visual lane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LineageLife {
+pub(crate) enum TeamLife {
     Steer,
     Drive,
     Drain,
 }
 
-impl LineageLife {
+impl TeamLife {
     const ALL: [Self; 3] = [Self::Steer, Self::Drive, Self::Drain];
 
     pub(super) const fn label(self) -> &'static str {
@@ -37,34 +37,34 @@ impl LineageLife {
         }
     }
 
-    const fn wire(self) -> wire::intent::LineageLife {
+    const fn wire(self) -> wire::intent::TeamLife {
         match self {
-            Self::Steer => wire::intent::LineageLife::Steer,
-            Self::Drive => wire::intent::LineageLife::Drive,
-            Self::Drain => wire::intent::LineageLife::Drain,
+            Self::Steer => wire::intent::TeamLife::Steer,
+            Self::Drive => wire::intent::TeamLife::Drive,
+            Self::Drain => wire::intent::TeamLife::Drain,
         }
     }
 }
 
-impl From<wire::intent::LineageLife> for LineageLife {
-    fn from(value: wire::intent::LineageLife) -> Self {
+impl From<wire::intent::TeamLife> for TeamLife {
+    fn from(value: wire::intent::TeamLife) -> Self {
         match value {
-            wire::intent::LineageLife::Steer => Self::Steer,
-            wire::intent::LineageLife::Drive => Self::Drive,
-            wire::intent::LineageLife::Drain => Self::Drain,
+            wire::intent::TeamLife::Steer => Self::Steer,
+            wire::intent::TeamLife::Drive => Self::Drive,
+            wire::intent::TeamLife::Drain => Self::Drain,
         }
     }
 }
 
-/// Browser-local speech posture for one Canvas organization.
+/// Browser-local speech posture for one Canvas team.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum LineageSpeech {
+pub(crate) enum TeamSpeech {
     Quiet,
     Speak,
     Narrate,
 }
 
-impl LineageSpeech {
+impl TeamSpeech {
     const ALL: [Self; 3] = [Self::Quiet, Self::Speak, Self::Narrate];
 
     const fn label(self) -> &'static str {
@@ -93,165 +93,161 @@ impl LineageSpeech {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-pub(super) struct LineageControl {
-    pub(super) mode: LineageMode,
+pub(super) struct TeamControl {
+    pub(super) mode: TeamMode,
     pub(super) menu_open: bool,
     pub(super) import_open: bool,
     pub(super) arrangement_open: bool,
-    pub(super) previous_topology: Option<Vec<LineageArrangement>>,
-    pub(super) speech: LineageSpeech,
-    pub(super) life: LineageLife,
-    preview_life: Option<LineageLife>,
-    pub(super) pending_life: Option<LineageLife>,
-    authoritative_life: LineageLife,
+    pub(super) previous_topology: Option<Vec<TeamArrangement>>,
+    pub(super) speech: TeamSpeech,
+    pub(super) life: TeamLife,
+    preview_life: Option<TeamLife>,
+    pub(super) pending_life: Option<TeamLife>,
+    authoritative_life: TeamLife,
     issue: Option<String>,
 }
 
-impl Default for LineageControl {
+impl Default for TeamControl {
     fn default() -> Self {
         Self {
-            mode: LineageMode::Lanes,
+            mode: TeamMode::Lanes,
             menu_open: false,
             import_open: false,
             arrangement_open: false,
             previous_topology: None,
-            speech: LineageSpeech::Quiet,
-            life: LineageLife::Steer,
+            speech: TeamSpeech::Quiet,
+            life: TeamLife::Steer,
             preview_life: None,
             pending_life: None,
-            authoritative_life: LineageLife::Steer,
+            authoritative_life: TeamLife::Steer,
             issue: None,
         }
     }
 }
 
-/// Per-organization control state retained across Mosaic redraws.
+/// Per-team control state retained across Mosaic redraws.
 #[derive(Clone, Default, PartialEq, Eq)]
-pub(crate) struct LineageControls {
-    lineages: BTreeMap<CanonicalUuid, LineageControl>,
-    empty_mode: LineageMode,
+pub(crate) struct TeamControls {
+    teams: BTreeMap<CanonicalUuid, TeamControl>,
+    empty_mode: TeamMode,
     closed: BTreeSet<CanonicalUuid>,
 }
 
-pub(crate) enum LineageControlAction {
+pub(crate) enum TeamControlAction {
     SetMode {
-        lineage: Option<CanonicalUuid>,
-        mode: LineageMode,
+        team: Option<CanonicalUuid>,
+        mode: TeamMode,
     },
     ToggleMenu {
-        lineage: CanonicalUuid,
+        team: CanonicalUuid,
     },
     ToggleImport {
-        lineage: CanonicalUuid,
+        team: CanonicalUuid,
     },
     ToggleArrangement {
-        lineage: CanonicalUuid,
+        team: CanonicalUuid,
     },
     CloseMenus,
-    CloseLineage {
-        lineage: CanonicalUuid,
+    CloseTeam {
+        team: CanonicalUuid,
     },
-    OpenLineage {
-        lineage: CanonicalUuid,
+    OpenTeam {
+        team: CanonicalUuid,
     },
     SaveSplit {
-        lineage: CanonicalUuid,
-        topology: Vec<LineageArrangement>,
+        team: CanonicalUuid,
+        topology: Vec<TeamArrangement>,
     },
     ClearRestore {
-        lineage: CanonicalUuid,
+        team: CanonicalUuid,
     },
     SetSpeech {
-        lineage: CanonicalUuid,
-        authoritative_life: wire::intent::LineageLife,
-        speech: LineageSpeech,
+        team: CanonicalUuid,
+        authoritative_life: wire::intent::TeamLife,
+        speech: TeamSpeech,
     },
     PreviewLife {
-        lineage: CanonicalUuid,
-        authoritative_life: wire::intent::LineageLife,
-        life: LineageLife,
+        team: CanonicalUuid,
+        authoritative_life: wire::intent::TeamLife,
+        life: TeamLife,
     },
     CancelLifePreview {
-        lineage: CanonicalUuid,
+        team: CanonicalUuid,
     },
     RequestLife {
-        lineage: CanonicalUuid,
-        authoritative_life: wire::intent::LineageLife,
-        life: LineageLife,
+        team: CanonicalUuid,
+        authoritative_life: wire::intent::TeamLife,
+        life: TeamLife,
     },
     SyncLanes {
         answer: wire::intent::LaneAnswer,
-        settle: Option<(CanonicalUuid, LineageLife)>,
+        settle: Option<(CanonicalUuid, TeamLife)>,
     },
     SettleIssue {
-        lineage: CanonicalUuid,
-        life: Option<LineageLife>,
+        team: CanonicalUuid,
+        life: Option<TeamLife>,
         issue: String,
     },
     SettleStaleLife {
-        lineage: CanonicalUuid,
-        life: LineageLife,
+        team: CanonicalUuid,
+        life: TeamLife,
     },
 }
 
-impl Reducible for LineageControls {
-    type Action = LineageControlAction;
+impl Reducible for TeamControls {
+    type Action = TeamControlAction;
 
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
         let mut next = (*self).clone();
         match action {
-            LineageControlAction::SetMode { lineage, mode } => next.set_mode(lineage, mode),
-            LineageControlAction::ToggleMenu { lineage } => next.toggle_menu(lineage),
-            LineageControlAction::ToggleImport { lineage } => next.toggle_import(lineage),
-            LineageControlAction::ToggleArrangement { lineage } => {
-                next.toggle_arrangement(lineage);
+            TeamControlAction::SetMode { team, mode } => next.set_mode(team, mode),
+            TeamControlAction::ToggleMenu { team } => next.toggle_menu(team),
+            TeamControlAction::ToggleImport { team } => next.toggle_import(team),
+            TeamControlAction::ToggleArrangement { team } => {
+                next.toggle_arrangement(team);
             }
-            LineageControlAction::CloseMenus => next.close_menus(),
-            LineageControlAction::CloseLineage { lineage } => next.close_lineage(lineage),
-            LineageControlAction::OpenLineage { lineage } => next.open_lineage(lineage),
-            LineageControlAction::SaveSplit { lineage, topology } => {
-                next.save_split(lineage, topology);
+            TeamControlAction::CloseMenus => next.close_menus(),
+            TeamControlAction::CloseTeam { team } => next.close_team(team),
+            TeamControlAction::OpenTeam { team } => next.open_team(team),
+            TeamControlAction::SaveSplit { team, topology } => {
+                next.save_split(team, topology);
             }
-            LineageControlAction::ClearRestore { lineage } => {
-                next.lineages.entry(lineage).or_default().previous_topology = None;
+            TeamControlAction::ClearRestore { team } => {
+                next.teams.entry(team).or_default().previous_topology = None;
             }
-            LineageControlAction::SetSpeech {
-                lineage,
+            TeamControlAction::SetSpeech {
+                team,
                 authoritative_life,
                 speech,
-            } => next.set_speech(lineage, authoritative_life, speech),
-            LineageControlAction::PreviewLife {
-                lineage,
+            } => next.set_speech(team, authoritative_life, speech),
+            TeamControlAction::PreviewLife {
+                team,
                 authoritative_life,
                 life,
-            } => next.preview_life(lineage, authoritative_life, life),
-            LineageControlAction::CancelLifePreview { lineage } => {
-                next.cancel_life_preview(lineage);
+            } => next.preview_life(team, authoritative_life, life),
+            TeamControlAction::CancelLifePreview { team } => {
+                next.cancel_life_preview(team);
             }
-            LineageControlAction::RequestLife {
-                lineage,
+            TeamControlAction::RequestLife {
+                team,
                 authoritative_life,
                 life,
-            } => next.request_life(lineage, authoritative_life, life),
-            LineageControlAction::SyncLanes { answer, settle } => {
+            } => next.request_life(team, authoritative_life, life),
+            TeamControlAction::SyncLanes { answer, settle } => {
                 next.sync_lanes(&answer, settle);
             }
-            LineageControlAction::SettleIssue {
-                lineage,
-                life,
-                issue,
-            } => {
-                next.settle_issue(lineage, life, issue);
+            TeamControlAction::SettleIssue { team, life, issue } => {
+                next.settle_issue(team, life, issue);
             }
-            LineageControlAction::SettleStaleLife { lineage, life } => {
-                next.settle_stale_life(lineage, life);
+            TeamControlAction::SettleStaleLife { team, life } => {
+                next.settle_stale_life(team, life);
             }
         }
         Rc::new(next)
     }
 }
 
-impl LineageControls {
+impl TeamControls {
     pub(in crate::browser) fn restore() -> Self {
         let mut controls = Self::default();
         let Some(storage) =
@@ -259,55 +255,54 @@ impl LineageControls {
         else {
             return controls;
         };
-        let Some(document) = storage.get_item(LINEAGE_SPEECH_STORAGE).ok().flatten() else {
+        let Some(document) = storage.get_item(TEAM_SPEECH_STORAGE).ok().flatten() else {
             return controls;
         };
         let Ok(rows) = serde_json::from_str::<Vec<(String, u8)>>(&document) else {
             return controls;
         };
-        for (lineage, value) in rows {
-            let (Ok(lineage), Some(speech)) = (lineage.parse(), LineageSpeech::from_storage(value))
-            else {
+        for (team, value) in rows {
+            let (Ok(team), Some(speech)) = (team.parse(), TeamSpeech::from_storage(value)) else {
                 continue;
             };
-            controls.lineages.entry(lineage).or_default().speech = speech;
+            controls.teams.entry(team).or_default().speech = speech;
         }
         controls
     }
 
     pub(super) fn current(
         &self,
-        lineage: CanonicalUuid,
-        authoritative_life: wire::intent::LineageLife,
-    ) -> LineageControl {
-        self.lineages
-            .get(&lineage)
+        team: CanonicalUuid,
+        authoritative_life: wire::intent::TeamLife,
+    ) -> TeamControl {
+        self.teams
+            .get(&team)
             .cloned()
-            .unwrap_or_else(|| LineageControl {
+            .unwrap_or_else(|| TeamControl {
                 life: authoritative_life.into(),
                 authoritative_life: authoritative_life.into(),
-                ..LineageControl::default()
+                ..TeamControl::default()
             })
     }
 
-    pub(super) const fn empty_mode(&self) -> LineageMode {
+    pub(super) const fn empty_mode(&self) -> TeamMode {
         self.empty_mode
     }
 
-    pub(in crate::browser) fn is_closed(&self, lineage: CanonicalUuid) -> bool {
-        self.closed.contains(&lineage)
+    pub(in crate::browser) fn is_closed(&self, team: CanonicalUuid) -> bool {
+        self.closed.contains(&team)
     }
 
-    fn set_mode(&mut self, lineage: Option<CanonicalUuid>, mode: LineageMode) {
-        if let Some(lineage) = lineage {
-            self.lineages.entry(lineage).or_default().mode = mode;
+    fn set_mode(&mut self, team: Option<CanonicalUuid>, mode: TeamMode) {
+        if let Some(team) = team {
+            self.teams.entry(team).or_default().mode = mode;
         } else {
             self.empty_mode = mode;
         }
     }
 
-    fn toggle_menu(&mut self, lineage: CanonicalUuid) {
-        let state = self.lineages.entry(lineage).or_default();
+    fn toggle_menu(&mut self, team: CanonicalUuid) {
+        let state = self.teams.entry(team).or_default();
         state.arrangement_open = false;
         if state.import_open {
             state.import_open = false;
@@ -317,24 +312,24 @@ impl LineageControls {
         state.menu_open = !state.menu_open;
     }
 
-    fn toggle_import(&mut self, lineage: CanonicalUuid) {
-        let state = self.lineages.entry(lineage).or_default();
+    fn toggle_import(&mut self, team: CanonicalUuid) {
+        let state = self.teams.entry(team).or_default();
         state.menu_open = false;
         state.arrangement_open = false;
         state.import_open = !state.import_open;
     }
 
-    fn toggle_arrangement(&mut self, lineage: CanonicalUuid) {
+    fn toggle_arrangement(&mut self, team: CanonicalUuid) {
         let open = !self
-            .lineages
-            .get(&lineage)
+            .teams
+            .get(&team)
             .is_some_and(|state| state.arrangement_open);
         self.close_menus();
-        self.lineages.entry(lineage).or_default().arrangement_open = open;
+        self.teams.entry(team).or_default().arrangement_open = open;
     }
 
     fn close_menus(&mut self) {
-        for state in self.lineages.values_mut() {
+        for state in self.teams.values_mut() {
             state.menu_open = false;
             state.import_open = false;
             state.arrangement_open = false;
@@ -342,25 +337,25 @@ impl LineageControls {
     }
 
     fn close_arrangements(&mut self) {
-        for state in self.lineages.values_mut() {
+        for state in self.teams.values_mut() {
             state.arrangement_open = false;
         }
     }
 
-    fn close_lineage(&mut self, lineage: CanonicalUuid) {
-        let state = self.lineages.entry(lineage).or_default();
+    fn close_team(&mut self, team: CanonicalUuid) {
+        let state = self.teams.entry(team).or_default();
         state.menu_open = false;
         state.import_open = false;
         state.arrangement_open = false;
-        self.closed.insert(lineage);
+        self.closed.insert(team);
     }
 
-    fn open_lineage(&mut self, lineage: CanonicalUuid) {
-        self.closed.remove(&lineage);
+    fn open_team(&mut self, team: CanonicalUuid) {
+        self.closed.remove(&team);
     }
 
-    fn save_split(&mut self, lineage: CanonicalUuid, topology: Vec<LineageArrangement>) {
-        let state = self.lineages.entry(lineage).or_default();
+    fn save_split(&mut self, team: CanonicalUuid, topology: Vec<TeamArrangement>) {
+        let state = self.teams.entry(team).or_default();
         state.menu_open = false;
         state.import_open = false;
         state.arrangement_open = false;
@@ -369,16 +364,16 @@ impl LineageControls {
 
     fn set_speech(
         &mut self,
-        lineage: CanonicalUuid,
-        authoritative_life: wire::intent::LineageLife,
-        speech: LineageSpeech,
+        team: CanonicalUuid,
+        authoritative_life: wire::intent::TeamLife,
+        speech: TeamSpeech,
     ) {
-        self.lineages
-            .entry(lineage)
-            .or_insert_with(|| LineageControl {
+        self.teams
+            .entry(team)
+            .or_insert_with(|| TeamControl {
                 life: authoritative_life.into(),
                 authoritative_life: authoritative_life.into(),
-                ..LineageControl::default()
+                ..TeamControl::default()
             })
             .speech = speech;
         self.store_speech();
@@ -391,29 +386,26 @@ impl LineageControls {
             return;
         };
         let rows = self
-            .lineages
+            .teams
             .iter()
-            .map(|(lineage, control)| (lineage.to_string(), control.speech.storage_value()))
+            .map(|(team, control)| (team.to_string(), control.speech.storage_value()))
             .collect::<Vec<_>>();
         if let Ok(document) = serde_json::to_string(&rows) {
-            let _ = storage.set_item(LINEAGE_SPEECH_STORAGE, &document);
+            let _ = storage.set_item(TEAM_SPEECH_STORAGE, &document);
         }
     }
 
     fn request_life(
         &mut self,
-        lineage: CanonicalUuid,
-        authoritative_life: wire::intent::LineageLife,
-        life: LineageLife,
+        team: CanonicalUuid,
+        authoritative_life: wire::intent::TeamLife,
+        life: TeamLife,
     ) {
-        let state = self
-            .lineages
-            .entry(lineage)
-            .or_insert_with(|| LineageControl {
-                life: authoritative_life.into(),
-                authoritative_life: authoritative_life.into(),
-                ..LineageControl::default()
-            });
+        let state = self.teams.entry(team).or_insert_with(|| TeamControl {
+            life: authoritative_life.into(),
+            authoritative_life: authoritative_life.into(),
+            ..TeamControl::default()
+        });
         state.life = life;
         state.preview_life = None;
         state.pending_life = Some(life);
@@ -422,25 +414,22 @@ impl LineageControls {
 
     fn preview_life(
         &mut self,
-        lineage: CanonicalUuid,
-        authoritative_life: wire::intent::LineageLife,
-        life: LineageLife,
+        team: CanonicalUuid,
+        authoritative_life: wire::intent::TeamLife,
+        life: TeamLife,
     ) {
-        let state = self
-            .lineages
-            .entry(lineage)
-            .or_insert_with(|| LineageControl {
-                life: authoritative_life.into(),
-                authoritative_life: authoritative_life.into(),
-                ..LineageControl::default()
-            });
+        let state = self.teams.entry(team).or_insert_with(|| TeamControl {
+            life: authoritative_life.into(),
+            authoritative_life: authoritative_life.into(),
+            ..TeamControl::default()
+        });
         if state.pending_life.is_none() {
             state.preview_life = (life != state.authoritative_life).then_some(life);
         }
     }
 
-    fn cancel_life_preview(&mut self, lineage: CanonicalUuid) {
-        let Some(state) = self.lineages.get_mut(&lineage) else {
+    fn cancel_life_preview(&mut self, team: CanonicalUuid) {
+        let Some(state) = self.teams.get_mut(&team) else {
             return;
         };
         if state.pending_life.is_none() {
@@ -454,44 +443,39 @@ impl LineageControls {
     fn sync_lanes(
         &mut self,
         answer: &wire::intent::LaneAnswer,
-        settle: Option<(CanonicalUuid, LineageLife)>,
+        settle: Option<(CanonicalUuid, TeamLife)>,
     ) {
         self.close_arrangements();
-        // A lineage that left the authoritative subscription set is gone, not
+        // A team that left the authoritative subscription set is gone, not
         // hidden. Drop its browser-local controls before deciding whether a
-        // newly seated first lineage should inherit the empty surface.
-        let live_lineages = answer
+        // newly seated first team should inherit the empty surface.
+        let live_teams = answer
             .subscriptions
             .iter()
-            .map(|subscription| subscription.lineage_id)
+            .map(|subscription| subscription.team)
             .collect::<BTreeSet<_>>();
-        self.lineages
-            .retain(|lineage, _| live_lineages.contains(lineage));
-        self.closed
-            .retain(|lineage| live_lineages.contains(lineage));
+        self.teams.retain(|team, _| live_teams.contains(team));
+        self.closed.retain(|team| live_teams.contains(team));
 
-        // A seat submitted from the empty Org view must keep that view when
+        // A seat submitted from the empty Team view must keep that view when
         // its first real surface arrives. The resident's authoritative
-        // subscription order resolves the transition: its first lineage
+        // subscription order resolves the transition: its first team
         // inherits the empty selection exactly once, and every sibling keeps
         // the explicit Lanes default.
-        if self.lineages.is_empty()
-            && self.empty_mode != LineageMode::Lanes
+        if self.teams.is_empty()
+            && self.empty_mode != TeamMode::Lanes
             && let Some(subscription) = answer.subscriptions.first()
         {
-            self.lineages
-                .entry(subscription.lineage_id)
-                .or_default()
-                .mode = self.empty_mode;
-            self.empty_mode = LineageMode::Lanes;
+            self.teams.entry(subscription.team).or_default().mode = self.empty_mode;
+            self.empty_mode = TeamMode::Lanes;
         }
         for subscription in &answer.subscriptions {
-            let lineage = subscription.lineage_id;
+            let team = subscription.team;
             let life = subscription.policy.into();
-            let state = self.lineages.entry(lineage).or_default();
+            let state = self.teams.entry(team).or_default();
             state.authoritative_life = life;
-            let settles_pending = settle.is_some_and(|(settled_lineage, requested)| {
-                settled_lineage == lineage && state.pending_life == Some(requested)
+            let settles_pending = settle.is_some_and(|(settled_team, requested)| {
+                settled_team == team && state.pending_life == Some(requested)
             });
             if settles_pending || (state.pending_life.is_none() && state.preview_life.is_none()) {
                 state.life = life;
@@ -503,8 +487,8 @@ impl LineageControls {
         }
     }
 
-    fn settle_issue(&mut self, lineage: CanonicalUuid, life: Option<LineageLife>, issue: String) {
-        let state = self.lineages.entry(lineage).or_default();
+    fn settle_issue(&mut self, team: CanonicalUuid, life: Option<TeamLife>, issue: String) {
+        let state = self.teams.entry(team).or_default();
         if life.is_some_and(|life| state.pending_life == Some(life)) {
             state.life = state.authoritative_life;
             state.preview_life = None;
@@ -513,8 +497,8 @@ impl LineageControls {
         state.issue = Some(issue);
     }
 
-    fn settle_stale_life(&mut self, lineage: CanonicalUuid, life: LineageLife) {
-        let Some(state) = self.lineages.get_mut(&lineage) else {
+    fn settle_stale_life(&mut self, team: CanonicalUuid, life: TeamLife) {
+        let Some(state) = self.teams.get_mut(&team) else {
             return;
         };
         if state.pending_life == Some(life) {
@@ -526,45 +510,45 @@ impl LineageControls {
 }
 
 fn preview_life_callback(
-    lineage: CanonicalUuid,
-    authoritative_life: wire::intent::LineageLife,
-    controls: UseReducerHandle<LineageControls>,
+    team: CanonicalUuid,
+    authoritative_life: wire::intent::TeamLife,
+    controls: UseReducerHandle<TeamControls>,
 ) -> Callback<InputEvent> {
     Callback::from(move |event: InputEvent| {
         let input: HtmlInputElement = event.target_unchecked_into();
         let index = input.value().parse::<usize>().unwrap_or(0).min(2);
-        controls.dispatch(LineageControlAction::PreviewLife {
-            lineage,
+        controls.dispatch(TeamControlAction::PreviewLife {
+            team,
             authoritative_life,
-            life: LineageLife::ALL[index],
+            life: TeamLife::ALL[index],
         });
     })
 }
 
 fn commit_life_callback(
-    lineage: CanonicalUuid,
-    authoritative_life: wire::intent::LineageLife,
+    team: CanonicalUuid,
+    authoritative_life: wire::intent::TeamLife,
     topology_revision: u64,
-    controls: UseReducerHandle<LineageControls>,
+    controls: UseReducerHandle<TeamControls>,
     sender: SenderHandle,
 ) -> Callback<Event> {
     Callback::from(move |event: Event| {
         let input: HtmlInputElement = event.target_unchecked_into();
         let index = input.value().parse::<usize>().unwrap_or(0).min(2);
-        let life = LineageLife::ALL[index];
+        let life = TeamLife::ALL[index];
         if !admit_action(
             &sender,
-            ClientAction::ConfigureLineage {
+            ClientAction::ConfigureTeam {
                 topology_revision,
-                lineage,
+                team,
                 member: None,
                 life: Some(life.wire()),
             },
         ) {
             return;
         }
-        controls.dispatch(LineageControlAction::RequestLife {
-            lineage,
+        controls.dispatch(TeamControlAction::RequestLife {
+            team,
             authoritative_life,
             life,
         });
@@ -572,54 +556,54 @@ fn commit_life_callback(
 }
 
 fn cancel_life_preview_callback(
-    lineage: CanonicalUuid,
-    controls: UseReducerHandle<LineageControls>,
+    team: CanonicalUuid,
+    controls: UseReducerHandle<TeamControls>,
 ) -> Callback<FocusEvent> {
     Callback::from(move |_| {
-        controls.dispatch(LineageControlAction::CancelLifePreview { lineage });
+        controls.dispatch(TeamControlAction::CancelLifePreview { team });
     })
 }
 
 #[allow(
     clippy::too_many_arguments,
-    reason = "watchband rendering binds organization identity and interactive control state"
+    reason = "watchband rendering binds team identity and interactive control state"
 )]
-pub(super) fn render_lineage_controls(
-    lineage: CanonicalUuid,
-    authoritative_life: wire::intent::LineageLife,
+pub(super) fn render_team_controls(
+    team: CanonicalUuid,
+    authoritative_life: wire::intent::TeamLife,
     topology_revision: u64,
-    control: &LineageControl,
-    lineage_controls: &UseReducerHandle<LineageControls>,
+    control: &TeamControl,
+    team_controls: &UseReducerHandle<TeamControls>,
     suppress_automatic_speech: &Callback<()>,
     sender: &SenderHandle,
     can_configure: bool,
     ready: bool,
 ) -> Html {
     let speech = control.speech;
-    let update_speech = lineage_controls.clone();
+    let update_speech = team_controls.clone();
     let suppress_automatic_speech = suppress_automatic_speech.clone();
     let selected = control.preview_life.unwrap_or(control.life);
-    let preview_life = preview_life_callback(lineage, authoritative_life, lineage_controls.clone());
+    let preview_life = preview_life_callback(team, authoritative_life, team_controls.clone());
     let commit_life = commit_life_callback(
-        lineage,
+        team,
         authoritative_life,
         topology_revision,
-        lineage_controls.clone(),
+        team_controls.clone(),
         sender.clone(),
     );
-    let cancel_life_preview = cancel_life_preview_callback(lineage, lineage_controls.clone());
+    let cancel_life_preview = cancel_life_preview_callback(team, team_controls.clone());
     html! {
         <aside
-            class="organization-composer-controls"
+            class="team-composer-controls"
             data-speech-mode={speech.label()}
             data-lifetime={selected.label()}
             data-lifetime-pending={control.pending_life.is_some().to_string()}
         >
             <label class={classes!(
-                "organization-slider",
-                "organization-speech",
-                (speech == LineageSpeech::Quiet).then_some("armed"),
-                (speech == LineageSpeech::Narrate).then_some("maxed"),
+                "team-slider",
+                "team-speech",
+                (speech == TeamSpeech::Quiet).then_some("armed"),
+                (speech == TeamSpeech::Narrate).then_some("maxed"),
             )}>
                 <input
                     type="range"
@@ -631,12 +615,12 @@ pub(super) fn render_lineage_controls(
                     oninput={Callback::from(move |event: InputEvent| {
                         let input: HtmlInputElement = event.target_unchecked_into();
                         let index = input.value().parse::<usize>().unwrap_or(1).min(2);
-                        let speech = LineageSpeech::ALL[index];
-                        if speech == LineageSpeech::Quiet {
+                        let speech = TeamSpeech::ALL[index];
+                        if speech == TeamSpeech::Quiet {
                             suppress_automatic_speech.emit(());
                         }
-                        update_speech.dispatch(LineageControlAction::SetSpeech {
-                            lineage,
+                        update_speech.dispatch(TeamControlAction::SetSpeech {
+                            team,
                             authoritative_life,
                             speech,
                         });
@@ -645,10 +629,10 @@ pub(super) fn render_lineage_controls(
                 <span>{speech.label()}</span>
             </label>
             <label class={classes!(
-                "organization-slider",
-                "organization-lifetime",
-                (selected == LineageLife::Steer).then_some("armed"),
-                (selected == LineageLife::Drain).then_some("maxed"),
+                "team-slider",
+                "team-lifetime",
+                (selected == TeamLife::Steer).then_some("armed"),
+                (selected == TeamLife::Drain).then_some("maxed"),
             )}>
                 <input
                     type="range"
@@ -667,16 +651,16 @@ pub(super) fn render_lineage_controls(
             </label>
             <button
                 class={classes!(
-                    "organization-send",
-                    (selected == LineageLife::Steer).then_some("armed"),
-                    (selected == LineageLife::Drain).then_some("maxed"),
+                    "team-send",
+                    (selected == TeamLife::Steer).then_some("armed"),
+                    (selected == TeamLife::Drain).then_some("maxed"),
                 )}
                 type="submit"
                 disabled={!ready}
                 title={format!("Send with {}: {}", selected.label(), selected.help())}
             >{selected.label()}</button>
             if let Some(issue) = &control.issue {
-                <p class="organization-control-issue" role="status">{issue.clone()}</p>
+                <p class="team-control-issue" role="status">{issue.clone()}</p>
             }
         </aside>
     }

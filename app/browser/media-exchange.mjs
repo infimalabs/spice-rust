@@ -159,12 +159,12 @@ async function cardIdentity(card) {
   }));
 }
 
-async function reopenLane(page, lineage, lane) {
+async function reopenLane(page, team, lane) {
   await chooseCanvasView(page, "Lanes");
-  const surface = page.locator(`.organization-surface[data-lineage-id="${lineage}"]`);
+  const surface = page.locator(`.team-surface[data-team="${team}"]`);
   await surface.waitFor({ timeout: TRANSITION_MS * 4 });
   await surface.getByRole("tab", { name: /^Agents(?:\s|$)/ }).click();
-  await surface.locator(`.organization-agent[data-agent-lane="${lane}"]`).waitFor();
+  await surface.locator(`.team-agent[data-agent-lane="${lane}"]`).waitFor();
   return surface;
 }
 
@@ -202,9 +202,9 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
   assert.ok(member, "the production media fixture seats one Codex lane");
   const wake = await reply(fixture, ["lane", "wake", member.lane]);
   assert.equal(wake.body.to, "occupied", "the Codex media stand-in becomes live");
-  let surface = await reopenLane(page, member.lineage_id, member.lane);
+  let surface = await reopenLane(page, member.team, member.lane);
   const composer = surface.locator(
-    `.organization-agent[data-agent-lane="${member.lane}"] .composer-shard--primary`,
+    `.team-agent[data-agent-lane="${member.lane}"] .composer-shard--primary`,
   );
   await composer.getByRole("textbox").fill("Inspect the attached operator pixel.");
   await pasteImages(composer, ["operator-pixel.png"]);
@@ -215,7 +215,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
     "the real Canvas attachment submission clears its composer",
     TRANSITION_MS,
     (lane) => document
-      .querySelector(`.organization-agent[data-agent-lane="${lane}"] textarea`)
+      .querySelector(`.team-agent[data-agent-lane="${lane}"] textarea`)
       ?.value === "",
     member.lane,
   );
@@ -285,7 +285,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
     "one production Codex image result reaches Canvas",
     TRANSITION_MS * 4,
     (lane) => document.querySelectorAll(
-      `.organization-surface .mosaic-message-card[data-agent-lane="${lane}"] img[alt="tool-image"]`,
+      `.team-surface .mosaic-message-card[data-agent-lane="${lane}"] img[alt="tool-image"]`,
     ).length === 1,
     member.lane,
   );
@@ -332,7 +332,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
   );
 
   await page.reload({ waitUntil: "networkidle" });
-  surface = await reopenLane(page, member.lineage_id, member.lane);
+  surface = await reopenLane(page, member.team, member.lane);
   card = await mediaCard(surface, key);
   assert.deepEqual(await cardIdentity(card), identity, "reconnect preserves the exact media card");
 
@@ -344,7 +344,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
     .waitFor({ timeout: TRANSITION_MS * 4 });
   await recordHistoryRequestsAfterReload(page);
   await page.reload({ waitUntil: "networkidle" });
-  surface = await reopenLane(page, member.lineage_id, member.lane);
+  surface = await reopenLane(page, member.team, member.lane);
   await waitForPageFunction(
     page,
     "the bounded reconnect requests older member history",

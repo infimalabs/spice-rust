@@ -887,7 +887,7 @@ fn contract_syntax_drives_argument_registration() {
             "spice",
             "lane",
             "add",
-            "--lineage",
+            "--team",
             "018f82d4-6f59-7d06-92e3-bce913116302",
         ],
         &["spice", "install", "--apply=digest"],

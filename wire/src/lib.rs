@@ -84,10 +84,10 @@ pub use environment::{
 pub use fact::{AnyFact, Body, Fact, FactKind, Producer};
 pub use head::{
     ClaimCell, ClaimDisposition, ClaimHead, CursorHead, FindingHead, FindingState,
-    LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead,
-    LineageSubscription, RenewalIdentity, ResidencyHead, ResidentState, SteeringHead, TapeLocus,
-    TaskHead, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass,
-    WitnessHead, WorkflowHead,
+    LaneRenewalRecord, LaneRenewalState, LaneResidency, LaneSession, LeaseHead, RenewalIdentity,
+    ResidencyHead, ResidentState, SteeringHead, TapeLocus, TaskHead, TeamSubscription,
+    TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WitnessClass, WitnessHead,
+    WorkflowHead,
 };
 pub use hello::{
     Accepted, CanvasBootstrap, CanvasVersion, Hello, Rejected, SpeechPlayback, SpeechRequest,

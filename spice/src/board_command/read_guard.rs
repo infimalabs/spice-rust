@@ -73,7 +73,7 @@ fn validated_snapshot_from_with_occupant(
     })?;
     let mut residency = positioned(residency);
     let origin_threads = task_origin_threads(observed.facts().iter(), &residency.body)?;
-    let creator_lineages = task_creator_lineages(observed.facts().iter())?;
+    let creator_teams = task_creator_teams(observed.facts().iter())?;
     let (claim_contexts, git_contexts) = task_contexts(observed.facts());
     let mut tasks = Vec::with_capacity(observed.tasks().len());
     let mut entries = Vec::with_capacity(observed.tasks().len());
@@ -89,10 +89,7 @@ fn validated_snapshot_from_with_occupant(
         )?;
         let git_context = git_contexts.get(&statement.body.born).cloned();
         let handle = TaskHandle::for_project(&statement.body.project, &statement.body.born);
-        let creator_lineage = creator_lineages
-            .get(&statement.body.born)
-            .copied()
-            .flatten();
+        let creator_team = creator_teams.get(&statement.body.born).copied().flatten();
         let entry = Entry::new(
             statement.body.clone(),
             workflow.body.clone(),
@@ -106,7 +103,7 @@ fn validated_snapshot_from_with_occupant(
                 &format!("task {handle} current heads are invalid: {error}"),
             )
         })?
-        .with_creator_lineage(creator_lineage);
+        .with_creator_team(creator_team);
         let visibility = entry.project().visibility().clone();
         let origin_thread = origin_threads
             .get(&statement.body.born)
@@ -122,7 +119,7 @@ fn validated_snapshot_from_with_occupant(
             BoardTask::from_authoritative(
                 visibility,
                 origin_thread,
-                creator_lineage,
+                creator_team,
                 statement,
                 workflow,
                 claim,
@@ -214,8 +211,8 @@ impl TaskCreationCapture {
         self.context.clone()
     }
 
-    pub(super) const fn creator_lineage(&self) -> Option<wire::CanonicalUuid> {
-        self.context.creator_lineage()
+    pub(super) const fn creator_team(&self) -> Option<wire::CanonicalUuid> {
+        self.context.creator_team()
     }
 
     pub(super) fn guard(&self, write: &mut JournalWrite) {
@@ -394,7 +391,7 @@ pub(super) fn task_creation_capture(
         context: body::TaskCreationContext::Transcript {
             session: session.identity.clone(),
             boundary: (**boundary).clone(),
-            creator_lineage: Some(row.lineage_id),
+            creator_team: Some(row.team),
         },
         residency: Some(snapshot.answer.residency.position),
         source: Some((lane, source)),
@@ -522,7 +519,7 @@ fn task_origin_threads<'a>(
     Ok(origins)
 }
 
-fn task_creator_lineages<'a>(
+fn task_creator_teams<'a>(
     facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
 ) -> Result<
     std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>>,
@@ -534,12 +531,12 @@ fn task_creator_lineages<'a>(
             continue;
         };
         let creator = match envelope.actor {
-            Actor::Lane(_) => added.creation.creator_lineage(),
-            Actor::Operator | Actor::Spice if added.creation.creator_lineage().is_none() => None,
+            Actor::Lane(_) => added.creation.creator_team(),
+            Actor::Operator | Actor::Spice if added.creation.creator_team().is_none() => None,
             Actor::Operator | Actor::Spice => {
                 return Err(protocol_fault(
-                    "board::task-creator-lineage-invalid",
-                    "a non-lane task creation names a creator lineage",
+                    "board::task-creator-team-invalid",
+                    "a non-lane task creation names a creator team",
                 ));
             }
         };
@@ -1044,7 +1041,7 @@ pub(super) struct AllocationObservation {
 pub(super) fn allocation_subscription<'a>(
     residency: &'a wire::ResidencyHead,
     actor: &Actor,
-) -> Result<&'a wire::LineageSubscription, Outcome<CommandAnswer>> {
+) -> Result<&'a wire::TeamSubscription, Outcome<CommandAnswer>> {
     let occupied =
         |lane: &&wire::LaneResidency| lane.disposition == "occupied" && lane.occupant.is_some();
     let seat = match actor {
@@ -1074,16 +1071,16 @@ pub(super) fn allocation_subscription<'a>(
     let mut subscriptions = residency
         .subscriptions
         .iter()
-        .filter(|subscription| subscription.lineage_id == seat.lineage_id);
+        .filter(|subscription| subscription.team == seat.team);
     let subscription = subscriptions.next().ok_or_else(|| {
         store_fault(
-            "lineage::subscription-missing",
+            "team::subscription-missing",
             "the allocating lane lineage has no durable task-allocation lifetime",
         )
     })?;
     if subscriptions.next().is_some() {
         return Err(store_fault(
-            "lineage::subscription-ambiguous",
+            "team::subscription-ambiguous",
             "the allocating lane lineage has more than one durable task-allocation lifetime",
         ));
     }

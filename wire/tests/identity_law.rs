@@ -57,14 +57,14 @@ use wire::{
     DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, Domain, DurationWord, Envelope,
     EnvironmentRequirement, EnvironmentRequirements, Fact, FactKind, Fault, FaultClass,
     FindingHead, FindingState, FoldName, Hello, Instant, JournalReport, JournalRestore,
-    LaneResidency, LaneSession, LeaseHead, LineageSubscription, MessageHistoryCursor, MessageLocus,
-    Name, OperatorDirection, Origin, Outcome, Overflow, Packed, Phase, Producer, ProofEvidence,
+    LaneResidency, LaneSession, LeaseHead, MessageHistoryCursor, MessageLocus, Name,
+    OperatorDirection, Origin, Outcome, Overflow, Packed, Phase, Producer, ProofEvidence,
     Provenance, Refusal, ReleaseNotes, ReleaseNotesEntry, ReleasePlanObservations,
     ReleaseRegistryEvidence, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
     RestoreVerification, Seq, SeqRange, SpiceVariable, SteeringHead, StreamCursor, StreamFact,
-    StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead, TaskStamp, TrustHead, TrustState,
-    TrustView, ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead, WitnessKind,
-    WorkflowHead, body,
+    StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead, TaskStamp, TeamSubscription,
+    TrustHead, TrustState, TrustView, ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead,
+    WitnessKind, WorkflowHead, body,
 };
 
 #[path = "identity_law/laws.rs"]

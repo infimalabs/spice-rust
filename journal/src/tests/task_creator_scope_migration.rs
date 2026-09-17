@@ -56,7 +56,7 @@ fn schema_eighteen_retires_project_filters_without_reclassifying_old_tasks() {
         .expect("read migrated residency");
     assert_eq!(
         migrated.subscriptions[0].policy,
-        wire::intent::LineageLife::Drive,
+        wire::intent::TeamLife::Drive,
         "migration preserves the lifetime while removing its former project state",
     );
     journal.verify().expect("migrated authority verifies");

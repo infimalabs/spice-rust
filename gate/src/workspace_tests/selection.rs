@@ -2,9 +2,10 @@
 
 use super::*;
 
-/// Ordinary source changes must stay comfortably below the historical
-/// repository-wide selected-test inventory. Authority changes are exhaustive
-/// and deliberately exempt because their effect cannot be narrowed.
+/// Ordinary source changes stay comfortably below the historical
+/// repository-wide selected-test inventory and run each target once. A change
+/// that reaches further is an authority change, however it is spelled: its
+/// effect cannot be narrowed, so it runs under the exhaustive verifier.
 pub(super) const ROUTINE_TEST_TARGET_LIMIT: usize = 32;
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -305,7 +306,6 @@ pub(super) fn selection_plan(
             )));
         }
     }
-    enforce_routine_target_budget(&build_sources, tests.len())?;
     let report = crate::TestEvidenceGraph::select_tests(
         source,
         build_sources,
@@ -750,11 +750,12 @@ fn select_durable_source_proofs(
     select_targets(package, targets, changed, tests, edges)
 }
 
-pub(super) fn routine_selection(changed_sources: &[String]) -> bool {
-    changed_sources
-        .iter()
-        .filter(|path| test_relevant_source(path))
-        .all(|path| !selection_authority_source(path))
+pub(super) fn routine_selection(changed_sources: &[String], targets: usize) -> bool {
+    targets <= ROUTINE_TEST_TARGET_LIMIT
+        && changed_sources
+            .iter()
+            .filter(|path| test_relevant_source(path))
+            .all(|path| !selection_authority_source(path))
 }
 
 fn selection_authority_source(path: &str) -> bool {
@@ -763,18 +764,6 @@ fn selection_authority_source(path: &str) -> bool {
             Path::new(path).file_name().and_then(OsStr::to_str),
             Some("Cargo.toml") | Some("build.rs")
         )
-}
-
-fn enforce_routine_target_budget(
-    changed_sources: &[String],
-    targets: usize,
-) -> Result<(), WorkspaceTestError> {
-    if routine_selection(changed_sources) && targets > ROUTINE_TEST_TARGET_LIMIT {
-        return Err(WorkspaceTestError::new(format!(
-            "routine Rust test selection reached {targets} targets, exceeding the repository limit of {ROUTINE_TEST_TARGET_LIMIT}; add a narrower target edge or classify the changed authority",
-        )));
-    }
-    Ok(())
 }
 
 fn containing_package<'a>(

@@ -9,14 +9,12 @@ const LINEAGE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116302";
 const PREDECESSOR: &str = "018f82d4-6f59-7d06-92e3-bce913116303";
 const SUCCESSOR: &str = "018f82d4-6f59-7d06-92e3-bce913116304";
-const CURRENT_SLOT: &[u8] = br#""org_slot":"#;
-const RETIRED_SLOT: &[u8] = br#""team_slot":"#;
 const RECEIPT_KINDS: &[CommandKind] = &[
     CommandKind::BoardRead,
     CommandKind::LaneRead,
     CommandKind::LaneArrange,
-    CommandKind::LineageConfigure,
-    CommandKind::LineageArrange,
+    CommandKind::TeamConfigure,
+    CommandKind::TeamArrange,
     CommandKind::LaneRenewal,
 ];
 
@@ -39,7 +37,7 @@ fn schema_sixteen_rewrites_every_renewal_carrier_and_replays_once() {
         (SCHEMA_VERSION, SCHEMA_VERSION)
     );
     let after = carrier_snapshot(&journal.connection);
-    assert_eq!(after, before.with_current_slots());
+    assert_eq!(after, before.with_team_spelling());
     assert_current_carriers(&journal.connection);
     journal.verify().expect("migrated authority verifies");
     assert_lane_answer_replays(&journal, replay_command);
@@ -64,22 +62,25 @@ fn schema_fifteen_chains_through_rollout_and_renewal_slot_migration() {
     );
     assert_eq!(
         carrier_snapshot(&journal.connection),
-        before.with_current_slots()
+        before.with_team_spelling()
     );
     journal.verify().expect("chained migration verifies");
 }
 
 #[test]
-fn current_renewal_slots_cross_schema_sixteen_byte_for_byte() {
+fn schema_seventeen_slots_cross_schema_sixteen_without_an_alternate_rewrite() {
     let scratch = Scratch::new();
     let path = scratch
         .path()
-        .join("schema-sixteen-current-renewal-slots.sqlite3");
+        .join("schema-sixteen-seventeen-renewal-slots.sqlite3");
     let (before, _) = renewal_authority(&path, 16, false);
 
-    let journal = Journal::open(&path).expect("current renewal bytes migrate by identity only");
+    let journal = Journal::open(&path).expect("schema-seventeen slots cross by identity only");
 
-    assert_eq!(carrier_snapshot(&journal.connection), before);
+    assert_eq!(
+        carrier_snapshot(&journal.connection),
+        before.with_team_spelling()
+    );
     assert_current_carriers(&journal.connection);
     journal
         .verify()
@@ -128,17 +129,20 @@ fn ambiguous_missing_and_noncanonical_slots_refuse_and_roll_back() {
     }
 }
 
+/// A renewal-bearing authority at `schema`, its slots spelled as schema 16
+/// spelled them (`team_slot`) or, when `sixteen_slots` is false, as schema 17
+/// already spelled them (`org_slot`).
 fn renewal_authority(
     path: &Path,
     schema: u32,
-    retire_slots: bool,
+    sixteen_slots: bool,
 ) -> (CarrierSnapshot, Command<Value>) {
     let journal = authority_file_fixture(path);
     let renewals = renewal_records();
     for (index, renewal) in renewals.iter().enumerate() {
         let position = 3 + u64::try_from(index).expect("fixture index fits u64");
         let body = wire::body::LaneRenewalChanged {
-            lineage_id: uuid(LINEAGE),
+            team: uuid(LINEAGE),
             lane: uuid(LANE),
             renewal: Some(renewal.clone()),
         };
@@ -182,8 +186,9 @@ fn renewal_authority(
         )
         .expect("advance renewal fixture cursors");
     let lane_read = insert_receipts(&journal.connection, &residency, &renewals);
-    if retire_slots {
-        retire_carrier_slots(&journal.connection);
+    spell_lineage(&journal.connection);
+    if !sixteen_slots {
+        spell_slots_as_seventeen(&journal.connection);
     }
     journal
         .connection
@@ -211,26 +216,26 @@ fn renewal_records() -> Vec<LaneRenewalRecord> {
     [
         LaneRenewalState::Requested {
             predecessor: predecessor(),
-            org_slot: 0,
+            team_slot: 0,
         },
         LaneRenewalState::HandoffPending {
             predecessor: predecessor(),
-            org_slot: 1,
+            team_slot: 1,
         },
         LaneRenewalState::SuccessorStarted {
             predecessor: predecessor(),
             successor: successor(),
-            org_slot: 2,
+            team_slot: 2,
         },
         LaneRenewalState::LaunchRefused {
             predecessor: predecessor(),
-            org_slot: 3,
+            team_slot: 3,
             reason: "vendor refused launch".to_owned(),
         },
     ]
     .into_iter()
     .map(|state| LaneRenewalRecord {
-        lineage_id: uuid(LINEAGE),
+        team: uuid(LINEAGE),
         lane: uuid(LANE),
         revision: 4,
         state,
@@ -278,14 +283,14 @@ fn insert_receipts(
         json!({}),
         json!({}),
         json!({"topology_revision": 4, "lane": LANE, "before": LANE}),
-        json!({"topology_revision": 4, "lineage_id": LINEAGE}),
+        json!({"topology_revision": 4, "team": LINEAGE}),
         json!({
             "topology_revision": 4,
-            "lineages": [{"lineage_id": LINEAGE, "lanes": [LANE]}]
+            "teams": [{"team": LINEAGE, "lanes": [LANE]}]
         }),
         json!({
             "topology_revision": 4,
-            "lineage_id": LINEAGE,
+            "team": LINEAGE,
             "lane": LANE,
             "requested": true
         }),
@@ -303,7 +308,7 @@ fn insert_receipts(
         let answer = match kind {
             CommandKind::BoardRead => serde_json::to_value(&board_answer),
             CommandKind::LaneRenewal => serde_json::to_value(wire::intent::LaneRenewalAnswer {
-                lineage_id: uuid(LINEAGE),
+                team: uuid(LINEAGE),
                 lane: uuid(LANE),
                 topology_revision: 4,
                 renewal: Some(renewals[0].clone()),
@@ -370,13 +375,22 @@ struct CarrierSnapshot {
 }
 
 impl CarrierSnapshot {
-    fn with_current_slots(mut self) -> Self {
+    /// The snapshot as schema 26 spells it: a request is canonical command
+    /// JSON, so its keys sort again once the lane group is named `team`.
+    fn with_team_spelling(mut self) -> Self {
         for (_, bytes) in &mut self.facts {
-            *bytes = replace_all(bytes, RETIRED_SLOT, CURRENT_SLOT);
+            *bytes = team_spelling(bytes);
         }
-        self.residency = replace_all(&self.residency, RETIRED_SLOT, CURRENT_SLOT);
-        for (_, _, _, response) in &mut self.receipts {
-            *response = replace_all(response, RETIRED_SLOT, CURRENT_SLOT);
+        self.residency = team_spelling(&self.residency);
+        for (_, request, witnesses, response) in &mut self.receipts {
+            let command: Command<Value> =
+                wire::decode(&team_spelling(request)).expect("respelled request decodes");
+            *request = command
+                .canonical_json()
+                .expect("respelled request is canonical")
+                .into_bytes();
+            *witnesses = team_spelling(witnesses);
+            *response = team_spelling(response);
         }
         self
     }
@@ -419,52 +433,6 @@ fn rows(connection: &Connection, sql: &str) -> Vec<(i64, Vec<u8>)> {
         .expect("collect carrier rows")
 }
 
-fn retire_carrier_slots(connection: &Connection) {
-    for (seq, bytes) in rows(
-        connection,
-        "SELECT seq, envelope FROM fact_envelopes WHERE kind = 'lane::renewal'",
-    ) {
-        connection
-            .execute(
-                "UPDATE fact_envelopes SET envelope = ?1 WHERE seq = ?2",
-                params![replace_all(&bytes, CURRENT_SLOT, RETIRED_SLOT), seq],
-            )
-            .expect("retire fact slots");
-    }
-    let head: Vec<u8> = connection
-        .query_row("SELECT body FROM residency_head", [], |row| row.get(0))
-        .expect("read residency slots");
-    connection
-        .execute(
-            "UPDATE residency_head SET body = ?1",
-            [replace_all(&head, CURRENT_SLOT, RETIRED_SLOT)],
-        )
-        .expect("retire residency slots");
-    let mut statement = connection
-        .prepare(
-            "SELECT command_id, response FROM command_receipts \
-             WHERE command_kind IN ('board::read', 'lane::read', 'lane::arrange', \
-              'lineage::configure', 'lineage::arrange', 'lane::renewal')",
-        )
-        .expect("prepare renewal receipts");
-    let receipts = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Vec<u8>>(1)?))
-        })
-        .expect("read renewal receipts")
-        .collect::<Result<Vec<_>, _>>()
-        .expect("collect renewal receipts");
-    drop(statement);
-    for (command, response) in receipts {
-        connection
-            .execute(
-                "UPDATE command_receipts SET response = ?1 WHERE command_id = ?2",
-                params![replace_all(&response, CURRENT_SLOT, RETIRED_SLOT), command],
-            )
-            .expect("retire receipt slots");
-    }
-}
-
 fn assert_current_carriers(connection: &Connection) {
     for (_, bytes) in rows(
         connection,
@@ -491,7 +459,7 @@ fn assert_current_carriers(connection: &Connection) {
                 wire::decode::<Response<wire::intent::BoardAnswer>>(&bytes)
                     .expect("board response is current wire");
             }
-            "lane::read" | "lane::arrange" | "lineage::configure" | "lineage::arrange" => {
+            "lane::read" | "lane::arrange" | "team::configure" | "team::arrange" => {
                 wire::decode::<Response<wire::intent::LaneAnswer>>(&bytes)
                     .expect("lane response is current wire");
             }
@@ -604,35 +572,4 @@ fn make_receipt_answer_noncanonical(connection: &Connection) {
             ],
         )
         .expect("store noncanonical board response");
-}
-
-fn replace_all(bytes: &[u8], from: &[u8], to: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(bytes.len());
-    let mut cursor = 0;
-    while let Some(relative) = bytes[cursor..]
-        .windows(from.len())
-        .position(|window| window == from)
-    {
-        let start = cursor + relative;
-        output.extend_from_slice(&bytes[cursor..start]);
-        output.extend_from_slice(to);
-        cursor = start + from.len();
-    }
-    output.extend_from_slice(&bytes[cursor..]);
-    output
-}
-
-fn version_records(connection: &Connection) -> (u32, u32) {
-    (
-        connection
-            .query_row(
-                "SELECT version FROM journal_schema WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .expect("read journal schema row"),
-        connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .expect("read SQLite schema version"),
-    )
 }

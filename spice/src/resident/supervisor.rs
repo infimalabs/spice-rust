@@ -1141,7 +1141,7 @@ mod tests {
         };
         let row = wire::LaneResidency {
             lane,
-            lineage_id: lane,
+            team: lane,
             name: None,
             worktree: root.to_string_lossy().into_owned(),
             life: "drive".to_owned(),

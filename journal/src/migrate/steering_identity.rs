@@ -886,7 +886,7 @@ fn decode(table: &'static str, row: &str, bytes: &[u8]) -> Result<Value, OpenErr
 }
 
 fn encode_fact(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    let bytes = serde_json::to_vec(value).map_err(|error| {
+    let bytes = super::team::current(value).map_err(|error| {
         invalid(
             "fact_envelopes",
             row,
@@ -910,7 +910,7 @@ fn encode_fact(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
 }
 
 fn encode_command(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    let bytes = serde_json::to_vec(value).map_err(|error| {
+    let bytes = super::team::current(value).map_err(|error| {
         invalid(
             "command_receipts",
             row,
@@ -944,7 +944,7 @@ fn encode_command(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
 }
 
 fn encode_witnesses(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    let bytes = serde_json::to_vec(value).map_err(|error| {
+    let bytes = super::team::current(value).map_err(|error| {
         invalid(
             "command_receipts",
             row,
@@ -968,7 +968,7 @@ fn encode_witnesses(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
 }
 
 fn encode_response(row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    let bytes = serde_json::to_vec(value).map_err(|error| {
+    let bytes = super::team::current(value).map_err(|error| {
         invalid(
             "command_receipts",
             row,

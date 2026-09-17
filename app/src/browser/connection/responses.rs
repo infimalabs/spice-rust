@@ -167,7 +167,7 @@ fn apply_command_response(
                 lane_authority: applied,
             }
         }
-        PendingKind::LaneArrange | PendingKind::LineageArrange => {
+        PendingKind::LaneArrange | PendingKind::TeamArrange => {
             let (refresh, applied) =
                 apply_lane_response(session, handles, runtime, &[], true, bytes)?;
             CommandApplication {
@@ -176,10 +176,10 @@ fn apply_command_response(
             }
         }
         PendingKind::LaneRenewal {
-            lineage,
+            team,
             lane,
             requested,
-        } => apply_lane_renewal_response(session, handles, lineage, lane, requested, bytes)?,
+        } => apply_lane_renewal_response(session, handles, team, lane, requested, bytes)?,
         PendingKind::Inbox { covered } => CommandApplication::ordinary(apply_inbox_response(
             session, handles, runtime, &covered, bytes,
         )?),
@@ -191,12 +191,12 @@ fn apply_command_response(
         PendingKind::WakeSubmission { lane, submission } => CommandApplication::ordinary(
             apply_wake_submission_response(session, handles, submission, lane, bytes)?,
         ),
-        PendingKind::LineageConfigure { lineage, life } => {
-            let (refresh, applied) = apply_lineage_configuration(
+        PendingKind::TeamConfigure { team, life } => {
+            let (refresh, applied) = apply_team_configuration(
                 session,
-                &handles.lineage_controls,
+                &handles.team_controls,
                 runtime,
-                lineage,
+                team,
                 life,
                 bytes,
             )?;
@@ -275,8 +275,8 @@ fn apply_lane_response(
             }
         }
         handles
-            .lineage_controls
-            .dispatch(LineageControlAction::SyncLanes {
+            .team_controls
+            .dispatch(TeamControlAction::SyncLanes {
                 answer: reply.body.clone(),
                 settle: None,
             });
@@ -307,7 +307,7 @@ const RENEWAL_ISSUE: &str = "Could not renew this agent";
 fn apply_lane_renewal_response(
     session: &Session,
     handles: &SurfaceHandles,
-    lineage: CanonicalUuid,
+    team: CanonicalUuid,
     lane: CanonicalUuid,
     requested: bool,
     bytes: &[u8],
@@ -316,15 +316,15 @@ fn apply_lane_renewal_response(
         admit_response(session, bytes)?;
     match &admitted.get().outcome {
         wire::Outcome::Reply(reply) => {
-            if reply.body.lineage_id != lineage || reply.body.lane != lane {
+            if reply.body.team != team || reply.body.lane != lane {
                 return Err(format!(
-                    "agent renewal response named {}/{}; expected {lineage}/{lane}",
-                    reply.body.lineage_id, reply.body.lane,
+                    "agent renewal response named {}/{}; expected {team}/{lane}",
+                    reply.body.team, reply.body.lane,
                 ));
             }
             if requested != reply.body.renewal.is_some() {
                 return Err(format!(
-                    "agent renewal response for {lineage}/{lane} did not settle requested={requested}",
+                    "agent renewal response for {team}/{lane} did not settle requested={requested}",
                 ));
             }
             handles

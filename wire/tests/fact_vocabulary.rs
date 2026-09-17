@@ -91,8 +91,8 @@ const PINNED: &[(&str, &str)] = &[
     ("ConsentFloored", "consent::floored"),
     ("LaneSeated", "lane::seated"),
     ("LaneArranged", "lane::arranged"),
-    ("LineageConfigured", "lineage::configured"),
-    ("LineageArranged", "lineage::arranged"),
+    ("TeamConfigured", "team::configured"),
+    ("TeamArranged", "team::arranged"),
     ("LaneSessionDeclared", "lane::declared"),
     ("LaneStarted", "lane::started"),
     ("LaneImported", "lane::imported"),
@@ -198,7 +198,7 @@ fn plane(kind: FactKind) -> &'static str {
         | FactKind::LaneDegraded
         | FactKind::LaneHeld
         | FactKind::LaneResumed => "lane",
-        FactKind::LineageConfigured | FactKind::LineageArranged => "lineage",
+        FactKind::TeamConfigured | FactKind::TeamArranged => "team",
         FactKind::TasteConfirmed
         | FactKind::TasteCleared
         | FactKind::TasteJudged

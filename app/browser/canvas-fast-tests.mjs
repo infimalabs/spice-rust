@@ -8,7 +8,7 @@ import "./canvas-fixture.test.mjs";
 import "./canvas-lifecycle.test.mjs";
 import "./canvas-process-ownership.test.mjs";
 import "./mosaic-placement-stability.test.mjs";
-import "./organization-menu.test.mjs";
+import "./team-menu.test.mjs";
 
 test("every Canvas test has exactly one fast or slow classification", async () => {
   const directory = new URL("./", import.meta.url);

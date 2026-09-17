@@ -171,7 +171,7 @@ async function settleIntoSilence(page) {
 async function observeOneBoundary(card, lane) {
   return card.evaluate(async (element, config) => {
     const age = document.querySelector(
-      `.organization-agent[data-agent-lane="${config.lane}"] .composer-shard-age-label[data-age-slot]`,
+      `.team-agent[data-agent-lane="${config.lane}"] .composer-shard-age-label[data-age-slot]`,
     );
     if (!age) throw new Error("the agent composer renders no age slot");
     const messageAge = element.querySelector(".message-age[data-age-slot]");

@@ -21,12 +21,12 @@ const RECEIPTS: &[(CommandKind, &str, u64)] = &[
         4,
     ),
     (
-        CommandKind::LineageConfigure,
+        CommandKind::TeamConfigure,
         "018f82d4-6f59-7d06-92e3-bce913116342",
         5,
     ),
     (
-        CommandKind::LineageArrange,
+        CommandKind::TeamArrange,
         "018f82d4-6f59-7d06-92e3-bce913116343",
         6,
     ),
@@ -81,16 +81,13 @@ fn schema_five_derives_one_revision_authority_from_topology_facts() {
         1
     );
     assert_eq!(
-        request::<wire::intent::LineageConfigure>(
-            &journal.connection,
-            CommandKind::LineageConfigure,
-        )
-        .body
-        .topology_revision,
+        request::<wire::intent::TeamConfigure>(&journal.connection, CommandKind::TeamConfigure,)
+            .body
+            .topology_revision,
         2
     );
     assert_eq!(
-        request::<wire::intent::LineageArrange>(&journal.connection, CommandKind::LineageArrange,)
+        request::<wire::intent::TeamArrange>(&journal.connection, CommandKind::TeamArrange,)
             .body
             .topology_revision,
         3
@@ -106,12 +103,12 @@ fn schema_five_derives_one_revision_authority_from_topology_facts() {
         2
     );
     assert_eq!(
-        response::<wire::intent::LaneAnswer>(&journal.connection, CommandKind::LineageConfigure,)
+        response::<wire::intent::LaneAnswer>(&journal.connection, CommandKind::TeamConfigure,)
             .topology_revision,
         3
     );
     assert_eq!(
-        response::<wire::intent::LaneAnswer>(&journal.connection, CommandKind::LineageArrange)
+        response::<wire::intent::LaneAnswer>(&journal.connection, CommandKind::TeamArrange)
             .topology_revision,
         4
     );
@@ -142,7 +139,13 @@ fn exact_schema_five_revisions_cross_without_an_alternate_rewrite() {
 
     let mut journal = Journal::open(&path).expect("exact topology authority migrates");
 
-    assert_eq!(topology_carriers(&journal.connection), before);
+    assert_eq!(
+        topology_carriers(&journal.connection),
+        before
+            .iter()
+            .map(|bytes| team_spelling(bytes))
+            .collect::<Vec<_>>()
+    );
     admit_empty_steering_fold(&mut journal);
     journal.verify().expect("exact migrated authority verifies");
 }
@@ -182,7 +185,7 @@ fn schema_five_topology_authority(path: &Path, stored: StoredRevision) {
     head.epoch = uuid(EPOCH);
     head.topology_revision = 4;
     head.lanes[0].lane = uuid(LANE);
-    head.lanes[0].lineage_id = uuid(LINEAGE);
+    head.lanes[0].team = uuid(LINEAGE);
     journal
         .connection
         .execute(
@@ -201,6 +204,7 @@ fn schema_five_topology_authority(path: &Path, stored: StoredRevision) {
         StoredRevision::Mismatched => set_head_revision(&journal.connection, 99),
     }
     drop_steering_index(&journal.connection);
+    spell_lineage(&journal.connection);
     journal
         .connection
         .execute_batch(
@@ -228,7 +232,7 @@ fn insert_topology_facts(journal: &Journal) {
             FactKind::LaneSeated,
             json!({
                 "lane": LANE,
-                "lineage_id": LINEAGE,
+                "team": LINEAGE,
                 "capability": OTHER,
                 "worktree": "/worktrees/topology",
                 "life": "drive",
@@ -241,17 +245,17 @@ fn insert_topology_facts(journal: &Journal) {
             FactKind::LaneArranged,
             json!({
                 "lane": LANE,
-                "from_lineage_id": LINEAGE,
-                "lineage_id": LINEAGE,
+                "from_team": LINEAGE,
+                "team": LINEAGE,
                 "before": OTHER
             }),
         ),
         fact(
             5,
             Some(4),
-            FactKind::LineageConfigured,
+            FactKind::TeamConfigured,
             json!({
-                "lineage_id": LINEAGE,
+                "team": LINEAGE,
                 "from": "drive",
                 "life": "drain"
             }),
@@ -259,10 +263,10 @@ fn insert_topology_facts(journal: &Journal) {
         fact(
             6,
             Some(5),
-            FactKind::LineageArranged,
+            FactKind::TeamArranged,
             json!({
-                "from": [{"lineage_id": LINEAGE, "lanes": [LANE]}],
-                "lineages": [{"lineage_id": LINEAGE, "lanes": [LANE]}]
+                "from": [{"team": LINEAGE, "lanes": [LANE]}],
+                "teams": [{"team": LINEAGE, "lanes": [LANE]}]
             }),
         ),
         fact(
@@ -294,7 +298,7 @@ fn insert_lane_receipts(journal: &Journal) {
             CommandKind::LaneSeat => json!({
                 "topology_revision": revision,
                 "lane": LANE,
-                "lineage_id": LINEAGE,
+                "team": LINEAGE,
                 "worktree": "/worktrees/topology",
                 "life": "drive",
                 "vendor": "codex"
@@ -304,14 +308,14 @@ fn insert_lane_receipts(journal: &Journal) {
                 "lane": LANE,
                 "before": OTHER
             }),
-            CommandKind::LineageConfigure => json!({
+            CommandKind::TeamConfigure => json!({
                 "topology_revision": revision,
-                "lineage_id": LINEAGE,
+                "team": LINEAGE,
                 "life": "drain"
             }),
-            CommandKind::LineageArrange => json!({
+            CommandKind::TeamArrange => json!({
                 "topology_revision": revision,
-                "lineages": [{"lineage_id": LINEAGE, "lanes": [LANE]}]
+                "teams": [{"team": LINEAGE, "lanes": [LANE]}]
             }),
             CommandKind::LaneState => json!({"lane": LANE, "action": "drain"}),
             _ => unreachable!("fixture names only lane receipt kinds"),
@@ -394,7 +398,7 @@ fn lane_answer(topology_revision: u64) -> Value {
         "topology_revision": topology_revision,
         "lanes": [{
             "lane": LANE,
-            "lineage_id": LINEAGE,
+            "team": LINEAGE,
             "worktree": "/worktrees/topology",
             "life": "drive",
             "vendor": "codex",
@@ -403,7 +407,7 @@ fn lane_answer(topology_revision: u64) -> Value {
             "disposition": "vacant",
             "liveness": "vacant"
         }],
-        "subscriptions": [{"lineage_id": LINEAGE, "policy": "drive"}]
+        "subscriptions": [{"team": LINEAGE, "policy": "drive"}]
     })
 }
 
@@ -534,7 +538,8 @@ fn topology_carriers(connection: &Connection) -> Vec<Vec<u8>> {
         .prepare(
             "SELECT request, response FROM command_receipts \
              WHERE command_kind IN ('lane::arrange', 'lane::seat', 'lane::state', \
-                                    'lineage::arrange', 'lineage::configure') \
+                                    'lineage::arrange', 'lineage::configure', \
+                                    'team::arrange', 'team::configure') \
              ORDER BY command_id",
         )
         .expect("prepare topology carrier query");
@@ -548,19 +553,4 @@ fn topology_carriers(connection: &Connection) -> Vec<Vec<u8>> {
         carriers.extend([request, response]);
     }
     carriers
-}
-
-fn version_records(connection: &Connection) -> (u32, u32) {
-    (
-        connection
-            .query_row(
-                "SELECT version FROM journal_schema WHERE singleton = 1",
-                [],
-                |row| row.get(0),
-            )
-            .expect("read schema row version"),
-        connection
-            .query_row("PRAGMA user_version", [], |row| row.get(0))
-            .expect("read schema pragma version"),
-    )
 }

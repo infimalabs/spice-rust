@@ -1,8 +1,8 @@
 use super::*;
 
 #[test]
-fn plan_claim_allows_board_organization_but_classifies_repository_work_as_forbidden() {
-    let (root, bus, epoch, seats) = fixture("plan-organization-contract", 1);
+fn plan_claim_allows_board_team_but_classifies_repository_work_as_forbidden() {
+    let (root, bus, epoch, seats) = fixture("plan-team-contract", 1);
     let lane = Actor::Lane(seats[0].lane);
     let plan = add_raw_task(
         &bus,

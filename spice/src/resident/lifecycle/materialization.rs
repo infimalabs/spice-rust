@@ -18,7 +18,7 @@ pub(super) struct Projection {
     fact_instants: BTreeMap<Seq, Instant>,
     ready_at: BTreeMap<TaskStamp, Instant>,
     dependents: BTreeMap<TaskStamp, BTreeSet<TaskStamp>>,
-    creator_lineages: BTreeMap<TaskStamp, Option<CanonicalUuid>>,
+    creator_teams: BTreeMap<TaskStamp, Option<CanonicalUuid>>,
 }
 
 struct EntryUpdate {
@@ -31,7 +31,7 @@ struct AdvancePlan {
     operator_directives: Vec<CanonicalUuid>,
     fact_instants: BTreeMap<Seq, Instant>,
     entries: BTreeMap<TaskStamp, EntryUpdate>,
-    creator_lineages: BTreeMap<TaskStamp, Option<CanonicalUuid>>,
+    creator_teams: BTreeMap<TaskStamp, Option<CanonicalUuid>>,
     ready_at: BTreeMap<TaskStamp, Instant>,
 }
 
@@ -48,7 +48,7 @@ impl Projection {
             fact_instants: BTreeMap::new(),
             ready_at: BTreeMap::new(),
             dependents: BTreeMap::new(),
-            creator_lineages: BTreeMap::new(),
+            creator_teams: BTreeMap::new(),
         }
     }
 
@@ -144,8 +144,8 @@ impl Projection {
         delta: &[&wire::Envelope<wire::AnyFact>],
     ) -> CommandResult<AdvancePlan> {
         let changed = self.changed_tasks(snapshot, delta)?;
-        let creator_lineages = creator_lineage_events(delta)?;
-        let entries = self.entry_updates(snapshot, projects, &changed, &creator_lineages)?;
+        let creator_teams = creator_team_events(delta)?;
+        let entries = self.entry_updates(snapshot, projects, &changed, &creator_teams)?;
         let affected = self.affected_tasks(&changed, &entries);
         let fact_instants = delta
             .iter()
@@ -173,7 +173,7 @@ impl Projection {
             operator_directives,
             fact_instants,
             entries,
-            creator_lineages,
+            creator_teams,
             ready_at,
         })
     }
@@ -216,7 +216,7 @@ impl Projection {
         snapshot: &bus::TaskSnapshot,
         projects: &board::ProjectPolicy,
         changed: &BTreeSet<TaskStamp>,
-        creator_lineages: &BTreeMap<TaskStamp, Option<CanonicalUuid>>,
+        creator_teams: &BTreeMap<TaskStamp, Option<CanonicalUuid>>,
     ) -> CommandResult<BTreeMap<TaskStamp, EntryUpdate>> {
         let mut entries = BTreeMap::new();
         for task in changed {
@@ -231,12 +231,12 @@ impl Projection {
                         &format!("changed task {task} has no current storage heads"),
                     )
                 })?;
-            let creator_lineage = creator_lineages
+            let creator_team = creator_teams
                 .get(task)
-                .or_else(|| self.creator_lineages.get(task))
+                .or_else(|| self.creator_teams.get(task))
                 .copied()
                 .flatten();
-            let entry = entry(&heads, projects)?.with_creator_lineage(creator_lineage);
+            let entry = entry(&heads, projects)?.with_creator_team(creator_team);
             entries.insert(task.clone(), EntryUpdate { heads, entry });
         }
         Ok(entries)
@@ -278,7 +278,7 @@ impl Projection {
         for (task, update) in plan.entries {
             self.apply_entry(task, update);
         }
-        self.creator_lineages.extend(plan.creator_lineages);
+        self.creator_teams.extend(plan.creator_teams);
         self.ready_at.extend(plan.ready_at);
         self.cursor = Some(plan.cursor);
     }
@@ -444,7 +444,7 @@ fn changed_task(
     )
 }
 
-fn creator_lineage_events(
+fn creator_team_events(
     delta: &[&wire::Envelope<wire::AnyFact>],
 ) -> CommandResult<BTreeMap<TaskStamp, Option<CanonicalUuid>>> {
     let mut creators = BTreeMap::new();
@@ -453,12 +453,12 @@ fn creator_lineage_events(
             continue;
         };
         let creator = match envelope.actor {
-            Actor::Lane(_) => added.creation.creator_lineage(),
-            Actor::Operator | Actor::Spice if added.creation.creator_lineage().is_none() => None,
+            Actor::Lane(_) => added.creation.creator_team(),
+            Actor::Operator | Actor::Spice if added.creation.creator_team().is_none() => None,
             Actor::Operator | Actor::Spice => {
                 return Err(store_fault(
-                    "lifecycle::task-creator-lineage-invalid",
-                    "a non-lane task creation names a creator lineage",
+                    "lifecycle::task-creator-team-invalid",
+                    "a non-lane task creation names a creator team",
                 ));
             }
         };

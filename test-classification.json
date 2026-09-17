@@ -8,7 +8,7 @@
         "node",
         "--test",
         "app/browser/boundary-reference.test.mjs",
-        "app/browser/lineage-responsive.test.mjs",
+        "app/browser/team-responsive.test.mjs",
         "app/browser/menu-trigger-reference.test.mjs"
       ],
       "reason": "launches Chromium and Firefox for static layout reference checks"

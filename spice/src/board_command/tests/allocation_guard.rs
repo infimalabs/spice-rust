@@ -19,7 +19,7 @@ pub(super) fn guard_projects() -> ProjectPolicy {
 pub(super) fn guard_winner(answer: &BoardAnswer, actor: &Actor) -> TaskHandle {
     let entries = actor_entries(answer).expect("allocation guard board entries validate");
     let subscription = allocation_subscription(&answer.residency.body, actor)
-        .expect("allocation guard board has one lineage subscription");
+        .expect("allocation guard board has one team subscription");
     board::select(
         &entries,
         actor,
@@ -57,7 +57,7 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
         .iter()
         .map(|seat| wire::LaneResidency {
             lane: seat.lane,
-            lineage_id: seat.lane,
+            team: seat.lane,
             name: None,
             worktree: "/fixture".to_owned(),
             life: "drive".to_owned(),
@@ -73,9 +73,9 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
         .collect::<Vec<_>>();
     let subscriptions = lanes
         .iter()
-        .map(|lane| wire::LineageSubscription {
-            lineage_id: lane.lineage_id,
-            policy: wire::intent::LineageLife::Drain,
+        .map(|lane| wire::TeamSubscription {
+            team: lane.team,
+            policy: wire::intent::TeamLife::Drain,
         })
         .collect::<Vec<_>>();
     let origin = format!("resident:{epoch}")

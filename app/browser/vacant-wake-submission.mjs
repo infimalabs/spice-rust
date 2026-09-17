@@ -15,7 +15,7 @@ const WAKE_MS = 15_000;
 ///
 /// The lane is drained outside the browser so the test begins with the state an
 /// operator encounters after an agent exits. The browser then crosses its
-/// visible refresh boundary before using the discoverable organization action. Pending
+/// visible refresh boundary before using the discoverable team action. Pending
 /// directions are cleared first so lifecycle auto-wake cannot consume the
 /// vacancy under test. The durable inbox proves steering without exposing the
 /// operator-authored direction as a card, while a new agent-authored card proves
@@ -26,7 +26,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
   await chooseCanvasView(page, "Lanes");
   const console_ = page.locator('[data-pane="agent-console"]');
   await console_.getByRole("tab", { name: /^Agents/ }).click();
-  const lane = console_.locator(`.organization-agent[data-agent-lane="${targetLane}"]`);
+  const lane = console_.locator(`.team-agent[data-agent-lane="${targetLane}"]`);
   const ticker = console_.locator(`.ticker[data-agent-lane="${targetLane}"]`);
   const form = lane.locator("xpath=ancestor::form[1]");
   const textbox = lane.locator(".composer-shard--primary").getByRole("textbox");
@@ -62,7 +62,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     "drained bound lane exposes wake-and-send",
     WAKE_MS,
     (laneId) => {
-      const member = document.querySelector(`.organization-agent[data-agent-lane="${laneId}"]`);
+      const member = document.querySelector(`.team-agent[data-agent-lane="${laneId}"]`);
       return member?.dataset.wakeAndSend === "true"
         && member.querySelector("textarea")?.placeholder.includes("vacant")
         && !member.querySelector(".composer-shard-standing");
@@ -70,7 +70,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     targetLane,
     {
       observed: () => page.evaluate(() =>
-        [...document.querySelectorAll(".organization-agent")].map((member) => ({
+        [...document.querySelectorAll(".team-agent")].map((member) => ({
           lane: member.dataset.agentLane,
           wake: member.dataset.wakeAndSend,
           classes: member.className,
@@ -91,12 +91,12 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
           height: box.height,
         };
       };
-      const agent = node.querySelector(`.organization-agent[data-agent-lane="${laneId}"]`);
+      const agent = node.querySelector(`.team-agent[data-agent-lane="${laneId}"]`);
       const stack = agent.querySelector(".agent-composer-stack");
       const primary = stack.querySelector(".composer-shard--primary");
-      const controls = node.querySelector(".organization-composer-controls");
+      const controls = node.querySelector(".team-composer-controls");
       const activity = node.nextElementSibling;
-      if (!activity?.classList.contains("organization-activity-grid")) {
+      if (!activity?.classList.contains("team-activity-grid")) {
         throw new Error("the vacant composer has no adjacent activity lane");
       }
       return {
@@ -153,8 +153,8 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
 
   const assertStatusEmphasis = async (inactive, label) => {
     const presentation = await ticker.evaluate((node, laneId) => {
-      const surface = node.closest(".organization-surface");
-      const agent = surface?.querySelector(`.organization-agent[data-agent-lane="${laneId}"]`);
+      const surface = node.closest(".team-surface");
+      const agent = surface?.querySelector(`.team-agent[data-agent-lane="${laneId}"]`);
       const style = getComputedStyle(node);
       return {
         agentOpacity: agent ? getComputedStyle(agent).opacity : null,
@@ -247,7 +247,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     "Send with Steer: Operator direction and explicit task capture only",
     "the vacant action keeps the established Steer title",
   );
-  const composerActions = await form.locator(".organization-send").evaluateAll((buttons) =>
+  const composerActions = await form.locator(".team-send").evaluateAll((buttons) =>
     buttons.map((button) => ({
       text: button.textContent.trim(),
       ariaLabel: button.getAttribute("aria-label"),
@@ -373,7 +373,7 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     await chooseCanvasView(reloaded, "Lanes");
     const reloadedConsole = reloaded.locator('[data-pane="agent-console"]');
     await reloadedConsole.getByRole("tab", { name: /^Agents/ }).click();
-    await reloadedConsole.locator(`.organization-agent[data-agent-lane="${targetLane}"]`).waitFor({
+    await reloadedConsole.locator(`.team-agent[data-agent-lane="${targetLane}"]`).waitFor({
       timeout: WAKE_MS,
     });
     assert.equal(

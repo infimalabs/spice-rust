@@ -228,7 +228,7 @@ fn rename_keys(
 }
 
 fn encode_value(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
-    serde_json::to_vec(value)
+    super::team::current(value)
         .map_err(|error| invalid(table, row, &format!("renamed JSON cannot encode: {error}")))
 }
 

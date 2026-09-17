@@ -11,12 +11,12 @@ fn lane_snapshots_project_exact_member_renewal_state() {
         thread: "thread-predecessor".to_owned(),
     };
     let renewal = wire::LaneRenewalRecord {
-        lineage_id: uuid(LANE),
+        team: uuid(LANE),
         lane: uuid(LANE),
         revision: 9,
         state: wire::LaneRenewalState::Requested {
             predecessor,
-            org_slot: 0,
+            team_slot: 0,
         },
     };
     let lanes = lane_response_with_renewals(

@@ -510,7 +510,7 @@ async fn a_saturated_ordinary_class_cannot_block_an_authenticated_demand() {
     wait_for_admission(&mut observed, AdmissionObservation::Reserving(blocked_id)).await;
 
     let demand_id = identity(0xb2);
-    send_lineage_configuration(&mut demand, demand_id).await;
+    send_team_configuration(&mut demand, demand_id).await;
     wait_for_admission(&mut observed, AdmissionObservation::Queued(demand_id)).await;
 
     let prioritized = control.recv().await.expect("demand enters Control");
@@ -579,7 +579,7 @@ async fn priority_is_three_to_one_and_dark_waits_for_both_classes() {
         identity(0xc4),
     ];
     for (socket, id) in demands.iter_mut().zip(demand_ids) {
-        send_lineage_configuration(socket, id).await;
+        send_team_configuration(socket, id).await;
         wait_for_admission(&mut observed, AdmissionObservation::Queued(id)).await;
     }
 
@@ -634,20 +634,20 @@ async fn priority_is_three_to_one_and_dark_waits_for_both_classes() {
         .expect("server stops");
 }
 
-async fn send_lineage_configuration(socket: &mut ClientSocket, id: wire::CanonicalUuid) {
+async fn send_team_configuration(socket: &mut ClientSocket, id: wire::CanonicalUuid) {
     send_client(
         socket,
         &wire::Command {
             v: wire::WireVersion::CURRENT,
             id,
             epoch: epoch(),
-            kind: wire::CommandKind::LineageConfigure,
+            kind: wire::CommandKind::TeamConfigure,
             expected: Vec::new(),
-            body: wire::intent::LineageConfigure {
+            body: wire::intent::TeamConfigure {
                 topology_revision: 1,
-                lineage_id: identity(0xb3),
+                team: identity(0xb3),
                 member: None,
-                life: Some(wire::intent::LineageLife::Steer),
+                life: Some(wire::intent::TeamLife::Steer),
             },
         },
     )

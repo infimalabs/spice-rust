@@ -23,7 +23,7 @@ export async function assertActivityIdentityLabels(
     assert.equal(
       await ticker.evaluate((node) => node.scrollWidth <= node.clientWidth + 1),
       true,
-      `${expected} remains inside the lineage ticker`,
+      `${expected} remains inside the team ticker`,
     );
   }
 

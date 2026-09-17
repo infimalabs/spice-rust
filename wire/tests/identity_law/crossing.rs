@@ -653,7 +653,7 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
 
     let occupied = LaneResidency {
         lane: first_uuid,
-        lineage_id: first_uuid,
+        team: first_uuid,
         name: Some("Ava".to_owned()),
         worktree: "/worktrees/lane-a".to_owned(),
         life: "drive".to_owned(),
@@ -682,7 +682,7 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
     };
     let empty = LaneResidency {
         lane: second_uuid,
-        lineage_id: second_uuid,
+        team: second_uuid,
         name: None,
         worktree: "/worktrees/lane-b".to_owned(),
         life: "steer".to_owned(),
@@ -704,19 +704,15 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
         &[recorded_session, unrecorded_session],
     );
     law(covered, "LaneResidency", &[occupied.clone(), empty.clone()]);
-    let drive = LineageSubscription {
-        lineage_id: first_uuid,
-        policy: wire::intent::LineageLife::Drive,
+    let drive = TeamSubscription {
+        team: first_uuid,
+        policy: wire::intent::TeamLife::Drive,
     };
-    let steer = LineageSubscription {
-        lineage_id: second_uuid,
-        policy: wire::intent::LineageLife::Steer,
+    let steer = TeamSubscription {
+        team: second_uuid,
+        policy: wire::intent::TeamLife::Steer,
     };
-    law(
-        covered,
-        "LineageSubscription",
-        &[drive.clone(), steer.clone()],
-    );
+    law(covered, "TeamSubscription", &[drive.clone(), steer.clone()]);
     law(
         covered,
         "ResidencyHead",
@@ -1194,7 +1190,7 @@ fn stream_lane_seated(position: u64, cause: Option<u64>) -> StreamFact {
         cause: cause.map(seq),
         fact: Fact::new(body::LaneSeated {
             lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
-            lineage_id: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
+            team: uuid("018f82d4-6f59-7d06-92e3-bce9131163d8"),
             capability: uuid("018f82d4-6f59-7d06-92e3-bce9131163d9"),
             name: Some("Ava".to_owned()),
             worktree: "/tmp/lane".to_owned(),

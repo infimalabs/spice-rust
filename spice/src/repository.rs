@@ -310,7 +310,7 @@ impl StatePaths {
 
     /// Current RTK history database for one Rust lane identity.
     ///
-    /// The path follows the typed-root/per-lane organization used by `tape`
+    /// The path follows the typed-root/per-lane team used by `tape`
     /// and `degraded`. Unowned paths elsewhere in the runtime are irrelevant.
     #[must_use]
     pub fn rtk_history(&self, lane: CanonicalUuid) -> PathBuf {

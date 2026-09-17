@@ -15,8 +15,7 @@ use sill::WaitOutcome;
 use spice::repository::Repository;
 use wire::intent::{
     CommandAnswer, LaneAction, LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRecall, LaneSeat,
-    LaneState, LineageArrange, LineageConfigure, LineageLife, RecallAnswer, RecallEntry,
-    RecallProvenance,
+    LaneState, RecallAnswer, RecallEntry, RecallProvenance, TeamArrange, TeamConfigure, TeamLife,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Fault, FaultClass, Outcome, Producer, Refusal, Reply,
@@ -26,12 +25,12 @@ use wire::{
 mod automatic;
 mod ending;
 mod launch;
-mod lineage;
 mod propose;
 mod renewal;
 mod reply;
 mod restart_claim;
 mod session;
+mod team;
 
 use automatic::wake;
 pub(super) use automatic::{AutomaticWake, wake_automatic};
@@ -39,7 +38,6 @@ use ending::{StopEvidence, drain, ending_fact, stop_lane, stop_occupant};
 #[cfg(test)]
 pub(in crate::resident) use launch::test_support::AdvisoryRtkFixture;
 pub(super) use launch::{OccupantLaunchRequest, occupant_launch};
-pub(super) use lineage::{arrange as arrange_lineages, configure};
 #[cfg(test)]
 pub(in crate::resident) use propose::tests::seed_task_claim;
 use propose::{commit_adopted, propose_drain, propose_remove, propose_seat, propose_wake};
@@ -54,6 +52,7 @@ pub(super) use session::{
     DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, SessionProofError,
     await_session, launch_resume, record_stream, resume_session, session_fact,
 };
+pub(super) use team::{arrange as arrange_teams, configure};
 
 use super::read_materializations::CurrentReads;
 use super::shutdown::{current_residency, guard_residency};
@@ -157,20 +156,20 @@ fn compaction_recorded(bus: &Bus, expected: &wire::body::LaneCompacted) -> Comma
         .map_err(|error| store_fault("lane::compaction-journal-unreadable", &error.to_string()))
 }
 
-/// Resolve the one durable subscription row for a lineage.
+/// Resolve the one durable subscription row for a team.
 fn subscription_row(
     head: &wire::ResidencyHead,
-    lineage_id: CanonicalUuid,
-) -> CommandResult<Option<&wire::LineageSubscription>> {
+    team: CanonicalUuid,
+) -> CommandResult<Option<&wire::TeamSubscription>> {
     let mut durable = head
         .subscriptions
         .iter()
-        .filter(|subscription| subscription.lineage_id == lineage_id);
+        .filter(|subscription| subscription.team == team);
     let subscription = durable.next();
     if durable.next().is_some() {
         return Err(store_fault(
-            "lineage::subscription-ambiguous",
-            "one lineage has more than one durable task-allocation lifetime",
+            "team::subscription-ambiguous",
+            "one team has more than one durable task-allocation lifetime",
         ));
     }
     Ok(subscription)
@@ -178,9 +177,9 @@ fn subscription_row(
 
 fn subscription_policy(
     head: &wire::ResidencyHead,
-    lineage_id: CanonicalUuid,
-) -> CommandResult<Option<LineageLife>> {
-    Ok(subscription_row(head, lineage_id)?.map(|subscription| subscription.policy))
+    team: CanonicalUuid,
+) -> CommandResult<Option<TeamLife>> {
+    Ok(subscription_row(head, team)?.map(|subscription| subscription.policy))
 }
 
 pub(super) struct Runtime<'a> {
@@ -392,7 +391,7 @@ pub(super) fn seat(
 
 /// Place one existing member immediately before another existing member.
 ///
-/// The target row supplies the destination lineage. Moving the row itself keeps
+/// The target row supplies the destination team. Moving the row itself keeps
 /// its lane, occupant, session, worktree, and composer identity unchanged. The
 /// residency head's vector is the durable order read back by Canvas.
 pub(super) fn arrange(
@@ -413,8 +412,8 @@ pub(super) fn arrange(
     };
     let Arrangement {
         next,
-        from_lineage,
-        lineage,
+        from_team,
+        team,
     } = match rearrange(observed.body(), request) {
         Ok(arrangement) => arrangement,
         Err(outcome) => return outcome,
@@ -446,8 +445,8 @@ pub(super) fn arrange(
     let fact = match write.fact(
         wire::body::LaneArranged {
             lane: request.lane,
-            from_lineage_id: from_lineage,
-            lineage_id: lineage,
+            from_team,
+            team,
             before: request.before,
             sources,
         },
@@ -486,8 +485,8 @@ pub(super) fn arrange(
 /// One arrangement resolved against the observed head.
 struct Arrangement {
     next: wire::ResidencyHead,
-    from_lineage: CanonicalUuid,
-    lineage: CanonicalUuid,
+    from_team: CanonicalUuid,
+    team: CanonicalUuid,
 }
 
 /// Resolve one arrangement against the observed order, or refuse it.
@@ -526,8 +525,8 @@ fn rearrange(
             "read lane state and retry with a current target member",
         ));
     };
-    let lineage = target.lineage_id;
-    let from_lineage = observed.lanes[source_index].lineage_id;
+    let team = target.team;
+    let from_team = observed.lanes[source_index].team;
     let mut next = observed.clone();
     let mut source = next.lanes.remove(source_index);
     let Some(target_index) = next.lanes.iter().position(|row| row.lane == request.before) else {
@@ -536,16 +535,16 @@ fn rearrange(
             "the target member disappeared while arranging one residency snapshot",
         ));
     };
-    source.lineage_id = lineage;
+    source.team = team;
     next.lanes.insert(target_index, source);
-    if from_lineage != lineage && !next.lanes.iter().any(|row| row.lineage_id == from_lineage) {
+    if from_team != team && !next.lanes.iter().any(|row| row.team == from_team) {
         next.subscriptions
-            .retain(|subscription| subscription.lineage_id != from_lineage);
+            .retain(|subscription| subscription.team != from_team);
     }
     Ok(Arrangement {
         next,
-        from_lineage,
-        lineage,
+        from_team,
+        team,
     })
 }
 

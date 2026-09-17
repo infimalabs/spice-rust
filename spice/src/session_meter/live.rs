@@ -272,10 +272,10 @@ fn collect_lane(
         .body()
         .subscriptions
         .iter()
-        .filter(|subscription| subscription.lineage_id == lane.lineage_id);
+        .filter(|subscription| subscription.team == lane.team);
     let drain_queue = subscriptions
         .next()
-        .is_some_and(|subscription| subscription.policy == wire::intent::LineageLife::Drain)
+        .is_some_and(|subscription| subscription.policy == wire::intent::TeamLife::Drain)
         && subscriptions.next().is_none();
     let heads = read.active_claim_for_actor(&Actor::Lane(lane.lane))?;
     let current = heads

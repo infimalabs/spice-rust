@@ -18,7 +18,7 @@ counsel, and repository checks preserve those authority boundaries.
 flowchart TD
   S["STEERING, durable intent, semantically retired"] --> L["LIFECYCLE, one supervised agent per worktree"]
   L --> C["COUNSEL, taste offered while speaking"]
-  C --> O["COORDINATION, claims, phases, organizations, routing"]
+  C --> O["COORDINATION, claims, phases, teams, routing"]
   O --> K["CHECKS, gates that refuse"]
   K --> S
 ```
@@ -86,8 +86,8 @@ erDiagram
   MESSAGE ||--o{ DISPOSITION : "one message may answer several directives"
 ```
 
-**Invariant —** An organization of one is the degenerate case of an organization of any size,
-never a separate type. Every rule written for organizations must hold for an organization of one.
+**Invariant —** A team of one is the degenerate case of a team of any size,
+never a separate type. Every rule written for teams must hold for a team of one.
 
 ### Identity
 

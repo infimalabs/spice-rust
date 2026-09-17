@@ -240,7 +240,7 @@ impl DraftStore {
 ///
 /// Prose outlives the seat that produced it, so the author is not always seated.
 /// That case resolves to the lane the card is rendered in rather than to a
-/// member drawn out of the lineage: quoting a departed agent composes into the
+/// member drawn out of the team: quoting a departed agent composes into the
 /// lane the operator is already looking at, and no unrelated agent is handed
 /// direction it never earned. One occupant seated in two members at once is not
 /// a state the resident reports; were it ever reported the answer stays the
@@ -359,7 +359,7 @@ mod tests {
         assert_eq!(
             quote_lane(&members, &message(LANE_A, SEATED_B)),
             uuid(LANE_B),
-            "a seated author elsewhere in the lineage still receives its replies"
+            "a seated author elsewhere in the team still receives its replies"
         );
         assert_eq!(
             quote_lane(&members, &message(LANE_B, SEATED_B)),
@@ -403,7 +403,7 @@ mod tests {
             assert_eq!(
                 quote_lane(&members, &message(LANE_A, SEATED_B)),
                 uuid(LANE_A),
-                "an unrepresentable lineage still answers the card's own lane"
+                "an unrepresentable team still answers the card's own lane"
             );
         }
     }

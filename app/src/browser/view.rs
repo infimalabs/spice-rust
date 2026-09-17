@@ -3,7 +3,7 @@
 use super::*;
 
 pub(super) mod chrome;
-mod lineage_menu;
+mod team_menu;
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
@@ -42,10 +42,10 @@ pub(super) struct CanvasRender<'a> {
     pub canvas_menu_open: &'a UseStateHandle<bool>,
     pub identity: &'a UseStateHandle<Option<CanvasIdentity>>,
     pub canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,
-    pub lineage_controls: &'a UseReducerHandle<LineageControls>,
+    pub team_controls: &'a UseReducerHandle<TeamControls>,
     pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub submissions: &'a SubmissionHandle,
-    pub lineage_fleet: &'a NodeRef,
+    pub team_fleet: &'a NodeRef,
     pub unsafe_intent: bool,
     pub sender: &'a SenderHandle,
     pub agents: &'a AgentControls,
@@ -88,7 +88,7 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
                 cursor: &cursor,
                 sender: render.sender,
                 submissions: &render.submissions.status,
-                lineage_controls: render.lineage_controls,
+                team_controls: render.team_controls,
             })}
             if let Some(issue) = &**render.action_issue {
                 <p class="form-refusal" role="alert">{issue}</p>
@@ -114,13 +114,13 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                 data-active={mosaic_active.to_string()}
             >
                 <main class={classes!("mosaic-content", mosaic_active.then_some("content"))}>
-                    {watchband::render_lineage(
+                    {watchband::render_team(
                         render.surface,
                         render.sender,
                         render.composer_drafts,
                         render.submissions,
-                        render.lineage_fleet,
-                        render.lineage_controls,
+                        render.team_fleet,
+                        render.team_controls,
                         render.agents,
                     )}
                 </main>
@@ -367,11 +367,11 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
                             <th>{"Agent"}</th><th>{"Standing"}</th><th>{"Occupant"}</th>
                             <th>{"Worktree"}</th><th>{"Vendor"}</th>
                         </tr></thead>
-                        <tbody>{for lanes.lanes.iter().flat_map(|lineage| {
-                            lineage.members.iter().map(move |member| (lineage, member))
-                        }).map(|(lineage, member)| html! {
+                        <tbody>{for lanes.lanes.iter().flat_map(|team| {
+                            team.members.iter().map(move |member| (team, member))
+                        }).map(|(team, member)| html! {
                             <tr>
-                                <td class="mono">{short(&lineage.lane.to_string())}</td>
+                                <td class="mono">{short(&team.lane.to_string())}</td>
                                 <td><span class="tag active">{member.disposition.clone()}</span></td>
                                 <td class="mono">{
                                     member

@@ -20,8 +20,8 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         CommandKind::LaneSeat
         | CommandKind::LaneArrange
         | CommandKind::LaneRenewal
-        | CommandKind::LineageConfigure
-        | CommandKind::LineageArrange => Class::Demand,
+        | CommandKind::TeamConfigure
+        | CommandKind::TeamArrange => Class::Demand,
         CommandKind::BoardRead
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
@@ -271,8 +271,8 @@ mod tests {
                 CommandKind::LaneSeat,
                 CommandKind::LaneArrange,
                 CommandKind::LaneRenewal,
-                CommandKind::LineageConfigure,
-                CommandKind::LineageArrange,
+                CommandKind::TeamConfigure,
+                CommandKind::TeamArrange,
             ]
         );
     }
