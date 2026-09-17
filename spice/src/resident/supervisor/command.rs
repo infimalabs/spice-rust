@@ -89,9 +89,9 @@ impl<W: Write + Send> Driver<W> {
     pub(in crate::resident) fn observe(&self, decoded: &Decoded) {
         let dialog = decoded
             .context()
-            .and_then(|context| context.dialog.as_deref());
+            .and_then(|context| context.dialog.as_ref());
         if let Some(dialog) = dialog {
-            let _declined = self.write(&vendor::omp::dialog_declined(dialog));
+            let _declined = self.write(&vendor::omp::dialog_declined(dialog.id()));
         }
         let compacted = decoded
             .events()

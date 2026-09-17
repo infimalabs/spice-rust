@@ -6,8 +6,8 @@
 //! envelope beside its own `session` record.
 
 use listen::{
-    Decoded, Dialect, Event, EventKind, Locus, ProseRole, ToolMoment, ToolResult, TurnMoment,
-    decode, decode_record, restated,
+    Decoded, Dialect, Dialog, Event, EventKind, Locus, ProseRole, ToolMoment, ToolResult,
+    TurnMoment, decode, decode_record, restated,
 };
 
 const SESSION: &[u8] = br#"{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{"model":{"id":"claude-opus-5","contextWindow":1000000},"sessionId":"01a0a807-666f-7524-be0d-2ee476b6c15c","sessionFile":"/tmp/sessions/x.jsonl","isStreaming":false}}"#;
@@ -185,11 +185,15 @@ fn dialogs_that_wait_on_an_answer_are_named_while_notices_are_not() {
     };
     assert_eq!(
         dialog(br#"{"type":"extension_ui_request","id":"8","method":"select","title":"Which?","options":["a"]}"#),
-        Some("8".to_owned())
+        Some(Dialog::Prompt { id: "8".to_owned() })
     );
     assert_eq!(
-        dialog(br#"{"type":"extension_ui_request","id":"9","method":"confirm","title":"Sure?","message":"m"}"#),
-        Some("9".to_owned())
+        dialog(br#"{"type":"extension_ui_request","id":"9","method":"confirm","title":"Deploy","message":"Deploy to prod?"}"#),
+        Some(Dialog::Confirm {
+            id: "9".to_owned(),
+            title: "Deploy".to_owned(),
+            message: "Deploy to prod?".to_owned(),
+        })
     );
     assert_eq!(
         dialog(br#"{"type":"extension_ui_request","id":"10","method":"notify","message":"hi"}"#),

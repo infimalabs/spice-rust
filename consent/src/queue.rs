@@ -10,7 +10,7 @@ use wire::intent::{
 };
 use wire::{CanonicalUuid, FactKind, Name, Origin, Refusal, Seq, Witness};
 
-use crate::{Answer, OPERATOR, Policy};
+use crate::{Answer, OPERATOR, Outcome, Policy};
 
 /// Durable materialization of pending consent and renewal budgets.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -185,6 +185,69 @@ impl Queue {
             Some(RequestState::Pending(pending)) => Some(pending),
             Some(RequestState::Asked { .. } | RequestState::Terminal) | None => None,
         }
+    }
+
+    /// The disposition policy gives one request nobody has asked before.
+    ///
+    /// A rule that grants under a budget grants while the durable budget has
+    /// grants left and queues for renewal once it has none, so the bound is
+    /// reached by queueing rather than by granting past it. The outcome is
+    /// the fact the caller commits right behind the ask; nothing here is
+    /// recorded until that commit lands.
+    ///
+    /// # Errors
+    ///
+    /// Returns a loud refusal without deciding when consent has already seen
+    /// this request identity.
+    pub fn decide(&self, policy: &Policy, asked: &ConsentAsked) -> Result<Outcome, Refusal> {
+        if self.requests.contains_key(&asked.request) {
+            return Err(Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "consent::request-seen",
+                    Some(asked.request.to_string()),
+                    Some("a request identity consent has never seen".to_owned()),
+                    Some("a request already asked".to_owned()),
+                )
+                .with_detail("mint a fresh identity for a new request"),
+            ));
+        }
+        let decision = policy.decide(&asked.operation);
+        let rule = decision.authority().name().to_owned();
+        let lane = asked.lane;
+        let request = asked.request;
+        Ok(match (decision.answer(), decision.bound()) {
+            (Answer::Deny, _) => Outcome::Denied(ConsentDenied {
+                request,
+                lane,
+                rule,
+            }),
+            (Answer::Queue, _) => Outcome::Queued(ConsentQueued {
+                request,
+                lane,
+                rule,
+                cause: ConsentQueueCause::Policy {},
+            }),
+            (Answer::Allow, None) => Outcome::Granted(ConsentGranted {
+                request,
+                lane,
+                rule,
+                budget: None,
+            }),
+            (Answer::Allow, Some(bound)) => match self.budget(&rule, bound).remaining {
+                0 => Outcome::Queued(ConsentQueued {
+                    request,
+                    lane,
+                    rule,
+                    cause: ConsentQueueCause::BudgetExhausted { bound },
+                }),
+                remaining => Outcome::Granted(ConsentGranted {
+                    request,
+                    lane,
+                    rule,
+                    budget: Some(remaining - 1),
+                }),
+            },
+        })
     }
 
     /// Render the current queue and budgets as their wire answer.
@@ -553,11 +616,13 @@ impl Error for QueueError {}
 #[cfg(test)]
 mod tests {
     use journal::FactSnapshot;
-    use wire::body::{ConsentAsked, ConsentGranted, ConsentQueueCause, ConsentQueued};
+    use wire::body::{
+        ConsentAsked, ConsentDenied, ConsentGranted, ConsentQueueCause, ConsentQueued,
+    };
     use wire::{Actor, AnyFact, Envelope, Fact, Instant, Origin, Seq, WireVersion};
 
     use super::Queue;
-    use crate::{Answer, Policy};
+    use crate::{Answer, Outcome, Policy, Rule};
 
     #[test]
     fn every_queue_and_terminal_fact_is_caused_by_its_current_request_fact() {
@@ -678,6 +743,97 @@ mod tests {
             .advance([&granted])
             .expect("one committed suffix advances");
         assert_eq!(incremental, restarted);
+    }
+
+    #[test]
+    fn a_fresh_request_is_decided_by_policy_against_the_durable_budgets() {
+        let policy = Policy::new(
+            Answer::Queue,
+            vec![
+                Rule::new("reads", "read*", Answer::Allow, Some(1)).expect("valid rule"),
+                Rule::new("never", "rm*", Answer::Deny, None).expect("valid rule"),
+            ],
+        )
+        .expect("valid table");
+        let lane = uuid(2);
+        let ask = |last: u8, operation: &str| ConsentAsked {
+            request: uuid(last),
+            lane,
+            operation: operation.to_owned(),
+        };
+        let queue = Queue::from_facts(std::iter::empty(), &policy).expect("empty queue");
+
+        assert_eq!(
+            queue.decide(&policy, &ask(1, "deploy")),
+            Ok(Outcome::Queued(ConsentQueued {
+                request: uuid(1),
+                lane,
+                rule: "posture".to_owned(),
+                cause: ConsentQueueCause::Policy {},
+            })),
+            "an unmatched operation waits on the operator under the posture"
+        );
+        assert_eq!(
+            queue.decide(&policy, &ask(3, "rm -rf")),
+            Ok(Outcome::Denied(ConsentDenied {
+                request: uuid(3),
+                lane,
+                rule: "never".to_owned(),
+            }))
+        );
+        let first = queue.decide(&policy, &ask(4, "read one"));
+        assert_eq!(
+            first,
+            Ok(Outcome::Granted(ConsentGranted {
+                request: uuid(4),
+                lane,
+                rule: "reads".to_owned(),
+                budget: Some(0),
+            })),
+            "the bounded rule grants its last budgeted request"
+        );
+
+        // Nothing is spent until the grant is durable; once it is, the
+        // exhausted rule queues for renewal instead of granting past it.
+        assert!(matches!(
+            queue.decide(&policy, &ask(5, "read two")),
+            Ok(Outcome::Granted(ConsentGranted {
+                budget: Some(0),
+                ..
+            }))
+        ));
+        let asked = envelope(1, None, "lane:one", Fact::new(ask(4, "read one")));
+        let granted = envelope(
+            2,
+            Some(1),
+            "lane:one",
+            Fact::new(ConsentGranted {
+                request: uuid(4),
+                lane,
+                rule: "reads".to_owned(),
+                budget: Some(0),
+            }),
+        );
+        let mut queue = queue;
+        queue
+            .advance([&asked, &granted])
+            .expect("the grant replays");
+        assert_eq!(
+            queue.decide(&policy, &ask(5, "read two")),
+            Ok(Outcome::Queued(ConsentQueued {
+                request: uuid(5),
+                lane,
+                rule: "reads".to_owned(),
+                cause: ConsentQueueCause::BudgetExhausted { bound: 1 },
+            }))
+        );
+        assert_eq!(
+            queue
+                .decide(&policy, &ask(4, "read one"))
+                .expect_err("a seen identity is refused")
+                .reason(),
+            "consent::request-seen"
+        );
     }
 
     fn envelope<B: wire::Body + serde::Serialize>(

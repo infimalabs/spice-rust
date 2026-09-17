@@ -24,7 +24,9 @@ pub use event::{
     Compaction, Event, EventKind, Failure, Prose, ProseRole, Reasoning, ReasoningContent,
     SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage,
 };
-pub use residue::{Decoded, LocusLengthError, RecordContext, Residue, ResidueKind, TurnMoment};
+pub use residue::{
+    Decoded, Dialog, LocusLengthError, RecordContext, Residue, ResidueKind, TurnMoment,
+};
 pub use stream::{
     Checkpoint, Position, Record, RecordPayload, Scan, ScanError, SourcedEvent, SourcedResidue,
     Span, TailBudget, TailBudgetError, TailScan, TailWork, scan, scan_before, scan_tail,

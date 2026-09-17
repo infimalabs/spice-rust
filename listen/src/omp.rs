@@ -10,9 +10,9 @@ use serde_json::Value;
 use tape::Locus;
 
 use crate::{
-    Compaction, Event, Events, Failure, Object, Prose, ProseRole, Reasoning, ReasoningContent,
-    ResidueKind, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, TurnMoment, Usage,
-    array,
+    Compaction, Dialog, Event, Events, Failure, Object, Prose, ProseRole, Reasoning,
+    ReasoningContent, ResidueKind, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult,
+    TurnMoment, Usage, array,
     media::{self, OwnedContent},
     object, optional_boolean, optional_string, optional_unsigned, required, string,
 };
@@ -106,12 +106,21 @@ pub(crate) fn session_turn(message: Option<&Object>) -> Option<TurnMoment> {
 /// The dialog one RPC frame opens that waits on an answer: a select, confirm,
 /// input, or editor request. Notices, status, widgets, titles, and URL
 /// openings expect no reply.
-pub(crate) fn dialog(record: &Object) -> Option<String> {
+pub(crate) fn dialog(record: &Object) -> Option<Dialog> {
     let field = |key: &str| record.get(key).and_then(Value::as_str);
-    (field("type")? == "extension_ui_request"
-        && matches!(field("method")?, "select" | "confirm" | "input" | "editor"))
-    .then(|| field("id").map(str::to_owned))
-    .flatten()
+    if field("type")? != "extension_ui_request" {
+        return None;
+    }
+    let id = field("id")?.to_owned();
+    match field("method")? {
+        "confirm" => Some(Dialog::Confirm {
+            id,
+            title: field("title").unwrap_or_default().to_owned(),
+            message: field("message").unwrap_or_default().to_owned(),
+        }),
+        "select" | "input" | "editor" => Some(Dialog::Prompt { id }),
+        _ => None,
+    }
 }
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {

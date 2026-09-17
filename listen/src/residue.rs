@@ -27,9 +27,38 @@ pub struct RecordContext {
     pub turn: Option<TurnMoment>,
     /// Model context window advertised on this record, when present.
     pub model_context_window: Option<u64>,
-    /// Identity of the vendor dialog this record opened that waits on an
-    /// answer, when it opened one.
-    pub dialog: Option<String>,
+    /// The vendor dialog this record opened that waits on an answer, when it
+    /// opened one.
+    pub dialog: Option<Dialog>,
+}
+
+/// A vendor dialog that holds the turn until it is answered.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Dialog {
+    /// A yes-or-no question, which a consent ruling answers.
+    Confirm {
+        /// Identity the answer cites.
+        id: String,
+        /// What the agent is asking permission for.
+        title: String,
+        /// The question in full.
+        message: String,
+    },
+    /// A choice, text, or editor session nobody away from the lane can compose.
+    Prompt {
+        /// Identity the answer cites.
+        id: String,
+    },
+}
+
+impl Dialog {
+    /// Identity the answer cites.
+    #[must_use]
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Confirm { id, .. } | Self::Prompt { id } => id,
+        }
+    }
 }
 
 /// Result of decoding one complete record.
