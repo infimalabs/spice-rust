@@ -198,10 +198,9 @@ pub(super) fn task_done(
             );
         }
     };
-    match replay_task_completion(bus, command, done, entry, operation) {
-        Ok(Some(replayed)) => return replayed,
-        Ok(None) => {}
-        Err(outcome) => return outcome,
+    if let Some(replayed) = replay_task_completion(&snapshot.facts, command, done, entry, operation)
+    {
+        return replayed;
     }
     if is_oops(entry) {
         return refusal(
@@ -276,47 +275,43 @@ fn done_entry<'a>(
         })
 }
 
+/// The committed reply for a completion this actor already landed.
+///
+/// The snapshot indexes every landed terminal by task and operation, so a
+/// retry finds its committed position without walking the history.
 fn replay_task_completion(
-    bus: &Bus,
+    facts: &bus::TaskFacts,
     command: &wire::AdmittedCommand,
     done: &TaskDone,
     entry: &Entry,
     operation: wire::CanonicalUuid,
-) -> Result<Option<Outcome<CommandAnswer>>, Outcome<CommandAnswer>> {
-    let snapshot = bus
-        .task_snapshot()
-        .map_err(|error| store_fault("task::completion-replay-unavailable", &error.to_string()))?;
-    let facts = snapshot.facts();
-    let terminal = facts.iter().rev().find_map(|envelope| {
-        let completed = envelope.fact.read::<body::TaskDone>()?;
-        let terminal = completed.terminal?;
-        (envelope.actor == *command.actor()
-            && completed.task == *entry.born()
-            && completed.validation == done.validation
-            && terminal.operation == operation)
-            .then_some((envelope.seq, terminal))
-    });
-    Ok(terminal.map(|(first, terminal)| {
-        let last = facts
-            .after(Some(first))
-            .next()
-            .and_then(|following| {
-                let phased = following.fact.read::<body::TaskPhased>()?;
-                (following.cause == Some(first) && phased.task == *entry.born())
-                    .then_some(following.seq)
-            })
-            .unwrap_or(first);
-        Outcome::Reply(Reply {
-            position: ReplyPosition::Committed(SeqRange { first, last }),
-            body: CommandAnswer::Task(wire::intent::TaskAnswer {
-                task: entry.handle().clone(),
-                status: terminal.status,
-                guidance: terminal.guidance,
-                completion: None,
-                learning: None,
-                next: terminal.next,
-            }),
+) -> Option<Outcome<CommandAnswer>> {
+    let first = facts.completion_terminal(entry.born(), operation)?;
+    let envelope = facts.at(first)?;
+    let completed = envelope.fact.read::<body::TaskDone>()?;
+    let terminal = completed.terminal?;
+    if envelope.actor != *command.actor() || completed.validation != done.validation {
+        return None;
+    }
+    let last = facts
+        .after(Some(first))
+        .next()
+        .and_then(|following| {
+            let phased = following.fact.read::<body::TaskPhased>()?;
+            (following.cause == Some(first) && phased.task == *entry.born())
+                .then_some(following.seq)
         })
+        .unwrap_or(first);
+    Some(Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(SeqRange { first, last }),
+        body: CommandAnswer::Task(wire::intent::TaskAnswer {
+            task: entry.handle().clone(),
+            status: terminal.status,
+            guidance: terminal.guidance,
+            completion: None,
+            learning: None,
+            next: terminal.next,
+        }),
     }))
 }
 

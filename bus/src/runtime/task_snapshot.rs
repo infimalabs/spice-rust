@@ -15,7 +15,37 @@ pub struct TaskFacts {
     tail: Option<Arc<TaskFactChunk>>,
     len: usize,
     horizon: Option<journal::crossing::Seq>,
-    trust_surfaces: Arc<BTreeMap<String, journal::crossing::Digest>>,
+    indexes: Arc<Indexes>,
+}
+
+/// Answers derived from the whole history, advanced once per commit so no
+/// later read walks the history for them.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct Indexes {
+    trust_surfaces: BTreeMap<String, journal::crossing::Digest>,
+    terminals: BTreeMap<
+        journal::crossing::TaskStamp,
+        BTreeMap<journal::crossing::CanonicalUuid, journal::crossing::Seq>,
+    >,
+}
+
+impl Indexes {
+    fn advanced(&self, rows: &[journal::crossing::Envelope<journal::crossing::AnyFact>]) -> Self {
+        let mut next = self.clone();
+        for row in rows {
+            if let Some(pended) = row.fact.read::<journal::crossing::body::TrustPended>() {
+                next.trust_surfaces.insert(pended.surface, pended.digest);
+            } else if let Some(done) = row.fact.read::<journal::crossing::body::TaskDone>()
+                && let Some(terminal) = done.terminal
+            {
+                next.terminals
+                    .entry(done.task)
+                    .or_default()
+                    .insert(terminal.operation, row.seq);
+            }
+        }
+        next
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -44,7 +74,7 @@ impl TaskFacts {
             )));
         }
         let added = rows.len();
-        let trust_surfaces = advance_trust_surfaces(&self.trust_surfaces, &rows);
+        let indexes = Arc::new(self.indexes.advanced(&rows));
         Ok(Self {
             tail: if rows.is_empty() {
                 self.tail.clone()
@@ -56,7 +86,7 @@ impl TaskFacts {
             },
             len: self.len.saturating_add(added),
             horizon: Some(horizon),
-            trust_surfaces,
+            indexes,
         })
     }
 
@@ -149,21 +179,18 @@ impl TaskFacts {
     /// Latest trust digest pended for one named executable surface.
     #[must_use]
     pub fn latest_trust_digest(&self, surface: &str) -> Option<&journal::crossing::Digest> {
-        self.trust_surfaces.get(surface)
+        self.indexes.trust_surfaces.get(surface)
     }
-}
 
-fn advance_trust_surfaces(
-    current: &Arc<BTreeMap<String, journal::crossing::Digest>>,
-    rows: &[journal::crossing::Envelope<journal::crossing::AnyFact>],
-) -> Arc<BTreeMap<String, journal::crossing::Digest>> {
-    let mut surfaces = current.as_ref().clone();
-    for row in rows {
-        if let Some(pended) = row.fact.read::<journal::crossing::body::TrustPended>() {
-            surfaces.insert(pended.surface, pended.digest);
-        }
+    /// Position of the completion that landed one task operation's terminal.
+    #[must_use]
+    pub fn completion_terminal(
+        &self,
+        task: &journal::crossing::TaskStamp,
+        operation: journal::crossing::CanonicalUuid,
+    ) -> Option<journal::crossing::Seq> {
+        self.indexes.terminals.get(task)?.get(&operation).copied()
     }
-    Arc::new(surfaces)
 }
 
 impl Drop for TaskFacts {
