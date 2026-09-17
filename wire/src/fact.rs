@@ -403,10 +403,9 @@ struct UncheckedFact {
 pub(crate) fn decode_registered_body<F: Body>(
     body: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<F, serde_json::Error> {
-    let supplied = serde_json::Value::Object(body.clone());
-    let decoded: F = serde_json::from_value(supplied.clone())?;
+    let decoded: F = read_registered_body(body)?;
     let registered = serde_json::to_value(&decoded)?;
-    if supplied == registered {
+    if registered.as_object() == Some(body) {
         Ok(decoded)
     } else {
         Err(<serde_json::Error as DeError>::custom(
@@ -415,11 +414,11 @@ pub(crate) fn decode_registered_body<F: Body>(
     }
 }
 
-/// Read a body already validated by [`decode_registered_body`] back through
-/// its registered DTO, borrowing the fields as they stand.
+/// Read a body through its registered DTO, borrowing the fields as they stand.
 ///
-/// Construction proved these exact fields round-trip through `F`, so this
-/// repeats only the decode: no field is cloned and nothing is re-serialized.
+/// Nothing is cloned and nothing is re-serialized: construction follows this
+/// with one re-serialization to prove the fields round-trip exactly, and every
+/// later read of a validated body is only this decode.
 pub(crate) fn read_registered_body<F: Body>(
     body: &serde_json::Map<String, serde_json::Value>,
 ) -> Result<F, serde_json::Error> {
