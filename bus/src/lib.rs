@@ -27,7 +27,7 @@ mod runtime {
     type DirectionHeads = Vec<JournalHead<journal::crossing::SteeringHead>>;
 
     mod task_snapshot;
-    pub use task_snapshot::TaskFacts;
+    pub use task_snapshot::{TaskFacts, context_opening};
     use task_snapshot::{TaskSnapshotState, advance_task_snapshot, invalidate_task_snapshot};
 
     /// One successful journal transaction, constructable only by the bus
@@ -1244,5 +1244,5 @@ pub use runtime::{
     BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasHeads,
     CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction,
     MAX_STEERING_PRESENTATION_KEYS, SteeringPresentation, SteeringSnapshot, TaskFacts,
-    TaskSnapshot,
+    TaskSnapshot, context_opening,
 };

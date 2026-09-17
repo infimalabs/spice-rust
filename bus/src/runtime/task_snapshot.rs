@@ -1,6 +1,6 @@
 //! Incremental immutable task snapshots owned by the sole journal writer.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::*;
@@ -27,6 +27,17 @@ struct Indexes {
         journal::crossing::TaskStamp,
         BTreeMap<journal::crossing::CanonicalUuid, journal::crossing::Seq>,
     >,
+    claims: HashMap<
+        journal::crossing::Actor,
+        (journal::crossing::Seq, Option<journal::crossing::ClaimCell>),
+    >,
+    context_anchors: BTreeMap<
+        (
+            journal::crossing::CanonicalUuid,
+            journal::crossing::CanonicalUuid,
+        ),
+        journal::crossing::Seq,
+    >,
 }
 
 impl Indexes {
@@ -35,16 +46,40 @@ impl Indexes {
         for row in rows {
             if let Some(pended) = row.fact.read::<journal::crossing::body::TrustPended>() {
                 next.trust_surfaces.insert(pended.surface, pended.digest);
-            } else if let Some(done) = row.fact.read::<journal::crossing::body::TaskDone>()
-                && let Some(terminal) = done.terminal
-            {
-                next.terminals
-                    .entry(done.task)
-                    .or_default()
-                    .insert(terminal.operation, row.seq);
+            } else if let Some(done) = row.fact.read::<journal::crossing::body::TaskDone>() {
+                if let Some(terminal) = done.terminal {
+                    next.terminals
+                        .entry(done.task)
+                        .or_default()
+                        .insert(terminal.operation, row.seq);
+                }
+            } else if let Some(won) = row.fact.read::<journal::crossing::body::ClaimWon>() {
+                next.claims.insert(won.actor, (row.seq, won.cell));
+            } else if let Some(opened) = context_opening(&row.fact) {
+                next.context_anchors.insert(opened, row.seq);
             }
         }
         next
+    }
+}
+
+/// The lane and occupant whose context one fact opens: its start, a renewal,
+/// or a compaction.
+#[must_use]
+pub fn context_opening(
+    fact: &journal::crossing::AnyFact,
+) -> Option<(
+    journal::crossing::CanonicalUuid,
+    journal::crossing::CanonicalUuid,
+)> {
+    use journal::crossing::body::{LaneCompacted, LaneRenewed, LaneStarted};
+    if let Some(body) = fact.read::<LaneCompacted>() {
+        Some((body.lane, body.occupant))
+    } else if let Some(body) = fact.read::<LaneRenewed>() {
+        Some((body.lane, body.occupant))
+    } else {
+        fact.read::<LaneStarted>()
+            .map(|body| (body.lane, body.occupant))
     }
 }
 
@@ -190,6 +225,25 @@ impl TaskFacts {
         operation: journal::crossing::CanonicalUuid,
     ) -> Option<journal::crossing::Seq> {
         self.indexes.terminals.get(task)?.get(&operation).copied()
+    }
+
+    /// The newest claim one actor won: its position and claim-time cell.
+    #[must_use]
+    pub fn latest_claim(
+        &self,
+        actor: &journal::crossing::Actor,
+    ) -> Option<(journal::crossing::Seq, Option<journal::crossing::ClaimCell>)> {
+        self.indexes.claims.get(actor).cloned()
+    }
+
+    /// The newest fact opening a context for one lane occupant.
+    #[must_use]
+    pub fn context_anchor(
+        &self,
+        lane: journal::crossing::CanonicalUuid,
+        occupant: journal::crossing::CanonicalUuid,
+    ) -> Option<journal::crossing::Seq> {
+        self.indexes.context_anchors.get(&(lane, occupant)).copied()
     }
 }
 

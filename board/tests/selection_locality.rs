@@ -1,8 +1,7 @@
 use board::Entry;
-use journal::{FactCause, Journal, JournalWrite};
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, LeaseHead, Origin, Phase, Producer,
-    Seq, TaskHead, TaskStamp, WorkflowHead, body,
+    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, Instant, LeaseHead, Origin, Phase, Seq,
+    TaskHead, TaskStamp, WorkflowHead,
 };
 
 fn stamp(text: &str) -> TaskStamp {
@@ -286,48 +285,42 @@ fn locality_is_neutral_outside_the_narrow_urgency_band() {
 }
 
 #[test]
-fn affinity_history_keeps_only_the_most_recent_claimed_cell() {
-    let mut journal = Journal::in_memory().expect("claim history journal");
-    let mut write = JournalWrite::new(
-        Actor::Spice,
-        "task:BOARD-history".parse().expect("history origin"),
-        instant("2026-08-01T06:00:00.000Z"),
-        Producer::CommandDoor,
-    );
-    for (task, project, current) in [
-        ("BOARD-h1", "board.first", "todo"),
-        ("BOARD-h2", "board.second", "review"),
-        ("BOARD-h3", "board.third", "todo"),
-    ] {
-        write
-            .fact(
-                body::ClaimWon {
-                    task: stamp(task),
-                    actor: Actor::Spice,
-                    lane: uuid("019fbbde-5105-75a3-a76a-722afde1e408"),
-                    occupant: uuid("019fbbde-5105-75a3-a76a-722afde1e409"),
-                    epoch: uuid("019fbbde-5105-75a3-a76a-722afde1e410"),
-                    cell: Some(wire::ClaimCell {
-                        project: project.to_owned(),
-                        phase: phase(current),
-                    }),
-                    until: instant("2026-08-01T06:10:00.000Z"),
-                    git: None,
-                    recovery: None,
-                    source: body::SourceBoundary::Proven { heads: Vec::new() },
-                },
-                FactCause::Root,
-            )
-            .expect("claim history fact");
-    }
-    journal.apply(write).expect("claim history commits");
-    let facts = journal.fact_snapshot().expect("claim history reads");
-
+fn affinity_history_reads_the_indexed_newest_win_and_migrates_one_legacy_cell() {
+    let third = wire::ClaimCell {
+        project: "board.third".to_owned(),
+        phase: phase("todo"),
+    };
+    assert_eq!(board::recent_claim_cell(&[], None, &Actor::Spice), None);
     assert_eq!(
-        board::recent_claim_cell(&[], facts.facts().iter(), &Actor::Spice),
+        board::recent_claim_cell(&[], Some((seq(3), Some(third.clone()))), &Actor::Spice),
+        Some(third),
+    );
+
+    // A legacy win without a claim-time cell borrows the migrated head's
+    // cell only while the head still names that same win.
+    let peer = peer_entry(
+        "BOARD-legacy",
+        Actor::Spice,
+        "board.beta",
+        "board.beta",
+        "todo",
+    );
+    let legacy = [peer];
+    assert_eq!(
+        board::recent_claim_cell(&legacy, Some((seq(2), None)), &Actor::Spice),
         Some(wire::ClaimCell {
-            project: "board.third".to_owned(),
+            project: "board.beta".to_owned(),
             phase: phase("todo"),
         }),
+    );
+    assert_eq!(
+        board::recent_claim_cell(&legacy, Some((seq(1), None)), &Actor::Spice),
+        None,
+        "a superseded legacy win has no invented locality"
+    );
+    assert_eq!(
+        board::recent_claim_cell(&legacy, Some((seq(2), None)), &Actor::Operator),
+        None,
+        "another actor's head never supplies the cell"
     );
 }

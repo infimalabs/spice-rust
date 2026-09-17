@@ -147,22 +147,19 @@ fn movement_cost(recent: &ClaimCell, candidate: &Entry) -> u8 {
 
 /// Principal's most recently claimed cell from durable claim history.
 ///
-/// The facts arrive in journal order, so the newest win is the first one met
-/// from the end; no older win is decoded. Schema-4 facts carry the exact
-/// claim-time cell. For the one legacy latest win whose fact predates that
-/// field, the migrated current claim head supplies its cell when it still
-/// names the same win. Older superseded legacy wins have no invented locality
-/// and therefore remain neutral.
+/// `latest_win` is the position and claim-time cell of the newest claim the
+/// principal won, which the snapshot indexes so no history is decoded here.
+/// Schema-4 facts carry the exact claim-time cell. For the one legacy latest
+/// win whose fact predates that field, the migrated current claim head
+/// supplies its cell when it still names the same win. Older superseded
+/// legacy wins have no invented locality and therefore remain neutral.
 #[must_use]
-pub fn recent_claim_cell<'a>(
+pub fn recent_claim_cell(
     entries: &[Entry],
-    facts: impl DoubleEndedIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+    latest_win: Option<(wire::Seq, Option<ClaimCell>)>,
     actor: &Actor,
 ) -> Option<ClaimCell> {
-    let (claimed, cell) = facts.rev().find_map(|envelope| {
-        let won = envelope.fact.read::<wire::body::ClaimWon>()?;
-        (&won.actor == actor).then_some((envelope.seq, won.cell))
-    })?;
+    let (claimed, cell) = latest_win?;
     cell.or_else(|| {
         entries.iter().find_map(|entry| {
             entry.claim().and_then(|claim| {

@@ -62,12 +62,12 @@ pub mod crossing {
     pub use wire::body;
     pub use wire::intent;
     pub use wire::{
-        Actor, AnyFact, CanonicalUuid, ClaimHead, Command, CommandKind, Digest, Envelope,
-        Environment, EnvironmentRequirement, EnvironmentRequirements, Fact, FactKind, FindingHead,
-        Instant, JournalCursor, LaneResidency, LaneSession, LeaseHead, Origin, Packed, Phase,
-        Producer, ResidencyHead, ResidentState, Seq, SteeringHead, TapeLocus, TaskHandle, TaskHead,
-        TaskStamp, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState, WireVersion,
-        Witness, WitnessHead, WorkflowHead,
+        Actor, AnyFact, CanonicalUuid, ClaimCell, ClaimHead, Command, CommandKind, Digest,
+        Envelope, Environment, EnvironmentRequirement, EnvironmentRequirements, Fact, FactKind,
+        FindingHead, Instant, JournalCursor, LaneResidency, LaneSession, LeaseHead, Origin, Packed,
+        Phase, Producer, ResidencyHead, ResidentState, Seq, SteeringHead, TapeLocus, TaskHandle,
+        TaskHead, TaskStamp, TranscriptSourceHead, TranscriptStreamKey, TrustHead, TrustState,
+        WireVersion, Witness, WitnessHead, WorkflowHead,
     };
 }
 

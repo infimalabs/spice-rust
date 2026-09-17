@@ -697,11 +697,7 @@ pub(super) fn inbox(
         }
         let compaction = match lane.occupant {
             Some(occupant) => {
-                match super::taste_surface::context_anchor_from(
-                    snapshot.facts.iter().rev(),
-                    lane.lane,
-                    occupant,
-                ) {
+                match super::taste_surface::context_anchor(&snapshot.facts, lane.lane, occupant) {
                     Ok(anchor) => Some(anchor.get()),
                     Err(error) => {
                         return typed_store_fault("steer::compaction-anchor-missing", &error);

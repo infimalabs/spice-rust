@@ -131,7 +131,11 @@ fn validated_snapshot_from_with_occupant(
             .with_context(claim_context, git_context),
         );
     }
-    let recent_cell = board::recent_claim_cell(&entries, observed.facts().iter(), &principal);
+    let recent_cell = board::recent_claim_cell(
+        &entries,
+        observed.facts().latest_claim(&principal),
+        &principal,
+    );
     let review_history = board::graph::review_history(observed.facts().iter(), &entries)
         .map_err(|error| error.to_string());
     for lane in &mut residency.body.lanes {

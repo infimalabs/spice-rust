@@ -1186,7 +1186,7 @@ impl Context {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
     ) -> Result<Self, String> {
-        let anchor = context_anchor_from(facts.iter().rev(), lane, occupant)?;
+        let anchor = context_anchor(facts, lane, occupant)?;
         Self::since(anchor, lane, occupant, facts.after(Some(anchor)))
     }
 
@@ -1223,7 +1223,7 @@ impl Context {
                 if body.compaction == anchor.get() {
                     context.warned.insert(body.taste);
                 }
-            } else if opens_context(envelope, lane, occupant) {
+            } else if bus::context_opening(&envelope.fact) == Some((lane, occupant)) {
                 return Err(format!(
                     "lane {lane} occupant {occupant} opened a newer context at {}",
                     envelope.seq
@@ -1277,40 +1277,15 @@ fn guarded_context(
         .map_err(|_| GuardError::refused("taste::epoch-moved"))
 }
 
-/// The newest fact opening a context for the occupant, searched in the order
-/// given: callers hand the history newest-first.
-pub(super) fn context_anchor_from<'a>(
-    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+/// The newest fact opening a context for the occupant.
+pub(super) fn context_anchor(
+    facts: &bus::TaskFacts,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> Result<Seq, String> {
-    facts
-        .into_iter()
-        .find(|envelope| opens_context(envelope, lane, occupant))
-        .map(|envelope| envelope.seq)
-        .ok_or_else(|| {
-            format!("lane {lane} occupant {occupant} has no start, renewal, or compaction fact")
-        })
-}
-
-/// Whether one fact opens a context for the occupant: its start, a renewal,
-/// or a compaction.
-fn opens_context(
-    envelope: &wire::Envelope<wire::AnyFact>,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-) -> bool {
-    let fact = &envelope.fact;
-    let opened = if let Some(body) = fact.read::<wire::body::LaneCompacted>() {
-        (body.lane, body.occupant)
-    } else if let Some(body) = fact.read::<wire::body::LaneRenewed>() {
-        (body.lane, body.occupant)
-    } else if let Some(body) = fact.read::<wire::body::LaneStarted>() {
-        (body.lane, body.occupant)
-    } else {
-        return false;
-    };
-    opened == (lane, occupant)
+    facts.context_anchor(lane, occupant).ok_or_else(|| {
+        format!("lane {lane} occupant {occupant} has no start, renewal, or compaction fact")
+    })
 }
 
 /// Origin of the fact opening one context epoch.

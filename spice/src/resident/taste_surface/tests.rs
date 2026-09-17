@@ -440,13 +440,10 @@ fn a_carried_claim_retains_the_occupants_taste_epoch_across_resident_replacement
     let carried = snapshot.facts().last().expect("claim carry is present");
     assert_eq!(carried.fact.kind(), wire::FactKind::ClaimCarried);
     assert_ne!(carried.seq, predecessor_anchor);
+    let facts = fixture.bus.task_snapshot().expect("task snapshot reads");
     assert_eq!(
-        context_anchor_from(
-            snapshot.facts().iter().rev(),
-            fixture.lane,
-            fixture.occupant
-        )
-        .expect("continued occupant retains its context anchor"),
+        context_anchor(facts.facts(), fixture.lane, fixture.occupant)
+            .expect("continued occupant retains its context anchor"),
         predecessor_anchor,
     );
 

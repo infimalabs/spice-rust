@@ -4,9 +4,9 @@ use std::thread::{self, ThreadId};
 
 use bus::{Bus, CommitOutcome};
 use journal::crossing::{
-    Actor, CanonicalUuid, Command, CommandKind, Digest, EnvironmentRequirements, Origin, Phase,
-    Producer, Seq, TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness, WorkflowHead,
-    body, intent,
+    Actor, CanonicalUuid, ClaimCell, Command, CommandKind, Digest, EnvironmentRequirements, Origin,
+    Phase, Producer, Seq, TaskHandle, TaskHead, TrustHead, TrustState, WireVersion, Witness,
+    WorkflowHead, body, intent,
 };
 use journal::{FactCause, GuardError, Journal, JournalGuard, JournalWrite};
 
@@ -662,6 +662,143 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
         )
         .expect("canonical command result");
     write
+}
+
+#[test]
+fn task_snapshot_indexes_the_newest_claim_per_actor_and_each_occupants_context_anchor() {
+    let bus = Bus::start(Journal::in_memory().expect("in-memory authority"))
+        .expect("dedicated writer starts");
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163d1");
+    let first = uuid("018f82d4-6f59-7d06-92e3-bce9131163d2");
+    let successor = uuid("018f82d4-6f59-7d06-92e3-bce9131163d3");
+
+    let mut write = recognition_write();
+    write
+        .fact(
+            body::LaneStarted {
+                lane,
+                occupant: first,
+                epoch: uuid(COMMAND_ONE),
+                group: 7,
+            },
+            FactCause::Root,
+        )
+        .expect("lane start fact");
+    write
+        .fact(
+            body::LaneRenewed {
+                lane,
+                occupant: successor,
+                ancestor: first,
+                epoch: uuid(COMMAND_ONE),
+                group: 8,
+            },
+            FactCause::Root,
+        )
+        .expect("lane renewal fact");
+    let landed = committed(bus.commit(write).expect("writer answers"));
+    assert_eq!((landed.first(), landed.last()), (1, 2));
+
+    let mut write = bare_write();
+    claim_won(&mut write, "bus.first", Some(phase("todo")), lane, first);
+    claim_won(&mut write, "bus.second", None, lane, first);
+    claim_won(
+        &mut write,
+        "bus.third",
+        Some(phase("review")),
+        lane,
+        successor,
+    );
+    let landed = committed(bus.commit(write).expect("writer answers"));
+    assert_eq!((landed.first(), landed.last()), (3, 5));
+
+    let snapshot = bus.task_snapshot().expect("task snapshot reads");
+    let facts = snapshot.facts();
+    assert_eq!(
+        facts.latest_claim(&Actor::Operator),
+        Some((
+            Seq::new(5).expect("position"),
+            Some(ClaimCell {
+                project: "bus.third".to_owned(),
+                phase: phase("review"),
+            })
+        )),
+        "the newest win wins, whatever cells the older ones carried"
+    );
+    assert_eq!(facts.latest_claim(&Actor::Spice), None);
+    assert_eq!(facts.context_anchor(lane, first), Seq::new(1));
+    assert_eq!(facts.context_anchor(lane, successor), Seq::new(2));
+    assert_eq!(facts.context_anchor(first, lane), None);
+
+    let mut write = recognition_write();
+    write
+        .fact(
+            body::LaneCompacted {
+                lane,
+                occupant: successor,
+                stream: "session".to_owned(),
+                member: 1,
+                offset: 0,
+                length: 1,
+            },
+            FactCause::Root,
+        )
+        .expect("lane compaction fact");
+    let landed = committed(bus.commit(write).expect("writer answers"));
+    assert_eq!((landed.first(), landed.last()), (6, 6));
+    let mut write = bare_write();
+    claim_won(&mut write, "bus.fourth", None, lane, successor);
+    let landed = committed(bus.commit(write).expect("writer answers"));
+    assert_eq!((landed.first(), landed.last()), (7, 7));
+
+    let snapshot = bus.task_snapshot().expect("task snapshot advances");
+    let facts = snapshot.facts();
+    assert_eq!(facts.context_anchor(lane, first), Seq::new(1));
+    assert_eq!(facts.context_anchor(lane, successor), Seq::new(6));
+    assert_eq!(
+        facts.latest_claim(&Actor::Operator),
+        Some((Seq::new(7).expect("position"), None)),
+        "a legacy win without a cell still supersedes the cell before it"
+    );
+    bus.shutdown().expect("writer shuts down");
+}
+
+fn recognition_write() -> JournalWrite {
+    JournalWrite::new(
+        Actor::Operator,
+        "task:BUS-a1".parse().expect("origin"),
+        instant("2030-04-12T18:44:09.271Z"),
+        Producer::ResidentRecognition,
+    )
+}
+
+fn claim_won(
+    write: &mut JournalWrite,
+    project: &str,
+    cell: Option<Phase>,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) {
+    write
+        .fact(
+            body::ClaimWon {
+                task: stamp(),
+                actor: Actor::Operator,
+                lane,
+                occupant,
+                epoch: uuid(COMMAND_ONE),
+                cell: cell.map(|phase| ClaimCell {
+                    project: project.to_owned(),
+                    phase,
+                }),
+                until: instant("2030-04-12T18:54:10.271Z"),
+                git: None,
+                recovery: None,
+                source: body::SourceBoundary::Proven { heads: Vec::new() },
+            },
+            FactCause::Root,
+        )
+        .expect("claim win fact");
 }
 
 fn note_write(

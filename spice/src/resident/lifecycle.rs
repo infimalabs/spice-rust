@@ -784,7 +784,8 @@ fn selected_ready(
     subscription: &wire::LineageSubscription,
     allocation: &board::NextConfig,
 ) -> CommandResult<Option<SelectedReady>> {
-    let recent_cell = board::recent_claim_cell(entries, snapshot.facts().iter(), actor);
+    let recent_cell =
+        board::recent_claim_cell(entries, snapshot.facts().latest_claim(actor), actor);
     let environment = snapshot.environment();
     let Some(selected) = board::select(
         entries,
