@@ -126,10 +126,10 @@ impl Authority {
                 return Self::Unavailable(format!("journal authority could not open: {error}"));
             }
         };
-        if let Err(error) = reader.verify() {
-            return Self::Unavailable(format!("journal authority verification failed: {error}"));
-        }
         match reader.read_with(|read| -> Result<AuthoritySnapshot, String> {
+            let (_, facts) = read
+                .verified_fact_snapshot()
+                .map_err(|error| format!("journal authority verification failed: {error}"))?;
             let _ = read
                 .cursor()
                 .map_err(|error| format!("journal cursor is invalid: {error}"))?;
@@ -137,9 +137,7 @@ impl Authority {
                 .task_head_page(None, journal::FactReadBudget::RETAINED)
                 .map_err(|error| format!("journal task heads are invalid: {error}"))?;
             Ok(AuthoritySnapshot {
-                facts: read
-                    .fact_snapshot()
-                    .map_err(|error| format!("journal facts are invalid: {error}"))?,
+                facts,
                 task_heads: tasks.rows,
                 task_continuation: tasks.continuation,
                 residency: read

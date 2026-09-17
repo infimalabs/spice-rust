@@ -213,6 +213,13 @@ impl<'a> JournalRead<'a> {
         crate::replay::verify_connection(self.connection)
     }
 
+    /// Verify every authority plane and keep the canonical stream it decoded.
+    pub fn verified_fact_snapshot(
+        &self,
+    ) -> Result<(crate::Verification, crate::FactSnapshot), crate::VerifyError> {
+        crate::replay::verify_connection_after_facts(self.connection, || {})
+    }
+
     /// Resolve one causal thread inside this exact immutable snapshot.
     pub fn thread(&self, reference: &str) -> Result<crate::ThreadSnapshot, crate::ThreadError> {
         crate::replay::thread_connection(self.connection, reference)

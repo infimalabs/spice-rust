@@ -56,8 +56,13 @@ impl FactSnapshot {
             }
             expected = expected.saturating_add(1);
         }
+        Ok(Self::from_verified(facts))
+    }
+
+    /// Adopt a stream verification already proved contiguous and current.
+    pub(crate) fn from_verified(facts: Vec<wire::Envelope<wire::AnyFact>>) -> Self {
         let horizon = facts.last().map(|fact| fact.seq);
-        Ok(Self { facts, horizon })
+        Self { facts, horizon }
     }
 
     /// Facts in ascending journal order.

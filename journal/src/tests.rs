@@ -209,7 +209,7 @@ fn reader_verification_keeps_every_plane_on_the_snapshot_before_a_concurrent_com
     let reader_changes = reader.connection.total_changes();
     let mut committed = false;
 
-    let verified =
+    let (verified, snapshot) =
         crate::replay::verify_reader_connection_with_concurrent_commit(&reader.connection, || {
             let mut write = crate::JournalWrite::new(
                 Actor::Operator,
@@ -237,6 +237,7 @@ fn reader_verification_keeps_every_plane_on_the_snapshot_before_a_concurrent_com
         "the fixture never crossed the verification planes"
     );
     assert_eq!((verified.facts, verified.threads), (2, 2));
+    assert_eq!(snapshot.horizon(), Some(seq(2)));
     assert_eq!(reader.connection.total_changes(), reader_changes);
 
     let current = reader

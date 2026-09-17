@@ -805,11 +805,8 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
 fn validate_seeded_journal(state: &spice::repository::StatePaths) -> DemoResult<()> {
     let reader = journal::JournalReader::open(state.journal())
         .map_err(|error| environment_fault("demo::journal-unavailable", error.to_string()))?;
-    reader
-        .verify()
-        .map_err(|error| environment_fault("demo::journal-invalid", error.to_string()))?;
-    let snapshot = reader
-        .fact_snapshot()
+    let (_, snapshot) = reader
+        .read_with(|read| read.verified_fact_snapshot())
         .map_err(|error| environment_fault("demo::journal-invalid", error.to_string()))?;
     let task = snapshot.facts().iter().any(|envelope| {
         envelope.fact.kind() == wire::FactKind::TaskAdded

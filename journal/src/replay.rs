@@ -267,7 +267,7 @@ impl Journal {
 impl JournalReader {
     /// Verifies a finalized authority inside one immutable read-only snapshot.
     pub fn verify(&self) -> Result<Verification, VerifyError> {
-        verify_reader_connection(&self.connection)
+        verify_reader_connection_with(&self.connection, verify_connection)
     }
 
     /// Resolves one sequence or exact origin into a verified cause thread.
@@ -375,13 +375,17 @@ fn sqlite_integer(value: u64) -> Result<i64, ReindexError> {
 }
 
 pub(crate) fn verify_connection(connection: &Connection) -> Result<Verification, VerifyError> {
-    verify_connection_after_facts(connection, || {})
+    verify_connection_after_facts(connection, || {}).map(|(verification, _)| verification)
 }
 
-fn verify_connection_after_facts(
+/// Verify every plane and keep the canonical stream the fact plane decoded.
+///
+/// A diagnostic that verifies and then reads the stream would otherwise decode
+/// the complete history twice.
+pub(crate) fn verify_connection_after_facts(
     connection: &Connection,
     after_facts: impl FnOnce(),
-) -> Result<Verification, VerifyError> {
+) -> Result<(Verification, crate::FactSnapshot), VerifyError> {
     crate::migrate::finalized_version(connection).map_err(VerifyError::Open)?;
     let mut violations = Vec::new();
     verify_sqlite(connection, &mut violations)?;
@@ -393,26 +397,26 @@ fn verify_connection_after_facts(
     let receipts = verify_receipts(connection, &mut violations)?;
     verify_cursor(connection, &facts, &mut violations)?;
 
-    if violations.is_empty() {
-        Ok(Verification {
-            facts: facts.len(),
-            receipts,
-            heads,
-            threads,
-        })
-    } else {
-        Err(VerifyError::Violations(violations))
+    if !violations.is_empty() {
+        return Err(VerifyError::Violations(violations));
     }
+    let verification = Verification {
+        facts: facts.len(),
+        receipts,
+        heads,
+        threads,
+    };
+    let facts = facts
+        .into_values()
+        .filter_map(|record| record.envelope)
+        .collect();
+    Ok((verification, crate::FactSnapshot::from_verified(facts)))
 }
 
-fn verify_reader_connection(connection: &Connection) -> Result<Verification, VerifyError> {
-    verify_reader_connection_with(connection, verify_connection)
-}
-
-fn verify_reader_connection_with(
+fn verify_reader_connection_with<T>(
     connection: &Connection,
-    verify: impl FnOnce(&Connection) -> Result<Verification, VerifyError>,
-) -> Result<Verification, VerifyError> {
+    verify: impl FnOnce(&Connection) -> Result<T, VerifyError>,
+) -> Result<T, VerifyError> {
     let transaction = connection
         .unchecked_transaction()
         .map_err(VerifyError::Sqlite)?;
@@ -425,7 +429,7 @@ fn verify_reader_connection_with(
 pub(crate) fn verify_reader_connection_with_concurrent_commit(
     connection: &Connection,
     commit: impl FnOnce(),
-) -> Result<Verification, VerifyError> {
+) -> Result<(Verification, crate::FactSnapshot), VerifyError> {
     verify_reader_connection_with(connection, |snapshot| {
         verify_connection_after_facts(snapshot, commit)
     })
