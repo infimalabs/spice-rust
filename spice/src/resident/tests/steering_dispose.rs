@@ -165,7 +165,7 @@ impl Direction {
             kind: CommandKind::SteerSend,
             expected: vec![Witness::Residency {
                 lane,
-                occupant,
+                occupant: Some(occupant),
                 epoch,
             }],
             body: serde_json::to_value(&send).expect("steer request encodes"),

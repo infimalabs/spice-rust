@@ -418,7 +418,7 @@ fn witnesses(
         },
         Witness::Residency {
             lane,
-            occupant: request.occupant,
+            occupant: Some(request.occupant),
             epoch: request.epoch,
         },
     ];
@@ -543,7 +543,7 @@ mod tests {
             },
             Witness::Residency {
                 lane: uuid(20),
-                occupant: uuid(21),
+                occupant: Some(uuid(21)),
                 epoch: uuid(22),
             },
         ];

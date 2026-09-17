@@ -34,7 +34,7 @@ fn direct_steer_send_refuses_invalid_media_before_journal_mutation() {
         kind: CommandKind::SteerSend,
         expected: vec![Witness::Residency {
             lane,
-            occupant,
+            occupant: Some(occupant),
             epoch,
         }],
         body: serde_json::to_value(&request).expect("steer request encodes"),
@@ -100,7 +100,7 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
         kind: CommandKind::SteerSend,
         expected: vec![Witness::Residency {
             lane,
-            occupant,
+            occupant: Some(occupant),
             epoch,
         }],
         body: serde_json::to_value(&send).expect("steer request encodes"),

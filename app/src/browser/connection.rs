@@ -791,7 +791,7 @@ async fn send_steer(
     };
     let expected = vec![Witness::Residency {
         lane,
-        occupant,
+        occupant: Some(occupant),
         epoch,
     }];
     send_typed_as(
@@ -851,7 +851,7 @@ async fn drain_submissions(
         };
         let expected = vec![Witness::Residency {
             lane: submission.lane,
-            occupant,
+            occupant: Some(occupant),
             epoch,
         }];
         send_typed_as(

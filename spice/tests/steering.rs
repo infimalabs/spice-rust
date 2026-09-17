@@ -496,7 +496,7 @@ fn send_operator_direction(
             kind: wire::CommandKind::SteerSend,
             expected: vec![wire::Witness::Residency {
                 lane,
-                occupant,
+                occupant: Some(occupant),
                 epoch: discovery.epoch,
             }],
             body: wire::intent::SteerSend {

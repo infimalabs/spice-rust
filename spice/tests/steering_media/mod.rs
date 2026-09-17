@@ -102,7 +102,7 @@ fn send_media(
             kind: wire::CommandKind::SteerSend,
             expected: vec![wire::Witness::Residency {
                 lane: lanes.target,
-                occupant: current_occupant(fixture, lanes.target),
+                occupant: Some(current_occupant(fixture, lanes.target)),
                 epoch: discovery.epoch,
             }],
             body: wire::intent::SteerSend {

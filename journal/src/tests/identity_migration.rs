@@ -467,7 +467,7 @@ fn review_witnesses(task: TaskStamp) -> Vec<Witness> {
         },
         Witness::Residency {
             lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
-            occupant: uuid("018f82d4-6f59-7d06-92e3-bce913116303"),
+            occupant: Some(uuid("018f82d4-6f59-7d06-92e3-bce913116303")),
             epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
         },
         Witness::Assignment {

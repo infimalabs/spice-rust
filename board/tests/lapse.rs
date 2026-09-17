@@ -114,7 +114,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
         },
         Witness::Residency {
             lane: uuid(20),
-            occupant: uuid(21),
+            occupant: Some(uuid(21)),
             epoch: uuid(22),
         },
     ];
@@ -194,7 +194,7 @@ fn possession(journal: &Journal) -> (ClaimHead, LeaseHead, Vec<Witness>) {
         },
         Witness::Residency {
             lane: uuid(20),
-            occupant: uuid(21),
+            occupant: Some(uuid(21)),
             epoch: uuid(22),
         },
     ];
@@ -626,7 +626,7 @@ fn lapsing_a_review_claim_assigned_elsewhere_leaves_the_workflow_head_alone() {
         },
         Witness::Residency {
             lane: uuid(20),
-            occupant: uuid(21),
+            occupant: Some(uuid(21)),
             epoch: uuid(22),
         },
     ];
@@ -1151,7 +1151,7 @@ fn a_task_command_that_appends_no_fact_is_refused_instead_of_receipted() {
                     Witness::Lease { task: born(), head },
                     Witness::Residency {
                         lane: uuid(20),
-                        occupant: uuid(21),
+                        occupant: Some(uuid(21)),
                         epoch: uuid(22),
                     },
                 ],

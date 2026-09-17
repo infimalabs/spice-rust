@@ -22,20 +22,13 @@ pub(crate) fn execute_steering(
                     "seat the lane before sending it direction",
                 );
             };
-            let Some(occupant) = row.occupant else {
-                return steering_refusal(
-                    "steer::lane-vacant",
-                    Some(lane.to_string()),
-                    "start an occupant in the lane before sending it direction",
-                );
-            };
             let mapped = MappedCommand::new(
                 contract,
                 &["steer"],
                 CommandKind::SteerSend,
                 vec![Witness::Residency {
                     lane,
-                    occupant,
+                    occupant: row.occupant,
                     epoch: inbox.epoch,
                 }],
                 &wire::intent::SteerSend {

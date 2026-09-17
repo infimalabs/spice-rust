@@ -436,12 +436,19 @@ pub enum Witness {
         /// Lease head the command relies on.
         head: Seq,
     },
-    /// Lane occupancy under a resident generation.
+    /// Lane occupancy under a resident generation: who sits in the lane, or
+    /// that nobody does.
     Residency {
         /// Bound lane.
         lane: CanonicalUuid,
-        /// Live occupant of the lane.
-        occupant: CanonicalUuid,
+        /// Live occupant of the lane; absent for a lane nobody sits in, whose
+        /// direction waits for its next occupant.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        occupant: Option<CanonicalUuid>,
         /// Resident epoch the command relies on.
         epoch: CanonicalUuid,
     },

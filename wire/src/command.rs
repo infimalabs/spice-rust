@@ -392,8 +392,8 @@ impl Law {
         optional: &[],
         authority: Authority::Connected,
     };
-    /// A new directive names the lane it lands on; there is no prior
-    /// disposition to re-prove.
+    /// A new directive names the lane it lands on as it found it, occupied
+    /// or vacant; there is no prior disposition to re-prove.
     pub const SEND: Self = Self {
         required: &[WitnessKind::Residency],
         optional: &[],

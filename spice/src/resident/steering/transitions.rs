@@ -33,17 +33,9 @@ pub(in crate::resident) fn send(
             "seat the lane before sending it direction",
         );
     };
-    let Some(occupant) = lane.occupant else {
-        return refusal(
-            "steer::lane-vacant",
-            Some("occupied".to_owned()),
-            Some("vacant".to_owned()),
-            "start an occupant in the lane before sending it direction",
-        );
-    };
     let witness = Witness::Residency {
         lane: send.lane,
-        occupant,
+        occupant: lane.occupant,
         epoch,
     };
     if command.expected() != [witness.clone()] {

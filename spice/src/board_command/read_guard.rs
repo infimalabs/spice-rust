@@ -697,7 +697,7 @@ pub(super) fn task_repository(
     let Some((lane, occupant)) = command.expected().iter().find_map(|witness| match witness {
         Witness::Residency {
             lane,
-            occupant,
+            occupant: Some(occupant),
             epoch,
         } if *epoch == command.epoch() => Some((*lane, *occupant)),
         _ => None,

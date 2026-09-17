@@ -903,7 +903,7 @@ pub(super) fn residency_witness(
 ) -> Witness {
     Witness::Residency {
         lane,
-        occupant,
+        occupant: Some(occupant),
         epoch: board.residency.body.epoch,
     }
 }

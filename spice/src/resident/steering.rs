@@ -1174,7 +1174,7 @@ fn send_guard(
                 .body()
                 .lanes
                 .iter()
-                .any(|row| row.lane == lane && row.occupant == Some(occupant));
+                .any(|row| row.lane == lane && row.occupant == occupant);
         if !matches {
             return Err(GuardError::refused("steer::residency-moved"));
         }

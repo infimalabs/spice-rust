@@ -36,13 +36,16 @@ mod startup;
 mod startup_window;
 #[path = "tests/steering_dispose.rs"]
 mod steering_dispose;
+#[path = "tests/steering_vacant.rs"]
+mod steering_vacant;
 #[path = "tests/supervisor_notices.rs"]
 mod supervisor_notices;
 #[path = "tests/sweep_publish.rs"]
 mod sweep_publish;
 
 use canvas_announcement::{
-    process_spec, resident_fixture, seed_lane, seed_lane_in_team, seed_lane_in_worktree, test_uuid,
+    process_spec, resident_fixture, seed_lane, seed_lane_in_team, seed_lane_in_worktree,
+    seed_vacant_lane_in_worktree, test_uuid,
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);

@@ -1291,7 +1291,7 @@ fn capture_lapsed_task(
             },
             Witness::Residency {
                 lane: fixture.authority.lane,
-                occupant,
+                occupant: Some(occupant),
                 epoch,
             },
         ],

@@ -388,7 +388,7 @@ fn claim_residency(
         .find_map(|witness| match witness {
             Witness::Residency {
                 lane,
-                occupant,
+                occupant: Some(occupant),
                 epoch,
             } if *epoch == command.epoch() => Some((*lane, *occupant)),
             _ => None,
@@ -504,7 +504,7 @@ fn recovery_git_boundary(
     let residency = command.expected().iter().find_map(|witness| match witness {
         Witness::Residency {
             lane,
-            occupant,
+            occupant: Some(occupant),
             epoch,
         } => Some((*lane, *occupant, *epoch)),
         _ => None,

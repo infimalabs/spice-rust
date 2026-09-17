@@ -64,7 +64,7 @@ pub(super) fn seed_lane_in_team(
         .expect("fixture worktree canonicalizes")
         .to_string_lossy()
         .into_owned();
-    seed_lane_in_team_at(bus, epoch, lane, team, occupant, &worktree);
+    seed_lane_in_team_at(bus, epoch, lane, team, Some(occupant), &worktree);
 }
 
 pub(super) fn seed_lane_in_worktree(
@@ -74,7 +74,17 @@ pub(super) fn seed_lane_in_worktree(
     occupant: CanonicalUuid,
     worktree: &str,
 ) {
-    seed_lane_in_team_at(bus, epoch, lane, lane, occupant, worktree);
+    seed_lane_in_team_at(bus, epoch, lane, lane, Some(occupant), worktree);
+}
+
+/// Seat one lane nobody sits in yet.
+pub(super) fn seed_vacant_lane_in_worktree(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    worktree: &str,
+) {
+    seed_lane_in_team_at(bus, epoch, lane, lane, None, worktree);
 }
 
 fn seed_lane_in_team_at(
@@ -82,7 +92,7 @@ fn seed_lane_in_team_at(
     epoch: CanonicalUuid,
     lane: CanonicalUuid,
     team: CanonicalUuid,
-    occupant: CanonicalUuid,
+    occupant: Option<CanonicalUuid>,
     worktree: &str,
 ) {
     let current = current_residency(bus, epoch).expect("current residency");
@@ -100,11 +110,16 @@ fn seed_lane_in_team_at(
         vendor: "claude".parse().expect("fixture vendor"),
         model: None,
         effort: None,
-        occupant: Some(occupant),
-        lineage: vec![occupant],
+        occupant,
+        lineage: occupant.into_iter().collect(),
         capabilities: vec![test_uuid(9)],
         session: None,
-        disposition: "occupied".to_owned(),
+        disposition: if occupant.is_some() {
+            "occupied"
+        } else {
+            "vacant"
+        }
+        .to_owned(),
     });
     if !head
         .subscriptions
@@ -137,18 +152,21 @@ fn seed_lane_in_team_at(
             FactCause::Existing(current.position()),
         )
         .expect("lane seats");
-    let started = write
-        .fact(
-            wire::body::LaneStarted {
-                lane,
-                occupant,
-                epoch,
-                group: 123,
-            },
-            FactCause::Pending(seated),
-        )
-        .expect("occupant starts");
-    write.residency_head(started, move |_| head);
+    let last = match occupant {
+        Some(occupant) => write
+            .fact(
+                wire::body::LaneStarted {
+                    lane,
+                    occupant,
+                    epoch,
+                    group: 123,
+                },
+                FactCause::Pending(seated),
+            )
+            .expect("occupant starts"),
+        None => seated,
+    };
+    write.residency_head(last, move |_| head);
     commit(bus, write).expect("fixture lane commits");
 }
 

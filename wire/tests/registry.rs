@@ -394,7 +394,7 @@ fn sample_witnesses() -> Vec<Witness> {
         },
         Witness::Residency {
             lane,
-            occupant: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+            occupant: Some(uuid("018f82d4-6f59-7d06-92e3-bce9131163c5")),
             epoch: uuid("018f82d4-6f59-7d06-92e3-bce9131163c3"),
         },
         Witness::Absence { task: task.clone() },

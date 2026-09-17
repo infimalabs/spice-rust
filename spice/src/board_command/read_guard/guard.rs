@@ -139,7 +139,7 @@ fn board_witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool
     Ok(match witness {
         Witness::Residency {
             lane,
-            occupant,
+            occupant: Some(occupant),
             epoch,
         } => read.residency_head()?.is_some_and(|observed| {
             observed.body().epoch == *epoch
@@ -149,6 +149,8 @@ fn board_witness_holds(read: &JournalRead<'_>, witness: &Witness) -> Result<bool
                         && seat.disposition == "occupied"
                 })
         }),
+        // Board work is somebody's: a lane nobody sits in holds no claim.
+        Witness::Residency { occupant: None, .. } => false,
         Witness::Eligibility { rule } => {
             matches!(rule.as_str(), "next" | "capture" | "steal" | "recover")
         }
