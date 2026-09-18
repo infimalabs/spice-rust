@@ -9,11 +9,13 @@ import {
   assertQuotedComposerParity,
 } from "./composer-parity.mjs";
 
-/// Production resolves one destination per primary shard, in one order
-/// (`primary_stream_link` in app/src/browser/watchband.rs): the last rendered
-/// prose card owned by that exact lane, then the team's last prose card,
-/// and only for a team with no message card the named stream default. Every
-/// branch is read back off the live DOM because a hand-written anchor id is
+/// Production resolves one destination per primary shard along one path
+/// (`primary_composer_header` in app/src/browser/watchband.rs): the last
+/// rendered prose card owned by that exact lane, else the named stream
+/// default. A lane with no prose of its own never borrows a peer's card,
+/// however recent, so a vacant member that has never run reads as empty
+/// rather than wearing the most recent active agent's status. Every branch
+/// is read back off the live DOM because a hand-written anchor id is
 /// precisely what went stale when that resolver landed.
 export async function primaryDestination(console, lane) {
   const member = console.locator(`.team-agent[data-agent-lane="${lane}"]`);
@@ -27,21 +29,21 @@ export async function primaryDestination(console, lane) {
         + '[data-card-kind="agent-message"]',
     )
     .evaluateAll((cards) => cards.map((card) => card.id));
-  const teamMessages = await surface.locator(
-    '.team-activity-grid .mosaic-message-card[data-card-kind="agent-message"]',
-  ).evaluateAll((cards) => cards.map((card) => card.id));
   if (rendered.length === 0) {
-    if (teamMessages.length === 0) {
-      const stream = await surface.locator(".team-activity-grid").getAttribute("id");
-      assert.equal(href, `#${stream}`);
-      assert.equal(label, "Jump to team activity");
-      assert.equal((await link.innerText()).trim(), "—", "only an empty stream renders a dash");
-      return { link, href, rendered, teamMessages };
-    }
-    assert.equal(href, `#${teamMessages.at(-1)}`);
-    assert.equal(label, "Jump to latest team message");
-    assert.notEqual((await link.innerText()).trim(), "—");
-    return { link, href, rendered, teamMessages };
+    const stream = await surface.locator(".team-activity-grid").getAttribute("id");
+    assert.equal(href, `#${stream}`, `${lane} without prose of its own links to the team stream`);
+    assert.equal(label, "Jump to team activity");
+    assert.equal(
+      (await link.innerText()).trim(),
+      "—",
+      `${lane} without prose of its own renders a dash, never a peer's age`,
+    );
+    assert.equal(
+      (await member.locator(".composer-shard-prose").innerText()).trim(),
+      "No agent prose yet",
+      `${lane} without prose of its own says so, never a peer's sentence`,
+    );
+    return { link, href, rendered };
   }
   assert.equal(
     href,
@@ -54,22 +56,36 @@ export async function primaryDestination(console, lane) {
     `${lane} announces its own latest prose message, not the team default`,
   );
   assert.notEqual((await link.innerText()).trim(), "—");
-  return { link, href, rendered, teamMessages };
+  return { link, href, rendered };
+}
+
+async function composerHeader(console, lane) {
+  const composer = console.locator(`.team-agent[data-agent-lane="${lane}"]`);
+  const link = composer.locator(".composer-shard--primary .composer-shard-age");
+  return {
+    href: await link.getAttribute("href"),
+    label: (await link.innerText()).trim(),
+    displays: await link
+      .locator("[data-age-authored]")
+      .evaluateAll((ages) => ages.map((age) => age.dataset.ageAuthored)),
+    prose: (await composer.locator(".composer-shard-prose").innerText()).trim(),
+  };
 }
 
 /// A valid wire message may carry only a synthetic ordering instant. Replace
 /// the current message snapshot with exactly that case so one composer selects
-/// it as its own source and another must select it through team fallback.
-/// Both headers and the card must expose one finite display chronology without
-/// rewriting the frame as vendor-authored or Spice-observed.
+/// it as its own source while a peer, left with no prose of its own, returns
+/// to the stream default instead of borrowing the card. The own header and the
+/// card must expose one finite display chronology without rewriting the frame
+/// as vendor-authored or Spice-observed, and the peer header must expose none.
 export async function assertSyntheticComposerObservation(
   page,
   console,
   activityReplay,
   ownLane,
-  fallbackLane,
+  peerLane,
 ) {
-  assert.notEqual(ownLane, fallbackLane, "own and team-fallback composers are distinct");
+  assert.notEqual(ownLane, peerLane, "own and peer composers are distinct");
   const text = `synthetic display chronology ${crypto.randomUUID()}`;
   await console.evaluate((surface, lanes) => {
     window.__syntheticComposerStates = [];
@@ -79,7 +95,11 @@ export async function assertSyntheticComposerObservation(
           `.team-agent[data-agent-lane="${lane}"] .composer-shard--primary .composer-shard-age`,
         );
         const href = link?.getAttribute("href");
-        const card = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
+        const target = href?.startsWith("#") ? document.getElementById(href.slice(1)) : null;
+        // Only a message card carries a display instant the header may share;
+        // the stream default carries none, so a header linking there must
+        // show none either.
+        const card = target?.matches('[data-card-kind="agent-message"]') ? target : null;
         window.__syntheticComposerStates.push({
           lane,
           href,
@@ -95,7 +115,7 @@ export async function assertSyntheticComposerObservation(
       childList: true,
       subtree: true,
     });
-  }, [ownLane, fallbackLane]);
+  }, [ownLane, peerLane]);
 
   try {
     const witness = await activityReplay.injectSyntheticSnapshot(page, ownLane, text);
@@ -106,30 +126,23 @@ export async function assertSyntheticComposerObservation(
     assert.equal(cardDisplay, expectedDisplay, "the card displays its stable synthetic instant");
     assert.ok(Number.isFinite(Number(cardDisplay)), "the synthetic card display time is finite");
 
-    const states = [];
-    for (const [lane, source] of [[ownLane, "own-agent"], [fallbackLane, "team fallback"]]) {
-      const composer = console.locator(`.team-agent[data-agent-lane="${lane}"]`);
-      const link = composer.locator(".composer-shard--primary .composer-shard-age");
-      const age = link.locator("[data-age-authored]");
-      const state = {
-        source,
-        href: await link.getAttribute("href"),
-        label: (await age.innerText()).trim(),
-        display: await age.getAttribute("data-age-authored"),
-        prose: (await composer.locator(".composer-shard-prose").innerText()).trim(),
-      };
-      states.push(state);
-      assert.equal(state.href, `#${cardId}`, `${source} header links to the synthetic card`);
-      assert.equal(state.display, cardDisplay, `${source} header uses the linked card timestamp`);
-      assert.notEqual(state.label, "—", `${source} header never renders a dash`);
-      assert.match(state.label, /^(?:now|\d+[smhd])$/, `${source} header renders relative time`);
-      assert.equal(state.prose, text, `${source} header prose comes from the same card`);
-    }
-    assert.deepEqual(
-      states.map(({ href, display }) => ({ href, display })),
-      Array.from({ length: 2 }, () => ({ href: `#${cardId}`, display: cardDisplay })),
-      "own-agent and team fallback select one card and one display instant",
-    );
+    const own = await composerHeader(console, ownLane);
+    assert.equal(own.href, `#${cardId}`, "the own-agent header links to the synthetic card");
+    assert.deepEqual(own.displays, [cardDisplay], "the own-agent header uses the linked card timestamp");
+    assert.notEqual(own.label, "—", "the own-agent header never renders a dash");
+    assert.match(own.label, /^(?:now|\d+[smhd])$/, "the own-agent header renders relative time");
+    assert.equal(own.prose, text, "the own-agent header prose comes from the same card");
+
+    const peerSurface = console
+      .locator(`.team-agent[data-agent-lane="${peerLane}"]`)
+      .locator("xpath=ancestor::*[contains(@class, 'team-surface')][1]");
+    const stream = await peerSurface.locator(".team-activity-grid").getAttribute("id");
+    const peer = await composerHeader(console, peerLane);
+    assert.equal(peer.href, `#${stream}`, "a peer without prose of its own links to the team stream");
+    assert.deepEqual(peer.displays, [], "the peer header carries no borrowed display instant");
+    assert.equal(peer.label, "—", "the peer header renders a dash rather than the synthetic age");
+    assert.equal(peer.prose, "No agent prose yet", "the peer header never wears the synthetic prose");
+
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(
       () => requestAnimationFrame(resolve),
     )));
@@ -137,9 +150,13 @@ export async function assertSyntheticComposerObservation(
     assert.ok(observedStates.length >= 2, "both synthetic composer paths were observed");
     assert.ok(
       observedStates.every((state) => state.headerDisplay === state.cardDisplay),
-      `no rendered header mixes a card link with another display time: ${
+      `no rendered header mixes its link with another display time: ${
         JSON.stringify(observedStates)
       }`,
+    );
+    assert.ok(
+      observedStates.some((state) => state.lane === peerLane && state.href === `#${stream}`),
+      `the peer was observed on the stream default: ${JSON.stringify(observedStates)}`,
     );
   } finally {
     await page.evaluate(() => window.__syntheticComposerObserver?.disconnect());

@@ -2,10 +2,10 @@ use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop,
     TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, elapsed_label,
-    elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, leaf, one_line,
-    remaining_label, remaining_label_deadline_millis, reported_tasks, response_speech_text, short,
-    split_team, standing_title, standings, task_mentions, ticker_chunks, ticker_line, topology,
-    truncate,
+    elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, latest_lane_prose, leaf,
+    one_line, remaining_label, remaining_label_deadline_millis, reported_tasks,
+    response_speech_text, short, split_team, standing_title, standings, task_mentions,
+    ticker_chunks, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -840,6 +840,86 @@ fn an_entirely_quoted_message_has_no_composer_prose() {
         None
     );
     assert_eq!(first_nonquoted_prose(" \r\n\t\r\n"), None);
+}
+
+/// One admitted agent message, `delta` milliseconds after `BASE`, in `lane`.
+fn message(lane: &str, delta: i64, activity: Option<&str>, text: &str) -> wire::AgentMessage {
+    let mut message = serde_json::json!({
+        "lane": lane,
+        "author": OCCUPANT,
+        "locus": {"member": 1, "offset": delta, "length": 20, "event": 0},
+        "authored": spell(delta),
+        "text": text,
+    });
+    if let Some(activity) = activity {
+        message["activity"] = serde_json::Value::String(activity.to_owned());
+    }
+    serde_json::from_value(message).expect("the fixture spells an admitted agent message")
+}
+
+#[test]
+fn a_lane_without_prose_of_its_own_borrows_none_from_the_team() {
+    let messages = [
+        message(LANE_A, 0, None, "Boarded as WATCHBA-1"),
+        message(LANE_A, 1_000, None, "Boarded as WATCHBA-2"),
+    ];
+
+    assert_eq!(
+        latest_lane_prose(uuid(LANE_A), messages.iter())
+            .map(|(source, prose)| (source.display_millis(), prose)),
+        Some((at(1_000), "Boarded as WATCHBA-2".to_owned()))
+    );
+    assert_eq!(latest_lane_prose(uuid(LANE_B), messages.iter()), None);
+    assert_eq!(latest_lane_prose(uuid(LANE_B), [].iter()), None);
+}
+
+#[test]
+fn a_lane_keeps_its_own_newest_prose_when_a_peer_speaks_later() {
+    let messages = [
+        message(LANE_A, 0, None, "older own prose"),
+        message(LANE_A, 1_000, None, "newest own prose"),
+        message(LANE_B, 2_000, None, "the peer's newer prose"),
+    ];
+
+    let (source, prose) =
+        latest_lane_prose(uuid(LANE_A), messages.iter()).expect("lane A authored prose");
+    assert_eq!(source.lane, uuid(LANE_A));
+    assert_eq!(source.display_millis(), at(1_000));
+    assert_eq!(prose, "newest own prose");
+}
+
+#[test]
+fn ineligible_own_activity_yields_older_own_prose_never_a_peer_message() {
+    let messages = [
+        message(LANE_A, 0, None, "> borrowed\nauthored under the quote"),
+        message(LANE_B, 1_000, None, "the peer's prose"),
+        message(
+            LANE_A,
+            2_000,
+            None,
+            "> entirely borrowed\n> > at every depth",
+        ),
+        message(LANE_A, 3_000, Some("tool"), "Bash: cargo test"),
+        message(
+            LANE_A,
+            4_000,
+            Some("reasoning"),
+            "thinking about the header",
+        ),
+        message(LANE_A, 5_000, Some("turn"), "new turn"),
+        message(LANE_A, 6_000, Some("compaction"), "compaction"),
+    ];
+
+    let (source, prose) =
+        latest_lane_prose(uuid(LANE_A), messages.iter()).expect("lane A authored prose");
+    assert_eq!(source.display_millis(), at(0));
+    assert_eq!(prose, "authored under the quote");
+
+    let only_ineligible = &messages[1..];
+    assert_eq!(
+        latest_lane_prose(uuid(LANE_A), only_ineligible.iter()),
+        None
+    );
 }
 
 #[test]

@@ -623,25 +623,20 @@ struct ComposerHeader {
 /// Tool previews, turn starts, and compaction boundaries remain useful activity
 /// cards, but none is the assistant prose printed beside this age. Selecting
 /// them here would make the clock describe a different event from the text it
-/// labels.
+/// labels. Only this lane's own prose is eligible: a lane without any, such as
+/// a vacant member that has never run, shows the empty header rather than the
+/// latest message another member of the team happened to produce.
 fn primary_composer_header(
     cards: &[ActivityCard],
     team: &crate::runtime::LaneRow,
     lane: CanonicalUuid,
     standing: &Standing,
 ) -> ComposerHeader {
-    let own_source = cards
-        .iter()
-        .rev()
-        .find_map(|card| visible_agent_prose(card, Some(lane)));
-    let is_own_source = own_source.is_some();
-    let source = own_source.or_else(|| {
-        cards
-            .iter()
-            .rev()
-            .find_map(|card| visible_agent_prose(card, None))
+    let messages = cards.iter().filter_map(|card| match card {
+        ActivityCard::Agent { message, .. } => Some(message.as_ref()),
+        ActivityCard::Lifecycle { .. } => None,
     });
-    source.map_or_else(
+    watchband::latest_lane_prose(lane, messages).map_or_else(
         || ComposerHeader {
             stream: ComposerStreamLink {
                 target: format!("team-stream-{}", team.lane),
@@ -653,33 +648,12 @@ fn primary_composer_header(
         |(message, prose)| ComposerHeader {
             stream: ComposerStreamLink {
                 target: agent_message_source_id(message),
-                label: if is_own_source {
-                    format!("Jump to latest {} message", standing.label)
-                } else {
-                    "Jump to latest team message".to_owned()
-                },
+                label: format!("Jump to latest {} message", standing.label),
                 display_millis: Some(crate::runtime::agent_message_display_millis(message)),
             },
             prose,
         },
     )
-}
-
-fn visible_agent_prose(
-    card: &ActivityCard,
-    lane: Option<CanonicalUuid>,
-) -> Option<(&wire::AgentMessage, String)> {
-    match card {
-        ActivityCard::Agent {
-            member, message, ..
-        } if lane.is_none_or(|lane| lane == member.lane)
-            && message.activity == wire::AgentActivityKind::Prose =>
-        {
-            watchband::first_nonquoted_prose(&message.text).map(|prose| (message.as_ref(), prose))
-        }
-        ActivityCard::Agent { .. } => None,
-        ActivityCard::Lifecycle { .. } => None,
-    }
 }
 
 fn renewal_callback(

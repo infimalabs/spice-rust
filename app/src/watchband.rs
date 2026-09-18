@@ -720,6 +720,33 @@ pub fn first_nonquoted_prose(text: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+/// Newest prose one lane authored, paired with the line its header shows.
+///
+/// A composer header speaks for exactly one agent, so both its text and the
+/// age beside it come from that lane and from nowhere else. A lane that has
+/// produced no prose within `messages` yields `None`, and the caller prints
+/// the empty header rather than borrowing a peer's message: a vacant lane
+/// that has never run must not wear the most recent active agent's status.
+///
+/// Prose is lane-scoped rather than occupant-scoped. A message a prior
+/// occupant authored in the same lane remains that lane's own prose, because
+/// the lane is the surface the operator addresses. Tool previews, reasoning,
+/// turn starts, compaction boundaries, and entirely quoted replies are
+/// skipped in favour of older prose, as the header labels the sentence it
+/// prints. `messages` is read in creation order; the newest eligible one wins.
+#[must_use]
+pub fn latest_lane_prose<'a>(
+    lane: CanonicalUuid,
+    messages: impl DoubleEndedIterator<Item = &'a wire::AgentMessage>,
+) -> Option<(&'a wire::AgentMessage, String)> {
+    messages
+        .rev()
+        .filter(|message| {
+            message.lane == lane && message.activity == wire::AgentActivityKind::Prose
+        })
+        .find_map(|message| first_nonquoted_prose(&message.text).map(|prose| (message, prose)))
+}
+
 /// Agent-authored response offered to manual message playback.
 #[must_use]
 pub fn response_speech_text(text: &str, prepared: Option<&str>) -> Option<String> {
