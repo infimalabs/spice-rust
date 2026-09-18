@@ -24,7 +24,7 @@ mod renewal;
 mod vendor;
 
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
-pub use vendor::{composer_vendor_icon_class, omp_provider};
+pub use vendor::{OmpEmblem, composer_vendor_icon_class, omp_emblem, omp_provider};
 
 /// Accent slots the band cycles through.
 ///

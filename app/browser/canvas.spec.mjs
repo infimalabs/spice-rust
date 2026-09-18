@@ -31,6 +31,7 @@ import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
 import { assertComposerRecovery } from "./composer-recovery.mjs";
 import { assertRenewalRefusalReason } from "./renewal-refusal.mjs";
 import { assertVacantWakeSubmission } from "./vacant-wake-submission.mjs";
+import { assertOmpEmblemRoles } from "./vendor-emblem.mjs";
 import {
   assertAgentSpacingRejectsFallbackOnlyMarkup,
   assertCanvas,
@@ -564,6 +565,9 @@ try {
         ));
         await run.phase("credential-boundary", () => (
           assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability])
+        ));
+        await run.phase("vendor-emblem", () => (
+          assertOmpEmblemRoles(lightPage, fixture, worktrees, seeded)
         ));
       });
       await run.scenario("firefox-restored-mosaic", async () => {
