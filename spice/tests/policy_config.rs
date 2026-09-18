@@ -221,9 +221,10 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
     assert!(!root.vendor().codex().fast_mode());
     assert_eq!(
         root.vendor().omp().auto_compact_window_tokens(),
-        vendor::DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS
+        vendor::DEFAULT_OMP_LONG_CONTEXT_AUTO_COMPACT_WINDOW_TOKENS,
+        "the default model is a million-token Claude"
     );
-    assert_eq!(root.vendor().omp().auto_compact_threshold_tokens(), 187_000);
+    assert_eq!(root.vendor().omp().auto_compact_threshold_tokens(), 231_200);
     assert_eq!(root.proof().image().as_str(), proof::DEFAULT_IMAGE);
     assert!(root.proof().container().is_none());
     assert!(root.proof().runner().is_none());
@@ -262,7 +263,7 @@ fn omp_window_defaults_to_the_boundary_of_the_provider_its_model_reaches() {
         .expect("an OpenAI model selection is valid");
     assert_eq!(
         openai.vendor().omp().auto_compact_window_tokens(),
-        vendor::DEFAULT_OMP_OPENAI_AUTO_COMPACT_WINDOW_TOKENS
+        vendor::DEFAULT_OMP_LONG_CONTEXT_AUTO_COMPACT_WINDOW_TOKENS
     );
     assert_eq!(
         openai.vendor().omp().auto_compact_threshold_tokens(),
@@ -279,6 +280,12 @@ fn omp_window_defaults_to_the_boundary_of_the_provider_its_model_reaches() {
         .expect("an Anthropic model selection is valid");
     assert_eq!(
         anthropic.vendor().omp().auto_compact_threshold_tokens(),
+        231_200
+    );
+    let haiku =
+        decode("[vendor.omp]\nmodel = \"claude-haiku-4-5\"\n").expect("a Haiku selection is valid");
+    assert_eq!(
+        haiku.vendor().omp().auto_compact_threshold_tokens(),
         187_000
     );
 }

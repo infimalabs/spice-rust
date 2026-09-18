@@ -16,38 +16,49 @@ pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.6-sol";
 pub const DEFAULT_CODEX_MODEL_CONTEXT_WINDOW: u64 = 1_050_000;
 /// oh-my-pi's compiled model selection, matched fuzzily by omp itself.
 pub const DEFAULT_OMP_MODEL: &str = "claude-opus-5";
-/// Input tokens beyond which Anthropic bills a request at long-context rates.
-const ANTHROPIC_LONG_CONTEXT_TOKENS: u64 = 200_000;
 /// Input tokens beyond which OpenAI bills a request at long-context rates.
 const OPENAI_LONG_CONTEXT_TOKENS: u64 = 272_000;
+/// The window of the smallest Claude a lane runs: Claude Haiku 4.5 holds
+/// 200,000 tokens where every Claude from 4.6 on holds a million. Anthropic
+/// bills that million at one rate, so the boundary a Claude must not cross
+/// is its own window, not a price.
+const CLAUDE_HAIKU_CONTEXT_TOKENS: u64 = 200_000;
 /// The least Claude has been seen to compact short of the window it is told,
 /// rounded down: 69 lane compactions against 200,000 landed between 166,418
 /// and 175,600 tokens.
 const CLAUDE_LEAST_SHORTFALL_TOKENS: u64 = 20_000;
 /// The window Claude is asked to compact against.
 ///
-/// Every vendor is told a window smaller than its model's so that no request
-/// crosses the provider's long-context price boundary, whatever the model
-/// really holds. Claude's trigger lands under Anthropic's boundary with the
-/// rounding and the last exchange's growth to spare.
+/// Claude takes its window from the environment without regard to the model,
+/// so it is told the one a Claude Haiku tolerates: the trigger lands under
+/// Haiku's window with the rounding and the last exchange's growth to spare,
+/// and a million-token Claude compacts there too.
 pub const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS: u64 =
-    ANTHROPIC_LONG_CONTEXT_TOKENS + CLAUDE_LEAST_SHORTFALL_TOKENS;
+    CLAUDE_HAIKU_CONTEXT_TOKENS + CLAUDE_LEAST_SHORTFALL_TOKENS;
 /// The window Codex is asked to compact against: OpenAI's boundary itself,
 /// since Codex triggers at 95% of it.
 pub const DEFAULT_CODEX_AUTO_COMPACT_WINDOW_TOKENS: u64 = OPENAI_LONG_CONTEXT_TOKENS;
-/// The window oh-my-pi is asked to compact against for an Anthropic model,
-/// the kind it selects by default; omp triggers 15% short of it. Left to
-/// itself omp compacts against the model's full window, 850,000 tokens into
-/// a million-token model, and its registry prices no Anthropic long context.
+/// The window oh-my-pi is asked to compact against for a Claude Haiku, or
+/// for a spelling that names no model spice knows: what a 200,000-token
+/// window tolerates, since omp clamps a threshold beneath the model's window
+/// and past that compacts only once a request has overflowed.
 pub const DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS: u64 = DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS;
-/// The window oh-my-pi is asked to compact against for an OpenAI model:
-/// OpenAI's boundary itself, the window omp's own registry declares for the
-/// Codex-served GPT models whose long-context price it does know.
-pub const DEFAULT_OMP_OPENAI_AUTO_COMPACT_WINDOW_TOKENS: u64 = OPENAI_LONG_CONTEXT_TOKENS;
+/// The window oh-my-pi is asked to compact against for a million-token
+/// model, OpenAI's or Anthropic's: OpenAI's boundary, the window omp's own
+/// registry declares for the Codex-served GPT models whose long-context
+/// price it does know, so a Claude compacts where a GPT does. Left to itself
+/// omp compacts against the model's full window, 850,000 tokens into a
+/// million-token model.
+pub const DEFAULT_OMP_LONG_CONTEXT_AUTO_COMPACT_WINDOW_TOKENS: u64 = OPENAI_LONG_CONTEXT_TOKENS;
 /// Provider prefixes omp resolves ahead of the slash in a `provider/model`
 /// spelling, and bare model families it matches fuzzily, that reach OpenAI.
 const OMP_OPENAI_PROVIDERS: [&str; 2] = ["openai", "openai-codex"];
 const OMP_OPENAI_FAMILIES: [&str; 2] = ["gpt", "codex"];
+/// The provider prefix and bare families that reach Anthropic, every one a
+/// million-token model unless the spelling names a Haiku.
+const OMP_ANTHROPIC_PROVIDER: &str = "anthropic";
+const OMP_ANTHROPIC_FAMILIES: [&str; 4] = ["claude", "opus", "sonnet", "fable"];
+const OMP_ANTHROPIC_HAIKU: &str = "haiku";
 /// The share of a window omp holds back for the reply, as omp computes it.
 const OMP_RESERVE_PERCENT: u64 = 15;
 /// The least reserve omp holds back, whatever the window.
@@ -438,20 +449,31 @@ fn omp_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>,
 }
 
 /// The window omp is asked to compact against when policy names none: the
-/// boundary of the provider its fuzzy match reaches from this spelling, or
-/// Anthropic's smaller one for a spelling that names no provider spice knows,
-/// so an unfamiliar model crosses neither boundary.
+/// long-context one for a spelling its fuzzy match carries to a million-token
+/// model at OpenAI or Anthropic, or the smaller one for a Claude Haiku and
+/// for a spelling that names no model spice knows, so an unfamiliar model
+/// crosses no window.
 #[must_use]
 pub fn omp_default_auto_compact_window_tokens(model: &str) -> u64 {
     let spelling = model.trim().to_ascii_lowercase();
-    let openai = match spelling.split_once('/') {
-        Some((provider, _)) => OMP_OPENAI_PROVIDERS.contains(&provider),
+    let (provider, family) = match spelling.split_once('/') {
+        Some((provider, family)) => (Some(provider), family),
+        None => (None, spelling.as_str()),
+    };
+    let openai = match provider {
+        Some(provider) => OMP_OPENAI_PROVIDERS.contains(&provider),
         None => OMP_OPENAI_FAMILIES
             .iter()
-            .any(|family| spelling.starts_with(family)),
+            .any(|known| family.starts_with(known)),
     };
-    if openai {
-        DEFAULT_OMP_OPENAI_AUTO_COMPACT_WINDOW_TOKENS
+    let anthropic = match provider {
+        Some(provider) => provider == OMP_ANTHROPIC_PROVIDER,
+        None => OMP_ANTHROPIC_FAMILIES
+            .iter()
+            .any(|known| family.starts_with(known)),
+    };
+    if openai || (anthropic && !family.contains(OMP_ANTHROPIC_HAIKU)) {
+        DEFAULT_OMP_LONG_CONTEXT_AUTO_COMPACT_WINDOW_TOKENS
     } else {
         DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS
     }
@@ -519,12 +541,12 @@ mod tests {
         assert!(omp(16_384).is_err());
         assert_eq!(
             OmpConfig::default().auto_compact_threshold_tokens(),
-            187_000
+            231_200
         );
     }
 
     #[test]
-    fn omp_window_follows_the_provider_the_model_spelling_reaches() {
+    fn omp_window_follows_the_model_the_spelling_reaches() {
         for spelling in [
             "gpt-5.6-sol",
             "GPT-5.2",
@@ -532,6 +554,12 @@ mod tests {
             "openai/gpt-5.2",
             "openai-codex/gpt-5.6-sol",
             "openai/anything",
+            "claude-opus-5",
+            "opus",
+            "Sonnet",
+            "fable-5",
+            "anthropic/claude-sonnet-5",
+            "anthropic/anything",
         ] {
             assert_eq!(
                 omp_default_auto_compact_window_tokens(spelling),
@@ -540,9 +568,9 @@ mod tests {
             );
         }
         for spelling in [
-            "claude-opus-5",
-            "opus",
-            "anthropic/claude-sonnet-5",
+            "claude-haiku-4-5",
+            "haiku",
+            "anthropic/claude-haiku-4-5",
             "gemini-2.5-pro",
             "google/gemini-2.5-pro",
             "",
@@ -558,7 +586,7 @@ mod tests {
         assert_eq!(sol.auto_compact_window_tokens(), 272_000);
         assert_eq!(sol.auto_compact_threshold_tokens(), 231_200);
         assert_eq!(
-            sol.auto_compact_threshold_tokens_for("claude-opus-5"),
+            sol.auto_compact_threshold_tokens_for("claude-haiku-4-5"),
             187_000,
             "a seat's own model selection governs its window"
         );
@@ -572,14 +600,14 @@ mod tests {
         .expect("a named window admits");
         assert_eq!(pinned.auto_compact_window_tokens(), 200_000);
         assert_eq!(
-            pinned.auto_compact_threshold_tokens_for("claude-opus-5"),
+            pinned.auto_compact_threshold_tokens_for("claude-haiku-4-5"),
             170_000,
             "a named window wins over every model selection"
         );
         let unset: OmpConfig =
             serde_json::from_value(serde_json::json!({"auto_compact_window_tokens": null}))
                 .expect("a null window admits");
-        assert_eq!(unset.auto_compact_window_tokens(), 220_000);
+        assert_eq!(unset.auto_compact_window_tokens(), 272_000);
     }
 
     #[test]
