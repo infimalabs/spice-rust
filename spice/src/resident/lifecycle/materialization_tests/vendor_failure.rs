@@ -151,9 +151,17 @@ fn an_exit_that_never_answered_the_prompt_is_a_young_death() {
         [wire::FactKind::LaneExited, wire::FactKind::LaneHeld],
         "an exit that answered nothing inside the young window is one young death"
     );
+    let held = fixture.held_fact();
+    assert_eq!(held.evidence, "1 consecutive young occupant deaths");
     assert_eq!(
-        fixture.held_fact().evidence,
-        "1 consecutive young occupant deaths"
+        String::from_utf8(diagnostic).expect("diagnostic is UTF-8"),
+        format!(
+            "lifecycle held lane={} until={} evidence={}\n",
+            lane(),
+            held.until,
+            held.evidence
+        ),
+        "the young-death hold is written down where the vendor-failure hold is"
     );
     fixture.finish();
 }
@@ -179,9 +187,20 @@ fn an_exit_that_answered_but_left_its_direction_live_is_a_young_death() {
         [wire::FactKind::LaneExited, wire::FactKind::LaneHeld],
         "an answer that retires nothing hands the same wake to a successor, so a quick exit on it is one young death"
     );
+    let held = fixture.held_fact();
+    assert_eq!(held.evidence, "1 consecutive young occupant deaths");
     assert_eq!(
-        fixture.held_fact().evidence,
-        "1 consecutive young occupant deaths"
+        String::from_utf8(diagnostic).expect("diagnostic is UTF-8"),
+        format!(
+            "lane {lane} steering 1kKRRsDS left pending at exit: \
+             steer::transcript-evidence-absent: the newest assistant text \
+             (member 1 offset 184) does not carry the header: \"Finished the claim.\"\n\
+             lifecycle held lane={lane} until={} evidence={}\n",
+            held.until,
+            held.evidence,
+            lane = lane(),
+        ),
+        "the direction left pending and the hold it earns are written down together"
     );
     fixture.finish();
 }

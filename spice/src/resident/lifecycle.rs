@@ -7,6 +7,7 @@
 //! resident timer worker.
 
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use board::Entry;
 use bus::Bus;
@@ -179,6 +180,10 @@ impl Backoff {
 pub(super) struct Runtime {
     backoff: Backoff,
     holds: Holds,
+    /// How long after its seating an occupant's unsettled death is young.
+    young: Duration,
+    /// How long a hold keeps the lane from its next wake.
+    hold: Duration,
     projection: Projection,
 }
 
@@ -270,6 +275,8 @@ impl Runtime {
         Self {
             backoff: Backoff::default(),
             holds: Holds::new(config.deaths()),
+            young: config.young().get(),
+            hold: config.hold().get(),
             projection: Projection::new(),
         }
     }
@@ -477,21 +484,21 @@ impl Runtime {
         seated: Option<Activity>,
         lane: CanonicalUuid,
         settled: bool,
-        config: &lane::Config,
+        diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<()> {
         let Some(activity) = seated else {
             return Ok(());
         };
-        let death = if !settled && activity.at().elapsed() < config.young().get() {
+        let death = if !settled && activity.at().elapsed() < self.young {
             Death::Young
         } else {
             Death::Mature
         };
-        let until = hold_deadline(config, current_instant()?)?;
+        let until = hold_deadline(self.hold, current_instant()?)?;
         let Some(held) = self.holds.died(lane, death, until) else {
             return Ok(());
         };
-        self.commit_hold(bus, epoch, held)
+        self.commit_hold(bus, epoch, held, diagnostic)
     }
 
     /// Hold a lane whose occupant's transcript ended on a vendor failure.
@@ -537,36 +544,41 @@ impl Runtime {
         now: Instant,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<()> {
-        let until = hold_deadline(config, now)?;
+        let until = hold_deadline(config.hold().get(), now)?;
         let evidence = vendor_failure_evidence(occupant, failure);
         let Some(held) = self.holds.failed(lane, evidence, until) else {
             return Ok(());
         };
-        let _ = writeln!(
-            diagnostic,
-            "lifecycle held lane={lane} until={until} evidence={}",
-            held.evidence
-        );
-        self.commit_hold(bus, epoch, held)
+        self.commit_hold(bus, epoch, held, diagnostic)
     }
 
     /// Journal one hold the reducer already recorded, forgetting it again
-    /// when the journal refuses so the reducer and the journal agree.
+    /// when the journal refuses so the reducer and the journal agree, and
+    /// write the hold down where an operator reading why a lane went quiet
+    /// will look.
     fn commit_hold(
         &mut self,
         bus: &Bus,
         epoch: CanonicalUuid,
         held: wire::body::LaneHeld,
+        diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<()> {
         let lane = held.lane;
         let observed = current_residency(bus, epoch)?;
         let mut proposal = write(Actor::Spice, epoch, Producer::BusTimer)?;
         guard_residency(&mut proposal, &observed);
+        let line = format!(
+            "lifecycle held lane={lane} until={} evidence={}",
+            held.until, held.evidence
+        );
         proposal
             .fact(held, FactCause::Existing(observed.position()))
             .map_err(|error| store_fault("lifecycle::hold-fact-invalid", &error.to_string()))?;
         match commit(bus, proposal) {
-            Ok(_) => Ok(()),
+            Ok(_) => {
+                let _ = writeln!(diagnostic, "{line}");
+                Ok(())
+            }
             Err(outcome) => {
                 let _ = self.holds.wake(lane);
                 Err(outcome)
@@ -962,8 +974,8 @@ fn current_instant() -> CommandResult<Instant> {
 }
 
 /// The deadline a hold taken now runs until, under the configured lane hold.
-fn hold_deadline(config: &lane::Config, now: Instant) -> CommandResult<Instant> {
-    let seconds = i64::try_from(config.hold().get().as_secs()).map_err(|_| {
+fn hold_deadline(hold: Duration, now: Instant) -> CommandResult<Instant> {
+    let seconds = i64::try_from(hold.as_secs()).map_err(|_| {
         super::environment_fault(
             "lifecycle::hold-range",
             "the configured lane hold does not fit a signed deadline",

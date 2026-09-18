@@ -817,14 +817,7 @@ fn accept_supervisor_report(
     } = notice
     {
         return super::reap::account_failure(
-            bus,
-            epoch,
-            seats,
-            lifecycle,
-            &command_surface.config.lane,
-            lane,
-            occupant,
-            &failure,
+            bus, epoch, seats, lifecycle, lane, occupant, &failure, diagnostic,
         );
     }
     let residency = current_residency(bus, epoch)?;
@@ -1011,6 +1004,7 @@ fn accept_failure(
                 seats,
                 failure.lane,
                 failure.occupant,
+                diagnostic,
             )?;
         }
         lane_surface::capture_failed(bus, epoch, seats, &failure)

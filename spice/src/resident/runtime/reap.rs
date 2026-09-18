@@ -70,7 +70,7 @@ pub(in crate::resident) fn account_exit(
         ),
         LastWord::Answered | LastWord::Silent => {
             let settled = word == LastWord::Answered && !direction_pending(bus, exit.lane)?;
-            lifecycle.observe_death(bus, epoch, seated, exit.lane, settled, config)
+            lifecycle.observe_death(bus, epoch, seated, exit.lane, settled, diagnostic)
         }
     }
 }
@@ -97,16 +97,16 @@ pub(super) fn account_failure(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
-    config: &lane::Config,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     failure: &str,
+    diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     if !lane_surface::renewal_requested_exit(bus, epoch, lane, occupant)? {
         let seated = seats
             .started(lane)
             .filter(|activity| activity.occupant() == occupant);
-        lifecycle.observe_death(bus, epoch, seated, lane, false, config)?;
+        lifecycle.observe_death(bus, epoch, seated, lane, false, diagnostic)?;
     }
     if seats
         .occupant(lane)
@@ -197,7 +197,7 @@ pub(in crate::resident) fn sweep_seats(
                 diagnostic,
             ),
             supervisor::ending::PublishedEnding::Failed(failure) => account_failure(
-                bus, epoch, seats, lifecycle, config, lane, occupant, &failure,
+                bus, epoch, seats, lifecycle, lane, occupant, &failure, diagnostic,
             ),
         };
         super::deferral::defer_store_fault(accounted, diagnostic, "reaped seat accounting")?;
