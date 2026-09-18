@@ -992,6 +992,7 @@ pub(super) fn latest_surface_digest(bus: &Bus) -> CommandResult<Option<wire::Dig
 }
 
 mod deferral;
+mod last_word;
 pub(super) mod reap;
 mod surface;
 #[cfg(test)]

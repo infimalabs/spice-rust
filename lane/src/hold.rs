@@ -5,6 +5,11 @@
 //! life starting. After enough of them in a row the seat is held: re-seating
 //! stops until an operator wakes it or the hold reaches its deadline.
 //!
+//! An occupant whose last word was a vendor failure holds the seat at once.
+//! The vendor refused the turn the seat resumes into, so the next occupant
+//! resumes into the same refusal, and counting those exits as young deaths
+//! would only re-seat the refusal until the run was long enough to notice.
+//!
 //! A hold is a fact, not a log line. [`LaneHeld`] carries the evidence and the
 //! deadline it was taken under and [`LaneResumed`] carries what released it, so
 //! the reason a lane stopped filling is answerable from the journal instead of
@@ -78,6 +83,31 @@ impl Holds {
             return None;
         }
         let evidence = format!("{deaths} consecutive young occupant deaths");
+        self.young.remove(&lane);
+        self.held.insert(lane, until);
+        Some(LaneHeld {
+            lane,
+            evidence,
+            until,
+        })
+    }
+
+    /// Records one occupant exit whose last word was a vendor failure, holding
+    /// the lane at once.
+    ///
+    /// One such exit is enough: the hold carries the vendor's own text as its
+    /// evidence, and any run of young deaths before it is forgotten because
+    /// the hold supersedes what the run was counting toward. A lane already
+    /// held keeps its hold and its deadline.
+    pub fn failed(
+        &mut self,
+        lane: CanonicalUuid,
+        evidence: String,
+        until: Instant,
+    ) -> Option<LaneHeld> {
+        if self.held.contains_key(&lane) {
+            return None;
+        }
         self.young.remove(&lane);
         self.held.insert(lane, until);
         Some(LaneHeld {
@@ -222,6 +252,51 @@ mod tests {
             holds.died(lane(1), Death::Young, instant(30)).is_none(),
             "a young death after a mature one held on the first of a new run",
         );
+    }
+
+    /// One vendor failure holds the lane at once, with the vendor's text as
+    /// its evidence, however short the run of young deaths before it.
+    #[test]
+    fn one_vendor_failure_holds_the_lane_without_a_run_of_young_deaths() {
+        let mut holds = Holds::new(3);
+        assert!(holds.died(lane(1), Death::Young, instant(30)).is_none());
+
+        let held = holds
+            .failed(
+                lane(1),
+                "occupant ended on a vendor error: refused".to_owned(),
+                instant(31),
+            )
+            .expect("the first vendor failure holds the lane");
+
+        assert_eq!(held.lane, lane(1));
+        assert_eq!(held.evidence, "occupant ended on a vendor error: refused");
+        assert_eq!(held.until, instant(31));
+        assert!(!holds.seats(lane(1)));
+        assert_eq!(holds.next(), Some((lane(1), instant(31))));
+        holds
+            .expire(lane(1), instant(31))
+            .expect("the hold expires at its deadline");
+        assert!(
+            holds.died(lane(1), Death::Young, instant(40)).is_none(),
+            "the young death before the failure was forgotten with the hold",
+        );
+    }
+
+    /// A vendor failure on a held lane keeps the hold it already has.
+    #[test]
+    fn a_vendor_failure_while_held_keeps_the_existing_hold() {
+        let mut holds = Holds::new(1);
+        holds
+            .died(lane(1), Death::Young, instant(30))
+            .expect("the first death holds");
+
+        assert!(
+            holds
+                .failed(lane(1), "later failure".to_owned(), instant(59))
+                .is_none()
+        );
+        assert_eq!(holds.held(lane(1)), Some(instant(30)));
     }
 
     /// A held lane cannot publish another hold before it resumes.

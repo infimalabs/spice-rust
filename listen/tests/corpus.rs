@@ -193,6 +193,46 @@ fn completed_codex_tools_retain_the_operation_beside_the_result() {
     ));
 }
 
+const CLAUDE_RATE_LIMIT_ALLOWED: &[u8] = br#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","isUsingOverage":false}}"#;
+const CLAUDE_RATE_LIMIT_WARNING: &[u8] = br#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed_warning","rateLimitType":"seven_day"}}"#;
+const CLAUDE_RATE_LIMIT_REJECTED: &[u8] = br#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"five_hour"}}"#;
+const CLAUDE_RATE_LIMIT_BARE: &[u8] =
+    br#"{"type":"rate_limit_event","message":"rate limit reached"}"#;
+
+#[test]
+fn claude_rate_limit_reports_fail_only_when_the_vendor_rejected_the_request() {
+    for allowed in [CLAUDE_RATE_LIMIT_ALLOWED, CLAUDE_RATE_LIMIT_WARNING] {
+        let standing = decode(Dialect::Claude, allowed, locus(allowed)).expect("matching locus");
+        assert!(
+            standing.events().is_empty(),
+            "an allowed standing is not a failure: {:?}",
+            standing.events()
+        );
+    }
+
+    let rejected = decode(
+        Dialect::Claude,
+        CLAUDE_RATE_LIMIT_REJECTED,
+        locus(CLAUDE_RATE_LIMIT_REJECTED),
+    )
+    .expect("matching locus");
+    assert!(matches!(
+        rejected.events(),
+        [Event::Failure(failure)] if failure.message == "rate limit rejected for the five_hour window"
+    ));
+
+    let bare = decode(
+        Dialect::Claude,
+        CLAUDE_RATE_LIMIT_BARE,
+        locus(CLAUDE_RATE_LIMIT_BARE),
+    )
+    .expect("matching locus");
+    assert!(matches!(
+        bare.events(),
+        [Event::Failure(failure)] if failure.message == "rate limit reached"
+    ));
+}
+
 #[test]
 fn current_opaque_failure_and_statusless_tool_payloads_are_preserved() {
     let opaque = decode(
