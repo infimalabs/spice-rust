@@ -146,6 +146,8 @@ pub struct Standing {
     pub disposition: String,
     /// Current supervised live/quiet fold.
     pub liveness: wire::intent::LaneLiveness,
+    /// Commands the lane started and has yet to hear the ending of.
+    pub jobs: Vec<wire::intent::LaneJob>,
     /// Directives waiting for the lane.
     pub pending: usize,
     /// Producer-supplied preview of the newest waiting directive.
@@ -383,6 +385,7 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                 life: member.life.clone(),
                 disposition: member.disposition.clone(),
                 liveness: member.liveness,
+                jobs: member.jobs.clone(),
                 pending: waiting.map_or(0, |row| row.pending.len()),
                 headline: waiting
                     .and_then(|row| row.pending.last())

@@ -741,6 +741,17 @@ pub enum LaneJobStanding {
     Unheard,
 }
 
+impl LaneJobStanding {
+    /// Exact operator-facing wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Unheard => "unheard",
+        }
+    }
+}
+
 /// One command a lane keeps beyond the call that started it, until the lane
 /// hears how it ended.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

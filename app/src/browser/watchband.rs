@@ -589,6 +589,12 @@ fn render_agent_details(
                             <dt>{"Liveness"}</dt>
                             <dd>{standing.liveness.as_str()}</dd>
                         </div>
+                        {for standing.jobs.iter().map(|job| html! {
+                            <div>
+                                <dt>{format!("Job {}", job.id)}</dt>
+                                <dd>{format!("{} · {}", job.standing.as_str(), job.command)}</dd>
+                            </div>
+                        })}
                         <div>
                             <dt>{"Vendor / residency policy"}</dt>
                             <dd>{format!("{} / {}", standing.vendor, standing.life)}</dd>

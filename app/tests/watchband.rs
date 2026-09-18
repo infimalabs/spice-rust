@@ -75,6 +75,7 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         // value is the fixture's stance rather than anything asserted below --
         // spelled out because a bare `true` reads as load-bearing when it is not.
         bound: true,
+        jobs: Vec::new(),
     }
 }
 

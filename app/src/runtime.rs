@@ -144,6 +144,8 @@ pub struct LaneMember {
     pub liveness: LaneLiveness,
     /// Whether a resumable session was ever declared for this seat.
     pub bound: bool,
+    /// Commands the lane started that it has yet to hear the ending of.
+    pub jobs: Vec<wire::intent::LaneJob>,
 }
 
 /// What a lane tile says about its agent, ranked the way the operator scans.
@@ -163,6 +165,9 @@ pub enum LaneStatus {
     Running,
     /// An occupant remains supervised but has been quiet for the stale horizon.
     RunningStale,
+    /// Nobody is in the seat, but a command it started still runs or ended
+    /// unheard, and its next occupant is owed the ending.
+    Waiting,
     /// The seat has a declared session but nobody in it.
     Bound,
     /// The seat has never been occupied.
@@ -177,6 +182,7 @@ impl LaneStatus {
             Self::Queued => "queued",
             Self::Running => "running",
             Self::RunningStale => "running-stale",
+            Self::Waiting => "waiting",
             Self::Bound => "bound",
             Self::Unbound => "unbound",
         }
@@ -189,6 +195,7 @@ impl LaneStatus {
             Self::Queued => "steering queued",
             Self::Running => "agent running",
             Self::RunningStale => "agent running-stale",
+            Self::Waiting => "agent waiting",
             Self::Bound => "agent bound",
             Self::Unbound => "agent unbound",
         }
@@ -200,7 +207,8 @@ impl LaneMember {
     ///
     /// Pending direction outranks liveness, exactly as the predecessor ranks
     /// it: a lane holding unanswered steering is the one the operator has to
-    /// look at, whether or not anything is running in it.
+    /// look at, whether or not anything is running in it. A vacant seat that
+    /// still owes its next occupant a command's ending is waiting, not cold.
     #[must_use]
     pub const fn status(&self, pending: usize) -> LaneStatus {
         if pending > 0 {
@@ -209,6 +217,7 @@ impl LaneMember {
             match self.liveness {
                 LaneLiveness::Running => LaneStatus::Running,
                 LaneLiveness::RunningStale => LaneStatus::RunningStale,
+                LaneLiveness::Vacant if !self.jobs.is_empty() => LaneStatus::Waiting,
                 LaneLiveness::Vacant if self.bound => LaneStatus::Bound,
                 LaneLiveness::Vacant => LaneStatus::Unbound,
             }
@@ -263,6 +272,7 @@ impl From<&LaneAnswer> for LaneView {
                 disposition: lane.disposition.clone(),
                 liveness: lane.liveness,
                 bound: lane.bound,
+                jobs: lane.jobs.clone(),
             };
             if let Some(team) = teams.iter_mut().find(|team| team.lane == lane.team) {
                 team.members.push(member);

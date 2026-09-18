@@ -405,6 +405,7 @@ body:has(.shell--mosaic),
   box-sizing: content-box;
 }
 .canvas-member-presence.running-stale { filter: saturate(.58); }
+.canvas-member-presence.waiting { background: var(--muted); filter: saturate(.58); }
 .canvas-member-presence.bound,
 .canvas-member-presence.unbound { background: var(--muted); }
 .canvas-member-copy { display: grid; min-width: 0; gap: 4px; }

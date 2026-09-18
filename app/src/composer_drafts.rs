@@ -323,6 +323,7 @@ mod tests {
             disposition: "seated".to_owned(),
             liveness: wire::intent::LaneLiveness::Running,
             bound: true,
+            jobs: Vec::new(),
         }
     }
 

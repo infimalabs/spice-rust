@@ -364,7 +364,7 @@ fn only_abnormal_typed_lane_endings_project_durable_lifecycle_boundaries() {
 /// wording changes.
 ///
 /// The rank is asserted through a shuffled sort because the strip orders its
-/// tiles by `Ord` alone: a ladder that named the five states in the right
+/// tiles by `Ord` alone: a ladder that named the six states in the right
 /// order but derived the wrong comparison would still put the lane waiting on
 /// the operator at the far end of the strip.
 #[test]
@@ -405,15 +405,29 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         LaneStatus::Queued,
         "queued direction outranks liveness even in a seat nobody has ever occupied"
     );
+    let mut owed = seated_before.clone();
+    owed.jobs.push(wire::intent::LaneJob {
+        id: "6ZbQk3mPx".to_owned(),
+        command: "cargo test".to_owned(),
+        standing: wire::intent::LaneJobStanding::Unheard,
+    });
+    assert_eq!(
+        owed.status(0),
+        LaneStatus::Waiting,
+        "a vacant seat still owed a command's ending is waiting, not cold"
+    );
+    assert_eq!(owed.status(1), LaneStatus::Queued);
 
     assert_eq!(LaneStatus::Queued.label(), "steering queued");
     assert_eq!(LaneStatus::Running.label(), "agent running");
     assert_eq!(LaneStatus::RunningStale.label(), "agent running-stale");
+    assert_eq!(LaneStatus::Waiting.label(), "agent waiting");
     assert_eq!(LaneStatus::Bound.label(), "agent bound");
     assert_eq!(LaneStatus::Unbound.label(), "agent unbound");
     assert_eq!(LaneStatus::Queued.key(), "queued");
     assert_eq!(LaneStatus::Running.key(), "running");
     assert_eq!(LaneStatus::RunningStale.key(), "running-stale");
+    assert_eq!(LaneStatus::Waiting.key(), "waiting");
     assert_eq!(LaneStatus::Bound.key(), "bound");
     assert_eq!(LaneStatus::Unbound.key(), "unbound");
 
@@ -422,6 +436,7 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         LaneStatus::RunningStale,
         LaneStatus::Running,
         LaneStatus::Bound,
+        LaneStatus::Waiting,
         LaneStatus::Queued,
     ];
     strip.sort_unstable();
@@ -431,6 +446,7 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
             LaneStatus::Queued,
             LaneStatus::Running,
             LaneStatus::RunningStale,
+            LaneStatus::Waiting,
             LaneStatus::Bound,
             LaneStatus::Unbound,
         ],
