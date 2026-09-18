@@ -31,6 +31,7 @@ fn state(remaining: Option<u64>) -> WorkingState {
             reclaim_extends: true,
         }),
         last_taste: "fallbacks".to_owned(),
+        narration: None,
     }
 }
 
@@ -468,4 +469,77 @@ fn invalid_usage_time_is_omitted_and_unknown_context_stays_unknown() {
 
     assert_eq!(snapshot.at.to_string(), "2026-08-08T16:00:00.000Z");
     assert_eq!(snapshot.model_context_window, None);
+}
+
+#[test]
+fn an_open_prod_speaks_once_per_prod_and_falls_silent_once_cleared() {
+    let root = fixture("narration");
+    let path = root.join("working-state.json");
+    let meter = Meter::new(&path);
+    let prodded = |count: u32| WorkingState {
+        narration: Some(NarrationState {
+            moments: 24 * count,
+            count,
+        }),
+        ..WorkingState::default()
+    };
+
+    // A prod alone is signal: nothing else in the snapshot is set.
+    assert!(prodded(1).has_signal());
+    let first = meter
+        .evaluate(&prodded(1), Duration::from_secs(1))
+        .expect("first prod evaluates");
+    assert_eq!(
+        first.announcement.as_deref(),
+        Some(
+            "🌶️ Working state: 24 tool calls since your last visible prose; open your next \
+             message with one short status line before the next tool call."
+        )
+    );
+    assert_eq!(first.refresh_after, None);
+    // The same prod at the next boundary is the same key: no repeat.
+    let again = meter
+        .evaluate(&prodded(1), Duration::from_secs(2))
+        .expect("same prod evaluates");
+    assert_eq!(again.announcement, None);
+    // The next prod in the streak changes the key and names its ordinal.
+    let second = meter
+        .evaluate(&prodded(2), Duration::from_secs(3))
+        .expect("second prod evaluates");
+    let line = second.announcement.expect("second prod speaks");
+    assert!(line.contains("48 tool calls since your last visible prose (prod 2)"));
+    assert!(line.contains("one short status line before the next tool call"));
+    assert!(line.len() < WORKING_STATE_LINE_LIMIT);
+    // Once the resident clears the streak the snapshot carries no signal.
+    let cleared = meter
+        .evaluate(&WorkingState::default(), Duration::from_secs(4))
+        .expect("cleared state evaluates");
+    assert_eq!(cleared, Decision::default());
+    assert!(!WorkingState::default().has_signal());
+
+    // The hook status carries the same clause beside the ordinary parts.
+    let mut hook = state(Some(59));
+    hook.narration = Some(NarrationState {
+        moments: 30,
+        count: 1,
+    });
+    let status = ordinary_status(&hook, false).expect("prodded hook status renders");
+    assert!(status.contains("claim METER-00000001 todo"));
+    assert!(status.ends_with(
+        "last taste fallbacks; 30 tool calls since your last visible prose; open your next \
+         message with one short status line before the next tool call."
+    ));
+    for word in [
+        "quiet", "delay", "poll", "sleep", "fallback", "compatib", "shim", "alias", "legacy",
+    ] {
+        assert!(
+            !render_narration(NarrationState {
+                moments: 30,
+                count: 2
+            })
+            .contains(word),
+            "the prod clause names {word}"
+        );
+    }
+    fs::remove_dir_all(root).expect("fixture cleanup");
 }

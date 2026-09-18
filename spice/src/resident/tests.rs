@@ -28,6 +28,8 @@ mod media;
 mod message_backlog;
 #[path = "tests/message_unavailable.rs"]
 mod message_unavailable;
+#[path = "tests/narration_prod.rs"]
+mod narration_prod;
 #[path = "tests/read_materialization_bounds.rs"]
 mod read_materialization_bounds;
 #[path = "tests/startup.rs"]

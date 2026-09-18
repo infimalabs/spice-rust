@@ -117,7 +117,7 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
 }
 
 /// The capture record one supervisor notice materializes for a tape record.
-fn noticed(
+pub(super) fn noticed(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     bytes: &[u8],

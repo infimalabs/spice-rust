@@ -639,6 +639,13 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "lane.narration" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(24)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "steer.expiry" {
         kind: Duration,
         builtin: Some(Builtin::String("24h")),

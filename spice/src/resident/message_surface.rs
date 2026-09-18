@@ -10,8 +10,8 @@ use lane::occupant::Seats;
 use wire::{AgentActivityKind, CanonicalUuid, Outcome};
 
 use super::{
-    CommandResult, RuntimePaths, current_residency, ingest_vendor, lane_surface, steering,
-    store_fault, taste_surface,
+    CommandResult, RuntimePaths, current_residency, ingest_vendor, lane_surface, narration,
+    steering, store_fault, taste_surface,
 };
 
 mod acknowledgement;
@@ -53,10 +53,12 @@ pub(super) struct CaptureSurfaces<'a, P> {
     tastes: &'a taste::Bag,
     steering: &'a steer::Config,
     publisher: &'a P,
+    /// Tool calls an occupant may run without prose before each prod.
+    narration: u32,
 }
 
 impl<'a, P> CaptureSurfaces<'a, P> {
-    pub(super) const fn new(
+    pub(super) fn new(
         paths: &'a RuntimePaths,
         tastes: &'a taste::Bag,
         steering: &'a steer::Config,
@@ -67,7 +69,21 @@ impl<'a, P> CaptureSurfaces<'a, P> {
             tastes,
             steering,
             publisher,
+            narration: lane::Config::default().narration(),
         }
+    }
+
+    /// Replace the compiled narration bound with the configured one.
+    pub(super) const fn narration(mut self, bound: u32) -> Self {
+        self.narration = bound;
+        self
+    }
+
+    /// Fold no narration streak: the seat these records belong to has closed,
+    /// so a prod could neither be recorded under it nor read back by it.
+    pub(super) const fn without_narration(mut self) -> Self {
+        self.narration = 0;
+        self
     }
 }
 
@@ -89,6 +105,7 @@ pub(in crate::resident) struct MessageState {
     observations: MessageObservations,
     prose: BTreeMap<CanonicalUuid, ProseState>,
     pending: pending::PendingPresentations,
+    narration: super::narration::Streaks,
 }
 
 #[derive(Debug)]

@@ -298,6 +298,12 @@ vocabulary! {
     /// A taste fired on authored prose and raised one live directive.
     TasteReminded = "taste::reminded" by ResidentRecognition;
 
+    /// A seated occupant kept running tools mid-turn without visible prose
+    /// past the configured bound, and the resident prodded it once more.
+    NarrationProdded = "narration::prodded" by ResidentRecognition;
+    /// A prodded occupant's silent streak ended.
+    NarrationCleared = "narration::cleared" by ResidentRecognition;
+
     /// An expected listening event remained absent past its armed window.
     CanaryAlarmed = "canary::alarmed" by ResidentRecognition;
     /// Listening meters disagreed: activity existed without decoded context.

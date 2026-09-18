@@ -958,7 +958,8 @@ fn accept_record(
         &command_surface.config.taste,
         &command_surface.config.steering,
         message_publisher,
-    );
+    )
+    .narration(command_surface.config.lane.narration());
     if let Some(taste_judge) = taste_judge {
         message_surface::accept_capture_record_deferred(
             bus,
