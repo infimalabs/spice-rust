@@ -1,10 +1,11 @@
-//! The composer's vendor emblem: a vendor's own glyph, or oh-my-pi's mark
-//! badged with the provider family its model runs on.
+//! The composer's vendor emblem: a vendor's own glyph, or for oh-my-pi the
+//! glyph of the provider family its model runs on, badged with oh-my-pi's
+//! mark.
 
 use wire::CanonicalUuid;
 use yew::prelude::*;
 
-use crate::watchband::{self, Standing};
+use crate::watchband::{self, OmpEmblem, Standing};
 
 pub(super) fn render_composer_vendor_icon(standing: &Standing) -> Html {
     let Some(class) = watchband::composer_vendor_icon_class(&standing.vendor) else {
@@ -12,15 +13,23 @@ pub(super) fn render_composer_vendor_icon(standing: &Standing) -> Html {
     };
     let title = watchband::standing_title(standing);
     let (mark, provider) = match standing.vendor.as_str() {
-        "omp" => {
-            let provider = standing.model.as_deref().and_then(watchband::omp_provider);
-            (render_omp_mark(standing.lane, provider), provider)
-        }
+        "omp" => match watchband::omp_emblem(standing.model.as_deref()) {
+            OmpEmblem::Provider(family) => {
+                let Some(path) = vendor_glyph_path(family) else {
+                    return Html::default();
+                };
+                (
+                    render_vendor_glyph(path, render_omp_badge(standing.lane)),
+                    Some(family),
+                )
+            }
+            OmpEmblem::Pi => (render_omp_mark(standing.lane), None),
+        },
         vendor => {
             let Some(path) = vendor_glyph_path(vendor) else {
                 return Html::default();
             };
-            (render_vendor_glyph(path), None)
+            (render_vendor_glyph(path, Html::default()), None)
         }
     };
     let provider_class = provider.map(|provider| format!("composer-vendor-icon--omp-{provider}"));
@@ -38,28 +47,53 @@ pub(super) fn render_composer_vendor_icon(standing: &Standing) -> Html {
     }
 }
 
-fn render_vendor_glyph(path: &'static str) -> Html {
+/// The vendor's glyph on the 16-unit canvas it publishes, wearing `badge`
+/// over its foot corner or nothing.
+fn render_vendor_glyph(path: &'static str, badge: Html) -> Html {
     html! {
         <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
             <path d={path}></path>
+            {badge}
         </svg>
     }
 }
 
-/// oh-my-pi's mark as omp.sh draws it: its pi under one diagonal gradient.
-///
-/// Every composer carries its own gradient, named by its lane, so the fill
-/// resolves inside the icon that paints it. A known provider family seats
-/// its glyph on a disc over the pi's foot.
-fn render_omp_mark(lane: CanonicalUuid, provider: Option<&str>) -> Html {
-    let gradient = format!("composer-vendor-gradient-{lane}");
-    let fill = format!("url(#{gradient})");
-    let badge = provider
-        .and_then(vendor_glyph_path)
-        .map(render_provider_badge)
-        .unwrap_or_default();
+/// oh-my-pi's mark filling the emblem on its own.
+fn render_omp_mark(lane: CanonicalUuid) -> Html {
     html! {
         <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+            {render_omp_pi(lane)}
+        </svg>
+    }
+}
+
+/// oh-my-pi's mark shrunk to the badge disc over a provider glyph's foot.
+///
+/// The disc and the pi inside it keep the proportion the badge has always
+/// had, a 30-unit disc centred at 49 on a 64-unit canvas, quartered onto
+/// the glyph's 16-unit canvas.
+fn render_omp_badge(lane: CanonicalUuid) -> Html {
+    html! {
+        <g class="composer-vendor-badge">
+            <circle cx="12.25" cy="12.25" r="3.75"></circle>
+            <svg x="9.75" y="9.75" width="5" height="5" viewBox="0 0 64 64">
+                {render_omp_pi(lane)}
+            </svg>
+        </g>
+    }
+}
+
+/// oh-my-pi's pi as omp.sh draws it, under one diagonal gradient on its
+/// 64-unit canvas.
+///
+/// Every composer carries its own gradient, named by its lane, so the fill
+/// resolves inside the icon that paints it whether the pi is the emblem or
+/// the badge.
+fn render_omp_pi(lane: CanonicalUuid) -> Html {
+    let gradient = format!("composer-vendor-gradient-{lane}");
+    let fill = format!("url(#{gradient})");
+    html! {
+        <>
             <defs>
                 // A literal tag is normalised to lowercase, and SVG knows no
                 // `lineargradient`; the dynamic form keeps its case.
@@ -70,19 +104,7 @@ fn render_omp_mark(lane: CanonicalUuid, provider: Option<&str>) -> Html {
                 </@>
             </defs>
             <path fill={fill} d="M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z"></path>
-            {badge}
-        </svg>
-    }
-}
-
-fn render_provider_badge(path: &'static str) -> Html {
-    html! {
-        <g class="composer-vendor-badge">
-            <circle cx="49" cy="49" r="15"></circle>
-            <svg x="39" y="39" width="20" height="20" viewBox="0 0 16 16">
-                <path d={path}></path>
-            </svg>
-        </g>
+        </>
     }
 }
 
