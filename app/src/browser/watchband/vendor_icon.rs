@@ -67,16 +67,17 @@ fn render_omp_mark(lane: CanonicalUuid) -> Html {
     }
 }
 
-/// oh-my-pi's mark shrunk to the badge disc over a provider glyph's foot.
+/// oh-my-pi's mark over a provider glyph's foot corner, on no plate.
 ///
-/// The disc and the pi inside it keep the proportion the badge has always
-/// had, a 30-unit disc centred at 49 on a 64-unit canvas, quartered onto
-/// the glyph's 16-unit canvas.
+/// The pi used to stand on a filled disc, which punched a circular hole
+/// through the glyph behind it wherever the two overlapped. Nothing backs it
+/// now, so the pi takes the footprint that disc had -- 7.5 units of the
+/// glyph's 16-unit canvas, in the foot corner -- and its own diagonal
+/// gradient is what tells it apart from the single-hue glyph it sits on.
 fn render_omp_badge(lane: CanonicalUuid) -> Html {
     html! {
         <g class="composer-vendor-badge">
-            <circle cx="12.25" cy="12.25" r="3.75"></circle>
-            <svg x="9.75" y="9.75" width="5" height="5" viewBox="0 0 64 64">
+            <svg x="8.5" y="8.5" width="7.5" height="7.5" viewBox="0 0 64 64">
                 {render_omp_pi(lane)}
             </svg>
         </g>
