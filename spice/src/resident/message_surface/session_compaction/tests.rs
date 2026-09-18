@@ -732,6 +732,7 @@ fn claude_environment(home: &Path) -> crate::session_command::Environment {
         None,
         None,
         None,
+        None,
     )
 }
 
@@ -742,6 +743,7 @@ fn codex_environment(home: &Path) -> crate::session_command::Environment {
             None,
             Some(home.as_os_str().to_owned()),
         )],
+        None,
         None,
         None,
         None,

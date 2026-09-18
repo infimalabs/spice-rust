@@ -8,6 +8,8 @@ use wire::Refusal;
 
 use super::{Environment, model::Vendor};
 
+mod folders;
+
 const THREAD_HEX_LEN: usize = 32;
 const SEARCH_DEPTH: usize = 8;
 const SEARCH_DIRECTORY_LIMIT: usize = 64;
@@ -323,12 +325,17 @@ pub(super) fn find_thread(
                 state_failure = Some(index_issue(format!("{}: {error}", state.display())))
             }
         }
-    } else if let Some(direct) = working_directory_transcript(
-        &root.join(layout.sessions_directory),
-        thread,
-        environment.cwd.as_deref(),
-    ) {
-        return Ok(vec![direct]);
+    }
+    if let Some(folders) = layout.working_directory_folders {
+        let direct = folders::working_directory_transcripts(
+            &root.join(layout.sessions_directory),
+            folders,
+            thread,
+            environment,
+        );
+        if !direct.is_empty() {
+            return Ok(direct);
+        }
     }
     let discovered = match find_named_transcript(&root.join(layout.sessions_directory), &lookup) {
         Ok(matches) => matches,
@@ -350,34 +357,6 @@ pub(super) fn find_thread(
             root.join(layout.sessions_directory).display()
         )
     }))
-}
-
-/// The transcript a vendor without a state index keeps for `thread` beneath
-/// the project directory keyed by `cwd`, when one is there.
-///
-/// Such a vendor names its session files beneath one directory per
-/// originating working directory, keyed by that directory's path with every
-/// separator replaced by `-`. Resolving one's own live thread is by far the
-/// most common lookup, and the process asking is, unless it changed
-/// directory afterward, still sitting in the exact directory that named it
-/// -- so this needs no search at all, only that one guess checked against
-/// the same regular-file rule the walk admits by. A miss is silent: the
-/// caller walks the sessions root exactly as if this were never tried.
-fn working_directory_transcript(
-    sessions: &Path,
-    thread: &str,
-    cwd: Option<&Path>,
-) -> Option<PathBuf> {
-    let directory = sessions.join(
-        cwd?.to_string_lossy()
-            .replace(std::path::MAIN_SEPARATOR, "-"),
-    );
-    ["jsonl", "jsonl.gz"]
-        .into_iter()
-        .map(|extension| directory.join(format!("{thread}.{extension}")))
-        .find(|path| {
-            fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
-        })
 }
 
 enum StateIndexError {
@@ -867,10 +846,10 @@ mod tests {
         }
     }
 
-    struct Scratch(PathBuf);
+    pub(super) struct Scratch(PathBuf);
 
     impl Scratch {
-        fn new(label: &str) -> Self {
+        pub(super) fn new(label: &str) -> Self {
             let serial = FIXTURE.fetch_add(1, Ordering::Relaxed);
             let path = std::env::temp_dir().join(format!(
                 "spice-session-source-{}-{serial}-{label}",
@@ -880,7 +859,7 @@ mod tests {
             Self(path)
         }
 
-        fn path(&self) -> &Path {
+        pub(super) fn path(&self) -> &Path {
             &self.0
         }
     }
@@ -901,7 +880,46 @@ mod tests {
             preferred_vendor: None,
             home: None,
             cwd: cwd.map(Path::to_path_buf),
+            temp: None,
         }
+    }
+
+    /// An omp home at `root` seen from `cwd`, with the operator home and
+    /// temporary directory oh-my-pi names folders relative to.
+    pub(super) fn omp_environment(
+        root: &Path,
+        cwd: &Path,
+        home: &Path,
+        temp: Option<&Path>,
+    ) -> Environment {
+        Environment {
+            vendors: vec![VendorEnvironment {
+                vendor: &spice::extension::OMP,
+                identity: None,
+                home: Some(root.to_path_buf()),
+            }],
+            preferred_vendor: None,
+            home: Some(home.to_path_buf()),
+            cwd: Some(cwd.to_path_buf()),
+            temp: temp.map(Path::to_path_buf),
+        }
+    }
+
+    /// An omp home whose sessions root holds more sibling folders than the
+    /// bounded walk will ever list, plus the fixture thread filed the way
+    /// oh-my-pi files it beneath `folder`: a timestamped transcript beside
+    /// its same-named artifact directory.
+    fn overflowing_omp_sessions(root: &Path, folder: &str) -> PathBuf {
+        let sessions = root.join("sessions");
+        for index in 0..=SEARCH_ENTRY_LIMIT {
+            fs::create_dir_all(sessions.join(format!("-unrelated-project-{index}")))
+                .expect("bounded decoy session folder exists");
+        }
+        let stem = format!("2026-09-16T06-43-21-805Z_{THREAD_DASHED}");
+        fs::create_dir_all(sessions.join(folder).join(&stem)).expect("artifact directory exists");
+        let transcript = sessions.join(folder).join(format!("{stem}.jsonl"));
+        fs::write(&transcript, b"\n").expect("fixture transcript exists");
+        transcript
     }
 
     fn codex_environment(home: &Path) -> Environment {
@@ -914,6 +932,7 @@ mod tests {
             preferred_vendor: None,
             home: None,
             cwd: None,
+            temp: None,
         }
     }
 
@@ -1145,6 +1164,72 @@ mod tests {
     }
 
     #[test]
+    fn an_omp_thread_resolves_beneath_its_own_working_directory_past_the_walk_bound() {
+        let scratch = Scratch::new("omp-unbounded");
+        let home = scratch.path().join("home");
+        let cwd = home.join("devel").join("worktree");
+        fs::create_dir_all(&cwd).expect("home worktree exists");
+        let transcript = overflowing_omp_sessions(scratch.path(), "-devel-worktree");
+        let registry = spice::extension::registry().expect("compiled registry is coherent");
+        let environment = omp_environment(scratch.path(), &cwd, &home, None);
+
+        let found = find_thread(THREAD_DASHED, &spice::extension::OMP, &environment)
+            .expect("the named folder holds the thread");
+        assert_eq!(found, vec![transcript.clone()]);
+        for spelling in [THREAD, THREAD_DASHED] {
+            let resolved = resolve_thread_from_registry(spelling, &environment, &registry)
+                .expect("the working directory reaches the thread without a walk");
+            assert_eq!(resolved.len(), 1, "{spelling}");
+            assert_eq!(
+                resolved[0].vendor,
+                super::Vendor::declared(&spice::extension::OMP)
+            );
+            assert_eq!(
+                resolved[0].path,
+                transcript
+                    .canonicalize()
+                    .expect("fixture transcript canonicalizes")
+            );
+        }
+
+        fs::remove_file(&transcript).expect("fixture transcript removed");
+        let refusal = resolve_thread_from_registry(THREAD_DASHED, &environment, &registry)
+            .expect_err("an empty folder is a miss, so the walk runs and overflows");
+        assert_eq!(refusal.reason(), "session::thread-unresolved");
+        let detail = refusal.explanation();
+        assert!(
+            detail.contains(&format!("{SEARCH_ENTRY_LIMIT}-entry limit")),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn an_omp_thread_outside_the_home_resolves_through_the_absolute_folder() {
+        let scratch = Scratch::new("omp-absolute");
+        let home = scratch.path().join("home");
+        let cwd = scratch.path().join("elsewhere");
+        fs::create_dir_all(&home).expect("home exists");
+        fs::create_dir_all(&cwd).expect("outside worktree exists");
+        let folder = format!(
+            "--{}-elsewhere--",
+            scratch
+                .path()
+                .canonicalize()
+                .expect("fixture root canonicalizes")
+                .strip_prefix("/")
+                .expect("fixture root is absolute")
+                .to_string_lossy()
+                .replace('/', "-")
+        );
+        let transcript = overflowing_omp_sessions(scratch.path(), &folder);
+        let environment = omp_environment(scratch.path(), &cwd, &home, None);
+
+        let found = find_thread(THREAD_DASHED, &spice::extension::OMP, &environment)
+            .expect("the absolute folder holds the thread");
+        assert_eq!(found, vec![transcript]);
+    }
+
+    #[test]
     fn codex_keeps_state_failure_beside_the_incomplete_session_path() {
         let scratch = Scratch::new("codex-depth");
         let sessions = scratch.path().join("sessions");
@@ -1217,6 +1302,7 @@ mod tests {
             Some(std::ffi::OsString::from("fixture")),
             None,
             None,
+            None,
         );
 
         let resolved = resolve_thread_from_registry(THREAD, &environment, &registry)
@@ -1273,6 +1359,7 @@ mod tests {
                 VendorEnvironment::new(&spice::extension::CLAUDE, identity.clone(), home.clone()),
                 VendorEnvironment::new(&spice::extension::CODEX, identity, home),
             ],
+            None,
             None,
             None,
             None,

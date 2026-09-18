@@ -26,6 +26,10 @@ pub struct TranscriptLayout {
     pub sessions_directory: &'static str,
     /// Optional state index used before filesystem discovery.
     pub state_index: Option<TranscriptIndex>,
+    /// How the vendor files each session beneath one folder per originating
+    /// working directory, when it does; the folder a working directory names
+    /// is checked before the bounded walk of the sessions directory.
+    pub working_directory_folders: Option<WorkingDirectoryFolders>,
 }
 
 /// Native transcript index understood by a declared vendor.
@@ -33,6 +37,20 @@ pub struct TranscriptLayout {
 pub enum TranscriptIndex {
     /// Codex's current SQLite thread-to-rollout mapping.
     CodexStateV5 { file: &'static str },
+}
+
+/// One folder per originating working directory beneath the sessions
+/// directory, and one file per session inside it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkingDirectoryFolders {
+    /// Claude Code names the folder after the absolute working directory
+    /// with every separator replaced by `-`, and the file `<thread>.jsonl`.
+    ClaudeProjects,
+    /// oh-my-pi names the folder `-` and the working directory relative to
+    /// the home, `-tmp` and it relative to the temporary directory, or
+    /// `--`, the absolute path, `--`, with every separator and `:` replaced
+    /// by `-`; the file is `<timestamp>_<thread>.jsonl`.
+    OmpSessions,
 }
 
 /// How a vendor's `exec` stdout carries assistant activity.
@@ -296,6 +314,7 @@ pub const CODEX: Vendor = Vendor {
         state_index: Some(TranscriptIndex::CodexStateV5 {
             file: "state_5.sqlite",
         }),
+        working_directory_folders: None,
     },
     stdout: StdoutContract {
         assistant: "",
@@ -320,6 +339,7 @@ pub const CLAUDE: Vendor = Vendor {
         default_home: ".claude",
         sessions_directory: "projects",
         state_index: None,
+        working_directory_folders: Some(WorkingDirectoryFolders::ClaudeProjects),
     },
     stdout: StdoutContract {
         assistant: "",
@@ -348,6 +368,7 @@ pub const OMP: Vendor = Vendor {
         default_home: ".omp/agent",
         sessions_directory: "sessions",
         state_index: None,
+        working_directory_folders: Some(WorkingDirectoryFolders::OmpSessions),
     },
     stdout: StdoutContract {
         assistant: "",
@@ -535,6 +556,15 @@ mod tests {
             })
         );
         assert_eq!(CLAUDE.transcript_layout().sessions_directory, "projects");
+        assert_eq!(CODEX.transcript_layout().working_directory_folders, None);
+        assert_eq!(
+            CLAUDE.transcript_layout().working_directory_folders,
+            Some(WorkingDirectoryFolders::ClaudeProjects)
+        );
+        assert_eq!(
+            OMP.transcript_layout().working_directory_folders,
+            Some(WorkingDirectoryFolders::OmpSessions)
+        );
         assert_eq!(OMP.stdout().format, StdoutFormat::JsonLines);
         assert_eq!(OMP.tool_envelope(), ToolEnvelope::Direct);
         assert_eq!(CODEX.steering(), SteeringChannel::ShellStderr);

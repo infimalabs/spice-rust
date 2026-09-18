@@ -350,6 +350,94 @@ fn public_thread_refusal_preserves_an_incomplete_claude_search_before_codex() {
     scratch.remove();
 }
 
+/// An omp home whose sessions root is wider than the bounded walk will list
+/// still answers for the thread filed beneath the folder oh-my-pi names for
+/// the working directory the command runs from: `-` and the directory
+/// relative to the home.
+#[test]
+fn an_omp_thread_beneath_the_working_directory_resolves_past_the_walk_bound() {
+    let scratch = Scratch::new("cwd-omp-thread");
+    let cwd = scratch.path().join("worktree");
+    fs::create_dir(&cwd).expect("fixture working directory exists");
+    let omp_home = scratch.path().join("omp-home");
+    let sessions = omp_home.join("sessions");
+    // More siblings than the 256-entry bound the transcript walk stops at.
+    for index in 0..300 {
+        fs::create_dir_all(sessions.join(format!("-unrelated-project-{index}")))
+            .expect("decoy omp session folder exists");
+    }
+    let stem = format!("2026-09-16T06-43-21-805Z_{CLAUDE_THREAD_DASHED}");
+    let folder = sessions.join("-worktree");
+    fs::create_dir_all(folder.join(&stem)).expect("omp artifact directory exists");
+    let omp_path = folder.join(format!("{stem}.jsonl"));
+    write_jsonl(
+        &omp_path,
+        &[
+            json!({"type": "session", "version": 3, "id": CLAUDE_THREAD_DASHED,
+                "timestamp": "2026-09-16T06:43:21.805Z", "cwd": cwd.to_string_lossy()}),
+            json!({"type": "message", "id": "u1", "parentId": null,
+                "timestamp": "2026-09-16T06:43:25.000Z",
+                "message": {"role": "user", "content": [{"type": "text", "text": "hello"}],
+                    "timestamp": 1789540205000_u64}}),
+            json!({"type": "message", "id": "a1", "parentId": "u1",
+                "timestamp": "2026-09-16T06:43:26.000Z",
+                "message": {"role": "assistant", "content": [{"type": "text", "text": "hi"}],
+                    "usage": {"input": 1, "output": 1, "cacheRead": 0, "cacheWrite": 0},
+                    "stopReason": "stop"}}),
+        ],
+    );
+    let environment = [
+        ("HOME", scratch.path().to_string_lossy().into_owned()),
+        (
+            "PI_CODING_AGENT_DIR",
+            omp_home.to_string_lossy().into_owned(),
+        ),
+        ("SPICE_AGENT_VENDOR", "omp".to_owned()), // env-policy: allow
+    ];
+
+    let elsewhere = invoke(
+        &strings(&["--json", "session", "thread", CLAUDE_THREAD_DASHED]),
+        &environment,
+    );
+    assert_eq!(
+        elsewhere.code,
+        Some(REFUSAL_EXIT),
+        "{}",
+        utf8(&elsewhere.err)
+    );
+    let envelope: Value =
+        serde_json::from_slice(&elsewhere.err).expect("refusal is a structured outcome DTO");
+    let diagnostic = refusal_diagnostic(&envelope);
+    assert_eq!(diagnostic["reason"], "session::thread-unresolved");
+    assert!(
+        diagnostic["detail"]
+            .as_str()
+            .expect("thread refusal carries diagnostic detail")
+            .contains("256-entry limit"),
+        "{}",
+        diagnostic["detail"]
+    );
+
+    let thread = reply_forms_in(
+        Some(&cwd),
+        &strings(&["session", "thread", CLAUDE_THREAD_DASHED]),
+        &environment,
+        "thread",
+    );
+    assert_eq!(thread["thread"]["id"], CLAUDE_THREAD_DASHED);
+    assert_eq!(thread["thread"]["vendor"], "omp");
+    assert_eq!(
+        thread["thread"]["transcript"],
+        omp_path
+            .canonicalize()
+            .expect("filed transcript canonicalizes")
+            .to_string_lossy()
+            .as_ref()
+    );
+
+    scratch.remove();
+}
+
 /// A Claude home whose projects root is wider than the bounded walk will list
 /// still answers for the thread kept beneath the directory keyed by the
 /// working directory the command runs from: that directory is checked first,
