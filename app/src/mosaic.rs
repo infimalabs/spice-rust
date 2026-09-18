@@ -208,7 +208,8 @@ pub fn boundary_rows_for(px: f64, gap: i32, module: i32) -> i32 {
     1.max(((px + f64::from(gap)) / f64::from(module)).ceil() as i32)
 }
 
-/// Build the base candidate and, only for a tall base measurement, one wide candidate.
+/// Build the base candidate and, for a tall base measurement, the one wider
+/// candidate that actually buys height.
 pub fn span_candidates(
     geometry: &Geometry,
     mut measure: impl FnMut(usize) -> f64,
@@ -222,15 +223,24 @@ fn span_candidates_with_threshold(
     threshold: f64,
 ) -> Vec<Candidate> {
     let base_px = measure(geometry.base_span);
-    let mut candidates = vec![Candidate {
+    let base = Candidate {
         span: geometry.base_span,
         rows: rows_for(base_px, geometry.gap, geometry.module),
-    }];
+    };
+    let mut candidates = vec![base];
+    // A tall base measurement earns the wider read, but only a wider
+    // measurement that is genuinely shorter earns a lane. Content whose height
+    // does not depend on width -- a letterboxed image, a panel sized by its own
+    // content -- measures the same at both spans, so widening it would consume
+    // a second lane and save nothing.
     if let Some(wide_span) = geometry.wide_span().filter(|_| base_px >= threshold) {
-        candidates.push(Candidate {
+        let wide = Candidate {
             span: wide_span,
             rows: rows_for(measure(wide_span), geometry.gap, geometry.module),
-        });
+        };
+        if wide.rows < base.rows {
+            candidates.push(wide);
+        }
     }
     candidates
 }
