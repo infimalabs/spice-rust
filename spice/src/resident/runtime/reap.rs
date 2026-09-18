@@ -19,13 +19,18 @@ use std::collections::BTreeSet;
 use super::last_word::LastWord;
 use super::*;
 
-/// Account one occupant exit against renewal, lifecycle holds, and residency.
+/// Account one occupant exit against residency, steering, and lifecycle holds.
 ///
 /// The supervisor notice and the seat sweep both land here, so an exit is
-/// accounted the same way whichever of them reports it first. An exit whose
-/// transcript ends on a vendor failure holds the lane on that word alone; one
-/// that ends on the occupant's own answer is a mature death however short its
-/// life; any other exit is one more death for the young-death run.
+/// accounted the same way whichever of them reports it first. The seat is
+/// vacated and the exit journaled first, which also retires the direction
+/// the occupant answered in its final transcript, and the death is judged
+/// against what that left behind: an exit whose transcript ends on a vendor
+/// failure holds the lane on that word alone; one that ends on the
+/// occupant's own answer with no direction left pending is a mature death
+/// however short its life; any other exit is one more death for the
+/// young-death run. An exit whose journaling is refused counts nothing, so
+/// the sweep that accounts it again counts it once.
 #[allow(
     clippy::too_many_arguments,
     reason = "one exit crosses renewal, lifecycle, residency, and steering"
@@ -40,37 +45,46 @@ pub(in crate::resident) fn account_exit(
     exit: lane::capture::CaptureExit,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    if !lane_surface::renewal_requested_exit(bus, epoch, exit.lane, exit.occupant)? {
-        let seated = seats
-            .occupant(exit.lane)
-            .is_some_and(|sitting| sitting.occupant() == exit.occupant);
-        let word = if seated {
-            super::last_word::exit_word(bus, paths, epoch, exit.lane, exit.occupant, diagnostic)?
-        } else {
-            LastWord::Silent
-        };
-        match word {
-            LastWord::Failure(failure) => lifecycle.observe_vendor_failure(
-                bus,
-                epoch,
-                exit.lane,
-                exit.occupant,
-                &failure,
-                config,
-                diagnostic,
-            )?,
-            LastWord::Answered | LastWord::Silent => lifecycle.observe_death(
-                bus,
-                epoch,
-                seats,
-                exit.lane,
-                exit.occupant,
-                word == LastWord::Answered,
-                config,
-            )?,
+    let renewal = lane_surface::renewal_requested_exit(bus, epoch, exit.lane, exit.occupant)?;
+    let seated = seats
+        .started(exit.lane)
+        .filter(|activity| activity.occupant() == exit.occupant);
+    let word = if seated.is_some() {
+        super::last_word::exit_word(bus, paths, epoch, exit.lane, exit.occupant, diagnostic)?
+    } else {
+        LastWord::Silent
+    };
+    lane_surface::occupant_exited(bus, paths, epoch, seats, exit, diagnostic)?;
+    if renewal {
+        return Ok(());
+    }
+    match word {
+        LastWord::Failure(failure) => lifecycle.observe_vendor_failure(
+            bus,
+            epoch,
+            exit.lane,
+            exit.occupant,
+            &failure,
+            config,
+            diagnostic,
+        ),
+        LastWord::Answered | LastWord::Silent => {
+            let settled = word == LastWord::Answered && !direction_pending(bus, exit.lane)?;
+            lifecycle.observe_death(bus, epoch, seated, exit.lane, settled, config)
         }
     }
-    lane_surface::occupant_exited(bus, paths, epoch, seats, exit, diagnostic)
+}
+
+/// Whether the lane still owes an answer to live direction.
+///
+/// An occupant that answered but left the direction it was woken for live
+/// hands the same wake to its successor: the lane learns nothing between
+/// the two, and only the young-death run stands between it and a wake for
+/// every exit until the direction lapses.
+fn direction_pending(bus: &Bus, lane: CanonicalUuid) -> CommandResult<bool> {
+    bus.read(move |read| read.pending_steering(Some(lane), journal::FactPageStart::After(None)))
+        .map(|page| !page.rows().is_empty())
+        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))
 }
 
 /// Account one supervisor failure the way its own notice would have.
@@ -89,7 +103,10 @@ pub(super) fn account_failure(
     failure: &str,
 ) -> CommandResult<()> {
     if !lane_surface::renewal_requested_exit(bus, epoch, lane, occupant)? {
-        lifecycle.observe_death(bus, epoch, seats, lane, occupant, false, config)?;
+        let seated = seats
+            .started(lane)
+            .filter(|activity| activity.occupant() == occupant);
+        lifecycle.observe_death(bus, epoch, seated, lane, false, config)?;
     }
     if seats
         .occupant(lane)

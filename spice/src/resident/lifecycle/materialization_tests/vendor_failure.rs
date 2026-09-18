@@ -33,6 +33,12 @@ const FINISHED_PROSE: &[u8] = br#"{"type":"assistant","message":{"type":"message
 const FINISHED_RESULT: &[u8] =
     br#"{"type":"result","subtype":"success","is_error":false,"result":"Finished the claim."}
 "#;
+/// The occupant's answer headed with the key `operator_direction_write` addresses to the lane.
+const ACKED_PROSE: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: Finished the claim."}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}
+"#;
+const ACKED_RESULT: &[u8] =
+    br#"{"type":"result","subtype":"success","is_error":false,"result":"ACK 1kKRRsDS: Finished the claim."}
+"#;
 
 #[test]
 fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat() {
@@ -48,8 +54,8 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
 
     assert_eq!(
         fact_kinds(&fixture.bus)[before.len()..],
-        [wire::FactKind::LaneHeld, wire::FactKind::LaneExited],
-        "the hold is journaled before the exit vacates the lane"
+        [wire::FactKind::LaneExited, wire::FactKind::LaneHeld],
+        "the exit vacates the lane and the hold is journaled against it"
     );
     let held = fixture.held_fact();
     assert_eq!(held.lane, lane());
@@ -142,12 +148,72 @@ fn an_exit_that_never_answered_the_prompt_is_a_young_death() {
 
     assert_eq!(
         fact_kinds(&fixture.bus)[before.len()..],
-        [wire::FactKind::LaneHeld, wire::FactKind::LaneExited],
+        [wire::FactKind::LaneExited, wire::FactKind::LaneHeld],
         "an exit that answered nothing inside the young window is one young death"
     );
     assert_eq!(
         fixture.held_fact().evidence,
         "1 consecutive young occupant deaths"
+    );
+    fixture.finish();
+}
+
+#[test]
+fn an_exit_that_answered_but_left_its_direction_live_is_a_young_death() {
+    let fixture = VendorExitFixture::new(
+        "unsettled",
+        &[PROMPT, FINISHED_PROSE, FINISHED_RESULT, RATE_LIMIT_ALLOWED],
+    );
+    fixture.steer();
+    let config = one_death_holds();
+    let mut lifecycle = lifecycle::Runtime::new(&config);
+    let before = fact_kinds(&fixture.bus);
+    let mut diagnostic = Vec::new();
+
+    fixture
+        .exit(&mut lifecycle, &config, &mut diagnostic)
+        .expect("the unsettled exit is accounted");
+
+    assert_eq!(
+        fact_kinds(&fixture.bus)[before.len()..],
+        [wire::FactKind::LaneExited, wire::FactKind::LaneHeld],
+        "an answer that retires nothing hands the same wake to a successor, so a quick exit on it is one young death"
+    );
+    assert_eq!(
+        fixture.held_fact().evidence,
+        "1 consecutive young occupant deaths"
+    );
+    fixture.finish();
+}
+
+#[test]
+fn an_exit_that_retired_its_direction_in_its_final_prose_is_a_mature_death() {
+    let fixture = VendorExitFixture::new(
+        "settled",
+        &[PROMPT, ACKED_PROSE, ACKED_RESULT, RATE_LIMIT_ALLOWED],
+    );
+    fixture.steer();
+    let config = one_death_holds();
+    let mut lifecycle = lifecycle::Runtime::new(&config);
+    let before = fact_kinds(&fixture.bus);
+    let mut diagnostic = Vec::new();
+
+    fixture
+        .exit(&mut lifecycle, &config, &mut diagnostic)
+        .expect("the settled exit is accounted");
+
+    assert_eq!(
+        fact_kinds(&fixture.bus)[before.len()..],
+        [wire::FactKind::LaneExited, wire::FactKind::SteerAcked],
+        "the answer in the final prose retires the direction before the death is judged, so nothing holds"
+    );
+    assert_eq!(lifecycle.held_until(lane()), None);
+    assert_eq!(
+        String::from_utf8(diagnostic).expect("diagnostic is UTF-8"),
+        format!(
+            "lane {} steering 1kKRRsDS acked at exit from its transcript\n",
+            lane()
+        )
     );
     fixture.finish();
 }
@@ -372,6 +438,15 @@ impl VendorExitFixture {
         );
         assert!(!seats.occupied(lane()));
         outcome
+    }
+
+    /// Address the operator's direction to the lane while the occupant sits.
+    fn steer(&self) {
+        committed(
+            self.bus
+                .commit(operator_direction_write())
+                .expect("operator direction commits"),
+        );
     }
 
     fn held_fact(&self) -> body::LaneHeld {

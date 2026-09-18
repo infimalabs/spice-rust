@@ -12,7 +12,7 @@ use board::Entry;
 use bus::Bus;
 use journal::FactCause;
 use lane::hold::{Death, Holds};
-use lane::occupant::Seats;
+use lane::occupant::{Activity, Seats};
 use spice::repository::Repository;
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, Instant, Outcome, Producer, ReplyPosition, Seq,
@@ -462,31 +462,27 @@ impl Runtime {
 
     /// Classify one observed occupant death through the shared hold reducer.
     ///
-    /// A death is young only when the occupant both died inside the young
-    /// window and never answered: an occupant whose transcript ends on its
-    /// own answer did the work its wake asked for, however quickly, so its
-    /// exit says nothing against the seat.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "one death crosses the journal, the seats, the clock, and the transcript's word"
-    )]
+    /// `seated` is the occupant's own seating, or nothing for an exit that
+    /// named no seated occupant, which is nobody's death. A death is young
+    /// only when the occupant died inside the young window without settling
+    /// its wake: an occupant whose transcript ends on its own answer and
+    /// leaves no direction pending did the work its wake asked for, however
+    /// quickly, so its exit says nothing against the seat. One that answered
+    /// but left the direction it was woken for live hands the same wake to
+    /// its successor, so its exit counts like silence.
     pub(super) fn observe_death(
         &mut self,
         bus: &Bus,
         epoch: CanonicalUuid,
-        seats: &Seats,
+        seated: Option<Activity>,
         lane: CanonicalUuid,
-        occupant: CanonicalUuid,
-        answered: bool,
+        settled: bool,
         config: &lane::Config,
     ) -> CommandResult<()> {
-        let Some(activity) = seats
-            .started(lane)
-            .filter(|activity| activity.occupant() == occupant)
-        else {
+        let Some(activity) = seated else {
             return Ok(());
         };
-        let death = if !answered && activity.at().elapsed() < config.young().get() {
+        let death = if !settled && activity.at().elapsed() < config.young().get() {
             Death::Young
         } else {
             Death::Mature

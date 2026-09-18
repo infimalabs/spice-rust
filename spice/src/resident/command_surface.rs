@@ -363,15 +363,10 @@ impl<'a> Surface<'a> {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
     ) -> super::CommandResult<()> {
-        lifecycle.observe_death(
-            self.bus,
-            self.epoch,
-            seats,
-            lane,
-            occupant,
-            false,
-            &self.config.lane,
-        )
+        let seated = seats
+            .started(lane)
+            .filter(|activity| activity.occupant() == occupant);
+        lifecycle.observe_death(self.bus, self.epoch, seated, lane, false, &self.config.lane)
     }
 
     pub(super) fn expire_lifecycle_hold(
