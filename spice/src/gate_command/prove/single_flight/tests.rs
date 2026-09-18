@@ -9,6 +9,11 @@ use wire::{Digest, Domain};
 
 use super::{Claim, LeaseGuard, Timing, acquired, claim, claim_with_timing};
 
+/// How long a fixture producer holds its lease: long enough that a loaded
+/// harness never sees it expire behind a waiter, which would let the waiter
+/// recover the lease instead of observing the producer's outcome.
+const PRODUCER_LEASE: Duration = Duration::from_secs(60 * 60);
+
 struct Fixture {
     root: std::path::PathBuf,
     store: gate::EvidenceStore,
@@ -61,12 +66,7 @@ fn waiter_consumes_the_producers_receipt() {
     let action = derive_action_key(b"shared success");
     let LeaseAcquisition::Acquired { lease, .. } = fixture
         .store
-        .acquire_lease(
-            &action,
-            "producer",
-            SystemTime::now(),
-            Duration::from_secs(5),
-        )
+        .acquire_lease(&action, "producer", SystemTime::now(), PRODUCER_LEASE)
         .unwrap()
     else {
         panic!("producer acquires action");
@@ -94,12 +94,7 @@ fn waiter_receives_the_producers_terminal_failure() {
     let action = derive_action_key(b"shared failure");
     let LeaseAcquisition::Acquired { lease, .. } = fixture
         .store
-        .acquire_lease(
-            &action,
-            "producer",
-            SystemTime::now(),
-            Duration::from_secs(5),
-        )
+        .acquire_lease(&action, "producer", SystemTime::now(), PRODUCER_LEASE)
         .unwrap()
     else {
         panic!("producer acquires action");
@@ -127,12 +122,7 @@ fn acquired_lease_rechecks_a_racing_receipt_before_execution() {
     let action = derive_action_key(b"receipt after acquisition");
     let LeaseAcquisition::Acquired { lease, .. } = fixture
         .store
-        .acquire_lease(
-            &action,
-            "producer",
-            SystemTime::now(),
-            Duration::from_secs(5),
-        )
+        .acquire_lease(&action, "producer", SystemTime::now(), PRODUCER_LEASE)
         .unwrap()
     else {
         panic!("producer acquires action");
@@ -167,12 +157,7 @@ fn busy_waiter_stops_at_its_bound_without_disturbing_the_producer() {
     let action = derive_action_key(b"bounded waiter");
     let LeaseAcquisition::Acquired { lease, .. } = fixture
         .store
-        .acquire_lease(
-            &action,
-            "producer",
-            SystemTime::now(),
-            Duration::from_secs(5),
-        )
+        .acquire_lease(&action, "producer", SystemTime::now(), PRODUCER_LEASE)
         .unwrap()
     else {
         panic!("producer acquires action");
@@ -208,12 +193,7 @@ fn dropping_a_guard_releases_only_its_exact_token() {
     let action = derive_action_key(b"dropped guard");
     let LeaseAcquisition::Acquired { lease, .. } = fixture
         .store
-        .acquire_lease(
-            &action,
-            "producer",
-            SystemTime::now(),
-            Duration::from_secs(5),
-        )
+        .acquire_lease(&action, "producer", SystemTime::now(), PRODUCER_LEASE)
         .unwrap()
     else {
         panic!("producer acquires action");

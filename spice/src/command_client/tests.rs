@@ -241,13 +241,19 @@ fn answer_replacement_opening(
     1
 }
 
+/// How long a fixture peer waits on its socket. A peer only reads what the
+/// client under test sends next, so the bound guards against a hung client,
+/// not a slow one: a loaded harness reconnects the client across a restart
+/// well inside it.
+const FIXTURE_PEER_TIMEOUT: Duration = Duration::from_secs(10);
+
 fn accept_fixture_session(listener: TcpListener, epoch: CanonicalUuid) -> WebSocket<TcpStream> {
     let (stream, _) = listener.accept().expect("fixture peer accepts");
     stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
+        .set_read_timeout(Some(FIXTURE_PEER_TIMEOUT))
         .expect("fixture peer read timeout");
     stream
-        .set_write_timeout(Some(Duration::from_secs(2)))
+        .set_write_timeout(Some(FIXTURE_PEER_TIMEOUT))
         .expect("fixture peer write timeout");
     let mut socket = tungstenite::accept(stream).expect("fixture peer opens socket");
     let hello: wire::Hello =
