@@ -9,7 +9,7 @@ use journal::JournalReader;
 use serde::{Deserialize, Serialize};
 use wire::{Actor, ClaimDisposition, ResidentState, TaskHandle};
 
-use super::{ClaimState, Decision, Meter, WorkingState};
+use super::{ClaimState, Decision, Meter, NarrationState, WorkingState};
 
 const METER_STATE: &str = "session-meter.json";
 const OWNER_STATE: &str = "session-meter-owner.json";
@@ -313,18 +313,66 @@ fn collect_lane(
             })
         })
         .transpose()?;
+    let narration = open_prod(read, lane)?;
     Ok(BoardObservation {
         state: WorkingState {
             pending_inbox_count,
             drain_queue,
             claim,
             last_taste: String::new(),
+            narration,
         },
         current,
         prior_active,
         claim_reconciliation_pending: false,
     })
 }
+
+/// The lane's open prod: its newest `narration::prodded` row addressed to the
+/// seated occupant with no `narration::cleared` row for that occupant after it.
+///
+/// Both kinds are read newest-first through one bounded page each; a prod
+/// older than a page of other lanes' rows is treated as gone, which the next
+/// prod on this lane corrects by itself.
+fn open_prod(
+    read: &journal::JournalRead<'_>,
+    lane: &wire::LaneResidency,
+) -> Result<Option<NarrationState>, journal::GuardError> {
+    let Some(occupant) = lane.occupant else {
+        return Ok(None);
+    };
+    let budget = journal::FactReadBudget::new(NARRATION_PAGE_ROWS, NARRATION_PAGE_BYTES)?;
+    let prodded = read
+        .recent_fact_page(wire::FactKind::NarrationProdded, None, budget)?
+        .rows
+        .into_iter()
+        .find_map(|envelope| {
+            let prodded = envelope.fact.read::<wire::body::NarrationProdded>()?;
+            (prodded.lane == lane.lane && prodded.occupant == occupant)
+                .then_some((envelope.seq, prodded))
+        });
+    let Some((seq, prodded)) = prodded else {
+        return Ok(None);
+    };
+    let cleared = read
+        .recent_fact_page(wire::FactKind::NarrationCleared, None, budget)?
+        .rows
+        .into_iter()
+        .filter(|envelope| envelope.seq > seq)
+        .any(|envelope| {
+            envelope
+                .fact
+                .read::<wire::body::NarrationCleared>()
+                .is_some_and(|cleared| cleared.lane == lane.lane && cleared.occupant == occupant)
+        });
+    Ok((!cleared).then_some(NarrationState {
+        moments: prodded.moments,
+        count: prodded.count,
+    }))
+}
+
+const NARRATION_PAGE_ROWS: usize = 64;
+const NARRATION_PAGE_BYTES: usize = 64 * 1024;
 
 fn counts_as_authored_inbox(control: Option<&str>) -> bool {
     !control.is_some_and(|control| control.starts_with(super::TASK_CONTRACT_CONTROL_PREFIX))

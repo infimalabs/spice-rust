@@ -90,6 +90,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("lane.deaths", TRACKED),
     ConfigKeyDeclaration::new("lane.young", TRACKED),
     ConfigKeyDeclaration::new("lane.hold", TRACKED),
+    ConfigKeyDeclaration::new("lane.narration", TRACKED),
     ConfigKeyDeclaration::new("steer.expiry", TRACKED),
     ConfigKeyDeclaration::new("steer.resend", TRACKED),
     ConfigKeyDeclaration::new("vendor.claude.binary", TRACKED),

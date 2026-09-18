@@ -297,6 +297,52 @@ pub use lane::{
     TeamConfigured, TeamStanding,
 };
 
+/// A seated occupant kept running tools mid-turn without visible prose past
+/// the configured bound, and the resident prodded it once more.
+///
+/// One prod is one row. `moments` is how many tool calls the occupant has
+/// issued since its last authored prose, and `count` numbers the prods in
+/// that streak from one; the resident records the next prod after each
+/// further bound of tool calls. The streak ends with a `NarrationCleared`
+/// row, so the meter reads the lane's newest prod and the newest clearance
+/// and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NarrationProdded {
+    /// Lane whose occupant went silent.
+    pub lane: CanonicalUuid,
+    /// Occupant that kept working without prose.
+    pub occupant: CanonicalUuid,
+    /// Tool calls issued since the occupant's last authored prose.
+    pub moments: u32,
+    /// Ordinal of this prod within the streak, from one.
+    pub count: u32,
+}
+
+/// A prodded occupant's silent streak ended.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NarrationCleared {
+    /// Lane whose occupant was prodded.
+    pub lane: CanonicalUuid,
+    /// Occupant the streak belonged to.
+    pub occupant: CanonicalUuid,
+    /// Tool calls the streak ran to.
+    pub moments: u32,
+    /// Prods the streak drew.
+    pub prods: u32,
+    /// What ended the streak.
+    pub relief: NarrationRelief,
+}
+
+/// What ended a prodded occupant's silent streak.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NarrationRelief {
+    /// The occupant authored visible prose.
+    Prose,
+    /// The occupant's turn completed without prose.
+    Turn,
+}
+
 /// An expected listening event remained absent past its armed window.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CanaryAlarmed {

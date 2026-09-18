@@ -131,6 +131,8 @@ pub(super) fn present_swept<P: AgentMessagePublisher>(
             worktree.as_deref(),
             views,
         )?;
+        let steps = views.state.narration.observe(surfaces.narration, record);
+        narration::record(bus, epoch, steps, views.diagnostic)?;
     }
     Ok(())
 }

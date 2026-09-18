@@ -113,6 +113,8 @@ const PINNED: &[(&str, &str)] = &[
     ("TasteCleared", "taste::cleared"),
     ("TasteJudged", "taste::judged"),
     ("TasteReminded", "taste::reminded"),
+    ("NarrationProdded", "narration::prodded"),
+    ("NarrationCleared", "narration::cleared"),
     ("CanaryAlarmed", "canary::alarmed"),
     ("CanaryContradicted", "canary::contradicted"),
     ("VendorArmed", "vendor::armed"),
@@ -203,6 +205,7 @@ fn plane(kind: FactKind) -> &'static str {
         | FactKind::TasteCleared
         | FactKind::TasteJudged
         | FactKind::TasteReminded => "taste",
+        FactKind::NarrationProdded | FactKind::NarrationCleared => "narration",
         FactKind::CanaryAlarmed | FactKind::CanaryContradicted => "canary",
         FactKind::VendorArmed => "vendor",
         FactKind::TrustPended | FactKind::TrustGranted | FactKind::TrustRevoked => "trust",

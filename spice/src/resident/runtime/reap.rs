@@ -219,7 +219,8 @@ pub(in crate::resident) fn present_closed_transcripts(
             &command_surface.config.taste,
             &command_surface.config.steering,
             message_publisher,
-        );
+        )
+        .without_narration();
         let recognition = taste_judge.as_deref_mut().map_or(
             message_surface::TasteRecognition::Direct,
             message_surface::TasteRecognition::Deferred,

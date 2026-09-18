@@ -103,6 +103,8 @@ pub struct WorkingState {
     pub claim: Option<ClaimState>,
     /// Most recently fired taste bag.
     pub last_taste: String,
+    /// The resident's open prod for this lane's silent tool streak, if any.
+    pub narration: Option<NarrationState>,
 }
 
 impl WorkingState {
@@ -116,7 +118,17 @@ impl WorkingState {
                 .as_ref()
                 .is_some_and(|claim| !clean(&claim.handle).is_empty())
             || !clean(&self.last_taste).is_empty()
+            || self.narration.is_some()
     }
+}
+
+/// The resident's open prod: the occupant kept running tools without prose.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NarrationState {
+    /// Tool calls issued since the occupant's last visible prose.
+    pub moments: u32,
+    /// Prods this streak has drawn so far, from one.
+    pub count: u32,
 }
 
 /// Select one snapshot for the actor proven by the current process.
@@ -143,6 +155,7 @@ pub fn collect_working_state(
         drain_queue: false,
         claim,
         last_taste: last_taste.into(),
+        narration: None,
     }
 }
 
@@ -386,6 +399,9 @@ struct StateKey {
     tier: LeaseTier,
     rolling: bool,
     reclaim_extends: bool,
+    /// Ordinal of the open prod, so each further prod speaks once more.
+    #[serde(default)]
+    prod: u32,
 }
 
 impl From<&WorkingState> for StateKey {
@@ -400,6 +416,7 @@ impl From<&WorkingState> for StateKey {
             tier: LeaseTier::observe(claim),
             rolling: claim.is_some_and(|claim| claim.rolling),
             reclaim_extends: claim.is_some_and(|claim| claim.reclaim_extends),
+            prod: snapshot.narration.map_or(0, |narration| narration.count),
         }
     }
 }
@@ -416,6 +433,7 @@ impl StateKey {
             tier: LeaseTier::observe(claim),
             rolling: claim.is_some_and(|claim| claim.rolling),
             reclaim_extends: claim.is_some_and(|claim| claim.reclaim_extends),
+            prod: 0,
         }
     }
 }
@@ -484,7 +502,26 @@ fn render_parts(snapshot: &WorkingState, include_lease: bool, include_inbox: boo
     if !taste.is_empty() {
         parts.push(format!("last taste {taste}"));
     }
+    if let Some(narration) = snapshot.narration {
+        parts.push(render_narration(narration));
+    }
     parts
+}
+
+/// The prod clause: how long the tool streak has run and what ends it.
+///
+/// The words stay away from the team-policy slider and the taste bag; the
+/// ask is one short status line, nothing an acknowledgment key would answer.
+fn render_narration(narration: NarrationState) -> String {
+    let mut text = format!(
+        "{} tool calls since your last visible prose",
+        narration.moments
+    );
+    if narration.count > 1 {
+        text.push_str(&format!(" (prod {})", narration.count));
+    }
+    text.push_str("; open your next message with one short status line before the next tool call");
+    text
 }
 
 fn render_lease(snapshot: &WorkingState) -> Option<String> {

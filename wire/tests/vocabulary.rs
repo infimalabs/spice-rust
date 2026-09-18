@@ -554,9 +554,8 @@ fn producer_assignment_follows_the_specified_enumeration() {
         let expected = match spelling.split_once("::").expect("a domain and a verb").0 {
             "task" | "doc" | "consent" | "trust" | "up" => Producer::CommandDoor,
             "taste" => Producer::Judge,
-            "lane" | "canary" | "vendor" | "commit" | "gate" | "journal" | "proof" | "release" => {
-                Producer::ResidentRecognition
-            }
+            "lane" | "narration" | "canary" | "vendor" | "commit" | "gate" | "journal"
+            | "proof" | "release" => Producer::ResidentRecognition,
             // `claim` and `steer` split across the door and the timers, so the
             // remainder of each is pinned by the explicit lists above.
             _ => continue,

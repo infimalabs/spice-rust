@@ -347,6 +347,7 @@ fn ordinary_working_state_is_change_only_hook_status_without_lease_urgency() {
             reclaim_extends: true,
         }),
         last_taste: "polling".to_owned(),
+        narration: None,
     };
 
     let first = deliver_status(&scratch, &answer, &state).expect("working state publishes");
@@ -367,6 +368,48 @@ fn ordinary_working_state_is_change_only_hook_status_without_lease_urgency() {
 }
 
 #[test]
+fn a_narration_prod_reaches_the_hook_document_once_per_prod_and_leaves_once_cleared() {
+    let scratch = HookScratch::new();
+    let answer = inbox_answer(OCCUPANT, 15, &[]);
+    let mut state = spice::session_meter::WorkingState {
+        pending_inbox_count: 0,
+        drain_queue: false,
+        claim: None,
+        last_taste: "polling".to_owned(),
+        narration: Some(spice::session_meter::NarrationState {
+            moments: 24,
+            count: 1,
+        }),
+    };
+    const SINCE: &str = "tool calls since your last visible prose";
+    const ASK: &str = "open your next message with one short status line before the next tool call";
+
+    let prodded = deliver_status(&scratch, &answer, &state).expect("the prod publishes");
+    let context = additional_context(&prodded);
+    assert!(context.contains(&format!(
+        "Working state: last taste polling; 24 {SINCE}; {ASK}."
+    )));
+    assert!(!context.contains("Rust Spice steering is pending."));
+    assert!(!context.contains("key="));
+    assert_eq!(deliver_status(&scratch, &answer, &state), None);
+
+    state.narration = Some(spice::session_meter::NarrationState {
+        moments: 48,
+        count: 2,
+    });
+    let again = deliver_status(&scratch, &answer, &state).expect("the second prod republishes");
+    assert!(additional_context(&again).contains(&format!("48 {SINCE} (prod 2); {ASK}.")));
+    assert_eq!(deliver_status(&scratch, &answer, &state), None);
+
+    state.narration = None;
+    let cleared = deliver_status(&scratch, &answer, &state).expect("the clearance republishes");
+    let context = additional_context(&cleared);
+    assert!(context.contains("Working state: last taste polling."));
+    assert!(!context.contains("tool calls since"));
+    assert_eq!(deliver_status(&scratch, &answer, &state), None);
+}
+
+#[test]
 fn authored_steering_owns_inbox_context_while_other_status_stays_change_only() {
     let scratch = HookScratch::new();
     let answer = inbox_answer(
@@ -379,6 +422,7 @@ fn authored_steering_owns_inbox_context_while_other_status_stays_change_only() {
         drain_queue: true,
         claim: None,
         last_taste: "polling".to_owned(),
+        narration: None,
     };
 
     let first = deliver_status(&scratch, &answer, &state).expect("mixed status publishes");

@@ -174,6 +174,7 @@ mod lane_recovery;
 mod lane_surface;
 mod lifecycle;
 mod message_surface;
+mod narration;
 mod policy_surface;
 mod read_materializations;
 mod settings_surface;

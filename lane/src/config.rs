@@ -18,6 +18,8 @@ pub struct Config {
     deaths: u32,
     young: DurationWord,
     hold: DurationWord,
+    #[serde(deserialize_with = "nonzero_narration")]
+    narration: u32,
 }
 
 impl Config {
@@ -62,6 +64,13 @@ impl Config {
     pub const fn hold(&self) -> &DurationWord {
         &self.hold
     }
+
+    /// Tool moments an occupant may run mid-turn without visible prose before
+    /// the resident prods it, and the interval between repeat prods.
+    #[must_use]
+    pub const fn narration(&self) -> u32 {
+        self.narration
+    }
 }
 
 impl Default for Config {
@@ -78,6 +87,7 @@ impl Default for Config {
                 .parse()
                 .expect("the compiled young threshold is valid"),
             hold: "30m".parse().expect("the compiled lane hold is valid"),
+            narration: 24,
         }
     }
 }
@@ -86,6 +96,15 @@ fn nonzero_deaths<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::
     let value = u32::deserialize(deserializer)?;
     if value == 0 {
         Err(D::Error::custom("young death limit must be nonzero"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn nonzero_narration<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let value = u32::deserialize(deserializer)?;
+    if value == 0 {
+        Err(D::Error::custom("narration bound must be nonzero"))
     } else {
         Ok(value)
     }

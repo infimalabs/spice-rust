@@ -89,6 +89,7 @@ vendor = "codex"
 deaths = 4
 young = "45s"
 hold = "1h"
+narration = 30
 
 [steer]
 expiry = "48h"
@@ -588,6 +589,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "lane.deaths",
     "lane.young",
     "lane.hold",
+    "lane.narration",
     "steer.expiry",
     "steer.resend",
     "vendor.claude.binary",

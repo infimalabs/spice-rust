@@ -1107,6 +1107,26 @@ fn a_live_capture_record_accounts_the_tape_once_without_feedback() {
 
 /// Seat one codex lane so the ingestion sweep can find it and its tape.
 pub(super) fn seat_ingestion_residency(bus: &Bus, lane: CanonicalUuid, epoch: CanonicalUuid) {
+    seat_codex_residency(bus, lane, None, epoch);
+}
+
+/// Seat one codex lane whose occupant already declared its session: the row
+/// a lane-authenticated reader such as the hook's working state recognizes.
+pub(super) fn seat_occupied_ingestion_residency(
+    bus: &Bus,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    epoch: CanonicalUuid,
+) {
+    seat_codex_residency(bus, lane, Some(occupant), epoch);
+}
+
+fn seat_codex_residency(
+    bus: &Bus,
+    lane: CanonicalUuid,
+    occupant: Option<CanonicalUuid>,
+    epoch: CanonicalUuid,
+) {
     let at = wire::Instant::new(jiff::Timestamp::now()).expect("fixture instant");
     let origin = format!("resident:{epoch}")
         .parse::<wire::Origin>()
@@ -1128,10 +1148,24 @@ pub(super) fn seat_ingestion_residency(bus: &Bus, lane: CanonicalUuid, epoch: Ca
             vendor: "codex".parse().expect("fixture vendor"),
             model: None,
             effort: None,
-            occupant: None,
-            lineage: Vec::new(),
+            occupant,
+            lineage: occupant.into_iter().collect(),
             capabilities: Vec::new(),
-            session: None,
+            session: occupant.map(|occupant| wire::LaneSession {
+                lane,
+                occupant,
+                worktree: "/ingestion/worktree".to_owned(),
+                vendor: "codex".parse().expect("fixture vendor"),
+                launch: None,
+                epoch,
+                stream: "stdout".to_owned(),
+                identity: "thread-ingestion".to_owned(),
+                locus: wire::TapeLocus {
+                    member: 0,
+                    offset: 0,
+                    length: 0,
+                },
+            }),
             disposition: "occupied".to_owned(),
         }],
         subscriptions: Vec::new(),
