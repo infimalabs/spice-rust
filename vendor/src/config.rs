@@ -328,11 +328,19 @@ impl OmpConfig {
     }
 
     /// The window omp is asked to compact against: the one policy names, or
-    /// else the boundary of the provider the model spelling reaches.
+    /// else the boundary of the provider the configured model reaches.
     #[must_use]
     pub fn auto_compact_window_tokens(&self) -> u64 {
+        self.auto_compact_window_tokens_for(self.model())
+    }
+
+    /// The window omp is asked to compact against when a seat selected
+    /// `model` over the configured one: the window policy names still wins,
+    /// and otherwise the boundary follows the model the seat really runs.
+    #[must_use]
+    pub fn auto_compact_window_tokens_for(&self, model: &str) -> u64 {
         self.auto_compact_window_tokens
-            .unwrap_or_else(|| omp_default_auto_compact_window_tokens(self.model()))
+            .unwrap_or_else(|| omp_default_auto_compact_window_tokens(model))
     }
 
     /// The fixed token limit omp is handed, derived from the window the way
@@ -340,6 +348,12 @@ impl OmpConfig {
     #[must_use]
     pub fn auto_compact_threshold_tokens(&self) -> u64 {
         omp_auto_compact_threshold_tokens(self.auto_compact_window_tokens())
+    }
+
+    /// [`Self::auto_compact_threshold_tokens`] for the model a seat selected.
+    #[must_use]
+    pub fn auto_compact_threshold_tokens_for(&self, model: &str) -> u64 {
+        omp_auto_compact_threshold_tokens(self.auto_compact_window_tokens_for(model))
     }
 }
 
@@ -543,11 +557,25 @@ mod tests {
             .expect("an OpenAI model admits");
         assert_eq!(sol.auto_compact_window_tokens(), 272_000);
         assert_eq!(sol.auto_compact_threshold_tokens(), 231_200);
+        assert_eq!(
+            sol.auto_compact_threshold_tokens_for("claude-opus-5"),
+            187_000,
+            "a seat's own model selection governs its window"
+        );
+        assert_eq!(
+            OmpConfig::default().auto_compact_threshold_tokens_for("gpt-5.6-sol"),
+            231_200
+        );
         let pinned: OmpConfig = serde_json::from_value(
             serde_json::json!({"model": "gpt-5.6-sol", "auto_compact_window_tokens": 200_000}),
         )
         .expect("a named window admits");
         assert_eq!(pinned.auto_compact_window_tokens(), 200_000);
+        assert_eq!(
+            pinned.auto_compact_threshold_tokens_for("claude-opus-5"),
+            170_000,
+            "a named window wins over every model selection"
+        );
         let unset: OmpConfig =
             serde_json::from_value(serde_json::json!({"auto_compact_window_tokens": null}))
                 .expect("a null window admits");

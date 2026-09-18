@@ -76,7 +76,9 @@ pub(in crate::resident) fn occupant_launch(
     let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
-    let pinned = pin_omp(paths, &repository, &resolved, name, resume, lane, occupant)?;
+    let omp = resolved.root().vendor().omp();
+    let threshold = omp.auto_compact_threshold_tokens_for(model.unwrap_or_else(|| omp.model()));
+    let pinned = pin_omp(paths, &repository, threshold, name, resume, lane, occupant)?;
     let selection = Selection {
         vendor: name,
         lane,
@@ -728,7 +730,7 @@ struct Pinned {
 fn pin_omp(
     paths: &RuntimePaths,
     repository: &Repository,
-    resolved: &spice::config::Resolved,
+    auto_compact_threshold_tokens: u64,
     name: &wire::Name,
     resume: vendor::Resume,
     lane: CanonicalUuid,
@@ -744,7 +746,7 @@ fn pin_omp(
         Some(_) => resume,
         None => pin_session(repository)?,
     };
-    let config_overlay = pin_config_overlay(paths, resolved, lane, occupant)?;
+    let config_overlay = pin_config_overlay(paths, auto_compact_threshold_tokens, lane, occupant)?;
     Ok(Pinned {
         resume,
         config_overlay: Some(config_overlay),
@@ -755,18 +757,14 @@ fn pin_omp(
 ///
 /// omp compacts at its own share of the model's window unless told a fixed
 /// limit, and it takes that limit only from a settings file, so every launch
-/// writes one stating the threshold the tracked policy derives.
+/// writes one stating the threshold the tracked policy derives for the model
+/// this seat runs.
 fn pin_config_overlay(
     paths: &RuntimePaths,
-    resolved: &spice::config::Resolved,
+    threshold: u64,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> CommandResult<PathBuf> {
-    let threshold = resolved
-        .root()
-        .vendor()
-        .omp()
-        .auto_compact_threshold_tokens();
     let path =
         crate::resident::supervisor::supervisor_directory(paths, lane, occupant).join("omp.yml");
     fs::create_dir_all(path.parent().expect("an overlay has a directory"))
