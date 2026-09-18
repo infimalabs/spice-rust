@@ -248,8 +248,8 @@ mod tests {
 
     fn invocation() -> Outcome<()> {
         Outcome::Refusal(Refusal::invocation(
-            "gate::instrument-unregistered",
-            "spice gate findings INSTRUMENT requires one registered instrument",
+            "gate::prove-action-unregistered",
+            "spice gate prove ACTION requires one registered gate action",
         ))
     }
 
@@ -415,7 +415,7 @@ mod tests {
             render(&invocation(), Form::Text)
                 .expect("invocation refusal renders")
                 .document,
-            b"spice gate findings INSTRUMENT requires one registered instrument\n",
+            b"spice gate prove ACTION requires one registered gate action\n",
         );
         assert_eq!(
             render(&evidence(), Form::Text)

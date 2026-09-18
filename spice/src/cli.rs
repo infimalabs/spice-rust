@@ -163,7 +163,6 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd
-        | CommandKind::GateFindings
         | CommandKind::TaskEdit
         | CommandKind::TaskDelete
         | CommandKind::TaskNote
@@ -285,7 +284,6 @@ fn observation_landed(path: &[&str]) -> bool {
             | ["version"]
             | ["rtk", "gain"]
             | ["gate"]
-            | ["gate", "findings"]
             | ["gate", "prove"]
             | ["gate", "camp"]
             | ["gate", "commit-msg"]

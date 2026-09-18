@@ -156,9 +156,7 @@ pub enum Domain {
     GateBatteryReport,
     /// One canonical focused gate-arm report.
     GateFocusedReport,
-    /// One stable gate finding identity projected from a typed battery report.
-    GateFinding,
-    /// The Git-common repository authority one gate finding belongs to.
+    /// The Git-common repository authority one gate selection belongs to.
     GateRepositoryAuthority,
     /// One exact staged-index or committed-revision selection.
     GateSelection,
@@ -245,7 +243,6 @@ impl Domain {
             | Self::GateBatteryManifest
             | Self::GateBatteryReport
             | Self::GateFocusedReport
-            | Self::GateFinding
             | Self::GateRepositoryAuthority
             | Self::GateSelection
             | Self::GateBatteryReceipt
@@ -320,7 +317,6 @@ impl Domain {
             Self::GateBatteryManifest => "spice.gate.battery-manifest.v1",
             Self::GateBatteryReport => "spice.gate.battery-report.v1",
             Self::GateFocusedReport => "spice.gate.focused-report.v1",
-            Self::GateFinding => "spice.gate.finding.v1",
             Self::GateRepositoryAuthority => "spice.gate.repository-authority.v1",
             Self::GateSelection => "spice.gate.selection.v1",
             Self::GateBatteryReceipt => "spice.gate.battery-receipt.v1",

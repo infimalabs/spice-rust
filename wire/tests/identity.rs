@@ -107,7 +107,6 @@ const fn position(domain: Domain) -> usize {
         | Domain::GateBatteryManifest
         | Domain::GateBatteryReport
         | Domain::GateFocusedReport
-        | Domain::GateFinding
         | Domain::GateRepositoryAuthority
         | Domain::GateSelection
         | Domain::GatePassReceipt
@@ -182,17 +181,16 @@ const fn late_position(domain: Domain) -> usize {
         Domain::GateBatteryManifest => 44,
         Domain::GateBatteryReport => 45,
         Domain::GateFocusedReport => 46,
-        Domain::GateFinding => 47,
-        Domain::GateBatteryReceipt => 48,
-        Domain::GateConfiguration => 49,
-        Domain::GateRepositoryAuthority => 50,
-        Domain::GateSelection => 51,
-        Domain::GatePassReceipt => 52,
-        Domain::GateAdmission => 53,
-        Domain::GateEvidenceLease => 54,
-        Domain::TasteProse => 55,
-        Domain::TasteBag => 56,
-        Domain::MediaContent => 57,
+        Domain::GateBatteryReceipt => 47,
+        Domain::GateConfiguration => 48,
+        Domain::GateRepositoryAuthority => 49,
+        Domain::GateSelection => 50,
+        Domain::GatePassReceipt => 51,
+        Domain::GateAdmission => 52,
+        Domain::GateEvidenceLease => 53,
+        Domain::TasteProse => 54,
+        Domain::TasteBag => 55,
+        Domain::MediaContent => 56,
         _ => panic!("domain position partition is closed"),
     }
 }
@@ -209,7 +207,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 58] = [
+const DOMAINS: [Domain; 57] = [
     Domain::BoardDocument,
     Domain::BoardTaskIdentity,
     Domain::BoardBarrier,
@@ -257,7 +255,6 @@ const DOMAINS: [Domain; 58] = [
     Domain::GateBatteryManifest,
     Domain::GateBatteryReport,
     Domain::GateFocusedReport,
-    Domain::GateFinding,
     Domain::GateBatteryReceipt,
     Domain::GateConfiguration,
     Domain::GateRepositoryAuthority,
@@ -366,7 +363,6 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.gate.battery-manifest.v1",
             "spice.gate.battery-report.v1",
             "spice.gate.focused-report.v1",
-            "spice.gate.finding.v1",
             "spice.gate.battery-receipt.v1",
             "spice.gate.configuration.v1",
             "spice.gate.repository-authority.v1",

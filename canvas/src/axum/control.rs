@@ -31,7 +31,6 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd
-        | CommandKind::GateFindings
         | CommandKind::TaskEdit
         | CommandKind::TaskDelete
         | CommandKind::TaskNote

@@ -61,20 +61,6 @@ const BODIES: &[(CommandKind, &str)] = &[
 }"#,
     ),
     (
-        CommandKind::GateFindings,
-        r#"{
-  "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-  "evidence": "{\"version\":1}",
-  "source": {
-    "repository": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "selection": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-    "tree": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-    "anchor": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-    "kind": "staged-index"
-  }
-}"#,
-    ),
-    (
         CommandKind::TaskEdit,
         r#"{ "task": "SPICE-1kKRRsDP", "title": "a replacement statement" }"#,
     ),
@@ -753,27 +739,6 @@ fn a_kind_binds_one_body_and_one_answer() {
     }
 }
 
-#[test]
-fn gate_findings_accept_only_one_report_evidence_binding() {
-    let shape = CommandKind::GateFindings.binding().body;
-    let missing = br#"{
-      "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-    }"#;
-    let injected = br#"{
-      "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "evidence": "{}",
-      "findings": []
-    }"#;
-    let missing_source = br#"{
-      "report": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-      "evidence": "{}"
-    }"#;
-
-    assert!(shape.decode(missing).is_err());
-    assert!(shape.decode(injected).is_err());
-    assert!(shape.decode(missing_source).is_err());
-}
-
 /// Shapes a body may take, listed so an unreachable one is caught.
 const ALL_BODIES: &[BodyShape] = &[
     BodyShape::BoardRead,
@@ -785,7 +750,6 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::TaskAdd,
     BodyShape::TaskOopsAdd,
     BodyShape::TasteProposalAdd,
-    BodyShape::GateFindings,
     BodyShape::TaskEdit,
     BodyShape::TaskDelete,
     BodyShape::TaskNote,

@@ -1133,9 +1133,6 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TasteProposalAdd(add) => {
             taste_proposal_add(bus, command, add, projects, allocation)
         }
-        wire::intent::Intent::GateFindings(findings) => {
-            gate_findings(bus, command, findings, repository, projects, allocation)
-        }
         wire::intent::Intent::TaskNote(note) => task_note(bus, command, note, projects, allocation),
         wire::intent::Intent::TaskEdit(edit) => {
             task_edit(bus, command, edit, repository, projects, allocation)

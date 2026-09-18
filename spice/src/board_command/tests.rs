@@ -23,7 +23,6 @@ use reclaim::*;
 mod allocation_guard;
 use allocation_guard::*;
 
-mod gate_findings;
 mod origin;
 mod task_list;
 mod task_listing;

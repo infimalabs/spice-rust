@@ -35,7 +35,6 @@ mod candidate_tree;
 mod capture;
 mod environment;
 pub use environment::operational_routing;
-mod finding_source;
 
 use environment::compiler_environment;
 pub use environment::git_local_environment;
@@ -46,10 +45,6 @@ use environment::{
 };
 
 pub use candidate_tree::CandidateTree;
-pub use finding_source::{
-    GateFindingAnchor, capture_gate_finding_anchor, require_gate_finding_source_forward,
-    validate_gate_finding_source,
-};
 
 /// Resolve the tree identity represented by the exact staged-index authority.
 ///

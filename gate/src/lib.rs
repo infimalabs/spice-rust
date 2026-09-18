@@ -74,7 +74,7 @@ pub use battery::{
     BatteryExecutor, BatteryInputs, BatteryManifest, BatteryManifestArm, BatteryRefusalFold,
     BatteryReport, BatteryScope, BatteryState, BatteryToolEvidence, BoundActorInputsEvidence,
     BoundEvidence, CANONICAL_BATTERY_MANIFEST, CompiledArm, ConfigurationEvidence,
-    FocusedArmReport, GATE_BATTERY_VERSION, GateFinding, LatchEvidence, ResultProvenance,
+    FocusedArmReport, GATE_BATTERY_VERSION, LatchEvidence, ResultProvenance,
     canonical_gate_set_digest, run_battery, run_battery_arm, run_focused_arm,
 };
 #[cfg(not(target_arch = "wasm32"))]

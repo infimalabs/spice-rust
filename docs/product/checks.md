@@ -423,43 +423,26 @@ divergence.
 
 ---
 
-## Findings become work
+## Findings stay findings
 
 ```mermaid
 flowchart LR
-  F["study finding"] --> S["finding identity"]
-  S --> M{"an open task with this<br/>identity and project?"}
-  M -- yes --> R["reuse it"]
-  M -- no --> C["file it, deferred"]
-  C --> O["origin required"]
-  R --> B[board]
-  C --> B
+  F["study finding"] --> R["reported in the run's typed report"]
+  R --> O{"operator wants it tracked?"}
+  O -- yes --> A["spice task add, by hand"]
+  O -- no --> N["nothing on the board"]
+  A --> B[board]
 ```
 
-**Invariant —** Only registered instruments may file work, and only when asked.
-A study cannot decide on its own to put something on the board.
+**Invariant —** A study reports; it never files. No instrument, registered or
+otherwise, puts work on the board, and no gate command exists to ask one to.
+Findings live in the run's typed report, and the operator decides which of them
+deserve a task by capturing it with `spice task add`, on the same terms as any
+other work.
 
-**Invariant —** Filing is idempotent against a finding's identity within its
-project. Re-running an instrument reuses the open task rather than filing a
-second one.
-
-**Invariant —** A finding's identity survives the board's own normalization, which
-is what makes it usable as a key rather than a label.
-
-**Invariant —** A completed task with the same finding identity never blocks
-re-filing. Recurrence files a fresh task carrying an annotation that names the
-resolved one, so the link to its prior fix is recorded rather than inferred.
-
-**Invariant —** Study work is filed **deferred**, and a deferred row carries no
-due date, so time spent parked does not consume the priority clock.
-
-**Invariant —** A study task carries the same required origin as any other task,
-inheriting the acting claim when none is given. Findings enter the board on the
-same terms as everything else and compete for attention honestly.
-
-**Invariant —** Findings and filed work are coextensive: an instrument reports
-what it found, and dispatch decides what becomes a task. An instrument cannot
-pre-seed or suppress its own filing.
+**Invariant —** The journal keeps decoding the historical `gate::filed` fact
+minted by the retired filing path, so a ledger written before the retirement
+still reads in full.
 
 ---
 
@@ -519,9 +502,9 @@ later safe reclamation.
 report order, complete evidence within each returned typed arm report, canonical
 scheduler-failure cutoff, accepted transactional state,
 base-headroom-latch pressure, provenance-retaining variation, claim-based
-redirection, partial reconciliation, the four forms of waiver, idempotent filing,
-and one retained immutable selected-source authority with verified exact sealed
-execution mirrors.
+redirection, partial reconciliation, the four forms of waiver, and one retained
+immutable selected-source authority with verified exact sealed execution
+mirrors.
 
 **Policy** — the compiled instrument manifest and the declared values each
 instrument consumes: thresholds, headroom and variation, claim lifetime,
