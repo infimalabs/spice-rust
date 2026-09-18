@@ -437,9 +437,6 @@ fn render_agent_message_footer(
     let copy_author = Callback::from(move |_| view::chrome::copy_text(&author));
     let producer_identity = html! {
         <span class="message-footer-identity">
-            if message.activity == wire::AgentActivityKind::Tool {
-                <span class="message-tool-label">{"Tool"}</span>
-            }
             <button
                 class="message-agent-name"
                 type="button"
@@ -466,11 +463,15 @@ fn render_agent_message_footer(
 }
 
 fn render_agent_message_badges(message: &wire::AgentMessage) -> Html {
-    if !message.final_answer {
+    let tool = message.activity == wire::AgentActivityKind::Tool;
+    if !tool && !message.final_answer {
         return Html::default();
     }
     html! {
         <span class="message-badges" role="list" aria-label="Message classifications">
+            if tool {
+                {render_agent_message_badge("TOOL", "tool", None)}
+            }
             if message.final_answer {
                 {render_agent_message_badge("FINAL", "final", None)}
             }

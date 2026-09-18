@@ -922,6 +922,12 @@ html[data-command-modifier-held="true"]
   gap: 6px;
   width: 4ch;
 }
+.team-surface .mosaic-message-card .message-footer:has(.message-badges) {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+.team-surface .message-footer:has(.message-badges) .message-footer-left {
+  width: auto;
+}
 .team-surface .message-footer-right {
   display: flex;
   flex-wrap: nowrap;
@@ -931,15 +937,6 @@ html[data-command-modifier-held="true"]
 .team-surface .message-footer-identity {
   display: inline-flex; flex: 1 1 auto; align-items: flex-end;
   min-width: 0; gap: 6px;
-}
-.team-surface .message-tool-label {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 10px;
-  font-weight: 600;
-  line-height: 1;
-  text-transform: uppercase;
 }
 .team-surface .message-age {
   display: block;
