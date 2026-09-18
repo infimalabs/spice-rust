@@ -7,7 +7,9 @@ use web_sys::{DragEvent, HtmlInputElement};
 use super::clock::{Age, Countdown};
 use super::*;
 use crate::composer_drafts::{ComposerDraft, compose};
-use crate::watchband::{self, Standing, TeamTaskSectionState};
+use crate::watchband::{
+    self, Standing, SubmissionAuthority, SubmissionTarget, TeamTaskSectionState,
+};
 
 mod command_preview;
 mod composer;
@@ -34,16 +36,6 @@ const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
 const MAX_ATTACHMENT_BYTES: f64 = wire::media::MAX_MEDIA_BYTES as f64;
 const LANE_DRAG_MIME: &str = "application/x-spice-lane";
 
-/// Authority a detached draft may use for its next transition.
-#[derive(Clone, Copy)]
-enum SubmissionTarget {
-    Resident {
-        occupant: CanonicalUuid,
-        epoch: CanonicalUuid,
-    },
-    Wake,
-}
-
 #[derive(Clone, Copy)]
 pub(super) struct BroadcastTarget {
     lane: CanonicalUuid,
@@ -58,15 +50,18 @@ pub(super) struct BroadcastTarget {
 /// the team contains. Only a team earns a surface: an agent seated alone under
 /// its own identity is not a formation, so it draws no surface here and stays
 /// reachable through the global menu and each team's import list instead.
-pub(super) fn render_team(
-    surface: &SurfaceData,
-    sender: &SenderHandle,
-    drafts: &UseReducerHandle<ComposerDrafts>,
-    submissions: &SubmissionHandle,
-    team_fleet: &NodeRef,
-    team_controls: &UseReducerHandle<TeamControls>,
-    controls: &view::AgentControls,
-) -> Html {
+pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
+    let view::CanvasRender {
+        connection,
+        surface,
+        sender,
+        composer_drafts: drafts,
+        submissions,
+        team_fleet,
+        team_controls,
+        agents: controls,
+        ..
+    } = render;
     let surface = surface.read();
     let Some(runtime) = surface.as_ref() else {
         return empty("No admitted live team is available.");
@@ -91,8 +86,8 @@ pub(super) fn render_team(
             .unwrap_or(&[]);
         standing.pending = submissions.status.pending(standing.lane, backend);
     }
-    let can_send = runtime.offers(CommandKind::SteerSend);
-    let can_wake = runtime.offers(CommandKind::LaneState) && runtime.offers(CommandKind::LaneRead);
+    let authority =
+        SubmissionAuthority::derive(connection.is_online(), |kind| runtime.offers(kind));
     let can_configure = runtime.offers(CommandKind::TeamConfigure);
     let can_arrange_lanes = runtime.offers(CommandKind::LaneArrange);
     let can_arrange_teams = runtime.offers(CommandKind::TeamArrange);
@@ -109,8 +104,7 @@ pub(super) fn render_team(
         runtime,
         epoch: lanes.epoch,
         topology_revision: lanes.topology_revision,
-        can_send,
-        can_wake,
+        authority,
         can_arrange_lanes,
         can_arrange_teams,
         can_configure,
@@ -156,8 +150,7 @@ fn render_compose(
     standings: &[Standing],
     epoch: CanonicalUuid,
     topology_revision: u64,
-    can_send: bool,
-    can_wake: bool,
+    authority: SubmissionAuthority,
     can_arrange: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
@@ -174,17 +167,18 @@ fn render_compose(
     let submit = submit_team_callback(
         &team.members,
         epoch,
-        can_wake,
+        authority,
         sender.clone(),
         drafts.clone(),
         submissions.clone(),
     );
-    let broadcast_targets = broadcast_targets(&team.members, epoch, can_send);
+    let broadcast_targets = broadcast_targets(&team.members, epoch, authority.send);
     let broadcast_help = format!("composer-broadcast-help-{}", team.lane);
-    let ready = can_send
-        && control.pending_life.is_none()
+    let ready = control.pending_life.is_none()
         && team.members.iter().any(|member| {
-            (member.occupant.is_some() || (member.bound && can_wake))
+            authority
+                .target(member.occupant, member.bound, epoch)
+                .is_some()
                 && drafts
                     .get(&member.lane.to_string())
                     .is_some_and(|draft| !compose(draft).trim().is_empty())
@@ -217,8 +211,7 @@ fn render_compose(
                                 .lanes()
                                 .and_then(|lanes| lanes.renewal(team.lane, member.lane)),
                             standing.pending,
-                            can_send,
-                            can_wake,
+                            authority,
                             can_arrange,
                             sender,
                             drafts,
@@ -798,8 +791,7 @@ fn render_agent_composer(
     topology_revision: u64,
     renewal: Option<&wire::LaneRenewalRecord>,
     pending: usize,
-    can_send: bool,
-    can_wake: bool,
+    authority: SubmissionAuthority,
     can_arrange: bool,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
@@ -813,18 +805,19 @@ fn render_agent_composer(
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let occupant = member.occupant;
-    let wake = can_send && can_wake && member.bound && occupant.is_none();
-    let target = occupant
-        .filter(|_| can_send)
-        .map(|occupant| SubmissionTarget::Resident { occupant, epoch })
-        .or_else(|| wake.then_some(SubmissionTarget::Wake));
+    let target = authority.target(occupant, member.bound, epoch);
+    let wake = target == Some(SubmissionTarget::Wake);
     let command_submit_eligible = target.is_some() && !draft.body.trim().is_empty();
     let broadcast_target_eligible = broadcast_targets
         .iter()
         .any(|target| target.lane == lane_id);
     let broadcast_source_eligible = broadcast_target_eligible && !draft.body.trim().is_empty();
-    let renewal =
-        watchband::agent_renewal_control(&standing.label, occupant.is_some(), can_send, renewal);
+    let renewal = watchband::agent_renewal_control(
+        &standing.label,
+        occupant.is_some(),
+        authority.send,
+        renewal,
+    );
     let renew = renewal_callback(
         topology_revision,
         team,
@@ -844,8 +837,7 @@ fn render_agent_composer(
     let ondragover = copy_dragover();
     let ondrop = drop_on_lane(
         lane_id,
-        occupant,
-        epoch,
+        target,
         lane_key.clone(),
         sender.clone(),
         drafts.clone(),
@@ -1132,7 +1124,7 @@ fn composer_placeholder(standing: &Standing, pending: usize) -> String {
 fn submit_team_callback(
     members: &[crate::runtime::LaneMember],
     epoch: CanonicalUuid,
-    can_wake: bool,
+    authority: SubmissionAuthority,
     sender: SenderHandle,
     drafts: UseReducerHandle<ComposerDrafts>,
     submissions: SubmissionHandle,
@@ -1140,10 +1132,7 @@ fn submit_team_callback(
     let targets = members
         .iter()
         .map(|member| {
-            let target = member
-                .occupant
-                .map(|occupant| SubmissionTarget::Resident { occupant, epoch })
-                .or_else(|| (can_wake && member.bound).then_some(SubmissionTarget::Wake));
+            let target = authority.target(member.occupant, member.bound, epoch);
             (member.lane, target, member.lane.to_string())
         })
         .collect::<Vec<_>>();

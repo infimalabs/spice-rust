@@ -21,9 +21,11 @@ use wire::{CanonicalUuid, TaskHandle};
 use crate::runtime::LaneRow;
 
 mod renewal;
+mod submission;
 mod vendor;
 
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
+pub use submission::{SubmissionAuthority, SubmissionTarget};
 pub use vendor::{OmpEmblem, composer_vendor_icon_class, omp_emblem, omp_provider};
 
 /// Accent slots the band cycles through.

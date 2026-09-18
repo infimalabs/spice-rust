@@ -30,6 +30,10 @@ import {
 import { assertCompleteComposerSubmission } from "./composer-submission.mjs";
 import { assertComposerRecovery } from "./composer-recovery.mjs";
 import { assertRenewalRefusalReason } from "./renewal-refusal.mjs";
+import {
+  assertOutageKeepsDraft,
+  assertRestartedResidentAcceptsDraft,
+} from "./restart-submission.mjs";
 import { assertVacantWakeSubmission } from "./vacant-wake-submission.mjs";
 import { assertOmpEmblemRoles } from "./vendor-emblem.mjs";
 import {
@@ -89,7 +93,6 @@ import {
   assertOfflineObserved,
   assertResidentLossObserved,
   assertResidentRestart,
-  assertWaitReportDistinguishesLayout,
   assertWaitReporting,
   appendSubstantialPrimaryHistory,
   buildResident,
@@ -432,7 +435,6 @@ try {
     let light;
     let lightPage;
     let lightMonitor;
-    let hiddenStatusReport;
     let dark;
     let darkMonitor;
     if (run.owns("readiness")) {
@@ -606,6 +608,7 @@ try {
       let primary;
       let configuredOccupants;
       let configuredPolicy;
+      let outageDraft;
       await run.phase("restart-preparation", async () => {
         light = await browser.newContext({
           colorScheme: "light",
@@ -620,7 +623,7 @@ try {
         ));
         await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
         await assertCanvas(lightPage, "light-restart");
-        hiddenStatusReport = await assertWaitReporting(lightPage, resident);
+        await assertWaitReporting(lightPage, resident);
         team = await seatAgentTeam(lightPage, fixture, worktrees);
         Object.assign(seeded, {
           lane: team.lane,
@@ -682,14 +685,16 @@ try {
         });
         await run.phase("resident-shutdown", async () => {
           lightMonitor.expectNetworkInterruption(true);
-          await chooseCanvasView(lightPage, "Flow");
-          await assertWaitReportDistinguishesLayout(lightPage, resident, hiddenStatusReport);
+          // The live team view stays up through the outage: the connection
+          // state is chrome every layout renders, and the composers under it
+          // are where the loss has to be legible.
           const shutdownStarted = performance.now();
           await stopResident(fixture, resident);
           const shutdownMs = performance.now() - shutdownStarted;
           assert.ok(shutdownMs < SHUTDOWN_MS,
             `resident semantic shutdown stays bounded: ${JSON.stringify({ shutdownMs })}`);
           await assertResidentLossObserved(lightPage, resident);
+          outageDraft = await assertOutageKeepsDraft(lightPage, seeded.lane);
         });
         await run.phase("retained-history", async () => {
           const retainedBytes = await appendSubstantialPrimaryHistory(fixture);
@@ -719,6 +724,13 @@ try {
           lightMonitor.expectNetworkInterruption(false);
           await assertCanvas(lightPage, "light-restarted");
           await chooseCanvasView(lightPage, "Lanes");
+          await assertRestartedResidentAcceptsDraft(
+            lightPage,
+            fixture,
+            seeded.lane,
+            outageDraft,
+            resident.discovery.epoch,
+          );
           if ((await settingsMenu.getAttribute("open")) === null) {
             await settingsMenu.locator(":scope > summary").click();
           }
@@ -769,7 +781,7 @@ try {
           lightMonitor = monitorPage(lightPage);
           await lightPage.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
           await assertCanvas(lightPage, "light-resilience");
-          hiddenStatusReport = await assertWaitReporting(lightPage, resident);
+          await assertWaitReporting(lightPage, resident);
           team = await seatAgentTeam(lightPage, fixture, worktrees);
           Object.assign(seeded, {
             lane: team.lane,

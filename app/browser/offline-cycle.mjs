@@ -21,8 +21,8 @@
 ///
 /// Two things are recorded per iteration and both are load-bearing. A failure
 /// carries the instrument's own report, whose shape names the cause: `rendered`
-/// false with `mosaic` true is the layout hiding the status, `rendered` true
-/// with a `status online` class is a page that never processed the close, and
+/// false is a page whose canvas chrome never mounted, `rendered` true with a
+/// `status online` class is a page that never processed the close, and
 /// `rendered` true with `status offline` is the flip having happened unseen. A
 /// success carries how long the flip actually took, because a bound can only be
 /// justified against the distribution of the thing it bounds.
@@ -30,8 +30,9 @@
 /// Usage: node app/browser/offline-cycle.mjs [--iterations N] [--bound MS]
 ///                                           [--view Lanes|Flow|Topology]
 ///
-/// Pointing `--view` at Lanes reproduces the reported incident, because the
-/// mosaic has no status element for the wait to ever see.
+/// The reported incident was a wait pointed at Lanes while the status lived in
+/// the analytics topbar the mosaic never rendered; the status is now command
+/// bar chrome in every view, so `--view` selects which layout's flip is timed.
 
 import { mkdtemp, mkdir, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -55,12 +56,12 @@ import {
 
 /// The views the cycle can be pointed at, which is the whole set the canvas has.
 ///
-/// `Lanes` is the mosaic and is the reason this is an option at all: `view.rs`
-/// renders the topbar carrying `.status` only outside the mosaic, so a cycle
-/// pointed there waits for an element that is not in the document. That is the
-/// configuration that proved the reported failure was a deaf wait rather than a
-/// slow transition, and a harness that cannot be pointed back at it cannot
-/// demonstrate the failure it was built to diagnose.
+/// `Lanes` is the mosaic and is the reason this is an option at all: until
+/// BROWSER-dStDhMQS1 the topbar carrying `.status` rendered only outside the
+/// mosaic, so a cycle pointed there waited for an element that was not in the
+/// document, which is what proved the reported failure was a deaf wait rather
+/// than a slow transition. The status is command bar chrome in every view now,
+/// so a cycle pointed at Lanes times the flip the live team view shows.
 const VIEWS = ["Lanes", "Flow", "Topology"];
 
 function argument(name) {

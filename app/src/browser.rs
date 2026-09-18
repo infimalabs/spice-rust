@@ -340,6 +340,15 @@ impl SpeechRuntime {
 }
 
 impl Connection {
+    /// The socket is admitted and the published runtime is the one the
+    /// resident serves now. Only this state lends the runtime's offers to a
+    /// composer: through an outage and through the hydration of a restarted
+    /// resident the last runtime stays on screen, and a draft submitted
+    /// against its remembered occupant and epoch would only be refused.
+    const fn is_online(&self) -> bool {
+        matches!(self, Self::Online { .. })
+    }
+
     fn class(&self) -> &'static str {
         match self {
             Self::Online { .. } => "status online",
