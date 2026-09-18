@@ -23,7 +23,6 @@ impl From<&AgentMessage> for MessageCardKey {
 enum MessageCardKind {
     Prose,
     ToolMedia,
-    Turn,
     Compaction,
 }
 
@@ -46,8 +45,7 @@ fn card_kind(message: &AgentMessage) -> Option<MessageCardKind> {
     match message.activity {
         AgentActivityKind::Prose => Some(MessageCardKind::Prose),
         AgentActivityKind::Tool if !message.media.is_empty() => Some(MessageCardKind::ToolMedia),
-        AgentActivityKind::Tool | AgentActivityKind::Reasoning => None,
-        AgentActivityKind::Turn => Some(MessageCardKind::Turn),
+        AgentActivityKind::Tool | AgentActivityKind::Reasoning | AgentActivityKind::Turn => None,
         AgentActivityKind::Compaction => Some(MessageCardKind::Compaction),
     }
 }
@@ -241,17 +239,29 @@ mod tests {
     }
 
     #[test]
-    fn tool_activity_requires_owning_media_to_become_a_card() {
-        assert_eq!(card_kind(&message(1, AgentActivityKind::Tool)), None);
-        assert_eq!(card_kind(&message(4, AgentActivityKind::Reasoning)), None);
+    fn turn_events_do_not_displace_final_answers_in_bounded_card_history() {
+        let mut cards = MessageCards::default();
+        let mut final_answer = message(1, AgentActivityKind::Prose);
+        final_answer.final_answer = true;
+        let turn = message(2, AgentActivityKind::Turn);
+        let next = message(3, AgentActivityKind::Prose);
+        let history = [final_answer, turn, next];
+
+        cards.snapshot(2, &history);
         assert_eq!(
-            card_kind(&message(2, AgentActivityKind::Turn)),
-            Some(MessageCardKind::Turn)
+            cards
+                .entries()
+                .iter()
+                .map(|entry| entry.locus.offset)
+                .collect::<Vec<_>>(),
+            [1, 3],
         );
-        assert_eq!(
-            card_kind(&message(3, AgentActivityKind::Compaction)),
-            Some(MessageCardKind::Compaction)
-        );
+        assert!(cards.entries()[0].final_answer);
+
+        let mut live = MessageCards::default();
+        live.snapshot(2, &history[..1]);
+        live.merge(&history[1..]);
+        assert_eq!(live.entries(), cards.entries());
     }
 
     #[test]
