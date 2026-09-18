@@ -1075,6 +1075,9 @@ html[data-command-modifier-held="true"]
   .team-surface .message-taste-pill:not(.markdown-body blockquote *) {
     --message-inline-pill-accent: color-mix(in srgb, var(--accent-2) 90%, var(--ink));
   }
+  .team-surface .message-review-pill:not(.markdown-body blockquote *) {
+    --message-inline-pill-accent: color-mix(in srgb, var(--accent-1) 90%, var(--ink));
+  }
 }
 .team-surface .markdown-body blockquote .message-task-chip,
 .team-surface .markdown-body blockquote .message-ack-pill,

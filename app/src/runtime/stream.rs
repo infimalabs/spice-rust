@@ -406,9 +406,10 @@ impl CanvasRuntime {
         let changed = self
             .message_cards
             .merge(messages.iter().filter(|message| message.lane == lane));
+        // Source history advances across records the card projection omits.
         let next = messages
             .iter()
-            .filter(|message| message.lane == lane && message_cards::is_card(message))
+            .filter(|message| message.lane == lane)
             .min_by_key(|message| message.chronology_key())
             .map(|message| message.locus)
             .filter(|next| Some(*next) != before);
