@@ -14,6 +14,7 @@ use super::*;
 
 mod deferral_fixture;
 use deferral_fixture::*;
+mod lane_held_claim;
 mod trust_ice;
 
 struct Fixture {
@@ -275,7 +276,7 @@ fn manual_claims_never_create_resident_warning_protocol() {
         .expect("manual claim lapse arms without warning protocol");
 
     assert_eq!(timers.claims.len(), 1);
-    assert!(timers.renewals.is_empty());
+    assert_eq!(timers.renewals.len(), 1, "the live lease rolls instead");
     assert!(timers.directives.is_empty());
     let facts = fixture.bus.fact_snapshot().expect("facts read");
     assert_eq!(facts.facts().len(), initial_fact_count);

@@ -326,7 +326,9 @@ fn task_status_names_the_claim_the_asking_principal_holds() {
 
     let holder = task_status(&claimed).expect("holder reads status");
     assert!(
-        holder.lines().any(|line| line == format!("claim {held}")),
+        holder
+            .lines()
+            .any(|line| line == format!("claim {held} rolling until {}", lease.body.expiry)),
         "{holder}"
     );
     assert!(holder.lines().any(|line| line == "active 1"), "{holder}");

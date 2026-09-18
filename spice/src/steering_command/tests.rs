@@ -343,6 +343,7 @@ fn ordinary_working_state_is_change_only_hook_status_without_lease_urgency() {
             phase: "todo".to_owned(),
             elapsed: Some(std::time::Duration::from_secs(90)),
             remaining: Some(std::time::Duration::from_secs(30)),
+            rolling: false,
             reclaim_extends: true,
         }),
         last_taste: "polling".to_owned(),

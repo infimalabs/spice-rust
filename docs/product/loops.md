@@ -129,6 +129,11 @@ flowchart TD
    `claim::rebound` retain `active` while changing their named lease or residency
    fields. An exact steal is a guarded replacement that emits a new
    `claim::won`, not a `stolen` disposition.
+- A live claim's lease rolls with its occupant: while the claim's lane still
+   seats the occupant that holds it, the resident extends the lease on its own
+   rolling horizon, so a lapse follows the occupant leaving rather than one long
+   foreground command outliving a fixed lease. A lease iced on the canonical
+   indefinite horizon is the one live lease that never rolls.
 - Every phase transition is accepted into the durable task journal and appears
    through the board projection, including a transition that changes no tree.
 - When integration must synthesize a new mutating landing, it creates exactly one
@@ -148,7 +153,8 @@ flowchart TD
 - A review that changes nothing still advances the phase. Absence of a
    commit is not absence of review.
 
-**Policy** — a manual claim opens with a 3600s lease and a 7200s renewal maximum,
+**Policy** — a manual claim opens with a 3600s lease and a 7200s renewal maximum
+that the resident then rolls while the occupant holds the lane,
 and records the lane's exact accounted source boundary. With no named flow,
 a task lacking acceptance receives `plan` to `todo` to `review`; every other
 task receives `todo` to `review`, independent of visibility. A hidden `.oops`

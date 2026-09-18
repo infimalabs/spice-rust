@@ -199,7 +199,7 @@ impl Runtime {
         let residency = snapshot.authority.residency();
         let desired_deferrals = desired_deferrals(tasks, &self.projects)?;
         let desired = desired_claims(tasks, residency)?;
-        let desired_renewals = desired_renewals(tasks, residency, snapshot.authority.facts())?;
+        let desired_renewals = desired_renewals(tasks, residency)?;
         let desired_directives = desired_directives(&snapshot.steering, &self.steering)?;
         self.synchronize_deferrals(desired_deferrals)?;
         let stale = self
@@ -746,10 +746,15 @@ fn desired_claims(
     Ok(desired)
 }
 
+/// Roll every live lease whose claim is held by a lane's current occupant.
+///
+/// Liveness, not the way the claim was minted, decides renewal: a claim won
+/// through allocation rolls exactly like a resident-minted automatic one while
+/// its occupant remains seated, so a lapse follows the occupant leaving rather
+/// than one long foreground command outliving a fixed lease.
 fn desired_renewals(
     tasks: &[journal::TaskHeads],
     residency: Option<&journal::JournalHead<wire::ResidencyHead>>,
-    facts: &bus::TaskFacts,
 ) -> CommandResult<BTreeMap<TaskHandle, RenewalAuthority>> {
     let Some(residency) = residency else {
         return Ok(BTreeMap::new());
@@ -765,7 +770,6 @@ fn desired_renewals(
         if claim.body().disposition != ClaimDisposition::Active
             || claim.body().epoch != residency.body().epoch
             || !current_claim_occupant(residency.body(), claim.body())
-            || !crate::board_command::is_automatic_claim(claim.body(), facts)
         {
             continue;
         }
@@ -773,12 +777,7 @@ fn desired_renewals(
         if spice::claim_lease::is_indefinite(lease.body()) || lease.body().expiry <= now {
             continue;
         }
-        let deadline = shifted(
-            lease.body().renewal,
-            std::time::Duration::from_secs(
-                crate::board_command::AUTOMATIC_HEARTBEAT_SECONDS as u64,
-            ),
-        )?;
+        let deadline = renewal_deadline(lease.body())?;
         let task = TaskHandle::for_project(
             &heads.statement().body().project,
             &heads.statement().body().born,
@@ -798,6 +797,23 @@ fn desired_renewals(
         );
     }
     Ok(desired)
+}
+
+/// Deadline at which one live lease is due for its next rolling renewal.
+///
+/// An automatic lease sits exactly one heartbeat inside its rolling horizon, so
+/// the horizon-relative term reproduces its current heartbeat; a longer
+/// lane-held lease waits until it enters that same last rolling window instead
+/// of committing heartbeats that would extend nothing.
+fn renewal_deadline(lease: &wire::LeaseHead) -> CommandResult<Instant> {
+    let entering = shifted_signed(
+        lease.expiry,
+        jiff::SignedDuration::from_secs(-crate::board_command::AUTOMATIC_ROLLING_SECONDS),
+    )?;
+    shifted_signed(
+        std::cmp::max(lease.renewal, entering),
+        jiff::SignedDuration::from_secs(crate::board_command::AUTOMATIC_HEARTBEAT_SECONDS),
+    )
 }
 
 fn renewal_guard(
@@ -928,6 +944,10 @@ fn desired_directives(
 fn shifted(at: Instant, duration: std::time::Duration) -> CommandResult<Instant> {
     let duration = jiff::SignedDuration::try_from(duration)
         .map_err(|error| environment_fault("steer::horizon-invalid", &error.to_string()))?;
+    shifted_signed(at, duration)
+}
+
+fn shifted_signed(at: Instant, duration: jiff::SignedDuration) -> CommandResult<Instant> {
     let shifted = at
         .get()
         .checked_add(duration)

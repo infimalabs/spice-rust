@@ -1,0 +1,151 @@
+//! Renewal tests for a claim won through allocation rather than the resident.
+
+use super::*;
+
+/// One claim minted the way allocation mints it: a fixed hour, never automatic.
+///
+/// `age_seconds` places the fixture inside that hour, so a fixture older than
+/// the rolling horizon is already due for its first renewal.
+fn lane_held_fixture(age_seconds: i64) -> Fixture {
+    let now = Instant::new(jiff::Timestamp::now()).expect("fixture clock is canonical");
+    let start = shifted(now, -age_seconds);
+    let expiry = shifted(start, spice::claim_lease::RECLAIM_HORIZON_SECONDS);
+    let maximum = shifted(start, 2 * spice::claim_lease::RECLAIM_HORIZON_SECONDS);
+    let authority = Authority {
+        task: task(),
+        lane: uuid(20),
+        occupant: uuid(21),
+        epoch: uuid(22),
+        worktree: format!("/fixture/{}", uuid(20)),
+        start,
+        expiry,
+        maximum,
+    };
+    let mut journal = Journal::in_memory().expect("fixture journal opens");
+    journal
+        .apply(seed_write(&authority))
+        .expect("fixture lane-held authority seeds");
+    Fixture {
+        bus: Bus::start(journal).expect("fixture bus starts"),
+        projects: projects(),
+        authority,
+    }
+}
+
+#[test]
+fn lane_held_claim_rolls_past_the_hour_its_allocation_minted() {
+    let fixture = lane_held_fixture(spice::claim_lease::RECLAIM_HORIZON_SECONDS - 30);
+    let minted_expiry = fixture.authority.expiry;
+    let snapshot = fixture.bus.task_snapshot().expect("seeded snapshot reads");
+    assert!(
+        !crate::board_command::is_automatic_claim(
+            lapsed_heads(&fixture)
+                .claim()
+                .expect("seeded claim head exists")
+                .body(),
+            snapshot.facts(),
+        ),
+        "the fixture exercises an allocated claim, not a resident-minted automatic one",
+    );
+    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
+        .expect("timer runtime starts");
+    timers
+        .synchronize(&fixture.bus)
+        .expect("lane-held lease arms a renewal");
+    assert_eq!(timers.renewals.len(), 1);
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let event = runtime
+        .block_on(timers.recv())
+        .expect("due lane-held renewal fires");
+
+    assert_eq!(event.kind(), TimerKind::ClaimRenew);
+    assert_eq!(timers.consume(&fixture.bus, event), Ok(Fired::ClaimRenew));
+    timers
+        .synchronize(&fixture.bus)
+        .expect("renewed lane-held lease re-arms");
+    let heads = lapsed_heads(&fixture);
+    assert_eq!(
+        heads
+            .claim()
+            .expect("claim head remains")
+            .body()
+            .disposition,
+        ClaimDisposition::Active,
+    );
+    let lease = heads.lease().expect("lease head remains");
+    assert!(
+        lease.body().expiry > minted_expiry,
+        "the rolled lease outlives the minted hour",
+    );
+    assert_eq!(
+        timers
+            .claims
+            .get(&fixture.authority.task)
+            .expect("lapse timer follows the rolled lease")
+            .authority
+            .expiry,
+        lease.body().expiry,
+    );
+    assert_eq!(
+        fixture
+            .bus
+            .fact_snapshot()
+            .expect("renewal facts read")
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::ClaimRenewed)
+            .count(),
+        1,
+    );
+
+    drop(timers);
+    fixture.bus.shutdown().expect("fixture bus stops");
+}
+
+#[test]
+fn lane_held_claim_stops_rolling_once_its_occupant_leaves_the_lane() {
+    let fixture = lane_held_fixture(spice::claim_lease::RECLAIM_HORIZON_SECONDS - 30);
+    let minted_expiry = fixture.authority.expiry;
+    let mut timers = Runtime::start(fixture.projects.clone(), steer::Config::default())
+        .expect("timer runtime starts");
+    timers
+        .synchronize(&fixture.bus)
+        .expect("lane-held lease arms a renewal");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("fixture async runtime builds");
+    let event = runtime
+        .block_on(timers.recv())
+        .expect("due lane-held renewal fires");
+    move_residency(&fixture, fixture.authority.epoch, uuid(24));
+
+    assert_eq!(timers.consume(&fixture.bus, event), Ok(Fired::Stale));
+    timers
+        .synchronize(&fixture.bus)
+        .expect("departed occupant disarms the renewal");
+    assert!(timers.renewals.is_empty());
+    assert!(
+        fixture
+            .bus
+            .fact_snapshot()
+            .expect("facts read")
+            .facts()
+            .iter()
+            .all(|fact| fact.fact.kind() != wire::FactKind::ClaimRenewed)
+    );
+    assert_eq!(
+        timers
+            .claims
+            .get(&fixture.authority.task)
+            .expect("lapse timer remains armed")
+            .authority
+            .expiry,
+        minted_expiry,
+        "the abandoned claim still lapses on the lease allocation minted",
+    );
+
+    drop(timers);
+    fixture.bus.shutdown().expect("fixture bus stops");
+}

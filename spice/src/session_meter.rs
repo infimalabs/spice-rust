@@ -75,6 +75,8 @@ pub struct ClaimState {
     pub elapsed: Option<Duration>,
     /// Time until this claim expires, when its timestamp was valid.
     pub remaining: Option<Duration>,
+    /// Whether the resident rolls this lease while the occupant holds the lane.
+    pub rolling: bool,
     /// Whether the default task reclaim can extend expiry in place.
     pub reclaim_extends: bool,
 }
@@ -349,13 +351,27 @@ enum LeaseTier {
 }
 
 impl LeaseTier {
-    fn from_remaining(remaining: Option<Duration>) -> Self {
-        match remaining {
+    /// Tier one observed claim, reading a rolled lease against its own roll.
+    ///
+    /// A rolling lease permanently sits inside the outer countdown boundaries,
+    /// so tiering its raw remaining time would warn forever about a lease that
+    /// renews itself. The critical band still survives: the resident renews a
+    /// live lease well before it reaches it, so a rolling lease that gets that
+    /// close is one nothing is renewing.
+    fn observe(claim: Option<&ClaimState>) -> Self {
+        let Some(claim) = claim else {
+            return Self::None;
+        };
+        let tier = match claim.remaining {
             Some(value) if value < CLAIM_CRITICAL_BOUNDARY => Self::Critical,
             Some(value) if value < CLAIM_URGENT_BOUNDARY => Self::Urgent,
             Some(value) if value < CLAIM_WARNING_BOUNDARY => Self::Warning,
             None | Some(_) => Self::None,
+        };
+        if claim.rolling && tier != Self::Critical {
+            return Self::None;
         }
+        tier
     }
 }
 
@@ -368,6 +384,7 @@ struct StateKey {
     claim_phase: String,
     last_taste: String,
     tier: LeaseTier,
+    rolling: bool,
     reclaim_extends: bool,
 }
 
@@ -380,7 +397,8 @@ impl From<&WorkingState> for StateKey {
             claim_handle: claim.map_or_else(String::new, |claim| clean(&claim.handle)),
             claim_phase: claim.map_or_else(String::new, |claim| clean(&claim.phase)),
             last_taste: clean(&snapshot.last_taste),
-            tier: LeaseTier::from_remaining(claim.and_then(|claim| claim.remaining)),
+            tier: LeaseTier::observe(claim),
+            rolling: claim.is_some_and(|claim| claim.rolling),
             reclaim_extends: claim.is_some_and(|claim| claim.reclaim_extends),
         }
     }
@@ -395,7 +413,8 @@ impl StateKey {
             claim_handle: claim.map_or_else(String::new, |claim| clean(&claim.handle)),
             claim_phase: String::new(),
             last_taste: String::new(),
-            tier: LeaseTier::from_remaining(claim.and_then(|claim| claim.remaining)),
+            tier: LeaseTier::observe(claim),
+            rolling: claim.is_some_and(|claim| claim.rolling),
             reclaim_extends: claim.is_some_and(|claim| claim.reclaim_extends),
         }
     }
@@ -478,32 +497,40 @@ fn render_lease(snapshot: &WorkingState) -> Option<String> {
 
 fn render_claim_lease(claim: &ClaimState, handle: &str) -> Option<String> {
     let remaining = claim.remaining?;
-    if LeaseTier::from_remaining(Some(remaining)) == LeaseTier::None {
-        return None;
+    match LeaseTier::observe(Some(claim)) {
+        LeaseTier::None if claim.rolling => Some(format!(
+            "Claim lease: {handle} rolls while this occupant holds the lane; no reclaim needed",
+        )),
+        LeaseTier::None => None,
+        _ => {
+            let recovery = if claim.reclaim_extends {
+                format!("run spice task reclaim {handle}")
+            } else {
+                format!("run spice task free {handle}, then spice task next")
+            };
+            Some(format!(
+                "Claim lease: {handle} has {}s remaining; {recovery}",
+                remaining.as_secs(),
+            ))
+        }
     }
-    let recovery = if claim.reclaim_extends {
-        format!("run spice task reclaim {handle}")
-    } else {
-        format!("run spice task free {handle}, then spice task next")
-    };
-    Some(format!(
-        "Claim lease: {handle} has {}s remaining; {recovery}",
-        remaining.as_secs(),
-    ))
 }
 
 fn next_refresh(snapshot: &WorkingState, tier: LeaseTier) -> Option<Duration> {
-    let remaining = snapshot.claim.as_ref().and_then(|claim| claim.remaining);
-    let boundary = remaining.and_then(|remaining| {
-        let target = match tier {
-            LeaseTier::None => CLAIM_WARNING_BOUNDARY.saturating_sub(Duration::from_secs(1)),
-            LeaseTier::Warning => CLAIM_URGENT_BOUNDARY.saturating_sub(Duration::from_secs(1)),
-            LeaseTier::Urgent => CLAIM_CRITICAL_BOUNDARY.saturating_sub(Duration::from_secs(1)),
-            LeaseTier::Critical => return None,
-        };
-        Some(remaining.saturating_sub(target))
-    });
-    boundary.map(|delay| delay.max(MINIMUM_REFRESH))
+    let claim = snapshot.claim.as_ref()?;
+    let remaining = claim.remaining?;
+    let target = match tier {
+        // A rolled lease only needs watching for the band that proves its roll
+        // stopped; the outer boundaries never fire while the resident renews.
+        LeaseTier::None if claim.rolling => {
+            CLAIM_CRITICAL_BOUNDARY.saturating_sub(Duration::from_secs(1))
+        }
+        LeaseTier::None => CLAIM_WARNING_BOUNDARY.saturating_sub(Duration::from_secs(1)),
+        LeaseTier::Warning => CLAIM_URGENT_BOUNDARY.saturating_sub(Duration::from_secs(1)),
+        LeaseTier::Urgent => CLAIM_CRITICAL_BOUNDARY.saturating_sub(Duration::from_secs(1)),
+        LeaseTier::Critical => return None,
+    };
+    Some(remaining.saturating_sub(target).max(MINIMUM_REFRESH))
 }
 
 fn clean(value: &str) -> String {
@@ -536,414 +563,4 @@ mod duration_millis {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::fs;
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    use super::*;
-
-    static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
-    const WORKING_STATE_LINE_LIMIT: usize = 160;
-
-    fn fixture(name: &str) -> PathBuf {
-        let sequence = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "spice-session-meter-{name}-{}-{sequence}",
-            std::process::id()
-        ));
-        fs::create_dir(&path).expect("fixture directory");
-        path
-    }
-
-    fn state(remaining: Option<u64>) -> WorkingState {
-        WorkingState {
-            pending_inbox_count: 1,
-            drain_queue: false,
-            claim: Some(ClaimState {
-                handle: "METER-00000001".to_owned(),
-                phase: "todo".to_owned(),
-                elapsed: Some(Duration::from_secs(90)),
-                remaining: remaining.map(Duration::from_secs),
-                reclaim_extends: true,
-            }),
-            last_taste: "fallbacks".to_owned(),
-        }
-    }
-
-    #[test]
-    fn short_working_state_line_contains_only_live_signal() {
-        let root = fixture("render");
-        let meter = Meter::new(root.join("working-state.json"));
-        let decision = meter
-            .evaluate(&state(None), Duration::from_secs(1))
-            .expect("meter evaluates");
-        let line = decision.announcement.expect("initial state speaks");
-
-        assert_eq!(
-            line,
-            "🌶️ Working state: 1 pending inbox; claim METER-00000001 todo held for 90s; \
-             last taste fallbacks."
-        );
-        assert!(!line.contains('\n'));
-        assert_eq!(line.matches('.').count(), 1);
-        assert!(line.len() < WORKING_STATE_LINE_LIMIT);
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
-    fn ordinary_hook_status_keeps_state_but_omits_elapsed_and_lease_countdown() {
-        let status = ordinary_status(&state(Some(59)), false).expect("ordinary state renders");
-        assert!(status.contains("1 pending inbox"));
-        assert!(status.contains("claim METER-00000001 todo"));
-        assert!(status.contains("last taste fallbacks"));
-        assert!(!status.contains("held for"));
-        assert!(!status.contains("Claim lease"));
-
-        let drain = WorkingState {
-            pending_inbox_count: 1,
-            drain_queue: true,
-            ..WorkingState::default()
-        };
-        let status = ordinary_status(&drain, false).expect("drain state renders");
-        assert!(status.contains("handle operator direction first"));
-        assert!(status.contains("run spice task next"));
-        assert_eq!(ordinary_status(&WorkingState::default(), false), None);
-    }
-
-    #[test]
-    fn idle_drain_guidance_orders_operator_direction_and_stops_while_claimed() {
-        let root = fixture("drain-guidance");
-        let path = root.join("working-state.json");
-        let idle = WorkingState {
-            drain_queue: true,
-            ..WorkingState::default()
-        };
-        let idle_line = Meter::new(&path)
-            .evaluate(&idle, Duration::from_secs(1))
-            .expect("idle drain state evaluates")
-            .announcement
-            .expect("idle drain state speaks");
-        let directed = WorkingState {
-            pending_inbox_count: 1,
-            ..idle.clone()
-        };
-        let directed_line = Meter::new(&path)
-            .evaluate(&directed, Duration::from_secs(2))
-            .expect("directed drain state evaluates")
-            .announcement
-            .expect("new operator direction speaks");
-        let claimed = WorkingState {
-            claim: Some(ClaimState {
-                handle: "DRAIN-00000001".to_owned(),
-                phase: "todo".to_owned(),
-                ..ClaimState::default()
-            }),
-            ..idle
-        };
-        let claimed_line = Meter::new(&path)
-            .evaluate(&claimed, Duration::from_secs(3))
-            .expect("claimed drain state evaluates")
-            .announcement
-            .expect("claim acquisition speaks");
-
-        assert!(idle_line.contains("run spice task next"));
-        assert_eq!(
-            directed_line,
-            "🌶️ Working state: 1 pending inbox; handle operator direction first, then \
-             run spice task next."
-        );
-        assert!(!claimed_line.contains("spice task next"));
-        for line in [&idle_line, &directed_line, &claimed_line] {
-            assert!(line.len() < WORKING_STATE_LINE_LIMIT);
-        }
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
-    fn only_the_running_process_environment_names_the_current_actor() {
-        let claims = [
-            ClaimObservation {
-                vendor: &crate::extension::CODEX,
-                actor: "stale-tree-thread".to_owned(),
-                state: ClaimState {
-                    handle: "STALE-00000001".to_owned(),
-                    ..ClaimState::default()
-                },
-            },
-            ClaimObservation {
-                vendor: &crate::extension::CODEX,
-                actor: "live-codex-thread".to_owned(),
-                state: ClaimState {
-                    handle: "LIVE-00000001".to_owned(),
-                    ..ClaimState::default()
-                },
-            },
-        ];
-        let absent =
-            collect_working_state(ProcessEnvironment::default(), 0, &claims, String::new());
-        let current_identities = [(&crate::extension::CODEX, Some("live-codex-thread"))];
-        let current = collect_working_state(
-            ProcessEnvironment {
-                identities: &current_identities,
-            },
-            0,
-            &claims,
-            String::new(),
-        );
-
-        assert_eq!(
-            absent.claim, None,
-            "a tree identity without a current environment is not current"
-        );
-        assert_eq!(
-            current.claim.as_ref().map(|claim| claim.handle.as_str()),
-            Some("LIVE-00000001")
-        );
-        assert_eq!(
-            ProcessEnvironment {
-                identities: &[
-                    (&crate::extension::CODEX, Some("codex")),
-                    (&crate::extension::CLAUDE, Some("claude")),
-                ],
-            }
-            .current_actor(),
-            None,
-            "two ambient identities are ambiguous rather than guessed"
-        );
-    }
-
-    #[test]
-    fn announcement_identity_survives_exit_and_boundary_changes_speak() {
-        let root = fixture("durable");
-        let path = root.join("working-state.json");
-        let first = Meter::new(&path)
-            .evaluate(&state(Some(599)), Duration::from_secs(1))
-            .expect("first process speaks");
-        let next_process = Meter::new(&path)
-            .evaluate(&state(Some(598)), Duration::from_secs(2))
-            .expect("next process reads durable state");
-        let next_boundary = Meter::new(&path)
-            .evaluate(&state(Some(299)), Duration::from_secs(3))
-            .expect("boundary transition evaluates");
-
-        assert!(first.announcement.is_some());
-        assert_eq!(next_process.announcement, None);
-        assert!(
-            next_boundary
-                .announcement
-                .as_deref()
-                .is_some_and(|line| line.contains("Claim lease: METER-00000001 has 299s remaining"))
-        );
-
-        fs::write(&path, b"not-json").expect("corrupt prior announcement");
-        let recovered = Meter::new(&path)
-            .evaluate(&state(Some(299)), Duration::from_secs(4))
-            .expect("malformed state is absence");
-        assert!(recovered.announcement.is_some());
-
-        let live_path = root.join("time-sensitive.json");
-        let live = Meter::new(&live_path);
-        let initial_boundary = live
-            .evaluate_time_sensitive(&state(Some(599)), Duration::from_secs(10))
-            .expect("initial live boundary evaluates");
-        let quiet_renewal = live
-            .evaluate_time_sensitive(&state(Some(700)), Duration::from_secs(11))
-            .expect("quiet live renewal evaluates");
-        let next_cycle = live
-            .evaluate_time_sensitive(&state(Some(599)), Duration::from_secs(12))
-            .expect("next live countdown cycle evaluates");
-        assert!(initial_boundary.announcement.is_some());
-        assert_eq!(quiet_renewal.announcement, None);
-        assert!(next_cycle.announcement.is_some());
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
-    fn expiry_refresh_targets_only_the_next_boundary() {
-        let root = fixture("boundaries");
-        let cases = [
-            (601, Some(Duration::from_secs(2))),
-            (599, Some(Duration::from_secs(300))),
-            (299, Some(Duration::from_secs(240))),
-            (59, None),
-            (0, None),
-        ];
-        for (index, (remaining, expected)) in cases.into_iter().enumerate() {
-            let meter = Meter::new(root.join(format!("state-{index}.json")));
-            let decision = meter
-                .evaluate(&state(Some(remaining)), Duration::from_secs(1))
-                .expect("boundary evaluates");
-            assert_eq!(decision.refresh_after, expected);
-            if let Some(delay) = decision.refresh_after {
-                assert!(!delay.is_zero());
-            }
-        }
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
-    fn lease_boundaries_are_strict_and_renewal_transitions_speak_once() {
-        let root = fixture("strict-boundaries");
-        let cases = [
-            (600, false, true),
-            (599, true, true),
-            (299, true, false),
-            (59, true, true),
-        ];
-        for (index, (remaining, shows_lease, reclaim_extends)) in cases.into_iter().enumerate() {
-            let mut snapshot = state(Some(remaining));
-            snapshot
-                .claim
-                .as_mut()
-                .expect("fixture claim")
-                .reclaim_extends = reclaim_extends;
-            let decision = Meter::new(root.join(format!("boundary-{index}.json")))
-                .evaluate(&snapshot, Duration::from_secs(1))
-                .expect("strict boundary evaluates");
-            let line = decision.announcement.expect("new state speaks once");
-            assert_eq!(
-                line.contains(&format!(
-                    "Claim lease: METER-00000001 has {remaining}s remaining"
-                )),
-                shows_lease,
-            );
-            assert!(!line.contains("Claim lease warning:"));
-            assert!(!line.contains("Claim lease urgent:"));
-            assert!(!line.contains("Claim lease critical:"));
-            if shows_lease {
-                assert!(line.contains("todo held for 90s"));
-                assert!(!line.contains("todo for 90s"));
-                assert!(line.contains(&format!("has {remaining}s remaining")));
-                if reclaim_extends {
-                    assert!(line.contains("run spice task reclaim METER-00000001"));
-                } else {
-                    assert!(
-                        line.contains("run spice task free METER-00000001, then spice task next")
-                    );
-                }
-                assert!(!line.contains(" ACK"));
-                assert!(!line.contains(" NACK"));
-            }
-        }
-
-        let path = root.join("renewals.json");
-        let meter = Meter::new(&path);
-        let final_boundary = meter
-            .evaluate(&state(Some(59)), Duration::from_secs(10))
-            .expect("final boundary evaluates");
-        let same_band = meter
-            .evaluate(&state(Some(58)), Duration::from_secs(11))
-            .expect("same band evaluates");
-        let middle_boundary = meter
-            .evaluate(&state(Some(299)), Duration::from_secs(12))
-            .expect("final to middle boundary evaluates");
-        let first_boundary = meter
-            .evaluate(&state(Some(599)), Duration::from_secs(13))
-            .expect("middle to first boundary evaluates");
-        let mut not_reclaimable = state(Some(598));
-        not_reclaimable
-            .claim
-            .as_mut()
-            .expect("fixture claim")
-            .reclaim_extends = false;
-        let free_guidance = meter
-            .evaluate(&not_reclaimable, Duration::from_secs(14))
-            .expect("eligibility change evaluates");
-        let same_eligibility = meter
-            .evaluate(&not_reclaimable, Duration::from_secs(15))
-            .expect("same eligibility evaluates");
-        let mut quiet_state = state(Some(600));
-        quiet_state
-            .claim
-            .as_mut()
-            .expect("fixture claim")
-            .reclaim_extends = false;
-        let quiet = meter
-            .evaluate(&quiet_state, Duration::from_secs(16))
-            .expect("countdown exit evaluates");
-        let mut renewed_state = state(Some(700));
-        renewed_state
-            .claim
-            .as_mut()
-            .expect("fixture claim")
-            .reclaim_extends = false;
-        let renewed = meter
-            .evaluate(&renewed_state, Duration::from_secs(17))
-            .expect("renewed lease evaluates");
-
-        assert!(final_boundary.announcement.is_some());
-        assert_eq!(same_band.announcement, None);
-        assert!(middle_boundary.announcement.as_deref().is_some_and(|line| {
-            line.contains("Claim lease: METER-00000001 has 299s remaining")
-        }));
-        assert!(first_boundary.announcement.as_deref().is_some_and(|line| {
-            line.contains("Claim lease: METER-00000001 has 599s remaining")
-        }));
-        assert!(free_guidance.announcement.as_deref().is_some_and(|line| {
-            line.contains("Claim lease: METER-00000001 has 598s remaining")
-                && line.contains("run spice task free METER-00000001, then spice task next")
-        }));
-        assert_eq!(same_eligibility.announcement, None);
-        assert!(
-            quiet
-                .announcement
-                .as_deref()
-                .is_some_and(|line| !line.contains("Claim lease"))
-        );
-        assert_eq!(renewed.announcement, None);
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
-    fn no_claim_keeps_durable_suppression_for_same_key_reacquisition() {
-        let root = fixture("reacquisition");
-        let path = root.join("working-state.json");
-        let meter = Meter::new(&path);
-        let first = meter
-            .evaluate(&state(Some(599)), Duration::from_secs(10))
-            .expect("boundary speaks");
-        let stored = fs::read(&path).expect("suppression state reads");
-        let absent = meter
-            .evaluate(&WorkingState::default(), Duration::from_secs(11))
-            .expect("no claim is silent");
-        let reacquired = Meter::new(&path)
-            .evaluate(&state(Some(598)), Duration::from_secs(12))
-            .expect("fresh process honors durable suppression");
-
-        assert!(first.announcement.is_some());
-        assert_eq!(absent, Decision::default());
-        assert_eq!(fs::read(&path).expect("state remains"), stored);
-        assert_eq!(reacquired.announcement, None);
-        assert_eq!(reacquired.refresh_after, Some(Duration::from_secs(299)));
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
-    fn collection_failure_is_silent_and_cannot_change_the_command_outcome() {
-        let root = fixture("failure");
-        let meter = Meter::new(root.join("working-state.json"));
-        let decorated = decorate(
-            &meter,
-            Duration::from_secs(1),
-            || Err::<WorkingState, _>("board unavailable"),
-            || 73,
-        );
-
-        assert_eq!(decorated.outcome, 73);
-        assert_eq!(decorated.meter, Decision::default());
-        fs::remove_dir_all(root).expect("fixture cleanup");
-    }
-
-    #[test]
-    fn invalid_usage_time_is_omitted_and_unknown_context_stays_unknown() {
-        assert_eq!(
-            ContextSnapshot::admit("not-a-timestamp", Some(200_000)),
-            None
-        );
-        let snapshot =
-            ContextSnapshot::admit("2026-08-08T16:00:00Z", None).expect("valid usage timestamp");
-
-        assert_eq!(snapshot.at.to_string(), "2026-08-08T16:00:00.000Z");
-        assert_eq!(snapshot.model_context_window, None);
-    }
-}
+mod tests;
