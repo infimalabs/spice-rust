@@ -244,8 +244,9 @@ fn answer_replacement_opening(
 /// How long a fixture peer waits on its socket. A peer only reads what the
 /// client under test sends next, so the bound guards against a hung client,
 /// not a slow one: a loaded harness reconnects the client across a restart
-/// well inside it.
-const FIXTURE_PEER_TIMEOUT: Duration = Duration::from_secs(10);
+/// well inside it. It outlasts every client bound a served fixture sets, so
+/// a client that gives up is seen giving up rather than timed out first.
+const FIXTURE_PEER_TIMEOUT: Duration = Duration::from_secs(90);
 
 fn accept_fixture_session(listener: TcpListener, epoch: CanonicalUuid) -> WebSocket<TcpStream> {
     let (stream, _) = listener.accept().expect("fixture peer accepts");

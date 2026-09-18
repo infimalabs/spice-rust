@@ -1,5 +1,12 @@
 use super::*;
 
+/// How long a client under test may spend outlasting a restart the fixture
+/// serves. The client reaches this bound only when the successor never
+/// answers, so it guards against a hung fixture, not a slow one: a loaded
+/// harness seats the successor and serves the envelope well inside it, and
+/// a client that gives up first drops its socket on the peer mid-read.
+const SERVED_BOUND: Duration = Duration::from_secs(60);
+
 /// The resident stopped admitting: the socket refusal `closing_refusal`
 /// sends once admission has closed, bound to the command it answers.
 fn not_admitting(id: CanonicalUuid, epoch: CanonicalUuid) -> Vec<u8> {
@@ -177,7 +184,7 @@ fn restart_under_command(
 #[test]
 fn a_witnessed_restart_is_outlasted_and_the_successor_serves_the_same_envelope() {
     let (outcome, predecessor, served, transients) =
-        restart_under_command("restart-served", true, Duration::from_secs(10));
+        restart_under_command("restart-served", true, SERVED_BOUND);
 
     let served = served.expect("the successor accepted the resubmitted command");
     assert_eq!(
@@ -285,13 +292,8 @@ fn a_second_refusal_from_the_successor_is_terminal() {
 
     let (contract, command) = task_add();
     let mut transients = Vec::new();
-    let outcome = execute_mapped_within(
-        &canvas,
-        &canvas,
-        contract,
-        command,
-        Duration::from_secs(10),
-        |fault| {
+    let outcome =
+        execute_mapped_within(&canvas, &canvas, contract, command, SERVED_BOUND, |fault| {
             transients.push(fault.reason.clone());
             let mut fixture = fixture.lock().expect("fixture locks");
             fs::remove_file(&canvas).expect("predecessor withdraws discovery");
@@ -301,8 +303,7 @@ fn a_second_refusal_from_the_successor_is_terminal() {
             successor_discovery
                 .publish(&fixture.canvas)
                 .expect("successor discovery publishes");
-        },
-    );
+        });
 
     let [predecessor, successor] = peers.map(|peer| peer.join().expect("peer joins"));
     assert_eq!(predecessor.id, successor.id);
@@ -395,7 +396,7 @@ fn a_dark_transition_refused_by_an_ending_resident_never_rides_the_handoff() {
         &canvas,
         &COMMAND_CONTRACT,
         command,
-        Duration::from_secs(10),
+        SERVED_BOUND,
         |fault| transients.push(fault.reason.clone()),
     );
 
