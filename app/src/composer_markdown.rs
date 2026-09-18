@@ -1087,6 +1087,40 @@ mod tests {
     }
 
     #[test]
+    fn a_quoted_acknowledgement_marker_takes_the_badge_at_its_own_depth() {
+        let rendered = render_received_with_badges(
+            "> > > [ACK] Tell me what the task is even about\n\
+             > > \n\
+             > > GIT-dSfJfCXfp is the task-git admission-depth task.\n\
+             >\n\
+             > Delete it\n\n\
+             Deleting GIT-dSfJfCXfp as directed.",
+            wire::AgentMessageBadges {
+                acknowledgements: 1,
+                ..wire::AgentMessageBadges::default()
+            },
+        );
+        assert_eq!(
+            rendered.html.matches("class=\"message-ack-pill\"").count(),
+            1,
+        );
+        assert!(
+            rendered.html.contains(
+                "<blockquote>\n<blockquote>\n<blockquote>\n<p><span class=\"message-ack-pill\""
+            ),
+            "the pill heads the innermost quote: {}",
+            rendered.html
+        );
+        assert!(
+            rendered
+                .html
+                .contains("classification\">ACK</span> Tell me what the task is even about</p>")
+        );
+        assert!(!rendered.html.contains("[ACK]"));
+        assert!(rendered.html.contains("<p>Delete it</p>"));
+    }
+
+    #[test]
     fn flavored_acknowledgements_keep_their_own_pill_as_the_mark() {
         let rendered = render_received_with_badges(
             "> [TASTE] polling: Wait for completion.\n\n\
