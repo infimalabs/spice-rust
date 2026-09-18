@@ -8,13 +8,13 @@ use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
     ConsentRead, DeliveryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger,
-    GateFindings, GlobalSettingsAnswer, GlobalSettingsRead, GlobalSettingsSet, InboxAnswer,
-    LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal,
-    LaneRenewalAnswer, LaneSeat, LaneState, RecallAnswer, RecognitionAnswer, Recognize,
-    ReleasePublish, StateAnswer, SteerDispose, SteerInbox, SteerRepair, SteerSend, TaskAdd,
-    TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote,
-    TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TaskWake, TasteAnswer, TasteProposalAdd,
-    TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange,
+    GlobalSettingsAnswer, GlobalSettingsRead, GlobalSettingsSet, InboxAnswer, LaneAnswer,
+    LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer, LaneSeat,
+    LaneState, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish, StateAnswer,
+    SteerDispose, SteerInbox, SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer,
+    TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
+    TaskReview, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure,
+    TextAnswer, TrustAnswer, TrustRef, UpChange,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -38,8 +38,6 @@ pub enum BodyShape {
     TaskOopsAdd,
     /// [`TasteProposalAdd`], the strict body for the hidden taste-proposal route.
     TasteProposalAdd,
-    /// [`GateFindings`]
-    GateFindings,
     /// [`TaskEdit`]
     TaskEdit,
     /// [`TaskDelete`]
@@ -334,7 +332,6 @@ impl CommandKind {
             | Self::TaskAdd
             | Self::TaskOopsAdd
             | Self::TasteProposalAdd
-            | Self::GateFindings
             | Self::TaskEdit
             | Self::TaskDelete
             | Self::TaskNote
@@ -396,7 +393,6 @@ impl CommandKind {
             Self::TaskAdd => Binding::of(B::TaskAdd, A::Task),
             Self::TaskOopsAdd => Binding::of(B::TaskOopsAdd, A::Task),
             Self::TasteProposalAdd => Binding::of(B::TasteProposalAdd, A::Task),
-            Self::GateFindings => Binding::of(B::GateFindings, A::Text),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
             Self::TaskDelete => Binding::of(B::TaskDelete, A::Task),
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
@@ -487,8 +483,6 @@ pub enum Intent {
     TaskOopsAdd(TaskOopsAdd),
     /// [`BodyShape::TasteProposalAdd`]
     TasteProposalAdd(TasteProposalAdd),
-    /// [`BodyShape::GateFindings`]
-    GateFindings(GateFindings),
     /// [`BodyShape::TaskEdit`]
     TaskEdit(TaskEdit),
     /// [`BodyShape::TaskDelete`]
@@ -575,7 +569,6 @@ impl Intent {
             | Self::TaskAdd(_)
             | Self::TaskOopsAdd(_)
             | Self::TasteProposalAdd(_)
-            | Self::GateFindings(_)
             | Self::TaskEdit(_)
             | Self::TaskDelete(_)
             | Self::TaskNote(_)
@@ -626,7 +619,6 @@ impl Intent {
             Self::TaskAdd(_) => BodyShape::TaskAdd,
             Self::TaskOopsAdd(_) => BodyShape::TaskOopsAdd,
             Self::TasteProposalAdd(_) => BodyShape::TasteProposalAdd,
-            Self::GateFindings(_) => BodyShape::GateFindings,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
             Self::TaskDelete(_) => BodyShape::TaskDelete,
             Self::TaskNote(_) => BodyShape::TaskNote,
@@ -702,7 +694,6 @@ impl BodyShape {
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TasteProposalAdd
-                | Self::GateFindings
                 | Self::TaskEdit
                 | Self::TaskDelete
                 | Self::TaskNote
@@ -731,7 +722,6 @@ impl BodyShape {
                 | Self::TaskAdd
                 | Self::TaskOopsAdd
                 | Self::TasteProposalAdd
-                | Self::GateFindings
                 | Self::TaskEdit
                 | Self::TaskDelete
                 | Self::TaskNote
@@ -752,7 +742,6 @@ impl BodyShape {
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
             Self::TaskOopsAdd => Intent::TaskOopsAdd(crate::decode(bytes)?),
             Self::TasteProposalAdd => Intent::TasteProposalAdd(crate::decode(bytes)?),
-            Self::GateFindings => Intent::GateFindings(crate::decode(bytes)?),
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),
             Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),

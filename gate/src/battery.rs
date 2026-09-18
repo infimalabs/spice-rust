@@ -9,7 +9,6 @@ mod authorities;
 mod context;
 mod execution;
 mod family_evidence;
-mod findings;
 mod manifest_contract;
 mod refusal_fold;
 #[cfg(not(target_arch = "wasm32"))]
@@ -33,7 +32,6 @@ pub use execution::{
     run_battery, run_battery_arm, run_focused_arm,
 };
 pub use family_evidence::{ArmEvidence, BatteryState, ResultProvenance};
-pub use findings::GateFinding;
 pub use manifest_contract::{
     ArmDisposition, BatteryManifest, BatteryManifestArm, CANONICAL_BATTERY_MANIFEST,
     GATE_BATTERY_VERSION,

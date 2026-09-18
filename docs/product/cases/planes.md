@@ -17,7 +17,7 @@
 | Another actor reads an accepted latch | the same repository latch holds the subject at base; any informational redirect comes from the distinct accepted claim | [Sticky latches and live claims are repository-shared](../invariants/checks.md#checks-sticky-latches-and-live-claims-are-repository-shared), [A finding whose subject is held by a peer informs and passes](../invariants/checks.md#checks-a-finding-whose-subject-is-held-by-a-peer-informs-and-passes) |
 | Wide measure unchanged but high | passes | [Wide measures diff against a baseline](../invariants/checks.md#checks-wide-measures-diff-against-a-baseline) |
 | Wide measure rises by one | refused | [Wide measures diff against a baseline](../invariants/checks.md#checks-wide-measures-diff-against-a-baseline) |
-| Gate-findings dispatch is explicitly requested for one registered study | each reported finding becomes deferred, traceable work | [A requested gate-findings dispatch files deferred work](../invariants/checks.md#checks-a-requested-gate-findings-dispatch-files-deferred-work) |
+| A study reports a finding the operator wants tracked | the study files nothing; the operator captures it with `spice task add` | [A study reports and never files](../invariants/checks.md#checks-a-study-reports-and-never-files) |
 | A gate blocks a merge | fixed at the source, never by weakening the gate | [A gate is never closed by weakening it](../invariants/checks.md#checks-a-gate-is-never-closed-by-weakening-it) |
 
 ### Session and counsel

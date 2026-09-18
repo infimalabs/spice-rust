@@ -675,8 +675,8 @@ fn every_refusal_form_round_trips_after_semantic_narrowing() {
         (
             "invocation",
             Refusal::invocation(
-                "gate::instrument-unregistered",
-                "spice gate findings INSTRUMENT requires one registered instrument",
+                "gate::prove-action-unregistered",
+                "spice gate prove ACTION requires one registered gate action",
             ),
         ),
         (

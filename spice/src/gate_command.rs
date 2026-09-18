@@ -8,13 +8,11 @@ use std::env;
 use std::io;
 use std::path::Path;
 
-use gate::{BatteryReport, CampReport, GateId, KillReport, ReportMutationMovement, Selector};
+use gate::{BatteryReport, CampReport, KillReport, ReportMutationMovement, Selector};
 #[cfg(test)]
 use gate::{GateReport, Standing};
-use wire::intent::{CommandAnswer, GateFindings};
-use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
+use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
-use crate::cli::Contract;
 use spice::repository::Repository;
 
 mod commit_message;
@@ -41,68 +39,6 @@ pub(crate) fn run(
         Ok(Err(error)) => battery_failure(error),
         Err(failure) => failure.outcome(),
     }
-}
-
-/// Run the ordinary gate and file its projected findings as deferred board work.
-pub(crate) fn findings(matches: &clap::ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
-    let instrument = matches
-        .get_one::<String>("INSTRUMENT")
-        .expect("required instrument is parsed");
-    let Some(gate_id) = GateId::BATTERY
-        .into_iter()
-        .find(|candidate| candidate.as_str() == instrument)
-    else {
-        return Outcome::Refusal(Refusal::invocation(
-            "gate::instrument-unregistered",
-            format!(
-                "spice gate findings INSTRUMENT requires one registered instrument; `{instrument}` is not registered"
-            ),
-        ));
-    };
-    let selector = matches
-        .get_one::<String>("at")
-        .map_or_else(Selector::staged, |revision| {
-            Selector::revision(revision.clone())
-        });
-    let repository = match focused_repository(gate_id) {
-        Ok(repository) => repository,
-        Err(outcome) => return outcome,
-    };
-    let before = match spice::gate::capture_gate_finding_anchor(&repository, &selector) {
-        Ok(source) => source,
-        Err(error) => return focused_failure(error, gate_id),
-    };
-    let report = match spice::gate::run_arm_report(selector.clone(), gate_id) {
-        Ok(report) => report,
-        Err(error) => return focused_failure(error, gate_id),
-    };
-    let after = match spice::gate::capture_gate_finding_anchor(&repository, &selector) {
-        Ok(source) => source,
-        Err(error) => return focused_failure(error, gate_id),
-    };
-    if before != after {
-        return Outcome::Refusal(Refusal::evidence(
-            "gate::finding-source-moved",
-            format!("before={before:?}; after={after:?}"),
-            "rerun the focused instrument after the Git source stops moving",
-        ));
-    }
-    let source = before.bind(report.context().source().clone());
-    let (report_digest, evidence) = match focused_report_evidence(&report) {
-        Ok(evidence) => evidence,
-        Err(outcome) => return outcome,
-    };
-    crate::command_client::execute_typed(
-        &repository,
-        contract,
-        wire::CommandKind::GateFindings,
-        Vec::new(),
-        &GateFindings {
-            report: report_digest,
-            evidence,
-            source,
-        },
-    )
 }
 
 #[cfg(test)]
@@ -398,63 +334,11 @@ fn battery_failure<B>(error: spice::gate::RunError) -> Outcome<B> {
     ))
 }
 
-fn focused_failure<B>(error: spice::gate::RunError, gate_id: GateId) -> Outcome<B> {
-    focused_unavailable(error.reason(), error.detail(), gate_id)
-}
-
-fn focused_unavailable<B>(reason: &str, detail: &str, gate_id: GateId) -> Outcome<B> {
-    Outcome::Refusal(Refusal::bare(
-        wire::RefusalDiagnostic::new(
-            "gate::instrument-cannot-run".to_owned(),
-            None,
-            Some(format!(
-                "registered gate instrument {gate_id} to complete one focused run"
-            )),
-            Some(format!("{reason}: {detail}")),
-        )
-        .with_detail("repair the named capture input, then rerun this registered instrument"),
-    ))
-}
-
-fn focused_repository(gate_id: GateId) -> Result<Repository, Outcome<CommandAnswer>> {
-    let current = std::env::current_dir().map_err(|error| {
-        focused_unavailable(
-            "gate::working-directory-unavailable",
-            &error.to_string(),
-            gate_id,
-        )
-    })?;
-    Repository::discover(&current).map_err(|error| {
-        focused_unavailable("gate::repository-unresolved", &error.to_string(), gate_id)
-    })
-}
-
 fn direct<B>(body: B) -> Outcome<B> {
     Outcome::Reply(Reply {
         position: ReplyPosition::Direct {},
         body,
     })
-}
-
-pub(crate) fn focused_report_evidence(
-    report: &gate::FocusedArmReport,
-) -> Result<(Digest, String), Outcome<CommandAnswer>> {
-    let bytes = report.encode().map_err(|error| {
-        Outcome::Fault(Fault {
-            class: FaultClass::Protocol,
-            reason: "gate::report-unencodable".to_owned(),
-            detail: error.to_string(),
-        })
-    })?;
-    let digest = Digest::compute(Domain::GateFocusedReport, &bytes);
-    let evidence = String::from_utf8(bytes).map_err(|error| {
-        Outcome::Fault(Fault {
-            class: FaultClass::Protocol,
-            reason: "gate::report-non-utf8".to_owned(),
-            detail: error.to_string(),
-        })
-    })?;
-    Ok((digest, evidence))
 }
 
 /// One immutable selected tree and the current contract loaded from its bytes.

@@ -95,8 +95,8 @@ pub(super) fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
             ),
             stale_witness(),
             Refusal::invocation(
-                "gate::instrument-unregistered",
-                "spice gate findings INSTRUMENT requires one registered instrument",
+                "gate::prove-action-unregistered",
+                "spice gate prove ACTION requires one registered gate action",
             ),
             Refusal::evidence(
                 "gate::regressed",

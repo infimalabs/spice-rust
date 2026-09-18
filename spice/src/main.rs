@@ -327,7 +327,6 @@ impl NativeInvocation<'_> {
             ["doctor"] => deliver(&doctor_outcome(configuration), form),
             ["demo"] => deliver(&demo_command::run(leaf), form),
             ["gate"] => deliver(&gate_command::run(leaf, configuration), form),
-            ["gate", "findings"] => deliver(&gate_command::findings(leaf, contract), form),
             ["gate", "prove"] => deliver(&gate_command::prove(leaf), form),
             ["gate", "camp"] => deliver(&gate_command::camp(), form),
             ["gate", "commit-msg"] => {

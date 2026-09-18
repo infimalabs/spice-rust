@@ -160,7 +160,6 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["taste"]), Landing::Landed);
     assert_eq!(landing(&["taste", "add"]), Landing::Landed);
     assert_eq!(landing(&["taste", "drop"]), Landing::Landed);
-    assert_eq!(landing(&["gate", "findings"]), Landing::Landed);
     for path in [
         &["backup"][..],
         &["restore"][..],
@@ -589,7 +588,6 @@ fn tool_postures_follow_the_closed_command_order() {
             ("dev xtask".to_owned(), vec!["cargo"]),
             ("lock run".to_owned(), vec!["CMD"]),
             ("gate".to_owned(), vec!["gate policy executable"]),
-            ("gate findings".to_owned(), vec!["gate policy executable"]),
             ("gate prove".to_owned(), vec!["gate policy executable"]),
             ("gate camp".to_owned(), vec!["gate policy executable"]),
             ("gate kill".to_owned(), vec!["gate mutation executable"]),

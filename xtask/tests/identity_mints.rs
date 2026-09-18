@@ -3,11 +3,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const CLOCK_SITES: [(&str, usize); 7] = [
+const CLOCK_SITES: [(&str, usize); 6] = [
     ("spice/src/board_command/client/submission.rs", 3),
     ("spice/src/board_command/client_document.rs", 1),
     ("spice/src/board_command/followup.rs", 1),
-    ("spice/src/board_command/mutation/gate_findings.rs", 1),
     ("spice/src/board_command/progress.rs", 1),
     ("spice/src/resident/steering.rs", 1),
     ("spice/src/resident/taste_surface.rs", 1),

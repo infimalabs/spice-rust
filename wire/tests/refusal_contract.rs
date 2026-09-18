@@ -29,8 +29,8 @@ fn each_form_requires_its_own_fields_and_rejects_every_other_shape() {
         (
             serde_json::json!({
                 "form": "invocation",
-                "reason": "gate::instrument-unregistered",
-                "contract": "spice gate findings INSTRUMENT requires one registered instrument"
+                "reason": "gate::prove-action-unregistered",
+                "contract": "spice gate prove ACTION requires one registered gate action"
             }),
             &["reason", "contract"][..],
             "diagnostic",

@@ -404,7 +404,10 @@ pub struct GateCleared {
     pub locus: String,
 }
 
-/// A requested gate finding dispatch completed.
+/// A gate finding dispatch completed under the retired filing path.
+///
+/// Historical only: the filing command is gone, and this body exists so the
+/// journal keeps decoding the `gate::filed` facts it already holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GateFindingsFiled {
     /// Digest of the complete typed battery report that was dispatched.
