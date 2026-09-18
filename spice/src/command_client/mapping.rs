@@ -329,4 +329,17 @@ impl MappedCommand {
             body: self.body.clone(),
         }
     }
+
+    /// Whether this envelope, refused by an ending resident, has a successor
+    /// to serve it.
+    ///
+    /// Admission closes the moment a dark command is enqueued, so a `spice
+    /// down` refused with not-admitting lost a race with another and the work
+    /// it asked for is already under way. A successor is not what it asked to
+    /// take dark, and "run it again once a resident is seated" is the opposite
+    /// of what the operator wanted, so that refusal stands exactly as the
+    /// resident gave it.
+    pub(super) fn outlasts_restart(&self) -> bool {
+        self.kind != CommandKind::UpChange
+    }
 }
