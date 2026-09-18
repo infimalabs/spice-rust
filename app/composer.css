@@ -115,8 +115,8 @@
   right: 8px;
   bottom: 8px;
   z-index: 1;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   cursor: help;
   color: color-mix(in srgb, var(--ink) 86%, var(--control));
   opacity: .74;
@@ -129,7 +129,6 @@
   opacity: .72;
 }
 .composer-vendor-icon--omp:not([data-composer-vendor-provider]) { opacity: .9; }
-.composer-vendor-badge circle { fill: var(--control); }
 .composer-shard--primary:has(.agent-action-menu[open]) .composer-vendor-icon { display: none; }
 
 .team-surface .mosaic-composer {
@@ -150,6 +149,6 @@
 }
 .team-surface .mosaic-composer textarea:focus-visible { outline: none; }
 .team-surface .composer-shard--primary textarea {
-  padding-right: 32px;
-  padding-bottom: 28px;
+  padding-right: 36px;
+  padding-bottom: 32px;
 }

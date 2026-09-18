@@ -318,7 +318,7 @@ function assertPrimaryIdentity(identity) {
   assert.equal(identity.title, identity.parentTitle, "vendor icon owns the standing identity tooltip");
   assert.deepEqual(
     identity.icon,
-    { width: 18, height: 18, right: 9, bottom: 9 },
+    { width: 22, height: 22, right: 9, bottom: 9 },
     "vendor emblem occupies the 8px inset inside the one-pixel reference perimeter",
   );
   assert.deepEqual(identity.menu, { width: 11, height: 8, bars: 3 });

@@ -9,7 +9,8 @@ const UNKNOWN_FAMILY_MODEL = "google/gemini-3-pro";
 ///
 /// The main emblem is the icon's own `svg`; its first path is the glyph in
 /// the emblem position. The badge is the `.composer-vendor-badge` group
-/// inside it, or nothing. Computed colour and opacity are read from the icon
+/// inside it, or nothing, and `plate` reports any filled shape standing
+/// behind its pi. Computed colour and opacity are read from the icon
 /// so two seats can be held to the same paint rather than the same class.
 function readEmblem(member) {
   const icon = member.querySelector(".composer-vendor-icon");
@@ -26,7 +27,7 @@ function readEmblem(member) {
     viewBox: emblem.getAttribute("viewBox"),
     glyph: emblem.querySelector(":scope > path")?.getAttribute("d") ?? null,
     badge: badge && {
-      disc: badge.querySelector("circle") !== null,
+      plate: badge.querySelector("circle, rect, ellipse") !== null,
       glyph: badgePath?.getAttribute("d") ?? null,
       fill: badgePath?.getAttribute("fill") ?? null,
       gradient: badge.querySelector("linearGradient")?.id ?? null,
@@ -43,8 +44,8 @@ function readEmblem(member) {
 /// Two vacant omp seats join the seeded team: one on an anthropic model and
 /// one on a family the composer does not know. The known family paints the
 /// claude glyph as its main emblem at the same paint and size as the native
-/// claude seat beside it, with oh-my-pi's pi shrunk to the disc badge over
-/// the glyph's corner; the unknown family keeps the pi alone as its emblem.
+/// claude seat beside it, with oh-my-pi's pi over the glyph's corner on no
+/// plate; the unknown family keeps the pi alone as its emblem.
 /// Vacant seats suffice because the emblem reads the seat's recorded model,
 /// not a running occupant.
 export async function assertOmpEmblemRoles(page, fixture, worktrees, seeded) {
@@ -103,7 +104,11 @@ export async function assertOmpEmblemRoles(page, fixture, worktrees, seeded) {
     { color: native.color, opacity: native.opacity, width: native.width, height: native.height },
     "the provider glyph is painted and sized exactly as the native seat's emblem",
   );
-  assert.ok(known.badge?.disc, "the pi badge sits on its disc over the glyph's corner");
+  assert.equal(
+    known.badge?.plate,
+    false,
+    "the badged pi stands on the glyph itself, with no plate punched through it",
+  );
   assert.equal(known.badge.glyph, unknown.glyph, "the badge is oh-my-pi's pi");
   assert.equal(
     known.badge.fill,
