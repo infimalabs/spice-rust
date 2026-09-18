@@ -17,36 +17,36 @@ use super::*;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
-fn fixture_app() -> canvas::AppSource {
-    static ROOT: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    let root = ROOT.get_or_init(|| {
-        let root = std::env::temp_dir().join(format!("spice-demo-unit-app-{}", std::process::id()));
-        let stage = root.join(canvas::APP_STAGE);
-        let identity = "5555555555555555555555555555555555555555555555555555555555555555";
-        let generation = stage.join(canvas::APP_STAGE_GENERATIONS).join(identity);
-        fs::create_dir_all(&generation).expect("demo fixture app generation");
-        for asset in canvas::APP.assets() {
-            fs::write(
-                generation.join(asset.file()),
-                format!("demo fixture app {}\n", asset.file()),
-            )
-            .expect("demo fixture app asset");
-        }
+/// A staged lane app the seed copies into the demo root, so the stage
+/// itself lives only as long as the seed that reads it.
+fn fixture_app() -> (Scratch, canvas::AppSource) {
+    let root = Scratch::new("app");
+    let stage = root.0.join(canvas::APP_STAGE);
+    let identity = "5555555555555555555555555555555555555555555555555555555555555555";
+    let generation = stage.join(canvas::APP_STAGE_GENERATIONS).join(identity);
+    fs::create_dir_all(&generation).expect("demo fixture app generation");
+    for asset in canvas::APP.assets() {
         fs::write(
-            stage.join(canvas::APP_STAGE_CURRENT),
-            format!("{identity}\n"),
+            generation.join(asset.file()),
+            format!("demo fixture app {}\n", asset.file()),
         )
-        .expect("demo fixture app pointer");
-        root
-    });
-    canvas::AppSource::resolve(root).expect("demo fixture app resolves")
+        .expect("demo fixture app asset");
+    }
+    fs::write(
+        stage.join(canvas::APP_STAGE_CURRENT),
+        format!("{identity}\n"),
+    )
+    .expect("demo fixture app pointer");
+    let source = canvas::AppSource::resolve(&root.0).expect("demo fixture app resolves");
+    (root, source)
 }
 
 fn seed_test_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Environment> {
     require_utf8(executable, "current spice executable")?;
     let (root, automatic) = prepare_root(root)?;
+    let (_stage, app) = fixture_app();
     let result = born_repository(&root)
-        .and_then(|()| finish_seed_prepared_root(&root, executable, automatic, &fixture_app()));
+        .and_then(|()| finish_seed_prepared_root(&root, executable, automatic, &app));
     result.map_err(|failure| preserve_failure(&root, executable, *failure).into())
 }
 
@@ -56,7 +56,8 @@ fn seed_test_prepared_root(
     automatic: bool,
 ) -> DemoResult<Environment> {
     born_repository(root)?;
-    finish_seed_prepared_root(root, executable, automatic, &fixture_app())
+    let (_stage, app) = fixture_app();
+    finish_seed_prepared_root(root, executable, automatic, &app)
 }
 
 struct Scratch(PathBuf);

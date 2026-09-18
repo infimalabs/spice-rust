@@ -507,14 +507,37 @@ fn format_uuid(raw: &[u8]) -> String {
 mod tests {
     use super::*;
 
-    fn scratch(label: &str) -> std::path::PathBuf {
+    /// One scratch directory, removed again when the test that made it ends.
+    struct Scratch(std::path::PathBuf);
+
+    impl std::ops::Deref for Scratch {
+        type Target = std::path::Path;
+
+        fn deref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl AsRef<std::path::Path> for Scratch {
+        fn as_ref(&self) -> &std::path::Path {
+            &self.0
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn scratch(label: &str) -> Scratch {
         let root = std::env::temp_dir().join(format!(
             "spice-install-symbols-{label}-{}-{}",
             std::process::id(),
             uuid::Uuid::new_v4()
         ));
         fs::create_dir(&root).expect("symbol scratch creates");
-        root
+        Scratch(root)
     }
 
     /// Minimal thin 64-bit Mach-O bytes carrying exactly one `LC_UUID`.

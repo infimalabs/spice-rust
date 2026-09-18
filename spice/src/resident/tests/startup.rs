@@ -120,6 +120,7 @@ fn canvas_identity_joins_the_running_binary_and_every_compiled_or_live_version_a
             .identity()
             .clone()
     );
+    fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
 fn admitted_lane_seat(

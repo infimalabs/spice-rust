@@ -63,6 +63,13 @@ fn kept_jobs_are_read_without_opening_delivered_records() {
         [job.id()]
     );
     assert!(jobs.list().is_err(), "the full listing opens every record");
+    // The job is still writing its ending; let it finish before its root goes.
+    let Observed::Ended(_) = job
+        .observe(&Control::new(), TEST_BOUND)
+        .expect("the job is observed")
+    else {
+        panic!("the job ends");
+    };
     let _ = fs::remove_dir_all(root);
 }
 
