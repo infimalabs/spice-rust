@@ -6,7 +6,7 @@ use crate::core::{CoreArmReport, CoreStanding};
 use crate::hygiene::{AnalysisEvidence, HygieneMeasurement, HygieneOutcome, HygieneProvenance};
 use crate::manifest::GateId;
 use crate::metrics::{
-    EvidenceState as MetricState, MetricEvidence, MetricMeasurement, MetricUnit,
+    EvidenceState as MetricState, MetricEvidence, MetricKey, MetricMeasurement, MetricUnit,
     StructuralArmEvidence,
 };
 use crate::toolchain::{ArmMeasurement, ArmOutcome};
@@ -418,30 +418,33 @@ fn over_bound(unit: MetricUnit, measurement: &MetricMeasurement) -> bool {
             .is_some_and(|threshold| measurement.value() > threshold)
 }
 
+/// Breaching rows one failed arm reason names before it counts the rest.
+///
+/// A reason is one line a person reads at a terminal after `reason=`, and a
+/// file-shape or complexity arm usually breaks on a handful of rows, so a
+/// handful is named in full. Past that the line stops being a reason and
+/// becomes a listing, which the canonical report already carries row by row;
+/// the count of what was left off is stated rather than implied so a reader
+/// cannot mistake the named rows for the whole breach.
+const METRIC_REASON_CLAUSE_LIMIT: usize = 6;
+
 /// The reason for whichever state the fold above settled on.
 ///
 /// The row that carries that state is the one asked for the words, rather than
 /// the arm's first row. Since an arm may hold a measurement beside a file that
 /// was never read, the first row is often a measurement, which knows nothing
 /// about why the arm did not complete.
+///
+/// A failed arm has no single carrier: every row that broke its bound is a
+/// reason in its own right, so the arm names each one rather than reporting
+/// that some unnamed measurement somewhere exceeded some unnamed bound.
 fn metric_reason(report: &StructuralArmEvidence) -> Result<String, BatteryError> {
     let state = metric_state(report)?;
     if state == BatteryState::Passed {
         return Ok("all declared structural measurements completed within threshold".to_owned());
     }
     if state == BatteryState::Failed {
-        // A row that failed in its own right says why; a measurement that broke
-        // its bound does not, so the arm speaks for it.
-        return Ok(report
-            .metrics()
-            .iter()
-            .find_map(|metric| match metric.state() {
-                MetricState::Failed { reason, .. } => Some(reason.clone()),
-                _ => None,
-            })
-            .unwrap_or_else(|| {
-                "one or more structural measurements exceeded their declared bound".to_owned()
-            }));
+        return Ok(breach_reason(report));
     }
     let carrier = report
         .metrics()
@@ -459,6 +462,98 @@ fn metric_reason(report: &StructuralArmEvidence) -> Result<String, BatteryError>
             unreachable!("measured rows settle on passed or failed, both handled above")
         }
     })
+}
+
+/// Name every measurement that broke its bound: which row, what it measured,
+/// and the limit it was held to.
+///
+/// A row that failed in its own right says why, and says it first; the
+/// breaching measurements follow in the arm's canonical row order so the same
+/// evidence always reads the same way. The fold above settles on `Failed` only
+/// when at least one row is failed or over bound, so the clause list is never
+/// empty.
+fn breach_reason(report: &StructuralArmEvidence) -> String {
+    let mut clauses: Vec<String> = report
+        .metrics()
+        .iter()
+        .find_map(|metric| match metric.state() {
+            MetricState::Failed { reason, .. } => Some(reason.clone()),
+            _ => None,
+        })
+        .into_iter()
+        .collect();
+    let breaches: Vec<(&MetricEvidence, &MetricMeasurement)> = report
+        .metrics()
+        .iter()
+        .filter_map(|metric| match metric.state() {
+            MetricState::Measured { measurement } if over_bound(metric.unit(), measurement) => {
+                Some((metric, &**measurement))
+            }
+            _ => None,
+        })
+        .collect();
+    clauses.extend(
+        breaches
+            .iter()
+            .take(METRIC_REASON_CLAUSE_LIMIT)
+            .map(|(metric, measurement)| breach_clause(metric, measurement)),
+    );
+    let undisplayed = breaches.len().saturating_sub(METRIC_REASON_CLAUSE_LIMIT);
+    if undisplayed > 0 {
+        clauses.push(format!("and {undisplayed} more over bound"));
+    }
+    clauses.join("; ")
+}
+
+/// One breaching row as `METRIC KEY measured VALUE UNIT over LIMIT`.
+fn breach_clause(metric: &MetricEvidence, measurement: &MetricMeasurement) -> String {
+    format!(
+        "{} {} measured {} {} over {}",
+        metric.metric().as_str(),
+        metric_key(metric.key()),
+        measurement.value(),
+        metric.unit().as_str(),
+        breach_limit(metric.unit(), measurement)
+    )
+}
+
+/// The bound a breaching measurement crossed, consulted in the order
+/// [`over_bound`] consults it.
+///
+/// A unit that admits only zero is bounded at zero whatever else the row
+/// carries: a magic measurement's threshold is the examine bar, not an
+/// allowance, and reading it here as the limit would print a bound the row was
+/// never held to. Otherwise the latch that tripped names its active limit, and
+/// failing that the threshold the value exceeded. Every row this is asked about
+/// broke one of those, so the closing fallback is never reached.
+fn breach_limit(unit: MetricUnit, measurement: &MetricMeasurement) -> u64 {
+    if unit.admits_only_zero() {
+        return 0;
+    }
+    if let Some(latch) = measurement.latch().filter(|latch| latch.over_limit()) {
+        return latch.active_limit();
+    }
+    measurement
+        .threshold()
+        .filter(|threshold| measurement.value() > *threshold)
+        .unwrap_or(0)
+}
+
+/// Spell one metric key the way every battery rendering spells it.
+pub(super) fn metric_key(key: &MetricKey) -> String {
+    match key {
+        MetricKey::Arm => "arm".to_owned(),
+        MetricKey::Path(path) => format!("path={}", quoted(path)),
+        MetricKey::Function(function) => format!(
+            "path={} function={}",
+            quoted(function.path()),
+            quoted(function.function())
+        ),
+    }
+}
+
+pub(super) fn quoted(value: &str) -> String {
+    serde_json::to_string(value).expect("validated battery text always serializes as JSON text")
 }
 
 fn hygiene_reason(report: &HygieneMeasurement) -> Result<String, BatteryError> {

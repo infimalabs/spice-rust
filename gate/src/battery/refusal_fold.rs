@@ -7,9 +7,9 @@
 
 use std::fmt;
 
-use super::family_evidence::metric_terminal;
+use super::family_evidence::{metric_key, metric_terminal, quoted};
 use super::{ArmEvidence, BatteryArmResult, BatteryReport, BatteryState, FocusedArmReport};
-use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricKey, MetricMeasurement};
+use crate::metrics::{EvidenceState as MetricState, MetricEvidence, MetricMeasurement};
 
 /// Hard byte limit for one human-facing refusal fold.
 pub const BATTERY_REFUSAL_FOLD_MAX_BYTES: usize = 65_536;
@@ -403,20 +403,4 @@ fn finding_sites(measurement: &MetricMeasurement) -> String {
         sites.push_str(&format!("  sites-undisplayed={undisplayed}\n"));
     }
     sites
-}
-
-fn metric_key(key: &MetricKey) -> String {
-    match key {
-        MetricKey::Arm => "arm".to_owned(),
-        MetricKey::Path(path) => format!("path={}", quoted(path)),
-        MetricKey::Function(function) => format!(
-            "path={} function={}",
-            quoted(function.path()),
-            quoted(function.function())
-        ),
-    }
-}
-
-fn quoted(value: &str) -> String {
-    serde_json::to_string(value).expect("validated battery text always serializes as JSON text")
 }
