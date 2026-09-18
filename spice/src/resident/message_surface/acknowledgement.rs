@@ -205,7 +205,7 @@ fn acknowledged_context_text(
     if !is_ordinary(directive) {
         return Cow::Borrowed(&directive.text);
     }
-    Cow::Owned(mark_acknowledged_context(marker, &directive.text))
+    mark_acknowledged_context(marker, &directive.text)
 }
 
 /// Prefix one ordinary acknowledged directive with its acknowledgement marker.
@@ -214,16 +214,43 @@ fn acknowledged_context_text(
 /// the Canvas pill sits inline with the directive. A first line that opens
 /// another block (a nested operator quote, list, heading, table, fence, rule,
 /// or indented code) keeps its structure beneath a marker paragraph of its own.
-fn mark_acknowledged_context(marker: &str, text: &str) -> String {
+///
+/// One nested quote needs no paragraph: an operator who quotes an acknowledged
+/// agent card and replies beneath it hands back text whose nested quote already
+/// heads with the ACK marker. Canvas badges the first authenticated marker it
+/// meets inside a quote, so the retired marker stays out of the way and the
+/// pill lands on the quoted one, where the operator reads the text. Pending
+/// credit never rides that marker, because the quoted card earned its badge
+/// under a key the journal already retired, not the one still held.
+fn mark_acknowledged_context<'a>(marker: &str, text: &'a str) -> Cow<'a, str> {
     if text.is_empty() {
-        return marker.to_owned();
+        return Cow::Owned(marker.to_owned());
     }
     let first = text.split('\n').next().unwrap_or_default();
     if opens_paragraph_text(first) {
-        format!("{marker} {text}")
+        Cow::Owned(format!("{marker} {text}"))
+    } else if marker == wire::stream::ACK_MARKER && quote_heads_with(first, marker) {
+        Cow::Borrowed(text)
     } else {
-        format!("{marker}\n\n{text}")
+        Cow::Owned(format!("{marker}\n\n{text}"))
     }
+}
+
+/// Whether a line that opens a nested quote carries `marker` as its first word.
+///
+/// Each quote level is one `>` and the single space the composer places after
+/// it, so the marker is read where the innermost quote's paragraph begins.
+fn quote_heads_with(line: &str, marker: &str) -> bool {
+    let mut quoted = line.trim_start();
+    if !quoted.starts_with('>') {
+        return false;
+    }
+    while let Some(deeper) = quoted.strip_prefix('>') {
+        quoted = deeper.strip_prefix(' ').unwrap_or(deeper);
+    }
+    quoted
+        .strip_prefix(marker)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
 }
 
 fn opens_paragraph_text(line: &str) -> bool {

@@ -21,6 +21,22 @@ fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
     )
 }
 
+/// Retire one fixture directive at the header locus `event()` reads.
+fn retire(directives: &mut PresentationDirectives, key: &str) {
+    let key = key.parse::<steer::Key>().expect("fixture key parses");
+    let directive = directives.0.get_mut(&key).expect("fixture directive");
+    directive.disposition = wire::Disposition::Acked;
+    directive.retirement = Some(wire::body::TranscriptLocus {
+        source: None,
+        member: 1,
+        offset: 0,
+        length: 1,
+        event: 0,
+        line: 1,
+        column: 5,
+    });
+}
+
 #[test]
 fn steering_acknowledgement_renders_key_context_and_agent_prose_once() {
     let directives = directives(&[("1kQnrzNZ", "Keep one tested, visible current path.")]);
@@ -271,7 +287,7 @@ fn inline_packets_render_each_context_and_body_in_source_order() {
 
 #[test]
 fn operator_reply_quotes_remain_nested_inside_acknowledgement_context() {
-    let directives = directives(&[(
+    let mut directives = directives(&[(
         "1kQwPZtK",
         "> The original assertion remains visible.\n\napproved",
     )]);
@@ -284,6 +300,71 @@ fn operator_reply_quotes_remain_nested_inside_acknowledgement_context() {
         )
         .expect("nested acknowledgment presents"),
         "> [ACK PENDING]\n>\n> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
+    );
+    retire(&mut directives, "1kQwPZtK");
+    assert_eq!(
+        present_steering_acknowledgements_with_directives(
+            "ACK 1kQwPZtK: Applied.",
+            &directives,
+            event(),
+        )
+        .expect("retired nested acknowledgment presents"),
+        "> [ACK]\n>\n> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
+    );
+}
+
+#[test]
+fn a_quoted_acknowledged_card_lends_its_marker_to_the_retired_badge() {
+    let text = "ACK 1kQwPZtK: deleting GIT-dSfJfCXfp as directed.";
+    let quoted_card = concat!(
+        "> > [ACK] Tell me what the task is even about because I don't recognize it\n",
+        "> \n",
+        "> GIT-dSfJfCXfp is the task-git admission-depth task; summary follows after the ack.\n",
+        "\n",
+        "Delete it",
+    );
+    let mut quoted = directives(&[("1kQwPZtK", quoted_card)]);
+    let nested = concat!(
+        "> > > [ACK] Tell me what the task is even about because I don't recognize it\n",
+        "> > \n",
+        "> > GIT-dSfJfCXfp is the task-git admission-depth task; summary follows after the ack.\n",
+        ">\n",
+        "> Delete it\n",
+        "\n",
+        "Deleting GIT-dSfJfCXfp as directed.",
+    );
+
+    assert_eq!(
+        present_steering_acknowledgements_with_directives(text, &quoted, event())
+            .expect("pending acknowledgment presents"),
+        format!("> [ACK PENDING]\n>\n{nested}"),
+        "pending credit keeps its own paragraph above the quoted marker",
+    );
+    retire(&mut quoted, "1kQwPZtK");
+    assert_eq!(
+        present_steering_acknowledgements_with_directives(text, &quoted, event())
+            .expect("retired acknowledgment presents"),
+        nested,
+        "the quoted marker is the one Canvas badges",
+    );
+    assert_eq!(
+        message_badges(text, Some(&quoted), event()),
+        wire::AgentMessageBadges {
+            acknowledgements: 1,
+            ..wire::AgentMessageBadges::default()
+        },
+    );
+
+    let mut still_pending = directives(&[(
+        "1kQwPZtK",
+        "> [ACK PENDING] Keep the current path.\n\nDelete it",
+    )]);
+    retire(&mut still_pending, "1kQwPZtK");
+    assert_eq!(
+        present_steering_acknowledgements_with_directives(text, &still_pending, event())
+            .expect("retired acknowledgment presents"),
+        "> [ACK]\n>\n> > [ACK PENDING] Keep the current path.\n>\n> Delete it\n\nDeleting GIT-dSfJfCXfp as directed.",
+        "a card quoted while pending carries no marker Canvas would credit",
     );
 }
 
@@ -442,7 +523,7 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
     };
     let registered = pending::PendingPresentation::of(text, Some(&directives), event(), locus)
         .expect("a pending key registers its card");
-    assert_eq!(registered.keys(), &BTreeSet::from([key.clone()]));
+    assert_eq!(registered.keys(), &BTreeSet::from([key]));
     let publisher = Messages::default();
     let mut state = MessageState::default();
     let record = capture_record_for(
@@ -466,17 +547,7 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
     assert_eq!(messages[0].badges.pending, 1);
     drop(messages);
 
-    let directive = directives.0.get_mut(&key).expect("fixture directive");
-    directive.disposition = wire::Disposition::Acked;
-    directive.retirement = Some(wire::body::TranscriptLocus {
-        source: None,
-        member: 1,
-        offset: 0,
-        length: 1,
-        event: 0,
-        line: 1,
-        column: 5,
-    });
+    retire(&mut directives, "1kQnrzNZ");
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &directives, event())
             .expect("retired acknowledgment presents"),
