@@ -50,6 +50,9 @@ pub(super) fn reconcile(
             if !current_claim_matches(observed, &edited.task, notice) {
                 continue;
             }
+            if self_authored(&envelope.actor, notice) {
+                continue;
+            }
             let control = control(&edited.task, envelope.seq, notice.claim);
             let directive = identity(&control);
             if super::super::steering::control_standing(bus, directive, notice.lane, &control)?
@@ -155,6 +158,16 @@ fn collapsed_notice(notice: &wire::body::TaskEditNotice) -> bool {
         .changes
         .iter()
         .all(|change| change.before == change.after)
+}
+
+/// An edit the claimant lane made to its own held contract.
+///
+/// The notice exists to tell a claimant that someone else moved the contract
+/// under it. When the editor is that lane, the notice would only ask it to
+/// acknowledge words it just wrote, so no claimant steering is derived; the
+/// edit fact and its notice stay journaled as the record of the change.
+fn self_authored(actor: &Actor, notice: &wire::body::TaskEditNotice) -> bool {
+    *actor == Actor::Lane(notice.lane)
 }
 
 fn current_claim_matches(
@@ -558,6 +571,139 @@ mod tests {
         bus.shutdown().expect("noted bus stops");
     }
 
+    #[test]
+    fn a_claimant_editing_its_own_contract_receives_no_revision_notice() {
+        let fixture = AdvisoryRtkFixture::new();
+        let (bus, task) = claimed_fixture(&fixture);
+        append_edit_by(
+            &bus,
+            &task,
+            "self-authored contract",
+            fixture.lane,
+            None,
+            Actor::Lane(fixture.lane),
+        );
+        let before = bus.cursor().expect("pre-reconciliation cursor reads");
+        let snapshot = bus.task_snapshot().expect("self-edited snapshot reads");
+
+        assert!(
+            !reconcile(
+                &bus,
+                &fixture.paths,
+                fixture.epoch,
+                &snapshot,
+                None,
+                Duration::from_secs(3_600),
+            )
+            .expect("self-authored edit reconciliation succeeds")
+        );
+        assert_eq!(
+            bus.cursor().expect("post-reconciliation cursor reads"),
+            before,
+            "a self-authored edit derives no steering and writes nothing"
+        );
+        let facts = bus.fact_snapshot().expect("self-edited facts read");
+        let ledger = steer::Ledger::from_snapshot(&facts).expect("self-edited facts replay");
+        assert!(ledger.pending(fixture.lane).is_empty());
+        let (authored, notices) =
+            super::super::super::steering::pending_presentations(&ledger, fixture.lane)
+                .expect("pending presentation partitions");
+        assert!(authored.is_empty());
+        assert!(notices.is_empty());
+        let edit = snapshot
+            .facts()
+            .iter()
+            .find_map(|envelope| {
+                envelope
+                    .fact
+                    .read::<wire::body::TaskEdited>()
+                    .map(|edited| (envelope.actor.clone(), edited))
+            })
+            .expect("the edit fact itself is still journaled");
+        assert_eq!(edit.0, Actor::Lane(fixture.lane));
+        assert!(
+            edit.1.notice.is_some(),
+            "only the derived claimant steering is skipped, never the notice"
+        );
+        bus.verify().expect("self-edit authority verifies");
+        bus.shutdown().expect("self-edit bus stops");
+    }
+
+    #[test]
+    fn other_editors_still_notify_the_claimant_and_name_themselves() {
+        let fixture = AdvisoryRtkFixture::new();
+        let (bus, task) = claimed_fixture(&fixture);
+        let other_lane = CanonicalUuid::new(uuid::Uuid::from_u128(0xA11CE));
+        append_edit_by(
+            &bus,
+            &task,
+            "another lane's contract",
+            fixture.lane,
+            None,
+            Actor::Lane(other_lane),
+        );
+        append_edit_by(
+            &bus,
+            &task,
+            "own contract in between",
+            fixture.lane,
+            None,
+            Actor::Lane(fixture.lane),
+        );
+        append_edit_by(
+            &bus,
+            &task,
+            "resident contract",
+            fixture.lane,
+            None,
+            Actor::Spice,
+        );
+        let snapshot = bus.task_snapshot().expect("multi-editor snapshot reads");
+
+        assert!(
+            reconcile(
+                &bus,
+                &fixture.paths,
+                fixture.epoch,
+                &snapshot,
+                None,
+                Duration::from_secs(3_600),
+            )
+            .expect("foreign edit notices reconcile")
+        );
+
+        let facts = bus.fact_snapshot().expect("multi-editor facts read");
+        let ledger = steer::Ledger::from_snapshot(&facts).expect("multi-editor facts replay");
+        let pending = ledger.pending(fixture.lane);
+        assert_eq!(
+            pending.len(),
+            2,
+            "the claimant's own edit publishes nothing"
+        );
+        assert!(pending[0].text().contains("another lane's contract"));
+        assert!(pending[0].text().contains(&format!("by lane:{other_lane}")));
+        assert!(pending[1].text().contains("resident contract"));
+        assert!(pending[1].text().contains("by spice."));
+        let (_, notices) =
+            super::super::super::steering::pending_presentations(&ledger, fixture.lane)
+                .expect("pending presentation partitions");
+        let foreign_edits = snapshot
+            .facts()
+            .iter()
+            .filter(|envelope| envelope.fact.read::<wire::body::TaskEdited>().is_some())
+            .filter(|envelope| envelope.actor != Actor::Lane(fixture.lane))
+            .map(|envelope| envelope.seq)
+            .collect::<Vec<_>>();
+        assert_eq!(foreign_edits.len(), 2);
+        assert_eq!(
+            notices.iter().map(|notice| notice.edit).collect::<Vec<_>>(),
+            foreign_edits,
+            "every notice comes from another editor's fact, none from the claimant's own"
+        );
+        bus.verify().expect("multi-editor authority verifies");
+        bus.shutdown().expect("multi-editor bus stops");
+    }
+
     fn claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
         let bus = Bus::start(Journal::in_memory().expect("fixture journal opens"))
             .expect("fixture bus starts");
@@ -638,6 +784,17 @@ mod tests {
         lane: CanonicalUuid,
         summaries: Option<(&str, &str)>,
     ) {
+        append_edit_by(bus, task, title, lane, summaries, Actor::Operator);
+    }
+
+    fn append_edit_by(
+        bus: &Bus,
+        task: &TaskStamp,
+        title: &str,
+        lane: CanonicalUuid,
+        summaries: Option<(&str, &str)>,
+        editor: Actor,
+    ) {
         let snapshot = bus.task_snapshot().expect("pre-edit snapshot reads");
         let heads = &snapshot.tasks()[0];
         let previous = heads.statement().body().clone();
@@ -653,7 +810,7 @@ mod tests {
             || (previous.title.clone(), title.to_owned()),
             |(before, after)| (before.to_owned(), after.to_owned()),
         );
-        let mut write = JournalWrite::new(Actor::Operator, origin, now(), Producer::CommandDoor);
+        let mut write = JournalWrite::new(editor, origin, now(), Producer::CommandDoor);
         let edited = write
             .fact(
                 wire::body::TaskEdited {
