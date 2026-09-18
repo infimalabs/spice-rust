@@ -125,8 +125,10 @@ fn a_key_the_final_transcript_does_not_answer_stays_pending_and_still_wakes_a_su
         String::from_utf8(diagnostic).expect("diagnostic is UTF-8"),
         format!(
             "lane {} steering {DIRECTION_KEY} left pending at exit: \
-             steer::transcript-evidence-absent: no assistant transcript record recognizes this token\n",
-            lane()
+             steer::transcript-evidence-absent: the newest assistant text (member 1 offset {}) \
+             does not carry the header: \"Finished without answering the direction.\"\n",
+            lane(),
+            NARRATION.len()
         )
     );
     assert!(
@@ -174,7 +176,8 @@ fn a_header_spelled_only_inside_the_final_tool_call_is_not_evidence_and_leaves_t
         String::from_utf8(diagnostic).expect("diagnostic is UTF-8"),
         format!(
             "lane {} steering {DIRECTION_KEY} left pending at exit: \
-             steer::transcript-evidence-absent: no assistant transcript record recognizes this token\n",
+             steer::transcript-evidence-absent: the newest assistant text (member 1 offset 0) \
+             does not carry the header: \"Reading the request before answering it.\"\n",
             lane()
         )
     );
@@ -204,8 +207,10 @@ fn a_header_in_an_operator_record_is_not_the_occupant_answering_and_leaves_the_k
         String::from_utf8(diagnostic).expect("diagnostic is UTF-8"),
         format!(
             "lane {} steering {DIRECTION_KEY} left pending at exit: \
-             steer::transcript-evidence-absent: no assistant transcript record recognizes this token\n",
-            lane()
+             steer::transcript-evidence-absent: no assistant text newer than the operator record \
+             (member 1 offset {})\n",
+            lane(),
+            NARRATION.len()
         )
     );
     assert!(

@@ -2,9 +2,126 @@
 
 use super::*;
 
+#[cfg(test)]
+mod tests;
+
 pub(super) struct TranscriptRecognition {
     pub(super) locus: TranscriptLocus,
     pub(super) outcome: ScanOutcome,
+}
+
+/// The repair when the lane wrote text that does not lead with the header,
+/// wrote no text at all, or has no tape to read.
+const HEADER_REPAIR: &str =
+    "emit an ACK or NACK header as the first line of assistant text before invoking ack";
+
+/// The repair when the newest assistant message persisted as reasoning.
+///
+/// Under the Claude harness a header the model narrates beside a tool call
+/// streams as a thinking block from its first byte and is written to the tape
+/// as reasoning that paraphrases the prose without the header, so the lane is
+/// told the one shape that is witnessed as text.
+const NARRATED_REPAIR: &str = "speak the header as one short line of visible assistant text, \
+     `ACK <key>: <one clause>`, immediately before the ack command; prose narrated beside \
+     a tool call persists as reasoning and is never evidence";
+
+/// Characters of the newest assistant text the refusal quotes back.
+const QUOTED_LINE: usize = 80;
+
+/// The shape of the newest assistant message on the tape.
+///
+/// The message is every assistant record newer than the newest operator
+/// prose or tool result. It is read newest record first while the scan finds
+/// no assistant prose recognizing the token, so the refusal names the record
+/// the lane actually wrote instead of the header it did not.
+#[derive(Default)]
+struct NewestMessage {
+    text: Option<(tape::Locus, String)>,
+    reasoning: Option<tape::Locus>,
+    tool: Option<tape::Locus>,
+    bound: Option<tape::Locus>,
+}
+
+impl NewestMessage {
+    fn observe(&mut self, event: &listen::Event, locus: tape::Locus) {
+        if self.bound.is_some() {
+            return;
+        }
+        match event {
+            listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+                self.text
+                    .get_or_insert_with(|| (locus, quoted_line(&prose.text)));
+            }
+            listen::Event::Prose(_) => self.bound = Some(locus),
+            listen::Event::Tool(tool) => match tool.moment {
+                listen::ToolMoment::Result(_) => self.bound = Some(locus),
+                listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => {
+                    self.tool.get_or_insert(locus);
+                }
+            },
+            listen::Event::Reasoning(_) => {
+                self.reasoning.get_or_insert(locus);
+            }
+            listen::Event::Session(_)
+            | listen::Event::Usage(_)
+            | listen::Event::Compaction(_)
+            | listen::Event::Failure(_) => {}
+        }
+    }
+
+    fn evidence_absent(self, token: &str) -> Outcome<CommandAnswer> {
+        if let Some((locus, line)) = self.text {
+            return evidence_refusal(
+                token,
+                &format!(
+                    "the newest assistant text (member {} offset {}) does not carry the header: \"{line}\"",
+                    locus.member, locus.offset
+                ),
+                HEADER_REPAIR,
+            );
+        }
+        if let Some(locus) = self.reasoning {
+            return evidence_refusal(
+                token,
+                &format!(
+                    "the newest assistant message (member {} offset {}) persisted as reasoning with no text record",
+                    locus.member, locus.offset
+                ),
+                NARRATED_REPAIR,
+            );
+        }
+        if let Some(locus) = self.tool {
+            return evidence_refusal(
+                token,
+                &format!(
+                    "the newest assistant message (member {} offset {}) is a tool call with no text record",
+                    locus.member, locus.offset
+                ),
+                HEADER_REPAIR,
+            );
+        }
+        if let Some(locus) = self.bound {
+            return evidence_refusal(
+                token,
+                &format!(
+                    "no assistant text newer than the operator record (member {} offset {})",
+                    locus.member, locus.offset
+                ),
+                HEADER_REPAIR,
+            );
+        }
+        evidence_refusal(token, "no assistant text on the tape", HEADER_REPAIR)
+    }
+}
+
+/// The first line of `text`, cut to [`QUOTED_LINE`] characters.
+fn quoted_line(text: &str) -> String {
+    let line = text.lines().next().unwrap_or_default();
+    let mut quoted: String = line.chars().take(QUOTED_LINE).collect();
+    if quoted.len() < line.len() {
+        quoted.push_str("...");
+    }
+    quoted
 }
 
 /// Find the latest assistant prose recognizing `token`, newest record first.
@@ -38,6 +155,7 @@ pub(super) fn transcript_recognition(
             return Err(evidence_refusal(
                 token,
                 "the lane has no durable transcript tape",
+                HEADER_REPAIR,
             ));
         }
         Err(error) => {
@@ -63,6 +181,7 @@ pub(super) fn transcript_recognition(
     let extents = tape.extents().map_err(|error| {
         typed_store_fault("steer::transcript-tape-unreadable", &error.to_string())
     })?;
+    let mut newest = NewestMessage::default();
     for extent in extents.into_iter().rev() {
         let whole = tape::Locus::new(extent.member, 0, extent.length);
         let bytes = tape.read(whole).map_err(|error| {
@@ -82,6 +201,7 @@ pub(super) fn transcript_recognition(
                 token,
                 disposition,
                 standing,
+                &mut newest,
             )? {
                 return Ok(TranscriptRecognition {
                     locus: TranscriptLocus {
@@ -98,10 +218,7 @@ pub(super) fn transcript_recognition(
             }
         }
     }
-    Err(evidence_refusal(
-        token,
-        "no assistant transcript record recognizes this token",
-    ))
+    Err(newest.evidence_absent(token))
 }
 
 struct RecordRecognition {
@@ -117,6 +234,7 @@ fn scan_record(
     token: &str,
     disposition: Option<Disposition>,
     standing: &impl steer::Standing,
+    newest: &mut NewestMessage,
 ) -> Result<Option<RecordRecognition>, Outcome<CommandAnswer>> {
     let registry = spice::extension::registry().map_err(|error| {
         typed_protocol_fault("steer::extension-registry-invalid", &error.to_string())
@@ -126,6 +244,7 @@ fn scan_record(
             typed_protocol_fault("steer::transcript-locus-invalid", &error.to_string())
         })?;
         for (event_index, event) in decoded.events().iter().enumerate().rev() {
+            newest.observe(event, locus);
             let listen::Event::Prose(prose) = event else {
                 continue;
             };

@@ -800,11 +800,15 @@ fn acknowledgment_miss(miss: Miss) -> wire::body::AcknowledgmentMiss {
     }
 }
 
-pub(super) fn evidence_refusal(token: &str, observed: &str) -> Outcome<CommandAnswer> {
+pub(super) fn evidence_refusal(
+    token: &str,
+    observed: &str,
+    repair: &str,
+) -> Outcome<CommandAnswer> {
     refusal(
         "steer::transcript-evidence-absent",
         Some(format!("assistant prose recognizing {token}")),
         Some(observed.to_owned()),
-        "emit an ACK or NACK header in assistant prose before invoking ack",
+        repair,
     )
 }

@@ -241,8 +241,10 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
     if has_task_contract_notices {
         context.push_str(concat!(
             " Task-contract revision acknowledgment is required ",
-            "before repository work continues. Begin assistant prose with `ACK <key> ",
-            "[<key> ...]:`, then run every printed acknowledgment command."
+            "before repository work continues. Speak one line of visible assistant text, ",
+            "`ACK <key> [<key> ...]: <one clause>`, immediately before running every printed ",
+            "acknowledgment command; commentary narrated beside a tool call persists as ",
+            "reasoning and is not evidence."
         ));
     }
     for lane in &publication.lanes {
@@ -277,9 +279,11 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
         }
         context.push_str(concat!(
             "Rust Spice steering is pending. Handle every listed key before other work. ",
-            "Begin assistant prose with `ACK <key> [<key> ...]:` or ",
-            "`NACK <key> [<key> ...]:`, then retire every listed key after that prose by ",
-            "running each printed `ack <key>` command; append `--decline` for a NACK."
+            "Speak one line of visible assistant text, `ACK <key> [<key> ...]: <one clause>` or ",
+            "`NACK <key> [<key> ...]: <one clause>`, then retire every listed key immediately ",
+            "after that line by running each printed `ack <key>` command in the same message; ",
+            "append `--decline` for a NACK. Commentary narrated beside a tool call persists ",
+            "as reasoning and is not evidence."
         ));
     }
     for lane in &publication.lanes {
