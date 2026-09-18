@@ -205,7 +205,7 @@ fn execute_mapped_within(
     let ending = if let Some(fault) = interrupted_submission(&outcome) {
         after_transient(fault);
         None
-    } else if refused_admission(&outcome) {
+    } else if refused_admission(&outcome) && mapped.outlasts_restart() {
         // The dialed resident is ending and refused before it enqueued
         // anything, so nothing was committed and the same envelope may be
         // presented to its successor. This is the one moment a restart is
