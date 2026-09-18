@@ -67,22 +67,40 @@ fn render_omp_mark(lane: CanonicalUuid) -> Html {
     }
 }
 
-/// oh-my-pi's mark over a provider glyph's foot corner, on no plate.
+/// oh-my-pi's mark over a provider glyph's foot corner, on a soft halo.
 ///
 /// The pi used to stand on a filled disc, which punched a circular hole
-/// through the glyph behind it wherever the two overlapped. Nothing backs it
-/// now, so the pi takes the footprint that disc had -- 7.5 units of the
-/// glyph's 16-unit canvas, in the foot corner -- and its own diagonal
-/// gradient is what tells it apart from the single-hue glyph it sits on.
+/// through the glyph behind it wherever the two overlapped. The halo that
+/// backs it now is the pi's own silhouette, stroked wide in the composer's
+/// surface colour, held translucent, and blurred, so it fades into the glyph
+/// at its edge and shows no cut; the pi keeps the footprint that disc had --
+/// 7.5 units of the glyph's 16-unit canvas, in the foot corner -- and its
+/// diagonal gradient reads over the single-hue glyph instead of drowning in
+/// it. The inner canvas stays open so the blur is not clipped at the pi's
+/// bounds.
 fn render_omp_badge(lane: CanonicalUuid) -> Html {
+    let halo = format!("composer-vendor-halo-{lane}");
+    let softened = format!("url(#{halo})");
     html! {
         <g class="composer-vendor-badge">
-            <svg x="8.5" y="8.5" width="7.5" height="7.5" viewBox="0 0 64 64">
+            <svg x="8.5" y="8.5" width="7.5" height="7.5" viewBox="0 0 64 64" overflow="visible">
+                <defs>
+                    <filter id={halo} x="-30%" y="-30%" width="160%" height="160%">
+                        // A literal tag is normalised to lowercase, and SVG
+                        // knows no `fegaussianblur`; the dynamic form keeps
+                        // its case.
+                        <@{"feGaussianBlur"} stdDeviation="5"></@>
+                    </filter>
+                </defs>
+                <path class="composer-vendor-halo" d={OMP_PI} filter={softened}></path>
                 {render_omp_pi(lane)}
             </svg>
         </g>
     }
 }
+
+/// oh-my-pi's pi as omp.sh draws it on its 64-unit canvas.
+const OMP_PI: &str = "M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z";
 
 /// oh-my-pi's pi as omp.sh draws it, under one diagonal gradient on its
 /// 64-unit canvas.
@@ -104,7 +122,7 @@ fn render_omp_pi(lane: CanonicalUuid) -> Html {
                     <stop offset="1" stop-color="oklch(0.81 0.14 200)"></stop>
                 </@>
             </defs>
-            <path fill={fill} d="M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z"></path>
+            <path fill={fill} d={OMP_PI}></path>
         </>
     }
 }
