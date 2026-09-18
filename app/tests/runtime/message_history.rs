@@ -71,6 +71,56 @@ fn target_offset(runtime: &CanvasRuntime, lane: &str) -> Option<u64> {
 }
 
 #[test]
+fn hidden_turn_history_advances_to_older_prose_without_rendering_a_card() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let snapshot = message_snapshot(
+        vec![agent_message(LANE, 100, T10, "newest prose", None)],
+        &[LANE],
+    );
+    apply(&mut runtime, &session, &snapshot);
+
+    let turns = history_page(
+        LANE,
+        100,
+        vec![agent_message(LANE, 50, T09, "", Some("turn"))],
+        true,
+    );
+    apply(&mut runtime, &session, &turns);
+    assert_eq!(target_offset(&runtime, LANE), Some(50));
+    assert_eq!(
+        runtime
+            .messages()
+            .iter()
+            .map(|message| message.text.as_str())
+            .collect::<Vec<_>>(),
+        ["newest prose"],
+    );
+
+    let older = history_page(
+        LANE,
+        50,
+        vec![agent_message(LANE, 25, T08, "older prose", None)],
+        false,
+    );
+    apply(&mut runtime, &session, &older);
+    assert_eq!(
+        runtime
+            .messages()
+            .iter()
+            .map(|message| message.text.as_str())
+            .collect::<Vec<_>>(),
+        ["older prose", "newest prose"],
+    );
+    assert_eq!(
+        runtime.newest_lane_activity(uuid(LANE)).unwrap().detail(),
+        "newest prose"
+    );
+    assert!(runtime.message_history_target(uuid(LANE)).is_none());
+}
+
+#[test]
 fn older_member_history_merges_without_replacing_the_live_activity_head() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);

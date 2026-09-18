@@ -66,10 +66,6 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
     })
 }
 
-pub(super) fn is_card(message: &AgentMessage) -> bool {
-    fingerprint(message).is_some()
-}
-
 #[derive(PartialEq, Eq, Default)]
 pub(super) struct MessageCards {
     entries: Vec<Rc<AgentMessage>>,
