@@ -27,7 +27,9 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
                 .to_owned(),
             locus,
         })]),
-        "attachment" | "last-prompt" | "ai-title" | "mode" | "queue-operation" => Ok(Vec::new()),
+        "attachment" | "last-prompt" | "ai-title" | "mode" | "queue-operation" | "atis-latch" => {
+            Ok(Vec::new())
+        }
         other => Err(ResidueKind::Unknown {
             discriminator: other.to_owned(),
         }),
