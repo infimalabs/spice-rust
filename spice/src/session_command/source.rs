@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OpenFlags};
 use wire::Refusal;
 
-use super::{Environment, VendorEnvironment, model::Vendor};
+use super::{Environment, model::Vendor};
 
 const THREAD_HEX_LEN: usize = 32;
 const SEARCH_DEPTH: usize = 8;
@@ -104,12 +104,6 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
                     "repair the live vendor thread identity or pass an explicit transcript path",
                 )
             })?;
-            if let Ok(cwd) = std::env::current_dir()
-                && let Some(admitted) =
-                    ambient_project_transcript(vendor_environment, &thread, environment, &cwd)
-            {
-                return deduplicate(vec![admitted]);
-            }
             let paths =
                 find_thread(&thread, vendor_environment.vendor, environment).map_err(|detail| {
                     refusal(
@@ -274,49 +268,6 @@ fn preferred_vendor(
         .expect("thread resolution requires at least one declared vendor")
 }
 
-/// Reach the current thread's transcript directly when this process is still
-/// running from the directory that named it, bypassing [`find_thread`]'s
-/// bounded walk across every project the vendor home has ever recorded.
-///
-/// A vendor with no state index names its session files beneath one
-/// directory per originating working directory, keyed by that directory's
-/// path with every separator replaced by `-`. Resolving one's own live
-/// thread is by far the most common ambient lookup, and the process asking
-/// is, unless it changed directory afterward, still sitting in the exact
-/// directory that named it -- so this needs no search at all, only that one
-/// guess checked. A miss is silent: the caller falls back to the walk below
-/// exactly as if this were never tried.
-fn ambient_project_transcript(
-    vendor_environment: &VendorEnvironment,
-    thread: &str,
-    environment: &Environment,
-    cwd: &Path,
-) -> Option<ResolvedSource> {
-    let vendor = vendor_environment.vendor;
-    let layout = vendor.transcript_layout();
-    if layout.state_index.is_some() {
-        return None;
-    }
-    let root = environment_root(
-        vendor_environment.home.as_deref(),
-        environment,
-        layout.default_home,
-    )
-    .ok()?;
-    let directory = cwd
-        .to_string_lossy()
-        .replace(std::path::MAIN_SEPARATOR, "-");
-    let sessions = root.join(layout.sessions_directory).join(directory);
-    ["jsonl", "jsonl.gz"].into_iter().find_map(|extension| {
-        admit(
-            sessions.join(format!("{thread}.{extension}")),
-            Some(vendor),
-            Some(thread.to_owned()),
-        )
-        .ok()
-    })
-}
-
 pub(super) fn find_thread(
     thread: &str,
     vendor: &'static spice::extension::Vendor,
@@ -368,6 +319,12 @@ pub(super) fn find_thread(
                 state_failure = Some(index_issue(format!("{}: {error}", state.display())))
             }
         }
+    } else if let Some(direct) = working_directory_transcript(
+        &root.join(layout.sessions_directory),
+        thread,
+        environment.cwd.as_deref(),
+    ) {
+        return Ok(vec![direct]);
     }
     let discovered = match find_named_transcript(&root.join(layout.sessions_directory), &lookup) {
         Ok(matches) => matches,
@@ -389,6 +346,34 @@ pub(super) fn find_thread(
             root.join(layout.sessions_directory).display()
         )
     }))
+}
+
+/// The transcript a vendor without a state index keeps for `thread` beneath
+/// the project directory keyed by `cwd`, when one is there.
+///
+/// Such a vendor names its session files beneath one directory per
+/// originating working directory, keyed by that directory's path with every
+/// separator replaced by `-`. Resolving one's own live thread is by far the
+/// most common lookup, and the process asking is, unless it changed
+/// directory afterward, still sitting in the exact directory that named it
+/// -- so this needs no search at all, only that one guess checked against
+/// the same regular-file rule the walk admits by. A miss is silent: the
+/// caller walks the sessions root exactly as if this were never tried.
+fn working_directory_transcript(
+    sessions: &Path,
+    thread: &str,
+    cwd: Option<&Path>,
+) -> Option<PathBuf> {
+    let directory = sessions.join(
+        cwd?.to_string_lossy()
+            .replace(std::path::MAIN_SEPARATOR, "-"),
+    );
+    ["jsonl", "jsonl.gz"]
+        .into_iter()
+        .map(|extension| directory.join(format!("{thread}.{extension}")))
+        .find(|path| {
+            fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
+        })
 }
 
 enum StateIndexError {
@@ -837,9 +822,8 @@ mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
     use super::{
-        Environment, SEARCH_DEPTH, SEARCH_ENTRY_LIMIT, ambient_project_transcript,
-        canonical_thread, find_named_transcript, find_thread, resolve_inputs,
-        resolve_thread_from_registry,
+        Environment, SEARCH_DEPTH, SEARCH_ENTRY_LIMIT, canonical_thread, find_named_transcript,
+        find_thread, resolve_inputs, resolve_thread_from_registry,
     };
     use crate::session_command::VendorEnvironment;
 
@@ -903,7 +887,7 @@ mod tests {
         }
     }
 
-    fn claude_environment(home: &Path) -> Environment {
+    fn claude_environment(home: &Path, cwd: Option<&Path>) -> Environment {
         Environment {
             vendors: vec![VendorEnvironment {
                 vendor: &spice::extension::CLAUDE,
@@ -912,6 +896,7 @@ mod tests {
             }],
             preferred_vendor: None,
             home: None,
+            cwd: cwd.map(Path::to_path_buf),
         }
     }
 
@@ -924,7 +909,27 @@ mod tests {
             }],
             preferred_vendor: None,
             home: None,
+            cwd: None,
         }
+    }
+
+    /// A Claude home whose projects root holds more sibling directories than
+    /// the bounded walk will ever list, plus the fixture thread beneath the
+    /// directory keyed by `cwd`; the walk alone cannot reach it.
+    fn overflowing_claude_projects(scratch: &Scratch, cwd: &Path) -> PathBuf {
+        let projects = scratch.path().join("projects");
+        for index in 0..=SEARCH_ENTRY_LIMIT {
+            fs::create_dir_all(projects.join(format!("unrelated-project-{index}")))
+                .expect("bounded decoy project directory exists");
+        }
+        let directory = projects.join(
+            cwd.to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "-"),
+        );
+        fs::create_dir_all(&directory).expect("fixture project directory exists");
+        let transcript = directory.join(format!("{THREAD_DASHED}.jsonl"));
+        fs::write(&transcript, b"\n").expect("fixture transcript exists");
+        transcript
     }
 
     fn write_codex_state(home: &Path, paths: &[&Path]) {
@@ -1006,7 +1011,7 @@ mod tests {
         let lookup = find_thread(
             THREAD,
             &spice::extension::CLAUDE,
-            &claude_environment(scratch.path()),
+            &claude_environment(scratch.path(), None),
         );
         fs::set_permissions(&denied, original).expect("restore fixture permissions");
         let read_error = read_result
@@ -1033,7 +1038,7 @@ mod tests {
         let error = find_thread(
             THREAD,
             &spice::extension::CLAUDE,
-            &claude_environment(scratch.path()),
+            &claude_environment(scratch.path(), None),
         )
         .expect_err("a bounded-out hit cannot become absence");
 
@@ -1046,71 +1051,92 @@ mod tests {
     }
 
     #[test]
-    fn ambient_thread_resolves_directly_beneath_its_own_working_directory() {
-        let scratch = Scratch::new("ambient-direct");
+    fn a_live_thread_resolves_directly_beneath_its_own_working_directory() {
+        let scratch = Scratch::new("cwd-direct");
         let cwd = PathBuf::from("/fixture/worktree");
         let directory = scratch.path().join("projects").join("-fixture-worktree");
         fs::create_dir_all(&directory).expect("fixture project directory exists");
         let transcript = directory.join(format!("{THREAD_DASHED}.jsonl"));
         fs::write(&transcript, b"\n").expect("fixture transcript exists");
-        let vendor_environment = VendorEnvironment {
-            vendor: &spice::extension::CLAUDE,
-            identity: None,
-            home: Some(scratch.path().to_path_buf()),
-        };
 
-        let resolved = ambient_project_transcript(
-            &vendor_environment,
+        let found = find_thread(
             THREAD_DASHED,
-            &claude_environment(scratch.path()),
-            &cwd,
+            &spice::extension::CLAUDE,
+            &claude_environment(scratch.path(), Some(&cwd)),
         )
-        .expect("the guessed path exists and is admitted");
+        .expect("the guessed path exists");
 
-        assert_eq!(
-            resolved.path,
-            transcript
-                .canonicalize()
-                .expect("fixture transcript canonicalizes")
-        );
+        assert_eq!(found, vec![transcript]);
     }
 
     #[test]
-    fn ambient_resolution_needs_no_search_past_the_entry_bound_a_bare_walk_refuses() {
-        let scratch = Scratch::new("ambient-unbounded");
-        let projects = scratch.path().join("projects");
-        fs::create_dir_all(&projects).expect("fixture projects root exists");
-        for index in 0..=SEARCH_ENTRY_LIMIT {
-            fs::create_dir_all(projects.join(format!("unrelated-project-{index}")))
-                .expect("bounded decoy project directory exists");
-        }
+    fn a_working_directory_reaches_past_the_entry_bound_a_bare_walk_refuses() {
+        let scratch = Scratch::new("cwd-unbounded");
         let cwd = PathBuf::from("/fixture/worktree");
-        let directory = projects.join("-fixture-worktree");
-        fs::create_dir_all(&directory).expect("fixture project directory exists");
-        let transcript = directory.join(format!("{THREAD_DASHED}.jsonl"));
-        fs::write(&transcript, b"\n").expect("fixture transcript exists");
-        let environment = claude_environment(scratch.path());
-        let vendor_environment = VendorEnvironment {
-            vendor: &spice::extension::CLAUDE,
-            identity: None,
-            home: Some(scratch.path().to_path_buf()),
-        };
+        let transcript = overflowing_claude_projects(&scratch, &cwd);
 
-        let error = find_thread(THREAD_DASHED, &spice::extension::CLAUDE, &environment)
-            .expect_err("a projects root wide enough to model this machine still overflows");
+        let error = find_thread(
+            THREAD_DASHED,
+            &spice::extension::CLAUDE,
+            &claude_environment(scratch.path(), None),
+        )
+        .expect_err("a projects root wide enough to model this machine still overflows");
         assert!(
             error.contains(&format!("{SEARCH_ENTRY_LIMIT}-entry limit")),
             "{error}"
         );
 
-        let resolved =
-            ambient_project_transcript(&vendor_environment, THREAD_DASHED, &environment, &cwd)
-                .expect("the direct guess never walks the decoys the search above overflowed on");
-        assert_eq!(
-            resolved.path,
-            transcript
-                .canonicalize()
-                .expect("fixture transcript canonicalizes")
+        let found = find_thread(
+            THREAD_DASHED,
+            &spice::extension::CLAUDE,
+            &claude_environment(scratch.path(), Some(&cwd)),
+        )
+        .expect("the direct guess never walks the decoys the search above overflowed on");
+        assert_eq!(found, vec![transcript]);
+    }
+
+    #[test]
+    fn a_thread_argument_resolves_through_the_working_directory_in_either_spelling() {
+        let scratch = Scratch::new("cwd-argument");
+        let cwd = PathBuf::from("/fixture/worktree");
+        let transcript = overflowing_claude_projects(&scratch, &cwd);
+        let registry = spice::extension::registry().expect("compiled registry is coherent");
+        let environment = claude_environment(scratch.path(), Some(&cwd));
+
+        for spelling in [THREAD, THREAD_DASHED] {
+            let resolved = resolve_thread_from_registry(spelling, &environment, &registry)
+                .expect("the working directory reaches the thread without a walk");
+            assert_eq!(resolved.len(), 1, "{spelling}");
+            assert_eq!(
+                resolved[0].vendor,
+                super::Vendor::declared(&spice::extension::CLAUDE)
+            );
+            assert_eq!(resolved[0].thread.as_deref(), Some(THREAD_DASHED));
+            assert_eq!(
+                resolved[0].path,
+                transcript
+                    .canonicalize()
+                    .expect("fixture transcript canonicalizes")
+            );
+        }
+    }
+
+    #[test]
+    fn a_thread_absent_from_the_working_directory_still_refuses_on_the_bounded_walk() {
+        let scratch = Scratch::new("cwd-absent");
+        let cwd = PathBuf::from("/fixture/worktree");
+        let transcript = overflowing_claude_projects(&scratch, &cwd);
+        fs::remove_file(&transcript).expect("fixture transcript removed");
+        let registry = spice::extension::registry().expect("compiled registry is coherent");
+        let environment = claude_environment(scratch.path(), Some(&cwd));
+
+        let refusal = resolve_thread_from_registry(THREAD_DASHED, &environment, &registry)
+            .expect_err("no guess hits, so the walk runs and overflows");
+        assert_eq!(refusal.reason(), "session::thread-unresolved");
+        let detail = refusal.explanation();
+        assert!(
+            detail.contains(&format!("{SEARCH_ENTRY_LIMIT}-entry limit")),
+            "{detail}"
         );
     }
 
@@ -1186,6 +1212,7 @@ mod tests {
             )],
             Some(std::ffi::OsString::from("fixture")),
             None,
+            None,
         );
 
         let resolved = resolve_thread_from_registry(THREAD, &environment, &registry)
@@ -1242,6 +1269,7 @@ mod tests {
                 VendorEnvironment::new(&spice::extension::CLAUDE, identity.clone(), home.clone()),
                 VendorEnvironment::new(&spice::extension::CODEX, identity, home),
             ],
+            None,
             None,
             None,
         );

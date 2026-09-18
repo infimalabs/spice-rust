@@ -349,3 +349,81 @@ fn public_thread_refusal_preserves_an_incomplete_claude_search_before_codex() {
 
     scratch.remove();
 }
+
+/// A Claude home whose projects root is wider than the bounded walk will list
+/// still answers for the thread kept beneath the directory keyed by the
+/// working directory the command runs from: that directory is checked first,
+/// so the walk never starts.
+#[test]
+fn a_claude_thread_beneath_the_working_directory_resolves_past_the_walk_bound() {
+    let scratch = Scratch::new("cwd-thread");
+    let cwd = scratch.path().join("worktree");
+    fs::create_dir(&cwd).expect("fixture working directory exists");
+    let claude_home = scratch.path().join("claude-home");
+    let projects = claude_home.join("projects");
+    // More siblings than the 256-entry bound the transcript walk stops at.
+    for index in 0..300 {
+        fs::create_dir_all(projects.join(format!("unrelated-project-{index}")))
+            .expect("decoy Claude project directory exists");
+    }
+    let keyed = cwd
+        .canonicalize()
+        .expect("fixture working directory canonicalizes")
+        .to_string_lossy()
+        .replace(std::path::MAIN_SEPARATOR, "-");
+    let claude_path = projects
+        .join(keyed)
+        .join(format!("{CLAUDE_THREAD_DASHED}.jsonl"));
+    fs::create_dir_all(claude_path.parent().expect("keyed project parent"))
+        .expect("keyed Claude project directory exists");
+    write_jsonl(&claude_path, &claude_rows());
+    let environment = [
+        (
+            "CLAUDE_CONFIG_DIR",
+            claude_home.to_string_lossy().into_owned(),
+        ),
+        ("SPICE_AGENT_VENDOR", "claude".to_owned()), // env-policy: allow
+    ];
+
+    let elsewhere = invoke(
+        &strings(&["--json", "session", "thread", CLAUDE_THREAD_DASHED]),
+        &environment,
+    );
+    assert_eq!(
+        elsewhere.code,
+        Some(REFUSAL_EXIT),
+        "{}",
+        utf8(&elsewhere.err)
+    );
+    let envelope: Value =
+        serde_json::from_slice(&elsewhere.err).expect("refusal is a structured outcome DTO");
+    let diagnostic = refusal_diagnostic(&envelope);
+    assert_eq!(diagnostic["reason"], "session::thread-unresolved");
+    assert!(
+        diagnostic["detail"]
+            .as_str()
+            .expect("thread refusal carries diagnostic detail")
+            .contains("256-entry limit"),
+        "{}",
+        diagnostic["detail"]
+    );
+
+    let thread = reply_forms_in(
+        Some(&cwd),
+        &strings(&["session", "thread", CLAUDE_THREAD_DASHED]),
+        &environment,
+        "thread",
+    );
+    assert_eq!(thread["thread"]["id"], CLAUDE_THREAD_DASHED);
+    assert_eq!(thread["thread"]["vendor"], "claude");
+    assert_eq!(
+        thread["thread"]["transcript"],
+        claude_path
+            .canonicalize()
+            .expect("keyed transcript canonicalizes")
+            .to_string_lossy()
+            .as_ref()
+    );
+
+    scratch.remove();
+}

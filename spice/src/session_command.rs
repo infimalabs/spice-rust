@@ -61,6 +61,11 @@ pub(crate) struct Environment {
     vendors: Vec<VendorEnvironment>,
     preferred_vendor: Option<OsString>,
     home: Option<PathBuf>,
+    /// The working directory this process was asked from, captured once beside
+    /// the vendor rows: a vendor with no state index keys its session files by
+    /// the directory that named them, so the directory is ambient session
+    /// state in the same sense the home is.
+    cwd: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +94,7 @@ impl Environment {
         mut vendors: Vec<VendorEnvironment>,
         preferred_vendor: Option<OsString>,
         home: Option<OsString>,
+        cwd: Option<PathBuf>,
     ) -> Self {
         vendors.sort_by_key(|row| {
             (
@@ -100,6 +106,7 @@ impl Environment {
             vendors,
             preferred_vendor,
             home: home.map(PathBuf::from),
+            cwd,
         }
     }
 }

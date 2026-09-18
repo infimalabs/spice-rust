@@ -50,6 +50,7 @@ pub(crate) fn session_environment() -> session_command::Environment {
         vendors,
         bootstrap_environment("SPICE_AGENT_VENDOR"), // env-policy: allow
         bootstrap_environment("HOME"),
+        std::env::current_dir().ok(),
     )
 }
 
