@@ -369,6 +369,7 @@ impl<'a> Surface<'a> {
             seats,
             lane,
             occupant,
+            false,
             &self.config.lane,
         )
     }

@@ -1,4 +1,4 @@
-//! The vendor failure an exiting occupant's transcript ends on.
+//! The word an exiting occupant's transcript ends on.
 //!
 //! An occupant whose turn the vendor refused writes that refusal as its last
 //! event and exits cleanly, so its exit status says nothing and the notice for
@@ -6,7 +6,7 @@
 //! durable before either notice is sent, so the exit reads the tape itself:
 //! the newest event the occupant wrote, scanned back from the tail through the
 //! session declaration that opened it, decides whether the exit ended on the
-//! vendor's word.
+//! vendor's word, on the occupant's own answer, or on nothing at all.
 
 use super::*;
 
@@ -16,22 +16,36 @@ use super::*;
 /// only when they sit behind large tool results.
 const TAIL_BYTES: u64 = 1024 * 1024;
 
-/// The vendor failure the exiting occupant's transcript ends on, if any.
+/// What the newest event an exiting occupant wrote says about its exit.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) enum LastWord {
+    /// The vendor refused the turn, in these words.
+    Failure(String),
+    /// The vendor answered: the occupant's newest event is assistant prose,
+    /// reasoning, a tool exchange, reported usage, or a compaction.
+    Answered,
+    /// Nothing decides the exit: the occupant wrote no event past its
+    /// declaration, its newest word is the operator's own prompt, or its
+    /// transcript could not be read.
+    Silent,
+}
+
+/// The word the exiting occupant's transcript ends on.
 ///
 /// Only records at or after the occupant's own session declaration are read,
 /// so a failure an earlier occupant left on the tape never holds the lane
 /// against a successor that wrote nothing. An occupant that declared no
 /// session has no bounded range and is left to ordinary death accounting.
-/// Every reading failure is written down and answers `None`: the exit is
-/// accounted either way, and this decides only whether it holds the lane.
-pub(super) fn vendor_failure(
+/// Every reading failure is written down and answers [`LastWord::Silent`]:
+/// the exit is accounted either way, and this decides only how.
+pub(super) fn exit_word(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     diagnostic: &mut dyn io::Write,
-) -> CommandResult<Option<String>> {
+) -> CommandResult<LastWord> {
     let observed = current_residency(bus, epoch)?;
     let Some(session) = observed
         .body()
@@ -41,34 +55,34 @@ pub(super) fn vendor_failure(
         .and_then(|row| row.session.as_ref())
         .filter(|session| session.occupant == occupant)
     else {
-        return Ok(None);
+        return Ok(LastWord::Silent);
     };
     let Some(vendor) = ingest_vendor(&session.vendor) else {
-        return Ok(None);
+        return Ok(LastWord::Silent);
     };
     let root = paths
         .tape
         .join(lane.to_string())
         .join(session.vendor.as_str());
-    match closing_failure(&root, vendor, &session.locus) {
-        Ok(failure) => Ok(failure),
+    match closing_word(&root, vendor, &session.locus) {
+        Ok(word) => Ok(word),
         Err(error) => {
             let _ = writeln!(
                 diagnostic,
                 "lane {lane} occupant {occupant} closing transcript unread; exit accounted without it: {error}"
             );
-            Ok(None)
+            Ok(LastWord::Silent)
         }
     }
 }
 
-/// The failure the newest event at or after `declared` is, read from the tape
+/// The word the newest event at or after `declared` is, read from the tape
 /// under `root` with the vendor's dialect.
-pub(super) fn closing_failure(
+pub(super) fn closing_word(
     root: &Path,
     vendor: &spice::extension::Vendor,
     declared: &wire::TapeLocus,
-) -> Result<Option<String>, String> {
+) -> Result<LastWord, String> {
     let tape = tape::Tape::open_existing(root).map_err(|error| error.to_string())?;
     let extents = tape.extents().map_err(|error| error.to_string())?;
     let mut remaining = TAIL_BYTES;
@@ -107,12 +121,20 @@ pub(super) fn closing_failure(
                 continue;
             };
             return Ok(match newest {
-                listen::Event::Failure(failure) => Some(failure.message.clone()),
-                _ => None,
+                listen::Event::Failure(failure) => LastWord::Failure(failure.message.clone()),
+                listen::Event::Prose(prose) if prose.role == listen::ProseRole::Operator => {
+                    LastWord::Silent
+                }
+                listen::Event::Session(_) => LastWord::Silent,
+                listen::Event::Prose(_)
+                | listen::Event::Reasoning(_)
+                | listen::Event::Tool(_)
+                | listen::Event::Usage(_)
+                | listen::Event::Compaction(_) => LastWord::Answered,
             });
         }
     }
-    Ok(None)
+    Ok(LastWord::Silent)
 }
 
 /// Complete newline-terminated record ranges in `bytes`, skipping a leading
@@ -214,13 +236,13 @@ mod tests {
         let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
         let declared = refused_wake(&tape, "018f82d4-6f59-7d06-92e3-bce9131163c2");
 
-        let failure = closing_failure(&scratch.0, &spice::extension::OMP, &declared)
+        let word = closing_word(&scratch.0, &spice::extension::OMP, &declared)
             .expect("the retained tape reads");
-        assert_eq!(failure.as_deref(), Some(REFUSAL));
+        assert_eq!(word, LastWord::Failure(REFUSAL.to_owned()));
     }
 
     #[test]
-    fn a_turn_that_ended_on_prose_is_no_vendor_failure() {
+    fn a_turn_that_ended_on_prose_is_an_answer() {
         let scratch = Scratch::new();
         let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
         let declared = write(
@@ -232,9 +254,26 @@ mod tests {
         write(&tape, OMP_TURN_END);
         write(&tape, OMP_AGENT_END);
 
-        let failure = closing_failure(&scratch.0, &spice::extension::OMP, &declared)
+        let word = closing_word(&scratch.0, &spice::extension::OMP, &declared)
             .expect("the retained tape reads");
-        assert_eq!(failure, None);
+        assert_eq!(word, LastWord::Answered);
+    }
+
+    #[test]
+    fn a_turn_that_ended_on_the_operators_prompt_is_silent() {
+        let scratch = Scratch::new();
+        let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
+        let declared = write(
+            &tape,
+            &omp_declaration("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+        );
+        write(&tape, r#"{"type":"agent_start"}"#);
+        write(&tape, OMP_USER);
+        write(&tape, OMP_WIDGET);
+
+        let word = closing_word(&scratch.0, &spice::extension::OMP, &declared)
+            .expect("the retained tape reads");
+        assert_eq!(word, LastWord::Silent);
     }
 
     #[test]
@@ -243,10 +282,9 @@ mod tests {
         let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
         let predecessor = refused_wake(&tape, "018f82d4-6f59-7d06-92e3-bce9131163c2");
         assert_eq!(
-            closing_failure(&scratch.0, &spice::extension::OMP, &predecessor)
-                .expect("the retained tape reads")
-                .as_deref(),
-            Some(REFUSAL),
+            closing_word(&scratch.0, &spice::extension::OMP, &predecessor)
+                .expect("the retained tape reads"),
+            LastWord::Failure(REFUSAL.to_owned()),
             "the predecessor's exit is accounted on its refusal"
         );
 
@@ -257,15 +295,15 @@ mod tests {
         write(&tape, r#"{"type":"agent_start"}"#);
         write(&tape, OMP_AGENT_END);
         assert_eq!(
-            closing_failure(&scratch.0, &spice::extension::OMP, &successor)
+            closing_word(&scratch.0, &spice::extension::OMP, &successor)
                 .expect("the retained tape reads"),
-            None,
+            LastWord::Silent,
             "the successor wrote no event after its declaration"
         );
         assert_eq!(
-            closing_failure(&scratch.0, &spice::extension::OMP, &predecessor)
+            closing_word(&scratch.0, &spice::extension::OMP, &predecessor)
                 .expect("the retained tape reads"),
-            None,
+            LastWord::Silent,
             "the successor's declaration is now the newest word on the tape"
         );
         let beyond = wire::TapeLocus {
@@ -274,9 +312,9 @@ mod tests {
             length: 1,
         };
         assert_eq!(
-            closing_failure(&scratch.0, &spice::extension::OMP, &beyond)
+            closing_word(&scratch.0, &spice::extension::OMP, &beyond)
                 .expect("a declaration past the tape reads nothing"),
-            None
+            LastWord::Silent
         );
     }
 
@@ -301,10 +339,9 @@ mod tests {
         assert_eq!(declared.member, 1);
 
         assert_eq!(
-            closing_failure(&scratch.0, &spice::extension::OMP, &declared)
-                .expect("the sealed tape reads")
-                .as_deref(),
-            Some(REFUSAL)
+            closing_word(&scratch.0, &spice::extension::OMP, &declared)
+                .expect("the sealed tape reads"),
+            LastWord::Failure(REFUSAL.to_owned())
         );
 
         let later = wire::TapeLocus {
@@ -313,10 +350,9 @@ mod tests {
             length: 1,
         };
         assert_eq!(
-            closing_failure(&scratch.0, &spice::extension::OMP, &later)
-                .expect("the sealed tape reads")
-                .as_deref(),
-            Some(REFUSAL)
+            closing_word(&scratch.0, &spice::extension::OMP, &later)
+                .expect("the sealed tape reads"),
+            LastWord::Failure(REFUSAL.to_owned())
         );
         let last_member_only = wire::TapeLocus {
             member: 2,
@@ -324,10 +360,9 @@ mod tests {
             length: 1,
         };
         assert_eq!(
-            closing_failure(&scratch.0, &spice::extension::OMP, &last_member_only)
-                .expect("the sealed tape reads")
-                .as_deref(),
-            Some(REFUSAL)
+            closing_word(&scratch.0, &spice::extension::OMP, &last_member_only)
+                .expect("the sealed tape reads"),
+            LastWord::Failure(REFUSAL.to_owned())
         );
     }
 
@@ -349,10 +384,9 @@ mod tests {
         write(&tape, CLAUDE_RATE_LIMIT_ALLOWED);
 
         assert_eq!(
-            closing_failure(&scratch.0, &spice::extension::CLAUDE, &declared)
-                .expect("the retained tape reads")
-                .as_deref(),
-            Some(REFUSAL)
+            closing_word(&scratch.0, &spice::extension::CLAUDE, &declared)
+                .expect("the retained tape reads"),
+            LastWord::Failure(REFUSAL.to_owned())
         );
 
         write(
@@ -361,10 +395,9 @@ mod tests {
         );
         write(&tape, CLAUDE_RATE_LIMIT_ALLOWED);
         assert_eq!(
-            closing_failure(&scratch.0, &spice::extension::CLAUDE, &declared)
-                .expect("the retained tape reads")
-                .as_deref(),
-            Some(REFUSAL),
+            closing_word(&scratch.0, &spice::extension::CLAUDE, &declared)
+                .expect("the retained tape reads"),
+            LastWord::Failure(REFUSAL.to_owned()),
             "a success result carries no event, so the newest event is still the error"
         );
 
@@ -373,9 +406,9 @@ mod tests {
             r#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"recovered"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#,
         );
         assert_eq!(
-            closing_failure(&scratch.0, &spice::extension::CLAUDE, &declared)
+            closing_word(&scratch.0, &spice::extension::CLAUDE, &declared)
                 .expect("the retained tape reads"),
-            None,
+            LastWord::Answered,
             "prose after the error is the newer word"
         );
     }
@@ -388,7 +421,7 @@ mod tests {
             offset: 0,
             length: 1,
         };
-        closing_failure(&scratch.0.join("absent"), &spice::extension::OMP, &declared)
+        closing_word(&scratch.0.join("absent"), &spice::extension::OMP, &declared)
             .expect_err("an absent tape cannot decide the exit");
     }
 

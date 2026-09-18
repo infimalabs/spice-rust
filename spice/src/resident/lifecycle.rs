@@ -461,6 +461,15 @@ impl Runtime {
     }
 
     /// Classify one observed occupant death through the shared hold reducer.
+    ///
+    /// A death is young only when the occupant both died inside the young
+    /// window and never answered: an occupant whose transcript ends on its
+    /// own answer did the work its wake asked for, however quickly, so its
+    /// exit says nothing against the seat.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one death crosses the journal, the seats, the clock, and the transcript's word"
+    )]
     pub(super) fn observe_death(
         &mut self,
         bus: &Bus,
@@ -468,6 +477,7 @@ impl Runtime {
         seats: &Seats,
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
+        answered: bool,
         config: &lane::Config,
     ) -> CommandResult<()> {
         let Some(activity) = seats
@@ -476,7 +486,7 @@ impl Runtime {
         else {
             return Ok(());
         };
-        let death = if activity.at().elapsed() < config.young().get() {
+        let death = if !answered && activity.at().elapsed() < config.young().get() {
             Death::Young
         } else {
             Death::Mature

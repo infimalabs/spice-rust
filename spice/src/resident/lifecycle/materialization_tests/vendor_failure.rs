@@ -100,12 +100,12 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
 }
 
 #[test]
-fn an_exit_that_ended_on_prose_is_one_young_death_and_no_hold() {
+fn an_exit_that_ended_on_prose_is_a_mature_death_however_young_the_occupant() {
     let fixture = VendorExitFixture::new(
         "finished",
         &[PROMPT, FINISHED_PROSE, FINISHED_RESULT, RATE_LIMIT_ALLOWED],
     );
-    let config = lane::Config::default();
+    let config = one_death_holds();
     let mut lifecycle = lifecycle::Runtime::new(&config);
     let before = fact_kinds(&fixture.bus);
     let mut diagnostic = Vec::new();
@@ -117,7 +117,7 @@ fn an_exit_that_ended_on_prose_is_one_young_death_and_no_hold() {
     assert_eq!(
         fact_kinds(&fixture.bus)[before.len()..],
         [wire::FactKind::LaneExited],
-        "an exit on the occupant's own prose journals no hold"
+        "an exit on the occupant's own prose journals no hold even where one young death would"
     );
     assert_eq!(lifecycle.held_until(lane()), None);
     assert!(
@@ -126,6 +126,37 @@ fn an_exit_that_ended_on_prose_is_one_young_death_and_no_hold() {
         String::from_utf8_lossy(&diagnostic)
     );
     fixture.finish();
+}
+
+#[test]
+fn an_exit_that_never_answered_the_prompt_is_a_young_death() {
+    let fixture = VendorExitFixture::new("silent", &[PROMPT, RATE_LIMIT_ALLOWED]);
+    let config = one_death_holds();
+    let mut lifecycle = lifecycle::Runtime::new(&config);
+    let before = fact_kinds(&fixture.bus);
+    let mut diagnostic = Vec::new();
+
+    fixture
+        .exit(&mut lifecycle, &config, &mut diagnostic)
+        .expect("the silent exit is accounted");
+
+    assert_eq!(
+        fact_kinds(&fixture.bus)[before.len()..],
+        [wire::FactKind::LaneHeld, wire::FactKind::LaneExited],
+        "an exit that answered nothing inside the young window is one young death"
+    );
+    assert_eq!(
+        fixture.held_fact().evidence,
+        "1 consecutive young occupant deaths"
+    );
+    fixture.finish();
+}
+
+/// Lane policy under which a single young death holds the lane, so one exit
+/// shows whether it was counted young.
+fn one_death_holds() -> lane::Config {
+    serde_json::from_value(serde_json::json!({"deaths": 1}))
+        .expect("a one-death lane policy admits")
 }
 
 #[test]
