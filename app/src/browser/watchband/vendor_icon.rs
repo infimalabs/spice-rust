@@ -73,17 +73,16 @@ fn render_omp_mark(lane: CanonicalUuid) -> Html {
 /// through the glyph behind it wherever the two overlapped. The halo that
 /// backs it now is the pi's own silhouette, stroked wide in the composer's
 /// surface colour, held translucent, and blurred, so it fades into the glyph
-/// at its edge and shows no cut; the pi keeps the footprint that disc had --
-/// 7.5 units of the glyph's 16-unit canvas, in the foot corner -- and its
-/// diagonal gradient reads over the single-hue glyph instead of drowning in
-/// it. The inner canvas stays open so the blur is not clipped at the pi's
-/// bounds.
+/// at its edge and shows no cut. The pi spans 10 units of the glyph's
+/// 16-unit canvas, anchored at the foot corner, and its diagonal gradient
+/// reads over the single-hue glyph instead of drowning in it. The inner
+/// canvas stays open so the blur is not clipped at the pi's bounds.
 fn render_omp_badge(lane: CanonicalUuid) -> Html {
     let halo = format!("composer-vendor-halo-{lane}");
     let softened = format!("url(#{halo})");
     html! {
         <g class="composer-vendor-badge">
-            <svg x="8.5" y="8.5" width="7.5" height="7.5" viewBox="0 0 64 64" overflow="visible">
+            <svg x="6" y="6" width="10" height="10" viewBox="0 0 64 64" overflow="visible">
                 <defs>
                     <filter id={halo} x="-30%" y="-30%" width="160%" height="160%">
                         // A literal tag is normalised to lowercase, and SVG
