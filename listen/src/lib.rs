@@ -263,7 +263,7 @@ fn detect_dialect(object: &Object) -> Option<Dialect> {
     match object.get("type").and_then(Value::as_str)? {
         "assistant" | "stream_event" | "user" | "system" | "result" | "summary"
         | "rate_limit_event" | "attachment" | "last-prompt" | "ai-title" | "mode"
-        | "queue-operation" => Some(Dialect::Claude),
+        | "queue-operation" | "atis-latch" => Some(Dialect::Claude),
         "thread.started" | "item.started" | "item.updated" | "item.completed"
         | "turn.completed" | "turn.failed" | "session_meta" | "event_msg" | "response_item"
         | "compacted" | "turn_context" | "world_state" => Some(Dialect::Codex),

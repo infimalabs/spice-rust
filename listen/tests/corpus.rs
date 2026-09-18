@@ -233,6 +233,33 @@ fn claude_rate_limit_reports_fail_only_when_the_vendor_rejected_the_request() {
     ));
 }
 
+/// Records Claude Code writes to its own transcript for the harness alone,
+/// each with its exact persisted shape.
+const CLAUDE_HOUSEKEEPING: &[&[u8]] = &[
+    br#"{"type":"attachment","attachment":{"type":"instructions","files":[]},"uuid":"3967c693-6453-4e2e-97da-8fc69d55dae1","timestamp":"2026-09-18T04:16:56.789Z"}"#,
+    br#"{"type":"last-prompt","lastPrompt":"continue","sessionId":"55eb2799-7109-4743-82bb-0f26c9f6fe86"}"#,
+    br#"{"type":"ai-title","aiTitle":"Session title","sessionId":"55eb2799-7109-4743-82bb-0f26c9f6fe86"}"#,
+    br#"{"type":"mode","mode":"default","sessionId":"55eb2799-7109-4743-82bb-0f26c9f6fe86"}"#,
+    br#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-09-18T04:16:56.466Z","sessionId":"55eb2799-7109-4743-82bb-0f26c9f6fe86","content":"continue"}"#,
+    br#"{"type":"atis-latch","atis":"5ddd0466fd524dad","sessionId":"55eb2799-7109-4743-82bb-0f26c9f6fe86"}"#,
+];
+
+#[test]
+fn claude_housekeeping_records_are_silent_under_the_expected_and_the_sniffed_dialect() {
+    for record in CLAUDE_HOUSEKEEPING {
+        let expected = decode(Dialect::Claude, record, locus(record)).expect("matching locus");
+        assert!(
+            expected.residue().is_none() && expected.events().is_empty(),
+            "a housekeeping record is neither residue nor an event: {expected:?}"
+        );
+
+        let sniffed = decode_record(None, record, locus(record))
+            .expect("the harness envelope is uniquely Claude's");
+        assert_eq!(sniffed.dialect, Dialect::Claude);
+        assert_eq!(sniffed.decoded, expected);
+    }
+}
+
 #[test]
 fn current_opaque_failure_and_statusless_tool_payloads_are_preserved() {
     let opaque = decode(
