@@ -12,6 +12,8 @@ use journal::{FactCause, GuardError, Journal, JournalGuard, JournalWrite};
 
 const COMMAND_ONE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c4";
 const COMMAND_TWO: &str = "018f82d4-6f59-7d06-92e3-bce9131163c5";
+/// How many retained tasks make a fleet whose snapshot spans several pages.
+const RETAINED_FACTS: usize = 300;
 
 #[test]
 fn steering_presentation_batches_refuse_before_crossing_the_fixed_key_ceiling() {
@@ -178,26 +180,7 @@ fn trust_only_commits_refresh_immutable_task_snapshots_at_the_commit_cursor() {
 
 #[test]
 fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
-    const RETAINED_FACTS: usize = 300;
-    let observed = Arc::new(Mutex::new(Vec::new()));
-    let mut journal = Journal::in_memory().expect("in-memory authority");
-    journal
-        .apply(initial_write(uuid(COMMAND_ONE), Arc::clone(&observed)))
-        .expect("initial task commits");
-    let mut bulk = JournalWrite::new(
-        Actor::Operator,
-        "task:BUS-a1".parse().expect("origin"),
-        instant("2030-04-12T18:44:10.271Z"),
-        Producer::CommandDoor,
-    );
-    let mut cause = FactCause::Existing(Seq::new(1).expect("initial cause"));
-    for index in 1..RETAINED_FACTS {
-        cause = FactCause::Pending(append_retained_task(&mut bulk, index, cause));
-    }
-    let applied = journal.apply(bulk).expect("fleet history commits");
-    assert_eq!(applied.last().get(), RETAINED_FACTS as u64);
-
-    let bus = Bus::start(journal).expect("dedicated writer starts");
+    let (bus, last) = retained_fleet(RETAINED_FACTS);
     let cold = bus.fact_snapshot().expect("cold fact snapshot reads");
     let before = bus.task_snapshot().expect("multi-page snapshot settles");
     let retained = bus.fact_snapshot().expect("retained fact snapshot reads");
@@ -219,7 +202,7 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
             task: stamp(),
             note: "one proportional tail".to_owned(),
         },
-        FactCause::Existing(applied.last()),
+        FactCause::Existing(last),
     )
     .expect("tail fact builds");
     committed(bus.commit(tail).expect("tail commit answers"));
@@ -240,8 +223,8 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
     );
     assert_eq!(
         after.materialization_steps(),
-        4,
-        "one fact, two task-head pages, and one trust-head page complete the generation"
+        3,
+        "one fact page, the one moved task bundle, and one trust-head page complete the generation"
     );
     let committed_tail = after.facts().after(before.cursor()).collect::<Vec<_>>();
     assert_eq!(
@@ -266,7 +249,7 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
     );
     assert!(
         std::ptr::eq(
-            after.facts().at(applied.last()).expect("last bulk fact"),
+            after.facts().at(last).expect("last bulk fact"),
             before
                 .facts()
                 .iter()
@@ -290,6 +273,68 @@ fn multi_page_task_snapshots_resume_then_decode_only_the_committed_tail() {
             .at(Seq::new((RETAINED_FACTS + 2) as u64).expect("beyond"))
             .is_none(),
         "a position past the horizon is not retained"
+    );
+    bus.shutdown().expect("writer shuts down");
+}
+
+/// A bus over one initial task and a fleet of retained tasks behind it, with
+/// the position of the fleet's last fact.
+fn retained_fleet(retained: usize) -> (Bus, Seq) {
+    let mut journal = Journal::in_memory().expect("in-memory authority");
+    journal
+        .apply(initial_write(
+            uuid(COMMAND_ONE),
+            Arc::new(Mutex::new(Vec::new())),
+        ))
+        .expect("initial task commits");
+    let mut bulk = JournalWrite::new(
+        Actor::Operator,
+        "task:BUS-a1".parse().expect("origin"),
+        instant("2030-04-12T18:44:10.271Z"),
+        Producer::CommandDoor,
+    );
+    let mut cause = FactCause::Existing(Seq::new(1).expect("initial cause"));
+    for index in 1..retained {
+        cause = FactCause::Pending(append_retained_task(&mut bulk, index, cause));
+    }
+    let applied = journal.apply(bulk).expect("fleet history commits");
+    assert_eq!(applied.last().get(), retained as u64);
+    let bus = Bus::start(journal).expect("dedicated writer starts");
+    (bus, applied.last())
+}
+
+#[test]
+fn a_new_task_among_a_retained_fleet_costs_one_moved_bundle() {
+    let (bus, last) = retained_fleet(RETAINED_FACTS);
+    let settled = bus.task_snapshot().expect("multi-page snapshot settles");
+    assert_eq!(settled.tasks().len(), RETAINED_FACTS);
+    let mut growth = JournalWrite::new(
+        Actor::Operator,
+        "task:BUS-a1".parse().expect("origin"),
+        instant("2030-04-12T18:44:12.271Z"),
+        Producer::CommandDoor,
+    );
+    append_retained_task(&mut growth, 0, FactCause::Existing(last));
+    committed(bus.commit(growth).expect("a new task commits"));
+    let grown = bus.task_snapshot().expect("grown snapshot reads");
+    assert_eq!(
+        grown.materialization_steps(),
+        3,
+        "a new task among hundreds costs one fact page, one moved bundle, and one trust page"
+    );
+    assert_eq!(grown.tasks().len(), RETAINED_FACTS + 1);
+    let stamps = grown
+        .tasks()
+        .iter()
+        .map(|heads| heads.statement().body().born.clone())
+        .collect::<Vec<_>>();
+    let mut ordered = stamps.clone();
+    ordered.sort();
+    assert_eq!(stamps, ordered, "the grown snapshot keeps stamp order");
+    assert_eq!(
+        stamps[0],
+        journal::crossing::TaskStamp::for_micros(1_000).expect("newborn stamp"),
+        "the newborn takes its place ahead of the fleet it sorts before"
     );
     bus.shutdown().expect("writer shuts down");
 }

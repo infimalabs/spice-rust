@@ -65,7 +65,7 @@ struct Request {
     command: String,
     argv: Vec<OsString>,
     cwd: PathBuf,
-    environment: Vec<(OsString, OsString)>,
+    environment: Environment,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     timeout_millis: Option<u64>,
     /// What the results carry ahead of the command's output, as omp noted it.
@@ -258,7 +258,7 @@ fn spawn(directory: &Path, request: &Request, sender: mpsc::Sender<Keep>) -> Res
         .args(arguments)
         .current_dir(&request.cwd)
         .env_clear()
-        .envs(request.environment.iter().cloned())
+        .envs(request.environment.entries().iter().cloned())
         .stdin(Stdio::null())
         .stdout(log)
         .stderr(stderr);
@@ -532,7 +532,7 @@ impl Jobs {
                 command: command.to_owned(),
                 argv,
                 cwd: cwd.to_path_buf(),
-                environment: environment.entries().to_vec(),
+                environment: environment.clone(),
                 timeout_millis: timeout
                     .map(|timeout| u64::try_from(timeout.as_millis()))
                     .transpose()
@@ -610,6 +610,21 @@ impl Jobs {
     ///
     /// Returns the failure of reading the lane's job directory.
     pub(in crate::resident) fn list(&self) -> io::Result<Vec<Job>> {
+        self.select(|_| true)
+    }
+
+    /// The jobs whose ending nobody has heard, oldest first, without opening
+    /// the record of any job already delivered: a lane's row is read far more
+    /// often than a job ends.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of reading the lane's job directory.
+    pub(in crate::resident) fn kept(&self) -> io::Result<Vec<Job>> {
+        self.select(|directory| !directory.join(DELIVERED).exists())
+    }
+
+    fn select(&self, wanted: impl Fn(&Path) -> bool) -> io::Result<Vec<Job>> {
         let entries = match fs::read_dir(&self.root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
@@ -621,6 +636,9 @@ impl Jobs {
             let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
+            if !wanted(&entry.path()) {
+                continue;
+            }
             match self.open(&id) {
                 Ok(job) => jobs.push(job),
                 Err(error) if error.kind() == ErrorKind::NotFound => {}
@@ -747,13 +765,8 @@ impl Job {
         File::create(self.directory.join(STOP)).map(drop)
     }
 
-    /// Whether the lane has heard how the job ended: in the answer to the
-    /// call that ran it, or as steering once it was kept.
-    pub(in crate::resident) fn delivered(&self) -> bool {
-        self.directory.join(DELIVERED).exists()
-    }
-
-    /// Record that the lane has heard how the job ended.
+    /// Record that the lane has heard how the job ended: in the answer to
+    /// the call that ran it, or as steering once it was kept.
     ///
     /// # Errors
     ///
@@ -847,186 +860,5 @@ impl Job {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// How long a test waits for a job to answer before it fails.
-    const TEST_BOUND: Duration = Duration::from_secs(2);
-
-    fn scratch(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "spice-job-{name}-{}-{}",
-            std::process::id(),
-            now_millis().expect("fixture time")
-        ));
-        fs::create_dir_all(&root).expect("scratch directory");
-        root
-    }
-
-    fn argv(command: &str) -> Vec<OsString> {
-        ["/bin/sh", "-c", command].map(OsString::from).to_vec()
-    }
-
-    #[test]
-    fn an_ending_is_unheard_until_the_delivery_record_appears() {
-        let root = scratch("unheard");
-        assert!(unheard(&root, Duration::ZERO));
-        let heard = thread::spawn({
-            let root = root.clone();
-            move || unheard(&root, TEST_BOUND)
-        });
-        File::create(root.join(DELIVERED)).expect("the record");
-        assert!(!heard.join().expect("the wait ends"));
-        assert!(!unheard(&root, Duration::ZERO));
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn a_job_runs_to_its_end_and_publishes_how_it_ended() {
-        let root = scratch("ends");
-        let jobs = Jobs::new(root.join("jobs"));
-        let job = jobs
-            .start(
-                "say",
-                argv("printf 'out\\n'; printf 'err\\n' >&2; exit 3"),
-                &root,
-                &Environment::empty(),
-                Some(Duration::from_secs(5)),
-                &["noted".to_owned()],
-            )
-            .expect("the job starts");
-        let control = Control::new();
-        let Observed::Ended(ended) = job
-            .observe(&control, TEST_BOUND)
-            .expect("the job is observed")
-        else {
-            panic!("the job ends");
-        };
-        assert_eq!(ended.ending, Ending::Exited { code: 3 });
-        assert!(ended.wall.is_some());
-        assert_eq!(
-            job.tail().expect("the log reads"),
-            Tail {
-                text: "out\nerr\n".to_owned(),
-                truncated: false
-            }
-        );
-        let listed = jobs.list().expect("the lane's jobs list");
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].id(), job.id());
-        assert_eq!(listed[0].command(), "say");
-        let reopened = jobs.open(job.id()).expect("the job reopens");
-        assert_eq!(reopened.command(), "say");
-        assert_eq!(reopened.timeout(), Some(Duration::from_secs(5)));
-        assert_eq!(reopened.notices(), ["noted".to_owned()]);
-        assert_eq!(reopened.ended(), Some(ended));
-        assert!(Key::shaped(job.id()), "{} is a key", job.id());
-        assert!(jobs.open("../jobs").is_err());
-        assert!(jobs.open("0badcafe").is_err());
-        assert!(jobs.open("1kJK6N3Rb").is_err());
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn a_stopped_job_is_ended_and_an_interrupted_observation_yields() {
-        let root = scratch("stops");
-        let jobs = Jobs::new(root.join("jobs"));
-        // A fifo nobody writes holds its reader open, so the command ends
-        // only because the keeper ends it.
-        let status = ProcessCommand::new("mkfifo")
-            .arg(root.join("hold"))
-            .status()
-            .expect("mkfifo");
-        assert!(status.success());
-        let job = jobs
-            .start(
-                "hold",
-                argv("cat hold"),
-                &root,
-                &Environment::empty(),
-                None,
-                &[],
-            )
-            .expect("the job starts");
-        let control = Control::new();
-        control.handle().interrupt();
-        assert_eq!(
-            job.observe(&control, TEST_BOUND)
-                .expect("the job is observed"),
-            Observed::Interrupted
-        );
-        assert_eq!(
-            job.observe(&control, Duration::ZERO)
-                .expect("the job is observed"),
-            Observed::Elapsed
-        );
-        job.stop().expect("the stop is asked");
-        let Observed::Ended(ended) = job
-            .observe(&control, TEST_BOUND)
-            .expect("the job is observed")
-        else {
-            panic!("the job ends");
-        };
-        assert_eq!(ended.ending, Ending::Stopped);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn a_job_past_its_deadline_is_ended_as_timed_out() {
-        let root = scratch("deadline");
-        let jobs = Jobs::new(root.join("jobs"));
-        let status = ProcessCommand::new("mkfifo")
-            .arg(root.join("hold"))
-            .status()
-            .expect("mkfifo");
-        assert!(status.success());
-        let job = jobs
-            .start(
-                "hold",
-                argv("cat hold"),
-                &root,
-                &Environment::empty(),
-                Some(Duration::from_millis(20)),
-                &[],
-            )
-            .expect("the job starts");
-        let Observed::Ended(ended) = job
-            .observe(&Control::new(), TEST_BOUND)
-            .expect("the job is observed")
-        else {
-            panic!("the job ends");
-        };
-        assert_eq!(ended.ending, Ending::TimedOut);
-        let _ = fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn a_command_that_cannot_run_ends_as_failed() {
-        let root = scratch("fails");
-        let jobs = Jobs::new(root.join("jobs"));
-        let job = jobs
-            .start(
-                "nothing",
-                vec![OsString::from("/nonexistent/spice-job-shell")],
-                &root,
-                &Environment::empty(),
-                Some(Duration::from_secs(5)),
-                &[],
-            )
-            .expect("the job starts");
-        let observed = job
-            .observe(&Control::new(), TEST_BOUND)
-            .expect("the job is observed");
-        assert!(
-            matches!(
-                observed,
-                Observed::Ended(Ended {
-                    ending: Ending::Failed { .. },
-                    ..
-                })
-            ),
-            "{observed:?}"
-        );
-        let _ = fs::remove_dir_all(root);
-    }
-}
+#[path = "job/tests.rs"]
+mod tests;

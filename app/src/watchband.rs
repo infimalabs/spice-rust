@@ -203,7 +203,36 @@ pub fn standing_title(standing: &Standing) -> String {
     if let Some(session) = &standing.session {
         parts.push(format!("session: {session}"));
     }
+    if let Some(kept) = jobs_kept(&standing.jobs) {
+        parts.push(kept);
+    }
     parts.join("; ")
+}
+
+/// The commands a lane still keeps, as one line: "waiting on 1 job (1
+/// running)" or "waiting on 3 jobs (2 running, 1 unheard)". None when the
+/// lane keeps nothing, so a caller adds the line only when there is one.
+#[must_use]
+pub fn jobs_kept(jobs: &[wire::intent::LaneJob]) -> Option<String> {
+    if jobs.is_empty() {
+        return None;
+    }
+    let plural = if jobs.len() == 1 { "" } else { "s" };
+    let running = jobs
+        .iter()
+        .filter(|job| job.standing == wire::intent::LaneJobStanding::Running)
+        .count();
+    let unheard = jobs.len() - running;
+    let breakdown = [(running, "running"), (unheard, "unheard")]
+        .into_iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, standing)| format!("{count} {standing}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some(format!(
+        "waiting on {} job{plural} ({breakdown})",
+        jobs.len()
+    ))
 }
 
 /// The fraction of a team's width, at either edge, that joins rather than

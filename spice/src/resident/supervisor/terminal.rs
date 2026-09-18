@@ -287,11 +287,7 @@ impl Terminal {
 /// The jobs a lane has yet to hear the end of, oldest first: still running,
 /// or ended while nobody was there.
 pub(in crate::resident) fn undelivered(jobs: &Jobs) -> Vec<Job> {
-    jobs.list()
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|job| !job.delivered())
-        .collect()
+    jobs.kept().unwrap_or_default()
 }
 
 /// What a lane is still waiting on, as its row in the lane table lists it.

@@ -15,6 +15,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, Weak};
 use std::time::Duration;
 
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Argv {
     program: OsString,
@@ -81,6 +83,66 @@ impl Environment {
 
     pub fn entries(&self) -> &[(OsString, OsString)] {
         &self.0
+    }
+}
+
+/// An environment on record is its entries in order, each key and value the
+/// text itself, so the record reads as the shell would show it and parses at
+/// the speed of a string; a value that is not UTF-8 is kept as its bytes.
+#[cfg(unix)]
+impl Serialize for Environment {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0
+            .iter()
+            .map(|(key, value)| (Text::from(key.as_os_str()), Text::from(value.as_os_str())))
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+}
+
+#[cfg(unix)]
+impl<'de> Deserialize<'de> for Environment {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let entries = Vec::<(Text, Text)>::deserialize(deserializer)?;
+        Self::new(
+            entries
+                .into_iter()
+                .map(|(key, value)| (OsString::from(key), OsString::from(value))),
+        )
+        .map_err(serde::de::Error::custom)
+    }
+}
+
+/// One environment key or value on record.
+#[cfg(unix)]
+#[derive(Deserialize, Serialize)]
+#[serde(untagged)]
+enum Text {
+    Utf8(String),
+    Bytes { bytes: Vec<u8> },
+}
+
+#[cfg(unix)]
+impl From<&OsStr> for Text {
+    fn from(text: &OsStr) -> Self {
+        use std::os::unix::ffi::OsStrExt;
+        text.to_str().map_or_else(
+            || Self::Bytes {
+                bytes: text.as_bytes().to_vec(),
+            },
+            |utf8| Self::Utf8(utf8.to_owned()),
+        )
+    }
+}
+
+#[cfg(unix)]
+impl From<Text> for OsString {
+    fn from(text: Text) -> Self {
+        use std::os::unix::ffi::OsStringExt;
+        match text {
+            Text::Utf8(utf8) => Self::from(utf8),
+            Text::Bytes { bytes } => Self::from_vec(bytes),
+        }
     }
 }
 
@@ -466,5 +528,31 @@ mod tests {
             .expect_err("duplicate environment keys must be rejected");
 
         assert_eq!(error, SpecError::DuplicateEnvironmentKey("ONE".into()));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn environment_records_as_text_and_keeps_bytes_that_are_not() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let raw = OsString::from_vec(vec![b'r', 0xff, b'w']);
+        let environment = Environment::new([
+            (OsString::from("PATH"), OsString::from("/bin")),
+            (OsString::from("RAW"), raw),
+        ])
+        .expect("distinct keys");
+
+        let recorded = serde_json::to_string(&environment).expect("an environment records");
+        assert_eq!(
+            recorded,
+            r#"[["PATH","/bin"],["RAW",{"bytes":[114,255,119]}]]"#
+        );
+        let read: Environment = serde_json::from_str(&recorded).expect("the record reads back");
+        assert_eq!(read, environment);
+        assert!(
+            serde_json::from_str::<Environment>(r#"[["ONE","1"],["ONE","2"]]"#).is_err(),
+            "a record with a duplicate key is refused as the constructor refuses it"
+        );
     }
 }

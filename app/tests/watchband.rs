@@ -2,9 +2,10 @@ use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop,
     TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, elapsed_label,
-    elapsed_label_deadline_millis, first_nonquoted_prose, leaf, one_line, remaining_label,
-    remaining_label_deadline_millis, reported_tasks, response_speech_text, short, split_team,
-    standing_title, standings, task_mentions, ticker_chunks, ticker_line, topology, truncate,
+    elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, leaf, one_line,
+    remaining_label, remaining_label_deadline_millis, reported_tasks, response_speech_text, short,
+    split_team, standing_title, standings, task_mentions, ticker_chunks, ticker_line, topology,
+    truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -549,6 +550,32 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
              session: session-fixture"
         )
     );
+
+    standing.jobs = vec![
+        wire::intent::LaneJob {
+            id: "6ZbQk3mPx".to_owned(),
+            command: "cargo test".to_owned(),
+            standing: wire::intent::LaneJobStanding::Running,
+        },
+        wire::intent::LaneJob {
+            id: "6ZbQk3mPy".to_owned(),
+            command: "cargo doc".to_owned(),
+            standing: wire::intent::LaneJobStanding::Unheard,
+        },
+    ];
+    assert_eq!(
+        standing_title(&standing),
+        format!(
+            "Codex vendor; model: unrecorded; effort: unrecorded; thread: {OCCUPANT}; \
+             session: session-fixture; waiting on 2 jobs (1 running, 1 unheard)"
+        )
+    );
+    standing.jobs.pop();
+    assert_eq!(
+        jobs_kept(&standing.jobs).as_deref(),
+        Some("waiting on 1 job (1 running)")
+    );
+    assert_eq!(jobs_kept(&[]), None);
 }
 
 #[test]

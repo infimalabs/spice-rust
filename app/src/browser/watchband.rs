@@ -1136,6 +1136,9 @@ fn composer_placeholder(standing: &Standing, pending: usize) -> String {
         target,
         format!("{pending} pending, {}", standing.liveness.as_str()),
     ];
+    if let Some(kept) = watchband::jobs_kept(&standing.jobs) {
+        lines.push(kept);
+    }
     if let Some(handle) = &standing.handle {
         lines.push(match &standing.phase {
             Some(phase) => format!("{handle}, {phase}"),

@@ -288,6 +288,10 @@ pub(super) struct TaskSnapshotBuild {
     cursor: Option<journal::crossing::Seq>,
     tasks: Vec<journal::TaskHeads>,
     task_after: Option<journal::crossing::TaskStamp>,
+    /// The tasks the last ready snapshot held, at the cursor it held them:
+    /// this build reads only the heads that moved past it, so a commit costs
+    /// what it changed rather than every task the journal remembers.
+    prior: Option<(journal::crossing::Seq, Arc<[journal::TaskHeads]>)>,
     trust: Vec<JournalHead<journal::crossing::TrustHead>>,
     trust_after: Option<journal::crossing::Digest>,
     stage: SnapshotStage,
@@ -308,6 +312,7 @@ impl TaskSnapshotBuild {
             cursor: None,
             tasks: Vec::new(),
             task_after: None,
+            prior: None,
             trust: Vec::new(),
             trust_after: None,
             stage: SnapshotStage::Facts,
@@ -317,13 +322,20 @@ impl TaskSnapshotBuild {
 }
 
 pub(super) fn invalidate_task_snapshot(state: &mut TaskSnapshotState) {
-    let facts = match state {
-        TaskSnapshotState::Ready(snapshot) => Some(snapshot.facts.clone()),
-        TaskSnapshotState::Building(build) => Some(build.facts.clone()),
+    let carried = match state {
+        TaskSnapshotState::Ready(snapshot) => Some((
+            snapshot.facts.clone(),
+            snapshot
+                .cursor
+                .map(|cursor| (cursor, Arc::clone(&snapshot.tasks))),
+        )),
+        TaskSnapshotState::Building(build) => Some((build.facts.clone(), build.prior.clone())),
         TaskSnapshotState::Empty | TaskSnapshotState::Fault(_) => None,
     };
-    if let Some(facts) = facts {
-        *state = TaskSnapshotState::Building(TaskSnapshotBuild::new(facts));
+    if let Some((facts, prior)) = carried {
+        let mut build = TaskSnapshotBuild::new(facts);
+        build.prior = prior;
+        *state = TaskSnapshotState::Building(build);
     }
 }
 
@@ -397,6 +409,26 @@ fn advance_tasks(
     mut build: TaskSnapshotBuild,
 ) -> Result<BuildStep, journal::ReadError<BusReadError>> {
     journal.read_with(|read| {
+        if let Some((since, prior)) = build.prior.take() {
+            if read.cursor().map_err(BusReadError::Head)? != build.cursor {
+                return Err(BusReadError::Head(GuardError::Invalid(
+                    "task snapshot authority moved between bounded pages".to_owned(),
+                )));
+            }
+            build.tasks = match build.cursor.filter(|cursor| *cursor > since) {
+                Some(cursor) => {
+                    let first = journal::crossing::Seq::new(since.get() + 1)
+                        .expect("a position past a position is not zero");
+                    let moved = read
+                        .changed_task_heads(first, cursor)
+                        .map_err(BusReadError::Head)?;
+                    merged(&prior, moved)
+                }
+                None => prior.to_vec(),
+            };
+            build.stage = SnapshotStage::Trust;
+            return Ok(BuildStep::Pending(build));
+        }
         let page = read
             .task_head_page(build.task_after.as_ref(), journal::FactReadBudget::RETAINED)
             .map_err(BusReadError::Head)?;
@@ -408,6 +440,20 @@ fn advance_tasks(
         }
         Ok(BuildStep::Pending(build))
     })
+}
+
+/// The prior tasks with each moved bundle replacing its stamp's, or taking
+/// its place in stamp order when the task is new; both inputs arrive sorted.
+fn merged(prior: &[journal::TaskHeads], moved: Vec<journal::TaskHeads>) -> Vec<journal::TaskHeads> {
+    let mut tasks = prior.to_vec();
+    for heads in moved {
+        let stamp = &heads.statement().body().born;
+        match tasks.binary_search_by(|kept| kept.statement().body().born.cmp(stamp)) {
+            Ok(index) => tasks[index] = heads,
+            Err(index) => tasks.insert(index, heads),
+        }
+    }
+    tasks
 }
 
 fn advance_trust(
