@@ -1027,14 +1027,12 @@ fn accept_exit(
             "lane process exit receiver closed",
         )
     })?;
-    let config = &command_surface.config.lane;
     let accounted = super::reap::account_exit(
         bus,
         command_surface.paths,
         epoch,
         seats,
         lifecycle,
-        config,
         exit,
         diagnostic,
     );

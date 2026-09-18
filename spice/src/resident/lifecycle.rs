@@ -509,10 +509,6 @@ impl Runtime {
     /// at once, with the vendor's own text journaled against the occupant as
     /// the hold's evidence, rather than waiting for a run of young deaths to
     /// reach the limit.
-    #[allow(
-        clippy::too_many_arguments,
-        reason = "one hold crosses the journal, the reducer, the clock, and the diagnostic"
-    )]
     pub(super) fn observe_vendor_failure(
         &mut self,
         bus: &Bus,
@@ -520,11 +516,10 @@ impl Runtime {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
         failure: &str,
-        config: &lane::Config,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<()> {
         let now = current_instant()?;
-        self.observe_vendor_failure_at(bus, epoch, lane, occupant, failure, config, now, diagnostic)
+        self.observe_vendor_failure_at(bus, epoch, lane, occupant, failure, now, diagnostic)
     }
 
     /// [`Self::observe_vendor_failure`] with the clock supplied, so the hold
@@ -540,11 +535,10 @@ impl Runtime {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
         failure: &str,
-        config: &lane::Config,
         now: Instant,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<()> {
-        let until = hold_deadline(config.hold().get(), now)?;
+        let until = hold_deadline(self.hold, now)?;
         let evidence = vendor_failure_evidence(occupant, failure);
         let Some(held) = self.holds.failed(lane, evidence, until) else {
             return Ok(());

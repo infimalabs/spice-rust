@@ -101,7 +101,6 @@ fn an_exit_whose_commit_hit_a_store_fault_is_accounted_by_the_next_seat_sweep() 
         epoch(),
         &mut seats,
         &mut lifecycle,
-        &config,
         exit,
         &mut diagnostic,
     )

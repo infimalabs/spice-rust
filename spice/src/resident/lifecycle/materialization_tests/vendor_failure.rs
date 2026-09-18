@@ -49,7 +49,7 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
     let mut diagnostic = Vec::new();
 
     fixture
-        .exit(&mut lifecycle, &config, &mut diagnostic)
+        .exit(&mut lifecycle, &mut diagnostic)
         .expect("the refused exit is accounted");
 
     assert_eq!(
@@ -117,7 +117,7 @@ fn an_exit_that_ended_on_prose_is_a_mature_death_however_young_the_occupant() {
     let mut diagnostic = Vec::new();
 
     fixture
-        .exit(&mut lifecycle, &config, &mut diagnostic)
+        .exit(&mut lifecycle, &mut diagnostic)
         .expect("the finished exit is accounted");
 
     assert_eq!(
@@ -143,7 +143,7 @@ fn an_exit_that_never_answered_the_prompt_is_a_young_death() {
     let mut diagnostic = Vec::new();
 
     fixture
-        .exit(&mut lifecycle, &config, &mut diagnostic)
+        .exit(&mut lifecycle, &mut diagnostic)
         .expect("the silent exit is accounted");
 
     assert_eq!(
@@ -179,7 +179,7 @@ fn an_exit_that_answered_but_left_its_direction_live_is_a_young_death() {
     let mut diagnostic = Vec::new();
 
     fixture
-        .exit(&mut lifecycle, &config, &mut diagnostic)
+        .exit(&mut lifecycle, &mut diagnostic)
         .expect("the unsettled exit is accounted");
 
     assert_eq!(
@@ -218,7 +218,7 @@ fn an_exit_that_retired_its_direction_in_its_final_prose_is_a_mature_death() {
     let mut diagnostic = Vec::new();
 
     fixture
-        .exit(&mut lifecycle, &config, &mut diagnostic)
+        .exit(&mut lifecycle, &mut diagnostic)
         .expect("the settled exit is accounted");
 
     assert_eq!(
@@ -264,7 +264,6 @@ fn a_vendor_failure_holds_for_the_configured_hold_from_the_injected_clock() {
             lane(),
             occupant,
             &format!("  {REFUSAL}\n"),
-            &config,
             instant(10),
             &mut diagnostic,
         )
@@ -307,7 +306,6 @@ fn a_vendor_failure_holds_for_the_configured_hold_from_the_injected_clock() {
             lane(),
             occupant,
             "a second failure while held",
-            &config,
             instant(20),
             &mut again,
         )
@@ -343,7 +341,6 @@ fn verbose_vendor_text_is_cut_at_a_character_boundary_in_the_evidence() {
             lane(),
             occupant,
             &verbose,
-            &config,
             instant(10),
             &mut diagnostic,
         )
@@ -429,7 +426,6 @@ impl VendorExitFixture {
     fn exit(
         &self,
         lifecycle: &mut lifecycle::Runtime,
-        config: &lane::Config,
         diagnostic: &mut Vec<u8>,
     ) -> CommandResult<()> {
         let row = residency_row(&self.bus);
@@ -448,7 +444,6 @@ impl VendorExitFixture {
             epoch(),
             &mut seats,
             lifecycle,
-            config,
             CaptureExit {
                 lane: lane(),
                 occupant: self.occupant,

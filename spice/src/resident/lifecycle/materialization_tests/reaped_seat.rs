@@ -37,7 +37,6 @@ fn a_seat_whose_exit_notice_was_lost_is_reaped_and_its_pending_inbox_wake_fires(
         &paths,
         &mut seats,
         &mut lifecycle,
-        &config,
         &BTreeSet::new(),
         &mut diagnostic,
     )
@@ -59,7 +58,6 @@ fn a_seat_whose_exit_notice_was_lost_is_reaped_and_its_pending_inbox_wake_fires(
         &paths,
         &mut seats,
         &mut lifecycle,
-        &config,
         &BTreeSet::new(),
         &mut diagnostic,
     )
@@ -107,7 +105,6 @@ fn a_seat_whose_exit_notice_was_lost_is_reaped_and_its_pending_inbox_wake_fires(
         &paths,
         &mut seats,
         &mut lifecycle,
-        &config,
         &BTreeSet::new(),
         &mut Vec::new(),
     )
@@ -141,7 +138,6 @@ fn a_seat_whose_ending_is_at_the_door_is_left_to_the_notice_arm() {
         &paths,
         &mut seats,
         &mut lifecycle,
-        &config,
         &noticed,
         &mut diagnostic,
     )
@@ -191,7 +187,6 @@ fn a_seat_whose_failure_notice_was_lost_is_degraded_from_its_published_state() {
         &paths,
         &mut seats,
         &mut lifecycle,
-        &config,
         &BTreeSet::new(),
         &mut Vec::new(),
     )

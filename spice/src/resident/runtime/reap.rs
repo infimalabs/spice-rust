@@ -31,17 +31,12 @@ use super::*;
 /// however short its life; any other exit is one more death for the
 /// young-death run. An exit whose journaling is refused counts nothing, so
 /// the sweep that accounts it again counts it once.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one exit crosses renewal, lifecycle, residency, and steering"
-)]
 pub(in crate::resident) fn account_exit(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
-    config: &lane::Config,
     exit: lane::capture::CaptureExit,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
@@ -65,7 +60,6 @@ pub(in crate::resident) fn account_exit(
             exit.lane,
             exit.occupant,
             &failure,
-            config,
             diagnostic,
         ),
         LastWord::Answered | LastWord::Silent => {
@@ -134,7 +128,6 @@ pub(super) fn reap_ended_seats(
         command_surface.paths,
         seats,
         lifecycle,
-        &command_surface.config.lane,
         &noticed,
         diagnostic,
     )
@@ -149,17 +142,12 @@ pub(super) fn reap_ended_seats(
 /// the next sweep to read again. A refused commit defers that seat the way a
 /// late notice is deferred: the state on disk does not change, so the next
 /// reconciliation reaches the same judgement.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one sweep judges every seat by its supervisor state and the door"
-)]
 pub(in crate::resident) fn sweep_seats(
     bus: &Bus,
     epoch: CanonicalUuid,
     paths: &RuntimePaths,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
-    config: &lane::Config,
     noticed: &BTreeSet<(CanonicalUuid, CanonicalUuid)>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
@@ -192,7 +180,6 @@ pub(in crate::resident) fn sweep_seats(
                 epoch,
                 seats,
                 lifecycle,
-                config,
                 lane::capture::CaptureExit { lane, occupant },
                 diagnostic,
             ),
