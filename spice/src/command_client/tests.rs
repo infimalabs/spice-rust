@@ -71,6 +71,25 @@ impl Fixture {
         self.publisher = None;
     }
 
+    /// Seat a successor the way `spice up` does after `spice down` returned:
+    /// the predecessor withdrew its discovery and dropped the lock, and the
+    /// successor takes the lock as its first act and publishes only later.
+    fn seat_successor(&mut self) {
+        assert!(
+            self.publisher.is_none(),
+            "a successor seats only after the predecessor released the lock"
+        );
+        let lock = LockFile::new(
+            LockName::new("resident").expect("resident is a non-empty lock name"),
+            resident_lock_path(&self.canvas),
+        );
+        let Acquisition::Acquired(publisher) = lock.try_acquire().expect("successor resident lock")
+        else {
+            panic!("a released fixture lock cannot be contended");
+        };
+        self.publisher = Some(publisher);
+    }
+
     fn publish(&self) -> canvas::Discovery {
         let discovery = canvas::Discovery {
             endpoint: "http://127.0.0.1:48123".to_owned(),
@@ -1082,3 +1101,4 @@ fn canvas_rechecks_discovery_identity_immediately_before_launch() {
 }
 
 mod late;
+mod restart;

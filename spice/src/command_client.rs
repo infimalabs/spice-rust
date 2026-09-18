@@ -159,7 +159,7 @@ fn execute_mapped_with(
     contract: &Contract,
     connection: Connection,
     mapped: ClientResult<MappedCommand>,
-    mut after_transient: impl FnMut(&Fault),
+    after_transient: impl FnMut(&Fault),
 ) -> Outcome<CommandAnswer> {
     let mapped = match mapped {
         Ok(mapped) => mapped,
@@ -167,11 +167,30 @@ fn execute_mapped_with(
     };
     let discovery_path = selected_discovery_path(operator_discovery, connection);
     let bound = answer_bound(mapped.kind, &discovery_path);
+    execute_mapped_within(
+        operator_discovery,
+        &discovery_path,
+        contract,
+        mapped,
+        bound,
+        after_transient,
+    )
+}
+
+/// Submit one mapped command and outlast one resident handoff inside `bound`.
+fn execute_mapped_within(
+    operator_discovery: &Path,
+    discovery_path: &Path,
+    contract: &Contract,
+    mapped: MappedCommand,
+    bound: Duration,
+    mut after_transient: impl FnMut(&Fault),
+) -> Outcome<CommandAnswer> {
     let deadline = Instant::now() + bound;
     let resident_lock = resident_lock_path(operator_discovery);
     let session = match acquire_session_until(
         contract,
-        &discovery_path,
+        discovery_path,
         &resident_lock,
         deadline,
         bound,
@@ -181,20 +200,36 @@ fn execute_mapped_with(
         Ok(session) => session,
         Err(outcome) => return outcome,
     };
+    let dialed = session.discovery.value.epoch;
     let outcome = submit(contract, &mapped, session);
-    let Some(fault) = interrupted_submission(&outcome) else {
+    let ending = if let Some(fault) = interrupted_submission(&outcome) {
+        after_transient(fault);
+        None
+    } else if refused_admission(&outcome) {
+        // The dialed resident is ending and refused before it enqueued
+        // anything, so nothing was committed and the same envelope may be
+        // presented to its successor. This is the one moment a restart is
+        // observable from a client: a resident that refuses admission is on
+        // its way out, and whatever the lock says while it leaves is part of
+        // the same handoff, not a resident that is gone for good.
+        after_transient(&environment_fault_value(
+            NOT_ADMITTING,
+            &format!("resident epoch {dialed} stopped admitting the command"),
+        ));
+        Some(dialed)
+    } else {
         return outcome;
     };
-    after_transient(fault);
 
-    // The resident may have committed before its socket disappeared. Present
-    // the exact command identity again: a replacement generation reconciles a
-    // durable receipt, while moved authority is returned as its current
+    // The resident may have committed before its socket disappeared, or it
+    // refused before enqueueing at all. Present the exact command identity
+    // again: a replacement generation reconciles a durable receipt or admits
+    // the envelope fresh, while moved authority is returned as its current
     // refusal. Both attempts share one client bound, and a second transport
-    // interruption is terminal rather than an unbounded replay loop.
+    // interruption or refusal is terminal rather than an unbounded replay loop.
     let session = match acquire_session_until(
         contract,
-        &discovery_path,
+        discovery_path,
         &resident_lock,
         deadline,
         bound,
@@ -202,9 +237,53 @@ fn execute_mapped_with(
         &mut after_transient,
     ) {
         Ok(session) => session,
-        Err(outcome) => return outcome,
+        Err(outcome) => {
+            return match ending {
+                Some(epoch) => restart_unfinished(outcome, epoch, bound),
+                None => outcome,
+            };
+        }
     };
     submit(contract, &mapped, session)
+}
+
+/// The refusal a resident sends while it is ending and no longer admits.
+const NOT_ADMITTING: &str = "resident::not-admitting";
+
+fn refused_admission(outcome: &Outcome<CommandAnswer>) -> bool {
+    matches!(outcome, Outcome::Refusal(refusal) if refusal.reason() == NOT_ADMITTING)
+}
+
+/// Keep one answer for a restart the client witnessed and outlasted.
+///
+/// After the dialed resident refused admission, every reason the handoff
+/// loop can name at its deadline describes a successor that never published:
+/// discovery absent, a lock nobody holds, or a holder still publishing. Naming
+/// any of those would send the caller to repair an environment that is merely
+/// between residents. The refusal the resident actually gave stands, extended
+/// with the epoch that ended, the bound the client waited, and the one action
+/// left: run the command again once a resident is seated. Any other outcome
+/// is a different defect and passes through unchanged.
+fn restart_unfinished(
+    outcome: Outcome<CommandAnswer>,
+    epoch: CanonicalUuid,
+    bound: Duration,
+) -> Outcome<CommandAnswer> {
+    match &outcome {
+        Outcome::Fault(fault) if fault.reason == "canvas::deadline-elapsed" => {}
+        _ => return outcome,
+    }
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            NOT_ADMITTING,
+            Some("resident-state".to_owned()),
+            Some("seated".to_owned()),
+            Some("quiescing".to_owned()),
+        )
+        .with_detail(format!(
+            "resident epoch {epoch} stopped admitting during this command and no successor published an authenticated surface within the {bound:?} client bound; run the command again once a resident is seated"
+        )),
+    ))
 }
 
 /// Prove the selected read contract through the resident's sole authenticated
