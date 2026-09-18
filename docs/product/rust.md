@@ -215,6 +215,12 @@ resulting lineage stream feeds one persistent plane whose pure Rust lattice owns
 placement, freezing, liquid settlement, ripple, backfill, geometry replay, and
 compaction-epoch replay. JavaScript only drives browser tests.
 
+Turn-start events remain lifecycle evidence, not Mosaic cards. The card reducer
+omits them for live delivery and retained history, so they consume no card slots
+and render no turn announcement. Final messages retain their FINAL badge and
+visual treatment; the next message makes the new turn apparent. Compaction
+events still render their context divider.
+
 The predecessor's implementation details differ where the Rust product has a
 stronger ownership boundary:
 

@@ -214,7 +214,7 @@ fn render_agent_message_card(
                 layout.lifecycle.as_str(),
             )}
             aria-label={card_label}
-            data-card-kind={watchband::agent_card_kind(message.activity)}
+            data-card-kind={if is_boundary { "compaction" } else { "agent-message" }}
             data-message-role="agent"
             data-mosaic-card-key={source_id}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
@@ -291,7 +291,7 @@ fn agent_message_presentation<'a>(
     let rendered_markdown =
         crate::composer_markdown::render_received_with_badges(&message.text, badges);
     let card_label = match message.activity {
-        wire::AgentActivityKind::Turn => format!("New turn started by {footer_label}"),
+        wire::AgentActivityKind::Turn => unreachable!("turn events are not message cards"),
         wire::AgentActivityKind::Compaction => format!("Context compacted by {footer_label}"),
         wire::AgentActivityKind::Tool if message.text.trim().is_empty() => {
             format!("Tool result from {attribution}")
@@ -329,7 +329,6 @@ fn agent_message_presentation<'a>(
 fn render_agent_boundary(message: &wire::AgentMessage, attribution: &str) -> Html {
     let attribution = attribution.to_owned();
     let display_millis = crate::runtime::agent_message_display_millis(message);
-    let label = watchband::agent_boundary_label(message.activity);
     html! {
         <>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
@@ -337,7 +336,7 @@ fn render_agent_boundary(message: &wire::AgentMessage, attribution: &str) -> Htm
                 <Age authored={display_millis} class="mosaic-compaction-age" />
                 <span class="mosaic-compaction-context">
                     <span class="mosaic-compaction-agent" title={attribution.clone()}>{attribution}</span>
-                    <span class="message-key">{label}</span>
+                    <span class="message-key">{"compacted context"}</span>
                 </span>
             </span>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>

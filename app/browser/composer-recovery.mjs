@@ -71,7 +71,7 @@ async function waitForInbox(fixture, lane, text) {
   throw new Error(`inbox never received ${JSON.stringify(text)}`);
 }
 
-async function installPreDurabilityCut(page, marker) {
+async function holdBeforeDurability(page, marker) {
   await page.evaluate((match) => {
     const socket = window.__canvasSockets.at(-1);
     if (!socket) throw new Error("canvas WebSocket was not captured");
@@ -89,7 +89,6 @@ async function installPreDurabilityCut(page, marker) {
       const command = JSON.parse(new TextDecoder().decode(bytes));
       if (!cut && command.kind === "steer::send" && command.body.message.includes(match)) {
         cut = true;
-        socket.close(4000, "cut before steering durability");
         return;
       }
       forward();
@@ -134,8 +133,8 @@ async function reconnectInPlace(page, monitor, reason, socketCount) {
 /// Cut one command before durability and another after durability.
 ///
 /// The first half queues two complete documents on one lane while its first
-/// write is cut. Their pending floor rises immediately, the socket replays the
-/// same first identity, and only then may the second write drain. The second
+/// write is held. Their pending floor rises before the socket is cut; reconnect
+/// replays the same first identity, and only then may the second write drain. The second
 /// half lets the resident commit while swallowing its response, proving the
 /// reconnect replay is idempotent rather than a second directive.
 export async function assertComposerRecovery(page, fixture, seeded, monitor) {
@@ -166,7 +165,7 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
   await pasteImages(primary, ["recovery-before.png"]);
   await primary.getByRole("img", { name: "recovery-before.png" }).waitFor();
   await unsafeState(page, true, 0);
-  await installPreDurabilityCut(page, first);
+  await holdBeforeDurability(page, first);
   monitor.expectNetworkInterruption(true);
   await textbox.press("Control+Enter");
   await textbox.fill(second);
@@ -177,6 +176,9 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
     before.length + 2,
     "queued submissions are an immediate pending floor",
   );
+  await page.evaluate(() => {
+    window.__canvasSockets.at(-1).close(4000, "cut before steering durability");
+  });
   await chooseCanvasView(page, "Flow");
   await assertOfflineObserved(page, "the first steering write is cut before durability");
   await assertOnlineObserved(page, "the cut steering socket reconnects", RECONNECT_MS);
