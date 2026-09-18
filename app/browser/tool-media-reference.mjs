@@ -70,7 +70,7 @@ async function descriptor(card) {
     aria: article.getAttribute("aria-label"),
     imageOnly: article.classList.contains("mosaic-message-card--image-only"),
     text: article.querySelector(".message-body")?.textContent?.trim() ?? "",
-    tool: article.querySelector(".message-tool-label")?.textContent,
+    tool: article.querySelector(".message-badge--tool")?.textContent,
     agent: article.querySelector(".message-agent-name")?.getAttribute("aria-label"),
     names: [...article.querySelectorAll(".message-attachments img")]
       .map((image) => image.getAttribute("alt")),
@@ -85,7 +85,7 @@ async function assertCard(card, expected, label) {
   const observed = await descriptor(card);
   assert.equal(observed.activity, "tool", `${label} retains typed tool activity`);
   assert.match(observed.aria, /^Tool result from /, `${label} exposes tool and agent attribution`);
-  assert.equal(observed.tool, "Tool", `${label} visibly identifies tool activity`);
+  assert.equal(observed.tool, "TOOL", `${label} visibly identifies tool activity`);
   assert.match(observed.agent, /^Copy agent id for /, `${label} keeps accessible agent identity`);
   assert.equal(observed.imageOnly, expected.text.length === 0, `${label} chooses the image-only tier`);
   assert.equal(observed.text, expected.text, `${label} retains its bounded textual outcome`);

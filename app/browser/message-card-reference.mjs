@@ -689,6 +689,30 @@ async function retainFinalCard(page, console, activityReplay, lane) {
   return card;
 }
 
+async function retainToolCard(page, console, activityReplay, lane) {
+  const message = await activityReplay.injectAgentToolMedia(
+    page,
+    lane,
+    [{
+      name: "badge-reference.png",
+      content_type: "image/png",
+      data_url: `data:image/png;base64,${PIXEL_PNG}`,
+    }],
+    "view image: badge-reference.png succeeded",
+  );
+  const card = console.locator(`[data-mosaic-card-key="${message.key}"]`);
+  await card.waitFor({ state: "attached", timeout: 10_000 });
+  await waitForPage(page, "tool message commits", TRANSITION_MS, (key) => {
+    const candidate = document.querySelector(`[data-mosaic-card-key="${key}"]`);
+    return candidate?.dataset.layoutPhase === "committed"
+      && candidate.dataset.agentActivity === "tool"
+      && candidate.querySelector("img")?.dataset.mosaicImageState === "loaded"
+      && [...candidate.querySelectorAll(".message-badge")]
+        .map((badge) => badge.textContent).join(",") === "TOOL";
+  }, message.key);
+  return card;
+}
+
 async function messageStateColors(card) {
   return card.evaluate((article) => {
     const canvas = document.createElement("canvas");
@@ -720,8 +744,34 @@ async function messageStateColors(card) {
     const footerBounds = footer.getBoundingClientRect();
     const footerRight = footer.querySelector(".message-footer-right");
     const footerRightBounds = footerRight.getBoundingClientRect();
-    const finalBadge = article.querySelector(".message-badge--final");
-    const badgeBounds = finalBadge?.getBoundingClientRect();
+    const age = article.querySelector(".message-age");
+    const ageBounds = age.getBoundingClientRect();
+    const footerBadge = (classification) => {
+      const badge = article.querySelector(`.message-badge--${classification}`);
+      if (!badge) {
+        return null;
+      }
+      const badgeBounds = badge.getBoundingClientRect();
+      return {
+        text: badge.textContent,
+        ariaLabel: badge.getAttribute("aria-label"),
+        role: badge.getAttribute("role"),
+        background: getComputedStyle(badge).backgroundColor,
+        color: getComputedStyle(badge).color,
+        count: badge.querySelectorAll(".message-badge-count").length,
+        listed: badge.parentElement.matches('.message-footer-left > .message-badges[role="list"]'),
+        left: badgeBounds.left,
+        right: badgeBounds.right,
+        top: badgeBounds.top,
+        bottom: badgeBounds.bottom,
+        ageRight: ageBounds.right,
+        footerLeft: footerBounds.left,
+        footerRight: footerBounds.right,
+        footerTop: footerBounds.top,
+        footerBottom: footerBounds.bottom,
+        footerRightLeft: footerRightBounds.left,
+      };
+    };
     const badgeGeometry = [...article.querySelectorAll(".message-badge, .message-ack-pill")].map((badge) => {
       const bounds = badge.getBoundingClientRect();
       const badgeStyle = getComputedStyle(badge);
@@ -749,6 +799,7 @@ async function messageStateColors(card) {
     const ackQuote = ackPill?.closest("blockquote");
     const result = {
       key: article.dataset.mosaicCardKey,
+      activity: article.dataset.agentActivity,
       classes: [...article.classList],
       background: style.backgroundColor,
       backgroundRgba: rgba(style.backgroundColor),
@@ -758,6 +809,15 @@ async function messageStateColors(card) {
       boxShadow: style.boxShadow,
       panel: background("var(--panel)"),
       finalAccent: color("var(--accent-1)"),
+      toolAccent: color("var(--accent-4)"),
+      otherAccents: {
+        ack: color("var(--accent)"),
+        ackPending: color("var(--muted)"),
+        broadcast: color("var(--accent-5)"),
+        final: color("var(--accent-1)"),
+        review: color("var(--accent-1)"),
+        taste: color("var(--accent-2)"),
+      },
       finalTint: background("color-mix(in srgb, var(--accent-1) 8%, var(--panel))"),
       producerAccent: color("var(--accent-slot, var(--accent))"),
       speechBorder: color("color-mix(in srgb, var(--warning) 70%, var(--line))"),
@@ -769,23 +829,9 @@ async function messageStateColors(card) {
         rightStart: footerRightBounds.left,
       },
       badgeGeometry,
-      finalBadge: finalBadge && {
-        text: finalBadge.textContent,
-        ariaLabel: finalBadge.getAttribute("aria-label"),
-        role: finalBadge.getAttribute("role"),
-        background: getComputedStyle(finalBadge).backgroundColor,
-        color: getComputedStyle(finalBadge).color,
-        count: finalBadge.querySelectorAll(".message-badge-count").length,
-        left: badgeBounds.left,
-        right: badgeBounds.right,
-        top: badgeBounds.top,
-        bottom: badgeBounds.bottom,
-        footerLeft: footerBounds.left,
-        footerRight: footerBounds.right,
-        footerTop: footerBounds.top,
-        footerBottom: footerBounds.bottom,
-        footerRightLeft: footerRightBounds.left,
-      },
+      finalBadge: footerBadge("final"),
+      toolBadge: footerBadge("tool"),
+      toolLabels: article.querySelectorAll(".message-tool-label").length,
       badgeTexts: [...article.querySelectorAll(".message-badge, .message-ack-pill")]
         .map((badge) => badge.textContent),
       badgeBorderWidths: [...article.querySelectorAll(".message-badge, .message-ack-pill")]
@@ -983,6 +1029,122 @@ async function captureFinalMessageStates(
   ), await card.getAttribute("data-mosaic-card-key"));
 }
 
+async function captureToolMessageStates(ordinaryCard, finalCard, card, artifacts, mode, label) {
+  const ordinary = await messageStateColors(ordinaryCard);
+  const final = await messageStateColors(finalCard);
+  const tool = await messageStateColors(card);
+  assert.equal(tool.activity, "tool", `${mode} ${label} measures a tool card`);
+  assert.ok(!tool.classes.includes("final"), `${mode} ${label} tool card is not final`);
+  assert.deepEqual(
+    { ordinary: ordinary.toolBadge, final: final.toolBadge, finalOnTool: tool.finalBadge },
+    { ordinary: null, final: null, finalOnTool: null },
+    `${mode} ${label} reserves the TOOL badge for tool cards and FINAL for final cards`,
+  );
+  assert.deepEqual(
+    [ordinary.toolLabels, final.toolLabels, tool.toolLabels],
+    [0, 0, 0],
+    `${mode} ${label} renders no muted tool label anywhere`,
+  );
+  assert.deepEqual(
+    {
+      text: tool.toolBadge?.text,
+      ariaLabel: tool.toolBadge?.ariaLabel,
+      role: tool.toolBadge?.role,
+      background: tool.toolBadge?.background,
+      color: tool.toolBadge?.color,
+      count: tool.toolBadge?.count,
+      listed: tool.toolBadge?.listed,
+    },
+    {
+      text: "TOOL",
+      ariaLabel: "TOOL message classification",
+      role: "listitem",
+      background: tool.toolAccent,
+      color: tool.panel,
+      count: 0,
+      listed: true,
+    },
+    `${mode} ${label} renders one accessible uncounted teal TOOL badge beside the age`,
+  );
+  assert.deepEqual(
+    Object.entries(tool.otherAccents).filter(([, accent]) => accent === tool.toolAccent),
+    [],
+    `${mode} ${label} gives TOOL a color no other classification wears: `
+      + `${tool.toolAccent} against ${JSON.stringify(tool.otherAccents)}`,
+  );
+  assert.deepEqual(
+    { texts: tool.badgeTexts, borders: tool.badgeBorderWidths, counts: tool.badgeCounts },
+    { texts: ["TOOL"], borders: ["0px"], counts: 0 },
+    `${mode} ${label} renders TOOL as the tool card's only borderless badge`,
+  );
+  const [toolGeometry] = tool.badgeGeometry;
+  const finalGeometry = final.badgeGeometry.find((badge) => badge.text === "FINAL");
+  const shape = (badge) => ({
+    display: badge.display,
+    height: badge.height,
+    minHeight: badge.minHeight,
+    padding: badge.padding,
+    borderWidth: badge.borderWidth,
+    borderRadius: badge.borderRadius,
+    fontSize: badge.fontSize,
+    fontFamily: badge.fontFamily,
+    fontWeight: badge.fontWeight,
+    counts: badge.counts,
+  });
+  assert.deepEqual(
+    shape(toolGeometry),
+    shape(finalGeometry),
+    `${mode} ${label} gives TOOL the FINAL badge's measured geometry`,
+  );
+  assert.deepEqual(
+    {
+      display: toolGeometry.display,
+      minHeight: toolGeometry.minHeight,
+      padding: toolGeometry.padding,
+      borderRadius: toolGeometry.borderRadius,
+      fontSize: toolGeometry.fontSize,
+      fontWeight: toolGeometry.fontWeight,
+    },
+    {
+      display: "flex",
+      minHeight: "17px",
+      padding: "0px 4px",
+      borderRadius: "999px",
+      fontSize: "12px",
+      fontWeight: "700",
+    },
+    `${mode} ${label} keeps the TOOL footer badge on the inline-badge geometry`,
+  );
+  assert.ok(
+    toolGeometry.scrollWidth <= toolGeometry.clientWidth + 1,
+    `${mode} ${label} keeps the TOOL badge unclipped`,
+  );
+  assert.ok(
+    tool.toolBadge.left >= tool.toolBadge.ageRight
+      && tool.toolBadge.left >= tool.toolBadge.footerLeft
+      && tool.toolBadge.right <= tool.toolBadge.footerRight
+      && tool.toolBadge.top >= tool.toolBadge.footerTop
+      && tool.toolBadge.bottom <= tool.toolBadge.footerBottom
+      && tool.toolBadge.right <= tool.toolBadge.footerRightLeft,
+    `${mode} ${label} seats TOOL after the age without obscuring attribution or actions: `
+      + JSON.stringify(tool.toolBadge),
+  );
+  assert.equal(
+    tool.footerGeometry.height,
+    ordinary.footerGeometry.height,
+    `${mode} ${label} TOOL badge does not expand the message footer`,
+  );
+  assert.ok(
+    tool.footerGeometry.scrollWidth <= tool.footerGeometry.clientWidth + 1,
+    `${mode} ${label} tool footer keeps its responsive contents contained`,
+  );
+  assert.equal(tool.background, tool.panel, `${mode} tool card keeps the panel background`);
+  assert.equal(tool.borderRight, tool.producerAccent, `${mode} tool card preserves producer identity`);
+  await card.screenshot({
+    path: join(artifacts, `canvas-message-tool-${label}-${mode}.png`),
+  });
+}
+
 export async function assertReferenceMessageCard(
   page,
   console,
@@ -994,6 +1156,7 @@ export async function assertReferenceMessageCard(
 ) {
   const ordinaryCard = await retainNoActionCard(page, console, activityReplay, lane);
   const finalCard = await retainFinalCard(page, console, activityReplay, lane);
+  const toolCard = await retainToolCard(page, console, activityReplay, lane);
   const geometry = await card.evaluate((article) => {
     const measured = (node) => {
       const box = node.getBoundingClientRect();
@@ -1080,9 +1243,11 @@ export async function assertReferenceMessageCard(
       await captureFinalMessageStates(page, console, ordinaryCard, finalCard, artifacts, mode, {
         label: "reference", width: 648, height: 726,
       });
+      await captureToolMessageStates(ordinaryCard, finalCard, toolCard, artifacts, mode, "reference");
       await captureFinalMessageStates(page, console, ordinaryCard, finalCard, artifacts, mode, {
         label: "mobile", width: 390, height: 720,
       });
+      await captureToolMessageStates(ordinaryCard, finalCard, toolCard, artifacts, mode, "mobile");
     }
     await page.emulateMedia({ colorScheme: "dark" });
     await page.evaluate(() => { document.documentElement.style.fontSize = "20px"; });
@@ -1090,6 +1255,7 @@ export async function assertReferenceMessageCard(
       label: "zoomed", width: 648, height: 726,
     });
     await finalCard.screenshot({ path: join(artifacts, "canvas-message-final-zoomed-dark.png") });
+    await captureToolMessageStates(ordinaryCard, finalCard, toolCard, artifacts, "dark", "zoomed");
   } finally {
     await page.evaluate((fontSize) => {
       document.documentElement.style.fontSize = fontSize;

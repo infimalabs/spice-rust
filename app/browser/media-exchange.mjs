@@ -152,7 +152,7 @@ async function cardIdentity(card) {
     activity: article.dataset.agentActivity,
     aria: article.getAttribute("aria-label"),
     text: article.querySelector(".message-body")?.textContent?.trim(),
-    tool: article.querySelector(".message-tool-label")?.textContent,
+    tool: article.querySelector(".message-badge--tool")?.textContent,
     agent: article.querySelector(".message-agent-name")?.getAttribute("aria-label"),
     source: article.querySelector('img[alt="tool-image"]')?.getAttribute("src"),
     media: article.querySelector('img[alt="tool-image"]')?.dataset.mediaIdentity,
@@ -301,7 +301,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
   assert.equal(identity.activity, "tool");
   assert.match(identity.aria, /^Tool result from /);
   assert.match(identity.text, /^const r = await tools\.view_image.* completed$/);
-  assert.equal(identity.tool, "Tool");
+  assert.equal(identity.tool, "TOOL");
   assert.match(identity.agent, /^Copy agent id for /);
   assert.equal(identity.source, dataUrl);
   assert.match(identity.media, /^[0-9a-f]{64}$/);
