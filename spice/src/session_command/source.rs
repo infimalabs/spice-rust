@@ -143,7 +143,10 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
         return Err(refusal(
             "session::transcript-unspecified",
             None,
-            "pass a .jsonl or .jsonl.gz path, or run inside a live Codex or Claude agent",
+            &format!(
+                "pass a .jsonl or .jsonl.gz path, or run inside a live agent of a declared vendor ({})",
+                live_vendor_labels(environment)
+            ),
         ));
     }
     let mut resolved = Vec::with_capacity(paths.len());
@@ -153,6 +156,17 @@ fn resolve_ambient(environment: &Environment) -> Result<Vec<ResolvedSource>, Ref
         require_ambient_time(started)?;
     }
     Ok(resolved)
+}
+
+/// The vendors whose live identity an ambient lookup would have read, in the
+/// environment's own row order, spelled for the hint that says none was there.
+fn live_vendor_labels(environment: &Environment) -> String {
+    environment
+        .vendors
+        .iter()
+        .map(|row| row.vendor.label())
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn require_ambient_time(started: std::time::Instant) -> Result<(), Refusal> {
@@ -806,7 +820,7 @@ mod tests {
 
     use super::{
         Environment, SEARCH_DEPTH, SEARCH_ENTRY_LIMIT, canonical_thread, find_named_transcript,
-        find_thread, resolve_inputs, resolve_thread_from_registry,
+        find_thread, live_vendor_labels, resolve_inputs, resolve_thread_from_registry,
     };
     use crate::session_command::VendorEnvironment;
 
@@ -1377,5 +1391,32 @@ mod tests {
             resolved[0].path,
             codex.canonicalize().expect("Codex transcript path")
         );
+    }
+
+    #[test]
+    fn the_ambient_hint_names_every_declared_vendor_once_in_row_order() {
+        let registry = spice::extension::registry().expect("compiled registry is coherent");
+        let declared = registry.session_vendors();
+        let environment = Environment::new(
+            declared
+                .iter()
+                .map(|vendor| VendorEnvironment::new(vendor, None, None))
+                .collect(),
+            None,
+            None,
+            None,
+            None,
+        );
+
+        let labels = live_vendor_labels(&environment);
+        assert_eq!(labels, "Codex, Claude, oh-my-pi");
+        for vendor in declared {
+            assert_eq!(
+                labels.matches(vendor.label()).count(),
+                1,
+                "{}",
+                vendor.label()
+            );
+        }
     }
 }
