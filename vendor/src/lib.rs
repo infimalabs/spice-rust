@@ -33,5 +33,5 @@ pub use record::{
 };
 pub use vendor::{
     CLAUDE, CODEX, LaunchValues, OMP, StdoutContract, StdoutFormat, SteeringChannel, ToolEnvelope,
-    TranscriptIndex, TranscriptLayout, Vendor,
+    TranscriptIndex, TranscriptLayout, Vendor, WorkingDirectoryFolders,
 };

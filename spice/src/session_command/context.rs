@@ -502,6 +502,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         )
     }
 
@@ -570,6 +571,7 @@ mod tests {
                 None,
                 None,
             )],
+            None,
             None,
             None,
             None,

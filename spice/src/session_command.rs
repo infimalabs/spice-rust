@@ -62,10 +62,14 @@ pub(crate) struct Environment {
     preferred_vendor: Option<OsString>,
     home: Option<PathBuf>,
     /// The working directory this process was asked from, captured once beside
-    /// the vendor rows: a vendor with no state index keys its session files by
-    /// the directory that named them, so the directory is ambient session
-    /// state in the same sense the home is.
+    /// the vendor rows: a vendor that files sessions by working directory
+    /// keys them by the directory that named them, so the directory is
+    /// ambient session state in the same sense the home is.
     cwd: Option<PathBuf>,
+    /// The temporary directory the process sees, captured beside the home
+    /// for the same reason: oh-my-pi names a working directory beneath it
+    /// relative to it.
+    temp: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -95,6 +99,7 @@ impl Environment {
         preferred_vendor: Option<OsString>,
         home: Option<OsString>,
         cwd: Option<PathBuf>,
+        temp: Option<PathBuf>,
     ) -> Self {
         vendors.sort_by_key(|row| {
             (
@@ -107,6 +112,7 @@ impl Environment {
             preferred_vendor,
             home: home.map(PathBuf::from),
             cwd,
+            temp,
         }
     }
 }
