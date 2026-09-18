@@ -567,7 +567,7 @@ try {
           assertNoCredentialOrLandingGap(lightPage, [resident.discovery.capability])
         ));
         await run.phase("vendor-emblem", () => (
-          assertOmpEmblemRoles(lightPage, fixture, worktrees, seeded)
+          assertOmpEmblemRoles(lightPage, fixture, worktrees, seeded, artifacts)
         ));
       });
       await run.scenario("firefox-restored-mosaic", async () => {

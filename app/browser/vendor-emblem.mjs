@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { join } from "node:path";
 
 import { CONNECT_MS, chooseCanvasView, reply, waitForLocator } from "./canvas-fixture.mjs";
 
@@ -9,17 +10,28 @@ const UNKNOWN_FAMILY_MODEL = "google/gemini-3-pro";
 ///
 /// The main emblem is the icon's own `svg`; its first path is the glyph in
 /// the emblem position. The badge is the `.composer-vendor-badge` group
-/// inside it, or nothing, and `plate` reports any filled shape standing
-/// behind its pi. Computed colour and opacity are read from the icon
-/// so two seats can be held to the same paint rather than the same class.
+/// inside it, or nothing: its pi is the gradient-filled path, `plate`
+/// reports any filled shape standing behind that pi, and `halo` describes
+/// the soft silhouette painted under it, or nothing. Computed colour and
+/// opacity are read from the icon so two seats can be held to the same
+/// paint rather than the same class, and `surface` is the composer's own
+/// surface colour as the icon resolves it, so the halo can be held to it.
 function readEmblem(member) {
   const icon = member.querySelector(".composer-vendor-icon");
   if (!icon) throw new Error(`${member.dataset.agentLane} paints no composer emblem`);
   const emblem = icon.querySelector(":scope > svg");
   const badge = icon.querySelector(".composer-vendor-badge");
-  const badgePath = badge?.querySelector("path") ?? null;
+  const pi = badge?.querySelector('path[fill^="url(#"]') ?? null;
+  const halo = badge?.querySelector(".composer-vendor-halo") ?? null;
+  const softener = badge?.querySelector("filter") ?? null;
+  const blur = softener && [...softener.children].find((child) => child.localName === "feGaussianBlur");
   const style = getComputedStyle(icon);
   const box = icon.getBoundingClientRect();
+  const probe = document.createElement("span");
+  probe.style.color = "var(--control)";
+  icon.append(probe);
+  const surface = getComputedStyle(probe).color;
+  probe.remove();
   return {
     vendor: icon.dataset.composerVendorIcon,
     provider: icon.dataset.composerVendorProvider ?? null,
@@ -28,10 +40,22 @@ function readEmblem(member) {
     glyph: emblem.querySelector(":scope > path")?.getAttribute("d") ?? null,
     badge: badge && {
       plate: badge.querySelector("circle, rect, ellipse") !== null,
-      glyph: badgePath?.getAttribute("d") ?? null,
-      fill: badgePath?.getAttribute("fill") ?? null,
+      glyph: pi?.getAttribute("d") ?? null,
+      fill: pi?.getAttribute("fill") ?? null,
       gradient: badge.querySelector("linearGradient")?.id ?? null,
+      halo: halo && {
+        glyph: halo.getAttribute("d"),
+        fill: getComputedStyle(halo).fill,
+        stroke: getComputedStyle(halo).stroke,
+        strokeWidth: Number.parseFloat(getComputedStyle(halo).strokeWidth),
+        opacity: Number(getComputedStyle(halo).opacity),
+        filter: halo.getAttribute("filter"),
+        softener: softener?.id ?? null,
+        blur: blur ? Number(blur.getAttribute("stdDeviation")) : null,
+        underPi: pi !== null && (halo.compareDocumentPosition(pi) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0,
+      },
     },
+    surface,
     color: style.color,
     opacity: style.opacity,
     width: box.width,
@@ -45,10 +69,14 @@ function readEmblem(member) {
 /// one on a family the composer does not know. The known family paints the
 /// claude glyph as its main emblem at the same paint and size as the native
 /// claude seat beside it, with oh-my-pi's pi over the glyph's corner on no
-/// plate; the unknown family keeps the pi alone as its emblem.
+/// plate but a soft halo of its own shape, blurred and translucent in the
+/// surface colour, so the pi reads over the glyph without a cut edge; the
+/// unknown family keeps the pi alone as its emblem.
 /// Vacant seats suffice because the emblem reads the seat's recorded model,
-/// not a running occupant.
-export async function assertOmpEmblemRoles(page, fixture, worktrees, seeded) {
+/// not a running occupant. The roster is kept as a screenshot in each colour
+/// scheme before anything is asserted, so the badged pi over the glyph can
+/// be inspected as painted.
+export async function assertOmpEmblemRoles(page, fixture, worktrees, seeded, artifacts) {
   const lanes = await reply(fixture, ["lane"]);
   const reference = lanes.body.lanes.find((lane) => lane.lane === seeded.lane);
   assert.equal(reference?.vendor, "claude", "the seeded team keeps its native claude seat");
@@ -80,6 +108,17 @@ export async function assertOmpEmblemRoles(page, fixture, worktrees, seeded) {
   for (const lane of [knownLane, unknownLane]) {
     await waitForLocator(page, "an oh-my-pi seat renders its composer emblem", CONNECT_MS,
       member(lane).locator(".composer-vendor-icon"));
+  }
+  try {
+    for (const scheme of ["light", "dark"]) {
+      await page.emulateMedia({ colorScheme: scheme });
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+      await console_.locator(".team-agents").screenshot({
+        path: join(artifacts, `canvas-vendor-emblem-${scheme}.png`),
+      });
+    }
+  } finally {
+    await page.emulateMedia({ colorScheme: "light" });
   }
   const [native, known, unknown] = await Promise.all(
     [seeded.lane, knownLane, unknownLane].map((lane) => member(lane).evaluate(readEmblem)),
@@ -116,6 +155,22 @@ export async function assertOmpEmblemRoles(page, fixture, worktrees, seeded) {
     "the badged pi keeps its own diagonal gradient, defined inside the badge",
   );
   assert.equal(known.badge.gradient, `composer-vendor-gradient-${knownLane}`);
+  const halo = known.badge.halo;
+  assert.deepEqual(
+    {
+      glyph: halo?.glyph, fill: halo?.fill, stroke: halo?.stroke,
+      filter: halo?.filter, softener: halo?.softener, underPi: halo?.underPi,
+    },
+    {
+      glyph: unknown.glyph, fill: known.surface, stroke: known.surface,
+      filter: `url(#composer-vendor-halo-${knownLane})`,
+      softener: `composer-vendor-halo-${knownLane}`, underPi: true,
+    },
+    "the pi stands on its own silhouette, painted under it in the surface colour and softened by the badge's own filter",
+  );
+  assert.ok(halo.strokeWidth > 0, `the halo is stroked wider than the pi, not ${halo.strokeWidth}`);
+  assert.ok(halo.opacity > 0 && halo.opacity < 1, `the halo is translucent, not ${halo.opacity}`);
+  assert.ok(halo.blur > 0, `the halo is blurred so it shows no edge, not ${halo.blur}`);
 
   assert.deepEqual(
     { vendor: unknown.vendor, provider: unknown.provider, badge: unknown.badge },

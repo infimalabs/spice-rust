@@ -123,6 +123,13 @@
   pointer-events: auto;
 }
 .composer-vendor-icon svg { display: block; width: 100%; height: 100%; fill: currentColor; }
+.composer-vendor-halo {
+  fill: var(--control);
+  stroke: var(--control);
+  stroke-width: 12;
+  stroke-linejoin: round;
+  opacity: .8;
+}
 .composer-vendor-icon--claude,
 .composer-vendor-icon--omp-claude {
   color: color-mix(in srgb, #d97706 88%, var(--ink));
