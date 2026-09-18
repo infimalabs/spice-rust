@@ -109,6 +109,13 @@ auto_compact_window_tokens = 300000
 personality = "pragmatic"
 fast_mode = true
 
+[vendor.omp]
+binary = "/opt/omp"
+model = "gpt-5.6-sol"
+effort = "max"
+fast_mode = true
+auto_compact_window_tokens = 250000
+
 [listen]
 window = "10m"
 

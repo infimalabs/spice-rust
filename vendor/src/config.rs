@@ -35,11 +35,19 @@ pub const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS: u64 =
 /// The window Codex is asked to compact against: OpenAI's boundary itself,
 /// since Codex triggers at 95% of it.
 pub const DEFAULT_CODEX_AUTO_COMPACT_WINDOW_TOKENS: u64 = OPENAI_LONG_CONTEXT_TOKENS;
-/// The window oh-my-pi is asked to compact against, for the Anthropic model
-/// it selects by default; omp triggers 15% short of it. Left to itself omp
-/// compacts against the model's full window, 850,000 tokens into a
-/// million-token model.
+/// The window oh-my-pi is asked to compact against for an Anthropic model,
+/// the kind it selects by default; omp triggers 15% short of it. Left to
+/// itself omp compacts against the model's full window, 850,000 tokens into
+/// a million-token model, and its registry prices no Anthropic long context.
 pub const DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS: u64 = DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS;
+/// The window oh-my-pi is asked to compact against for an OpenAI model:
+/// OpenAI's boundary itself, the window omp's own registry declares for the
+/// Codex-served GPT models whose long-context price it does know.
+pub const DEFAULT_OMP_OPENAI_AUTO_COMPACT_WINDOW_TOKENS: u64 = OPENAI_LONG_CONTEXT_TOKENS;
+/// Provider prefixes omp resolves ahead of the slash in a `provider/model`
+/// spelling, and bare model families it matches fuzzily, that reach OpenAI.
+const OMP_OPENAI_PROVIDERS: [&str; 2] = ["openai", "openai-codex"];
+const OMP_OPENAI_FAMILIES: [&str; 2] = ["gpt", "codex"];
 /// The share of a window omp holds back for the reply, as omp computes it.
 const OMP_RESERVE_PERCENT: u64 = 15;
 /// The least reserve omp holds back, whatever the window.
@@ -275,8 +283,11 @@ pub struct OmpConfig {
     model: LaunchValue,
     effort: ClaudeEffort,
     fast_mode: bool,
-    #[serde(deserialize_with = "omp_window")]
-    auto_compact_window_tokens: u64,
+    #[serde(
+        deserialize_with = "omp_window",
+        skip_serializing_if = "Option::is_none"
+    )]
+    auto_compact_window_tokens: Option<u64>,
 }
 
 impl Default for OmpConfig {
@@ -286,7 +297,7 @@ impl Default for OmpConfig {
             model: LaunchValue::new(DEFAULT_OMP_MODEL),
             effort: ClaudeEffort::Xhigh,
             fast_mode: false,
-            auto_compact_window_tokens: DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS,
+            auto_compact_window_tokens: None,
         }
     }
 }
@@ -316,17 +327,19 @@ impl OmpConfig {
         self.fast_mode
     }
 
-    /// The window omp is asked to compact against.
+    /// The window omp is asked to compact against: the one policy names, or
+    /// else the boundary of the provider the model spelling reaches.
     #[must_use]
-    pub const fn auto_compact_window_tokens(&self) -> u64 {
+    pub fn auto_compact_window_tokens(&self) -> u64 {
         self.auto_compact_window_tokens
+            .unwrap_or_else(|| omp_default_auto_compact_window_tokens(self.model()))
     }
 
     /// The fixed token limit omp is handed, derived from the window the way
     /// omp derives its own threshold from a model's window.
     #[must_use]
-    pub const fn auto_compact_threshold_tokens(&self) -> u64 {
-        omp_auto_compact_threshold_tokens(self.auto_compact_window_tokens)
+    pub fn auto_compact_threshold_tokens(&self) -> u64 {
+        omp_auto_compact_threshold_tokens(self.auto_compact_window_tokens())
     }
 }
 
@@ -400,14 +413,34 @@ fn codex_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Er
     Ok(value)
 }
 
-fn omp_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
-    let value = u64::deserialize(deserializer)?;
-    if omp_auto_compact_threshold_tokens(value) == 0 {
+fn omp_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
+    let value = Option::<u64>::deserialize(deserializer)?;
+    if value.is_some_and(|window| omp_auto_compact_threshold_tokens(window) == 0) {
         return Err(D::Error::custom(
             "oh-my-pi auto-compaction window must exceed the reserve omp holds back",
         ));
     }
     Ok(value)
+}
+
+/// The window omp is asked to compact against when policy names none: the
+/// boundary of the provider its fuzzy match reaches from this spelling, or
+/// Anthropic's smaller one for a spelling that names no provider spice knows,
+/// so an unfamiliar model crosses neither boundary.
+#[must_use]
+pub fn omp_default_auto_compact_window_tokens(model: &str) -> u64 {
+    let spelling = model.trim().to_ascii_lowercase();
+    let openai = match spelling.split_once('/') {
+        Some((provider, _)) => OMP_OPENAI_PROVIDERS.contains(&provider),
+        None => OMP_OPENAI_FAMILIES
+            .iter()
+            .any(|family| spelling.starts_with(family)),
+    };
+    if openai {
+        DEFAULT_OMP_OPENAI_AUTO_COMPACT_WINDOW_TOKENS
+    } else {
+        DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS
+    }
 }
 
 /// Derive the threshold omp would compute for a window of this size: the
@@ -474,6 +507,51 @@ mod tests {
             OmpConfig::default().auto_compact_threshold_tokens(),
             187_000
         );
+    }
+
+    #[test]
+    fn omp_window_follows_the_provider_the_model_spelling_reaches() {
+        for spelling in [
+            "gpt-5.6-sol",
+            "GPT-5.2",
+            "codex-mini",
+            "openai/gpt-5.2",
+            "openai-codex/gpt-5.6-sol",
+            "openai/anything",
+        ] {
+            assert_eq!(
+                omp_default_auto_compact_window_tokens(spelling),
+                272_000,
+                "{spelling}"
+            );
+        }
+        for spelling in [
+            "claude-opus-5",
+            "opus",
+            "anthropic/claude-sonnet-5",
+            "gemini-2.5-pro",
+            "google/gemini-2.5-pro",
+            "",
+        ] {
+            assert_eq!(
+                omp_default_auto_compact_window_tokens(spelling),
+                220_000,
+                "{spelling}"
+            );
+        }
+        let sol: OmpConfig = serde_json::from_value(serde_json::json!({"model": "gpt-5.6-sol"}))
+            .expect("an OpenAI model admits");
+        assert_eq!(sol.auto_compact_window_tokens(), 272_000);
+        assert_eq!(sol.auto_compact_threshold_tokens(), 231_200);
+        let pinned: OmpConfig = serde_json::from_value(
+            serde_json::json!({"model": "gpt-5.6-sol", "auto_compact_window_tokens": 200_000}),
+        )
+        .expect("a named window admits");
+        assert_eq!(pinned.auto_compact_window_tokens(), 200_000);
+        let unset: OmpConfig =
+            serde_json::from_value(serde_json::json!({"auto_compact_window_tokens": null}))
+                .expect("a null window admits");
+        assert_eq!(unset.auto_compact_window_tokens(), 220_000);
     }
 
     #[test]

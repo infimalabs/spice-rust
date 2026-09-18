@@ -257,6 +257,33 @@ fn rust_codex_default_is_current_and_explicit_selection_still_wins() {
 }
 
 #[test]
+fn omp_window_defaults_to_the_boundary_of_the_provider_its_model_reaches() {
+    let openai = decode("[vendor.omp]\nmodel = \"gpt-5.6-sol\"\n")
+        .expect("an OpenAI model selection is valid");
+    assert_eq!(
+        openai.vendor().omp().auto_compact_window_tokens(),
+        vendor::DEFAULT_OMP_OPENAI_AUTO_COMPACT_WINDOW_TOKENS
+    );
+    assert_eq!(
+        openai.vendor().omp().auto_compact_threshold_tokens(),
+        231_200
+    );
+    let pinned =
+        decode("[vendor.omp]\nmodel = \"gpt-5.6-sol\"\nauto_compact_window_tokens = 200000\n")
+            .expect("a named window is valid");
+    assert_eq!(
+        pinned.vendor().omp().auto_compact_threshold_tokens(),
+        170_000
+    );
+    let anthropic = decode("[vendor.omp]\nmodel = \"anthropic/claude-sonnet-5\"\n")
+        .expect("an Anthropic model selection is valid");
+    assert_eq!(
+        anthropic.vendor().omp().auto_compact_threshold_tokens(),
+        187_000
+    );
+}
+
+#[test]
 fn malformed_policy_values_are_refused_under_their_domain_paths() {
     for (document, path) in [
         (

@@ -766,9 +766,7 @@ configuration_registry! {
     }
     fixed "vendor.omp.auto_compact_window_tokens" {
         kind: UnsignedInteger,
-        builtin: Some(Builtin::UnsignedInteger(
-            vendor::DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS,
-        )),
+        builtin: None,
         layers: TRACKED,
         class: Policy,
         flag: None,

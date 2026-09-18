@@ -133,7 +133,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 64);
+    assert_eq!(missing.provenance().len(), 63);
     assert!(
         missing
             .provenance()
