@@ -715,14 +715,6 @@ pub(crate) fn block_quote(raw: &str) -> String {
         .join("\n")
 }
 
-/// Display the producer's preview or the explicit absent-preview label.
-///
-/// This is the module's runtime boundary: agent transcript cards deliberately
-/// pass absence instead of reparsing authored prose in the browser.
-pub(crate) fn quote_label(preview: Option<&str>) -> &str {
-    preview.unwrap_or("quoted message")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -807,12 +799,6 @@ mod tests {
         assert_eq!(block_quote("   \n\t\n  "), "");
         assert_eq!(block_quote(""), "");
         assert_eq!(compose("", &quoted(&[("   \n  ", "")]), &[]), "");
-    }
-
-    #[test]
-    fn absent_preview_has_one_documented_label() {
-        assert_eq!(quote_label(Some("author words")), "author words");
-        assert_eq!(quote_label(None), "quoted message");
     }
 
     #[test]

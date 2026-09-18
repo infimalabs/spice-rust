@@ -19,6 +19,7 @@ use wire::{
 
 use crate::pane::{Principal, SteerPane};
 use crate::socket::{Admitted, SessionScope};
+use crate::watchband;
 
 mod message_cards;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -379,6 +380,12 @@ impl LaneLifecycleBoundary {
 }
 
 impl LaneActivity {
+    /// Prose detail is the line the composer quote header would show for the
+    /// same message: the first authored line after borrowed Markdown quotes,
+    /// or the shared absent-preview label when every line is quoted. The
+    /// ticker voices this detail as the agent's own words, so a reply that
+    /// opens by quoting the operator must never surface as that quote. Every
+    /// other activity kind keeps its text verbatim.
     fn from_message(message: &AgentMessage) -> Self {
         let (class, title) = match message.activity {
             AgentActivityKind::Prose => ("prose", "assistant"),
@@ -387,12 +394,19 @@ impl LaneActivity {
             AgentActivityKind::Turn => ("turn", "new turn"),
             AgentActivityKind::Compaction => ("compaction", "compaction"),
         };
+        let detail = match message.activity {
+            AgentActivityKind::Prose => {
+                watchband::quote_label(watchband::first_nonquoted_prose(&message.text).as_deref())
+                    .to_owned()
+            }
+            _ => message.text.clone(),
+        };
         Self {
             lane: message.lane,
             display_millis: agent_message_display_millis(message),
             class,
             title: title.to_owned(),
-            detail: message.text.clone(),
+            detail,
             source: ActivitySource {
                 lane: message.lane,
                 locus: message.locus,

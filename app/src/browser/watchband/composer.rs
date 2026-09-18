@@ -529,7 +529,7 @@ pub(super) fn render_quote_shards(
                         body: input.value(),
                     });
                 });
-                let shown = crate::composer_markdown::quote_label(quote.preview.as_deref());
+                let shown = watchband::quote_label(quote.preview.as_deref());
                 let textarea_id = quote_textarea_id(lane_key, &quote.identity);
                 let source_id = format!("message-{}", quote.identity);
                 let onpaste = paste_images(

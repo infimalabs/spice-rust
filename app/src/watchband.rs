@@ -735,6 +735,18 @@ pub fn response_speech_text(text: &str, prepared: Option<&str>) -> Option<String
     (!response.is_empty()).then(|| response.to_owned())
 }
 
+/// Display the producer's preview or the explicit absent-preview label.
+///
+/// This is the boundary between a producer and every surface that voices an
+/// agent's prose as its own: the composer quote header and the team ticker
+/// both pass the outcome of [`first_nonquoted_prose`] here rather than
+/// reparsing authored text, so an entirely quoted message wears one shared
+/// label instead of a borrowed quote presented as the agent's own words.
+#[must_use]
+pub fn quote_label(preview: Option<&str>) -> &str {
+    preview.unwrap_or("quoted message")
+}
+
 /// The count a navigation pill wears, or nothing.
 ///
 /// Zero is absence rather than a badge reading `0`: the badge exists to draw
@@ -871,9 +883,15 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, agent_activity_name, agent_boundary_label, agent_card_kind,
-        agent_message_attribution, agent_message_label, team_visual_weight,
+        agent_message_attribution, agent_message_label, quote_label, team_visual_weight,
         ticker_accessible_label, ticker_chunks,
     };
+
+    #[test]
+    fn absent_preview_has_one_documented_label() {
+        assert_eq!(quote_label(Some("author words")), "author words");
+        assert_eq!(quote_label(None), "quoted message");
+    }
 
     #[test]
     fn unnamed_agent_attribution_still_names_author_lane_and_worktree() {

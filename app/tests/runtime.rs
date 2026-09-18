@@ -1,5 +1,6 @@
 //! The real canvas runtime retains only admitted, capability-scoped state.
 
+use app::watchband::{ticker_accessible_label, ticker_chunks};
 use app::{
     CanvasRuntime, LaneStatus, Session, Stale, StreamDirective, StreamTerminal, stale_reads,
 };
@@ -1092,6 +1093,107 @@ fn redelivered_older_activity_does_not_displace_newer_lane_activity() {
         runtime.activities().len(),
         2,
         "both unique identities are retained and the replay adds no third row"
+    );
+}
+
+#[test]
+fn team_ticker_prose_leads_with_the_first_authored_line_after_borrowed_quotes() {
+    // The chrome ticker's line budget; the composition below is the one
+    // `render_team_ticker` performs over `detail()` for a prose activity.
+    const TICKER_BUDGET: usize = 160;
+    const STANDING_LABEL: &str = "Jeff";
+
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let lanes = lane_response(&[(LANE, LANE, Some(LANE_CAPABILITY), true)]);
+    let admitted_lanes: app::Admitted<Response<wire::intent::LaneAnswer>> = session
+        .admit_frame(&lanes)
+        .expect("lane response is admitted");
+    runtime.apply_lanes(&admitted_lanes);
+
+    let quoted_reply = message_frame(
+        LANE,
+        LANE_CAPABILITY,
+        60,
+        0,
+        None,
+        "> ship the ticker fix today\n>\n  > and keep the composer rule\n\n\
+         On it: the ticker shares the composer header rule.\n\
+         A second authored line stays on the card.",
+    );
+    runtime.apply_stream(&admitted_stream(&session, &quoted_reply));
+    let activity = runtime
+        .newest_team_activity(&runtime.lanes().expect("lane snapshot").lanes[0])
+        .expect("quoted prose still becomes activity");
+    assert_eq!(activity.class(), "prose");
+    assert_eq!(
+        activity.detail(),
+        "On it: the ticker shares the composer header rule.",
+        "the ticker leads with the first authored line, never the borrowed quote"
+    );
+    let (prefix, detail) = ticker_chunks(STANDING_LABEL, activity.detail(), TICKER_BUDGET);
+    let line = format!("{prefix}: {detail}");
+    let accessible =
+        ticker_accessible_label(STANDING_LABEL, activity.class(), &line, TICKER_BUDGET);
+    assert_eq!(
+        line,
+        "Jeff: On it: the ticker shares the composer header rule."
+    );
+    assert_eq!(
+        accessible,
+        "Jeff: Jeff: On it: the ticker shares the composer header rule."
+    );
+    for quoted in ["ship the ticker fix", "keep the composer rule", ">"] {
+        assert!(
+            !line.contains(quoted) && !accessible.contains(quoted),
+            "{quoted:?} is the operator's quoted text, not the agent's words"
+        );
+    }
+    assert!(
+        runtime
+            .messages()
+            .iter()
+            .any(|message| message.text.starts_with("> ship the ticker fix today\n")),
+        "the conversation card still carries the message verbatim, quotes included"
+    );
+
+    let entirely_quoted = message_frame(
+        LANE,
+        LANE_CAPABILITY,
+        90,
+        1,
+        None,
+        "> only the operator's words\n>\n> and nothing authored underneath",
+    );
+    runtime.apply_stream(&admitted_stream(&session, &entirely_quoted));
+    let activity = runtime
+        .newest_team_activity(&runtime.lanes().expect("lane snapshot").lanes[0])
+        .expect("an entirely quoted reply is still the newest activity");
+    assert_eq!(
+        activity.detail(),
+        "quoted message",
+        "with no authored line the ticker wears the composer header's absent-preview label"
+    );
+    let (prefix, detail) = ticker_chunks(STANDING_LABEL, activity.detail(), TICKER_BUDGET);
+    assert_eq!(format!("{prefix}: {detail}"), "Jeff: quoted message");
+
+    let tool = message_frame(
+        LANE,
+        LANE_CAPABILITY,
+        120,
+        2,
+        Some("tool"),
+        "Bash: grep -n '> quoted' app/src/watchband.rs",
+    );
+    runtime.apply_stream(&admitted_stream(&session, &tool));
+    let activity = runtime
+        .newest_team_activity(&runtime.lanes().expect("lane snapshot").lanes[0])
+        .expect("tool activity follows");
+    assert_eq!(
+        activity.detail(),
+        "Bash: grep -n '> quoted' app/src/watchband.rs",
+        "only prose adopts the quote rule; a tool detail keeps its text verbatim"
     );
 }
 
