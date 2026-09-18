@@ -617,7 +617,13 @@ fn task_status_and_progress_select_the_actor_claim_when_peers_are_active() {
 
     let answer = board(&bus, epoch, actor);
     let status = task_status(&answer).expect("status reads");
-    assert!(status.lines().any(|line| line == format!("claim {held}")));
+    assert!(
+        status
+            .lines()
+            .any(|line| line.starts_with(&format!("claim {held} "))),
+        "{status}"
+    );
+    assert!(!status.contains(&peer_held.to_string()), "{status}");
     assert!(status.lines().any(|line| line == "active 2"), "{status}");
     let actor_claims = answer
         .tasks

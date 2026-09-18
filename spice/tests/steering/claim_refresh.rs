@@ -509,7 +509,7 @@ fn assert_status_claim(output: &Output, expected: &TaskHandle) {
         .as_str()
         .expect("task status reply carries text");
     assert!(
-        text.starts_with(&format!("claim {expected}\n")),
+        text.starts_with(&format!("claim {expected} ")),
         "task status lost the active claim: {}",
         text,
     );

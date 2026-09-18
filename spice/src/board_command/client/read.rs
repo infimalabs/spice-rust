@@ -809,7 +809,7 @@ pub(in crate::board_command) fn task_status(
                     .claim()
                     .is_some_and(|claim| claim.actor == board.principal)
         })
-        .map_or_else(|| "-".to_owned(), |entry| entry.handle().to_string());
+        .map_or_else(|| "-".to_owned(), |entry| actor_claim_lease(board, entry));
     let review = rows
         .iter()
         .copied()
@@ -847,6 +847,38 @@ pub(in crate::board_command) fn task_status(
         stale = parked.stale,
         oops = parked.oops,
     ))
+}
+
+/// Name the actor's own claim with the lease posture that governs it.
+///
+/// A lease the resident rolls while this occupant stays seated needs no
+/// reclaim, so the posture is the actionable part of the line, not the expiry.
+fn actor_claim_lease(board: &BoardAnswer, entry: &Entry) -> String {
+    let handle = entry.handle();
+    let Some(lease) = entry.lease() else {
+        return handle.to_string();
+    };
+    let rolling = entry
+        .claim()
+        .is_some_and(|claim| resident_rolls_lease(board, claim, lease));
+    let posture = if rolling { "rolling until" } else { "until" };
+    format!("{handle} {posture} {}", lease.expiry)
+}
+
+/// Whether the resident renews this lease on its own rolling horizon.
+///
+/// This mirrors the resident's renewal eligibility: a live epoch-matched claim
+/// held by a lane's current occupant, excluding a lease iced on the canonical
+/// indefinite horizon.
+fn resident_rolls_lease(board: &BoardAnswer, claim: &ClaimHead, lease: &LeaseHead) -> bool {
+    let residency = &board.residency.body;
+    residency.state == wire::ResidentState::Seated
+        && claim.epoch == residency.epoch
+        && !spice::claim_lease::is_indefinite(lease)
+        && residency
+            .lanes
+            .iter()
+            .any(|lane| lane.lane == claim.lane && lane.occupant == Some(claim.occupant))
 }
 
 fn environment_status(

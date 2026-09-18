@@ -496,6 +496,10 @@ impl Runtime {
     /// at once, with the vendor's own text journaled against the occupant as
     /// the hold's evidence, rather than waiting for a run of young deaths to
     /// reach the limit.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one hold crosses the journal, the reducer, the clock, and the diagnostic"
+    )]
     pub(super) fn observe_vendor_failure(
         &mut self,
         bus: &Bus,

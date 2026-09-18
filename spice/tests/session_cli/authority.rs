@@ -472,7 +472,9 @@ fn short_run_processes_share_suppression_and_boundary_changes_speak() {
     let first = invoke_meter_child(scratch.path(), &thread);
     let second = invoke_meter_child(scratch.path(), &thread);
     assert_eq!(fact_count(&authority), first_boundary_generation_facts);
-    renew_maximum_bound_claim_for_meter(&authority, 299);
+    // Nothing renewed the lease this close to expiry, so the roll visibly
+    // stopped and the countdown returns with its recovery.
+    renew_maximum_bound_claim_for_meter(&authority, 30);
     let next_boundary_generation_facts = fact_count(&authority);
     let next_boundary = invoke_meter_child(scratch.path(), &thread);
 
@@ -484,12 +486,11 @@ fn short_run_processes_share_suppression_and_boundary_changes_speak() {
     let first_boundary = String::from_utf8(first.err).expect("first boundary stderr");
     assert_eq!(first_boundary.lines().count(), 1);
     assert!(!first_boundary.contains("Working state"));
-    assert!(first_boundary.contains("Claim lease:"));
-    assert!(first_boundary.contains("s remaining"));
-    assert!(
-        first_boundary.contains(&format!("run spice task reclaim {handle}")),
-        "first boundary recommends reclaiming the automatic fixture claim: {first_boundary:?}"
-    );
+    assert!(first_boundary.contains(&format!(
+        "Claim lease: {handle} rolls while this occupant holds the lane; no reclaim needed"
+    )));
+    assert!(!first_boundary.contains("s remaining"));
+    assert!(!first_boundary.contains("task reclaim"));
     assert!(!first_boundary.contains("task free"));
     assert!(!first_boundary.contains("Claim lease warning:"));
     assert!(!first_boundary.contains(" ACK"));
@@ -504,7 +505,7 @@ fn short_run_processes_share_suppression_and_boundary_changes_speak() {
     assert!(next_boundary.contains("s remaining"));
     assert!(
         next_boundary.contains(&format!("run spice task reclaim {handle}")),
-        "next boundary recommends reclaiming the automatic fixture claim: {next_boundary:?}"
+        "a stalled roll recommends reclaiming the fixture claim: {next_boundary:?}"
     );
     assert!(!next_boundary.contains("task free"));
     assert!(!next_boundary.contains("Claim lease urgent:"));
