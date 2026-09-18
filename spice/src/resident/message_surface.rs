@@ -9,7 +9,10 @@ use bus::Bus;
 use lane::occupant::Seats;
 use wire::{AgentActivityKind, CanonicalUuid, Outcome};
 
-use super::{CommandResult, RuntimePaths, lane_surface, store_fault, taste_surface};
+use super::{
+    CommandResult, RuntimePaths, current_residency, ingest_vendor, lane_surface, steering,
+    store_fault, taste_surface,
+};
 
 mod acknowledgement;
 mod automatic_speech;
@@ -261,7 +264,56 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
         record.occupant,
         &swept,
         &mut views,
+    )?;
+    hear_swept(
+        bus,
+        surfaces.paths,
+        epoch,
+        record.lane,
+        &swept,
+        views.diagnostic,
     )
+}
+
+/// Retire the directives the swept prose answered, for a lane that hears its
+/// steering by interjection.
+///
+/// Such a lane runs no ack command: what it says is its answer, and the
+/// sweep that presented it hears it. A lane that retires its own keys on the
+/// command line is left to that path, or its command would find them gone.
+fn hear_swept(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    swept: &[std::borrow::Cow<'_, lane::capture::CaptureRecord>],
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    let keys = steering_keys(swept.iter().flat_map(|record| {
+        record
+            .decoded
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+                    Some(prose.text.as_str())
+                }
+                _ => None,
+            })
+    }));
+    if keys.is_empty() {
+        return Ok(());
+    }
+    let residency = current_residency(bus, epoch)?;
+    let Some(row) = residency.body().lanes.iter().find(|row| row.lane == lane) else {
+        return Ok(());
+    };
+    let interjected = ingest_vendor(&row.vendor)
+        .is_some_and(|vendor| vendor.steering() == vendor::SteeringChannel::Interjection);
+    if interjected {
+        steering::dispose_heard(bus, paths, epoch, lane, &row.vendor, &keys, diagnostic);
+    }
+    Ok(())
 }
 
 /// Account and present whatever a lane's tape gained before its seat closed.

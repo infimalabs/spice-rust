@@ -64,7 +64,7 @@ pub(super) fn seed_lane_in_team(
         .expect("fixture worktree canonicalizes")
         .to_string_lossy()
         .into_owned();
-    seed_lane_in_team_at(bus, epoch, lane, team, Some(occupant), &worktree);
+    seed_lane_in_team_at(bus, epoch, lane, team, Some(occupant), &worktree, "claude");
 }
 
 pub(super) fn seed_lane_in_worktree(
@@ -74,7 +74,19 @@ pub(super) fn seed_lane_in_worktree(
     occupant: CanonicalUuid,
     worktree: &str,
 ) {
-    seed_lane_in_team_at(bus, epoch, lane, lane, Some(occupant), worktree);
+    seed_lane_in_team_at(bus, epoch, lane, lane, Some(occupant), worktree, "claude");
+}
+
+/// Seat one occupied lane run by the named vendor.
+pub(super) fn seed_vendor_lane_in_worktree(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+    worktree: &str,
+    vendor: &str,
+) {
+    seed_lane_in_team_at(bus, epoch, lane, lane, Some(occupant), worktree, vendor);
 }
 
 /// Seat one lane nobody sits in yet.
@@ -84,7 +96,7 @@ pub(super) fn seed_vacant_lane_in_worktree(
     lane: CanonicalUuid,
     worktree: &str,
 ) {
-    seed_lane_in_team_at(bus, epoch, lane, lane, None, worktree);
+    seed_lane_in_team_at(bus, epoch, lane, lane, None, worktree, "claude");
 }
 
 fn seed_lane_in_team_at(
@@ -94,7 +106,9 @@ fn seed_lane_in_team_at(
     team: CanonicalUuid,
     occupant: Option<CanonicalUuid>,
     worktree: &str,
+    vendor: &str,
 ) {
+    let vendor: wire::Name = vendor.parse().expect("fixture vendor");
     let current = current_residency(bus, epoch).expect("current residency");
     let mut head = current.body().clone();
     head.topology_revision = head
@@ -107,7 +121,7 @@ fn seed_lane_in_team_at(
         name: None,
         worktree: worktree.to_owned(),
         life: "drive".to_owned(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: vendor.clone(),
         model: None,
         effort: None,
         occupant,
@@ -145,7 +159,7 @@ fn seed_lane_in_team_at(
                 name: None,
                 worktree: worktree.to_owned(),
                 life: "drive".to_owned(),
-                vendor: "claude".parse().expect("fixture vendor"),
+                vendor,
                 model: None,
                 effort: None,
             },

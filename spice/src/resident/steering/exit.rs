@@ -1,5 +1,6 @@
-//! Disposition of steering the ended occupant answered in its transcript.
+//! Disposition of steering an occupant answered in its transcript.
 
+use std::collections::BTreeSet;
 use std::io;
 
 use super::*;
@@ -24,32 +25,101 @@ pub(in crate::resident) fn dispose_at_exit(
     vendor: &wire::Name,
     diagnostic: &mut dyn io::Write,
 ) {
+    dispose_pending(
+        bus,
+        paths,
+        epoch,
+        lane,
+        vendor,
+        &Reading::AtExit,
+        diagnostic,
+    );
+}
+
+/// Retire the live directives the occupant's newest prose answered, as that
+/// prose lands.
+///
+/// A lane that hears steering by interjection runs no ack command: what it
+/// says is its answer, and the sweep that presents the prose hears it here,
+/// so a resend ladder never climbs past an answer already given. Only the
+/// keys the prose headed are read, so a record that answers nothing costs no
+/// scan of the tape.
+pub(in crate::resident) fn dispose_heard(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    vendor: &wire::Name,
+    keys: &BTreeSet<steer::Key>,
+    diagnostic: &mut dyn io::Write,
+) {
+    let reading = Reading::OnLanding(keys);
+    dispose_pending(bus, paths, epoch, lane, vendor, &reading, diagnostic);
+}
+
+/// When a transcript is read for its answers, and which keys it is read for.
+enum Reading<'a> {
+    /// The whole transcript, once the occupant has ended.
+    AtExit,
+    /// The keys the prose that just landed headed.
+    OnLanding(&'a BTreeSet<steer::Key>),
+}
+
+impl Reading<'_> {
+    fn moment(&self) -> &'static str {
+        match self {
+            Self::AtExit => "at exit",
+            Self::OnLanding(_) => "on landing",
+        }
+    }
+
+    fn answered(&self, key: &str) -> bool {
+        match self {
+            Self::AtExit => true,
+            Self::OnLanding(keys) => keys.iter().any(|heard| heard.as_str() == key),
+        }
+    }
+}
+
+fn dispose_pending(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    vendor: &wire::Name,
+    reading: &Reading<'_>,
+    diagnostic: &mut dyn io::Write,
+) {
+    let moment = reading.moment();
     let pending = match bus.read(move |read| crate::steering_read::pending(read, Some(lane))) {
         Ok(pending) => pending,
         Err(error) => {
             let _ = writeln!(
                 diagnostic,
-                "lane {lane} steering left pending at exit: steer::index-unreadable: {error}"
+                "lane {lane} steering left pending {moment}: steer::index-unreadable: {error}"
             );
             return;
         }
     };
     let mut retired = false;
-    for head in &pending {
+    for head in pending
+        .iter()
+        .filter(|head| reading.answered(&head.body().key))
+    {
         let key = head.body().key.as_str();
         match dispose_head(bus, paths, epoch, lane, vendor, head) {
             Ok(disposition) => {
                 retired = true;
                 let _ = writeln!(
                     diagnostic,
-                    "lane {lane} steering {key} {} at exit from its transcript",
+                    "lane {lane} steering {key} {} {moment} from its transcript",
                     format!("{disposition:?}").to_lowercase()
                 );
             }
             Err(outcome) => {
                 let _ = writeln!(
                     diagnostic,
-                    "lane {lane} steering {key} left pending at exit: {}",
+                    "lane {lane} steering {key} left pending {moment}: {}",
                     failure_line(&outcome)
                 );
             }
@@ -63,7 +133,7 @@ pub(in crate::resident) fn dispose_at_exit(
     if let Err(outcome) = refolded {
         let _ = writeln!(
             diagnostic,
-            "lane {lane} inbox not refolded after exit: {}",
+            "lane {lane} inbox not refolded {moment}: {}",
             failure_line(&outcome)
         );
     }

@@ -32,6 +32,6 @@ pub use record::{
     SessionId, SessionIdError,
 };
 pub use vendor::{
-    CLAUDE, CODEX, LaunchValues, OMP, StdoutContract, StdoutFormat, ToolEnvelope, TranscriptIndex,
-    TranscriptLayout, Vendor,
+    CLAUDE, CODEX, LaunchValues, OMP, StdoutContract, StdoutFormat, SteeringChannel, ToolEnvelope,
+    TranscriptIndex, TranscriptLayout, Vendor,
 };

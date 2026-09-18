@@ -68,6 +68,17 @@ pub enum ToolEnvelope {
     ClaudeEval,
 }
 
+/// Where a vendor's lane hears operator steering.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SteeringChannel {
+    /// On shell-command stderr from the hook its shell runs; the lane retires
+    /// each key on the command line once its prose has answered.
+    ShellStderr,
+    /// As a message interjected over the command stream the supervisor
+    /// drives; the prose it answers with is the whole acknowledgment.
+    Interjection,
+}
+
 /// Borrowed launch values selected from the typed vendor configuration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LaunchValues<'a> {
@@ -98,6 +109,7 @@ pub struct Vendor {
     transcript: TranscriptLayout,
     stdout: StdoutContract,
     envelope: ToolEnvelope,
+    steering: SteeringChannel,
     render: RecordRenderer,
 }
 
@@ -112,6 +124,7 @@ impl fmt::Debug for Vendor {
             .field("transcript", &self.transcript)
             .field("stdout", &self.stdout)
             .field("envelope", &self.envelope)
+            .field("steering", &self.steering)
             .finish_non_exhaustive()
     }
 }
@@ -137,6 +150,7 @@ impl Vendor {
             transcript: contract.transcript,
             stdout: contract.stdout,
             envelope: contract.envelope,
+            steering: contract.steering,
             render: contract.render,
         }
     }
@@ -181,6 +195,12 @@ impl Vendor {
     #[must_use]
     pub const fn tool_envelope(&self) -> ToolEnvelope {
         self.envelope
+    }
+
+    /// Where this vendor's lane hears steering.
+    #[must_use]
+    pub const fn steering(&self) -> SteeringChannel {
+        self.steering
     }
 
     /// Rewrite the command nested in a vendor-specific tool envelope.
@@ -285,6 +305,7 @@ pub const CODEX: Vendor = Vendor {
         format: StdoutFormat::JsonLines,
     },
     envelope: ToolEnvelope::Direct,
+    steering: SteeringChannel::ShellStderr,
     render: codex_record,
 };
 
@@ -308,6 +329,7 @@ pub const CLAUDE: Vendor = Vendor {
         format: StdoutFormat::JsonLines,
     },
     envelope: ToolEnvelope::ClaudeEval,
+    steering: SteeringChannel::ShellStderr,
     render: claude_record,
 };
 
@@ -335,6 +357,7 @@ pub const OMP: Vendor = Vendor {
         format: StdoutFormat::JsonLines,
     },
     envelope: ToolEnvelope::Direct,
+    steering: SteeringChannel::Interjection,
     render: omp_record,
 };
 
@@ -514,6 +537,9 @@ mod tests {
         assert_eq!(CLAUDE.transcript_layout().sessions_directory, "projects");
         assert_eq!(OMP.stdout().format, StdoutFormat::JsonLines);
         assert_eq!(OMP.tool_envelope(), ToolEnvelope::Direct);
+        assert_eq!(CODEX.steering(), SteeringChannel::ShellStderr);
+        assert_eq!(CLAUDE.steering(), SteeringChannel::ShellStderr);
+        assert_eq!(OMP.steering(), SteeringChannel::Interjection);
         assert_eq!(OMP.dialect(), Dialect::Omp);
         assert_eq!(OMP.thread_id_environment(), omp::SESSION_ENVIRONMENT);
         assert_eq!(OMP.transcript_layout().default_home, ".omp/agent");
