@@ -713,6 +713,15 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "vendor.codex.auto_compact_window_tokens" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(
+            vendor::DEFAULT_CODEX_AUTO_COMPACT_WINDOW_TOKENS,
+        )),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "vendor.codex.personality" {
         kind: String,
         builtin: Some(Builtin::Absent),
@@ -751,6 +760,15 @@ configuration_registry! {
     fixed "vendor.omp.fast_mode" {
         kind: Boolean,
         builtin: Some(Builtin::Boolean(false)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
+    fixed "vendor.omp.auto_compact_window_tokens" {
+        kind: UnsignedInteger,
+        builtin: Some(Builtin::UnsignedInteger(
+            vendor::DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS,
+        )),
         layers: TRACKED,
         class: Policy,
         flag: None,

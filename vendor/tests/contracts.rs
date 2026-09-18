@@ -26,6 +26,10 @@ const STEERING_TOKEN: &str = "1kJHh5bb";
 const CLAUDE_MODEL: &str = "claude-opus-5";
 const CODEX_MODEL: &str = "gpt-5-codex";
 const CODEX_CONTEXT_WINDOW: u64 = 1_050_000;
+/// The window Codex is told to compact against, well inside the model's.
+const AUTO_COMPACT_WINDOW: u64 = 272_000;
+/// An overlay only oh-my-pi has a launch seam for.
+const CONFIG_OVERLAY: &str = "/supervisors/lane/occupant/omp.yml";
 const MCP_COMMAND: &str = "npx";
 const MCP_ARGS: [&str; 3] = ["@playwright/mcp@latest", "--isolated", "--headless"];
 
@@ -122,7 +126,7 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
             "--config",
             "model_context_window=1050000",
             "--config",
-            "model_auto_compact_token_limit=997500",
+            "model_auto_compact_token_limit=258400",
             "--config",
             CODEX_MCP_COMMAND_OVERRIDE,
             "--config",
@@ -165,7 +169,7 @@ fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
             "--config",
             "model_context_window=1050000",
             "--config",
-            "model_auto_compact_token_limit=997500",
+            "model_auto_compact_token_limit=258400",
             "--config",
             CODEX_MCP_COMMAND_OVERRIDE,
             "--config",
@@ -309,6 +313,16 @@ fn vendor_specific_knobs_refuse_instead_of_being_silently_ignored() {
         }
     );
 
+    claude_launch.model_context_window = None;
+    claude_launch.config_overlay = Some(CONFIG_OVERLAY.into());
+    assert_eq!(
+        claude::record("/opt/claude", &claude_launch).expect_err("overlay refuses"),
+        ContractError::Unsupported {
+            path: "vendor.claude.config_overlay",
+            vendor: "Claude",
+        }
+    );
+
     let mut codex_launch = fixture(CODEX_MODEL, Resume::Fresh);
     codex_launch.fast_mode = None;
     assert_eq!(
@@ -324,6 +338,25 @@ fn vendor_specific_knobs_refuse_instead_of_being_silently_ignored() {
         codex::record("/opt/codex", &codex_launch).expect_err("context window is required"),
         ContractError::Missing {
             path: "vendor.codex.model_context_window",
+        }
+    );
+
+    codex_launch.model_context_window = Some(CODEX_CONTEXT_WINDOW);
+    codex_launch.auto_compact_window_tokens = None;
+    assert_eq!(
+        codex::record("/opt/codex", &codex_launch).expect_err("compaction window is required"),
+        ContractError::Missing {
+            path: "vendor.codex.auto_compact_window_tokens",
+        }
+    );
+
+    codex_launch.auto_compact_window_tokens = Some(AUTO_COMPACT_WINDOW);
+    codex_launch.config_overlay = Some(CONFIG_OVERLAY.into());
+    assert_eq!(
+        codex::record("/opt/codex", &codex_launch).expect_err("overlay refuses"),
+        ContractError::Unsupported {
+            path: "vendor.codex.config_overlay",
+            vendor: "Codex",
         }
     );
 }
@@ -478,6 +511,8 @@ fn fixture(model: &str, resume: Resume) -> Launch {
         personality: None,
         fast_mode: (model == CODEX_MODEL).then_some(false),
         model_context_window: (model == CODEX_MODEL).then_some(CODEX_CONTEXT_WINDOW),
+        auto_compact_window_tokens: (model == CODEX_MODEL).then_some(AUTO_COMPACT_WINDOW),
+        config_overlay: None,
         attribution: Attribution::Harness,
         hook: SteeringHook {
             command: HOOK_COMMAND.to_owned(),

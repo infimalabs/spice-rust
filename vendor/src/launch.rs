@@ -189,6 +189,18 @@ pub struct Launch {
     pub fast_mode: Option<bool>,
     /// Full model context window, for a dialect with an explicit config seam.
     pub model_context_window: Option<u64>,
+    /// The window the agent is asked to compact against.
+    ///
+    /// Codex renders its 95% limit from it and requires it. Claude reads it
+    /// from its environment and omp from its overlay, both composed by the
+    /// caller from the same policy, so their renderers leave it alone.
+    pub auto_compact_window_tokens: Option<u64>,
+    /// A configuration overlay the dialect reads from disk for this run.
+    ///
+    /// omp takes its compaction threshold this way, from a file the lane
+    /// writes before launch. Claude and Codex state theirs inline and refuse
+    /// an overlay rather than ignore it.
+    pub config_overlay: Option<PathBuf>,
     /// Caller-resolved disposition for Claude's native commit attribution.
     ///
     /// The repository-policy read stays outside this I/O-free crate. Codex has

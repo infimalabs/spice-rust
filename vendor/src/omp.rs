@@ -138,9 +138,20 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
     let fast_mode = launch.fast_mode.ok_or(ContractError::Missing {
         path: "vendor.omp.fast_mode",
     })?;
+    let config_overlay = launch
+        .config_overlay
+        .as_ref()
+        .ok_or(ContractError::Missing {
+            path: "vendor.omp.config_overlay",
+        })?;
     let mut arguments = vec![
         OsString::from("--mode"),
         OsString::from("rpc"),
+        // The compaction threshold has no flag and no RPC command; it rides a
+        // per-run overlay the lane writes, exactly as Codex takes its own
+        // limit as a `--config` assignment.
+        OsString::from("--config"),
+        config_overlay.clone().into_os_string(),
         // The lane is the approval authority, exactly as the other dialects
         // bypass their own permission prompts; a prompt no operator can see
         // would otherwise hold the turn forever.
@@ -179,6 +190,16 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
     )?
     .with_opening(opening_request(launch))
     .with_environment(environment))
+}
+
+/// The configuration overlay a lane writes before launch so omp compacts at
+/// this fixed token limit rather than at its own share of the model's window.
+///
+/// omp reads `compaction.thresholdTokens` ahead of every percentage or
+/// reserve it would otherwise derive, clamped beneath the model's window.
+#[must_use]
+pub fn config_overlay(auto_compact_threshold_tokens: u64) -> String {
+    format!("compaction:\n  thresholdTokens: {auto_compact_threshold_tokens}\n")
 }
 
 /// The session file a lane writes before launch so the identity is known.

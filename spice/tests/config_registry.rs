@@ -105,6 +105,7 @@ binary = "/opt/codex"
 model = "gpt-current"
 effort = "max"
 model_context_window = 1234567
+auto_compact_window_tokens = 300000
 personality = "pragmatic"
 fast_mode = true
 
@@ -590,12 +591,14 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "vendor.codex.model",
     "vendor.codex.effort",
     "vendor.codex.model_context_window",
+    "vendor.codex.auto_compact_window_tokens",
     "vendor.codex.personality",
     "vendor.codex.fast_mode",
     "vendor.omp.binary",
     "vendor.omp.model",
     "vendor.omp.effort",
     "vendor.omp.fast_mode",
+    "vendor.omp.auto_compact_window_tokens",
     "listen.window",
     "lock.busy",
     "lock.taken",

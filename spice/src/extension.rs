@@ -486,7 +486,7 @@ fn codex_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
         personality: configured.personality(),
         fast_mode: Some(configured.fast_mode()),
         model_context_window: Some(configured.model_context_window()),
-        auto_compact_window_tokens: None,
+        auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
     }
 }
 
@@ -512,7 +512,7 @@ fn omp_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
         personality: None,
         fast_mode: Some(configured.fast_mode()),
         model_context_window: None,
-        auto_compact_window_tokens: None,
+        auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
     }
 }
 

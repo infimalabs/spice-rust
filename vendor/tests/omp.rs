@@ -22,6 +22,8 @@ const STEERING_TOKEN: &str = "1kJHh5bb";
 /// Width of the title slot omp rewrites in place at the top of a session file.
 const TITLE_SLOT_BYTES: usize = 256;
 const MODEL: &str = "claude-opus-5";
+/// Where the lane wrote this occupant's compaction threshold.
+const CONFIG_OVERLAY: &str = "/supervisors/lane/occupant/omp.yml";
 
 fn fixture(resume: Resume) -> Launch {
     Launch {
@@ -32,6 +34,8 @@ fn fixture(resume: Resume) -> Launch {
         personality: None,
         fast_mode: Some(false),
         model_context_window: None,
+        auto_compact_window_tokens: Some(220_000),
+        config_overlay: Some(CONFIG_OVERLAY.into()),
         attribution: Attribution::Harness,
         hook: SteeringHook {
             command: "/usr/bin/spice hook omp".to_owned(),
@@ -75,6 +79,8 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
     let expected = [
         "--mode",
         "rpc",
+        "--config",
+        CONFIG_OVERLAY,
         "--approval-mode",
         "yolo",
         "--no-title",
@@ -401,6 +407,25 @@ fn fast_mode_is_the_priority_service_tier_and_must_be_explicit() {
         omp::record("/opt/omp", &implicit).expect_err("refused"),
         ContractError::Missing {
             path: "vendor.omp.fast_mode"
+        }
+    );
+}
+
+#[test]
+fn the_compaction_threshold_rides_an_overlay_the_lane_must_have_written() {
+    // The exact document omp 18.2.1 resolved to a 170,000-token limit through
+    // its `--config` overlay; the layout is omp's own config.yml.
+    assert_eq!(
+        omp::config_overlay(170_000),
+        "compaction:\n  thresholdTokens: 170000\n"
+    );
+
+    let mut unwritten = fixture(Resume::Fresh);
+    unwritten.config_overlay = None;
+    assert_eq!(
+        omp::record("/opt/omp", &unwritten).expect_err("refused"),
+        ContractError::Missing {
+            path: "vendor.omp.config_overlay"
         }
     );
 }

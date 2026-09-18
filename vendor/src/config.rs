@@ -14,10 +14,36 @@ pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.6-sol";
 ///
 /// <https://developers.openai.com/api/docs/models/gpt-5.6-sol>
 pub const DEFAULT_CODEX_MODEL_CONTEXT_WINDOW: u64 = 1_050_000;
-/// Claude's compiled auto-compaction window.
-pub const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS: u64 = 200_000;
 /// oh-my-pi's compiled model selection, matched fuzzily by omp itself.
 pub const DEFAULT_OMP_MODEL: &str = "claude-opus-5";
+/// Input tokens beyond which Anthropic bills a request at long-context rates.
+const ANTHROPIC_LONG_CONTEXT_TOKENS: u64 = 200_000;
+/// Input tokens beyond which OpenAI bills a request at long-context rates.
+const OPENAI_LONG_CONTEXT_TOKENS: u64 = 272_000;
+/// The least Claude has been seen to compact short of the window it is told,
+/// rounded down: 69 lane compactions against 200,000 landed between 166,418
+/// and 175,600 tokens.
+const CLAUDE_LEAST_SHORTFALL_TOKENS: u64 = 20_000;
+/// The window Claude is asked to compact against.
+///
+/// Every vendor is told a window smaller than its model's so that no request
+/// crosses the provider's long-context price boundary, whatever the model
+/// really holds. Claude's trigger lands under Anthropic's boundary with the
+/// rounding and the last exchange's growth to spare.
+pub const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS: u64 =
+    ANTHROPIC_LONG_CONTEXT_TOKENS + CLAUDE_LEAST_SHORTFALL_TOKENS;
+/// The window Codex is asked to compact against: OpenAI's boundary itself,
+/// since Codex triggers at 95% of it.
+pub const DEFAULT_CODEX_AUTO_COMPACT_WINDOW_TOKENS: u64 = OPENAI_LONG_CONTEXT_TOKENS;
+/// The window oh-my-pi is asked to compact against, for the Anthropic model
+/// it selects by default; omp triggers 15% short of it. Left to itself omp
+/// compacts against the model's full window, 850,000 tokens into a
+/// million-token model.
+pub const DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS: u64 = DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS;
+/// The share of a window omp holds back for the reply, as omp computes it.
+const OMP_RESERVE_PERCENT: u64 = 15;
+/// The least reserve omp holds back, whatever the window.
+const OMP_RESERVE_FLOOR_TOKENS: u64 = 16_384;
 
 /// A configured executable spelling.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -166,6 +192,8 @@ pub struct CodexConfig {
     effort: Effort,
     #[serde(deserialize_with = "codex_context_window")]
     model_context_window: u64,
+    #[serde(deserialize_with = "codex_window")]
+    auto_compact_window_tokens: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     personality: Option<LaunchValue>,
     fast_mode: bool,
@@ -178,6 +206,7 @@ impl Default for CodexConfig {
             model: LaunchValue::new(DEFAULT_CODEX_MODEL),
             effort: Effort::High,
             model_context_window: DEFAULT_CODEX_MODEL_CONTEXT_WINDOW,
+            auto_compact_window_tokens: DEFAULT_CODEX_AUTO_COMPACT_WINDOW_TOKENS,
             personality: None,
             fast_mode: false,
         }
@@ -209,13 +238,20 @@ impl CodexConfig {
         self.model_context_window
     }
 
-    /// Automatic compaction threshold derived from the full context window.
+    /// The window Codex is asked to compact against.
+    #[must_use]
+    pub const fn auto_compact_window_tokens(&self) -> u64 {
+        self.auto_compact_window_tokens
+    }
+
+    /// Automatic compaction threshold: Codex's own 95% of the window it is
+    /// asked to compact against, not of the model's full context window.
     ///
     /// Dividing before multiplying makes `floor(window * 95 / 100)` exact
     /// without allowing an admitted signed-64-bit Codex value to overflow.
     #[must_use]
     pub const fn model_auto_compact_token_limit(&self) -> u64 {
-        codex_auto_compact_token_limit(self.model_context_window)
+        codex_auto_compact_token_limit(self.auto_compact_window_tokens)
     }
 
     /// Optional Codex personality spelling.
@@ -239,6 +275,8 @@ pub struct OmpConfig {
     model: LaunchValue,
     effort: ClaudeEffort,
     fast_mode: bool,
+    #[serde(deserialize_with = "omp_window")]
+    auto_compact_window_tokens: u64,
 }
 
 impl Default for OmpConfig {
@@ -248,6 +286,7 @@ impl Default for OmpConfig {
             model: LaunchValue::new(DEFAULT_OMP_MODEL),
             effort: ClaudeEffort::Xhigh,
             fast_mode: false,
+            auto_compact_window_tokens: DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS,
         }
     }
 }
@@ -275,6 +314,19 @@ impl OmpConfig {
     #[must_use]
     pub const fn fast_mode(&self) -> bool {
         self.fast_mode
+    }
+
+    /// The window omp is asked to compact against.
+    #[must_use]
+    pub const fn auto_compact_window_tokens(&self) -> u64 {
+        self.auto_compact_window_tokens
+    }
+
+    /// The fixed token limit omp is handed, derived from the window the way
+    /// omp derives its own threshold from a model's window.
+    #[must_use]
+    pub const fn auto_compact_threshold_tokens(&self) -> u64 {
+        omp_auto_compact_threshold_tokens(self.auto_compact_window_tokens)
     }
 }
 
@@ -330,12 +382,47 @@ fn codex_context_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u6
             "Codex model context window must fit Codex's signed 64-bit configuration",
         ));
     }
+    Ok(value)
+}
+
+fn codex_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let value = u64::deserialize(deserializer)?;
+    if value > i64::MAX as u64 {
+        return Err(D::Error::custom(
+            "Codex auto-compaction window must fit Codex's signed 64-bit configuration",
+        ));
+    }
     if codex_auto_compact_token_limit(value) == 0 {
         return Err(D::Error::custom(
-            "Codex model context window must yield a positive 95% auto-compaction limit",
+            "Codex auto-compaction window must yield a positive 95% auto-compaction limit",
         ));
     }
     Ok(value)
+}
+
+fn omp_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+    let value = u64::deserialize(deserializer)?;
+    if omp_auto_compact_threshold_tokens(value) == 0 {
+        return Err(D::Error::custom(
+            "oh-my-pi auto-compaction window must exceed the reserve omp holds back",
+        ));
+    }
+    Ok(value)
+}
+
+/// Derive the threshold omp would compute for a window of this size: the
+/// window less the larger of its proportional and floor reserves.
+#[must_use]
+pub const fn omp_auto_compact_threshold_tokens(window: u64) -> u64 {
+    let hundreds = window / 100;
+    let remainder = window % 100;
+    let proportional = hundreds * OMP_RESERVE_PERCENT + remainder * OMP_RESERVE_PERCENT / 100;
+    let reserve = if proportional > OMP_RESERVE_FLOOR_TOKENS {
+        proportional
+    } else {
+        OMP_RESERVE_FLOOR_TOKENS
+    };
+    window.saturating_sub(reserve)
 }
 
 /// Derive Codex's automatic compaction threshold without overflowing.
@@ -350,11 +437,43 @@ pub const fn codex_auto_compact_token_limit(context_window: u64) -> u64 {
 mod tests {
     use super::*;
 
-    fn codex(model_context_window: u64) -> CodexConfig {
+    fn codex(auto_compact_window_tokens: u64) -> CodexConfig {
         serde_json::from_value(serde_json::json!({
-            "model_context_window": model_context_window,
+            "auto_compact_window_tokens": auto_compact_window_tokens,
         }))
         .expect("Codex configuration admits")
+    }
+
+    fn omp(auto_compact_window_tokens: u64) -> Result<OmpConfig, serde_json::Error> {
+        serde_json::from_value(serde_json::json!({
+            "auto_compact_window_tokens": auto_compact_window_tokens,
+        }))
+    }
+
+    #[test]
+    fn omp_threshold_is_the_window_less_the_larger_reserve() {
+        // The floor wins for windows under roughly 109,000 tokens.
+        assert_eq!(omp_auto_compact_threshold_tokens(200_000), 170_000);
+        assert_eq!(omp_auto_compact_threshold_tokens(1_000_000), 850_000);
+        assert_eq!(omp_auto_compact_threshold_tokens(100_000), 83_616);
+        assert_eq!(omp_auto_compact_threshold_tokens(16_385), 1);
+        assert_eq!(omp_auto_compact_threshold_tokens(16_384), 0);
+        assert_eq!(omp_auto_compact_threshold_tokens(0), 0);
+        assert_eq!(
+            omp_auto_compact_threshold_tokens(u64::MAX),
+            u64::MAX - u64::MAX / 100 * 15 - u64::MAX % 100 * 15 / 100
+        );
+        assert_eq!(
+            omp(16_385)
+                .expect("one usable token admits")
+                .auto_compact_threshold_tokens(),
+            1
+        );
+        assert!(omp(16_384).is_err());
+        assert_eq!(
+            OmpConfig::default().auto_compact_threshold_tokens(),
+            187_000
+        );
     }
 
     #[test]
@@ -367,6 +486,10 @@ mod tests {
             boundary.model_auto_compact_token_limit(),
             8_762_203_435_012_037_016
         );
-        assert!(boundary.model_auto_compact_token_limit() < boundary.model_context_window());
+        assert!(boundary.model_auto_compact_token_limit() < boundary.auto_compact_window_tokens());
+        assert_eq!(
+            CodexConfig::default().model_auto_compact_token_limit(),
+            258_400
+        );
     }
 }

@@ -41,7 +41,7 @@ pub(in crate::resident) struct OccupantLaunchRequest<'a> {
 struct Selection<'a> {
     vendor: &'a wire::Name,
     lane: CanonicalUuid,
-    resume: vendor::Resume,
+    pinned: Pinned,
     fast_mode: bool,
     model: Option<&'a str>,
     effort: Option<vendor::Effort>,
@@ -76,11 +76,11 @@ pub(in crate::resident) fn occupant_launch(
     let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
-    let resume = pin_session(&repository, name, resume)?;
+    let pinned = pin_omp(paths, &repository, &resolved, name, resume, lane, occupant)?;
     let selection = Selection {
         vendor: name,
         lane,
-        resume,
+        pinned,
         fast_mode,
         model,
         effort,
@@ -190,7 +190,7 @@ fn launch_plan(
     let Selection {
         vendor: name,
         lane,
-        resume,
+        pinned,
         fast_mode,
         model,
         effort,
@@ -220,22 +220,7 @@ fn launch_plan(
         lane,
     )?;
     let Some(vendor) = spice::extension::vendor(name.as_str()) else {
-        return Err(Outcome::Refusal(Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                "lane::vendor-unsupported".to_owned(),
-                Some("lane.vendor".to_owned()),
-                Some(
-                    spice::extension::registry()
-                        .expect("compiled extension declarations are validated by the test gate")
-                        .vendors()
-                        .into_iter()
-                        .map(|vendor| vendor.name())
-                        .collect::<Vec<_>>()
-                        .join(" or "),
-                ),
-                Some(name.as_str().to_owned()),
-            ),
-        )));
+        return Err(vendor_unsupported(name.as_str().to_owned()));
     };
     let prompt = vendor.neutral_launch_prompt(&skill);
     let plan = spice::agent_launch::compose(
@@ -247,33 +232,38 @@ fn launch_plan(
             executable: executable.display().to_string(),
             environment,
             lane,
-            resume,
+            resume: pinned.resume,
+            config_overlay: pinned.config_overlay,
             fast_mode,
             model: model.map(str::to_owned),
             effort,
         },
     )
     .map_err(|error| match error {
-        spice::agent_launch::ComposeError::UnsupportedVendor(other) => {
-            Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
-                "lane::vendor-unsupported".to_owned(),
-                Some("lane.vendor".to_owned()),
-                Some(
-                    spice::extension::registry()
-                        .expect("compiled extension declarations are validated by the test gate")
-                        .vendors()
-                        .into_iter()
-                        .map(|vendor| vendor.name())
-                        .collect::<Vec<_>>()
-                        .join(" or "),
-                ),
-                Some(other),
-            )))
-        }
+        spice::agent_launch::ComposeError::UnsupportedVendor(other) => vendor_unsupported(other),
         other => store_fault("lane::launch-invalid", &other.to_string()),
     })?;
     let rtk = rtk_hook_health(plan.vendor().dialect(), rtk);
     Ok((plan, rtk))
+}
+
+/// The refusal naming every vendor with a landed renderer beside the one asked
+/// for.
+fn vendor_unsupported(asked: String) -> Outcome<()> {
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        "lane::vendor-unsupported".to_owned(),
+        Some("lane.vendor".to_owned()),
+        Some(
+            spice::extension::registry()
+                .expect("compiled extension declarations are validated by the test gate")
+                .vendors()
+                .into_iter()
+                .map(|vendor| vendor.name())
+                .collect::<Vec<_>>()
+                .join(" or "),
+        ),
+        Some(asked),
+    )))
 }
 
 fn rtk_hook_health(dialect: listen::Dialect, health: spice::rtk::Health) -> spice::rtk::Health {
@@ -726,20 +716,79 @@ mod shell_path_tests {
     }
 }
 
+/// What the lane fixed on disk before launch for a vendor that reads it back.
+struct Pinned {
+    resume: vendor::Resume,
+    config_overlay: Option<PathBuf>,
+}
+
+/// Pin what an oh-my-pi occupant reads from disk before it launches: the
+/// session it resumes and the overlay carrying its compaction threshold.
+/// Every other vendor passes through untouched.
+fn pin_omp(
+    paths: &RuntimePaths,
+    repository: &Repository,
+    resolved: &spice::config::Resolved,
+    name: &wire::Name,
+    resume: vendor::Resume,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> CommandResult<Pinned> {
+    if name.as_str() != vendor::OMP.name() {
+        return Ok(Pinned {
+            resume,
+            config_overlay: None,
+        });
+    }
+    let resume = match resume.session_id() {
+        Some(_) => resume,
+        None => pin_session(repository)?,
+    };
+    let config_overlay = pin_config_overlay(paths, resolved, lane, occupant)?;
+    Ok(Pinned {
+        resume,
+        config_overlay: Some(config_overlay),
+    })
+}
+
+/// Write this occupant's configuration overlay beside its supervisor record.
+///
+/// omp compacts at its own share of the model's window unless told a fixed
+/// limit, and it takes that limit only from a settings file, so every launch
+/// writes one stating the threshold the tracked policy derives.
+fn pin_config_overlay(
+    paths: &RuntimePaths,
+    resolved: &spice::config::Resolved,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+) -> CommandResult<PathBuf> {
+    let threshold = resolved
+        .root()
+        .vendor()
+        .omp()
+        .auto_compact_threshold_tokens();
+    let path =
+        crate::resident::supervisor::supervisor_directory(paths, lane, occupant).join("omp.yml");
+    fs::create_dir_all(path.parent().expect("an overlay has a directory"))
+        .and_then(|()| fs::write(&path, vendor::omp::config_overlay(threshold)))
+        .map_err(|error| {
+            store_fault(
+                "lane::config-overlay-unavailable",
+                &format!(
+                    "oh-my-pi configuration overlay {} cannot be written: {error}",
+                    path.display()
+                ),
+            )
+        })?;
+    Ok(path)
+}
+
 /// Pin a fresh oh-my-pi session before launch so its identity is known.
 ///
 /// omp names a session only once it starts and exports nothing to its tools,
 /// so the lane mints the identity, writes the session file omp resumes, and
-/// launches by that identity. Every other vendor, and every launch that
-/// already resumes a session, passes through untouched.
-fn pin_session(
-    repository: &Repository,
-    name: &wire::Name,
-    resume: vendor::Resume,
-) -> CommandResult<vendor::Resume> {
-    if name.as_str() != vendor::OMP.name() || resume.session_id().is_some() {
-        return Ok(resume);
-    }
+/// launches by that identity.
+fn pin_session(repository: &Repository) -> CommandResult<vendor::Resume> {
     let home = crate::bootstrap_environment("HOME")
         .map(PathBuf::from)
         .ok_or_else(|| {

@@ -124,6 +124,17 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
             path: "vendor.codex.model_context_window",
         });
     }
+    if launch.auto_compact_window_tokens.is_none() {
+        return Err(ContractError::Missing {
+            path: "vendor.codex.auto_compact_window_tokens",
+        });
+    }
+    if launch.config_overlay.is_some() {
+        return Err(ContractError::Unsupported {
+            path: "vendor.codex.config_overlay",
+            vendor: "Codex",
+        });
+    }
     let mut arguments = vec![
         OsString::from("exec"),
         OsString::from("--cd"),
@@ -178,13 +189,13 @@ pub fn config_overrides(launch: &Launch) -> Vec<String> {
         format!("model_reasoning_effort=\"{}\"", launch.effort.as_str()),
     ];
     if let Some(context_window) = launch.model_context_window {
-        overrides.extend([
-            format!("model_context_window={context_window}"),
-            format!(
-                "model_auto_compact_token_limit={}",
-                crate::codex_auto_compact_token_limit(context_window)
-            ),
-        ]);
+        overrides.push(format!("model_context_window={context_window}"));
+    }
+    if let Some(window) = launch.auto_compact_window_tokens {
+        overrides.push(format!(
+            "model_auto_compact_token_limit={}",
+            crate::codex_auto_compact_token_limit(window)
+        ));
     }
     if let Some(server) = &launch.mcp {
         overrides.extend(mcp_overrides(server));

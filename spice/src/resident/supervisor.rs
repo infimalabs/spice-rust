@@ -841,7 +841,7 @@ impl DetachedProcess for DirectHandle {
     }
 }
 
-fn supervisor_directory(
+pub(super) fn supervisor_directory(
     paths: &RuntimePaths,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,

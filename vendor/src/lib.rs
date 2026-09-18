@@ -19,8 +19,9 @@ mod vendor;
 pub use acp::{PermissionRequestError, permission_request};
 pub use config::{
     Binary, ClaudeConfig, CodexConfig, Config, DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS,
-    DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_MODEL, DEFAULT_CODEX_MODEL_CONTEXT_WINDOW,
-    DEFAULT_OMP_MODEL, OmpConfig, codex_auto_compact_token_limit,
+    DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_AUTO_COMPACT_WINDOW_TOKENS, DEFAULT_CODEX_MODEL,
+    DEFAULT_CODEX_MODEL_CONTEXT_WINDOW, DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS, DEFAULT_OMP_MODEL,
+    OmpConfig, codex_auto_compact_token_limit, omp_auto_compact_threshold_tokens,
 };
 pub use launch::{
     Attribution, ContractError, Effort, EffortError, Launch, McpServer, POST_TOOL_HOOK_EVENT,

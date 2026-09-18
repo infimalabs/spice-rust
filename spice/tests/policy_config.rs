@@ -56,8 +56,16 @@ binary = "/opt/codex"
 model = "gpt-codex"
 effort = "max"
 model_context_window = 1234567
+auto_compact_window_tokens = 300000
 personality = "pragmatic"
 fast_mode = true
+
+[vendor.omp]
+binary = "/opt/omp"
+model = "omp-current"
+effort = "max"
+fast_mode = true
+auto_compact_window_tokens = 250000
 
 [proof]
 image = "registry.example/proof@sha256:4444444444444444444444444444444444444444444444444444444444444444"
@@ -137,11 +145,24 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
     assert_eq!(decoded.vendor().codex().effort(), vendor::Effort::Max);
     assert_eq!(decoded.vendor().codex().model_context_window(), 1_234_567);
     assert_eq!(
+        decoded.vendor().codex().auto_compact_window_tokens(),
+        300_000
+    );
+    assert_eq!(
         decoded.vendor().codex().model_auto_compact_token_limit(),
-        1_172_838
+        285_000
     );
     assert_eq!(decoded.vendor().codex().personality(), Some("pragmatic"));
     assert!(decoded.vendor().codex().fast_mode());
+    assert_eq!(decoded.vendor().omp().binary().as_str(), "/opt/omp");
+    assert_eq!(decoded.vendor().omp().model(), "omp-current");
+    assert_eq!(decoded.vendor().omp().effort(), vendor::Effort::Max);
+    assert!(decoded.vendor().omp().fast_mode());
+    assert_eq!(decoded.vendor().omp().auto_compact_window_tokens(), 250_000);
+    assert_eq!(
+        decoded.vendor().omp().auto_compact_threshold_tokens(),
+        212_500
+    );
     assert_eq!(
         decoded.proof().image().as_str(),
         "registry.example/proof@sha256:4444444444444444444444444444444444444444444444444444444444444444"
@@ -189,11 +210,20 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
         vendor::DEFAULT_CODEX_MODEL_CONTEXT_WINDOW
     );
     assert_eq!(
+        root.vendor().codex().auto_compact_window_tokens(),
+        vendor::DEFAULT_CODEX_AUTO_COMPACT_WINDOW_TOKENS
+    );
+    assert_eq!(
         root.vendor().codex().model_auto_compact_token_limit(),
-        997_500
+        258_400
     );
     assert_eq!(root.vendor().codex().personality(), None);
     assert!(!root.vendor().codex().fast_mode());
+    assert_eq!(
+        root.vendor().omp().auto_compact_window_tokens(),
+        vendor::DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS
+    );
+    assert_eq!(root.vendor().omp().auto_compact_threshold_tokens(), 187_000);
     assert_eq!(root.proof().image().as_str(), proof::DEFAULT_IMAGE);
     assert!(root.proof().container().is_none());
     assert!(root.proof().runner().is_none());
@@ -268,8 +298,20 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
             "vendor.claude.auto_compact_window_tokens",
         ),
         (
-            "[vendor.codex]\nauto_compact_window_tokens = 100\n",
+            "[vendor.codex]\nauto_compact_window_tokens = 1\n",
             "vendor.codex.auto_compact_window_tokens",
+        ),
+        (
+            "[vendor.codex]\nauto_compact_window_tokens = 9223372036854775808\n",
+            "vendor.codex.auto_compact_window_tokens",
+        ),
+        (
+            "[vendor.omp]\nauto_compact_window_tokens = 16384\n",
+            "vendor.omp.auto_compact_window_tokens",
+        ),
+        (
+            "[vendor.omp]\nmodel_context_window = 1000000\n",
+            "vendor.omp.model_context_window",
         ),
         (
             "[vendor.codex]\nmodel_context_window = 'large'\n",
@@ -277,10 +319,6 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
         ),
         (
             "[vendor.codex]\nmodel_context_window = 0\n",
-            "vendor.codex.model_context_window",
-        ),
-        (
-            "[vendor.codex]\nmodel_context_window = 1\n",
             "vendor.codex.model_context_window",
         ),
         (

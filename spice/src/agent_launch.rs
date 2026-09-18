@@ -36,6 +36,8 @@ pub struct Inputs {
     pub lane: CanonicalUuid,
     /// Fresh or exact-session continuation.
     pub resume: vendor::Resume,
+    /// The configuration overlay the lane wrote for a vendor that reads one.
+    pub config_overlay: Option<PathBuf>,
     /// Authoritative global fast-mode value for vendors that support it.
     pub fast_mode: bool,
     /// Model this lane selected over the vendor's configured model.
@@ -140,7 +142,10 @@ fn compose_with_registry(
         .vendor(inputs.vendor.as_str())
         .ok_or_else(|| ComposeError::UnsupportedVendor(inputs.vendor.as_str().to_owned()))?;
     let configured = declared.launch_values(root);
+    // Claude alone takes its window from the environment; Codex renders its
+    // limit inline and omp reads the overlay the lane wrote.
     if let Some(window) = configured.auto_compact_window_tokens
+        && declared.dialect() == listen::Dialect::Claude
         && !environment_contains_entries(&environment, CLAUDE_AUTO_COMPACT_WINDOW)
     {
         environment.push((
@@ -168,6 +173,8 @@ fn compose_with_registry(
             personality: configured.personality.map(str::to_owned),
             fast_mode: configured.fast_mode.map(|_| inputs.fast_mode),
             model_context_window: configured.model_context_window,
+            auto_compact_window_tokens: configured.auto_compact_window_tokens,
+            config_overlay: inputs.config_overlay,
             attribution,
             hook,
             steering_key,
@@ -256,7 +263,7 @@ mod tests {
             personality: configured.personality(),
             fast_mode: Some(configured.fast_mode()),
             model_context_window: Some(configured.model_context_window()),
-            auto_compact_window_tokens: None,
+            auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
         }
     }
 
@@ -274,6 +281,7 @@ mod tests {
                 environment: Environment::empty(),
                 lane: LANE.parse().expect("fixture lane"),
                 resume: vendor::Resume::Fresh,
+                config_overlay: None,
                 fast_mode: false,
                 model: None,
                 effort: None,
@@ -302,6 +310,7 @@ mod tests {
             environment: Environment::empty(),
             lane: LANE.parse().expect("fixture lane"),
             resume: vendor::Resume::Fresh,
+            config_overlay: None,
             fast_mode: false,
             model: model.map(str::to_owned),
             effort,

@@ -30,6 +30,7 @@ fn inputs(vendor: &str, environment: Environment, resume: Resume) -> Inputs {
         environment,
         lane: lane(),
         resume,
+        config_overlay: (vendor == "omp").then(|| PathBuf::from("/supervisors/omp.yml")),
         fast_mode: true,
         model: None,
         effort: None,
@@ -154,6 +155,19 @@ fn omp_plan_carries_the_global_fast_mode_as_its_service_tier() {
             .windows(2)
             .any(|pair| pair == ["--service-tier", "priority"])
     );
+    assert!(
+        rendered
+            .windows(2)
+            .any(|pair| pair == ["--config", "/supervisors/omp.yml"])
+    );
+    assert!(
+        !plan
+            .environment()
+            .entries()
+            .iter()
+            .any(|(key, _)| key == CLAUDE_AUTO_COMPACT_WINDOW),
+        "omp takes its window through the overlay, never Claude's variable"
+    );
 }
 
 #[test]
@@ -197,6 +211,7 @@ binary = "/opt/codex"
 model = "gpt-6-astra"
 effort = "max"
 model_context_window = 1234567
+auto_compact_window_tokens = 300000
 personality = "pragmatic"
 fast_mode = true
 "#,
@@ -240,9 +255,10 @@ fast_mode = true
         None
     );
     assert_eq!(config_integer(&rendered, "model_context_window"), 1_234_567);
+    assert_eq!(plan.launch().auto_compact_window_tokens, Some(300_000));
     assert_eq!(
         config_integer(&rendered, "model_auto_compact_token_limit"),
-        1_172_838
+        285_000
     );
 }
 
