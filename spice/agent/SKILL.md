@@ -21,12 +21,15 @@ If either call is impossible, state only the blocker and end the turn. Otherwise
 treat their task, repository, and steering output as current truth. Do not infer a
 durable task from this skill invocation.
 
-When steering keys are pending, lead the next working message with
-`ACK <key> [<key> ...]: <accepted result>` or
-`NACK <key>: <reason for refusal>`. Do not defer acknowledgements to the final
-response. Handle operator direction before allocator work; capture durable new
-work before returning to the allocator only when its substance warrants a
-separate deliverable.
+When steering keys are pending, lead the next working message with one line
+of visible assistant text, `ACK <key> [<key> ...]: <one clause>` or
+`NACK <key>: <one clause>`, immediately followed by the ack command in the same
+message, with no other prose in that message. Commentary narrated beside a tool
+call persists on the tape as reasoning, never as text, and reasoning is not
+acknowledgment evidence. Do not defer acknowledgements to the final response.
+Handle operator direction before allocator work; capture durable new work
+before returning to the allocator only when its substance warrants a separate
+deliverable.
 
 If continuity is clipped, recover only the detail needed to proceed with
 `spice session sweep --count N` or
