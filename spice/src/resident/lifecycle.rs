@@ -290,9 +290,7 @@ impl Runtime {
         config: &SurfaceConfig,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<Option<WakeDeadline>> {
-        let now = Instant::new(jiff::Timestamp::now()).map_err(|error| {
-            super::environment_fault("lifecycle::clock-invalid", &error.to_string())
-        })?;
+        let now = current_instant()?;
         self.reconcile_at(
             now,
             bus,
@@ -483,19 +481,74 @@ impl Runtime {
         } else {
             Death::Mature
         };
-        let now = Instant::new(jiff::Timestamp::now()).map_err(|error| {
-            super::environment_fault("lifecycle::clock-invalid", &error.to_string())
-        })?;
-        let seconds = i64::try_from(config.hold().get().as_secs()).map_err(|_| {
-            super::environment_fault(
-                "lifecycle::hold-range",
-                "the configured lane hold does not fit a signed deadline",
-            )
-        })?;
-        let until = after(now, seconds)?;
+        let until = hold_deadline(config, current_instant()?)?;
         let Some(held) = self.holds.died(lane, death, until) else {
             return Ok(());
         };
+        self.commit_hold(bus, epoch, held)
+    }
+
+    /// Hold a lane whose occupant's transcript ended on a vendor failure.
+    ///
+    /// The vendor refused the turn this seat resumes into, so a successor
+    /// resumes into the same refusal a few seconds later and the lane spends
+    /// its budget on wakes that say nothing new. One such exit holds the lane
+    /// at once, with the vendor's own text journaled against the occupant as
+    /// the hold's evidence, rather than waiting for a run of young deaths to
+    /// reach the limit.
+    pub(super) fn observe_vendor_failure(
+        &mut self,
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        failure: &str,
+        config: &lane::Config,
+        diagnostic: &mut dyn std::io::Write,
+    ) -> CommandResult<()> {
+        let now = current_instant()?;
+        self.observe_vendor_failure_at(bus, epoch, lane, occupant, failure, config, now, diagnostic)
+    }
+
+    /// [`Self::observe_vendor_failure`] with the clock supplied, so the hold
+    /// deadline a fixture asserts is the deadline the reducer was handed.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one hold crosses the journal, the reducer, the clock, and the diagnostic"
+    )]
+    pub(super) fn observe_vendor_failure_at(
+        &mut self,
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        failure: &str,
+        config: &lane::Config,
+        now: Instant,
+        diagnostic: &mut dyn std::io::Write,
+    ) -> CommandResult<()> {
+        let until = hold_deadline(config, now)?;
+        let evidence = vendor_failure_evidence(occupant, failure);
+        let Some(held) = self.holds.failed(lane, evidence, until) else {
+            return Ok(());
+        };
+        let _ = writeln!(
+            diagnostic,
+            "lifecycle held lane={lane} until={until} evidence={}",
+            held.evidence
+        );
+        self.commit_hold(bus, epoch, held)
+    }
+
+    /// Journal one hold the reducer already recorded, forgetting it again
+    /// when the journal refuses so the reducer and the journal agree.
+    fn commit_hold(
+        &mut self,
+        bus: &Bus,
+        epoch: CanonicalUuid,
+        held: wire::body::LaneHeld,
+    ) -> CommandResult<()> {
+        let lane = held.lane;
         let observed = current_residency(bus, epoch)?;
         let mut proposal = write(Actor::Spice, epoch, Producer::BusTimer)?;
         guard_residency(&mut proposal, &observed);
@@ -511,6 +564,12 @@ impl Runtime {
         }
     }
 
+    /// The deadline the lane is held until, when it is held.
+    #[cfg(test)]
+    pub(super) fn held_until(&self, lane: CanonicalUuid) -> Option<Instant> {
+        self.holds.held(lane)
+    }
+
     /// Release one hold from its explicit timer event.
     pub(super) fn expire_hold(
         &mut self,
@@ -518,9 +577,7 @@ impl Runtime {
         epoch: CanonicalUuid,
         lane: CanonicalUuid,
     ) -> CommandResult<()> {
-        let now = Instant::new(jiff::Timestamp::now()).map_err(|error| {
-            super::environment_fault("lifecycle::clock-invalid", &error.to_string())
-        })?;
+        let now = current_instant()?;
         let until = self.holds.held(lane);
         let resumed = self.holds.expire(lane, now);
         self.commit_resume(bus, epoch, lane, until, resumed)
@@ -887,6 +944,41 @@ fn resolve(targets: &[Target], backoff: &Backoff, now: Instant) -> Resolution {
                 deadline,
             }
         })
+}
+
+fn current_instant() -> CommandResult<Instant> {
+    Instant::new(jiff::Timestamp::now())
+        .map_err(|error| super::environment_fault("lifecycle::clock-invalid", &error.to_string()))
+}
+
+/// The deadline a hold taken now runs until, under the configured lane hold.
+fn hold_deadline(config: &lane::Config, now: Instant) -> CommandResult<Instant> {
+    let seconds = i64::try_from(config.hold().get().as_secs()).map_err(|_| {
+        super::environment_fault(
+            "lifecycle::hold-range",
+            "the configured lane hold does not fit a signed deadline",
+        )
+    })?;
+    after(now, seconds)
+}
+
+/// Longest vendor failure text a hold carries as evidence.
+const VENDOR_FAILURE_EVIDENCE_BYTES: usize = 512;
+
+/// The evidence a vendor failure hold names: the occupant that ended on the
+/// failure and the vendor's own words, cut at a character boundary so one
+/// verbose vendor does not fill the journal.
+fn vendor_failure_evidence(occupant: CanonicalUuid, failure: &str) -> String {
+    let failure = failure.trim();
+    let mut end = failure.len().min(VENDOR_FAILURE_EVIDENCE_BYTES);
+    while !failure.is_char_boundary(end) {
+        end -= 1;
+    }
+    let cut = if end < failure.len() { "…" } else { "" };
+    format!(
+        "occupant {occupant} ended on a vendor error: {}{cut}",
+        &failure[..end]
+    )
 }
 
 fn after(at: Instant, seconds: i64) -> CommandResult<Instant> {

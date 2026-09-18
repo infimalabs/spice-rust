@@ -294,6 +294,17 @@ pub(super) fn occupied_seed(occupant: CanonicalUuid) -> JournalWrite {
 /// Seat the fixture lane on `worktree`, which names a repository when the
 /// scenario publishes the lane inbox and any path at all when it does not.
 pub(super) fn occupied_seed_at(occupant: CanonicalUuid, worktree: &str) -> JournalWrite {
+    occupied_seed_with_session(occupant, worktree, None)
+}
+
+/// Seat the fixture lane on `worktree` with the session its occupant
+/// declared, when the scenario reads the occupant's transcript by that
+/// declaration.
+pub(super) fn occupied_seed_with_session(
+    occupant: CanonicalUuid,
+    worktree: &str,
+    session: Option<wire::LaneSession>,
+) -> JournalWrite {
     let origin = format!("resident:{}", epoch())
         .parse::<Origin>()
         .expect("fixture resident origin");
@@ -318,7 +329,7 @@ pub(super) fn occupied_seed_at(occupant: CanonicalUuid, worktree: &str) -> Journ
             occupant: Some(occupant),
             lineage: vec![occupant],
             capabilities: vec![uuid(9)],
-            session: None,
+            session,
             disposition: "occupied".to_owned(),
         }],
         subscriptions: vec![wire::TeamSubscription {

@@ -112,7 +112,7 @@ pub(crate) fn run(
 ) -> Outcome<Report> {
     let action = path.get(1).copied().unwrap_or("briefing");
     let result = if action == "context" {
-        context::build(matches)
+        context::build(matches, environment)
     } else if matches!(action, "briefing" | "sweep") {
         deadline_build(matches, path, action, environment, configuration)
     } else {

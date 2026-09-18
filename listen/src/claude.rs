@@ -4,7 +4,7 @@ use crate::{
     Compaction, Event, Events, Failure, Object, Prose, ProseRole, Reasoning, ReasoningContent,
     ResidueKind, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage, array,
     media::{self, OwnedContent},
-    object, optional_boolean, optional_unsigned, required, string,
+    object, optional_boolean, optional_string, optional_unsigned, required, string,
 };
 
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
@@ -18,7 +18,8 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
             summary: Some(string(record, "summary")?.to_owned()),
             locus,
         })]),
-        "rate_limit_event" | "error" => Ok(vec![Event::Failure(Failure {
+        "rate_limit_event" => rate_limit(record, locus),
+        "error" => Ok(vec![Event::Failure(Failure {
             message: record
                 .get("message")
                 .and_then(serde_json::Value::as_str)
@@ -31,6 +32,35 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
             discriminator: other.to_owned(),
         }),
     }
+}
+
+/// A rate limit report is a failure only when the vendor rejected the request.
+///
+/// Claude Code reports its rate limit standing beside ordinary responses, and
+/// an allowed standing, with or without a warning, says the request went
+/// through. Only a rejection is the vendor's word that the turn did not, so
+/// only a rejection decodes to the failure an exit can be held on.
+fn rate_limit(record: &Object, locus: Locus) -> Events {
+    let Some(info) = record
+        .get("rate_limit_info")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return Ok(vec![Event::Failure(Failure {
+            message: optional_string(record, "message")?
+                .unwrap_or("vendor reported an error")
+                .to_owned(),
+            locus,
+        })]);
+    };
+    let status = string(info, "status")?;
+    if matches!(status, "allowed" | "allowed_warning") {
+        return Ok(Vec::new());
+    }
+    let window = optional_string(info, "rateLimitType")?.unwrap_or("request");
+    Ok(vec![Event::Failure(Failure {
+        message: format!("rate limit {status} for the {window} window"),
+        locus,
+    })])
 }
 
 fn assistant(record: &Object, locus: Locus) -> Events {

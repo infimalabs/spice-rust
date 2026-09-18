@@ -21,7 +21,9 @@ use super::*;
 /// Account one occupant exit against renewal, lifecycle holds, and residency.
 ///
 /// The supervisor notice and the seat sweep both land here, so an exit is
-/// accounted the same way whichever of them reports it first.
+/// accounted the same way whichever of them reports it first. An exit whose
+/// transcript ends on a vendor failure holds the lane on that word alone; any
+/// other exit is one more death for the young-death run.
 #[allow(
     clippy::too_many_arguments,
     reason = "one exit crosses renewal, lifecycle, residency, and steering"
@@ -37,7 +39,33 @@ pub(in crate::resident) fn account_exit(
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     if !lane_surface::renewal_requested_exit(bus, epoch, exit.lane, exit.occupant)? {
-        lifecycle.observe_death(bus, epoch, seats, exit.lane, exit.occupant, config)?;
+        let seated = seats
+            .occupant(exit.lane)
+            .is_some_and(|sitting| sitting.occupant() == exit.occupant);
+        let failure = if seated {
+            super::last_word::vendor_failure(
+                bus,
+                paths,
+                epoch,
+                exit.lane,
+                exit.occupant,
+                diagnostic,
+            )?
+        } else {
+            None
+        };
+        match failure {
+            Some(failure) => lifecycle.observe_vendor_failure(
+                bus,
+                epoch,
+                exit.lane,
+                exit.occupant,
+                &failure,
+                config,
+                diagnostic,
+            )?,
+            None => lifecycle.observe_death(bus, epoch, seats, exit.lane, exit.occupant, config)?,
+        }
     }
     lane_surface::occupant_exited(bus, paths, epoch, seats, exit, diagnostic)
 }

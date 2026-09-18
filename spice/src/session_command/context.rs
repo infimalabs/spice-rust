@@ -4,7 +4,7 @@ use spice::repository::Repository;
 const WINDOW_BYTES: u64 = 256 * 1024;
 const WINDOW_RECORDS: usize = 8;
 
-pub(super) fn build(matches: &ArgMatches) -> Result<Report, Refusal> {
+pub(super) fn build(matches: &ArgMatches, environment: &Environment) -> Result<Report, Refusal> {
     let session = required(matches, "SESSION")?;
     let lane = parse::<wire::CanonicalUuid>(matches, "lane")?;
     let vendor = parse::<wire::Name>(matches, "vendor")?;
@@ -19,6 +19,7 @@ pub(super) fn build(matches: &ArgMatches) -> Result<Report, Refusal> {
             "use the selected accounted stream retained by task creation context",
         ));
     }
+    refuse_own_live_session(&session, environment)?;
 
     let current = std::env::current_dir().map_err(|error| {
         refusal(
@@ -292,6 +293,39 @@ where
     })
 }
 
+/// Refuse to hand a live session its own transcript.
+///
+/// The retained context command names the session whose tape it reads. When
+/// that name is the caller's own live vendor identity, every assistant and
+/// thinking record the reply would carry was produced by the model reading
+/// it, and feeding that reasoning back poisons each later turn of the same
+/// session. The caller's identity is whatever a vendor put in the process
+/// environment; a match on either the canonical form or the raw text refuses
+/// before any tape is opened.
+fn refuse_own_live_session(session: &str, environment: &Environment) -> Result<(), Refusal> {
+    let requested = source::canonical_thread(session);
+    for row in &environment.vendors {
+        let Some(identity) = row.identity.as_deref() else {
+            continue;
+        };
+        let raw = identity.to_string_lossy();
+        let same_text = raw.trim() == session.trim();
+        let same_thread = requested.is_some() && source::canonical_thread(&raw) == requested;
+        if !(same_text || same_thread) {
+            continue;
+        }
+        return Err(refusal(
+            "session::context-live-session-self",
+            Some(format!(
+                "{} names the requested session",
+                row.vendor.thread_id_environment()
+            )),
+            "a live session never reads its own context; rehydrate from a different session or read the task transcript after this session ends",
+        ));
+    }
+    Ok(())
+}
+
 fn source_read_refusal(member: u64, offset: u64, error: tape::Error) -> Refusal {
     refusal(
         "session::context-source-truncated",
@@ -453,5 +487,98 @@ mod tests {
                 .reason(),
             "session::context-source-undecodable"
         );
+    }
+
+    const LIVE_SESSION: &str = "2bf7ba62-0002-4434-83a6-12065e5fa058";
+    const OTHER_SESSION: &str = "018f82d4-6f59-7d06-92e3-bce9131163c2";
+
+    fn live_environment(identity: &str) -> Environment {
+        Environment::new(
+            vec![VendorEnvironment::new(
+                &spice::extension::CLAUDE,
+                Some(std::ffi::OsString::from(identity)),
+                None,
+            )],
+            None,
+            None,
+        )
+    }
+
+    fn context_matches(session: &str) -> ArgMatches {
+        crate::cli::command()
+            .try_get_matches_from([
+                "spice",
+                "session",
+                "context",
+                session,
+                "--lane",
+                "47f8b187-f5ec-4644-a2bd-11e077408d0e",
+                "--vendor",
+                "claude",
+                "--stream",
+                wire::body::TASK_CREATION_CONTEXT_STREAM,
+                "--source",
+                OTHER_SESSION,
+                "--member",
+                "1",
+                "--offset",
+                "0",
+            ])
+            .expect("context syntax parses")
+    }
+
+    #[test]
+    fn a_live_session_never_reads_its_own_context() {
+        let environment = live_environment(LIVE_SESSION);
+        let matches = context_matches(LIVE_SESSION);
+        let leaf = crate::cli::selected_matches(&matches);
+        let refused = build(leaf, &environment).expect_err("the caller's own session refuses");
+        assert_eq!(refused.reason(), "session::context-live-session-self");
+        assert_eq!(
+            refused
+                .diagnostic()
+                .and_then(wire::RefusalDiagnostic::observed),
+            Some("CLAUDE_CODE_SESSION_ID names the requested session")
+        );
+
+        let dashless = LIVE_SESSION.replace('-', "").to_ascii_uppercase();
+        assert_eq!(
+            refuse_own_live_session(&dashless, &environment)
+                .expect_err("the same thread in another spelling refuses")
+                .reason(),
+            "session::context-live-session-self"
+        );
+        let trimmed = live_environment(&format!(" {LIVE_SESSION}\n"));
+        assert_eq!(
+            refuse_own_live_session(LIVE_SESSION, &trimmed)
+                .expect_err("surrounding whitespace in the identity still names the session")
+                .reason(),
+            "session::context-live-session-self"
+        );
+    }
+
+    #[test]
+    fn another_session_and_an_absent_identity_pass_the_self_check() {
+        let environment = live_environment(LIVE_SESSION);
+        refuse_own_live_session(OTHER_SESSION, &environment)
+            .expect("another session is not the caller's own");
+
+        let unnamed = Environment::new(
+            vec![VendorEnvironment::new(
+                &spice::extension::CLAUDE,
+                None,
+                None,
+            )],
+            None,
+            None,
+        );
+        refuse_own_live_session(LIVE_SESSION, &unnamed)
+            .expect("no live identity means no session is the caller's own");
+
+        let opaque = live_environment("not-a-thread");
+        refuse_own_live_session("not-a-thread", &opaque)
+            .expect_err("an opaque identity still refuses its own exact text");
+        refuse_own_live_session(OTHER_SESSION, &opaque)
+            .expect("an opaque identity refuses nothing else");
     }
 }

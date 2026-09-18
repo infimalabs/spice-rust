@@ -17,6 +17,7 @@ mod deferred_exit;
 mod exit_disposal;
 mod reaped_seat;
 mod trust_ice;
+mod vendor_failure;
 
 const PROJECT: &str = "lifecycle.work";
 const TASK_MOMENT: &str = "1kKRRsDP";
