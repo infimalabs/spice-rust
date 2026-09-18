@@ -55,7 +55,9 @@ pub(super) struct BroadcastTarget {
 ///
 /// This is the sole Lanes conversation path: each team owns exactly one
 /// composer and activity plane, however many independently steerable members
-/// the team contains.
+/// the team contains. Only a team earns a surface: an agent seated alone under
+/// its own identity is not a formation, so it draws no surface here and stays
+/// reachable through the global menu and each team's import list instead.
 pub(super) fn render_team(
     surface: &SurfaceData,
     sender: &SenderHandle,
@@ -95,7 +97,12 @@ pub(super) fn render_team(
     let can_arrange_lanes = runtime.offers(CommandKind::LaneArrange);
     let can_arrange_teams = runtime.offers(CommandKind::TeamArrange);
     let topology = watchband::topology(&lanes.lanes);
-    if lanes.lanes.is_empty() {
+    let teams = lanes
+        .lanes
+        .iter()
+        .filter(|team| team.teamed())
+        .collect::<Vec<_>>();
+    if teams.is_empty() {
         return render_empty_fleet(runtime, lanes.epoch, team_fleet, team_controls, controls);
     }
     let render = FleetRender {
@@ -114,7 +121,7 @@ pub(super) fn render_team(
         team_controls,
         controls,
     };
-    render_populated_fleet(&lanes.lanes, &standings, team_fleet, &render)
+    render_populated_fleet(&teams, &standings, team_fleet, &render)
 }
 
 #[hook]

@@ -47,7 +47,7 @@ pub(super) fn project_targets(
                 entries,
                 ready_at,
                 row,
-                subscription,
+                subscription.as_ref(),
                 allocation,
                 first_drain_member,
             )?
@@ -100,10 +100,15 @@ fn held_claim(
     Ok((live && !trust_blocked, trust_blocked))
 }
 
-fn subscription<'a>(
-    residency: &'a wire::ResidencyHead,
+/// The effective task-allocation lifetime of one vacant lane's team.
+///
+/// An agent seated alone under its own identity is not on a team, so it
+/// follows no capacity: its configured lifetime resumes once placement moves
+/// it onto a team.
+fn subscription(
+    residency: &wire::ResidencyHead,
     row: &wire::LaneResidency,
-) -> CommandResult<Option<&'a wire::TeamSubscription>> {
+) -> CommandResult<Option<wire::TeamSubscription>> {
     let mut subscriptions = residency
         .subscriptions
         .iter()
@@ -115,7 +120,7 @@ fn subscription<'a>(
             "one lifecycle target has more than one durable task-allocation lifetime",
         ));
     }
-    Ok(subscription)
+    Ok(subscription.map(|subscription| subscription.effective(residency.team_members(row.team))))
 }
 
 fn work_availability(

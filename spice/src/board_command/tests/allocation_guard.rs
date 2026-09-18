@@ -23,7 +23,7 @@ pub(super) fn guard_winner(answer: &BoardAnswer, actor: &Actor) -> TaskHandle {
     board::select(
         &entries,
         actor,
-        subscription,
+        &subscription,
         answer.allocation_band,
         answer.recent_cell.as_ref(),
         &answer.environment(),
@@ -57,7 +57,7 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
         .iter()
         .map(|seat| wire::LaneResidency {
             lane: seat.lane,
-            team: seat.lane,
+            team: seat.team,
             name: None,
             worktree: "/fixture".to_owned(),
             life: "drive".to_owned(),

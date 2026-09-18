@@ -302,6 +302,21 @@ pub fn topology(lanes: &[LaneRow]) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
         .collect()
 }
 
+/// The teams in one topology, in the order the canvas drew them.
+///
+/// These are the rows the fleet renders and an arrangement can target. A row
+/// holding one agent under its own identity is that agent's default seat, not
+/// a team: it stays in the topology so a restatement remains complete, but no
+/// surface stands for it.
+pub fn teams(
+    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+) -> impl Iterator<Item = CanonicalUuid> + '_ {
+    topology
+        .iter()
+        .filter(|(team, members)| wire::head::teamed(*team, members.iter().copied()))
+        .map(|(team, _)| *team)
+}
+
 /// State the whole team arrangement one drop produces.
 ///
 /// The resident admits an arrangement only as a complete restatement of the

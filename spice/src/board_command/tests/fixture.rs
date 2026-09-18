@@ -3,9 +3,15 @@ use super::*;
 pub(super) static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(1);
 pub(super) static NEXT_COMMAND: AtomicU64 = AtomicU64::new(100);
 
+/// One occupied fixture seat, placed on a team of its own.
+///
+/// The team carries an identity distinct from the lane: an agent seated alone
+/// under its own identity is not on a team and draws no work, so every fixture
+/// seat that expects allocation is placed the way an operator would place it.
 #[derive(Clone, Debug)]
 pub(super) struct Seat {
     pub(super) lane: CanonicalUuid,
+    pub(super) team: CanonicalUuid,
     pub(super) occupant: CanonicalUuid,
 }
 
@@ -40,6 +46,7 @@ pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, Canonical
     let seats = (0..lane_count)
         .map(|index| Seat {
             lane: uuid(number * 100 + index as u64 + 10),
+            team: uuid(number * 100 + index as u64 + 70),
             occupant: uuid(number * 100 + index as u64 + 30),
         })
         .collect::<Vec<_>>();
@@ -48,7 +55,7 @@ pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, Canonical
         .enumerate()
         .map(|(index, seat)| wire::LaneResidency {
             lane: seat.lane,
-            team: seat.lane,
+            team: seat.team,
             name: None,
             worktree: "/fixture".to_owned(),
             life: "drive".to_owned(),

@@ -101,7 +101,8 @@ test("staggered image outcomes preserve the committed plane", { timeout: 90_000 
     const page = await context.newPage();
     await page.goto(resident.discovery.endpoint, { waitUntil: "networkidle" });
     const seated = await reply(fixture, [
-      "lane", "add", fixture, "--name", "Image", "--life", "Steer", "--vendor", "claude",
+      "lane", "add", fixture, "--team", crypto.randomUUID(),
+      "--name", "Image", "--life", "Steer", "--vendor", "claude",
     ]);
     const lane = seated.body.lane;
     await reply(fixture, ["lane", "wake", lane]);

@@ -578,7 +578,8 @@ try {
       });
     } else if (run.owns("media")) {
       await reply(fixture, [
-        "lane", "add", worktrees[0], "--name", "Control", "--life", "Steer", "--vendor", "claude",
+        "lane", "add", worktrees[0], "--team", crypto.randomUUID(),
+        "--name", "Control", "--life", "Steer", "--vendor", "claude",
       ]);
       const media = await browser.newContext({
         colorScheme: "light",

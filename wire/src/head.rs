@@ -672,6 +672,42 @@ impl TeamSubscription {
     pub fn admits_creator_team(&self, creator: Option<CanonicalUuid>) -> bool {
         self.policy.admits_creator_team(creator, self.team)
     }
+
+    /// The policy allocation honours for this team's current members.
+    ///
+    /// The configured policy stays durable, but only a [`teamed`] formation
+    /// draws work under it: an unteamed agent allocates as
+    /// [`TeamLife::Steer`](crate::intent::TeamLife::Steer) until it joins a
+    /// team, when its configured lifetime resumes.
+    #[must_use]
+    pub fn effective(&self, members: impl IntoIterator<Item = CanonicalUuid>) -> Self {
+        let policy = if teamed(self.team, members) {
+            self.policy
+        } else {
+            crate::intent::TeamLife::Steer
+        };
+        Self {
+            team: self.team,
+            policy,
+        }
+    }
+}
+
+/// Whether one Canvas team is a formation rather than a lone seat.
+///
+/// A fresh seat sits in a team carrying its own lane identity, so a team whose
+/// only member is that identity is merely a defined agent, not a team. This is
+/// the one definition of teamed: the fleet renders a surface only for a teamed
+/// row, the global menu lists an unteamed agent for placement, and allocation
+/// admits work only to a teamed formation.
+#[must_use]
+pub fn teamed(team: CanonicalUuid, members: impl IntoIterator<Item = CanonicalUuid>) -> bool {
+    let mut members = members.into_iter();
+    match (members.next(), members.next()) {
+        (Some(only), None) => only != team,
+        (Some(_), Some(_)) => true,
+        (None, _) => false,
+    }
 }
 
 /// Current resident and lane state.
@@ -700,6 +736,16 @@ pub struct ResidencyHead {
     /// Current agent-renewal handoffs, sorted by team and member identity.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub renewals: Vec<LaneRenewalRecord>,
+}
+
+impl ResidencyHead {
+    /// Lane identities seated in one team, in canonical seat order.
+    pub fn team_members(&self, team: CanonicalUuid) -> impl Iterator<Item = CanonicalUuid> + '_ {
+        self.lanes
+            .iter()
+            .filter(move |row| row.team == team)
+            .map(|row| row.lane)
+    }
 }
 
 /// Current journal and wake positions.

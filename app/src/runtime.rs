@@ -237,6 +237,12 @@ impl LaneRow {
     pub fn member(&self, lane: CanonicalUuid) -> Option<&LaneMember> {
         self.members.iter().find(|member| member.lane == lane)
     }
+
+    /// Whether this row is a team the fleet renders rather than a lone agent.
+    #[must_use]
+    pub fn teamed(&self) -> bool {
+        wire::head::teamed(self.lane, self.members.iter().map(|member| member.lane))
+    }
 }
 
 impl From<&LaneAnswer> for LaneView {

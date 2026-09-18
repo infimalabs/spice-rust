@@ -133,7 +133,7 @@ fn lane_creation_guard_refuses_when_the_accounted_source_moves_before_commit() {
         .expect("exact lane creation context admits");
     assert_eq!(
         capture.creator_team(),
-        Some(seats[0].lane),
+        Some(seats[0].team),
         "the same guarded residency observation captures creator-team ownership",
     );
     let body::TaskCreationContext::Transcript { boundary, .. } = expected else {
@@ -217,7 +217,7 @@ fn lane_creation_guard_refuses_when_creator_team_moves_before_commit() {
     .expect("fixture snapshot validates");
     let capture = task_creation_capture(&bus, &command, &snapshot)
         .expect("exact lane creation context admits");
-    assert_eq!(capture.creator_team(), Some(lane));
+    assert_eq!(capture.creator_team(), Some(seats[0].team));
 
     super::subscription::move_fixture_lane_to_team(&bus, epoch, &seats[0], uuid(9_999));
 

@@ -68,6 +68,10 @@ const teamLaneIds = [
   "00000000-0000-4000-8000-000000000000", "00000000-0000-4000-8000-000000000001",
   "00000000-0000-4000-8000-000000000002", "00000000-0000-4000-8000-000000000006",
 ];
+/// The fixture team's own identity. Only a team renders a fleet surface, and a
+/// seat whose team is its own lane is not on one, so the host is seated under a
+/// distinct team identity from its first submission onward.
+const teamId = "00000000-0000-4000-8000-000000000700";
 export const nestedQuotePreview = "The author words belong in the composer band.";
 export const nestedQuoteMessage = [
   "> > The final review found no alternate execution path.", "> >",
@@ -120,7 +124,7 @@ const tallMosaicMessage = [
 ].join("\n");
 
 async function assignTeamLaneIds(page) {
-  await page.evaluate((laneIds) => {
+  await page.evaluate(({ laneIds, team }) => {
     const socket = window.__canvasSockets.at(-1);
     if (!socket) throw new Error("canvas WebSocket was not captured");
     const send = socket.send.bind(socket);
@@ -132,7 +136,7 @@ async function assignTeamLaneIds(page) {
       if (!lane) throw new Error("fixture received an unexpected fifth lane::seat command");
       assignment += 1;
       command.body.lane = lane;
-      command.body.team = laneIds[0];
+      command.body.team = team;
       return new TextEncoder().encode(JSON.stringify(command));
     };
     socket.send = (data) => {
@@ -145,7 +149,7 @@ async function assignTeamLaneIds(page) {
         send(rewrite(new Uint8Array(data.buffer ?? data, data.byteOffset ?? 0, data.byteLength)));
       }
     };
-  }, teamLaneIds);
+  }, { laneIds: teamLaneIds, team: teamId });
 }
 
 async function measurePips(locator, laneKey, statusKey) {
@@ -249,6 +253,7 @@ export async function seatAgentTeam(
   const host = firstSnapshot.body.lanes.find((lane) => lane.worktree === teamWorktrees[0]);
   assert.ok(host, "the Canvas seat control creates the team host");
   assert.equal(host.lane, teamLaneIds[0], "the fixture fixes the team host accent slot");
+  assert.equal(host.team, teamId, "the fixture seats the host under the team's own identity");
   const hostSurface = console.locator(
     `.team-surface[data-team="${host.team}"]`,
   );

@@ -63,9 +63,9 @@ fn parked_board(seats: &[Seat], bus: &Bus, epoch: CanonicalUuid) -> (BoardAnswer
     (answer, stale)
 }
 
-fn steered(mut answer: BoardAnswer, lane: CanonicalUuid) -> BoardAnswer {
+fn steered(mut answer: BoardAnswer, team: CanonicalUuid) -> BoardAnswer {
     for subscription in &mut answer.residency.body.subscriptions {
-        if subscription.team == lane {
+        if subscription.team == team {
             subscription.policy = TeamLife::Steer;
         }
     }
@@ -76,13 +76,13 @@ fn steered(mut answer: BoardAnswer, lane: CanonicalUuid) -> BoardAnswer {
 fn empty_drain_readout_counts_the_parked_board_like_task_status() {
     let (root, bus, epoch, seats) = fixture("drain-readout", 3);
     let (answer, _) = parked_board(&seats, &bus, epoch);
-    let answer = steered(answer, seats[0].lane);
+    let answer = steered(answer, seats[0].team);
     let entries = actor_entries(&answer).expect("planted rows validate");
     assert!(
         board::select(
             &entries,
             &answer.principal,
-            allocation_subscription(&answer.residency.body, &answer.principal)
+            &allocation_subscription(&answer.residency.body, &answer.principal)
                 .expect("steered subscription"),
             answer.allocation_band,
             answer.recent_cell.as_ref(),

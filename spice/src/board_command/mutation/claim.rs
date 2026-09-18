@@ -285,7 +285,7 @@ fn allocator_claim_selection<'a>(
     let selected = board::select(
         &snapshot.entries,
         command.actor(),
-        subscription,
+        &subscription,
         snapshot.answer.allocation_band,
         snapshot.answer.recent_cell.as_ref(),
         &environment,

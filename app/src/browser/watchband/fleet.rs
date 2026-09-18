@@ -114,7 +114,7 @@ pub(super) fn render_empty_fleet(
 }
 
 pub(super) fn render_populated_fleet(
-    lanes: &[crate::runtime::LaneRow],
+    teams: &[&crate::runtime::LaneRow],
     standings: &[watchband::Standing],
     fleet: &NodeRef,
     render: &FleetRender<'_>,
@@ -124,7 +124,7 @@ pub(super) fn render_populated_fleet(
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
             tabindex="0" aria-label="Agent teams" onclick={dismiss} onkeydown={escape}>
-            {for lanes.iter().map(|team| {
+            {for teams.iter().map(|team| {
                 if render.team_controls.is_closed(team.lane) {
                     return Html::default();
                 }
@@ -393,7 +393,7 @@ fn render_team_toolbar(
     render: &FleetRender<'_>,
 ) -> Html {
     let pip_stack = crate::pip_layout::PipStack::new(standings.len());
-    let can_arrange = render.can_arrange_teams && render.topology.len() > 1;
+    let can_arrange = render.can_arrange_teams && watchband::teams(&render.topology).count() > 1;
     let id = team.lane;
     let arrangement_help_id = format!("team-arrangement-help-{id}");
     let lights_label = if can_arrange {

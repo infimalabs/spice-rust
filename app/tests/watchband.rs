@@ -4,8 +4,8 @@ use app::watchband::{
     TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, elapsed_label,
     elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, leaf, one_line,
     remaining_label, remaining_label_deadline_millis, reported_tasks, response_speech_text, short,
-    split_team, standing_title, standings, task_mentions, ticker_chunks, ticker_line, topology,
-    truncate,
+    split_team, standing_title, standings, task_mentions, teams, ticker_chunks, ticker_line,
+    topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -1012,6 +1012,47 @@ fn a_reorder_moves_the_dragged_team_into_the_target_position_without_moving_an_a
             (uuid(TEAM_ONE), vec![uuid(LANE_A), uuid(LANE_B)]),
             (uuid(TEAM_THREE), vec![uuid(LANE_D)]),
         ],
+    );
+}
+
+#[test]
+fn only_a_team_stands_in_the_fleet_while_a_lone_seat_stays_in_the_topology() {
+    // LANE_A sits alone under its own identity: the default seat every lane
+    // starts in, not a team. TEAM_TWO holds one agent too, but under a distinct
+    // identity, which is how "New team" and `lane add --team` create a team
+    // of one. The fleet, the arrangement targets, and the global menu all read
+    // the same rule, so a lone seat draws no surface while the topology still
+    // restates it in full.
+    let lanes = [
+        lane(LANE_A, "main-a"),
+        seated(TEAM_ONE, &[(LANE_B, "main-b"), (LANE_C, "main-c")]),
+        seated(TEAM_TWO, &[(LANE_D, "main-d")]),
+    ];
+
+    assert_eq!(
+        lanes.iter().map(LaneRow::teamed).collect::<Vec<_>>(),
+        [false, true, true],
+        "a lone seat under its own identity is the one row that is not a team",
+    );
+    let restated = topology(&lanes);
+    assert_eq!(
+        restated,
+        vec![
+            (uuid(LANE_A), vec![uuid(LANE_A)]),
+            (uuid(TEAM_ONE), vec![uuid(LANE_B), uuid(LANE_C)]),
+            (uuid(TEAM_TWO), vec![uuid(LANE_D)]),
+        ],
+        "the topology restates every seat, teamed or not",
+    );
+    assert_eq!(
+        teams(&restated).collect::<Vec<_>>(),
+        vec![uuid(TEAM_ONE), uuid(TEAM_TWO)],
+        "only teams stand in the fleet and receive arrangement drops",
+    );
+    assert_eq!(
+        teams(&topology(&[lane(LANE_A, "main-a"), lane(LANE_B, "main-b")])).count(),
+        0,
+        "a fleet of lone seats is an empty fleet",
     );
 }
 

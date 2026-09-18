@@ -432,7 +432,9 @@ fn canvas_app() -> Html {
         .read()
         .as_ref()
         .and_then(CanvasRuntime::lanes)
-        .map_or(0, |lanes| lanes.lanes.len());
+        .map_or(0, |lanes| {
+            lanes.lanes.iter().filter(|team| team.teamed()).count()
+        });
     watchband::use_team_fleet_right_edge(team_fleet.clone(), team_count);
 
     let refresh = refresh_callback(sender.clone(), axis.clone());

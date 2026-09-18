@@ -131,6 +131,37 @@ fn org_policy_drives_every_member_while_terminal_seat_life_remains_an_override()
     bus.shutdown().expect("terminal override bus stops");
 }
 
+/// A vacant lane seated alone under its own identity is not on a team.
+///
+/// Its configured policy stays durable, but only a team draws work under it:
+/// the lane holds at Idle under every policy, exactly as a steered team does,
+/// however much ready work the board carries.
+#[test]
+fn a_vacant_lane_without_a_team_projects_no_startup_under_any_policy() {
+    for policy in [
+        wire::intent::TeamLife::Steer,
+        wire::intent::TeamLife::Drive,
+        wire::intent::TeamLife::Drain,
+    ] {
+        let (bus, _, projection) = seated_policy_fixture(policy, false, lane());
+        let snapshot = bus.task_snapshot().expect("unteamed snapshot reads");
+        let targets = project_targets(
+            &snapshot,
+            &projection,
+            instant(50),
+            &Holds::new(3),
+            &board::NextConfig::default(),
+        )
+        .expect("an unteamed lane projects lifecycle targets");
+        assert_eq!(
+            resolve(&targets, &Backoff::default(), instant(50)),
+            Resolution::Idle,
+            "{policy:?} starts no agent on a lane without a team",
+        );
+        bus.shutdown().expect("unteamed fixture bus stops");
+    }
+}
+
 #[test]
 fn drive_burst_uses_the_selected_winners_ready_instant() {
     let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
@@ -459,9 +490,21 @@ fn policy_fixture(
     policy: wire::intent::TeamLife,
     terminal: bool,
 ) -> (Bus, ProjectPolicy, Projection) {
+    seated_policy_fixture(policy, terminal, team())
+}
+
+/// The policy fixture with its one lane seated under `team`.
+///
+/// Seating the lane under its own identity leaves it without a team, which is
+/// how every lane starts before an operator places it.
+fn seated_policy_fixture(
+    policy: wire::intent::TeamLife,
+    terminal: bool,
+    team: CanonicalUuid,
+) -> (Bus, ProjectPolicy, Projection) {
     let mut journal = Journal::in_memory().expect("policy fixture journal opens");
     journal
-        .apply(seed_write_with_policy(policy, terminal))
+        .apply(seed_write_seated(policy, terminal, team))
         .expect("policy fixture seeds");
     let bus = Bus::start(journal).expect("policy fixture bus starts");
     let projects = projects();
@@ -480,6 +523,14 @@ fn seed_write() -> JournalWrite {
 }
 
 fn seed_write_with_policy(policy: wire::intent::TeamLife, terminal: bool) -> JournalWrite {
+    seed_write_seated(policy, terminal, team())
+}
+
+fn seed_write_seated(
+    policy: wire::intent::TeamLife,
+    terminal: bool,
+    team: CanonicalUuid,
+) -> JournalWrite {
     let task = task(TASK_MOMENT);
     let phase = phase();
     let origin = format!("task:{}", handle(TASK_MOMENT))
@@ -521,7 +572,7 @@ fn seed_write_with_policy(policy: wire::intent::TeamLife, terminal: bool) -> Jou
         topology_revision: 1,
         lanes: vec![LaneResidency {
             lane: lane(),
-            team: lane(),
+            team,
             name: None,
             worktree: "/fixture".to_owned(),
             life: if terminal { "drain" } else { "drive" }.to_owned(),
@@ -534,10 +585,7 @@ fn seed_write_with_policy(policy: wire::intent::TeamLife, terminal: bool) -> Jou
             session: None,
             disposition: "vacant".to_owned(),
         }],
-        subscriptions: vec![wire::TeamSubscription {
-            team: lane(),
-            policy,
-        }],
+        subscriptions: vec![wire::TeamSubscription { team, policy }],
         renewals: Vec::new(),
     });
     write
@@ -626,7 +674,7 @@ fn add_vacant_org_members(bus: &Bus, lanes: &[CanonicalUuid]) {
     for member in lanes {
         next.lanes.push(LaneResidency {
             lane: *member,
-            team: lane(),
+            team: team(),
             name: None,
             worktree: format!("/fixture/{member}"),
             life: "drive".to_owned(),
@@ -656,7 +704,7 @@ fn add_vacant_org_members(bus: &Bus, lanes: &[CanonicalUuid]) {
             .fact(
                 body::LaneSeated {
                     lane: *member,
-                    team: lane(),
+                    team: team(),
                     capability: *member,
                     name: None,
                     worktree: format!("/fixture/{member}"),
@@ -876,6 +924,15 @@ fn lane() -> CanonicalUuid {
     uuid(1)
 }
 
+/// The team the fixture lane is placed on.
+///
+/// Its identity differs from the lane's: a lane seated alone under its own
+/// identity is not on a team and draws no work, so the fixture places its
+/// seat the way an operator would.
+fn team() -> CanonicalUuid {
+    uuid(7)
+}
+
 fn lane_creation() -> body::TaskCreationContext {
     body::TaskCreationContext::Transcript {
         session: "fixture-session".to_owned(),
@@ -889,7 +946,7 @@ fn lane_creation() -> body::TaskCreationContext {
                 offset: 1,
             },
         },
-        creator_team: Some(lane()),
+        creator_team: Some(team()),
     }
 }
 
