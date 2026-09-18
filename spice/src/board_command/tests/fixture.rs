@@ -32,13 +32,44 @@ pub(super) fn stamp(text: &str) -> wire::TaskStamp {
     wire::TaskStamp::for_micros(value).expect("fixture name fits the task stamp codec")
 }
 
-pub(super) fn fixture(name: &str, lane_count: usize) -> (PathBuf, Bus, CanonicalUuid, Vec<Seat>) {
+/// One fixture's directory, removed again when the fixture goes out of scope.
+///
+/// A test that ends on `clean` removes it after verifying the authority; one
+/// that ends on an assertion, or never reaches `clean`, still leaves nothing
+/// behind in the temp directory. Removal is best effort so an assertion's
+/// unwinding is what a failed test reports.
+pub(super) struct FixtureRoot(PathBuf);
+
+impl std::ops::Deref for FixtureRoot {
+    type Target = Path;
+
+    fn deref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for FixtureRoot {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for FixtureRoot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+pub(super) fn fixture(
+    name: &str,
+    lane_count: usize,
+) -> (FixtureRoot, Bus, CanonicalUuid, Vec<Seat>) {
     let number = NEXT_FIXTURE.fetch_add(1, Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!(
+    let root = FixtureRoot(std::env::temp_dir().join(format!(
         "spice-board-command-{name}-{}-{number}",
         std::process::id()
-    ));
-    fs::create_dir_all(&root).expect("fixture directory exists");
+    )));
+    fs::create_dir_all(&*root).expect("fixture directory exists");
     let path = root.join("authority.sqlite3");
     let journal = journal::Journal::open(&path).expect("fixture journal opens");
     let bus = Bus::start(journal).expect("fixture bus starts");

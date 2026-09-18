@@ -557,17 +557,35 @@ fn the_embedded_preflight_is_valid_posix_shell() {
     );
 }
 
+/// One fixture directory, removed again when the test that made it ends,
+/// whichever way it ends.
+struct FixtureDirectory(std::path::PathBuf);
+
+impl std::ops::Deref for FixtureDirectory {
+    type Target = std::path::Path;
+
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for FixtureDirectory {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
 /// A `/sys/class/net` directory holding the named interfaces and their
 /// flags, alongside the `bonding_masters` control file the kernel puts
 /// there, which is a file rather than an interface directory.
-fn network_directory(interfaces: &[(&str, u32)]) -> std::path::PathBuf {
+fn network_directory(interfaces: &[(&str, u32)]) -> FixtureDirectory {
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    let root = std::env::temp_dir().join(format!(
+    let root = FixtureDirectory(std::env::temp_dir().join(format!(
         "spice-proof-net-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    fs::create_dir_all(&root).expect("fixture network directory");
+    )));
+    fs::create_dir_all(&*root).expect("fixture network directory");
     fs::write(root.join("bonding_masters"), "\n").expect("fixture control file");
     for (name, flags) in interfaces {
         let interface = root.join(name);
@@ -620,6 +638,7 @@ fn mount_violation(lines: &[String]) -> String {
         ])
         .output()
         .expect("host POSIX shell runs the mount rule");
+    let _ = fs::remove_file(&path);
     String::from_utf8(output.stdout)
         .expect("refusal names are ASCII")
         .trim()

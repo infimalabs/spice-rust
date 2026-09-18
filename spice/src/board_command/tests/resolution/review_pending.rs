@@ -1,8 +1,8 @@
 use super::*;
 
 struct AssignedReview {
-    root: PathBuf,
     bus: Bus,
+    root: FixtureRoot,
     epoch: CanonicalUuid,
     seats: Vec<Seat>,
     implementer: Actor,
