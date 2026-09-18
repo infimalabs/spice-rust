@@ -179,6 +179,29 @@ fn wide_measurement_occurs_only_for_a_tall_card_and_at_most_once() {
 }
 
 #[test]
+fn a_tall_card_whose_width_buys_no_height_keeps_one_base_candidate() {
+    let geometry = Geometry::new(16.0, 1440.0);
+    let calls = Cell::new(0);
+    let letterbox = span_candidates(&geometry, |_| {
+        calls.set(calls.get() + 1);
+        252.0
+    });
+
+    assert_eq!(calls.get(), 2);
+    assert_eq!(letterbox, vec![Candidate { span: 3, rows: 5 }]);
+
+    let rewrapped_header = span_candidates(&geometry, |span| {
+        if span == geometry.base_span {
+            262.0
+        } else {
+            242.0
+        }
+    });
+
+    assert_eq!(rewrapped_header, vec![Candidate { span: 3, rows: 5 }]);
+}
+
+#[test]
 fn candidate_policy_depends_on_measured_height_not_card_class() {
     let geometry = Geometry::new(16.0, 1440.0);
     let candidates_for = |_: &str, base_height: f64| {

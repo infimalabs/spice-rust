@@ -523,8 +523,10 @@ flowchart TD
    keeps cards readable in ordinary base flow but commits no lattice geometry
    or fingerprint until a measurable width arrives.
 
-**Policy** — wide tier at twice the width when a card measures tall, freeze
-depth 2, resize debounce 200ms.
+**Policy** — wide tier at twice the width when a card measures tall *and* the
+wider measurement is genuinely shorter, freeze depth 2, resize debounce 200ms. A
+tall card whose height does not depend on width, such as a letterboxed image,
+keeps its base lane.
 
 **Incidental** — track count, span ladder, the placement key's tie-breakers,
 tween duration, the entire visual style.

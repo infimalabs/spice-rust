@@ -5,6 +5,10 @@ import {
   waitForPageFunction as waitForPage,
 } from "./canvas-fixture.mjs";
 
+function rowsFor(plane, height) {
+  return Math.max(plane.minCardRows, Math.ceil((height + plane.columnGap) / plane.module));
+}
+
 export async function assertMosaicLattice(page, requireBothReadPaths) {
   await waitForMosaicReady(page);
   const snapshot = await page.locator('[data-pane="agent-console"]').evaluate((console) => ({
@@ -50,6 +54,8 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
             measureProperty: style.getPropertyValue("--mosaic-measure-span"),
             measurementActive: card.hasAttribute("data-mosaic-measurement-active"),
             tallWitness: card.querySelector("h2")?.textContent?.trim() === "Measured lattice witness",
+            state: card.dataset.state,
+            imageOnly: card.classList.contains("mosaic-message-card--image-only"),
             textOnly: card.querySelector(".message-image") === null,
             columnStart: Number(style.gridColumnStart),
             columnEnd: style.gridColumnEnd,
@@ -98,25 +104,28 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
     );
     for (const card of plane.cards) {
       assert.ok(card.key, "every Mosaic card exposes its stable identity");
-      const measuredBaseSpan = card.candidateSpans[0];
+      const measuredBaseSpan = card.measuredSpans[0];
       const wideSpan = Math.min(plane.trackCount, measuredBaseSpan * 2);
-      const wideEligible = wideSpan > measuredBaseSpan && card.heights[0] >= plane.tallThreshold;
-      const expectedSpans = wideEligible ? [measuredBaseSpan, wideSpan] : [measuredBaseSpan];
-      const latchedSpans = card.measuredSpans.slice(expectedSpans.length);
+      const wideMeasured = wideSpan > measuredBaseSpan && card.heights[0] >= plane.tallThreshold;
+      const policySpans = wideMeasured ? [measuredBaseSpan, wideSpan] : [measuredBaseSpan];
+      const wideAdmitted = wideMeasured
+        && rowsFor(plane, card.heights[1]) < rowsFor(plane, card.heights[0]);
+      const expectedSpans = wideAdmitted ? [measuredBaseSpan, wideSpan] : [measuredBaseSpan];
+      const latchedSpans = card.measuredSpans.slice(policySpans.length);
       assert.ok(latchedSpans.length <= 1, "measurement performs at most one frozen-span read");
       assert.ok(
-        latchedSpans.every((span) => !expectedSpans.includes(span)),
-        "a frozen-span read is distinct from every current policy candidate",
+        latchedSpans.every((span) => !policySpans.includes(span)),
+        "a frozen-span read is distinct from every span the height policy already read",
       );
-      const expectedMeasuredSpans = [...expectedSpans, ...latchedSpans];
+      const expectedMeasuredSpans = [...policySpans, ...latchedSpans];
       assert.equal(
         card.reads,
         expectedMeasuredSpans.length,
         `height reads follow the bounded policy, including at most one frozen-span read: ${JSON.stringify({
           card,
           expectedMeasuredSpans,
-          expectedSpans,
           latchedSpans,
+          policySpans,
           plane: {
             baseSpan: plane.baseSpan,
             tallThreshold: plane.tallThreshold,
@@ -131,7 +140,26 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
       );
       assert.equal(card.measuredWidths.length, card.reads, "every DOM read records its real width");
       assert.equal(card.heights.length, card.reads, "every instrumented read records one height");
-      assert.deepEqual(card.candidateSpans, expectedSpans, "height alone admits the wide tier");
+      assert.deepEqual(
+        card.candidateSpans,
+        expectedSpans,
+        `a tall height earns the wider read and only a shorter wider measurement earns the wide tier: ${JSON.stringify({
+          card,
+          plane: { module: plane.module, tallThreshold: plane.tallThreshold },
+        })}`,
+      );
+      if (card.imageOnly && !wideAdmitted && card.state === "liquid") {
+        assert.equal(
+          card.span,
+          measuredBaseSpan,
+          `a letterboxed image card whose width buys no height keeps its base lane: ${JSON.stringify({
+            heights: card.heights,
+            key: card.key,
+            span: card.span,
+            widths: card.measuredWidths,
+          })}`,
+        );
+      }
       assert.equal(card.measureSpan, measuredBaseSpan, "measurement restores the base diagnostic span");
       assert.equal(
         Number(card.measureProperty),
@@ -163,25 +191,17 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
           card.heights[1] < card.heights[0],
           "the tall text witness becomes naturally shorter at double width",
         );
-        const rowsFor = (height) => Math.max(
-          plane.minCardRows,
-          Math.ceil((height + plane.columnGap) / plane.module),
+        assert.ok(
+          rowsFor(plane, card.heights[1]) < rowsFor(plane, card.heights[0]),
+          "the wide text witness has a smaller natural row count",
         );
-        const baseRows = rowsFor(card.heights[0]);
-        const wideRows = rowsFor(card.heights[1]);
-        assert.ok(wideRows < baseRows, "the wide text witness has a smaller natural row count");
       }
-      if (
-        card.textOnly
-          && card.candidateSpans.length >= 2
-          && card.span === card.candidateSpans[1]
-          && card.heights[1] < card.heights[0]
-      ) {
-        const wideRows = Math.max(
-          plane.minCardRows,
-          Math.ceil((card.heights[1] + plane.columnGap) / plane.module),
+      if (card.textOnly && wideAdmitted && card.span === wideSpan) {
+        assert.equal(
+          card.rows,
+          rowsFor(plane, card.heights[1]),
+          "a wide text card commits its measured wide row count",
         );
-        assert.equal(card.rows, wideRows, "a wide text card commits its measured wide row count");
         assert.ok(
           Math.abs(card.footerInset - card.paddingBottom) <= 1.1,
           `a wide text card leaves only its natural padding below the footer: ${JSON.stringify({
@@ -219,9 +239,9 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
         card.clientHeight + 1 >= card.scrollHeight,
         `Mosaic card contains its own content: ${JSON.stringify(card)}`,
       );
-      readPaths.add(expectedSpans.length);
+      readPaths.add(policySpans.length);
       kinds.add(card.kind);
-      placements.push(card);
+      placements.push({ ...card, tall: wideMeasured, wideAdmitted });
     }
     for (let left = 0; left < plane.cards.length; left += 1) {
       for (let right = left + 1; right < plane.cards.length; right += 1) {

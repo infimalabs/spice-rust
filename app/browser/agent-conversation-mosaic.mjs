@@ -537,5 +537,23 @@ export async function assertPersistentMosaic(
     "Chromium runtime tool media",
     { history: true },
   );
-  await assertMosaicLattice(page, true);
+  const placements = await assertMosaicLattice(page, true);
+  const letterboxed = placements.filter((card) => card.imageOnly && card.tall);
+  assert.ok(
+    letterboxed.length > 0,
+    "the lattice observes at least one tall letterboxed image card",
+  );
+  for (const card of letterboxed) {
+    assert.deepEqual(
+      card.candidateSpans,
+      [card.measuredSpans[0]],
+      `a tall letterboxed image card is offered no wide candidate: ${JSON.stringify({
+        candidateSpans: card.candidateSpans,
+        heights: card.heights,
+        key: card.key,
+        span: card.span,
+        widths: card.measuredWidths,
+      })}`,
+    );
+  }
 }
