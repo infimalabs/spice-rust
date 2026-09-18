@@ -268,6 +268,10 @@ fn preferred_vendor(
         .expect("thread resolution requires at least one declared vendor")
 }
 
+/// Every transcript `vendor` keeps for the canonical dashed `thread`, in
+/// the order its layout admits: state index, then the project directory
+/// keyed by the working directory, then the bounded walk of its sessions
+/// root.
 pub(super) fn find_thread(
     thread: &str,
     vendor: &'static spice::extension::Vendor,
