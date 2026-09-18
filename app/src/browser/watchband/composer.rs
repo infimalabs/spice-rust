@@ -664,8 +664,7 @@ pub(super) fn paste_images(
 
 pub(super) fn drop_on_lane(
     lane: CanonicalUuid,
-    occupant: Option<CanonicalUuid>,
-    epoch: CanonicalUuid,
+    target: Option<SubmissionTarget>,
     lane_key: String,
     sender: SenderHandle,
     drafts: UseReducerHandle<ComposerDrafts>,
@@ -684,7 +683,7 @@ pub(super) fn drop_on_lane(
         let Ok(text) = transfer.get_data("text/plain") else {
             return;
         };
-        let Some(occupant) = occupant else {
+        let Some(SubmissionTarget::Resident { occupant, epoch }) = target else {
             return;
         };
         let message = crate::composer_markdown::block_quote(&text);

@@ -5,18 +5,17 @@ import { connect, createServer } from "node:net";
 
 import { childExited } from "./canvas-child-state.mjs";
 
-/// The page-side connection state, read from the topbar that carries it.
+/// The page-side connection state, read from the command bar that carries it.
 ///
 /// The class names Online against Offline and the label carries the reason the
 /// client last recorded, so a page that never saw the socket close reads
 /// differently from one that saw it and did not render the change.
 ///
-/// The status element is NOT always present. The topbar holding it is rendered
-/// only outside the mosaic workspace, so a wait on a status class is deaf while
-/// the mosaic is active. An absent status therefore reports the layout that
-/// hides it rather than a bare false, because the two are opposite diagnoses:
-/// one is a client that never changed state, the other is a client whose state
-/// is simply not on screen to be waited for.
+/// The status is rendered by every layout, so its absence means the canvas
+/// chrome itself is not on screen: a page whose Wasm root never mounted, or one
+/// that unloaded. That is reported with which workspaces did render rather
+/// than as a bare false, because a client that never changed state and a
+/// client whose state was never on screen are opposite diagnoses.
 export async function describeConnection(page) {
   return await page
     .evaluate(() => {

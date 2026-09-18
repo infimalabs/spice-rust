@@ -556,22 +556,20 @@ export async function seedAuthority(fixture) {
 // the client clock across its two probe intervals instead of spending them on
 // the host.
 //
-// What is not settled before the wait is armed is *this* function. The status
-// element is not part of a permanently rendered chrome: `app/src/browser.rs`
-// starts `mosaic` at `true` and `app/src/browser/view.rs` renders the topbar
-// holding `.status` only under `if !**render.mosaic`, so `.status` is absent
-// from the document in the default Lanes view. Every `.status` wait in
-// `canvas.spec.mjs` is therefore preceded by a switch to a non-mosaic view,
-// and each one is really waiting on two things: the connection state, and this
-// click having been applied. This function returns once the click is
-// dispatched; nothing here confirms the view actually changed. A wait that
-// times out consequently cannot distinguish "`.status` never carried
-// `offline`" from "`.status` was never in the document at all", and only the
-// second is a view-switch failure. That is demonstrated, not supposed: pointing
-// one such wait at the mosaic "Lanes" view instead reproduces the reported
-// flake's signature exactly, down to the same bare uncaught TimeoutError on
-// `waiting for locator('.status.offline') to be visible`, from a cause that
-// never involved the connection at all.
+// What is not settled before the wait is armed is *this* function, which
+// returns once the click is dispatched and only then waits on the durable
+// destination. The status element used to compound that: until
+// BROWSER-dStDhMQS1 it lived in the analytics topbar that
+// `app/src/browser/view.rs` rendered only outside the mosaic, so every
+// `.status` wait had to be preceded by a switch away from the default Lanes
+// view and a timeout could not tell "`.status` never carried `offline`" from
+// "`.status` was never in the document at all". Pointing one such wait at the
+// mosaic reproduced the reported flake's signature exactly, from a cause that
+// never involved the connection. The status now renders in the command bar of
+// every layout (`app/src/browser/view/chrome.rs`), which is also what lets an
+// operator see an outage where the composers are; the wait report still says
+// whether the status rendered, because a page whose Wasm root never mounted
+// is the remaining way for it to be absent.
 //
 // Keying this on the transition it triggers, and reporting which of the two
 // cases a timeout hit, is BROWSER-1kKZDVGZ and BROWSER-1kKZDKpT respectively.
@@ -739,10 +737,6 @@ async function readObservation(observe) {
 /// wait, locates its call site, and carries both descriptions. Without this a
 /// future edit could drop the enrichment and restore an unattributable timeout
 /// with every other test still green.
-///
-/// Returns the connection state the report carried, so a caller running this at
-/// two layouts can prove the report tells a hidden status from a rendered one
-/// instead of only ever seeing whichever the default happens to be.
 export async function assertWaitReporting(page, resident) {
   const label = "instrument self-check";
   const started = performance.now();
@@ -819,35 +813,14 @@ export async function assertWaitReporting(page, resident) {
     "an observation that cannot be read is reported in place rather than raised",
   );
 
-  // The connection state is asserted by shape rather than by one literal, because
-  // both shapes are real and each is a different diagnosis. Reading it back out
-  // of the rendered message proves the report carries it, not merely that the
-  // helper could compute it.
+  // The connection state is read back out of the rendered message, which
+  // proves the report carries it rather than merely that the helper could
+  // compute it. The canvas is mounted by the time this runs, so the status is
+  // rendered and names Online against Offline; a report from a page whose
+  // Wasm root never mounted would instead say the status is absent.
   const connection = JSON.parse(reportField(failure.message, "connection"));
-  assert.ok("rendered" in connection, "the report says whether the status rendered");
-  if (connection.rendered) {
-    assert.match(connection.classes, /^status/, "a rendered status names Online against Offline");
-  } else {
-    assert.ok("mosaic" in connection, "an absent status reports the layout that hides it");
-  }
-  return connection;
-}
-
-/// Run the self-check at a second layout and prove the two reports disagree.
-///
-/// The workspace starts as a mosaic, which renders no topbar and therefore no
-/// status element at all, so a wait on a status class is deaf until a single
-/// view is chosen. `hidden` is the report taken at the mosaic; taking another
-/// once a view is open proves the instrument separates a status the layout
-/// hides from one that rendered and never changed, which are opposite
-/// diagnoses for the same timeout.
-export async function assertWaitReportDistinguishesLayout(page, resident, hidden) {
-  const shown = await assertWaitReporting(page, resident);
-  assert.notEqual(
-    hidden.rendered,
-    shown.rendered,
-    "the report tells a status hidden by the layout from one that rendered",
-  );
+  assert.equal(connection.rendered, true, "the report sees the rendered status");
+  assert.match(connection.classes, /^status/, "a rendered status names Online against Offline");
 }
 
 /// A restarted resident republishes a generation and the canvas rejoins it.
@@ -1083,7 +1056,9 @@ export async function assertGenerationOnline(page, epoch, cause, bound, context 
 
 /// The canvas must notice the resident is gone.
 ///
-/// The status flips Offline and reports through the shared instrument.
+/// The status flips Offline and reports through the shared instrument. The
+/// status is chrome every layout renders, so this holds in the live team view
+/// as well as on an analytics page.
 export async function assertResidentLossObserved(page, resident) {
   await observedWait(
     page,

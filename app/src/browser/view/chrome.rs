@@ -1,10 +1,17 @@
 //! The chrome standing above the feed.
 //!
-//! One bar of pills across the top, one band of lane standings under it, one
-//! line of the newest command outcome under that, and the card the feed packs.
-//! All four are placement and markup only: every number they show is derived
-//! in [`crate::watchband`], which a native test can reach, so what is left here
-//! is the part that genuinely needs a browser.
+//! One bar of pills across the top with the connection state beside them, one
+//! band of lane standings under it, one line of the newest command outcome
+//! under that, and the card the feed packs. All four are placement and markup
+//! only: every number they show is derived in [`crate::watchband`], which a
+//! native test can reach, so what is left here is the part that genuinely
+//! needs a browser.
+//!
+//! The connection state lives in this bar because this bar is the one piece of
+//! chrome every layout renders. The surface keeps the last admitted runtime on
+//! screen through an outage and through a restarted resident's hydration, so a
+//! layout that hid the state would show a live-looking surface whose composers
+//! accept nothing.
 
 use super::*;
 use crate::browser::clock::Age;
@@ -20,6 +27,7 @@ const TICKER_BUDGET: usize = 160;
 
 /// The bar of view pills, each wearing what its axis currently counts.
 pub(super) struct CommandBarRender<'a> {
+    pub(super) connection: &'a UseStateHandle<Connection>,
     pub(super) axis: &'a UseStateHandle<Axis>,
     pub(super) mosaic: &'a UseStateHandle<bool>,
     pub(super) menu_open: &'a UseStateHandle<bool>,
@@ -74,6 +82,10 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                         }
                     })}
                 </nav>
+                <div class={render.connection.class()} title={render.connection.label()}>
+                    <span class="status-dot"></span>
+                    <span class="status-copy">{render.connection.label()}</span>
+                </div>
                 if **render.menu_open {
                     {render_navigation(&render, runtime)}
                 }

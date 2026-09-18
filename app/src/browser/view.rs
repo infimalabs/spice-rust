@@ -78,6 +78,7 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
             data-submission-count={render.submissions.status.len().to_string()}
         >
             {chrome::render_command_bar(chrome::CommandBarRender {
+                connection: render.connection,
                 axis: render.axis,
                 mosaic: render.mosaic,
                 menu_open: render.canvas_menu_open,
@@ -114,25 +115,13 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                 data-active={mosaic_active.to_string()}
             >
                 <main class={classes!("mosaic-content", mosaic_active.then_some("content"))}>
-                    {watchband::render_team(
-                        render.surface,
-                        render.sender,
-                        render.composer_drafts,
-                        render.submissions,
-                        render.team_fleet,
-                        render.team_controls,
-                        render.agents,
-                    )}
+                    {watchband::render_team(render)}
                 </main>
             </div>
             if !mosaic_active {
                 <div key="analytics" class="workspace">
                 <header class="topbar">
                     <div class="mobile-brand">{"Spice Canvas"}</div>
-                    <div class={render.connection.class()}>
-                        <span class="status-dot"></span>
-                        <span class="status-copy">{render.connection.label()}</span>
-                    </div>
                     <div class="topbar-actions">
                         <button
                             class="refresh"
