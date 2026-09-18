@@ -144,7 +144,8 @@ function dragTeam(page, dragged, target) {
 
 async function joinAndRemoveMember(page, fixture, worktrees, surface, plane, primaryTeam) {
   await reply(fixture, [
-    "lane", "add", worktrees[4], "--life", "Drive", "--vendor", "claude",
+    "lane", "add", worktrees[4], "--team", crypto.randomUUID(),
+    "--life", "Drive", "--vendor", "claude",
   ]);
   const secondarySnapshot = await reply(fixture, ["lane"]);
   const secondary = secondarySnapshot.body.lanes.find((lane) => lane.worktree === worktrees[4]);
@@ -246,7 +247,9 @@ export async function assertStagedMosaicHydration(
   const teamWorktrees = await readTeamWorktrees(console);
   const fixture = teamWorktrees[0];
   const [firstLane, secondLane, thirdLane] = history.lanes;
-  assert.ok(history.lanes.includes(team), "the retained fixture includes the team host lane");
+  const host = await surface.locator(".team-agent[data-agent-lane]").first()
+    .getAttribute("data-agent-lane");
+  assert.ok(host && history.lanes.includes(host), "the retained fixture includes the team host lane");
 
   history.sendHeads("initial");
   const initialRequests = await history.waitForRequests(history.lanes);

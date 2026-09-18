@@ -14,7 +14,7 @@ pub(super) fn configure_subscription(
     let subscription = next
         .subscriptions
         .iter_mut()
-        .find(|subscription| subscription.team == seat.lane)
+        .find(|subscription| subscription.team == seat.team)
         .expect("fixture team subscription exists");
     let from = subscription.policy;
     subscription.policy = policy;
@@ -26,7 +26,7 @@ pub(super) fn configure_subscription(
     let configured = write
         .fact(
             wire::body::TeamConfigured {
-                team: seat.lane,
+                team: seat.team,
                 member: None,
                 from_team: None,
                 source_rekeyed_to: None,
@@ -108,7 +108,9 @@ pub(super) fn selectable_handles(answer: &BoardAnswer, actor: &Actor) -> BTreeSe
     let environment = answer.environment();
     entries
         .iter()
-        .filter(|entry| board::selectable_entry(&entries, entry, actor, subscription, &environment))
+        .filter(|entry| {
+            board::selectable_entry(&entries, entry, actor, &subscription, &environment)
+        })
         .map(|entry| entry.handle().to_string())
         .collect()
 }
@@ -276,7 +278,7 @@ fn drive_does_not_move_existing_work_with_its_creator_lane() {
         .iter()
         .find(|row| row.statement.body.handle == task)
         .expect("created task remains on the board");
-    assert_eq!(row.creator_team, Some(seat.lane));
+    assert_eq!(row.creator_team, Some(seat.team));
 
     let moved_team = uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed));
     move_fixture_lane_to_team(&bus, epoch, seat, moved_team);
@@ -289,8 +291,63 @@ fn drive_does_not_move_existing_work_with_its_creator_lane() {
         .expect("old task remains readable after its creator moves");
     assert_eq!(
         row.creator_team,
-        Some(seat.lane),
+        Some(seat.team),
         "creator-team ownership is the TaskAdded-time team, not current membership",
+    );
+    clean(&root, bus);
+}
+
+/// An agent seated alone under its own identity is not on a team.
+///
+/// Its configured lifetime stays durable, but allocation honours it only for
+/// a team: alone, the lane selects nothing, exactly as Steer would, while its
+/// seat keeps running. Joining a team resumes the configured lifetime.
+#[test]
+fn an_agent_without_a_team_allocates_as_steer_until_it_joins_one() {
+    let (root, bus, epoch, seats) = fixture("unteamed-allocation", 1);
+    let seat = &seats[0];
+    let lane = Actor::Lane(seat.lane);
+    authorize_lane_creation(&bus, epoch, seat);
+    configure_subscription(&bus, epoch, seat, wire::intent::TeamLife::Drive);
+    let task = add_project(
+        &bus,
+        epoch,
+        lane.clone(),
+        "SCOPE-alone01",
+        "Work the team created",
+        "task.alone",
+        Some("todo"),
+    );
+    let teamed = board(&bus, epoch, lane.clone());
+    assert_scope(&teamed, &lane, wire::intent::TeamLife::Drive, &[&task]);
+
+    move_fixture_lane_to_team(&bus, epoch, seat, seat.lane);
+    let alone = board(&bus, epoch, lane.clone());
+    assert_eq!(
+        alone
+            .residency
+            .body
+            .subscriptions
+            .iter()
+            .find(|subscription| subscription.team == seat.lane)
+            .map(|subscription| subscription.policy),
+        Some(wire::intent::TeamLife::Drive),
+        "the configured lifetime stays durable while the agent is alone",
+    );
+    assert_scope(&alone, &lane, wire::intent::TeamLife::Steer, &[]);
+    assert_eq!(
+        allocated(&bus, epoch, &lane),
+        None,
+        "an agent without a team is handed no work",
+    );
+
+    move_fixture_lane_to_team(&bus, epoch, seat, seat.team);
+    let rejoined = board(&bus, epoch, lane.clone());
+    assert_scope(&rejoined, &lane, wire::intent::TeamLife::Drive, &[&task]);
+    assert_eq!(
+        allocated(&bus, epoch, &lane).map(|(handle, _)| handle),
+        Some(task.to_string()),
+        "joining a team restores the configured lifetime",
     );
     clean(&root, bus);
 }

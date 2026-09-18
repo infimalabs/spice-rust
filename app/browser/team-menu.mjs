@@ -1291,6 +1291,15 @@ export async function assertTeamMenu(page, fixture, artifacts) {
     "removing a member keeps green anchored to the surviving right edge",
   );
   await assertResidentTeam(fixture, moved, moved, host, "removing an agent from its team");
+  await waitForPageFunction(
+    page,
+    "an agent without a team keeps no fleet surface of its own",
+    TRANSITION_MS,
+    ({ team, lane }) => document.querySelectorAll(".team-surface").length === 1
+      && document.querySelector(`.team-surface[data-team="${team}"]`) !== null
+      && document.querySelector(`.team-surface[data-team="${lane}"]`) === null,
+    { team: host, lane: moved },
+  );
 
   originalTeam = panel.locator(`.canvas-team[data-team="${host}"]`);
   await member.dragTo(originalTeam);
@@ -1317,6 +1326,14 @@ export async function assertTeamMenu(page, fixture, artifacts) {
   assert.notEqual(created, moved, "a new one-agent team stays distinct from an unassigned agent");
   assert.equal(await panel.locator(".canvas-team").count(), 2);
   await assertResidentTeam(fixture, moved, created, host, "creating a team by drop");
+  await waitForPageFunction(
+    page,
+    "a one-agent team under its own identity earns a fleet surface",
+    TRANSITION_MS,
+    (team) => document.querySelectorAll(".team-surface").length === 2
+      && document.querySelector(`.team-surface[data-team="${team}"]`) !== null,
+    created,
+  );
 
   member = await waitForMemberIn(createdTeam, moved);
   originalTeam = panel.locator(`.canvas-team[data-team="${host}"]`);

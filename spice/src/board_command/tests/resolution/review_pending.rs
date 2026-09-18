@@ -262,7 +262,7 @@ fn finding_command_replays_once_and_allocator_selects_its_correction() {
     let selected = board::select(
         &entries,
         &review.implementer,
-        subscription,
+        &subscription,
         available.allocation_band,
         available.recent_cell.as_ref(),
         &available.environment(),

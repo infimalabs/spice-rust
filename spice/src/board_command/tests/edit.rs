@@ -512,7 +512,7 @@ pub(super) fn allocated(bus: &Bus, epoch: CanonicalUuid, actor: &Actor) -> Optio
     board::select(
         &entries,
         actor,
-        subscription,
+        &subscription,
         answer.allocation_band,
         answer.recent_cell.as_ref(),
         &answer.environment(),

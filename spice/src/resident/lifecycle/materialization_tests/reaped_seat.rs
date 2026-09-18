@@ -308,7 +308,7 @@ pub(super) fn occupied_seed_at(occupant: CanonicalUuid, worktree: &str) -> Journ
         topology_revision: 1,
         lanes: vec![LaneResidency {
             lane: lane(),
-            team: lane(),
+            team: team(),
             name: None,
             worktree,
             life: "drive".to_owned(),
@@ -322,7 +322,7 @@ pub(super) fn occupied_seed_at(occupant: CanonicalUuid, worktree: &str) -> Journ
             disposition: "occupied".to_owned(),
         }],
         subscriptions: vec![wire::TeamSubscription {
-            team: lane(),
+            team: team(),
             policy: wire::intent::TeamLife::Drive,
         }],
         renewals: Vec::new(),

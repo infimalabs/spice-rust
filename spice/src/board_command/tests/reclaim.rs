@@ -599,7 +599,7 @@ pub(super) fn assert_reclaim_survives_restart(
         board::select(
             &entries,
             lane,
-            allocation_subscription(&after_restart.residency.body, lane)
+            &allocation_subscription(&after_restart.residency.body, lane)
                 .expect("restarted lane subscription"),
             after_restart.allocation_band,
             after_restart.recent_cell.as_ref(),

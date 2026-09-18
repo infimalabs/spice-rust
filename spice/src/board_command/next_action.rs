@@ -102,7 +102,7 @@ fn allocator_continuation(
     // A drain lane asks the allocator even when this row is no longer
     // selectable; the typed allocator-empty response closes that drain pass.
     (subscription.policy == wire::intent::TeamLife::Drain
-        || board::selectable_entry(entries, entry, principal, subscription, environment))
+        || board::selectable_entry(entries, entry, principal, &subscription, environment))
     .then_some(NextTransition::Next)
 }
 

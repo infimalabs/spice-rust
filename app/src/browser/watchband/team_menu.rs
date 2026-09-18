@@ -165,11 +165,9 @@ fn render_topology_actions(
 }
 
 fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
-    let choices = context
-        .topology
-        .iter()
-        .filter(|(target, _)| *target != team)
-        .flat_map(|(target, _)| {
+    let choices = watchband::teams(context.topology)
+        .filter(|target| *target != team)
+        .flat_map(|target| {
             [
                 ("before", "Move before", watchband::TeamDrop::Reorder),
                 ("after", "Move after", watchband::TeamDrop::ReorderAfter),
@@ -177,8 +175,8 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
             ]
             .into_iter()
             .filter_map(|(kind, verb, drop)| {
-                watchband::arrangement(context.topology, team, *target, drop)
-                    .map(|rows| (kind, verb, *target, topology(&rows)))
+                watchband::arrangement(context.topology, team, target, drop)
+                    .map(|rows| (kind, verb, target, topology(&rows)))
             })
             .collect::<Vec<_>>()
         })

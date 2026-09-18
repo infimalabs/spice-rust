@@ -195,7 +195,8 @@ async function recordHistoryRequestsAfterReload(page) {
 
 export async function assertBidirectionalMediaExchange(page, fixture, worktree) {
   await reply(fixture, [
-    "lane", "add", worktree, "--name", "Media", "--life", "Steer", "--vendor", "codex",
+    "lane", "add", worktree, "--team", crypto.randomUUID(),
+    "--name", "Media", "--life", "Steer", "--vendor", "codex",
   ]);
   const snapshot = await reply(fixture, ["lane"]);
   const member = snapshot.body.lanes.find((lane) => lane.worktree === worktree);

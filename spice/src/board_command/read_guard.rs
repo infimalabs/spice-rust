@@ -1038,10 +1038,15 @@ pub(super) struct AllocationObservation {
     pub(super) residency_position: Seq,
 }
 
-pub(super) fn allocation_subscription<'a>(
-    residency: &'a wire::ResidencyHead,
+/// The task-allocation lifetime the allocator honours for one actor's seat.
+///
+/// This is the team's effective policy: an agent seated alone under its own
+/// identity is not on a team, so it allocates as steer however its durable
+/// subscription reads until placement moves it onto one.
+pub(super) fn allocation_subscription(
+    residency: &wire::ResidencyHead,
     actor: &Actor,
-) -> Result<&'a wire::TeamSubscription, Outcome<CommandAnswer>> {
+) -> Result<wire::TeamSubscription, Outcome<CommandAnswer>> {
     let occupied =
         |lane: &&wire::LaneResidency| lane.disposition == "occupied" && lane.occupant.is_some();
     let seat = match actor {
@@ -1084,7 +1089,7 @@ pub(super) fn allocation_subscription<'a>(
             "the allocating lane lineage has more than one durable task-allocation lifetime",
         ));
     }
-    Ok(subscription)
+    Ok(subscription.effective(residency.team_members(seat.team)))
 }
 
 pub(super) fn committed(

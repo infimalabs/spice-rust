@@ -166,7 +166,7 @@ fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
             let selected = board::select(
                 &entries,
                 &board.principal,
-                subscription,
+                &subscription,
                 board.allocation_band,
                 board.recent_cell.as_ref(),
                 &environment,

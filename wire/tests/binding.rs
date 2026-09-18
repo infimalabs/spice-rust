@@ -16,8 +16,9 @@ use wire::intent::{
     ProjectVisibility, TaskGuidance,
 };
 use wire::{
-    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LeaseHead, Phase, Seq,
-    TaskHandle, WorkflowHead,
+    Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LaneResidency,
+    LeaseHead, Phase, ResidencyHead, ResidentState, Seq, TaskHandle, TeamSubscription,
+    WorkflowHead,
 };
 
 /// Every command body, spelled as WIRE spells it, paired with the kind whose
@@ -869,6 +870,81 @@ fn team_lifetimes_close_over_creator_team_scope() {
     assert!(TeamLife::Drain.admits_creator_team(None, team));
     for policy in [TeamLife::Steer, TeamLife::Drive, TeamLife::Drain] {
         assert_eq!(TeamLife::from_wire(policy.as_str()), Some(policy));
+    }
+}
+
+/// One definition of teamed governs rendering, placement, and allocation.
+///
+/// A lane seated alone under its own identity is a defined agent, not a team:
+/// it keeps its durable policy but allocates as steer until placement moves it
+/// onto a team, where the configured lifetime resumes.
+#[test]
+fn a_lane_seated_alone_under_its_own_identity_is_not_on_a_team() {
+    use wire::intent::TeamLife;
+
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce913116301");
+    let peer = uuid("018f82d4-6f59-7d06-92e3-bce913116302");
+    let team = uuid("018f82d4-6f59-7d06-92e3-bce913116303");
+    assert!(
+        !wire::head::teamed(lane, [lane]),
+        "a default seat is not a team"
+    );
+    assert!(
+        !wire::head::teamed(lane, []),
+        "a team without members is not one"
+    );
+    assert!(
+        wire::head::teamed(team, [lane]),
+        "one agent placed on a team is on it"
+    );
+    assert!(
+        wire::head::teamed(lane, [lane, peer]),
+        "two agents under either identity are a team"
+    );
+    assert!(wire::head::teamed(lane, [peer, lane]));
+
+    for policy in [TeamLife::Steer, TeamLife::Drive, TeamLife::Drain] {
+        let configured = TeamSubscription { team: lane, policy };
+        assert_eq!(configured.effective([lane]).policy, TeamLife::Steer);
+        assert_eq!(configured.effective([lane, peer]).policy, policy);
+        assert_eq!(
+            TeamSubscription { team, policy }.effective([lane]).policy,
+            policy
+        );
+    }
+
+    let mut residency = ResidencyHead {
+        epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116310"),
+        state: ResidentState::Seated,
+        topology_revision: 0,
+        lanes: vec![residency_row(lane, lane), residency_row(peer, peer)],
+        subscriptions: Vec::new(),
+        renewals: Vec::new(),
+    };
+    assert_eq!(residency.team_members(lane).collect::<Vec<_>>(), [lane]);
+    residency.lanes[1].team = lane;
+    assert_eq!(
+        residency.team_members(lane).collect::<Vec<_>>(),
+        [lane, peer]
+    );
+    assert_eq!(residency.team_members(peer).count(), 0);
+}
+
+fn residency_row(lane: CanonicalUuid, team: CanonicalUuid) -> LaneResidency {
+    LaneResidency {
+        lane,
+        team,
+        name: None,
+        worktree: "/fixture".to_owned(),
+        life: "drive".to_owned(),
+        vendor: "claude".parse().expect("fixture vendor"),
+        model: None,
+        effort: None,
+        occupant: None,
+        lineage: Vec::new(),
+        capabilities: Vec::new(),
+        session: None,
+        disposition: "vacant".to_owned(),
     }
 }
 

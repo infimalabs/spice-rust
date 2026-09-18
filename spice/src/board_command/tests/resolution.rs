@@ -57,7 +57,7 @@ fn one_captured_band_drives_board_answer_server_selection_and_guard_replay() {
     let selected = board::select(
         &entries,
         &lane,
-        subscription,
+        &subscription,
         available.allocation_band,
         available.recent_cell.as_ref(),
         &available.environment(),

@@ -81,7 +81,7 @@ fn prepare_claim(
         validated_snapshot_for_automatic(observed, actor.clone(), occupant, projects, allocation)?;
     let row = available_lane(&snapshot, lane)?;
     let subscription = available_subscription(&snapshot, row)?;
-    let selected = select_task(&snapshot, &actor, subscription)?;
+    let selected = select_task(&snapshot, &actor, &subscription)?;
     let task = selected.handle().clone();
     let born = selected.born().clone();
     let (at, expiry, maximum) = claim_deadlines()?;
@@ -147,14 +147,17 @@ fn available_lane(
     Ok(row)
 }
 
-fn available_subscription<'a>(
-    snapshot: &'a ValidatedSnapshot,
+/// The effective task-allocation lifetime of one vacant lane's team.
+///
+/// An agent seated alone under its own identity is not on a team and so
+/// allocates as steer, which capacity-following wake refuses exactly as it
+/// refuses a steered team.
+fn available_subscription(
+    snapshot: &ValidatedSnapshot,
     row: &wire::LaneResidency,
-) -> Result<&'a wire::TeamSubscription, Outcome<CommandAnswer>> {
-    let mut subscriptions = snapshot
-        .answer
-        .residency
-        .body
+) -> Result<wire::TeamSubscription, Outcome<CommandAnswer>> {
+    let residency = &snapshot.answer.residency.body;
+    let mut subscriptions = residency
         .subscriptions
         .iter()
         .filter(|subscription| subscription.team == row.team);
@@ -170,6 +173,7 @@ fn available_subscription<'a>(
             "the vacant lane lineage has more than one durable task-allocation lifetime",
         ));
     }
+    let subscription = subscription.effective(residency.team_members(row.team));
     if subscription.policy == wire::intent::TeamLife::Steer {
         return Err(refusal(
             "lifecycle::available-work-scope",

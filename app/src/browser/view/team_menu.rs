@@ -87,12 +87,12 @@ fn render_lanes(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html 
     let grouped_teams = lanes
         .lanes
         .iter()
-        .filter(|team| is_grouped_team(team))
+        .filter(|team| team.teamed())
         .collect::<Vec<_>>();
     let solo_members = lanes
         .lanes
         .iter()
-        .filter(|team| !is_grouped_team(team))
+        .filter(|team| !team.teamed())
         .flat_map(|team| &team.members)
         .collect::<Vec<_>>();
     let solo_member_ids = solo_members
@@ -345,10 +345,6 @@ fn render_theme_selector() -> Html {
                 })}
         </div>
     }
-}
-
-fn is_grouped_team(team: &crate::runtime::LaneRow) -> bool {
-    team.members.len() > 1 || team.host().is_some_and(|member| member.lane != team.lane)
 }
 
 fn render_team(

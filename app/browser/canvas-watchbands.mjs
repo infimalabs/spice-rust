@@ -211,6 +211,7 @@ export async function assertPerTeamWatchbands(
   assert.ok(primary, "the primary team remains seated for watchband proof");
   const added = await reply(fixture, [
     "lane", "add", worktrees[4],
+    "--team", crypto.randomUUID(),
     "--life", "Drive",
     "--vendor", "claude",
   ]);
@@ -683,7 +684,9 @@ export async function assertPerTeamWatchbands(
   const secondaryCardsBeforeBurst = await secondaryNarrationCards.count();
   await triggerAgentProse(primaryNarrator.worktree, primaryNarrationCards);
   await waitForPage(page, "the first team owns the global narration head", CONNECT_MS,
-    () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
+    () => window.__speechLog.filter((row) => row.action === "speak").length === 1,
+    undefined,
+    { observed: () => page.evaluate(() => window.__speechLog) });
   await streamAgentProse(secondary.worktree, secondaryNarrationCards, "older queued narration");
   const newestNarration = await streamAgentProse(
     secondary.worktree,
