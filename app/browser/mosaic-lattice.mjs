@@ -241,7 +241,7 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
       );
       readPaths.add(policySpans.length);
       kinds.add(card.kind);
-      placements.push({ ...card, tall: wideMeasured, wideAdmitted });
+      placements.push({ ...card, tall: wideMeasured });
     }
     for (let left = 0; left < plane.cards.length; left += 1) {
       for (let right = left + 1; right < plane.cards.length; right += 1) {
