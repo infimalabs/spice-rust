@@ -238,14 +238,17 @@ impl<W: Write + Send + 'static> Driver<W> {
             .iter()
             .any(|event| matches!(event, Event::Compaction(_)));
         if compacted {
-            self.delivered
+            // Match interject's lock order: no delivery may observe only one reset.
+            let mut delivered = self
+                .delivered
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner)
-                .take();
+                .unwrap_or_else(PoisonError::into_inner);
             self.told
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clear();
+            delivered.take();
+            drop(delivered);
             self.interject(false);
         }
         let completed = decoded
