@@ -3,6 +3,8 @@
 use std::error::Error;
 use std::fmt;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::time::Duration;
 
 use journal::crossing::CanonicalUuid;
 use listen::{Decoded, Locus};
@@ -12,6 +14,11 @@ use sill::{
 };
 use tape::Tape;
 use vendor::{Record, RecordStream};
+
+/// Allow two durable tee syncs and scheduler contention without treating the
+/// process-exit drain window as a per-record I/O budget. Thirty seconds is a
+/// fail-closed bound for a wedged sink, not a delay on healthy delivery.
+const SINK_DELIVERY: Duration = Duration::from_secs(30);
 
 /// One selected record committed and decoded under its exact tape locus.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,6 +70,11 @@ pub trait CaptureReporter: Send + Sync + 'static {
     /// account for the selected record stream.
     fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError>;
 
+    /// Nonblocking attribution while record delivery is stalled.
+    fn stage(&self) -> &'static str {
+        "notice"
+    }
+
     /// Deliver the single terminal failure after SILL cleanup completes.
     fn failed(&self, failure: CaptureFailure);
 
@@ -112,14 +124,23 @@ pub fn observation(
         stream,
         frame_limit,
         queue_capacity,
+        SINK_DELIVERY,
         Arc::new(LaneObserver {
             lane,
             occupant,
             record,
             tape,
             reporter,
+            stage: AtomicU8::new(DeliveryStage::Decode as u8),
         }),
     )
+}
+
+#[repr(u8)]
+enum DeliveryStage {
+    Tee,
+    Decode,
+    Report,
 }
 
 struct LaneObserver {
@@ -128,10 +149,13 @@ struct LaneObserver {
     record: Record,
     tape: Tape,
     reporter: Arc<dyn CaptureReporter>,
+    stage: AtomicU8,
 }
 
 impl RecordObserver for LaneObserver {
     fn observe(&self, observed: ObservedRecord<'_>) -> Result<(), ObserveError> {
+        self.stage
+            .store(DeliveryStage::Decode as u8, Ordering::Relaxed);
         let bytes = observed.bytes();
         if self.record.restated(self.record.stream(), bytes) {
             // What this partial carries arrives again, whole, in the frame
@@ -139,6 +163,8 @@ impl RecordObserver for LaneObserver {
             // square of what the occupant said.
             return Ok(());
         }
+        self.stage
+            .store(DeliveryStage::Tee as u8, Ordering::Relaxed);
         let locus = self
             .tape
             .tee(bytes)
@@ -150,6 +176,8 @@ impl RecordObserver for LaneObserver {
                 .tee(b"\n")
                 .map_err(|error| ObserveError::new(format!("tape refused delimiter: {error}")))?;
         }
+        self.stage
+            .store(DeliveryStage::Decode as u8, Ordering::Relaxed);
         let decoded = self
             .record
             .decode(self.record.stream(), bytes, locus)
@@ -159,6 +187,8 @@ impl RecordObserver for LaneObserver {
             .record
             .session_declaration(&decoded)
             .map_err(|error| ObserveError::new(format!("session declaration refused: {error}")))?;
+        self.stage
+            .store(DeliveryStage::Report as u8, Ordering::Relaxed);
         self.reporter
             .record(CaptureRecord {
                 lane: self.lane,
@@ -170,6 +200,14 @@ impl RecordObserver for LaneObserver {
                 decoded,
             })
             .map_err(|error| ObserveError::new(format!("record reporter refused: {error}")))
+    }
+
+    fn stage(&self) -> &'static str {
+        match self.stage.load(Ordering::Relaxed) {
+            stage if stage == DeliveryStage::Tee as u8 => "tee sync",
+            stage if stage == DeliveryStage::Decode as u8 => "decode",
+            _ => self.reporter.stage(),
+        }
     }
 
     fn failed(&self, failure: &ObservationFailure) {
@@ -544,6 +582,88 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         panic!("the observer reported fewer than {count} records before the fixture bound");
+    }
+
+    struct StallingReporter {
+        entered: std::sync::mpsc::Sender<()>,
+        release: Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        reports: Arc<Reports>,
+    }
+
+    impl CaptureReporter for StallingReporter {
+        fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
+            let release = self.release.lock().expect("release lock").take();
+            if let Some(release) = release {
+                self.entered.send(()).expect("announce stalled delivery");
+                release.recv().expect("release delivery");
+            }
+            self.reports.record(record)
+        }
+
+        fn failed(&self, failure: CaptureFailure) {
+            self.reports.failed(failure);
+        }
+    }
+
+    #[test]
+    fn a_three_second_sink_stall_does_not_end_a_healthy_occupant() {
+        let lane = uuid(9);
+        let occupant = uuid(10);
+        let root =
+            std::env::temp_dir().join(format!("lane-capture-{lane}-{}-stall", std::process::id()));
+        let tape = Tape::open(root.join("tape")).expect("stall tape opens");
+        let record = vendor::codex::record("/bin/sh", &launch()).expect("vendor contract");
+        let reports = Arc::new(Reports::default());
+        let (entered, observed) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let observer = observation(
+            lane,
+            occupant,
+            record,
+            tape,
+            1024,
+            4,
+            Arc::new(StallingReporter {
+                entered,
+                release: Mutex::new(Some(released)),
+                reports: Arc::clone(&reports),
+            }),
+        )
+        .expect("stall observation");
+        let mut spec = fixture_spec(
+            concat!(
+                "i=0; while [ $i -lt 8 ]; do printf '{\"type\":\"item.completed\"}\\n'; ",
+                "i=$((i + 1)); done; read answer; [ \"$answer\" = continue ]"
+            )
+            .to_owned(),
+        );
+        spec.deadlines = Deadlines::new(
+            Duration::from_secs(20),
+            Duration::from_secs(2),
+            Duration::from_secs(1),
+        )
+        .expect("independent exit drain");
+        spec.output = Output::new(
+            StdinPolicy::Pipe,
+            StreamPolicy::Capture { limit: 1024 },
+            StreamPolicy::Capture { limit: 1024 },
+        );
+        let mut running = spawn_observed(spec, observer).expect("stall child launches");
+        observed
+            .recv_timeout(Duration::from_secs(10))
+            .expect("sink entered");
+        std::thread::sleep(Duration::from_secs(3));
+        release.send(()).expect("release stalled observer");
+        let continued = running.write_stdin(b"continue\n");
+        let outcome = running.wait();
+        fs::remove_dir_all(root).expect("stall cleanup");
+        continued.expect("occupant still accepts input after the stall");
+        let outcome = outcome.expect("stall child reaps");
+        assert!(outcome.completion().status().success());
+        assert!(outcome.observation_failure().is_none());
+        assert!(outcome.outputs_drained());
+        assert_eq!(reports.records.lock().expect("records").len(), 8);
+        assert!(reports.failures.lock().expect("failures").is_empty());
     }
 
     #[test]

@@ -1001,6 +1001,7 @@ fn spawn_step(
         OutputStream::Stderr,
         PROGRESS_FRAME_LIMIT,
         PROGRESS_QUEUE_CAPACITY,
+        OUTPUT_DRAIN,
         Arc::clone(progress) as Arc<dyn RecordObserver>,
     )
     .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;

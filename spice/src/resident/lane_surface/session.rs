@@ -303,6 +303,10 @@ impl CaptureReporter for DeclarationReporter {
         })
     }
 
+    fn stage(&self) -> &'static str {
+        self.inner.stage()
+    }
+
     fn failed(&self, failure: CaptureFailure) {
         if let Ok(state) = self.state.lock() {
             let _sent = state

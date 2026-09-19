@@ -375,6 +375,7 @@ fn kernel_exit_event_vacates_and_records_only_the_exact_occupant() {
         OutputStream::Stdout,
         1024,
         4,
+        Duration::from_secs(5),
         Arc::new(ExitReporter(exited)),
     )
     .expect("exit observation is valid");

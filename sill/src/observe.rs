@@ -90,6 +90,20 @@ impl fmt::Display for ObserveError {
 
 impl Error for ObserveError {}
 
+/// Attribution sampled when the sink exhausts its delivery bound.
+///
+/// Kept behind an allocation only on failure so healthy process outcomes do
+/// not carry the size of these diagnostics.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ObservationStall {
+    /// Actual time spent waiting, including scheduler delay.
+    pub elapsed: Duration,
+    /// Queue admission or completion of one callback.
+    pub waiting: &'static str,
+    /// Sink-owned stage sampled without blocking on its work.
+    pub stage: &'static str,
+}
+
 /// Terminal failure of the selected-stream observation path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ObservationFailure {
@@ -98,11 +112,12 @@ pub enum ObservationFailure {
         stream: OutputStream,
         detail: String,
     },
-    /// The bounded handoff queue filled before the sink accepted prior records.
+    /// A full queue or one sink callback exhausted its delivery bound.
     SinkBackpressure {
         stream: OutputStream,
         capacity: usize,
         deadline: Duration,
+        stall: Box<ObservationStall>,
     },
     /// The selected-record sink refused durable handling or interpretation.
     SinkRefused {
@@ -136,13 +151,14 @@ impl fmt::Display for ObservationFailure {
                 stream,
                 capacity,
                 deadline,
+                stall,
             } => write!(
                 formatter,
                 concat!(
-                    "selected {} observer exceeded its {}-record queue ",
-                    "or {:?} delivery deadline"
+                    "selected {} observer stalled for {:?} waiting for {} ",
+                    "(sink stage: {}; {}-record queue; {:?} delivery limit)"
                 ),
-                stream, capacity, deadline,
+                stream, stall.elapsed, stall.waiting, stall.stage, capacity, deadline,
             ),
             Self::SinkRefused { stream, detail } => {
                 write!(
@@ -159,10 +175,10 @@ impl fmt::Display for ObservationFailure {
 
 /// Sink for byte-exact selected-stream records.
 ///
-/// `observe` is called by a bounded worker, never by the pipe reader. A blocked
-/// sink therefore reaches the process spec's output-drain deadline or fills a
-/// finite handoff queue and fails supervision instead of allowing the child
-/// pipe or resident memory to grow without bound.
+/// `observe` is called by a bounded worker, never by the pipe reader. Its
+/// delivery limit belongs to [`Observation`], independently of the process's
+/// post-exit output-drain deadline. A finite queue bounds buffered records
+/// while a slow sink catches up.
 pub trait RecordObserver: Send + Sync + 'static {
     /// Accept one complete or terminal record.
     ///
@@ -170,6 +186,12 @@ pub trait RecordObserver: Send + Sync + 'static {
     ///
     /// Returning an error terminates the observed process group.
     fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError>;
+
+    /// Name the active sink stage without waiting on the sink's own locks.
+    /// Called only to diagnose exhausted delivery bounds.
+    fn stage(&self) -> &'static str {
+        "observe"
+    }
 
     /// Receive the single terminal observation failure, after bounded cleanup.
     fn failed(&self, _failure: &ObservationFailure) {}
@@ -187,20 +209,23 @@ pub struct Observation {
     stream: OutputStream,
     frame_limit: usize,
     queue_capacity: usize,
+    sink_deadline: Duration,
     #[cfg_attr(not(unix), allow(dead_code))]
     observer: Arc<dyn RecordObserver>,
 }
 
 impl Observation {
-    /// Select one captured stream and admit explicit framing and queue bounds.
+    /// Select one captured stream with explicit framing, queue and delivery bounds.
     ///
     /// # Errors
     ///
-    /// Returns [`ObservationSpecError`] when either bound is zero.
+    /// Returns [`ObservationSpecError`] when any bound is zero. `sink_deadline`
+    /// bounds one callback or queue admission, not process-exit draining.
     pub fn new(
         stream: OutputStream,
         frame_limit: usize,
         queue_capacity: usize,
+        sink_deadline: Duration,
         observer: Arc<dyn RecordObserver>,
     ) -> Result<Self, ObservationSpecError> {
         if frame_limit == 0 {
@@ -209,10 +234,14 @@ impl Observation {
         if queue_capacity == 0 {
             return Err(ObservationSpecError::ZeroQueueCapacity);
         }
+        if sink_deadline.is_zero() {
+            return Err(ObservationSpecError::ZeroSinkDeadline);
+        }
         Ok(Self {
             stream,
             frame_limit,
             queue_capacity,
+            sink_deadline,
             observer,
         })
     }
@@ -233,6 +262,10 @@ impl Observation {
     }
 
     #[cfg(unix)]
+    pub(crate) const fn sink_deadline(&self) -> Duration {
+        self.sink_deadline
+    }
+    #[cfg(unix)]
     pub(crate) fn observer(&self) -> Arc<dyn RecordObserver> {
         Arc::clone(&self.observer)
     }
@@ -245,6 +278,7 @@ impl fmt::Debug for Observation {
             .field("stream", &self.stream)
             .field("frame_limit", &self.frame_limit)
             .field("queue_capacity", &self.queue_capacity)
+            .field("sink_deadline", &self.sink_deadline)
             .finish_non_exhaustive()
     }
 }
@@ -256,6 +290,8 @@ pub enum ObservationSpecError {
     ZeroFrameLimit,
     /// The reader-to-sink handoff must admit at least one record.
     ZeroQueueCapacity,
+    /// Delivery must have a nonzero bound distinct from process-exit draining.
+    ZeroSinkDeadline,
 }
 
 impl fmt::Display for ObservationSpecError {
@@ -263,6 +299,7 @@ impl fmt::Display for ObservationSpecError {
         formatter.write_str(match self {
             Self::ZeroFrameLimit => "selected-stream frame limit must be nonzero",
             Self::ZeroQueueCapacity => "selected-stream queue capacity must be nonzero",
+            Self::ZeroSinkDeadline => "selected-stream sink delivery deadline must be nonzero",
         })
     }
 }

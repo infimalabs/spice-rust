@@ -96,6 +96,10 @@ pub(super) fn account_failure(
     failure: &str,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
+    let _ = writeln!(
+        diagnostic,
+        "lane {lane} occupant {occupant} supervisor failed: {failure}"
+    );
     if !lane_surface::renewal_requested_exit(bus, epoch, lane, occupant)? {
         let seated = seats
             .started(lane)

@@ -637,6 +637,7 @@ fn run_shard(
             OutputStream::Stdout,
             RECORD_FRAME_LIMIT,
             RECORD_QUEUE_CAPACITY,
+            policy.output_drain,
             Arc::clone(&observer) as Arc<dyn RecordObserver>,
         )
         .map_err(|error| WorkspaceTestError::new(error.to_string()))?;
