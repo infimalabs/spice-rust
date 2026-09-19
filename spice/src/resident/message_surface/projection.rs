@@ -7,7 +7,7 @@ pub(in crate::resident) fn publish_agent_messages(
     state: &mut MessageState,
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<()> {
-    publish_agent_messages_in(publisher, record, state, steering, None)
+    publish_agent_messages_in(publisher, record, state, steering, None, None, None)
 }
 
 pub(super) fn publish_agent_messages_in(
@@ -16,10 +16,20 @@ pub(super) fn publish_agent_messages_in(
     state: &mut MessageState,
     steering: Option<&PresentationDirectives>,
     worktree: Option<&Path>,
+    source: Option<CanonicalUuid>,
+    observed: Option<wire::Instant>,
 ) -> CommandResult<()> {
     let Some(context) = record.decoded.context() else {
         return Ok(());
     };
+    let source = source.or_else(|| state.observations.source(record.lane, record.locus));
+    if state
+        .presented
+        .get(&(record.lane, record.occupant, source))
+        .is_some_and(|next| (record.locus.member, record.locus.offset) < (next.member, next.offset))
+    {
+        return Ok(());
+    }
     let mut events = Vec::new();
     for (event, decoded) in record.decoded.events().iter().enumerate() {
         let event = u32::try_from(event)
@@ -31,12 +41,12 @@ pub(super) fn publish_agent_messages_in(
         AgentRecord {
             lane: record.lane,
             author: record.occupant,
-            source: None,
+            source,
             worktree,
             locus: record.locus,
             context,
             events: &events,
-            observed: None,
+            observed,
             unavailable_tool_terminals: &[],
         },
         state,
@@ -116,6 +126,27 @@ pub(super) fn publish_agent_record(
     if record.context.turn == Some(listen::TurnMoment::Completed) {
         state.prose.remove(&record.lane);
     }
+    let source = record
+        .source
+        .or_else(|| state.observations.source(record.lane, record.locus));
+    let next = listen::Position {
+        member: record.locus.member,
+        offset: record
+            .locus
+            .offset
+            .checked_add(record.locus.length)
+            .ok_or_else(|| {
+                store_fault(
+                    "canvas::message-locus-invalid",
+                    "record end exceeds the tape position range",
+                )
+            })?,
+    };
+    state
+        .presented
+        .entry((record.lane, record.author, source))
+        .and_modify(|known| *known = (*known).max(next))
+        .or_insert(next);
     Ok(())
 }
 

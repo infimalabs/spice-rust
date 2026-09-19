@@ -187,7 +187,6 @@ pub(super) async fn run_surface(
     } else {
         None
     };
-    let started = start_surface(bus, paths, epoch, residency.body(), config, launch).await?;
     let StartedSurface {
         capabilities,
         discovery,
@@ -197,7 +196,7 @@ pub(super) async fn run_surface(
         mut server_task,
         message_publisher,
         progress,
-    } = started;
+    } = start_surface(bus, paths, epoch, residency.body(), config, launch).await?;
     let channels = capture::channels();
     let mut supervisor_reports = capture::SupervisorReports::bind(paths)?;
     lane_surface::restore_seats(bus, paths, epoch, seats, progress)?;
@@ -253,7 +252,14 @@ pub(super) async fn run_surface(
         return stop_surface(publication, shutdown, server_task).await;
     };
     let _ = progress.write_all(&message_startup.diagnostic);
-    let message_state = message_startup.reader.into_state();
+    let message_state = message_surface::LiveMessages::new(
+        paths,
+        epoch,
+        message_publisher.clone(),
+        message_startup.reader.into_state(),
+    )?;
+    supervisor_reports.enable_live(message_state.clone())?;
+    channels.enable_live(message_state.clone())?;
     let session_compactions =
         message_surface::SessionCompactions::new(crate::session_environment());
     drive_surface(
@@ -503,7 +509,7 @@ async fn drive_surface(
     shutdown: oneshot::Sender<()>,
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: canvas::stream::MessagePublisher,
-    mut message_state: message_surface::MessageState,
+    message_state: message_surface::LiveMessages,
     mut session_compactions: message_surface::SessionCompactions,
     mut taste_submitter: Option<&mut taste_surface::AdjudicationSubmitter>,
     mut taste_completions: Option<&mut taste_surface::AdjudicationCompletions>,
@@ -528,7 +534,7 @@ async fn drive_surface(
             report = supervisor_reports.recv() => accept_supervisor_reports(
                 bus, epoch, seats, command_surface, &message_publisher,
                 taste_submitter.as_deref_mut(), &mut lifecycle,
-                supervisor_reports.batch(report), &mut message_state, diagnostic,
+                supervisor_reports.batch(report), message_state.state(), diagnostic,
             )?,
             (turn, request) = control_projection_turn(
                 &mut control, &inbox_projections, lifecycle_reconciliation.control_enabled(),
@@ -553,7 +559,7 @@ async fn drive_surface(
             record = records.recv() => accept_record_turn(
                 bus, epoch, seats, command_surface, &message_publisher,
                 taste_submitter.as_deref_mut(), &mut session_compactions, record,
-                &mut message_state, diagnostic,
+                message_state.state(), diagnostic,
             )?,
             completed = receive_judgment(&mut taste_completions) => accept_judgment(
                 bus, epoch, command_surface, taste_submitter.as_deref_mut(), completed?,
@@ -572,7 +578,7 @@ async fn drive_surface(
             )?,
             committed = timer_commits.recv() => accept_commit_turn(
                 bus, seats, command_surface, &message_publisher, &mut lifecycle,
-                &mut supervisor_reports, &mut message_state, diagnostic, &mut timers,
+                &mut supervisor_reports, message_state.state(), diagnostic, &mut timers,
                 &mut lifecycle_reconciliation, committed,
             )?,
             ending = &mut server_task => return Err(server_outcome(ending)),
@@ -584,7 +590,7 @@ async fn drive_surface(
             command_surface,
             &message_publisher,
             taste_submitter.as_deref_mut(),
-            &mut message_state,
+            message_state.state(),
             diagnostic,
         )?;
     }
@@ -679,7 +685,7 @@ fn accept_supervisor_reports(
     mut taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     lifecycle: &mut lifecycle::Runtime,
     reports: Vec<io::Result<super::supervisor::Notice>>,
-    message_state: &mut message_surface::MessageState,
+    message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     for report in reports {
@@ -713,7 +719,7 @@ fn accept_record_turn(
     taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     session_compactions: &mut message_surface::SessionCompactions,
     record: Option<lane::capture::CaptureRecord>,
-    message_state: &mut message_surface::MessageState,
+    message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     if let Some(lane) = record.as_ref().map(|record| record.lane) {
@@ -789,7 +795,7 @@ fn accept_supervisor_report(
     taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     lifecycle: &mut lifecycle::Runtime,
     report: io::Result<super::supervisor::Notice>,
-    message_state: &mut message_surface::MessageState,
+    message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let notice = match report {
@@ -944,7 +950,7 @@ fn accept_record(
     message_publisher: &canvas::stream::MessagePublisher,
     taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     record: Option<lane::capture::CaptureRecord>,
-    message_state: &mut message_surface::MessageState,
+    message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let record = record.ok_or_else(|| {
@@ -1055,7 +1061,7 @@ fn accept_commit_turn(
     message_publisher: &canvas::stream::MessagePublisher,
     lifecycle: &mut lifecycle::Runtime,
     door: &mut capture::SupervisorReports,
-    message_state: &mut message_surface::MessageState,
+    message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
     reconciliation: &mut lifecycle::Reconciliation,
@@ -1142,7 +1148,7 @@ fn accept_commit(
 fn settle_spoken_acknowledgements(
     bus: &Bus,
     message_publisher: &canvas::stream::MessagePublisher,
-    message_state: &mut message_surface::MessageState,
+    message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     match message_surface::settle_pending_presentations(bus, message_publisher, message_state) {

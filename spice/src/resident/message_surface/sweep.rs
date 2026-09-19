@@ -79,7 +79,7 @@ pub(super) fn closing_records(
 /// Residue presents nothing and carries no prose to recognize, so it is left
 /// out rather than materialized. Authorship is the caller's: a sweep is scoped
 /// to one lane and the occupant that wrote the range it covers.
-fn scanned_capture_record(
+pub(super) fn scanned_capture_record(
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     stream: vendor::RecordStream,
@@ -131,7 +131,9 @@ pub(super) fn present_swept<P: AgentMessagePublisher>(
             worktree.as_deref(),
             views,
         )?;
-        let steps = views.state.narration.observe(surfaces.narration, record);
+        let steps = lock_state(views.state)?
+            .narration
+            .observe(surfaces.narration, record);
         narration::record(bus, epoch, steps, views.diagnostic)?;
     }
     Ok(())
@@ -226,7 +228,15 @@ pub(super) fn present<P: AgentMessagePublisher>(
     worktree: Option<&Path>,
     views: &mut CaptureViews<'_>,
 ) -> CommandResult<()> {
-    match publish_agent_messages_in(surfaces.publisher, record, views.state, steering, worktree) {
+    match publish_agent_messages_in(
+        surfaces.publisher,
+        record,
+        &mut *lock_state(views.state)?,
+        steering,
+        worktree,
+        None,
+        None,
+    ) {
         Ok(()) => Ok(()),
         Err(Outcome::Fault(fault)) => {
             let _ = writeln!(

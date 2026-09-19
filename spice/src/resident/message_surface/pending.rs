@@ -83,15 +83,24 @@ impl PendingPresentations {
 pub(in crate::resident) fn settle_pending_presentations(
     bus: &Bus,
     publisher: &canvas::stream::MessagePublisher,
-    state: &mut MessageState,
+    state: &Mutex<MessageState>,
 ) -> CommandResult<()> {
-    if state.pending.is_empty() {
+    // Detach exactly this batch before crossing the writer queue. New cards
+    // may publish meanwhile and must not settle against this older query.
+    let pending = std::mem::take(&mut lock_state(state)?.pending);
+    if pending.is_empty() {
         return Ok(());
     }
-    let rows = load_steering_presentations(&bus.reader(), &state.pending.keys())?;
-    let directives = PresentationDirectives::from_presentations(&rows)
-        .map_err(|error| store_fault("canvas::message-steering-invalid", &error))?;
-    settle_with_directives(publisher, state, &directives)
+    let directives = load_steering_presentations(&bus.reader(), &pending.keys()).and_then(|rows| {
+        PresentationDirectives::from_presentations(&rows)
+            .map_err(|error| store_fault("canvas::message-steering-invalid", &error))
+    });
+    let mut state = lock_state(state)?;
+    let incoming = std::mem::replace(&mut state.pending, pending);
+    let settled = directives
+        .and_then(|directives| settle_with_directives(publisher, &mut state, &directives));
+    state.pending.0.extend(incoming.0);
+    settled
 }
 
 fn settle_with_directives(
@@ -105,20 +114,18 @@ fn settle_with_directives(
             .get(key)
             .is_some_and(|directive| directive.disposition == wire::Disposition::Live)
     };
-    let mut remaining = Vec::new();
-    for mut card in std::mem::take(&mut state.pending.0) {
+    let mut pending = std::mem::take(&mut state.pending.0);
+    let settled = pending.iter_mut().try_for_each(|card| {
         if card.keys.iter().all(still_pending) {
-            remaining.push(card);
-            continue;
+            return Ok(());
         }
-        present_again(publisher, state, &card, directives)?;
+        present_again(publisher, state, card, directives)?;
         card.keys.retain(still_pending);
-        if !card.keys.is_empty() {
-            remaining.push(card);
-        }
-    }
-    state.pending.0 = remaining;
-    Ok(())
+        Ok(())
+    });
+    pending.retain(|card| !card.keys.is_empty());
+    state.pending.0 = pending;
+    settled
 }
 
 /// Re-present one card from the current journal disposition of its keys.

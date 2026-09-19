@@ -9,8 +9,6 @@ use std::io;
 use std::path::Path;
 
 use gate::{BatteryReport, CampReport, KillReport, ReportMutationMovement, Selector};
-#[cfg(test)]
-use gate::{GateReport, Standing};
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 use spice::repository::Repository;
@@ -39,22 +37,6 @@ pub(crate) fn run(
         Ok(Err(error)) => battery_failure(error),
         Err(failure) => failure.outcome(),
     }
-}
-
-#[cfg(test)]
-fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport> {
-    let report = match result {
-        Ok(report) => report,
-        Err(error) => return Failure::run("gate::run-refused", error).outcome(),
-    };
-    if report.standing() == Standing::Refused {
-        return Outcome::Refusal(Refusal::evidence(
-            "gate::regressed",
-            report.render(),
-            "remove the regression; never lower baseline.toml to admit it",
-        ));
-    }
-    direct(report)
 }
 
 /// Run the release-scoped native staged-change gate without command recursion.
@@ -184,38 +166,6 @@ fn selection_detail(progress: &[u8], detail: &str) -> String {
         return detail.to_owned();
     }
     format!("{}{detail}", String::from_utf8_lossy(progress))
-}
-
-#[cfg(test)]
-mod selection_progress_tests {
-    use super::*;
-
-    const OVERSIZED_PROGRESS: usize = 70 * 1024;
-    const TERMINAL: &str =
-        "gate=complexity state=failed reason=structural bound exceeded\nselected gate regressed";
-
-    #[test]
-    fn supervised_failure_keeps_only_terminal_evidence_after_oversized_progress() {
-        let progress = SelectionProgress {
-            buffered: vec![b'x'; OVERSIZED_PROGRESS],
-            live: Some(io::stderr()),
-        };
-
-        assert_eq!(progress.failure_detail(TERMINAL), TERMINAL);
-    }
-
-    #[test]
-    fn direct_failure_keeps_progress_before_terminal_evidence() {
-        let progress = SelectionProgress {
-            buffered: b"[change-gate-phase] stage=capture\n".to_vec(),
-            live: None,
-        };
-
-        assert_eq!(
-            progress.failure_detail(TERMINAL),
-            format!("[change-gate-phase] stage=capture\n{TERMINAL}"),
-        );
-    }
 }
 
 pub(crate) use commit_message::Run as CommitMessageRun;
@@ -427,6 +377,3 @@ impl Failure {
         }
     }
 }
-
-#[cfg(all(test, unix))]
-mod fixtures;

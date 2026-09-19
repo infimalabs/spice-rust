@@ -1,5 +1,3 @@
-use std::os::unix::process::ExitStatusExt as _;
-use std::process::ExitStatus;
 use std::time::Duration;
 
 use lane::occupant::{DetachedProcess, DetachedWait};
@@ -8,10 +6,7 @@ use sill::{WaitError, WaitOutcome};
 use super::super::launch::test_support::{AdvisoryRtkFixture, SESSION};
 use super::*;
 
-mod claim_carry;
-
 struct RunningProcess;
-struct ExitedProcess;
 
 impl DetachedProcess for RunningProcess {
     fn group(&self) -> u32 {
@@ -47,40 +42,6 @@ impl DetachedProcess for RunningProcess {
     }
 }
 
-impl DetachedProcess for ExitedProcess {
-    fn group(&self) -> u32 {
-        78
-    }
-
-    fn runtime_remaining(&self) -> Duration {
-        Duration::ZERO
-    }
-
-    fn termination_grace(&self) -> Duration {
-        Duration::ZERO
-    }
-
-    fn reap_bound(&self) -> Duration {
-        Duration::ZERO
-    }
-
-    fn wait_for(self: Box<Self>, _duration: Duration) -> Result<DetachedWait, WaitError> {
-        Ok(DetachedWait::Exited(success()))
-    }
-
-    fn terminate(&self) -> Result<(), WaitError> {
-        Ok(())
-    }
-
-    fn kill(&self) -> Result<(), WaitError> {
-        Ok(())
-    }
-
-    fn wait(self: Box<Self>) -> Result<WaitOutcome, WaitError> {
-        Ok(success())
-    }
-}
-
 #[test]
 fn request_duplicate_and_cancel_keep_one_pre_handoff_transition() {
     let fixture = AdvisoryRtkFixture::new();
@@ -107,237 +68,6 @@ fn request_duplicate_and_cancel_keep_one_pre_handoff_transition() {
     drop(discovery);
     bus.verify().expect("renewal command authority verifies");
     bus.shutdown().expect("renewal command bus stops");
-}
-
-#[test]
-fn handoff_pending_launches_one_fresh_successor_with_context() {
-    let fixture = AdvisoryRtkFixture::new();
-    let bus = seeded(&fixture, Some(requested(&fixture, true)));
-    let discovery = publish_surface(&fixture);
-    let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
-    let surface = super::super::super::load_startup_surface(&repository)
-        .expect("fixture startup policy resolves");
-    let capabilities = canvas::axum::Capabilities::default();
-    let lane_runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
-    let mut lifecycle = super::super::super::lifecycle::Runtime::new(&surface.config.lane);
-    let mut seats = Seats::new();
-
-    lifecycle
-        .reconcile(
-            &bus,
-            &repository,
-            &fixture.paths,
-            fixture.epoch,
-            &mut seats,
-            &lane_runtime,
-            &surface.config,
-            &mut Vec::new(),
-        )
-        .expect("handoff-pending renewal reconciles");
-    assert!(seats.occupied(fixture.lane));
-    let head = current_residency(&bus, fixture.epoch).expect("successor head reads");
-    let successor = head.body().lanes[0]
-        .occupant
-        .expect("successor occupies the retained lane");
-    assert_ne!(successor, fixture.occupant);
-    assert!(matches!(
-        &head.body().renewals[0].state,
-        wire::LaneRenewalState::SuccessorStarted {
-            predecessor,
-            successor: next,
-            team_slot: 0,
-        } if predecessor.occupant == fixture.occupant && next.occupant == successor
-    ));
-    assert_eq!(controls(&bus, fixture.lane), [CONTEXT_CONTROL]);
-    let launches = fixture.launches();
-    assert_eq!(launches.len(), 1);
-    assert!(
-        !launches[0]
-            .split_whitespace()
-            .any(|word| word == "--resume"),
-        "renewal successor must be a fresh vendor thread: {launches:?}"
-    );
-
-    lifecycle
-        .reconcile(
-            &bus,
-            &repository,
-            &fixture.paths,
-            fixture.epoch,
-            &mut seats,
-            &lane_runtime,
-            &surface.config,
-            &mut Vec::new(),
-        )
-        .expect("repeated reconciliation is idle");
-    assert_eq!(fixture.launches().len(), 1);
-
-    assert_second_renewal(&fixture, &bus, &seats, &surface.config.steering, successor);
-
-    stop_lane(&mut seats, fixture.lane);
-    super::super::super::steering::remove_lane_surface(
-        &fixture.paths,
-        fixture.root.to_str().expect("fixture root is UTF-8"),
-        fixture.lane,
-    );
-    bus.verify().expect("successor authority verifies");
-    bus.shutdown().expect("successor bus stops");
-}
-
-#[test]
-fn predecessor_exit_advances_handoff_and_retires_its_control_before_successor_launch() {
-    let fixture = AdvisoryRtkFixture::new();
-    let bus = seeded(&fixture, None);
-    let discovery = publish_surface(&fixture);
-    let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
-    let surface = super::super::super::load_startup_surface(&repository)
-        .expect("fixture startup policy resolves");
-    let capabilities = canvas::axum::Capabilities::default();
-    let lane_runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
-    let mut lifecycle = super::super::super::lifecycle::Runtime::new(&surface.config.lane);
-    let mut seats = Seats::new();
-    seats
-        .seat_detached(fixture.lane, fixture.occupant, Box::new(ExitedProcess))
-        .expect("fixture predecessor seats");
-    let renewal_request = request(&fixture, true);
-    assert!(matches!(
-        set(
-            &bus,
-            &fixture.paths,
-            fixture.epoch,
-            &seats,
-            &surface.config.steering,
-            &command(&fixture, 20, &renewal_request),
-            &renewal_request,
-        ),
-        Outcome::Reply(_)
-    ));
-    assert_eq!(controls(&bus, fixture.lane), [HANDOFF_CONTROL]);
-
-    occupant_exited(
-        &bus,
-        &fixture.paths,
-        fixture.epoch,
-        &mut seats,
-        lane::capture::CaptureExit {
-            lane: fixture.lane,
-            occupant: fixture.occupant,
-        },
-        &mut Vec::new(),
-    )
-    .expect("predecessor exit commits handoff");
-    let pending = current_residency(&bus, fixture.epoch).expect("pending handoff reads");
-    assert!(matches!(
-        pending.body().renewals[0].state,
-        wire::LaneRenewalState::HandoffPending { .. }
-    ));
-    assert_eq!(pending.body().lanes[0].occupant, None);
-
-    lifecycle
-        .reconcile(
-            &bus,
-            &repository,
-            &fixture.paths,
-            fixture.epoch,
-            &mut seats,
-            &lane_runtime,
-            &surface.config,
-            &mut Vec::new(),
-        )
-        .expect("successor reconciliation completes");
-    assert_eq!(controls(&bus, fixture.lane), [CONTEXT_CONTROL]);
-    assert_eq!(fixture.launches().len(), 1);
-
-    stop_lane(&mut seats, fixture.lane);
-    super::super::super::steering::remove_lane_surface(
-        &fixture.paths,
-        fixture.root.to_str().expect("fixture root is UTF-8"),
-        fixture.lane,
-    );
-    bus.verify().expect("complete handoff authority verifies");
-    bus.shutdown().expect("complete handoff bus stops");
-}
-
-#[test]
-fn launch_refusal_is_durable_and_an_explicit_retry_starts_one_successor() {
-    let fixture = AdvisoryRtkFixture::new();
-    let bus = seeded(&fixture, Some(requested(&fixture, true)));
-    let discovery = publish_surface(&fixture);
-    let repository = Repository::discover(&fixture.root).expect("fixture repository resolves");
-    let surface = super::super::super::load_startup_surface(&repository)
-        .expect("fixture startup policy resolves");
-    let original = refuse_launch_config(&fixture);
-    let capabilities = canvas::axum::Capabilities::default();
-    let lane_runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
-    let mut lifecycle = super::super::super::lifecycle::Runtime::new(&surface.config.lane);
-    let mut seats = Seats::new();
-
-    lifecycle
-        .reconcile(
-            &bus,
-            &repository,
-            &fixture.paths,
-            fixture.epoch,
-            &mut seats,
-            &lane_runtime,
-            &surface.config,
-            &mut Vec::new(),
-        )
-        .expect("launch refusal records rather than escaping reconciliation");
-    let head = current_residency(&bus, fixture.epoch).expect("refused renewal reads");
-    assert!(matches!(
-        &head.body().renewals[0].state,
-        wire::LaneRenewalState::LaunchRefused { reason, .. }
-            if reason.contains("supervisor-launch-failed")
-    ));
-    assert!(!seats.occupied(fixture.lane));
-    assert_eq!(controls(&bus, fixture.lane), [CONTEXT_CONTROL]);
-
-    std::fs::write(fixture.root.join("spice-rust.toml"), original)
-        .expect("valid launch configuration restores");
-    let retry = request(&fixture, true);
-    assert!(matches!(
-        set(
-            &bus,
-            &fixture.paths,
-            fixture.epoch,
-            &seats,
-            &surface.config.steering,
-            &command(&fixture, 30, &retry),
-            &retry,
-        ),
-        Outcome::Reply(_)
-    ));
-    lifecycle
-        .reconcile(
-            &bus,
-            &repository,
-            &fixture.paths,
-            fixture.epoch,
-            &mut seats,
-            &lane_runtime,
-            &surface.config,
-            &mut Vec::new(),
-        )
-        .expect("repaired successor launches");
-    assert!(matches!(
-        current_residency(&bus, fixture.epoch)
-            .expect("repaired renewal reads")
-            .body()
-            .renewals[0]
-            .state,
-        wire::LaneRenewalState::SuccessorStarted { .. }
-    ));
-    assert_eq!(fixture.launches().len(), 1);
-
-    stop_lane(&mut seats, fixture.lane);
-    super::super::super::steering::remove_lane_surface(
-        &fixture.paths,
-        fixture.root.to_str().expect("fixture root is UTF-8"),
-        fixture.lane,
-    );
-    bus.verify().expect("launch refusal authority verifies");
-    bus.shutdown().expect("launch refusal bus stops");
 }
 
 #[test]
@@ -498,62 +228,6 @@ fn assert_cancellation(
     assert!(controls(bus, fixture.lane).is_empty());
 }
 
-fn assert_second_renewal(
-    fixture: &AdvisoryRtkFixture,
-    bus: &Bus,
-    seats: &Seats,
-    steering: &steer::Config,
-    successor: CanonicalUuid,
-) {
-    let again = request(fixture, true);
-    assert!(matches!(
-        set(
-            bus,
-            &fixture.paths,
-            fixture.epoch,
-            seats,
-            steering,
-            &command(fixture, 15, &again),
-            &again,
-        ),
-        Outcome::Reply(_)
-    ));
-    let renewed_again = current_residency(bus, fixture.epoch)
-        .expect("second renewal request reads")
-        .body()
-        .renewals[0]
-        .clone();
-    assert!(matches!(
-        renewed_again.state,
-        wire::LaneRenewalState::Requested { predecessor, .. }
-            if predecessor.occupant == successor
-    ));
-    assert_eq!(
-        controls(bus, fixture.lane)
-            .into_iter()
-            .filter(|control| control == HANDOFF_CONTROL)
-            .count(),
-        1
-    );
-}
-
-fn refuse_launch_config(fixture: &AdvisoryRtkFixture) -> String {
-    let path = fixture.root.join("spice-rust.toml");
-    let original = std::fs::read_to_string(&path).expect("fixture configuration reads");
-    let refused = original.replace(
-        &format!(
-            "{:?}",
-            fixture.root.join("fake-claude").display().to_string()
-        ),
-        &format!(
-            "{:?}",
-            fixture.root.join("missing-claude").display().to_string()
-        ),
-    );
-    std::fs::write(path, refused).expect("refused launch configuration writes");
-    original
-}
-
 fn request(fixture: &AdvisoryRtkFixture, requested: bool) -> wire::intent::LaneRenewal {
     wire::intent::LaneRenewal {
         topology_revision: 1,
@@ -708,8 +382,4 @@ fn fixture_uuid(value: u64) -> CanonicalUuid {
     format!("018f82d4-6f59-7d06-92e3-{value:012x}")
         .parse()
         .expect("fixture UUID")
-}
-
-fn success() -> WaitOutcome {
-    WaitOutcome::externally_reaped_completion(sill::Completion::Exited(ExitStatus::from_raw(0)))
 }

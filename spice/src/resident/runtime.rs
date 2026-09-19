@@ -574,7 +574,8 @@ fn up_from_with(
     };
 
     let mut seats = Seats::new();
-    let surface = match tokio::runtime::Builder::new_current_thread()
+    let surface = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
     {

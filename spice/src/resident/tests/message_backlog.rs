@@ -541,10 +541,11 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
         pending,
         wire::stream::ACK_PENDING_MARKER,
     );
+    let state = std::sync::Mutex::new(state);
 
     // Nothing retires before the journal says so: a settle with the key
     // still pending leaves the card as spoken.
-    message_surface::settle_pending_presentations(&bus, &publisher, &mut state)
+    message_surface::settle_pending_presentations(&bus, &publisher, &state)
         .expect("a pending key settles nothing");
     assert_mixed_acknowledgement_message(
         &live,
@@ -557,7 +558,7 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     // steer::acked lands for the acknowledged key: the live card and every
     // replay now read the acknowledged state from the journal disposition.
     retire_steering(&bus, epoch, lane, test_uuid(28), "1kQwPZtK", locus);
-    message_surface::settle_pending_presentations(&bus, &publisher, &mut state)
+    message_surface::settle_pending_presentations(&bus, &publisher, &state)
         .expect("a retired key re-presents its card");
     assert_mixed_acknowledgement_message(
         &live,

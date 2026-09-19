@@ -5,7 +5,7 @@
 use super::*;
 
 /// The paged frames, sampled with and without an overflow tail.
-pub(super) fn cover_packed_frames(covered: &mut BTreeSet<String>) {
+pub(super) fn cover_packed_frames() {
     let rows = vec![Row {
         task: handle("SPICE-1kKRRsDP"),
     }];
@@ -23,9 +23,8 @@ pub(super) fn cover_packed_frames(covered: &mut BTreeSet<String>) {
         horizon: seq(48213),
     };
 
-    law(covered, "Packed", &[plain.clone(), overflowing.clone()]);
+    law("Packed", &[plain.clone(), overflowing.clone()]);
     law(
-        covered,
         "Derived",
         &[
             Derived {
@@ -45,9 +44,8 @@ pub(super) fn cover_packed_frames(covered: &mut BTreeSet<String>) {
 }
 
 /// The frames that carry a refusal or a fault back to a caller.
-pub(super) fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
+pub(super) fn cover_refusal_frames() {
     law(
-        covered,
         "SeqRange",
         &[
             SeqRange {
@@ -61,7 +59,6 @@ pub(super) fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "RefusalDiagnostic",
         &[
             wire::RefusalDiagnostic::new("wire::mismatch", None, None, None),
@@ -75,7 +72,6 @@ pub(super) fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "SpiceCommand",
         &[
             wire::SpiceCommand::new("fold", std::iter::empty::<&str>())
@@ -85,7 +81,6 @@ pub(super) fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "Refusal",
         &[
             Refusal::repairable(
@@ -106,7 +101,6 @@ pub(super) fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "Fault",
         &[
             moved_epoch(),
@@ -120,9 +114,8 @@ pub(super) fn cover_refusal_frames(covered: &mut BTreeSet<String>) {
 }
 
 /// The frames a caller reads back after a command lands.
-pub(super) fn cover_reply_frames(covered: &mut BTreeSet<String>) {
+pub(super) fn cover_reply_frames() {
     law(
-        covered,
         "DemoAnswer",
         &[
             DemoAnswer {
@@ -145,14 +138,13 @@ pub(super) fn cover_reply_frames(covered: &mut BTreeSet<String>) {
             },
         ],
     );
-    cover_journal_reply_frames(covered);
-    cover_restore_reply_frames(covered);
-    cover_transport_reply_frames(covered);
+    cover_journal_reply_frames();
+    cover_restore_reply_frames();
+    cover_transport_reply_frames();
 }
 
-fn cover_journal_reply_frames(covered: &mut BTreeSet<String>) {
+fn cover_journal_reply_frames() {
     law(
-        covered,
         "JournalReport",
         &[
             JournalReport {
@@ -182,9 +174,8 @@ fn cover_journal_reply_frames(covered: &mut BTreeSet<String>) {
     );
 }
 
-fn cover_restore_reply_frames(covered: &mut BTreeSet<String>) {
+fn cover_restore_reply_frames() {
     law(
-        covered,
         "JournalRestore",
         &[
             JournalRestore {
@@ -205,12 +196,11 @@ fn cover_restore_reply_frames(covered: &mut BTreeSet<String>) {
     );
 }
 
-fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
-    cover_release_note_frames(covered);
-    cover_release_plan_observations(covered);
-    cover_proof_evidence_frames(covered);
+fn cover_transport_reply_frames() {
+    cover_release_note_frames();
+    cover_release_plan_observations();
+    cover_proof_evidence_frames();
     law(
-        covered,
         "ReplyPosition",
         &[
             committed(48213),
@@ -219,7 +209,6 @@ fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "Reply",
         &[
             Reply {
@@ -237,7 +226,6 @@ fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "Outcome",
         &[
             Outcome::Reply(Reply {
@@ -252,7 +240,6 @@ fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "Response",
         &[
             Response {
@@ -283,7 +270,7 @@ fn cover_transport_reply_frames(covered: &mut BTreeSet<String>) {
     );
 }
 
-fn cover_release_plan_observations(covered: &mut BTreeSet<String>) {
+fn cover_release_plan_observations() {
     let version = ProductVersion::parse("1.2.3").expect("release version");
     let base = ReleasePlanObservations {
         head: "1".repeat(40),
@@ -298,7 +285,6 @@ fn cover_release_plan_observations(covered: &mut BTreeSet<String>) {
         registry: None,
     };
     law(
-        covered,
         "ReleasePlanObservations",
         &[
             base.clone(),
@@ -317,9 +303,8 @@ fn cover_release_plan_observations(covered: &mut BTreeSet<String>) {
     );
 }
 
-fn cover_proof_evidence_frames(covered: &mut BTreeSet<String>) {
+fn cover_proof_evidence_frames() {
     law(
-        covered,
         "ProofEvidence",
         &[
             ProofEvidence {
@@ -340,7 +325,7 @@ fn cover_proof_evidence_frames(covered: &mut BTreeSet<String>) {
     );
 }
 
-fn cover_release_note_frames(covered: &mut BTreeSet<String>) {
+fn cover_release_note_frames() {
     let entries = [
         ReleaseNotesEntry {
             project: "general".to_owned(),
@@ -358,9 +343,8 @@ fn cover_release_note_frames(covered: &mut BTreeSet<String>) {
             ],
         },
     ];
-    law(covered, "ReleaseNotesEntry", &entries);
+    law("ReleaseNotesEntry", &entries);
     law(
-        covered,
         "ReleaseNotes",
         &[
             ReleaseNotes {

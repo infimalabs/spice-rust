@@ -887,7 +887,11 @@ pub struct LaneAnswer {
     ///
     /// Re-read once at this deadline; absence means no time-driven transition
     /// remains in this snapshot. This is not a periodic refresh interval.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
     pub refresh_after_millis: Option<u32>,
 }
 
