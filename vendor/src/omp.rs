@@ -61,7 +61,8 @@ pub const TOOLS: &str = "read,write,edit,glob,grep,todo,web_search";
 /// The tool starts language servers, which is why it is named only on that
 /// explicit disposition rather than sitting in the roster above. The servers
 /// stay inside the occupant's own process tree: [`config_overlay`] declines
-/// omp's shared broker, whose daemon is built to outlive any one session.
+/// omp's shared broker, and resident launch composition separately disables
+/// the external lspmux route through its child environment.
 /// What each server is and how it runs is the worktree's own business, read
 /// from the repository's `.omp/lsp.json`; this crate names no server.
 pub const LSP_TOOLS: &str = "read,write,edit,glob,grep,todo,web_search,lsp";
@@ -216,9 +217,9 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 /// A declined lane turns the integration off outright, because omp otherwise
 /// starts a language server behind the lane's back on the first write to a
 /// file some server claims, whether or not the tool is in the roster. An
-/// admitted lane declines the shared broker instead, so the servers it starts
-/// belong to this occupant's process tree rather than a daemon built to
-/// outlive it. Which servers those are stays the worktree's own business.
+/// admitted lane declines omp's shared broker. The resident must also disable
+/// external lspmux routing in the child environment; that route is independent
+/// of this overlay. Which servers run stays the worktree's own business.
 #[must_use]
 pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool) -> String {
     let mut overlay = format!("compaction:\n  thresholdTokens: {auto_compact_threshold_tokens}\n");
