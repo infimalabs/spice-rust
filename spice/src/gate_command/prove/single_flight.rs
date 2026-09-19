@@ -1,4 +1,4 @@
-use std::io::{self, Write as _};
+use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -31,6 +31,7 @@ pub(super) fn run(
     actions: Vec<PreparedAction>,
     mut validate: impl FnMut() -> Result<(), ProveFailure>,
     cleanup: impl FnOnce() -> Result<(), ProveFailure>,
+    progress: &mut impl io::Write,
 ) -> Result<Vec<ProveActionReport>, ProveFailure> {
     let owner = format!(
         "proof:{}:{}",
@@ -49,10 +50,7 @@ pub(super) fn run(
         };
         match claimed {
             Claim::Present(report) => {
-                if let Err(error) = write_progress("present", &report) {
-                    failure = Some(error);
-                    break;
-                }
+                write_progress(progress, "present", &report);
                 present.push(report);
             }
             Claim::Lease(lease) => {
@@ -92,10 +90,7 @@ pub(super) fn run(
                     disposition: ProveDisposition::Published,
                     receipt: publication.receipt().clone(),
                 };
-                if let Err(error) = write_progress("published", &report) {
-                    failure = Some(error);
-                    break;
-                }
+                write_progress(progress, "published", &report);
                 present.push(report);
             }
         }
@@ -116,15 +111,14 @@ pub(super) fn run(
     Ok(present)
 }
 
-fn write_progress(stage: &str, report: &ProveActionReport) -> Result<(), ProveFailure> {
-    let mut stderr = io::stderr().lock();
-    writeln!(
-        stderr,
+/// Progress is diagnostic: losing its stream must not stop receipt publication.
+fn write_progress(output: &mut impl io::Write, stage: &str, report: &ProveActionReport) {
+    let _ = writeln!(
+        output,
         "[gate-prove] stage={stage} action={:?} action_key={} receipt={}",
         report.action, report.action_key, report.receipt,
     )
-    .and_then(|()| stderr.flush())
-    .map_err(|error| ProveFailure::fault("gate::prove-progress-unavailable", error))
+    .and_then(|()| output.flush());
 }
 
 enum Claim {
