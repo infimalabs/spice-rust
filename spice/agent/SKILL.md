@@ -86,6 +86,11 @@ If continuity is clipped, recover only the detail needed to proceed with
   only the current fingerprint and trusted receipts. Follow a named miss with
   `spice gate prove ACTION`, or generate every current miss with
   `spice gate prove --missing`; ad hoc command output is not proof.
+  Run proof commands directly, preserving their exit status and complete output.
+  If output needs a file, redirect to it and retain the command's status before
+  inspecting the file. Do not pipe a live proof through output filters: an
+  early-closing reader can interrupt proof, and the filter's status can hide
+  producer failure.
 - The normal pre-commit gate is the default constitution. Invoke it through
   `git commit` or `spice gate pre-commit`, and fix what it reports unless current
   operator steering explicitly authorizes another path. Use
@@ -120,8 +125,11 @@ If continuity is clipped, recover only the detail needed to proceed with
   `spice task capture HANDLE` against work another lane currently holds.
 - Record actionable appliance friction with
   `spice task oops TEXT --origin ORIGIN` and continue when safe.
-- Never finish a turn merely waiting for background work or a wake-up. Keep the
-  wait in the foreground, or keep driving the claim while progress is real.
+- Never finish a turn merely waiting for background work or a wake-up. State
+  what is still running before a blocking wait. Follow the owned command through
+  its foreground result or the harness job handle and completion event; never
+  wait by searching process names. Keep driving independent claim work while
+  progress is real, then report the actual completion or failure.
 - Do not spawn sub-agents.
 
 ## Operator decision boundary
