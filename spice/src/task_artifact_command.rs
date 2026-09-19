@@ -150,60 +150,79 @@ fn snapshot(configuration: Option<&spice::config::RepositoryCapture>) -> Result<
     })?;
     let projects = task_project_policy(&repository, configuration)?;
     let state = repository.admit_state().map_err(state_failure)?;
-    let journal = journal::Journal::open(state.journal()).map_err(|error| {
+    let journal = journal::JournalReader::open(state.journal()).map_err(|error| {
         Failure::fault(
             FaultClass::Store,
             "artifact::journal-unreadable",
             error.to_string(),
         )
     })?;
-    let bus = bus::Bus::start(journal).map_err(|error| {
-        Failure::fault(
-            FaultClass::Store,
-            "artifact::journal-unreadable",
-            error.to_string(),
-        )
-    })?;
-    let authority = bus.task_snapshot().map_err(|error| {
-        Failure::fault(
-            FaultClass::Store,
-            "artifact::task-heads-unreadable",
-            error.to_string(),
-        )
-    })?;
-    let cursor = authority.cursor().ok_or_else(|| {
-        Failure::fault(
-            FaultClass::Store,
-            "artifact::cursor-missing",
-            "journal has no current task snapshot",
-        )
-    })?;
-    let mut statuses = BTreeMap::new();
-    for heads in authority.tasks() {
-        let entry = board::Entry::new(
-            heads.statement().body().clone(),
-            heads.workflow().body().clone(),
-            heads.claim().map(|head| head.body().clone()),
-            heads.lease().map(|head| head.body().clone()),
-            &projects,
-        )
-        .map_err(|error| {
-            Failure::fault(
-                FaultClass::Store,
-                "artifact::task-head-invalid",
-                error.to_string(),
-            )
+    // Keep every bounded page and the reply cursor in one read-only snapshot.
+    // The transaction ends before artifact payload I/O or store locking.
+    let (cursor, statuses) = journal
+        .read_with(|read| {
+            let cursor = read.cursor().map_err(task_heads_failure)?.ok_or_else(|| {
+                Failure::fault(
+                    FaultClass::Store,
+                    "artifact::cursor-missing",
+                    "journal has no current task snapshot",
+                )
+            })?;
+            let mut statuses = BTreeMap::new();
+            let mut after = None;
+            loop {
+                let page = read
+                    .task_head_page(after.as_ref(), journal::FactReadBudget::RETAINED)
+                    .map_err(task_heads_failure)?;
+                if page.witness.cursor != Some(cursor) {
+                    return Err(task_heads_failure(journal::GuardError::Invalid(
+                        "task snapshot authority moved between bounded pages".to_owned(),
+                    )));
+                }
+                for heads in &page.rows {
+                    let entry = board::Entry::new(
+                        heads.statement().body().clone(),
+                        heads.workflow().body().clone(),
+                        heads.claim().map(|head| head.body().clone()),
+                        heads.lease().map(|head| head.body().clone()),
+                        &projects,
+                    )
+                    .map_err(|error| {
+                        Failure::fault(
+                            FaultClass::Store,
+                            "artifact::task-head-invalid",
+                            error.to_string(),
+                        )
+                    })?;
+                    statuses.insert(
+                        entry.born().clone(),
+                        (entry.handle().clone(), entry.workflow().status.clone()),
+                    );
+                }
+                after = page.continuation;
+                if after.is_none() {
+                    break;
+                }
+            }
+            Ok((cursor, statuses))
+        })
+        .map_err(|error| match error {
+            journal::ReadError::Journal(error) => task_heads_failure(error),
+            journal::ReadError::Answer(failure) => failure,
         })?;
-        statuses.insert(
-            entry.born().clone(),
-            (entry.handle().clone(), entry.workflow().status.clone()),
-        );
-    }
     Ok(Snapshot {
         state,
         cursor,
         statuses,
     })
+}
+
+fn task_heads_failure(error: journal::GuardError) -> Failure {
+    Failure::fault(
+        FaultClass::Store,
+        "artifact::task-heads-unreadable",
+        error.to_string(),
+    )
 }
 
 fn task_project_policy(
