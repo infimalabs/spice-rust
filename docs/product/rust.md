@@ -151,6 +151,12 @@ birth-stamp allocation retain explicit full-board reads; they do not substitute
 a pending-only view for retained authority. Scoped reads omit global allocator
 history rather than presenting partial history as complete.
 
+Task-artifact commands remain daemonless. They read bounded current task-head
+pages and their reply cursor inside one read-only journal transaction, so
+concurrent publications cannot mix task status generations. The transaction
+ends before artifact payload I/O or store locking; these commands neither start
+a local Bus nor migrate the journal.
+
 The journal accepts one schema and an ordered one-way migration chain. Wire and
 browser compatibility have independent versions and resident epochs; runtime
 behavior never branches by release.
