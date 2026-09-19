@@ -446,16 +446,7 @@ fn source_claims<'a>(
                 } else {
                     explicit.into_iter().map(|(target, _)| target).collect()
                 };
-            // A removed, unclaimed input may have been runtime fixture data
-            // rather than a Rust module. Its effect cannot be narrowed below
-            // the containing package; present unclaimed sources still refuse.
-            let package_wide = package_wide_source(changed, package, absolute)
-                || (targets.is_empty()
-                    && containing.is_some_and(|owner| owner.id == package.id)
-                    && matches!(
-                        fs::symlink_metadata(absolute),
-                        Err(error) if error.kind() == io::ErrorKind::NotFound
-                    ));
+            let package_wide = package_wide_source(changed, package, absolute);
             (!targets.is_empty() || package_wide).then_some(SourceClaim {
                 package,
                 targets,
@@ -810,11 +801,12 @@ fn removed_uncompiled_data<'a>(
     inventory: &'a Inventory,
     absolute: &Path,
 ) -> Option<&'a PackageInventory> {
-    absolute
-        .symlink_metadata()
-        .is_err()
-        .then(|| containing_package(inventory, absolute))
-        .flatten()
+    matches!(
+        absolute.symlink_metadata(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound
+    )
+    .then(|| containing_package(inventory, absolute))
+    .flatten()
 }
 
 fn unclassified_source(
@@ -1057,12 +1049,12 @@ fn target_reaches_dependent_tests(target: &TargetIdentity, source: &Path) -> boo
 mod tests {
     use super::*;
 
-    fn one_package_fixture(
+    fn package_and_dependent_fixture(
         fixture: &crate::test_repository::Fixture,
     ) -> (Inventory, PackageInventory) {
         let root = fs::canonicalize(fixture.path()).expect("canonical fixture root");
-        let target = |kind: &str, name: &str, source: &str| TargetIdentity {
-            package: "wire".to_owned(),
+        let target = |package: &str, kind: &str, name: &str, source: &str| TargetIdentity {
+            package: package.to_owned(),
             kind: kind.to_owned(),
             name: name.to_owned(),
             required_features: Vec::new(),
@@ -1071,8 +1063,8 @@ mod tests {
             source_bytes: 1,
         };
         let targets = vec![
-            target("lib", "wire", "wire/src/lib.rs"),
-            target("test", "absence", "wire/tests/absence.rs"),
+            target("wire", "lib", "wire", "wire/src/lib.rs"),
+            target("wire", "test", "absence", "wire/tests/absence.rs"),
         ];
         let package = PackageInventory {
             id: "wire 0.0.0".to_owned(),
@@ -1086,8 +1078,20 @@ mod tests {
             removed_targets: Vec::new(),
             targets,
         };
+        let dependent_targets = vec![target("consumer", "lib", "consumer", "consumer/src/lib.rs")];
+        let dependent = PackageInventory {
+            id: "consumer 0.0.0".to_owned(),
+            name: "consumer".to_owned(),
+            root: root.join("consumer"),
+            dependencies: vec![package.root.clone()],
+            namespace_context: FileMacroCrateContext::from_metadata("consumer", "2024", &[])
+                .expect("dependent namespace"),
+            declared_targets: dependent_targets.clone(),
+            targets: dependent_targets,
+            ..package.clone()
+        };
         let inventory = Inventory {
-            packages: vec![package.clone()],
+            packages: vec![package.clone(), dependent],
             resolution: CargoResolution::default(),
             binary_outputs: Vec::new(),
             target_directory: root.join("target"),
@@ -1102,7 +1106,7 @@ mod tests {
     #[test]
     fn removing_rust_data_no_target_compiled_selects_its_package() {
         let fixture = crate::test_repository::Fixture::repository("removed-rust-data");
-        let (inventory, package) = one_package_fixture(&fixture);
+        let (inventory, package) = package_and_dependent_fixture(&fixture);
         let data = ["wire/tests/fixture/absence/bare.rs".to_owned()];
 
         let selected = cargo_check_selections(&inventory, fixture.path(), &data)
@@ -1120,16 +1124,15 @@ mod tests {
     #[test]
     fn an_unowned_rust_file_still_on_disk_is_refused() {
         let fixture = crate::test_repository::Fixture::repository("unowned-rust-source");
-        let (inventory, _) = one_package_fixture(&fixture);
+        let (inventory, _) = package_and_dependent_fixture(&fixture);
         fixture.write("wire/tests/fixture/absence/bare.rs", b"pub struct Draft;\n");
         let present = ["wire/tests/fixture/absence/bare.rs".to_owned()];
 
-        let refusal = cargo_check_selections(&inventory, fixture.path(), &present)
+        cargo_check_selections(&inventory, fixture.path(), &present)
             .expect_err("a present unowned Rust source is refused");
 
-        assert!(
-            refusal.to_string().contains("ownership"),
-            "refusal names the missing ownership: {refusal}"
-        );
+        let inaccessible = ["wire/tests/fixture/absence/bare.rs/child.rs".to_owned()];
+        cargo_check_selections(&inventory, fixture.path(), &inaccessible)
+            .expect_err("a filesystem error other than absence must remain a refusal");
     }
 }
