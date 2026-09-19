@@ -1,5 +1,6 @@
 //! Private materialization workspace ownership and abandoned-root reclamation.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -25,11 +26,54 @@ const WORKSPACE_LOCK: &str = "gate-tree-workspace";
 const WORKSPACE_PREFIX: &str = "spice-gate-tree-";
 const WORKSPACE_PARENT_PREFIX: &str = "spice-gate-workspaces-";
 
+/// The prefix every workspace retained between runs begins with.
+///
+/// Retained workspaces carry the exact bytes of the last selection
+/// materialized into them, so the next selection can leave every unchanged
+/// file's modification time alone. Cargo decides freshness by comparing each
+/// source file's modification time against the artifact built from it, so a
+/// tree written from scratch on every run reports every file as newer than
+/// every artifact and rebuilds the entire local graph. The path the tree is
+/// materialized at is not part of that comparison: Cargo records dep-info
+/// paths relative to the package root and does not hash the source path into
+/// unit metadata. Only the timestamps carry the cost.
+///
+/// The family is named apart from [`WORKSPACE_PREFIX`] rather than nested
+/// inside it because a predecessor gate sharing this temporary directory
+/// sweeps every *unheld* workspace of its own family, and a retained
+/// workspace is unheld between runs by design. A separate prefix is invisible
+/// to that sweep, so a mixed-version machine costs a recompile at most where a
+/// shared prefix would cost one on every run.
+const RETAINED_PREFIX: &str = "spice-gate-keep-";
+
+/// How many retained workspaces one repository may hold at once.
+///
+/// Each is a full copy of the selection, so this is a disk cost paid per
+/// concurrently measuring run rather than per run. Two covers a pre-commit
+/// reservation overlapping one proof; a third concurrent run falls back to an
+/// ephemeral workspace and pays the compile it would have paid anyway.
+const RETAINED_WORKSPACES: usize = 2;
+
+/// File inside a retained workspace naming the repository it serves.
+///
+/// A retained workspace outlives the run that filled it, so nothing about a
+/// live process distinguishes it from wreckage. This file is what a later
+/// sweep reads to decide that the repository is gone and the copy is owed to
+/// nobody.
+const RETAINED_OWNER: &str = "repository";
+
+/// Hex characters of the repository digest a retained workspace name carries.
+///
+/// Long enough that two checkouts on one machine do not collide, short enough
+/// that the name stays readable in a listing beside its slot.
+const REPOSITORY_KEY_LENGTH: usize = 16;
+
 #[derive(Debug)]
 pub(super) struct BuildRoot {
     pub(super) workspace: PathBuf,
     pub(super) root: PathBuf,
     possession: Option<Possession>,
+    retained: bool,
 }
 
 impl BuildRoot {
@@ -51,6 +95,7 @@ impl BuildRoot {
                         workspace,
                         root,
                         possession: Some(possession),
+                        retained: false,
                     };
                     private_directory(&build.workspace)?;
                     fs::create_dir(&build.root).map_err(|source| {
@@ -79,6 +124,50 @@ impl BuildRoot {
         ))
     }
 
+    /// Take the retained workspace this repository refills, or an ephemeral one.
+    ///
+    /// A retained workspace is possessed exactly as a minted one is, and for
+    /// the same reason: the lock is what separates a copy a live run is
+    /// measuring from one nobody owns. It differs only in what possession
+    /// means afterwards -- the contents are kept for the next run to refill in
+    /// place, so that unchanged files keep the modification times the current
+    /// artifacts were built against.
+    ///
+    /// Every retained name belongs to one repository, so two checkouts never
+    /// overwrite each other's copy, and the slot suffix admits exactly as many
+    /// concurrent runs as [`RETAINED_WORKSPACES`]. Beyond that, and on any
+    /// failure to prepare the copy, this falls back to [`Self::create`]: an
+    /// ephemeral workspace is always correct and only ever slower.
+    pub(super) fn retained(repository: &Path) -> Result<Self, TreeError> {
+        let Some(owner) = repository_owner(repository) else {
+            return Self::create();
+        };
+        let Some(key) = repository_key(&owner) else {
+            return Self::create();
+        };
+        let temporary = workspace_parent()?;
+        reclaim_abandoned(&temporary);
+        for slot in 0..RETAINED_WORKSPACES {
+            let workspace = temporary.join(format!("{RETAINED_PREFIX}{key}-{slot}"));
+            let Ok(lock) = workspace_lock(&workspace) else {
+                continue;
+            };
+            let Ok(Acquisition::Acquired(possession)) = lock.try_acquire() else {
+                continue;
+            };
+            let build = Self {
+                root: workspace.join("root"),
+                workspace,
+                possession: Some(possession),
+                retained: true,
+            };
+            if prepare_retained(&build, &owner).is_ok() {
+                return Ok(build);
+            }
+        }
+        Self::create()
+    }
+
     /// Hand the workspace, and the lock that guards it, to the selected tree.
     ///
     /// Taking the possession is what stops this build root's own [`Drop`] from
@@ -102,9 +191,122 @@ impl BuildRoot {
             renames,
             staged_authority,
             publishes_state,
+            retained: self.retained,
             possession: self.possession.take(),
         }
     }
+}
+
+/// Make one possessed retained workspace ready to be refilled in place.
+///
+/// What the previous run left under `root` is deliberately kept: it is the
+/// only record of when each selected byte last changed. Everything else the
+/// previous run left -- observation scratch, index copies -- is removed, so a
+/// retained workspace offers a caller exactly what a freshly minted one does.
+fn prepare_retained(build: &BuildRoot, owner: &str) -> Result<(), TreeError> {
+    match create_private_workspace(&build.workspace) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        Err(source) => {
+            return Err(TreeError::io(
+                "creating a retained selected tree workspace",
+                &build.workspace,
+                source,
+            ));
+        }
+    }
+    private_directory(&build.workspace)?;
+    let listing = fs::read_dir(&build.workspace).map_err(|source| {
+        TreeError::io(
+            "reading a retained selected tree workspace",
+            &build.workspace,
+            source,
+        )
+    })?;
+    for entry in listing.flatten() {
+        if entry.file_name() == OsStr::new("root") {
+            continue;
+        }
+        let path = entry.path();
+        make_removable(&path);
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            let _ = fs::remove_dir_all(&path);
+        } else {
+            let _ = fs::remove_file(&path);
+        }
+    }
+    if !fs::symlink_metadata(&build.root).is_ok_and(|metadata| metadata.is_dir()) {
+        make_removable(&build.root);
+        let _ = fs::remove_file(&build.root);
+        fs::create_dir(&build.root).map_err(|source| {
+            TreeError::io("creating a selected tree root", &build.root, source)
+        })?;
+    }
+    private_directory(&build.root)?;
+    fs::write(build.workspace.join(RETAINED_OWNER), owner).map_err(|source| {
+        TreeError::io(
+            "recording a retained workspace owner",
+            &build.workspace,
+            source,
+        )
+    })
+}
+
+/// The exact repository path one retained workspace serves.
+///
+/// `None` withholds retention rather than recording a path this build cannot
+/// read back exactly. A repository whose canonical path is not UTF-8 keeps
+/// the ephemeral behavior, which is correct and merely slower.
+fn repository_owner(repository: &Path) -> Option<String> {
+    fs::canonicalize(repository)
+        .unwrap_or_else(|_| repository.to_path_buf())
+        .into_os_string()
+        .into_string()
+        .ok()
+}
+
+/// Stable short name for the repository a retained workspace belongs to.
+///
+/// The repository path itself cannot be the name: it contains separators, has
+/// no length bound, and would put a checkout's location in a world-listable
+/// temporary directory. The digest is taken over the canonical path so two
+/// names for one checkout resolve to one workspace.
+fn repository_key(owner: &str) -> Option<String> {
+    let digest = gix::objs::compute_hash(
+        gix::hash::Kind::Sha1,
+        gix::objs::Kind::Blob,
+        owner.as_bytes(),
+    )
+    .ok()?
+    .to_string();
+    Some(digest[..REPOSITORY_KEY_LENGTH.min(digest.len())].to_owned())
+}
+
+/// Whether this path is a workspace retained for reuse between runs.
+fn is_retained_workspace(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with(RETAINED_PREFIX))
+}
+
+/// Whether the repository one retained workspace was filled for still exists.
+///
+/// An unreadable or absent owner record answers no: the copy is then owed to
+/// nobody and the ordinary abandoned-workspace sweep may take it.
+fn retained_owner_lives(workspace: &Path) -> bool {
+    fs::read_to_string(workspace.join(RETAINED_OWNER)).is_ok_and(|owner| Path::new(&owner).is_dir())
+}
+
+/// Release one workspace at the end of the run that possessed it.
+///
+/// A retained workspace keeps its contents; only the lock is given up, which
+/// happens when the possession drops. Every other workspace is removed, which
+/// is the contract every gate before retention existed relied on.
+pub(super) fn retire_workspace(workspace: &Path, possession: &Possession, retained: bool) {
+    if retained {
+        return;
+    }
+    let _ = release_workspace(workspace, possession);
 }
 
 pub(super) fn workspace_parent() -> Result<PathBuf, TreeError> {
@@ -209,6 +411,12 @@ pub(super) fn workspace_lock(workspace: &Path) -> Result<LockFile, String> {
 /// shape of a live run between locking a fresh name and creating its directory.
 /// The lock is therefore unlinked only while this sweep possesses it and a
 /// second absence check proves that no directory appeared during acquisition.
+///
+/// A retained workspace is the one shape an unheld lock does not condemn. It
+/// is kept on purpose, between runs, for the repository named in its owner
+/// record, and removing it would only cost the next run of that repository a
+/// full recompile. It is swept exactly when that repository is gone, which is
+/// also when nothing will ever refill it.
 pub(super) fn reclaim_abandoned(temporary: &Path) {
     let Ok(listing) = fs::read_dir(temporary) else {
         return;
@@ -221,6 +429,9 @@ pub(super) fn reclaim_abandoned(temporary: &Path) {
         let Ok(lock) = workspace_lock(workspace) else {
             continue;
         };
+        if is_retained_workspace(workspace) && retained_owner_lives(workspace) {
+            continue;
+        }
         // Acquiring creates the lock file, so a workspace that never had one is
         // asked about rather than locked into existence.
         if !lock.path().try_exists().unwrap_or(false) {
@@ -261,8 +472,7 @@ fn reclaim_parentless_lock(lock_path: &Path) {
 fn workspace_named_by_lock(lock_path: &Path) -> Option<PathBuf> {
     let name = lock_path.file_name()?.to_str()?;
     let workspace = name.strip_suffix(".lock")?;
-    workspace
-        .starts_with(WORKSPACE_PREFIX)
+    (workspace.starts_with(WORKSPACE_PREFIX) || workspace.starts_with(RETAINED_PREFIX))
         .then(|| lock_path.with_file_name(workspace))
 }
 
@@ -274,6 +484,10 @@ fn is_workspace_lock_file(path: &Path) -> bool {
 
 /// Whether this path is a directory named as a gate tree workspace.
 ///
+/// Both families count: the ephemeral one a run mints and removes, and the
+/// retained one a repository refills, which this build still sweeps once its
+/// repository is gone.
+///
 /// The lock file beside a workspace shares its prefix, so the kind is checked
 /// rather than assumed, and it is checked without following a symlink: a link
 /// planted under this name would otherwise be dereferenced by the very call
@@ -282,7 +496,7 @@ fn is_workspace_directory(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return false;
     };
-    name.starts_with(WORKSPACE_PREFIX)
+    (name.starts_with(WORKSPACE_PREFIX) || name.starts_with(RETAINED_PREFIX))
         && fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_dir())
 }
 
@@ -320,7 +534,7 @@ pub(super) fn release_workspace(workspace: &Path, possession: &Possession) -> He
 impl Drop for BuildRoot {
     fn drop(&mut self) {
         if let Some(possession) = self.possession.take() {
-            let _ = release_workspace(&self.workspace, &possession);
+            retire_workspace(&self.workspace, &possession, self.retained);
         }
     }
 }

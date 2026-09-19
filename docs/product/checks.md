@@ -458,19 +458,32 @@ mirror.
 ```mermaid
 stateDiagram-v2
   [*] --> Building : acquire companion lock and private workspace
-  Building --> Sealed : materialize exact selected objects, verify identity and read-only seal
+  Building --> Sealed : write only the objects that differ, verify identity and read-only seal
   Sealed --> Measuring : execute from the retained tree or a verified sealed mirror
   Measuring --> Releasing : owner drops the retained tree
-  Releasing --> [*] : make removable, remove workspace, then lock
+  Releasing --> [*] : remove an ephemeral workspace, then its lock
+  Releasing --> Refillable : keep a staged workspace's bytes, release only its lock
+  Refillable --> Building : the same repository selects again
   Building --> Abandoned : owner disappears
   Sealed --> Abandoned : owner disappears
   Measuring --> Abandoned : owner disappears
+  Refillable --> Abandoned : the repository it serves is gone
   Abandoned --> [*] : a later run acquires the companion lock and reclaims the root
   note right of Sealed
     live source paths never supply or receive selected bytes;
     verified mirrors, caches, and outputs may use checkout target
   end note
 ```
+
+**Invariant —** A staged workspace is refilled rather than rebuilt. One
+repository keeps a bounded number of private workspaces, and a later selection
+writes only the paths whose bytes differ, removes the paths it no longer
+selects, and leaves every unchanged file untouched. A build reading the tree
+decides freshness from file modification times, so rewriting identical bytes
+would cost the whole compile of an unchanged tree. Identity is unaffected:
+the seal and the full object-identity verification run over the refilled tree
+exactly as over a newly minted one, and a workspace is possessed for as long
+as a run measures it.
 
 **Invariant —** Isolation preserves selection rather than widening it. The
 private tree contains the exact staged-index or named-revision objects already
