@@ -189,6 +189,14 @@ merge-parent, rename, or committed-baseline identities in the action key.
 `live-only` must run during pre-commit because its decision reads mutable state
 that a prior proof must not stand in for.
 
+Cargo test proof separates preparation from execution, as the full verifier does.
+The exact selected Cargo targets and features first compile with `--no-run`;
+only a successful prebuild starts the unchanged test command. Each phase retains
+its own 180-second supervision bound, so compilation against a newly materialized
+selected-tree path cannot consume the test execution budget. Both phases must
+succeed before a receipt is published. The test action declaration binds this
+two-phase contract; source admission, output bounds, and cleanup remain required.
+
 Workspace packages that execute a build script or proc macro opt into reusable
 Cargo proof with `[package.metadata.spice.cargo-proof]`, `version = 1`, and
 `complete = true`. That flag is the package owner's closed-world assertion that

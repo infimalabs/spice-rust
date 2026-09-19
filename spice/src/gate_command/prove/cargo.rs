@@ -140,7 +140,7 @@ fn prepare_action(
     let inventory = digest_encoded(Domain::GateInventory, &shard)?;
     let declaration = match shard.kind() {
         CargoGateShardKind::Typecheck => typecheck_declaration,
-        CargoGateShardKind::Test => "gate::cargo-workspace-tests::proof-shard-v2",
+        CargoGateShardKind::Test => "gate::cargo-workspace-tests::proof-shard-v3",
     };
     let non_files = vec![
         non_file(
