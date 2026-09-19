@@ -1367,6 +1367,7 @@ html[data-command-modifier-held="true"]
   letter-spacing: .05em;
   text-transform: uppercase;
 }
+.team-detail-card dt code { font: inherit; text-transform: none; }
 .team-detail-card dd {
   margin: 2px 0 0;
   overflow-wrap: anywhere;
