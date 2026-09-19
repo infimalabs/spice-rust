@@ -39,7 +39,7 @@ pub(super) fn validated_snapshot_from(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
-    validated_snapshot_from_with_occupant(observed, principal, projects, allocation, None)
+    validated_snapshot_from_with_occupant(observed, principal, projects, allocation, None, None)
 }
 
 pub(super) fn validated_snapshot_for_automatic(
@@ -49,7 +49,14 @@ pub(super) fn validated_snapshot_for_automatic(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
-    validated_snapshot_from_with_occupant(observed, principal, projects, allocation, Some(occupant))
+    validated_snapshot_from_with_occupant(
+        observed,
+        principal,
+        projects,
+        allocation,
+        Some(occupant),
+        None,
+    )
 }
 
 fn validated_snapshot_from_with_occupant(
@@ -58,6 +65,7 @@ fn validated_snapshot_from_with_occupant(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
     prospective_occupant: Option<wire::CanonicalUuid>,
+    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let cursor = observed.cursor().ok_or_else(|| {
         store_fault(
@@ -72,12 +80,23 @@ fn validated_snapshot_from_with_occupant(
         )
     })?;
     let mut residency = positioned(residency);
-    let origin_threads = task_origin_threads(observed.facts().iter(), &residency.body)?;
-    let creator_teams = task_creator_teams(observed.facts().iter())?;
-    let (claim_contexts, git_contexts) = task_contexts(observed.facts());
-    let mut tasks = Vec::with_capacity(observed.tasks().len());
-    let mut entries = Vec::with_capacity(observed.tasks().len());
+    let (origin_threads, creator_teams, (claim_contexts, git_contexts)) =
+        if selected.is_some_and(std::collections::BTreeSet::is_empty) {
+            (Default::default(), Default::default(), Default::default())
+        } else {
+            (
+                task_origin_threads(observed.facts().iter(), &residency.body, selected)?,
+                task_creator_teams(observed.facts().iter(), selected)?,
+                task_contexts(observed.facts(), selected),
+            )
+        };
+    let capacity = selected.map_or(observed.tasks().len(), std::collections::BTreeSet::len);
+    let mut tasks = Vec::with_capacity(capacity);
+    let mut entries = Vec::with_capacity(capacity);
     for heads in observed.tasks() {
+        if selected.is_some_and(|tasks| !tasks.contains(&heads.statement().body().born)) {
+            continue;
+        }
         let statement = positioned(heads.statement());
         let workflow = positioned(heads.workflow());
         let claim = heads.claim().map(positioned);
@@ -128,13 +147,24 @@ fn validated_snapshot_from_with_occupant(
             .with_context(claim_context, git_context),
         );
     }
-    let recent_cell = board::recent_claim_cell(
-        &entries,
-        observed.facts().latest_claim(&principal),
-        &principal,
-    );
-    let review_history = board::graph::review_history(observed.facts().iter(), &entries)
-        .map_err(|error| error.to_string());
+    // Allocation history and graph history are global projections. Scoped
+    // preflights neither consume nor synthesize a partial version of either.
+    let recent_cell = selected
+        .is_none()
+        .then(|| {
+            board::recent_claim_cell(
+                &entries,
+                observed.facts().latest_claim(&principal),
+                &principal,
+            )
+        })
+        .flatten();
+    let review_history = if selected.is_none() {
+        board::graph::review_history(observed.facts().iter(), &entries)
+            .map_err(|error| error.to_string())
+    } else {
+        Ok(Vec::new())
+    };
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
     }
@@ -465,6 +495,7 @@ fn route_actor_identity(identity: &str) -> Option<String> {
 fn task_origin_threads<'a>(
     facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
     residency: &wire::ResidencyHead,
+    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
 ) -> Result<std::collections::BTreeMap<wire::TaskStamp, String>, Outcome<CommandAnswer>> {
     let mut occupants = std::collections::BTreeMap::new();
     let mut sessions = std::collections::BTreeMap::new();
@@ -481,6 +512,9 @@ fn task_origin_threads<'a>(
         let Some(added) = fact.fact.read::<body::TaskAdded>() else {
             continue;
         };
+        if selected.is_some_and(|tasks| !tasks.contains(&added.task)) {
+            continue;
+        }
         let actor = match fact.actor {
             wire::Actor::Operator => "operator".to_owned(),
             wire::Actor::Spice => "spice".to_owned(),
@@ -521,6 +555,7 @@ fn task_origin_threads<'a>(
 
 fn task_creator_teams<'a>(
     facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
+    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
 ) -> Result<
     std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>>,
     Outcome<CommandAnswer>,
@@ -530,6 +565,9 @@ fn task_creator_teams<'a>(
         let Some(added) = envelope.fact.read::<body::TaskAdded>() else {
             continue;
         };
+        if selected.is_some_and(|tasks| !tasks.contains(&added.task)) {
+            continue;
+        }
         let creator = match envelope.actor {
             Actor::Lane(_) => added.creation.creator_team(),
             Actor::Operator | Actor::Spice if added.creation.creator_team().is_none() => None,
@@ -604,6 +642,7 @@ pub(super) fn claim_transcript_recovery(
 
 fn task_contexts(
     facts: &bus::TaskFacts,
+    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
 ) -> (
     ClaimContexts,
     std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskGitContext>,
@@ -625,6 +664,9 @@ fn task_contexts(
             continue;
         }
         if let Some(won) = envelope.fact.read::<body::ClaimWon>() {
+            if selected.is_some_and(|tasks| !tasks.contains(&won.task)) {
+                continue;
+            }
             let task = won.task.clone();
             if let Some(boundary) = won.git.clone() {
                 git.insert(
@@ -654,6 +696,7 @@ fn task_contexts(
             continue;
         }
         if let Some(done) = envelope.fact.read::<body::TaskDone>()
+            && selected.is_none_or(|tasks| tasks.contains(&done.task))
             && let Some(boundary) = done.git
         {
             git.insert(
@@ -667,6 +710,7 @@ fn task_contexts(
             continue;
         }
         if let Some(reviewed) = envelope.fact.read::<body::TaskReviewed>()
+            && selected.is_none_or(|tasks| tasks.contains(&reviewed.task))
             && let Some(boundary) = reviewed.git
         {
             git.insert(
@@ -800,11 +844,26 @@ pub(super) fn read_board(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let mut snapshot = match validated_snapshot(bus, principal, projects, allocation) {
+    let observed = match bus.task_snapshot() {
+        Ok(observed) => observed,
+        Err(error) => return store_fault("board::heads-unreadable", &error.to_string()),
+    };
+    let selected = selected_tasks(&observed, read, &principal);
+    let mut snapshot = match validated_snapshot_from_with_occupant(
+        &observed,
+        principal,
+        projects,
+        allocation,
+        None,
+        selected.as_ref(),
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    if let Some(family) = &read.family {
+    if let BoardRead::All {
+        family: Some(family),
+    } = read
+    {
         if family.is_empty()
             || !family
                 .bytes()
@@ -829,6 +888,56 @@ pub(super) fn read_board(
         snapshot.cursor,
         CommandAnswer::Board(Box::new(snapshot.answer)),
     )
+}
+
+/// Select identities before cloning or projecting their task heads. Dependencies
+/// and claims come from the same immutable barrier, including completed tasks.
+fn selected_tasks(
+    observed: &bus::TaskSnapshot,
+    read: &BoardRead,
+    principal: &wire::Actor,
+) -> Option<std::collections::BTreeSet<wire::TaskStamp>> {
+    let BoardRead::Tasks {
+        tasks,
+        dependencies,
+        claims,
+    } = read
+    else {
+        return match read {
+            BoardRead::All { .. } => None,
+            BoardRead::Trust => Some(Default::default()),
+            BoardRead::Tasks { .. } => unreachable!(),
+        };
+    };
+    let mut selected: std::collections::BTreeSet<_> = tasks.iter().cloned().collect();
+    if *claims {
+        selected.extend(observed.tasks().iter().filter_map(|heads| {
+            heads
+                .claim()
+                .filter(|claim| {
+                    claim.body().actor == *principal
+                        && claim.body().disposition == wire::ClaimDisposition::Active
+                })
+                .map(|_| heads.statement().body().born.clone())
+        }));
+    }
+    if *dependencies {
+        let mut pending: Vec<_> = selected.iter().cloned().collect();
+        while let Some(task) = pending.pop() {
+            // The immutable bus projection is ordered by durable task stamp.
+            if let Ok(index) = observed
+                .tasks()
+                .binary_search_by(|heads| heads.statement().body().born.cmp(&task))
+            {
+                for dependency in &observed.tasks()[index].statement().body().dependencies {
+                    if selected.insert(dependency.clone()) {
+                        pending.push(dependency.clone());
+                    }
+                }
+            }
+        }
+    }
+    Some(selected)
 }
 
 pub(super) fn read_graph(

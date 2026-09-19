@@ -113,7 +113,25 @@ pub(crate) fn mine(
         Err(error) => return evidence_fault(error),
     };
     let candidates = cluster(&corrections, threshold);
-    let board = match crate::board_command::current_board(&repository) {
+    let tasks = facts
+        .facts()
+        .iter()
+        .filter_map(|envelope| {
+            let added = envelope.fact.read::<TaskAdded>()?;
+            added
+                .project
+                .starts_with(".maxim_proposal.taste.")
+                .then_some(added.task)
+        })
+        .collect();
+    let board = match crate::board_command::current_board(
+        &repository,
+        wire::intent::BoardRead::Tasks {
+            tasks,
+            dependencies: false,
+            claims: false,
+        },
+    ) {
         Ok(board) => board,
         Err(outcome) => return retag(outcome),
     };

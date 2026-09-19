@@ -6,7 +6,11 @@ pub(super) fn client_done(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let board = match current_board(repository) {
+    let (requested_task, read) = match submission::mutation_read(matches) {
+        Ok(read) => read,
+        Err(outcome) => return outcome,
+    };
+    let board = match current_board(repository, read) {
         Ok(board) => board,
         Err(outcome) => return outcome,
     };
@@ -24,19 +28,9 @@ pub(super) fn client_done(
         },
         None => None,
     };
-    let written_task = matches.get_one::<String>("HANDLE");
-    let (task, heads) = match written_task {
-        Some(written) => {
-            let task = match written.parse::<TaskHandle>() {
-                Ok(task) => task,
-                Err(error) => {
-                    return refusal(
-                        "task::handle-invalid",
-                        Some(written.clone()),
-                        &error.to_string(),
-                    );
-                }
-            };
+    let implicit = requested_task.is_none();
+    let (task, heads) = match requested_task {
+        Some(task) => {
             let heads = match task_heads(&board, &task) {
                 Ok(heads) => heads,
                 Err(outcome) => return outcome,
@@ -52,7 +46,7 @@ pub(super) fn client_done(
         claim.body.actor == board.principal
             && claim.body.disposition == wire::ClaimDisposition::Active
     });
-    if !active && written_task.is_none() {
+    if !active && implicit {
         return refusal(
             "claim::active-missing",
             Some(board.principal.to_string()),

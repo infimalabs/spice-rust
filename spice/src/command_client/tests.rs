@@ -504,7 +504,7 @@ fn mapped_task_status() -> (&'static Contract, MappedCommand) {
         contract.path,
         CommandKind::BoardRead,
         Vec::new(),
-        &wire::intent::BoardRead { family: None },
+        &wire::intent::BoardRead::All { family: None },
     )
     .expect("task status maps before discovery");
     (contract, mapped)

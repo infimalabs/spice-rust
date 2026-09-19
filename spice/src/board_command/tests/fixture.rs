@@ -204,7 +204,7 @@ pub(super) fn board(bus: &Bus, epoch: CanonicalUuid, actor: Actor) -> BoardAnswe
         actor,
         CommandKind::BoardRead,
         Vec::new(),
-        &BoardRead { family: None },
+        &BoardRead::All { family: None },
     );
     let Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(position),
@@ -229,7 +229,7 @@ pub(super) fn board_with_allocation(
         actor,
         CommandKind::BoardRead,
         Vec::new(),
-        &BoardRead { family: None },
+        &BoardRead::All { family: None },
         allocation,
     );
     let Outcome::Reply(Reply {

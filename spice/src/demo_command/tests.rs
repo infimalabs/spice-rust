@@ -640,7 +640,7 @@ fn assert_browser_seed(discovery: &canvas::Discovery) {
         discovery,
         accepted.epoch,
         CommandKind::BoardRead,
-        &BoardRead { family: None },
+        &BoardRead::All { family: None },
     );
     let CommandAnswer::Board(board) = board else {
         panic!("demo board command returns a board");

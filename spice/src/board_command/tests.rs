@@ -24,6 +24,7 @@ mod allocation_guard;
 use allocation_guard::*;
 
 mod origin;
+mod read_scope;
 mod task_list;
 mod task_listing;
 mod taste_review;

@@ -32,7 +32,8 @@ pub(super) fn run_doc(
             );
         }
     };
-    let board = match current_board(repository) {
+    // Document application witnesses a global barrier and allocates fresh births.
+    let board = match current_board(repository, BoardRead::All { family: None }) {
         Ok(board) => board,
         Err(outcome) => return outcome,
     };
