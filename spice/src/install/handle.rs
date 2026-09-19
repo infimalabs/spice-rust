@@ -2,8 +2,6 @@ use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-#[cfg(debug_assertions)]
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::path::validate_relative;
@@ -23,20 +21,7 @@ static TEMPORARY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 mod support;
 
-#[cfg(debug_assertions)]
-pub(super) use support::configure_mutation_rendezvous;
 pub(super) use support::{retirement_temporary_name, temporary_name};
-
-#[cfg(debug_assertions)]
-static MUTATION_RENDEZVOUS: OnceLock<Option<MutationRendezvous>> = OnceLock::new();
-
-#[cfg(debug_assertions)]
-#[derive(Debug)]
-struct MutationRendezvous {
-    control: PathBuf,
-    action: OsString,
-    path: PathBuf,
-}
 
 #[cfg(unix)]
 struct OpenedParents {
@@ -181,7 +166,7 @@ impl AdmittedPath {
         image: &FileImage,
         expected: Option<Generation>,
     ) -> Result<Generation, InstallError> {
-        self.publish_with(image, expected, || mutation_pause("publish", &self.display))
+        self.publish_with(image, expected, || Ok(()))
     }
 
     /// Publish the shared receipt without crossing a stale direction's CAS.
@@ -203,7 +188,7 @@ impl AdmittedPath {
         let generation = self.publish_checked(
             image,
             expected_native,
-            || mutation_pause("publish", &self.display),
+            || Ok(()),
             || self.require_receipt_generation(expected.as_ref()),
             before_admission,
             |name| {
@@ -386,7 +371,7 @@ impl AdmittedPath {
     }
 
     pub(super) fn remove(&self, expected: Generation) -> Result<(), InstallError> {
-        self.remove_with(expected, || mutation_pause("remove", &self.display))
+        self.remove_with(expected, || Ok(()))
     }
 
     pub(super) fn retire(
@@ -421,7 +406,6 @@ impl AdmittedPath {
                 )?;
                 return Err(error);
             }
-            mutation_pause("retire-renamed", &self.display)?;
             self.finish_retirement(expected, temporary)
         }
         #[cfg(not(unix))]
@@ -461,8 +445,7 @@ impl AdmittedPath {
                 &self.display,
                 source,
             )
-        })?;
-        mutation_pause("retire-unlinked", &self.display)
+        })
     }
 
     fn remove_with(
@@ -643,7 +626,7 @@ impl AdmittedPath {
 
     #[cfg(unix)]
     fn cleanup_directory(&self, index: usize, path: &Path) -> Result<(), InstallError> {
-        self.cleanup_directory_with(index, path, || mutation_pause("cleanup", path))
+        self.cleanup_directory_with(index, path, || Ok(()))
     }
 
     #[cfg(unix)]
@@ -820,9 +803,7 @@ fn open_parent_chain(
                 if index < first_introduced {
                     return Err(InstallError::ParentChanged(display));
                 }
-                let directory = create_directory(parent, component, &display, || {
-                    mutation_pause("create", &display)
-                })?;
+                let directory = create_directory(parent, component, &display, || Ok(()))?;
                 directories.push(directory);
             }
             Err(source) => {
@@ -1037,109 +1018,4 @@ fn exchange(
         "atomic install exchange is unavailable for {}",
         display.display()
     )))
-}
-
-#[cfg(debug_assertions)]
-fn mutation_pause(action: &str, display: &Path) -> Result<(), InstallError> {
-    let Some(rendezvous) = MUTATION_RENDEZVOUS.get().and_then(Option::as_ref) else {
-        return Ok(());
-    };
-    if rendezvous.action != action || rendezvous.path != display {
-        return Ok(());
-    }
-    await_release(&rendezvous.control, action, display)
-}
-
-/// Block until the harness releases this pause, or the horizon is spent.
-///
-/// A release landed before the child starts remains an explicit file. Otherwise
-/// the child binds a loopback listener before announcing readiness, then blocks
-/// on one exact release token. The harness therefore cannot observe
-/// readiness until the event receiver is armed, and no filesystem notification
-/// or polling interval sits between the release and the resumed mutation.
-#[cfg(debug_assertions)]
-fn await_release(control: &Path, action: &str, display: &Path) -> Result<(), InstallError> {
-    use std::net::{Ipv4Addr, TcpListener};
-    use std::sync::mpsc::{self, RecvTimeoutError};
-    use std::thread;
-    use std::time::Duration;
-
-    if control.join("release").join("continue").exists() {
-        return signal_ready(control, action, None, display);
-    }
-
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .map_err(|source| InstallError::io("bind install mutation rendezvous", display, source))?;
-    let release_port = listener
-        .local_addr()
-        .map_err(|source| InstallError::io("inspect install mutation rendezvous", display, source))?
-        .port();
-    signal_ready(control, action, Some(release_port), display)?;
-
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let result = listener.accept().and_then(|(mut stream, _)| {
-            let mut token = [0_u8; 8];
-            stream.read_exact(&mut token)?;
-            if token == *b"continue" {
-                Ok(())
-            } else {
-                Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "install rendezvous received the wrong release token",
-                ))
-            }
-        });
-        let _ = sender.send(result);
-    });
-
-    match receiver.recv_timeout(Duration::from_secs(10)) {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(source)) => Err(InstallError::io(
-            "receive install mutation rendezvous",
-            display,
-            source,
-        )),
-        Err(RecvTimeoutError::Timeout) => Err(InstallError::io(
-            "wait for install mutation rendezvous",
-            display,
-            io::Error::new(io::ErrorKind::TimedOut, "test rendezvous timed out"),
-        )),
-        Err(RecvTimeoutError::Disconnected) => Err(InstallError::io(
-            "wait for install mutation rendezvous",
-            display,
-            io::Error::new(io::ErrorKind::BrokenPipe, "test rendezvous disconnected"),
-        )),
-    }
-}
-
-#[cfg(debug_assertions)]
-fn signal_ready(
-    control: &Path,
-    action: &str,
-    release_port: Option<u16>,
-    display: &Path,
-) -> Result<(), InstallError> {
-    use std::net::{Ipv4Addr, TcpStream};
-
-    let ready_port = fs::read_to_string(control.join("ready").join("port"))
-        .map_err(|source| InstallError::io("read install readiness rendezvous", display, source))?
-        .parse::<u16>()
-        .map_err(|source| {
-            InstallError::io(
-                "decode install readiness rendezvous",
-                display,
-                io::Error::new(io::ErrorKind::InvalidData, source),
-            )
-        })?;
-    let mut ready = TcpStream::connect((Ipv4Addr::LOCALHOST, ready_port)).map_err(|source| {
-        InstallError::io("connect install readiness rendezvous", display, source)
-    })?;
-    write!(ready, "{action} {}", release_port.unwrap_or_default())
-        .map_err(|source| InstallError::io("signal install mutation rendezvous", display, source))
-}
-
-#[cfg(not(debug_assertions))]
-fn mutation_pause(_action: &str, _display: &Path) -> Result<(), InstallError> {
-    Ok(())
 }

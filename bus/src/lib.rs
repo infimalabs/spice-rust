@@ -149,6 +149,39 @@ mod runtime {
     }
 
     impl SteeringPresentation {
+        /// Read one key's presentation context from an already-admitted snapshot.
+        pub fn read(
+            read: &journal::JournalRead<'_>,
+            key: &str,
+        ) -> Result<Option<Self>, GuardError> {
+            let Some(head) = read.steering_key(key)? else {
+                return Ok(None);
+            };
+            let fact = |position| {
+                read.fact_page(
+                    journal::FactPageStart::At(position),
+                    position,
+                    journal::FactReadBudget::new(1, journal::MAX_RETAINED_FACT_PAGE_BYTES)
+                        .expect("one steering context fact is a repository budget"),
+                )?
+                .rows
+                .into_iter()
+                .next()
+                .ok_or_else(|| {
+                    GuardError::Invalid(format!(
+                        "steering key {key} has no context fact at {position}"
+                    ))
+                })
+            };
+            let created = fact(head.body().created)?;
+            let current = fact(head.position())?;
+            Ok(Some(Self {
+                head,
+                created,
+                current,
+            }))
+        }
+
         #[must_use]
         pub const fn head(&self) -> &JournalHead<journal::crossing::SteeringHead> {
             &self.head
@@ -1026,44 +1059,9 @@ mod runtime {
             )));
         }
         journal.read(move |read| {
-            let mut presentations = Vec::new();
-            for key in keys {
-                let Some(head) = read.steering_key(&key)? else {
-                    continue;
-                };
-                let created = read
-                    .fact_page(
-                        journal::FactPageStart::At(head.body().created),
-                        head.body().created,
-                        journal::FactReadBudget::new(1, journal::MAX_RETAINED_FACT_PAGE_BYTES)
-                            .expect("one creating fact is a repository budget"),
-                    )?
-                    .rows
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| {
-                        GuardError::Invalid(format!("steering key {key} has no creating fact"))
-                    })?;
-                let current = read
-                    .fact_page(
-                        journal::FactPageStart::At(head.position()),
-                        head.position(),
-                        journal::FactReadBudget::new(1, journal::MAX_RETAINED_FACT_PAGE_BYTES)
-                            .expect("one current fact is a repository budget"),
-                    )?
-                    .rows
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| {
-                        GuardError::Invalid(format!("steering key {key} has no current fact"))
-                    })?;
-                presentations.push(SteeringPresentation {
-                    head,
-                    created,
-                    current,
-                });
-            }
-            Ok(presentations)
+            keys.iter()
+                .filter_map(|key| SteeringPresentation::read(read, key).transpose())
+                .collect()
         })
     }
 

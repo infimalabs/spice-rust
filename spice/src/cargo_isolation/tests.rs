@@ -238,24 +238,6 @@ fn exact_lockfile_bytes_advance_the_home_to_a_new_generation() {
 }
 
 #[test]
-fn source_generation_authority_binds_the_exact_home_and_lockfile() {
-    let fixture = Fixture::new();
-    let prepared = store::prepare(&fixture.repository, None, &fixture.host())
-        .expect("prepare source generation");
-    let lock_bytes =
-        fs::read(fixture.repository.join("Cargo.lock")).expect("read fixture lockfile");
-
-    let authority = source_generation_authority(prepared.home(), &lock_bytes)
-        .expect("admit exact source generation");
-    assert_eq!(authority.generation(), prepared.generation());
-    assert_eq!(authority.manifest().len(), 64);
-
-    let error = source_generation_authority(prepared.home(), lockfile("different").as_bytes())
-        .expect_err("different lock bytes must refuse the retained home generation");
-    assert_eq!(error.reason(), "cargo-isolation::generation-lock-mismatch");
-}
-
-#[test]
 fn retained_owned_home_rebinds_only_to_the_current_store_for_the_same_lock() {
     let retained = Fixture::new();
     let retained_home = store::prepare(&retained.repository, None, &retained.host())

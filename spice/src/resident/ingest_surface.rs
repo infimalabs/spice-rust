@@ -31,10 +31,8 @@ fn ingest_vendor_from(
 ///
 /// Live capture passes the one lane whose record just landed; startup catch-up
 /// passes nothing and sweeps them all. Both arrive here, so there is exactly
-/// one resume rule over the transcript checkpoint. A resident that read live
-/// records one way and recovered missed ones another would hold two opinions
-/// about where a head stands, and the bytes between them would be accounted
-/// twice or not at all.
+/// one accounting resume rule over the transcript checkpoint. Live display
+/// may read ahead of that checkpoint, but only this guarded sweep advances it.
 ///
 /// The residency read and every accounting share one writer transaction, so a
 /// lane cannot be seated into or out of the sweep midway through it.

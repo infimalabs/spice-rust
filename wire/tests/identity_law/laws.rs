@@ -34,22 +34,22 @@ fn hash_of<T: Hash>(value: &T) -> u64 {
     hasher.finish()
 }
 
-/// Assert the law for one type's samples and record that the type was covered.
+/// Assert the law for one type's samples.
 ///
 /// Checks, per sample: encoding then decoding returns an equal value, and
 /// re-encoding the decoded value returns identical bytes. Checks, per ordered
 /// pair: byte equality holds exactly when value equality holds.
-pub(super) fn law<T>(covered: &mut BTreeSet<String>, name: &str, samples: &[T])
+pub(super) fn law<T>(name: &str, samples: &[T])
 where
     T: Serialize + serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
 {
-    law_under(covered, name, samples, encoded_by_wire);
+    assert_identity_law(name, samples, encoded_by_wire);
 }
 
 /// The encoder a type's identity binds, for types where that is `wire::encode`.
 ///
-/// Named rather than written inline at each call so the registry states which
-/// encoding it checked. A type whose identity binds a different encoding names
+/// Named rather than written inline at each call so the call states which
+/// encoding it checks. A type whose identity binds a different encoding names
 /// that one instead; see [`canonical_command_identity`].
 fn encoded_by_wire<T: Serialize>(value: &T) -> Vec<u8> {
     wire::encode(value).expect("value encodes")
@@ -76,23 +76,7 @@ pub(super) fn canonical_command_identity<B: Serialize>(command: &Command<B>) -> 
 /// type is free to bind a narrower rendering than the generic one, and only the
 /// bound rendering is the one anything takes an identity over. Each call names
 /// which it checked.
-pub(super) fn law_under<T, E>(covered: &mut BTreeSet<String>, name: &str, samples: &[T], encode: E)
-where
-    T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
-    E: Fn(&T) -> Vec<u8>,
-{
-    covered.insert(name.to_owned());
-    assert_identity_law(name, samples, encode);
-}
-
-/// The law itself, stated without claiming coverage of a re-exported name.
-///
-/// Separated from [`law_under`] because the audit reads `covered` as a set of
-/// root re-exports and reports anything else as stale. A generic type applied
-/// to one body — `Fact<TasteReminded>` — is a distinct encoding worth asserting
-/// and is not a name `wire` re-exports, so it states the law here and leaves
-/// the coverage registry alone.
-fn assert_identity_law<T, E>(name: &str, samples: &[T], encode: E)
+pub(super) fn assert_identity_law<T, E>(name: &str, samples: &[T], encode: E)
 where
     T: serde::de::DeserializeOwned + PartialEq + std::fmt::Debug,
     E: Fn(&T) -> Vec<u8>,
@@ -172,11 +156,11 @@ where
 ///
 /// A type whose rank is a declared sequence rather than its text belongs in
 /// [`ranked_law`] instead.
-pub(super) fn spelling_law<T>(covered: &mut BTreeSet<String>, name: &str, samples: &[T])
+pub(super) fn spelling_law<T>(name: &str, samples: &[T])
 where
     T: Serialize + serde::de::DeserializeOwned + Ord + Hash + std::fmt::Debug,
 {
-    law(covered, name, samples);
+    law(name, samples);
 
     let encoded: Vec<Vec<u8>> = samples.iter().map(encoded_by_wire).collect();
     hash_law(name, samples, &encoded);
@@ -220,11 +204,11 @@ where
 /// a spelling order wearing a different name, and belongs in [`spelling_law`]
 /// where the whole sequence is checked rather than the sequence someone
 /// remembered to list.
-pub(super) fn ranked_law<T>(covered: &mut BTreeSet<String>, name: &str, ascending: &[T])
+pub(super) fn ranked_law<T>(name: &str, ascending: &[T])
 where
     T: Serialize + serde::de::DeserializeOwned + Ord + Hash + std::fmt::Debug,
 {
-    law(covered, name, ascending);
+    law(name, ascending);
 
     let encoded: Vec<Vec<u8>> = ascending.iter().map(encoded_by_wire).collect();
     hash_law(name, ascending, &encoded);
@@ -387,14 +371,12 @@ fn reminder() -> body::TasteReminded {
 
 /// A fact is its body's bytes, and the reminder body is ten fields wide.
 ///
-/// [`Fact`] is registered in the crossing fixture over one body, `TaskDone`,
+/// [`Fact`] is sampled in the crossing fixture over one body, `TaskDone`,
 /// which carries a handle and two strings. That says nothing about a body
 /// composed of a [`Digest`], an [`Instant`], a bare `u64` compaction epoch, and
 /// a six-field locus: each is a place a field can be dropped at encode or
 /// narrowed at render while derived equality keeps the distinction the bytes
-/// lost. `TranscriptLocus` is reached here and nowhere else in this fixture —
-/// it is not re-exported from `wire`'s root, and the coverage audit walks only
-/// those, so nothing ever asked for a sample of it.
+/// lost. `TranscriptLocus` is reached through this reminder body.
 ///
 /// The samples are a base reminder plus one variant per field, each differing
 /// from the base in exactly that field. A field the encoding drops therefore

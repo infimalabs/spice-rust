@@ -4,7 +4,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use lane::capture::{
     CaptureExit, CaptureFailure, CaptureRecord, CaptureReportError, CaptureReporter,
@@ -12,6 +12,7 @@ use lane::capture::{
 use tokio::sync::mpsc;
 use wire::CanonicalUuid;
 
+use super::message_surface::LiveMessages;
 use super::supervisor::Notice;
 
 const RECORD_CAPACITY: usize = 64;
@@ -24,7 +25,7 @@ const NOTICE_BYTES: usize = 4 * 1024;
 /// that on a busy lane, so most notices were refused before this queue grew.
 const NOTICE_QUEUE_BYTES: usize = 1024 * 1024;
 /// Notices one loop turn takes from the drained queue before it sweeps.
-const NOTICE_BATCH: usize = 1024;
+pub(super) const NOTICE_BATCH: usize = 1024;
 
 /// Resident-generation endpoint for tiny supervisor tape notices.
 ///
@@ -46,6 +47,7 @@ pub(super) struct SupervisorReports {
     staged: VecDeque<io::Result<Notice>>,
     drain: tokio::task::JoinHandle<()>,
     path: PathBuf,
+    messages: Arc<OnceLock<LiveMessages>>,
 }
 
 impl SupervisorReports {
@@ -103,15 +105,25 @@ impl SupervisorReports {
             })?;
             let socket = Arc::new(socket);
             let (sender, notices) = mpsc::unbounded_channel();
-            let drain = tokio::spawn(drain_notices(Arc::clone(&socket), sender));
+            let messages = Arc::new(OnceLock::new());
+            let drain = tokio::spawn(drain_notices(
+                Arc::clone(&socket),
+                sender,
+                Arc::clone(&messages),
+            ));
             Ok(Self {
                 socket,
                 notices,
                 staged: VecDeque::new(),
                 drain,
                 path,
+                messages,
             })
         }
+    }
+
+    pub(super) fn enable_live(&self, messages: LiveMessages) -> super::CommandResult<()> {
+        install_messages(&self.messages, messages)
     }
 
     /// Everything staged, waiting in the in-process queue, and behind it in
@@ -140,7 +152,11 @@ impl SupervisorReports {
                 let received =
                     unsafe { libc::recv(socket, buffer.as_mut_ptr().cast(), buffer.len(), 0) };
                 match usize::try_from(received) {
-                    Ok(received) => notices.push(decode(&buffer[..received])),
+                    Ok(received) => {
+                        let notice = decode(&buffer[..received]);
+                        publish_notice(&self.messages, &notice);
+                        notices.push(notice);
+                    }
                     Err(_) => {
                         let error = io::Error::last_os_error();
                         if error.kind() != io::ErrorKind::WouldBlock {
@@ -221,6 +237,7 @@ impl Drop for SupervisorReports {
 async fn drain_notices(
     socket: Arc<tokio::net::UnixDatagram>,
     notices: mpsc::UnboundedSender<io::Result<Notice>>,
+    messages: Arc<OnceLock<LiveMessages>>,
 ) {
     let mut buffer = vec![0_u8; NOTICE_BYTES];
     loop {
@@ -228,9 +245,31 @@ async fn drain_notices(
             Ok(received) => decode(&buffer[..received]),
             Err(error) => Err(error),
         };
+        publish_notice(&messages, &notice);
         if notices.send(notice).is_err() {
             return;
         }
+    }
+}
+
+fn install_messages(
+    slot: &OnceLock<LiveMessages>,
+    messages: LiveMessages,
+) -> super::CommandResult<()> {
+    slot.set(messages).map_err(|_| {
+        super::store_fault(
+            "canvas::message-worker-already-started",
+            "live presentation starts once",
+        )
+    })
+}
+
+fn publish_notice(messages: &OnceLock<LiveMessages>, notice: &io::Result<Notice>) {
+    if let Some(messages) = messages.get()
+        && let Ok(notice) = notice
+        && let Err(error) = messages.notice(notice)
+    {
+        eprintln!("canvas live message unavailable: {error:?}");
     }
 }
 
@@ -341,21 +380,31 @@ pub(super) struct Channels {
     pub(super) records: mpsc::Receiver<CaptureRecord>,
     pub(super) failures: mpsc::UnboundedReceiver<CaptureFailure>,
     pub(super) exits: mpsc::UnboundedReceiver<CaptureExit>,
+    messages: Arc<OnceLock<LiveMessages>>,
+}
+
+impl Channels {
+    pub(super) fn enable_live(&self, messages: LiveMessages) -> super::CommandResult<()> {
+        install_messages(&self.messages, messages)
+    }
 }
 
 pub(super) fn channels() -> Channels {
     let (records, record_receiver) = mpsc::channel(RECORD_CAPACITY);
     let (failures, failure_receiver) = mpsc::unbounded_channel();
     let (exits, exit_receiver) = mpsc::unbounded_channel();
+    let messages = Arc::new(OnceLock::new());
     Channels {
         reporter: Arc::new(Reporter {
             records,
             failures,
             exits,
+            messages: Arc::clone(&messages),
         }),
         records: record_receiver,
         failures: failure_receiver,
         exits: exit_receiver,
+        messages,
     }
 }
 
@@ -363,10 +412,16 @@ struct Reporter {
     records: mpsc::Sender<CaptureRecord>,
     failures: mpsc::UnboundedSender<CaptureFailure>,
     exits: mpsc::UnboundedSender<CaptureExit>,
+    messages: Arc<OnceLock<LiveMessages>>,
 }
 
 impl CaptureReporter for Reporter {
     fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
+        if let Some(messages) = self.messages.get()
+            && let Err(error) = messages.wake(record.lane, record.occupant)
+        {
+            eprintln!("canvas live message unavailable: {error:?}");
+        }
         self.records.try_send(record).map_err(|error| match error {
             mpsc::error::TrySendError::Full(_) => {
                 CaptureReportError::new("resident capture report queue is full")

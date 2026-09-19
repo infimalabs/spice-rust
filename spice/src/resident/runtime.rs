@@ -579,7 +579,8 @@ fn up_from_with(
     // the callers that supply the stream. The wrapper is settled below,
     // before the surface's answer is returned.
     let mut progress = log::Rollup::new(progress);
-    let surface = match tokio::runtime::Builder::new_current_thread()
+    let surface = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
     {

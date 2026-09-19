@@ -34,13 +34,12 @@ fn a_seq_cannot_encode_a_zero_position() {
 /// variant a sample would skip. Listing them in declared order is what
 /// `ranked_law` wants anyway, so the sweep and the order assertion are the same
 /// list.
-pub(super) fn cover_vocabularies(covered: &mut BTreeSet<String>) {
-    ranked_law(covered, "CommandKind", CommandKind::ALL);
-    ranked_law(covered, "FactKind", FactKind::ALL);
-    ranked_law(covered, "Producer", Producer::ALL);
-    ranked_law(covered, "WitnessKind", WitnessKind::ALL);
+pub(super) fn cover_vocabularies() {
+    ranked_law("CommandKind", CommandKind::ALL);
+    ranked_law("FactKind", FactKind::ALL);
+    ranked_law("Producer", Producer::ALL);
+    ranked_law("WitnessKind", WitnessKind::ALL);
     ranked_law(
-        covered,
         "Disposition",
         &[
             Disposition::Live,
@@ -52,7 +51,6 @@ pub(super) fn cover_vocabularies(covered: &mut BTreeSet<String>) {
         ],
     );
     ranked_law(
-        covered,
         "Answer",
         &[
             Answer::Asked,
@@ -62,12 +60,10 @@ pub(super) fn cover_vocabularies(covered: &mut BTreeSet<String>) {
         ],
     );
     ranked_law(
-        covered,
         "TrustState",
         &[TrustState::Pended, TrustState::Granted, TrustState::Revoked],
     );
     ranked_law(
-        covered,
         "ResidentState",
         &[
             ResidentState::Seated,
@@ -79,13 +75,8 @@ pub(super) fn cover_vocabularies(covered: &mut BTreeSet<String>) {
             ResidentState::Dark,
         ],
     );
+    spelling_law("Name", &[name("polling"), name("aliases"), name("legacy")]);
     spelling_law(
-        covered,
-        "Name",
-        &[name("polling"), name("aliases"), name("legacy")],
-    );
-    spelling_law(
-        covered,
         "Digest",
         &[
             DIGEST.parse::<Digest>().expect("digest"),

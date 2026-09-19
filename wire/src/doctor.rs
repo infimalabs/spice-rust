@@ -35,15 +35,6 @@ pub enum SpiceVariable {
     /// Debug install fixture executable override.
     #[serde(rename = "SPICE_INSTALL_TEST_EXECUTABLE")] // env-policy: allow
     InstallTestExecutable,
-    /// Debug install mutation-rendezvous action.
-    #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_ACTION")] // env-policy: allow
-    InstallTestPauseAction,
-    /// Debug install mutation-rendezvous control directory.
-    #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_CONTROL")] // env-policy: allow
-    InstallTestPauseControl,
-    /// Debug install mutation-rendezvous destination path.
-    #[serde(rename = "SPICE_INSTALL_TEST_PAUSE_PATH")] // env-policy: allow
-    InstallTestPausePath,
     /// Current mutation attempt number.
     #[serde(rename = "SPICE_MUTATION_ATTEMPT")] // env-policy: allow
     MutationAttempt,
@@ -108,9 +99,6 @@ impl SpiceVariable {
         Self::HygieneAcquireRepository,
         Self::HygieneInterpreterMarker,
         Self::InstallTestExecutable,
-        Self::InstallTestPauseAction,
-        Self::InstallTestPauseControl,
-        Self::InstallTestPausePath,
         Self::MutationAttempt,
         Self::MutationSeed,
         Self::NativePins,
@@ -151,15 +139,6 @@ impl SpiceVariable {
             Self::Inbox => "SPICE_RS_INBOX", // env-policy: allow
             Self::InstallTestExecutable => {
                 "SPICE_INSTALL_TEST_EXECUTABLE" // env-policy: allow
-            }
-            Self::InstallTestPauseAction => {
-                "SPICE_INSTALL_TEST_PAUSE_ACTION" // env-policy: allow
-            }
-            Self::InstallTestPauseControl => {
-                "SPICE_INSTALL_TEST_PAUSE_CONTROL" // env-policy: allow
-            }
-            Self::InstallTestPausePath => {
-                "SPICE_INSTALL_TEST_PAUSE_PATH" // env-policy: allow
             }
             Self::Lane => "SPICE_RS_LANE", // env-policy: allow
             Self::MutationAttempt => "SPICE_MUTATION_ATTEMPT", // env-policy: allow

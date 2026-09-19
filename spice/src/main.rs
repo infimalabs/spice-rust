@@ -1157,8 +1157,6 @@ fn deliver_config(outcome: &Outcome<config_command::ConfigReport>, form: Form) -
 
 mod main_tail;
 
-#[cfg(test)]
-pub(crate) use main_tail::exit_status;
 pub(crate) use main_tail::terminate_code;
 pub use main_tail::{bootstrap_environment, terminate};
 #[cfg(not(target_arch = "wasm32"))]

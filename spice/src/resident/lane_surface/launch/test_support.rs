@@ -23,9 +23,6 @@ pub(in crate::resident) struct AdvisoryRtkFixture {
     pub(in crate::resident) occupant: CanonicalUuid,
     pub(in crate::resident) capability: CanonicalUuid,
     pub(in crate::resident) vendor: wire::Name,
-    probe_log: PathBuf,
-    occupant_environment: PathBuf,
-    launch_log: PathBuf,
     reads: OnceCell<CurrentReads>,
 }
 
@@ -73,9 +70,8 @@ impl AdvisoryRtkFixture {
         executable(&rtk);
 
         let occupant_environment = root.join("occupant-environment");
-        let launch_log = root.join("occupant-launches");
         let vendor = root.join("fake-claude");
-        write_vendor(&vendor, &launch_log, &occupant_environment, SESSION);
+        write_vendor(&vendor, &occupant_environment);
         fs::write(
             root.join("spice-rust.toml"),
             format!(
@@ -104,9 +100,6 @@ impl AdvisoryRtkFixture {
             occupant: uuid(3),
             capability: uuid(4),
             vendor: "claude".parse().expect("fixture vendor name"),
-            probe_log,
-            occupant_environment,
-            launch_log,
             reads: OnceCell::new(),
         }
     }
@@ -143,69 +136,12 @@ impl AdvisoryRtkFixture {
             .get_or_init(|| CurrentReads::start_queueing(bus, &self.paths));
         super::super::Runtime::new(capabilities, discovery, self.reporter(), reads)
     }
-
-    pub(in crate::resident) fn assert_one_configured_probe_from_launch_worktree(&self) {
-        assert_eq!(
-            fs::read_to_string(&self.probe_log).expect("configured RTK was probed"),
-            format!("{}|--version\n", self.root.display())
-        );
-    }
-
-    pub(in crate::resident) fn assert_occupant_started_with_rtk(&self) {
-        assert_eq!(
-            fs::read_to_string(&self.occupant_environment)
-                .expect("occupant published its environment verdict"),
-            "present\n"
-        );
-    }
-
-    pub(in crate::resident) fn assert_rust_native_history_path_prepared(&self) {
-        assert!(
-            self.paths
-                .runtime
-                .join("rtk")
-                .join(self.lane.to_string())
-                .is_dir(),
-            "resident launch did not prepare the typed RTK lane root"
-        );
-        assert!(
-            !self.paths.runtime.join("agents").exists(),
-            "resident launch recreated the superseded generic agents root"
-        );
-    }
-
-    pub(in crate::resident) fn launches(&self) -> Vec<String> {
-        fs::read_to_string(&self.launch_log)
-            .unwrap_or_default()
-            .lines()
-            .filter_map(|line| line.strip_prefix("LAUNCH:").map(str::to_owned))
-            .collect()
-    }
-
-    pub(in crate::resident) fn set_next_session(&self, session: &str) {
-        write_vendor(
-            &self.root.join("fake-claude"),
-            &self.launch_log,
-            &self.occupant_environment,
-            session,
-        );
-    }
 }
 
 impl Drop for AdvisoryRtkFixture {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.root).expect("advisory RTK fixture removes");
     }
-}
-
-pub(in crate::resident) fn assert_advisory_health(health: &wire::body::RtkHealth) {
-    assert_eq!(health.state(), wire::body::RtkHealthState::Active);
-    assert_eq!(health.version(), None);
-    assert_eq!(
-        health.detail(),
-        "executable launched; version observation unavailable: selector stdout was not UTF-8; rewrites are validated per command"
-    );
-    assert!(health.detail().chars().count() <= 1024);
 }
 
 fn executable(path: &Path) {
@@ -216,14 +152,13 @@ fn executable(path: &Path) {
     let _ = path;
 }
 
-fn write_vendor(path: &Path, launch_log: &Path, environment: &Path, session: &str) {
+fn write_vendor(path: &Path, environment: &Path) {
     fs::write(
         path,
         format!(
             concat!(
                 "#!/bin/sh\n",
                 "set -eu\n",
-                "printf 'LAUNCH:%s\\n' \"$*\" >> '{}'\n",
                 "if [ \"${{SPICE_RS_RTK_EXECUTABLE+x}}\" = x ] || ",
                 "[ \"${{RTK_DB_PATH+x}}\" = x ]; then\n",
                 "  printf '%s\\n' present > '{}'\n",
@@ -235,10 +170,9 @@ fn write_vendor(path: &Path, launch_log: &Path, environment: &Path, session: &st
                 "{{\"type\":\"system\",\"subtype\":\"init\",",
                 "\"session_id\":\"{}\"}}'\n",
             ),
-            launch_log.display(),
             environment.display(),
             environment.display(),
-            session,
+            SESSION,
         ),
     )
     .expect("fixture vendor writes");

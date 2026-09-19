@@ -171,19 +171,27 @@ impl SessionCompactions {
         epoch: CanonicalUuid,
         selection: (&wire::ResidencyHead, CanonicalUuid),
         publisher: &impl AgentMessagePublisher,
-        state: &mut MessageState,
+        state: &Mutex<MessageState>,
         diagnostic: &mut dyn io::Write,
     ) -> CommandResult<()> {
         let (residency, lane) = selection;
         self.synchronize_selected_with(
             residency,
             Some(lane),
-            publisher,
-            state,
             diagnostic,
             |lane, occupant, thread, locus| {
                 lane_surface::recover_session_compaction(bus, epoch, lane, occupant, thread, locus)
                     .map(drop)
+            },
+            |record, lane, author, worktree| {
+                publish(
+                    record,
+                    lane,
+                    author,
+                    worktree,
+                    publisher,
+                    &mut *lock_state(state)?,
+                )
             },
         )
     }
@@ -200,20 +208,28 @@ impl SessionCompactions {
     where
         F: FnMut(CanonicalUuid, CanonicalUuid, &str, listen::Locus) -> CommandResult<()>,
     {
-        self.synchronize_selected_with(residency, None, publisher, state, diagnostic, recover)
+        self.synchronize_selected_with(
+            residency,
+            None,
+            diagnostic,
+            recover,
+            |record, lane, author, worktree| {
+                publish(record, lane, author, worktree, publisher, state)
+            },
+        )
     }
 
-    fn synchronize_selected_with<F>(
+    fn synchronize_selected_with<F, P>(
         &mut self,
         residency: &wire::ResidencyHead,
         selected: Option<CanonicalUuid>,
-        publisher: &impl AgentMessagePublisher,
-        state: &mut MessageState,
         diagnostic: &mut dyn io::Write,
         mut recover: F,
+        mut present: P,
     ) -> CommandResult<()>
     where
         F: FnMut(CanonicalUuid, CanonicalUuid, &str, listen::Locus) -> CommandResult<()>,
+        P: FnMut(CompactionRecord, CanonicalUuid, CanonicalUuid, &Path) -> CommandResult<()>,
     {
         let current = residency
             .lanes
@@ -264,7 +280,7 @@ impl SessionCompactions {
                         if dialect == listen::Dialect::Codex && startup_recovery.is_none() {
                             recover(lane, author, &thread, record.locus())?;
                         }
-                        publish(record, lane, author, &worktree, publisher, state)?;
+                        present(record, lane, author, &worktree)?;
                     }
                 }
                 ScanAttempt::Latched => {}

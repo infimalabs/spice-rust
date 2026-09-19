@@ -128,7 +128,7 @@ impl Heard {
             .expect("the fixture occupant is seated");
         let source = canvas::stream::Source::new(self.bus.reader(), self.epoch, 8);
         let publisher = source.message_publisher();
-        let mut message_state = MessageState::default();
+        let message_state = std::sync::Mutex::new(MessageState::default());
         let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
         let steering = steer::Config::default();
         let surfaces = CaptureSurfaces::new(&self.paths, &tastes, &steering, &publisher);
@@ -139,7 +139,7 @@ impl Heard {
             &surfaces,
             None,
             &record,
-            CaptureViews::new(&mut message_state, &mut diagnostics),
+            CaptureViews::new(&message_state, &mut diagnostics),
         )
         .expect("the answer is swept");
         seats.release_all();

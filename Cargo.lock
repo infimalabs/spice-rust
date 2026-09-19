@@ -4062,7 +4062,6 @@ dependencies = [
  "jiff",
  "serde",
  "serde_json",
- "syn 3.0.3",
  "thiserror 2.0.19",
  "toml",
  "uuid",

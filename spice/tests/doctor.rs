@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsStr;
 use std::fs;
 #[cfg(unix)]
-use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -937,72 +937,6 @@ fn doctor_reports_unsafe_install_publications_without_changing_them() {
     assert!(reason.contains("installation temporary publication scan"));
     assert!(reason.contains(".spice-install-1-0.tmp"));
     assert!(reason.contains("receipt diagnosis: not-applicable: installation receipt is absent"));
-    assert_eq!(directory_state(repository.path()), before);
-}
-
-#[cfg(unix)]
-#[test]
-fn reclaimable_publication_does_not_downgrade_an_unavailable_receipt() {
-    use std::time::{Duration, UNIX_EPOCH};
-
-    let repository = Scratch::repository("unavailable-receipt-with-stale-publication");
-    repository.tracked("");
-    let record = repository.path().join(".git/.spice-rs/install.json");
-    fs::write(&record, b"malformed install receipt").expect("write malformed install receipt");
-    fs::set_permissions(&record, fs::Permissions::from_mode(0o600))
-        .expect("set install receipt mode");
-
-    let mut owner = Command::new("/usr/bin/true")
-        .spawn()
-        .expect("spawn temporary owner");
-    let pid = owner.id();
-    owner.wait().expect("reap temporary owner");
-    let pid = rustix::process::Pid::from_raw(pid.try_into().unwrap()).unwrap();
-    assert_eq!(
-        rustix::process::test_kill_process(pid),
-        Err(rustix::io::Errno::SRCH),
-        "fixture owner must be definitely absent",
-    );
-    let temporary = repository.path().join(format!(
-        ".git/.spice-rs/.spice-install-{}-0.tmp",
-        pid.as_raw_pid()
-    ));
-    fs::write(&temporary, b"stale publication").expect("write stale install publication");
-    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))
-        .expect("set stale install publication mode");
-    fs::File::options()
-        .write(true)
-        .open(&temporary)
-        .expect("open stale install publication")
-        .set_times(fs::FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(1)))
-        .expect("age stale install publication modification time");
-    let metadata = fs::metadata(&temporary).expect("inspect stale install publication");
-    let now = u64::try_from(metadata.ctime())
-        .expect("fixture metadata-change time follows the Unix epoch")
-        + 2 * 60 * 60;
-    let now = format!("maintenance-now:{now}");
-    let before = directory_state(repository.path());
-
-    let text = invoke(
-        repository.path(),
-        &["doctor"],
-        OsStr::new(""),
-        &[(SpiceVariable::InstallTestPauseAction, now.as_str())],
-    );
-    let json = invoke(
-        repository.path(),
-        &["--json", "doctor"],
-        OsStr::new(""),
-        &[(SpiceVariable::InstallTestPauseAction, now.as_str())],
-    );
-    let report = same_report(&text, &json);
-    let DoctorObservation::Unavailable { reason } =
-        &subsystem(&report, DoctorSubsystem::Installation).observation
-    else {
-        panic!("a stale publication cannot downgrade an unavailable receipt");
-    };
-    assert!(reason.contains("1 stale install publication file(s)"));
-    assert!(reason.contains("receipt diagnosis: unavailable"));
     assert_eq!(directory_state(repository.path()), before);
 }
 

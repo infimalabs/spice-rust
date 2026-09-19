@@ -58,6 +58,8 @@ fn file_change_summary_keeps_the_session_worktree_when_the_lane_row_moves() {
         &mut MessageState::default(),
         None,
         Some(&live_worktree),
+        None,
+        None,
     )
     .expect("live file change publishes");
 

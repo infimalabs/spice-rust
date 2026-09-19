@@ -124,6 +124,8 @@
 
 | Situation | Expected | Ref |
 | --- | --- | --- |
+| A displayable tape record arrives while unrelated journal-writer work is held | live publication proceeds before the writer is released; durable accounting catches up separately without a duplicate card | [Each changed stream frame publishes immediately](../invariants/lifecycle.md#surface-each-changed-stream-frame-publishes-immediately) |
+| A turn-ending record follows Claude prose, or an OMP terminal message arrives | the Claude card becomes FINAL at the ending record; the OMP card is FINAL on first publication; both retain the final state after reload | [Each changed stream frame publishes immediately](../invariants/lifecycle.md#surface-each-changed-stream-frame-publishes-immediately) |
 | Message arrives with the reader more than 80px from the top | same-frame compensation protects the viewport | [A reader more than 80px from the top is compensated in the same frame](../invariants/lifecycle.md#surface-a-reader-more-than-80px-from-the-top-is-compensated-in-the-same-frame) |
 | Message arrives with the reader 0–80px from the top | near-top behavior shows the push-down | [A reader more than 80px from the top is compensated in the same frame](../invariants/lifecycle.md#surface-a-reader-more-than-80px-from-the-top-is-compensated-in-the-same-frame) |
 | Reduced motion is set | no tweens; compensation still lands | [Compensation lands regardless of motion preference](../invariants/lifecycle.md#surface-compensation-lands-regardless-of-motion-preference) |

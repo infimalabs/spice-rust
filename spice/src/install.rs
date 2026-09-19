@@ -141,37 +141,11 @@ const SKILL: &str = ::std::include_str!("../agent/SKILL.md");
 
 #[cfg(debug_assertions)]
 #[doc(hidden)]
-pub const TEST_PAUSE_CONTROL: &str = "SPICE_INSTALL_TEST_PAUSE_CONTROL"; // env-policy: allow
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub const TEST_PAUSE_ACTION: &str = "SPICE_INSTALL_TEST_PAUSE_ACTION"; // env-policy: allow
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub const TEST_PAUSE_PATH: &str = "SPICE_INSTALL_TEST_PAUSE_PATH"; // env-policy: allow
-#[cfg(debug_assertions)]
-#[doc(hidden)]
 pub const TEST_EXECUTABLE: &str = "SPICE_INSTALL_TEST_EXECUTABLE"; // env-policy: allow
 /// Explicitly selects the worktree app stage for debug-only resident process tests.
 #[cfg(debug_assertions)]
 #[doc(hidden)]
 pub const TEST_CANVAS_STAGE_ARGUMENT: &str = "--spice-test-canvas-stage";
-/// Configures the process-test mutation rendezvous before installation starts.
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub fn configure_test_mutation_rendezvous(
-    control: Option<std::ffi::OsString>,
-    action: Option<std::ffi::OsString>,
-    path: Option<std::ffi::OsString>,
-) {
-    handle::configure_mutation_rendezvous(control, action, path);
-}
-
-/// Configures the process-test clock used by temporary-record maintenance.
-#[cfg(debug_assertions)]
-#[doc(hidden)]
-pub fn configure_test_maintenance_now(now: Option<std::ffi::OsString>) {
-    maintenance::configure_test_now(now);
-}
 
 /// Rewrites one complete debug fixture receipt into a directly upgradable schema.
 #[cfg(debug_assertions)]

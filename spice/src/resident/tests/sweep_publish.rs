@@ -42,7 +42,7 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
     let publisher = source.message_publisher();
     let mut updates = source.subscribe_messages();
     let mut diagnostics = Vec::new();
-    let mut message_state = MessageState::default();
+    let message_state = std::sync::Mutex::new(MessageState::default());
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
     let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
@@ -54,7 +54,7 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
         &surfaces,
         None,
         &noticed(lane, occupant, CODEX_THIRD, third),
-        CaptureViews::new(&mut message_state, &mut diagnostics),
+        CaptureViews::new(&message_state, &mut diagnostics),
     )
     .expect("the surviving notice is accepted");
 
@@ -99,7 +99,7 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
         &surfaces,
         None,
         &noticed(lane, occupant, CODEX_FIRST, first),
-        CaptureViews::new(&mut message_state, &mut diagnostics),
+        CaptureViews::new(&message_state, &mut diagnostics),
     )
     .expect("a late notice for an accounted record is accepted");
     assert!(

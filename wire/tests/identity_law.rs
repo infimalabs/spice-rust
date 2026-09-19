@@ -40,14 +40,10 @@
 //! `Lane(..)` while spelling `lane:` before `operator`.
 
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
 use std::hash::{Hash, Hasher};
 use std::num::NonZeroU64;
-use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use syn::{Attribute, Fields, Item, Meta, Token, UseTree, Visibility};
 use wire::manifest::{ProductVersion, ReleaseTarget};
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMediaReference, AgentMessage, AgentMessageBadges,
@@ -70,11 +66,8 @@ use wire::{
 #[path = "identity_law/laws.rs"]
 mod laws;
 use laws::*;
-#[path = "identity_law/audit.rs"]
-mod audit;
 #[path = "identity_law/crossing.rs"]
 mod crossing;
-use audit::*;
 #[path = "identity_law/vocabulary.rs"]
 mod vocabulary;
 use vocabulary::*;
