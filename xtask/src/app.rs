@@ -26,6 +26,14 @@ const GENERATED_REFERENCES: [(&str, usize); 7] = [
     ("/composer.css", 1),
     ("/responsive.css", 1),
 ];
+const WASM_ROUTE: &str = "/app_bg.wasm";
+const WASM_FILE: &str = "app_bg.wasm";
+/// Generations kept beside the current one after a publication.
+///
+/// A page already open keeps requesting the generation it loaded until it
+/// reloads, so a few predecessors stay servable; beyond that the store only
+/// grew, one immutable generation per refresh, without bound.
+const RETAINED_GENERATIONS: usize = 8;
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 
 /// Run `spice dev xtask -- app` to compile the browser app into the one stage
@@ -82,6 +90,16 @@ fn app_from(
 ) -> Result<(), AppBuildError> {
     let sources = source::SourceSnapshot::capture(root)?;
     let source_identity = sources.identity().clone();
+    if let Some(identity) = current_generation_of(publish_root, &source_identity) {
+        return writeln!(
+            output,
+            "[app] {} generation {identity} from selected sources {} ({source_identity}) is \
+             already current; the compiler was not run",
+            publish_root.join(spice::canvas::APP_STAGE).display(),
+            root.display(),
+        )
+        .map_err(AppBuildError::Output);
+    }
     app_build_at(
         root,
         publish_root,
@@ -160,6 +178,29 @@ fn app_build_at<W: Write>(
     result.and(cleanup)
 }
 
+/// The published generation compiled from exactly these sources, if any.
+///
+/// Every generation carries the source identity it was compiled from inside
+/// its Wasm, and a compilation is reproducible, so a current generation that
+/// carries this identity is byte-for-byte what Trunk would publish again.
+/// Trunk's wasm-bindgen and wasm-opt passes cost seconds on every run even
+/// when Cargo has nothing to rebuild, which is what every refresh that touched
+/// no app source was paying. Any defect in the published stage answers `None`
+/// and the compiler runs as before.
+fn current_generation_of(publish_root: &Path, source_identity: &Digest) -> Option<Digest> {
+    let stage = spice::canvas::AppSource::resolve(publish_root).ok()?;
+    let generation = stage.current_generation().ok()?;
+    let wasm = generation
+        .served(spice::canvas::APP.asset(WASM_ROUTE)?)
+        .ok()?;
+    carries_identity(wasm.bytes(), source_identity).then(|| generation.identity().clone())
+}
+
+fn carries_identity(wasm: &[u8], source_identity: &Digest) -> bool {
+    wasm.windows(source_identity.as_str().len())
+        .any(|window| window == source_identity.as_str().as_bytes())
+}
+
 fn publish_generation(
     stage: &Path,
     temporary: &Path,
@@ -201,7 +242,34 @@ fn publish_generation(
         path: pointer,
         source,
     })?;
-    staged.commit().map_err(AppBuildError::Atomic)
+    staged.commit().map_err(AppBuildError::Atomic)?;
+    prune_generations(&generations, identity)
+}
+
+/// Remove every generation older than the newest [`RETAINED_GENERATIONS`],
+/// never the one just published.
+///
+/// Age is the directory's modification time, which a rename into the store
+/// sets at publication. A generation that cannot be removed is left in place:
+/// retention is housekeeping, and the publication it follows already holds.
+fn prune_generations(generations: &Path, current: &Digest) -> Result<(), AppBuildError> {
+    let mut published = fs::read_dir(generations)
+        .map_err(|source| AppBuildError::Io {
+            path: generations.to_path_buf(),
+            source,
+        })?
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_name() != OsStr::new(current.as_str()))
+        .filter_map(|entry| {
+            let modified = entry.metadata().ok()?.modified().ok()?;
+            Some((modified, entry.path()))
+        })
+        .collect::<Vec<_>>();
+    published.sort_by_key(|(modified, _)| std::cmp::Reverse(*modified));
+    for (_, stale) in published.into_iter().skip(RETAINED_GENERATIONS) {
+        let _ = fs::remove_dir_all(stale);
+    }
+    Ok(())
 }
 
 fn same_generation(left: &Path, right: &Path) -> Result<bool, AppBuildError> {
@@ -392,11 +460,8 @@ fn finalize_stage(stage: &Path, source_identity: &Digest) -> Result<Digest, AppB
 }
 
 fn validate_wasm_source(stage: &Path, source_identity: &Digest) -> Result<(), AppBuildError> {
-    let wasm = read_regular(&stage.join("app_bg.wasm"))?;
-    if wasm
-        .windows(source_identity.as_str().len())
-        .any(|window| window == source_identity.as_str().as_bytes())
-    {
+    let wasm = read_regular(&stage.join(WASM_FILE))?;
+    if carries_identity(&wasm, source_identity) {
         return Ok(());
     }
     Err(AppBuildError::GeneratedStage(format!(

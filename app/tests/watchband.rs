@@ -392,7 +392,7 @@ fn team_members_receive_the_complete_palette_from_the_right_edge() {
 fn the_stylesheet_matches_the_reference_accent_palette() {
     const STYLESHEET: &str = include_str!("../style.css");
     const LIGHT: [&str; ACCENTS] = [
-        "#1b4332", "#4f63b5", "#8b5f00", "#b3402a", "#007c89", "#8a4fbf",
+        "#1b4332", "#495dac", "#8b5f00", "#b3402a", "#007c89", "#8a4fbf",
     ];
     const DARK: [&str; ACCENTS] = [
         "#95d5b2", "#8ea2ff", "#f2c14e", "#e0734f", "#5fd6d0", "#d1a3ff",

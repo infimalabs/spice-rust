@@ -883,11 +883,11 @@ pub struct LaneAnswer {
     /// Current capability-free agent renewal state in team/member order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub renewals: Vec<crate::LaneRenewalRecord>,
-    /// Milliseconds until the next supervised occupant becomes quiet.
-    ///
-    /// Re-read once at this deadline; absence means no time-driven transition
-    /// remains in this snapshot. This is not a periodic refresh interval.
+    /// Milliseconds until the next supervised occupant becomes quiet; re-read
+    /// once at this deadline rather than periodically. Absence means no
+    /// time-driven transition remains in this snapshot.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "crate::optional::present")]
     pub refresh_after_millis: Option<u32>,
 }
 

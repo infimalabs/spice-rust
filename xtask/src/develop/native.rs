@@ -11,6 +11,7 @@ use std::io::Write;
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Instant;
 
 use spice::install::{self, InstallError, InstallPreview};
 use spice::repository::Repository;
@@ -47,8 +48,11 @@ pub(super) fn perform(
     };
 
     if request.restart && published.is_some() {
+        let stopping = Instant::now();
         stop(&repository, &installed, output)?;
+        writeln!(output, "resident stopped in {:.1?}", stopping.elapsed())?;
     }
+    let installing = Instant::now();
     let digest = match refresh_install(&repository, &built) {
         Ok(digest) => digest,
         Err(error) => {
@@ -61,7 +65,12 @@ pub(super) fn perform(
             ));
         }
     };
-    writeln!(output, "installed {} plan={digest}", installed.display())?;
+    writeln!(
+        output,
+        "installed {} plan={digest} in {:.1?}",
+        installed.display(),
+        installing.elapsed()
+    )?;
 
     let bound = (endpoint.0.as_deref(), endpoint.1);
     let endpoint = match restart(&repository, &installed, bound, request, output) {
@@ -242,25 +251,39 @@ const fn build_profile(release: bool) -> &'static str {
 /// sealed release package is present, so an ordinary refresh gets a verified
 /// symbol receipt the same way a packaged release install does, without a
 /// release build or a signed payload, unless `--no-symbols` suppressed it.
+///
+/// The linker derives the executable's UUID from its contents, so a bundle
+/// beside it that already carries that UUID was extracted from this exact
+/// link. Cargo restores the unstripped executable from its deps on every
+/// build, even one that relinked nothing, and extracting its DWARF again took
+/// seven seconds of every refresh that changed no native source.
 #[cfg(target_os = "macos")]
 fn generate_worktree_symbols(
     executable: &Path,
     output: &mut impl Write,
 ) -> Result<(), RefreshError> {
-    writeln!(output, "generating dSYM for {}", executable.display())?;
     let bundle = worktree_dsym_path(executable);
-    run_symbols_tool(
-        Command::new("dsymutil")
-            .arg(executable)
-            .arg("-o")
-            .arg(&bundle),
-    )?;
     let executable_uuid = symbol_uuid(executable)?;
-    let dwarf_uuid = symbol_uuid(&bundle)?;
-    if executable_uuid != dwarf_uuid {
-        return Err(RefreshError::Symbols(format!(
-            "executable UUID {executable_uuid} differs from dSYM UUID {dwarf_uuid}"
-        )));
+    if bundle.exists() && symbol_uuid(&bundle).is_ok_and(|uuid| uuid == executable_uuid) {
+        writeln!(
+            output,
+            "reusing dSYM {} for UUID {executable_uuid}",
+            bundle.display()
+        )?;
+    } else {
+        writeln!(output, "generating dSYM for {}", executable.display())?;
+        run_symbols_tool(
+            Command::new("dsymutil")
+                .arg(executable)
+                .arg("-o")
+                .arg(&bundle),
+        )?;
+        let dwarf_uuid = symbol_uuid(&bundle)?;
+        if executable_uuid != dwarf_uuid {
+            return Err(RefreshError::Symbols(format!(
+                "executable UUID {executable_uuid} differs from dSYM UUID {dwarf_uuid}"
+            )));
+        }
     }
     // Plain `strip` matches `[profile.dev.package.spice] strip = "symbols"`;
     // `-S` alone only drops the debug symbol table and left the installed
@@ -633,6 +656,7 @@ fn restart(
     if !request.restart {
         return Ok(None);
     }
+    let starting = Instant::now();
     let mut command = restart_command(installed, endpoint, request);
     let answer = command.current_dir(repository.worktree_root()).output()?;
     if !answer.status.success() {
@@ -656,7 +680,12 @@ fn restart(
             "successful resident launcher returned {ready:?}"
         )));
     };
-    writeln!(output, "resident ready at {}", ready.body.endpoint)?;
+    writeln!(
+        output,
+        "resident ready at {} in {:.1?}",
+        ready.body.endpoint,
+        starting.elapsed()
+    )?;
     Ok(Some(ready.body.endpoint))
 }
 

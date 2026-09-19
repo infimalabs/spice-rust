@@ -375,6 +375,49 @@ fn finalization_produces_the_closed_worktree_stage_inventory() {
 }
 
 #[test]
+fn a_current_generation_from_the_same_sources_stands_in_for_the_compiler() {
+    let root = fixture("worktree-app-current");
+    assert_eq!(current_generation_of(&root, &fixture_source()), None);
+    publish_fixture(&root, "first");
+    let current = spice::canvas::AppSource::resolve(&root)
+        .expect("published generation resolves")
+        .current_generation()
+        .expect("published generation is current");
+    assert_eq!(
+        current_generation_of(&root, &fixture_source()).as_ref(),
+        Some(current.identity())
+    );
+    let edited = Digest::compute(Domain::DistInventory, b"edited app sources");
+    assert_eq!(current_generation_of(&root, &edited), None);
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn publication_retains_only_the_newest_generations() {
+    let root = fixture("worktree-app-retention");
+    let published = RETAINED_GENERATIONS + 3;
+    for index in 0..published {
+        publish_fixture(&root, &format!("generation {index}"));
+    }
+    let stage = root.join(spice::canvas::APP_STAGE);
+    let current = spice::canvas::AppSource::resolve(&root)
+        .expect("last generation resolves")
+        .current_generation()
+        .expect("last generation is current");
+    let retained = fs::read_dir(stage.join(spice::canvas::APP_STAGE_GENERATIONS))
+        .expect("generation store lists")
+        .map(|entry| entry.expect("generation entry").file_name())
+        .collect::<Vec<_>>();
+    assert_eq!(retained.len(), RETAINED_GENERATIONS + 1);
+    assert!(
+        retained
+            .iter()
+            .any(|name| name == current.identity().as_str())
+    );
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
 fn publication_switches_only_after_an_event_releases_the_complete_generation() {
     let root = fixture("worktree-app-event");
     publish_fixture(&root, "first");

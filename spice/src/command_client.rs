@@ -10,7 +10,6 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
-use notify::{RecursiveMode, Watcher as _};
 use serde::Serialize;
 use sill::{Availability, LockFile, LockName};
 use tungstenite::client::IntoClientRequest;
@@ -675,46 +674,47 @@ fn open_discovery(path: &Path) -> Result<File, Fault> {
     options.open(path).map_err(discovery_unavailable)
 }
 
-enum DiscoverySignal {
-    Changed,
-    Failed,
-}
-
+/// One direct wake on the runtime directory, re-armed before each read.
+///
+/// A kernel vnode watch replaces the FSEvents stream: arming a stream blocks
+/// until the events daemon schedules it, seconds behind a busy build.
 struct DiscoveryObserver {
-    _watcher: notify::RecommendedWatcher,
-    changes: Receiver<DiscoverySignal>,
+    runtime: PathBuf,
+    changes: Receiver<io::Result<()>>,
 }
 
 impl DiscoveryObserver {
     fn arm(resident_lock: &Path) -> Option<Self> {
-        let runtime = resident_lock.parent()?;
-        let (changed, changes) = mpsc::sync_channel(1);
-        let mut watcher =
-            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                let signal = if event.is_ok() {
-                    DiscoverySignal::Changed
-                } else {
-                    DiscoverySignal::Failed
-                };
-                let _ = changed.try_send(signal);
-            })
-            .ok()?;
-        watcher.watch(runtime, RecursiveMode::Recursive).ok()?;
-        Some(Self {
-            _watcher: watcher,
-            changes,
-        })
+        let runtime = resident_lock.parent()?.to_path_buf();
+        let changes = Self::watch(&runtime)?;
+        Some(Self { runtime, changes })
     }
 
-    fn wait(&self, deadline: Instant) -> DiscoveryWait {
+    fn watch(runtime: &Path) -> Option<Receiver<io::Result<()>>> {
+        let observer = crate::resident::observer::DirectObserver::arm(runtime).ok()?;
+        let (changed, changes) = mpsc::sync_channel(1);
+        std::thread::Builder::new()
+            .name("spice-discovery-wait".to_owned())
+            .spawn(move || {
+                let _ = changed.send(observer.wait());
+            })
+            .ok()?;
+        Some(changes)
+    }
+
+    fn wait(&mut self, deadline: Instant) -> DiscoveryWait {
         let Ok(remaining) = remaining(deadline) else {
             return DiscoveryWait::Deadline;
         };
         match self.changes.recv_timeout(remaining) {
-            Ok(DiscoverySignal::Changed) => DiscoveryWait::Changed,
-            Ok(DiscoverySignal::Failed) | Err(RecvTimeoutError::Disconnected) => {
-                DiscoveryWait::Failed
-            }
+            Ok(Ok(())) => match Self::watch(&self.runtime) {
+                Some(changes) => {
+                    self.changes = changes;
+                    DiscoveryWait::Changed
+                }
+                None => DiscoveryWait::Failed,
+            },
+            Ok(Err(_)) | Err(RecvTimeoutError::Disconnected) => DiscoveryWait::Failed,
             Err(RecvTimeoutError::Timeout) => DiscoveryWait::Deadline,
         }
     }
@@ -783,7 +783,7 @@ fn acquire_session_until(
         Ok(None) => return Err(outcome),
         Err(fault) => return Err(Outcome::Fault(fault)),
     }
-    let Some(observer) = DiscoveryObserver::arm(resident_lock) else {
+    let Some(mut observer) = DiscoveryObserver::arm(resident_lock) else {
         return Err(outcome);
     };
     loop {
@@ -1229,13 +1229,13 @@ fn decode_opening(bytes: &[u8], discovery: &canvas::Discovery) -> ClientResult<w
         ));
     }
     if let Ok(refusal) = wire::decode::<Refusal>(bytes) {
-        if discloses_capability(&refusal, discovery.capability) {
+        if discloses_capability(bytes, discovery.capability) {
             return Err(capability_disclosed());
         }
         return Err(Outcome::Refusal(refusal));
     }
     if let Ok(fault) = wire::decode::<Fault>(bytes) {
-        if discloses_capability(&fault, discovery.capability) {
+        if discloses_capability(bytes, discovery.capability) {
             return Err(capability_disclosed());
         }
         return Err(Outcome::Fault(fault));
@@ -1263,7 +1263,7 @@ fn decode_response(
             );
         }
     };
-    if discloses_capability(&response, capability) {
+    if discloses_capability(bytes, capability) {
         return capability_disclosed();
     }
     if !response.v.is_current() || response.id != id || response.epoch != epoch {
@@ -1336,13 +1336,13 @@ fn principal_matches(principal: Principal, actor: &Actor) -> bool {
     }
 }
 
-fn discloses_capability(value: &impl Serialize, capability: CanonicalUuid) -> bool {
+/// Whether one received frame carries the discovery capability.
+///
+/// The frame is searched as received: a board answer runs to megabytes, and
+/// re-encoding it only to scan the copy doubled the cost of every reply.
+fn discloses_capability(frame: &[u8], capability: CanonicalUuid) -> bool {
     let needle = capability.to_string();
-    wire::encode(value).is_ok_and(|bytes| {
-        bytes
-            .windows(needle.len())
-            .any(|window| window == needle.as_bytes())
-    })
+    std::str::from_utf8(frame).is_ok_and(|text| text.contains(&needle))
 }
 
 fn send<T: Serialize>(socket: &mut WebSocket<DeadlineStream>, value: &T) -> ClientResult<()> {

@@ -11,12 +11,16 @@ use super::AppBuildError;
 #[cfg(test)]
 mod modules;
 
-const SOURCE_FILES: [&str; 7] = [
+const SOURCE_FILES: [&str; 11] = [
     "Cargo.lock",
     "Cargo.toml",
     "rust-toolchain.toml",
     "app/Cargo.toml",
     "app/index.html",
+    "app/chrome.css",
+    "app/composer.css",
+    "app/mosaic.css",
+    "app/responsive.css",
     "app/style.css",
     "wire/Cargo.toml",
 ];
@@ -264,6 +268,21 @@ mod tests {
             app.contains("wire = { path = \"../wire\" }"),
             "the app path dependency moved outside the captured wire closure"
         );
+        let index = fs::read_to_string(root.join("app/index.html")).expect("read app index");
+        for line in index.lines().filter(|line| line.contains("data-trunk")) {
+            let Some(href) = line
+                .split("href=\"")
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+            else {
+                continue;
+            };
+            let linked = format!("app/{href}");
+            assert!(
+                paths.contains(&linked),
+                "{linked} is a Trunk input outside the captured source closure"
+            );
+        }
     }
 
     #[test]

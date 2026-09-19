@@ -627,10 +627,8 @@ fn message_badges(
             wire::Disposition::Acked => {
                 acknowledged.insert(key);
             }
-            wire::Disposition::Declined => {
-                if directives.0.get(&key).is_some_and(is_ordinary) {
-                    declined.insert(key);
-                }
+            wire::Disposition::Declined if directives.0.get(&key).is_some_and(is_ordinary) => {
+                declined.insert(key);
             }
             _ => {}
         }

@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use serde::{Deserialize, Serialize};
 
 #[cfg(unix)]
-pub(super) mod observer;
+pub(crate) mod observer;
 
 #[cfg(unix)]
 use observer::{DirectObserver, Signal, wait_for_change, wait_for_exit};
@@ -35,6 +35,14 @@ const ARRIVAL_HORIZON: Duration = Duration::from_secs(60);
 const ARRIVAL_WARN_HORIZON: Duration = Duration::from_secs(30);
 const PROBE_BOUND: Duration = Duration::from_secs(20);
 const TERMINATION_HORIZON: Duration = Duration::from_secs(5);
+/// Size past which the previous residents' log is set aside at start-up.
+///
+/// The log is appended by every resident this repository has run, and with
+/// nothing bounding it one repository carried 47 MiB of stale diagnostics that
+/// every launch-failure report then read end to end.
+const LOG_ROTATE_BYTES: u64 = 8 * 1024 * 1024;
+/// Suffix of the one set-aside log; a second rotation replaces it.
+const LOG_ROTATED_SUFFIX: &str = ".1";
 
 /// The only secret crossing from the launcher into its child.
 #[derive(Deserialize, Serialize)]
@@ -169,7 +177,8 @@ impl PreparedLaunch {
             .map_err(|error| daemon_fault("resident::daemon-observer-unavailable", error))?;
         let executable = std::env::current_exe()
             .map_err(|error| daemon_fault("resident::executable-unavailable", error))?;
-        let log = open_log(state.resident_log())
+        let log = rotate_log(state.resident_log())
+            .and_then(|()| open_log(state.resident_log()))
             .map_err(|error| daemon_fault("resident::log-unavailable", error))?;
         let log_offset = log.metadata().map(|metadata| metadata.len()).unwrap_or(0);
         let (parent_handoff, child_handoff) = prepare_handoff(token.clone())?;
@@ -345,6 +354,18 @@ fn warn_readiness_pending(log_path: &Path, warn_horizon: Duration, horizon: Dura
 }
 
 #[cfg(unix)]
+/// Set an oversized log aside under [`LOG_ROTATED_SUFFIX`] before a resident
+/// starts appending to a fresh one; a missing or small log is left alone.
+fn rotate_log(path: &Path) -> io::Result<()> {
+    let oversized = fs::metadata(path).is_ok_and(|metadata| metadata.len() > LOG_ROTATE_BYTES);
+    if !oversized {
+        return Ok(());
+    }
+    let mut rotated = path.as_os_str().to_owned();
+    rotated.push(LOG_ROTATED_SUFFIX);
+    fs::rename(path, rotated)
+}
+
 fn open_log(path: &Path) -> io::Result<File> {
     let file = OpenOptions::new()
         .create(true)
@@ -721,4 +742,50 @@ fn handoff_present(descriptor: RawFd) -> Result<bool, Outcome<()>> {
         environment_fault("resident::daemon-handoff-unavailable", &error.to_string())
     })?;
     Ok(read == HANDOFF_MAGIC.len() && prefix == HANDOFF_MAGIC)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("spice-resident-log-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("fixture root exists");
+        root
+    }
+
+    #[test]
+    fn an_oversized_log_is_set_aside_once_and_a_small_one_is_left_alone() {
+        let root = fixture("rotate");
+        let log = root.join("resident.log");
+        let rotated = root.join("resident.log.1");
+
+        fs::write(&log, b"short").expect("small log written");
+        rotate_log(&log).expect("small log rotation succeeds");
+        assert_eq!(fs::read(&log).expect("small log remains"), b"short");
+        assert!(!rotated.exists());
+
+        let oversized = vec![b'x'; usize::try_from(LOG_ROTATE_BYTES).expect("bound fits") + 1];
+        fs::write(&log, &oversized).expect("oversized log written");
+        rotate_log(&log).expect("oversized log rotation succeeds");
+        assert!(!log.exists(), "the oversized log was not set aside");
+        assert_eq!(
+            fs::metadata(&rotated).expect("rotated log exists").len(),
+            LOG_ROTATE_BYTES + 1
+        );
+
+        fs::write(&log, &oversized[..oversized.len() - 1]).expect("second log written");
+        rotate_log(&log).expect("boundary-sized log rotation succeeds");
+        assert!(log.exists(), "a log exactly at the bound was rotated");
+        fs::write(&log, &oversized).expect("third log written");
+        rotate_log(&log).expect("second oversized rotation succeeds");
+        assert!(!log.exists());
+        assert_eq!(
+            fs::metadata(&rotated).expect("rotated log replaced").len(),
+            LOG_ROTATE_BYTES + 1
+        );
+        fs::remove_dir_all(root).expect("fixture removed");
+    }
 }
