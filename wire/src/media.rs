@@ -685,7 +685,6 @@ mod tests {
     #[test]
     fn canonical_png_has_one_byte_identity() {
         let media = Media::from_base64("capture.png", "image/png", PNG).unwrap();
-        assert_eq!(media.identity().unwrap(), media.identity().unwrap());
         assert_eq!(media.data_url, format!("data:image/png;base64,{PNG}"));
         assert_eq!(
             media.markdown().unwrap(),

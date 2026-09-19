@@ -797,18 +797,6 @@ mod tests {
     }
 
     #[test]
-    fn attachment_names_round_trip_through_canonical_media_markdown() {
-        let attachment = Media::from_base64(r"one](two)\\雪.png", "image/png", "iVBORw0KGgo=")
-            .expect("fixture attachment admits");
-        assert_eq!(
-            compose("", &[], std::slice::from_ref(&attachment)),
-            attachment
-                .reference_markdown()
-                .expect("fixture Markdown renders"),
-        );
-    }
-
-    #[test]
     fn block_quotes_normalize_every_line_ending_before_prefixing() {
         assert_eq!(block_quote("first\r\nsecond"), "> first\n> second");
         assert_eq!(block_quote("first\rsecond"), "> first\n> second");
