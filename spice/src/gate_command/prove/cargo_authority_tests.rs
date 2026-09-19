@@ -7,7 +7,7 @@ use super::cargo_authority;
 
 #[test]
 fn staged_lockfile_uses_the_live_worktrees_private_home() {
-    use spice::cargo_isolation::{CARGO_HOME_VARIABLE, Host, prepare_manual};
+    use spice::cargo_isolation::{CARGO_HOME_VARIABLE, Host, prepare_lane, prepare_manual};
 
     let root = std::env::temp_dir().join(format!("spice-prove-source-{}", uuid::Uuid::new_v4()));
     let worktree = root.join("worktree");
@@ -34,7 +34,8 @@ fn staged_lockfile_uses_the_live_worktrees_private_home() {
         tools.join("rustdoc"),
     )
     .unwrap();
-    let home = prepare_manual(&repository, &host).unwrap();
+    let lane = "018f82d4-6f59-7d06-92e3-bce913116411".parse().unwrap();
+    let home = prepare_lane(&repository, lane, &host).unwrap();
     let mut environment = host.compiler_environment().unwrap().entries().to_vec();
     for (name, value) in &mut environment {
         if name == OsStr::new(CARGO_HOME_VARIABLE) {
@@ -63,10 +64,39 @@ fn staged_lockfile_uses_the_live_worktrees_private_home() {
         format!("{lockfile}# staged drift\n"),
     )
     .unwrap();
-    let Err(error) = super::cargo_source_authority(&worktree, &selected, &environment) else {
+    let Err(_) = super::cargo_source_authority(&worktree, &selected, &environment) else {
         panic!("a different selected lockfile needs its own admitted generation");
     };
-    assert!(error.detail().contains("generation-lock-mismatch"));
+
+    // Task synchronization moves both trees, while the supervised lane keeps
+    // its original private home. Only the supported launcher admits the new
+    // immutable source generation.
+    let next_lock = format!("{lockfile}# staged drift\n");
+    fs::write(worktree.join("Cargo.lock"), &next_lock).unwrap();
+    assert!(
+        super::cargo_source_authority(&worktree, &selected, &environment).is_err(),
+        "synchronizing alone cannot admit new external sources",
+    );
+    spice::cargo_isolation::source_generation_authority(home.home(), lockfile.as_bytes())
+        .expect("refused readmission leaves the prior generation usable");
+    let admitted = prepare_manual(&repository, &host).unwrap();
+    let (_, next) = super::cargo_source_authority(&worktree, &selected, &environment)
+        .unwrap_or_else(|error| {
+            panic!(
+                "admitted synchronized generation refused: {}",
+                error.detail()
+            )
+        });
+    assert_ne!(
+        accepted
+            .as_ref()
+            .unwrap_or_else(|error| panic!("{}", error.detail()))
+            .1,
+        next
+    );
+    spice::cargo_isolation::source_generation_authority(home.home(), lockfile.as_bytes())
+        .expect("selecting the development home leaves the occupied lane generation unchanged");
+    drop(admitted);
     drop(accepted);
     drop(home);
     writable_directories(&root);

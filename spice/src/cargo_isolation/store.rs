@@ -224,6 +224,43 @@ pub(super) fn readmit_source_generation(
     })
 }
 
+pub(super) fn select_source_generation(
+    home: &Path,
+    lockfile: &[u8],
+    current_worktree: &Path,
+    host: &Host,
+) -> Result<(PreparedHome, SourceGenerationAuthority), IsolationError> {
+    let layout = Layout::open(host)?;
+    let _store_lock = acquire_lock(&layout, "store-mutation")?;
+    let (home, authority) = match readmit_source_generation(home, lockfile, current_worktree, host)
+    {
+        Ok(authority) => (home.to_path_buf(), authority),
+        Err(error) if error.reason() == "cargo-isolation::generation-lock-mismatch" => {
+            // A supervised lane retains its original generation until its seat
+            // is vacant. Only its worktree's separately admitted development
+            // home can supply a newer selected generation.
+            let mut owner = readmission_home(home, current_worktree)?.owner;
+            owner.lane = None;
+            let manual = layout.homes.join(home_identity(&owner));
+            let authority = readmit_source_generation(&manual, lockfile, current_worktree, host)?;
+            (manual, authority)
+        }
+        Err(error) => return Err(error),
+    };
+    let pin = GenerationPin::acquire(&layout, authority.generation())?;
+    Ok((
+        PreparedHome {
+            home,
+            generation: authority.generation().to_owned(),
+            store: layout.root,
+            cargo: host.cargo().to_path_buf(),
+            reused_generation: true,
+            _pin: Some(pin),
+        },
+        authority,
+    ))
+}
+
 struct ReadmissionHome {
     retained: Layout,
     retained_root: PathBuf,
@@ -254,10 +291,7 @@ fn readmission_home(
     let retained_root = retained_root.to_path_buf();
     let retained = Layout::open_root(retained_root.clone())?;
     let owner: HomeOwner = read_json(&home.join(OWNER))?;
-    let home_id = digest(
-        b"spice-cargo-home-v1",
-        &serde_json::to_vec(&owner).expect("home owner is serializable"),
-    );
+    let home_id = home_identity(&owner);
     if home.file_name() != Some(OsStr::new(&home_id)) {
         return Err(IsolationError::new(
             "cargo-isolation::home-owner-mismatch",
@@ -342,6 +376,13 @@ struct HomeOwner {
     schema: u64,
     worktree: String,
     lane: Option<String>,
+}
+
+fn home_identity(owner: &HomeOwner) -> String {
+    digest(
+        b"spice-cargo-home-v1",
+        &serde_json::to_vec(owner).expect("home owner is serializable"),
+    )
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -892,10 +933,7 @@ fn ensure_home(
         worktree: encoded_path(worktree),
         lane: lane.map(|lane| lane.to_string()),
     };
-    let home_id = digest(
-        b"spice-cargo-home-v1",
-        &serde_json::to_vec(&owner).expect("home owner is serializable"),
-    );
+    let home_id = home_identity(&owner);
     let _lock = acquire_lock(layout, &format!("home-{home_id}"))?;
     let lock_path = worktree.join("Cargo.lock");
     let current_lock = fs::read(&lock_path).map_err(|error| {

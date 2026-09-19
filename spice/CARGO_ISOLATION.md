@@ -63,3 +63,12 @@ crashed wrapper, and retains all generations if a pin cannot be classified.
 Resident occupants need no transient pin: their lane-specific home remains the
 current reference for the one process group that can occupy that lane, and a
 replacement cannot advance the same home until the seat is vacant.
+
+Proof planning binds the exact staged lock bytes to an already-admitted private
+home. When a synchronized tree has moved past the occupied lane's generation,
+the same worktree's development home may supply that generation after admission
+through `spice dev cargo`. Selection neither advances the lane home nor seeds
+dependencies. Foreign owners, malformed homes, and unadmitted generations still
+refuse. A reader pin retains the selected generation through proof planning and
+execution; metadata and Cargo use that exact home, and completion revalidates it
+without switching to another home.
