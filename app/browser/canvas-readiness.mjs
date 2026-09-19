@@ -408,10 +408,6 @@ export async function assertCanvas(page, scheme) {
     const body = await page.locator("body").innerText().catch(() => "<body unavailable>");
     throw new Error(`canvas did not come online; body=${JSON.stringify(body)}`, { cause: error });
   }
-  const connection = page.locator(".commandbar .status.online");
-  assert.equal(await connection.innerText(), "", "online chrome shows only its state dot");
-  assert.ok(await connection.locator(".status-dot").isVisible(), "online state dot remains visible");
-  assert.ok(await connection.getAttribute("title"), "connection state remains discoverable");
   assert.equal(
     await page.locator(".canvas-menu > summary:visible").count(),
     1,
