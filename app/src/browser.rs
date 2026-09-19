@@ -25,6 +25,7 @@ use crate::client_action::ClientAction;
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
 use crate::runtime::{CanvasSurface, topology_mutation_requires_refresh};
+use crate::speech::{SystemObservers, SystemStart};
 use crate::speech_queue::{
     Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
     SpeechRequest, SuppressAutomatic,
@@ -61,6 +62,13 @@ const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
 /// The probe is what makes the next interval meaningful: after it, silence is a
 /// resident that did not answer rather than a resident with nothing to say.
 const LIVENESS_PROBE_MILLIS: u32 = 15_000;
+
+/// How long a system request waits for the browser to publish its voices.
+///
+/// Engines enumerate voices once per page and announce the list with
+/// `voiceschanged`; the wait covers that first-load window. An engine with no
+/// voices never announces anything, so the wait needs an end.
+const VOICE_PUBLICATION_DEADLINE_MILLIS: u32 = 5_000;
 
 #[derive(Clone)]
 struct SenderHandle {
@@ -134,7 +142,11 @@ enum SpeechStatus {
     #[default]
     Idle,
     Loading,
-    Playing,
+    /// Playback is with the browser. System synthesis names the voice the
+    /// browser reports for the utterance; rendered external audio has none.
+    Playing {
+        voice: Option<String>,
+    },
     Failed(String),
 }
 
@@ -215,21 +227,88 @@ impl SpeechRuntime {
     ) {
         let ended = self.clone();
         let failed = self.clone();
+        let awaiting = self.clone();
         let id = entry.id();
+        let resumed = entry.clone();
+        let resumed_voice = voice.to_owned();
         let result = self.controller.borrow_mut().start_system(
             generation,
             entry.text(),
             voice,
             words_per_minute,
-            move || ended.defer_finish(id, None),
-            move || {
-                failed.defer_finish(id, Some("system speech playback failed".to_owned()));
+            SystemObservers {
+                voices: move || {
+                    awaiting.resume_system(
+                        resumed.clone(),
+                        generation,
+                        resumed_voice.clone(),
+                        words_per_minute,
+                    );
+                },
+                ended: move || ended.defer_finish(id, None),
+                failed: move |issue| {
+                    failed.defer_finish(id, Some(issue));
+                },
             },
         );
         match result {
-            Ok(()) => self.status.set(SpeechStatus::Playing),
+            Ok(SystemStart::Speaking(voice)) => {
+                self.status
+                    .set(SpeechStatus::Playing { voice: Some(voice) });
+            }
+            // The browser has published no voices yet. This entry stays the
+            // loading queue head until `voiceschanged` resumes it, so the
+            // first utterance of a page load speaks instead of refusing a
+            // voice the browser had not enumerated.
+            Ok(SystemStart::AwaitingVoices) => self.refuse_unpublished_voices(id, generation),
             Err(error) => self.finish(id, Some(error)),
         }
+    }
+
+    /// Retry system playback once the browser publishes its voice list.
+    ///
+    /// The resume runs one task after the event: the observing closure is
+    /// owned by the controller, and re-entering [`Self::start_system`]
+    /// directly would drop that closure while it is still running. Stopping
+    /// or superseding the request in the meantime both detaches the observer
+    /// and fails this ownership check, so nothing stale ever starts.
+    fn resume_system(
+        &self,
+        entry: SpeechEntry,
+        generation: u64,
+        voice: String,
+        words_per_minute: u32,
+    ) {
+        let runtime = self.clone();
+        spawn_local(async move {
+            TimeoutFuture::new(0).await;
+            if !runtime.is_current(entry.id(), generation) {
+                return;
+            }
+            runtime.start_system(entry, generation, &voice, words_per_minute);
+        });
+    }
+
+    /// Refuse a request whose browser never publishes any voice.
+    ///
+    /// Waiting on `voiceschanged` is what lets a configured voice arrive
+    /// late, but an engine carrying no voices at all never fires it. Without
+    /// this deadline such a request would hold the queue head silently until
+    /// a global stop, which reads as speech that vanished rather than speech
+    /// this browser cannot give.
+    fn refuse_unpublished_voices(&self, id: u64, generation: u64) {
+        let runtime = self.clone();
+        spawn_local(async move {
+            TimeoutFuture::new(VOICE_PUBLICATION_DEADLINE_MILLIS).await;
+            let awaiting = runtime.controller.borrow().is_awaiting_voices(generation);
+            if !awaiting || !runtime.is_current(id, generation) {
+                return;
+            }
+            runtime.finish(
+                id,
+                Some("this browser published no system voices".to_owned()),
+            );
+        });
     }
 
     fn start_external(&self, entry: SpeechEntry, generation: u64, content_type: String) {
@@ -267,7 +346,7 @@ impl SpeechRuntime {
                     return;
                 }
             };
-            runtime.status.set(SpeechStatus::Playing);
+            runtime.status.set(SpeechStatus::Playing { voice: None });
             if let Err(error) = crate::speech::await_play(playing).await
                 && runtime.is_current(id, generation)
             {

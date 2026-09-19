@@ -11,6 +11,10 @@ import {
 } from "./canvas-fixture.mjs";
 import { launchBrowser } from "./headless-launch.mjs";
 
+/// Room for Canvas's own five-second wait on a browser that publishes no
+/// voice list, plus the render that reports it.
+const VOICE_DEADLINE_MS = 15_000;
+
 async function routeSpeechBootstrap(page, speech) {
   await page.route("**/bootstrap", async (route) => {
     const response = await route.fetch();
@@ -30,8 +34,12 @@ async function settleSpeechBackend(page) {
   )));
 }
 
-export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) {
-  await context.addInitScript((voiceNames) => {
+export async function installBrowserSpeech(
+  context,
+  voices = ["Zoe (Premium)"],
+  { deferVoices = false } = {},
+) {
+  await context.addInitScript(({ voiceNames, deferVoices }) => {
     window.__speechLog = [];
     window.__speechUtterances = [];
     window.__speechActive = 0;
@@ -39,6 +47,25 @@ export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) 
     window.__holdSpeechPlay = false;
     window.__speechPlayPending = [];
     window.__speechAudios = [];
+    // A real engine enumerates its voices asynchronously: until it has,
+    // getVoices answers an empty list and the engine announces the published
+    // list with voiceschanged. `deferVoices` reproduces that first-load
+    // window, which is the state a page reaching for a configured voice
+    // immediately after load actually observes.
+    window.__speechVoicesPublished = !deferVoices;
+    window.__publishSpeechVoices = () => {
+      window.__speechVoicesPublished = true;
+      window.speechSynthesis.onvoiceschanged?.(new Event("voiceschanged"));
+    };
+    // Report one utterance failure the way the engine does, through the
+    // error member of the event handed to the utterance observer.
+    window.__failSpeech = (code) => {
+      const utterance = window.__speechUtterances.at(-1);
+      if (!utterance?.onerror) throw new Error("no system utterance is speaking");
+      const event = new Event("error");
+      event.error = code;
+      utterance.onerror(event);
+    };
     class FakeVoice {
       constructor(name) { this.name = name; }
     }
@@ -96,7 +123,16 @@ export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) 
             // Storage may be unavailable while the document unloads.
           }
         },
-        getVoices() { return voiceNames.map((name) => new FakeVoice(name)); },
+        onvoiceschanged: null,
+        getVoices() {
+          const published = window.__speechVoicesPublished;
+          // Only the initialization fixture records reads: the log is a
+          // playback log, every other scenario asserts it whole, and asking
+          // for the voice list is not playback.
+          if (deferVoices) window.__speechLog.push({ action: "voices", published });
+          if (!published) return [];
+          return voiceNames.map((name) => new FakeVoice(name));
+        },
         speak(utterance) {
           const ended = utterance.onend;
           const failed = utterance.onerror;
@@ -120,7 +156,7 @@ export async function installBrowserSpeech(context, voices = ["Zoe (Premium)"]) 
         },
       },
     });
-  }, voices);
+  }, { voiceNames: voices, deferVoices });
 }
 
 export async function installSocketControl(context) {
@@ -143,8 +179,145 @@ export async function installSocketControl(context) {
   });
 }
 
+/// The evidenced cause of intermittent configured-voice unavailability.
+///
+/// A page that reads `getVoices` once, immediately after load, reads it
+/// before the engine has enumerated its voices: the list is empty and the
+/// installed configured voice looks absent. The names arrive with
+/// `voiceschanged`, so the held request is the one that speaks, and it
+/// speaks exactly once with the configured voice. That is a different cause
+/// from a published list that omits the name, which `assertSpeechVariants`
+/// covers and which refuses immediately.
+export async function assertDeferredVoicePublication(browser, endpoint) {
+  const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  await installBrowserSpeech(context, ["Zoe (Premium)"], { deferVoices: true });
+
+  const page = await context.newPage();
+  const monitor = monitorPage(page);
+  await page.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(page, "Flow");
+  await assertOnlineObserved(page, "the page loads before voices are published", CONNECT_MS);
+  await chooseCanvasView(page, "Lanes");
+  const card = page.locator('[data-card-kind="agent-message"]').first();
+  await card.waitFor();
+  await card.getByLabel("Speak this message").click();
+  await settleSpeechBackend(page);
+  assert.deepEqual(
+    await page.evaluate(() => window.__speechLog),
+    [{ action: "voices", published: false }],
+    "the request reads an unpublished list and starts nothing on it",
+  );
+  assert.equal(await page.locator(".form-refusal").count(), 0,
+    "an unpublished voice list refuses nothing");
+  assert.equal(await card.getAttribute("data-speech-active"), "true",
+    "the held request remains the marked queue head");
+
+  await page.evaluate(() => window.__publishSpeechVoices());
+  await waitForPage(page, "the published list starts the held utterance", CONNECT_MS,
+    () => window.__speechLog.filter((row) => row.action === "speak").length === 1);
+  assert.deepEqual(
+    await page.evaluate(() => window.__speechLog
+      .filter((row) => row.action === "speak")
+      .map((row) => row.voice)),
+    ["Zoe (Premium)"],
+    "the held request speaks once, with the configured voice",
+  );
+  assert.deepEqual(
+    await page.evaluate(() => window.__speechLog
+      .filter((row) => row.action === "voices")
+      .map((row) => row.published)),
+    [false, true],
+    "the same request resolves its voice on the published list it first read empty",
+  );
+  const voiceLine = page.locator("[data-speech-voice]");
+  await voiceLine.waitFor();
+  assert.equal(await voiceLine.getAttribute("data-speech-voice"), "Zoe (Premium)",
+    "Canvas names the voice the browser reported for the utterance");
+  assert.equal(await voiceLine.innerText(), "Speaking as Zoe (Premium)");
+
+  await page.evaluate(() => window.__publishSpeechVoices());
+  await settleSpeechBackend(page);
+  assert.equal(
+    await page.evaluate(() => window.__speechLog.filter((row) => row.action === "speak").length),
+    1,
+    "a repeated publication speaks nothing further",
+  );
+
+  await page.evaluate(() => window.__failSpeech("synthesis-failed"));
+  await page.locator(".form-refusal").waitFor();
+  assert.equal(
+    await page.locator(".form-refusal").innerText(),
+    "system speech playback failed: synthesis-failed",
+    "the browser's own error code reaches the operator",
+  );
+  assert.equal(await page.locator("[data-speech-voice]").count(), 0,
+    "a finished utterance names no speaking voice");
+  monitor.assertClean();
+  await page.close();
+
+  const cancelled = await context.newPage();
+  const cancelledMonitor = monitorPage(cancelled);
+  await cancelled.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(cancelled, "Flow");
+  await assertOnlineObserved(cancelled, "a second page loads before voices", CONNECT_MS);
+  await chooseCanvasView(cancelled, "Lanes");
+  const cancelledCard = cancelled.locator('[data-card-kind="agent-message"]').first();
+  await cancelledCard.waitFor();
+  await cancelledCard.getByLabel("Speak this message").click();
+  await settleSpeechBackend(cancelled);
+  await cancelledCard.getByLabel("Stop playback").click();
+  await settleSpeechBackend(cancelled);
+  await cancelled.evaluate(() => window.__publishSpeechVoices());
+  await settleSpeechBackend(cancelled);
+  assert.equal(
+    await cancelled.evaluate(() => window.__speechLog.some((row) => row.action === "speak")),
+    false,
+    "a stopped request cannot be started by a later publication",
+  );
+  assert.equal(await cancelledCard.getAttribute("data-speech-active"), "false");
+  cancelledMonitor.assertClean();
+  await cancelled.close();
+
+  await context.close();
+}
+
+
 
 export async function assertSpeechVariants(browser, endpoint) {
+  // A published list that omits the configured voice is a naming mismatch:
+  // the request is refused at once, no other voice is substituted, and the
+  // refusal names what this browser does offer.
+  const mismatchContext = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  await installBrowserSpeech(mismatchContext, ["Daniel", "Karen", "Alex"]);
+  const mismatchPage = await mismatchContext.newPage();
+  const mismatchMonitor = monitorPage(mismatchPage);
+  await mismatchPage.goto(endpoint, { waitUntil: "networkidle" });
+  await chooseCanvasView(mismatchPage, "Flow");
+  await assertOnlineObserved(mismatchPage, "the page loads with another voice", CONNECT_MS);
+  await chooseCanvasView(mismatchPage, "Lanes");
+  const mismatchCard = mismatchPage.locator('[data-card-kind="agent-message"]').first();
+  await mismatchCard.waitFor();
+  await mismatchCard.getByLabel("Speak this message").click();
+  await settleSpeechBackend(mismatchPage);
+  assert.equal(await mismatchCard.getAttribute("data-speech-active"), "false");
+  assert.equal(
+    await mismatchPage.evaluate(() => window.__speechLog.some((row) => row.action === "speak")),
+    false,
+    "a missing configured voice cannot start a message",
+  );
+  assert.equal(
+    await mismatchPage.locator(".form-refusal").innerText(),
+    'system voice "Zoe (Premium)" is unavailable; this browser offers Daniel, Karen, Alex',
+    "the refusal names the voices this browser published",
+  );
+  assert.equal(await mismatchPage.locator(".speech-button").count(), 0,
+    "Canvas exposes no general-purpose page reader");
+  mismatchMonitor.assertClean();
+  await mismatchContext.close();
+
+  // An empty list is the pre-publication state, so the request waits for
+  // voiceschanged rather than refusing. An engine carrying no voices never
+  // announces one, and the bounded wait is what still ends that request.
   const unavailableContext = await browser.newContext({ viewport: { width: 1024, height: 768 } });
   await installBrowserSpeech(unavailableContext, []);
   const unavailablePage = await unavailableContext.newPage();
@@ -157,14 +330,22 @@ export async function assertSpeechVariants(browser, endpoint) {
   await unavailableCard.waitFor();
   await unavailableCard.getByLabel("Speak this message").click();
   await settleSpeechBackend(unavailablePage);
+  assert.equal(
+    await unavailableCard.getAttribute("data-speech-active"),
+    "true",
+    "an unpublished voice list holds the request rather than refusing it",
+  );
+  await unavailablePage.locator(".form-refusal").waitFor({ timeout: VOICE_DEADLINE_MS });
+  assert.equal(
+    await unavailablePage.locator(".form-refusal").innerText(),
+    "this browser published no system voices",
+  );
   assert.equal(await unavailableCard.getAttribute("data-speech-active"), "false");
   assert.equal(
     await unavailablePage.evaluate(() => window.__speechLog.some((row) => row.action === "speak")),
     false,
-    "a missing configured voice cannot start a message",
+    "a browser with no voices speaks nothing",
   );
-  assert.equal(await unavailablePage.locator(".speech-button").count(), 0,
-    "Canvas exposes no general-purpose page reader");
   unavailableMonitor.assertClean();
   await unavailableContext.close();
 

@@ -585,6 +585,20 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   line-height: 1.35;
 }
 
+/* Which browser voice is speaking. Present only while system synthesis owns
+   playback, so the operator reads the browser's own name for the voice
+   instead of inferring it from the configured one. */
+.speech-voice {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--control-surface-soft);
+  color: var(--muted);
+  font-size: .77rem;
+  line-height: 1.35;
+}
+
 .page-heading {
   display: flex;
   align-items: end;
