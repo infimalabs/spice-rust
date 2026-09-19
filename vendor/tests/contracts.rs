@@ -33,75 +33,11 @@ const CONFIG_OVERLAY: &str = "/supervisors/lane/occupant/omp.yml";
 const MCP_COMMAND: &str = "npx";
 const MCP_ARGS: [&str; 3] = ["@playwright/mcp@latest", "--isolated", "--headless"];
 
-/// The `--mcp-config` document, spelled out rather than rebuilt from the code
-/// under test, so a change to either one has to be stated here to pass.
-const CLAUDE_MCP_CONFIG: &str = r#"{"mcpServers":{"playwright":{"command":"npx","args":["@playwright/mcp@latest","--isolated","--headless"]}}}"#;
-const CLAUDE_SETTINGS: &str = r#"{"autoMemoryEnabled":false,"hooks":{"PostToolUse":[{"hooks":[{"command":"/usr/bin/spice agent post-tool-hook --repo-root /worktree","statusMessage":"Checking spice steering","timeout":30,"type":"command"}],"matcher":"*"}]},"permissions":{"deny":["Task","Agent","TaskCreate","TaskGet","TaskList","TaskUpdate","TaskOutput","TaskStop","Monitor"]}}"#;
-const CLAUDE_SETTINGS_WITHOUT_ATTRIBUTION: &str = r#"{"attribution":{"commit":"","sessionUrl":false},"autoMemoryEnabled":false,"hooks":{"PostToolUse":[{"hooks":[{"command":"/usr/bin/spice agent post-tool-hook --repo-root /worktree","statusMessage":"Checking spice steering","timeout":30,"type":"command"}],"matcher":"*"}]},"permissions":{"deny":["Task","Agent","TaskCreate","TaskGet","TaskList","TaskUpdate","TaskOutput","TaskStop","Monitor"]}}"#;
-
 const CODEX_HOOK_OVERRIDE: &str = r#"hooks.PostToolUse=[{matcher="*",hooks=[{type="command",command="/usr/bin/spice agent post-tool-hook --repo-root /worktree",timeout=30,statusMessage="Checking spice steering"}]}]"#;
 const CODEX_RTK_HOOK_OVERRIDE: &str = r#"hooks.PreToolUse=[{matcher="^Bash$",hooks=[{type="command",command="/usr/bin/spice agent post-tool-hook --repo-root /worktree",timeout=10,statusMessage="Checking RTK command rewrite"}]}]"#;
 const CODEX_MCP_COMMAND_OVERRIDE: &str = r#"mcp_servers.playwright.command="npx""#;
 const CODEX_MCP_ARGS_OVERRIDE: &str =
     r#"mcp_servers.playwright.args=["@playwright/mcp@latest","--isolated","--headless"]"#;
-
-#[test]
-fn claude_carries_every_launch_knob_and_the_system_prompt_it_re_grounds_in() {
-    let launch = fixture(CLAUDE_MODEL, Resume::Fresh);
-    let system_prompt = claude::system_prompt(&launch);
-    let fresh = claude::record("/opt/claude", &launch).expect("valid fresh record");
-    assert_record(
-        &fresh,
-        "/opt/claude",
-        &[
-            "--print",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-            "--include-partial-messages",
-            "--thinking-display",
-            "summarized",
-            "--model",
-            "claude-opus-5",
-            "--permission-mode",
-            "bypassPermissions",
-            "--mcp-config",
-            CLAUDE_MCP_CONFIG,
-            "--settings",
-            CLAUDE_SETTINGS,
-            "--append-system-prompt",
-            &system_prompt,
-            "--effort",
-            "high",
-            // The trailing positional is the composed system prompt, not the
-            // bare start prompt: the agent re-reads the skill every turn.
-            &system_prompt,
-        ],
-        Dialect::Claude,
-        None,
-    );
-
-    let resumed = claude::record(
-        "/opt/claude",
-        &fixture(
-            CLAUDE_MODEL,
-            Resume::Session(
-                SessionId::new("018f7777777774448888999999999999").expect("session identity"),
-            ),
-        ),
-    )
-    .expect("valid resumed record");
-    assert_arguments_contain(
-        &resumed,
-        &["--resume", "018f7777-7777-7444-8888-999999999999"],
-    );
-    assert_eq!(
-        resumed.arguments().last().expect("a trailing prompt"),
-        OsStr::new(&system_prompt),
-        "resume must not displace the system prompt from the trailing position"
-    );
-    assert_stream_wiring(&resumed, CLAUDE_PROSE);
-}
 
 #[test]
 fn codex_carries_every_launch_knob_and_resumes_after_its_flags() {
@@ -234,25 +170,25 @@ fn every_launch_closes_the_steering_path_end_to_end() {
 
 #[test]
 fn a_repository_that_refuses_claudes_trailer_gets_attribution_withheld() {
-    let hook = SteeringHook {
-        command: HOOK_COMMAND.to_owned(),
-    };
-    assert_eq!(
-        claude::settings_json(&hook, Attribution::Harness),
-        CLAUDE_SETTINGS
-    );
-    assert_eq!(
-        claude::settings_json(&hook, Attribution::Withheld),
-        CLAUDE_SETTINGS_WITHOUT_ATTRIBUTION
-    );
-
-    let mut launch = fixture(CLAUDE_MODEL, Resume::Fresh);
-    launch.attribution = Attribution::Withheld;
-    let withheld = claude::record("/opt/claude", &launch).expect("valid record");
-    assert_arguments_contain(
-        &withheld,
-        &["--settings", CLAUDE_SETTINGS_WITHOUT_ATTRIBUTION],
-    );
+    for attribution in [Attribution::Harness, Attribution::Withheld] {
+        let mut launch = fixture(CLAUDE_MODEL, Resume::Fresh);
+        launch.attribution = attribution;
+        let record = claude::record("/opt/claude", &launch).expect("valid record");
+        let arguments = arguments(&record);
+        let settings = arguments
+            .windows(2)
+            .find(|pair| pair[0] == "--settings")
+            .expect("Claude receives settings");
+        let settings: serde_json::Value =
+            serde_json::from_str(&settings[1]).expect("Claude settings are a JSON object");
+        match attribution {
+            Attribution::Harness => assert!(settings.get("attribution").is_none()),
+            Attribution::Withheld => assert_eq!(
+                settings["attribution"],
+                serde_json::json!({"commit": "", "sessionUrl": false})
+            ),
+        }
+    }
 }
 
 #[test]

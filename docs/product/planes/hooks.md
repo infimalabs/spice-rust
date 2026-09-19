@@ -166,6 +166,30 @@ exactly once. That is what makes rewriting possible at all: it is the last point
 at which the command still exists as one string rather than as a running
 process.
 
+#### Shell-command advice
+
+Leading `cd [--] ABSOLUTE_PATH` followed by `&&`, `;`, or a newline receives
+succinct advice when the literal path already equals the command's admitted
+pre-execution working directory. Quoting and escaped spaces are understood;
+relative paths, expansions, redirections, pipelines, directory-changing options,
+and unknown or overridden hook working directories remain silent. Symlinks are
+not resolved to equate different logical directory spellings.
+
+Claude and Codex inspect authored Bash input at `PreToolUse`, before any
+vendor-generated shell envelope; advice uses `additionalContext`. OMP attaches
+the same advice to its existing host-shell result notices. Advice never changes
+the command, permission decision, child output, or exit status. Independently
+configured Codex RTK rewriting retains its existing behavior; Claude's pre-tool
+advice does not invoke RTK.
+
+No trailing-`tail` advice is emitted without a verified equivalent native output
+selector. Spice's OMP host-shell and job tools expose no last-N-lines option;
+their fixed 64 KiB tail is not a selectable line range. OMP can spill a large
+returned host-tool payload to an artifact and range it with `read`, but that
+artifact cannot recover command output omitted before the payload reached OMP.
+The host-shell result does not publish a reference to its complete command log.
+Codex's token cap is likewise not equivalent to `tail -n`.
+
 #### Active-work narration
 
 The resident owns one narration streak per current occupant. The configured

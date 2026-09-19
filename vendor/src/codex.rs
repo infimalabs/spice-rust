@@ -52,6 +52,8 @@ struct RtkHookSpecificOutput {
     permission_decision: Option<PermissionDecision>,
     #[serde(rename = "updatedInput", default)]
     updated_input: Option<RtkUpdatedInput>,
+    #[serde(rename = "additionalContext", default)]
+    _additional_context: Option<String>,
 }
 
 #[derive(Clone, Copy, Deserialize)]

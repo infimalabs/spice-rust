@@ -9,7 +9,8 @@ use sill::Running;
 
 use crate::launch::{
     Attribution, Launch, McpServer, POST_TOOL_HOOK_EVENT, POST_TOOL_HOOK_STATUS_MESSAGE,
-    POST_TOOL_HOOK_TIMEOUT_SECONDS, SteeringHook,
+    POST_TOOL_HOOK_TIMEOUT_SECONDS, PRE_TOOL_HOOK_EVENT, PRE_TOOL_HOOK_TIMEOUT_SECONDS,
+    SteeringHook,
 };
 use crate::{ContractError, LaunchError, Process, Record, RecordStream};
 
@@ -165,18 +166,32 @@ pub fn settings_json(hook: &SteeringHook, attribution: Attribution) -> String {
             }),
         },
         auto_memory_enabled: false,
-        hooks: BTreeMap::from([(
-            POST_TOOL_HOOK_EVENT,
-            vec![HookGroup {
-                hooks: vec![Hook {
-                    command: &hook.command,
-                    status_message: POST_TOOL_HOOK_STATUS_MESSAGE,
-                    timeout: POST_TOOL_HOOK_TIMEOUT_SECONDS,
-                    kind: "command",
+        hooks: BTreeMap::from([
+            (
+                POST_TOOL_HOOK_EVENT,
+                vec![HookGroup {
+                    hooks: vec![Hook {
+                        command: &hook.command,
+                        status_message: POST_TOOL_HOOK_STATUS_MESSAGE,
+                        timeout: POST_TOOL_HOOK_TIMEOUT_SECONDS,
+                        kind: "command",
+                    }],
+                    matcher: POST_TOOL_HOOK_MATCHER,
                 }],
-                matcher: POST_TOOL_HOOK_MATCHER,
-            }],
-        )]),
+            ),
+            (
+                PRE_TOOL_HOOK_EVENT,
+                vec![HookGroup {
+                    hooks: vec![Hook {
+                        command: &hook.command,
+                        status_message: "Checking shell command advice",
+                        timeout: PRE_TOOL_HOOK_TIMEOUT_SECONDS,
+                        kind: "command",
+                    }],
+                    matcher: "^Bash$",
+                }],
+            ),
+        ]),
         permissions: Permissions { deny: DENIED_TOOLS },
     };
     serde_json::to_string(&settings).expect("settings payload is representable as JSON")

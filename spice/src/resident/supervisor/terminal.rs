@@ -144,13 +144,17 @@ impl Terminal {
     /// message arrives for the occupant, after which it is kept.
     pub(in crate::resident) fn run(&self, call: &ShellCall, control: &Control) -> Run {
         let (argv, diagnostic) = self.argv(call);
+        let mut notices = std::borrow::Cow::Borrowed(call.notices.as_slice());
+        if let Some(advice) = spice::command_advice::for_shell(&call.command, &self.cwd) {
+            notices.to_mut().push(advice.to_owned());
+        }
         let started = self.jobs.start(
             &call.command,
             argv,
             &self.cwd,
             &self.environment,
             call.timeout,
-            &call.notices,
+            &notices,
         );
         let job = match started {
             Ok(job) => job,
