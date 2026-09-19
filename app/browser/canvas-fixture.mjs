@@ -1048,7 +1048,7 @@ export async function assertGenerationOnline(page, epoch, cause, bound, context 
     page,
     `canvas adopts the generation published when ${cause}`,
     bound,
-    (expected) => document.querySelector(".status-copy")?.textContent?.includes(expected),
+    (expected) => document.querySelector(".status.online")?.title.includes(expected),
     epoch,
     context,
   );

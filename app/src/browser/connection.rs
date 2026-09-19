@@ -202,7 +202,6 @@ fn finish_hydration(
     }
     handles.surface.set(data.publication());
     handles.connection.set(Connection::Online {
-        actor: principal.actor().to_string(),
         epoch: principal.epoch().to_string(),
     });
     Ok(())
@@ -635,7 +634,6 @@ async fn admit_runtime(
     if !hydrating {
         surface.set(data.publication());
         connection.set(Connection::Online {
-            actor: principal.actor().to_string(),
             epoch: principal.epoch().to_string(),
         });
     }
