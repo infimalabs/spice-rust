@@ -507,6 +507,7 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
         pending,
         || validate_source(&repository, staged.anchor(), &candidate_tree),
         || staged.reject_state().map_err(ProveFailure::run),
+        &mut std::io::stderr(),
     )?;
     actions.extend(published);
     actions.sort_by(|left, right| proof_action_order(&left.action, &right.action));

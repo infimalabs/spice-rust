@@ -152,6 +152,15 @@ aggregate command. Staged content is the unconditional source for inspection
 and generation; `spice gate prove ACTION --missing` reuses an already-current
 receipt.
 
+Proof progress on stderr is best-effort diagnostic output. A failed progress
+write or flush does not stop later actions, lose their reports, or prevent
+receipt publication. Execution, lease, source-validation, cleanup, and final
+result failures remain authoritative and keep their ordinary error semantics.
+Losing stdout can still prevent delivery of the final result; it is distinct
+from losing diagnostic progress. An enclosing shell pipeline can mask the
+producer's exit status, so callers must preserve that status rather than infer
+success from a downstream filter or the last progress line.
+
 A candidate-tree directory may contain more than one immutable admission. This
 is required when two branches or linked worktrees produce equal tree content
 from different parent commits. Prepared selects the unexpired bundle whose
