@@ -359,19 +359,26 @@ the discovery happens after the one step that cannot be undone.
 
 ```mermaid
 flowchart LR
-  C["Canvas"] --> A["Agents<br/>converse with seated agents"]
-  C --> F["Flow<br/>what work is moving?"]
-  C --> T["Topology<br/>what is connected and possessed?"]
+  C["Canvas"] --> I["Info<br/>what is connected and possessed?"]
+  C --> W["Work<br/>what work is moving?"]
+  C --> H["Chat<br/>converse with seated agents"]
 ```
 
-Agents is the conversation surface. Flow and Topology are the complete closed
-analytical vocabulary; every analytical pane stands on one of those two axes.
-The rail changes the question asked of the whole Canvas,
+Info, Work, and Chat are the sole panel names in global navigation and each
+team's tab rail. Info and Work present the internal Topology and Flow axes;
+those analytical identities and the domain team, task, and agent names stay
+unchanged. The global rail changes the question asked of the whole Canvas,
 not the mode of one lane or team.
+
+Panel variants and DOM mode identifiers use Info, Work, and Chat directly.
+Selection is in-memory: switching global views or reconnecting preserves each
+team's selection, while a page reload starts in Chat as before. Stored team
+speech preferences and narration cursors keep their existing formats and
+restore unchanged; no panel-name data migration or storage reset is needed.
 
 ### The team console
 
-The Agents view tiles one console per live team. A console contains
+The Chat view tiles one console per live team. A console contains
 one or more member lanes, and every row answers a question the operator would
 otherwise have to go and ask.
 
@@ -379,7 +386,7 @@ otherwise have to go and ask.
 block-beta
   columns 2
   T["team row<br/>member lights, mode rail, team menu"] q1["which team is this,<br/>and who is alive?"]
-  V["team view<br/>compose | tasks | metrics | info"] q2["what can I do with the team<br/>without leaving?"]
+  V["team view<br/>Info | Work | Chat"] q2["what can I do with the team<br/>without leaving?"]
   S["member surfaces<br/>lane/worktree address identity;<br/>pane-specific standing fields"] q3["where is each lane addressed,<br/>and what does this pane expose?"]
   M["merged message stream<br/>newest first, explicit lane attribution"] q4["what did the team<br/>just say?"]
 ```

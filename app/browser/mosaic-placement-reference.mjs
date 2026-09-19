@@ -234,7 +234,7 @@ export async function assertModeSwitchPreservesDeferredMosaic(
     imageCases.push({ outcome, url, release, requested });
   }
 
-  await chooseCanvasView(page, "Flow");
+  await chooseCanvasView(page, "Work");
   await waitForPage(page, "hidden Mosaic observes zero width", TRANSITION_MS, () => {
     const workspace = document.querySelector(".mosaic-workspace");
     const plane = workspace?.querySelector(".lane-mosaic-plane");
@@ -290,7 +290,7 @@ export async function assertModeSwitchPreservesDeferredMosaic(
     "hidden reduction retains prior cards and materializes every background arrival");
   assert.deepEqual(hidden.writes, [], "the zero-width host performs no card geometry writes");
 
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   await waitForPage(page, "reveal measures one complete hidden batch", TRANSITION_MS,
     (expected) => {
       const plane = document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane');
@@ -309,11 +309,11 @@ export async function assertModeSwitchPreservesDeferredMosaic(
     "reveal retains the original Mosaic host node");
 
   const stable = await armPlacementProbe(plane);
-  await chooseCanvasView(page, "Flow");
+  await chooseCanvasView(page, "Work");
   await waitForPage(page, "repeated hide returns to zero width", TRANSITION_MS, () => (
     Number(document.querySelector(".mosaic-workspace .lane-mosaic-plane")?.dataset.observedWidth) < 24
   ));
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   await waitForPage(page, "repeated reveal restores the committed width", TRANSITION_MS,
     (expected) => Number(
       document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')

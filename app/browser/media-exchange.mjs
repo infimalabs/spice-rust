@@ -159,10 +159,10 @@ async function cardIdentity(card) {
 }
 
 async function reopenLane(page, team, lane) {
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   const surface = page.locator(`.team-surface[data-team="${team}"]`);
   await surface.waitFor({ timeout: TRANSITION_MS * 4 });
-  await surface.getByRole("tab", { name: /^Agents(?:\s|$)/ }).click();
+  await surface.getByRole("tab", { name: /^Chat(?:\s|$)/ }).click();
   await surface.locator(`.team-agent[data-agent-lane="${lane}"]`).waitFor();
   return surface;
 }

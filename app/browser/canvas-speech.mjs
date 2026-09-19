@@ -195,9 +195,9 @@ export async function assertDeferredVoicePublication(browser, endpoint) {
   const page = await context.newPage();
   const monitor = monitorPage(page);
   await page.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Flow");
+  await chooseCanvasView(page, "Work");
   await assertOnlineObserved(page, "the page loads before voices are published", CONNECT_MS);
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   const card = page.locator('[data-card-kind="agent-message"]').first();
   await card.waitFor();
   await card.getByLabel("Speak this message").click();
@@ -258,9 +258,9 @@ export async function assertDeferredVoicePublication(browser, endpoint) {
   const cancelled = await context.newPage();
   const cancelledMonitor = monitorPage(cancelled);
   await cancelled.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(cancelled, "Flow");
+  await chooseCanvasView(cancelled, "Work");
   await assertOnlineObserved(cancelled, "a second page loads before voices", CONNECT_MS);
-  await chooseCanvasView(cancelled, "Lanes");
+  await chooseCanvasView(cancelled, "Chat");
   const cancelledCard = cancelled.locator('[data-card-kind="agent-message"]').first();
   await cancelledCard.waitFor();
   await cancelledCard.getByLabel("Speak this message").click();
@@ -292,9 +292,9 @@ export async function assertSpeechVariants(browser, endpoint) {
   const mismatchPage = await mismatchContext.newPage();
   const mismatchMonitor = monitorPage(mismatchPage);
   await mismatchPage.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(mismatchPage, "Flow");
+  await chooseCanvasView(mismatchPage, "Work");
   await assertOnlineObserved(mismatchPage, "the page loads with another voice", CONNECT_MS);
-  await chooseCanvasView(mismatchPage, "Lanes");
+  await chooseCanvasView(mismatchPage, "Chat");
   const mismatchCard = mismatchPage.locator('[data-card-kind="agent-message"]').first();
   await mismatchCard.waitFor();
   await mismatchCard.getByLabel("Speak this message").click();
@@ -323,9 +323,9 @@ export async function assertSpeechVariants(browser, endpoint) {
   const unavailablePage = await unavailableContext.newPage();
   const unavailableMonitor = monitorPage(unavailablePage);
   await unavailablePage.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(unavailablePage, "Flow");
+  await chooseCanvasView(unavailablePage, "Work");
   await assertOnlineObserved(unavailablePage, "the page loads with speech unavailable", CONNECT_MS);
-  await chooseCanvasView(unavailablePage, "Lanes");
+  await chooseCanvasView(unavailablePage, "Chat");
   const unavailableCard = unavailablePage.locator('[data-card-kind="agent-message"]').first();
   await unavailableCard.waitFor();
   await unavailableCard.getByLabel("Speak this message").click();
@@ -356,9 +356,9 @@ export async function assertSpeechVariants(browser, endpoint) {
   const disabledMonitor = monitorPage(disabled);
   await routeSpeechBootstrap(disabled, { backend: "disabled" });
   await disabled.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(disabled, "Flow");
+  await chooseCanvasView(disabled, "Work");
   await assertOnlineObserved(disabled, "the page loads with speech disabled", CONNECT_MS);
-  await chooseCanvasView(disabled, "Lanes");
+  await chooseCanvasView(disabled, "Chat");
   const disabledCard = disabled.locator('[data-card-kind="agent-message"]').first();
   await disabledCard.waitFor();
   await disabledCard.getByLabel("Speak this message").click();
@@ -378,9 +378,9 @@ export async function assertSpeechVariants(browser, endpoint) {
     available: false,
   });
   await externalUnavailable.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(externalUnavailable, "Flow");
+  await chooseCanvasView(externalUnavailable, "Work");
   await assertOnlineObserved(externalUnavailable, "no external backend is offered", CONNECT_MS);
-  await chooseCanvasView(externalUnavailable, "Lanes");
+  await chooseCanvasView(externalUnavailable, "Chat");
   let unavailableRequests = 0;
   await externalUnavailable.route("**/speech", async (route) => {
     unavailableRequests += 1;
@@ -424,9 +424,9 @@ export async function assertSpeechVariants(browser, endpoint) {
     });
   });
   await external.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(external, "Flow");
+  await chooseCanvasView(external, "Work");
   await assertOnlineObserved(external, "the page loads against the external backend", CONNECT_MS);
-  await chooseCanvasView(external, "Lanes");
+  await chooseCanvasView(external, "Chat");
   const card = external.locator('[data-card-kind="agent-message"]').first();
   await card.waitFor();
   const cardKey = await card.getAttribute("data-mosaic-card-key");
@@ -542,7 +542,7 @@ export async function assertSpeechVariants(browser, endpoint) {
   const malformedMonitor = monitorPage(malformed);
   await routeSpeechBootstrap(malformed, { backend: "system", voice: "Zoe (Premium)" });
   await malformed.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(malformed, "Flow");
+  await chooseCanvasView(malformed, "Work");
   await assertOfflineObserved(malformed, "a malformed bootstrap is rejected");
   assert.match(await malformed.locator(".status-copy").innerText(), /bootstrap response was invalid/);
   assert.equal(await malformed.locator(".speech-button").count(), 0);
@@ -559,9 +559,9 @@ async function assertSpeechStopsWithThePage(context, endpoint) {
   const closing = await context.newPage();
   const closingMonitor = monitorPage(closing);
   await closing.goto(endpoint, { waitUntil: "networkidle" });
-  await chooseCanvasView(closing, "Flow");
+  await chooseCanvasView(closing, "Work");
   await assertOnlineObserved(closing, "the page loads with system speech", CONNECT_MS);
-  await chooseCanvasView(closing, "Lanes");
+  await chooseCanvasView(closing, "Chat");
   const card = closing.locator('[data-card-kind="agent-message"]').first();
   await card.waitFor();
   await card.getByLabel("Speak this message").click();

@@ -88,8 +88,8 @@ export async function assertTeamActions(page, primary, secondary, primaryTeam) {
   );
   assert.deepEqual(
     [await selectedMode(primary), await selectedMode(secondary)],
-    ["Lanes", "Lanes"],
-    "opening a team menu does not switch either team to Team",
+    ["Chat", "Chat"],
+    "opening a team menu does not switch either team to Info",
   );
 
   await secondaryToggle.click();

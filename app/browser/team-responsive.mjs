@@ -140,7 +140,7 @@ function assertTrack(geometry, label, overflow) {
   assert.ok(Math.abs(geometry.lastRight - geometry.right) <= 1, `${label} reveals the newest lane`);
   assert.ok(
     geometry.tabLabels.every((labels) => (
-      JSON.stringify(labels) === JSON.stringify(["Team", "Board", "Agents"])
+      JSON.stringify(labels) === JSON.stringify(["Info", "Work", "Chat"])
     )),
     `${label} keeps only retained destinations in every responsive team tablist: ${JSON.stringify(geometry)}`,
   );

@@ -12,19 +12,19 @@ import {
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const artifacts = join(root, "artifacts/canvas");
 const agentGeometryOwners = Object.freeze({
-  activity: ':scope > .team-pane[data-team-mode="Lanes"] '
-    + '> .team-mode-pane[data-mode="Lanes"] > .team-compose > .team-activity-grid',
+  activity: ':scope > .team-pane[data-team-mode="Chat"] '
+    + '> .team-mode-pane[data-mode="Chat"] > .team-compose > .team-activity-grid',
   committedCard: ':scope > .lane-mosaic-plane > .lane-mosaic-track '
     + '> .mosaic-message-card[data-layout-phase="committed"]',
   emptyActivity: ":scope > .mosaic-message-empty",
-  emptyFleet: ':scope > .team-pane[data-team-mode="Lanes"] > .empty',
+  emptyFleet: ':scope > .team-pane[data-team-mode="Chat"] > .empty',
   measuringCard: ':scope > .lane-mosaic-plane > .lane-mosaic-track '
     + '> .mosaic-message-card[data-layout-phase="measuring"]',
   plane: ":scope > .lane-mosaic-plane",
 });
 const axisPanes = new Map([
-  ["Board", ["Tasks", "Claims", "Deferrals", "Reviews"]],
-  ["Team", ["Agents", "Worktrees", "Lineage", "Occupancy", "Residents"]],
+  ["Work", ["Tasks", "Claims", "Deferrals", "Reviews"]],
+  ["Info", ["Agents", "Worktrees", "Lineage", "Occupancy", "Residents"]],
 ]);
 
 export async function assertAgentWorkspaceGeometry(page, state) {
@@ -326,10 +326,10 @@ export async function assertAgentSpacingRejectsFallbackOnlyMarkup(page, state) {
     surface.dataset.fallbackSpacingOwner = fallbackMarker;
     const pane = document.createElement("div");
     pane.className = "team-pane";
-    pane.dataset.teamMode = "Lanes";
+    pane.dataset.teamMode = "Chat";
     const mode = document.createElement("div");
     mode.className = "team-mode-pane";
-    mode.dataset.mode = "Lanes";
+    mode.dataset.mode = "Chat";
     const compose = document.createElement("div");
     compose.className = "team-compose";
     const activity = document.createElement("div");
@@ -425,9 +425,9 @@ export async function assertCanvas(page, scheme) {
   assert.equal(await page.locator(".canvas-navigation").count(), 0, "navigation stays collapsed");
   await page.getByLabel("Open Spice Canvas menu").click();
   assert.equal(
-    await page.locator(".canvas-navigation button.axis-button", { hasText: /^Agents/ }).count(),
+    await page.locator(".canvas-navigation button.axis-button", { hasText: /^Chat/ }).count(),
     1,
-    "one disclosed Agents entry reaches the one conversation surface",
+    "one disclosed Chat entry reaches the one conversation surface",
   );
   assert.equal(
     await page.getByText("Lanes", { exact: true }).count(),
@@ -479,14 +479,14 @@ export async function assertCanvas(page, scheme) {
   await page.keyboard.press("Tab");
   assert.ok(await page.locator(":focus-visible").count(), "keyboard focus remains visible");
   if ((page.viewportSize()?.width ?? 1000) <= 560) {
-    await chooseCanvasView(page, "Flow");
+    await chooseCanvasView(page, "Work");
     const workspace = page.locator(".workspace:not([hidden])");
     await workspace.evaluate((element) => element.scrollTo(0, element.scrollHeight));
     assert.ok(await page.getByRole("button", { name: "Add note" }).isVisible());
     await workspace.evaluate((element) => element.scrollTo(0, 0));
   }
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   await page.locator('[data-pane="agent-console"]').waitFor();
-  await assertAgentWorkspaceGeometry(page, `${scheme} Lanes page`);
+  await assertAgentWorkspaceGeometry(page, `${scheme} Chat page`);
   await page.screenshot({ path: join(artifacts, `canvas-${scheme}.png`), fullPage: true });
 }

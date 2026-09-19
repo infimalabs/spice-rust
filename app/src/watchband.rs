@@ -61,7 +61,7 @@ pub const FIELD_BUDGET: usize = 22;
 /// Stable bounded identity when neither configured name nor worktree leaf exists.
 pub const UNKNOWN_AGENT_LABEL: &str = "Unknown agent";
 
-/// Render state for one independently admitted section of the team Board view.
+/// Render state for one independently admitted section of the team Work view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TeamTaskSectionState {
     TaskSnapshotUnavailable,

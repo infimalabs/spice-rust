@@ -198,8 +198,8 @@ async function assertThreeAgentTeamPips(page, console) {
     "three team pip identities keep the established stack fill order",
   );
 
-  await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Team/ }).click();
+  await chooseCanvasView(page, "Chat");
+  await console.getByRole("tab", { name: /^Info/ }).click();
 }
 
 /// Seat the canonical four-member fixture team without running its scenarios.
@@ -216,18 +216,18 @@ export async function seatAgentTeam(
 ) {
   const teamWorktrees = worktrees.slice(0, 4);
   const console = page.locator('[data-pane="agent-console"]');
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   await console.waitFor();
   assert.equal(
     await console.locator(".team-pane").getAttribute("data-team-mode"),
-    "Lanes",
-    "the empty team begins in the right-edge Lanes mode",
+    "Chat",
+    "the empty team begins in the right-edge Chat mode",
   );
   await page.getByLabel("Open Spice Canvas menu").click();
   await assertGlobalNavigation(page, "the empty fleet");
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   await assertTeamNavigation(console, "the empty fleet");
-  await console.getByRole("tab", { name: /^Team/ }).click();
+  await console.getByRole("tab", { name: /^Info/ }).click();
   await console.getByLabel("Name").fill(agentNames[0]);
   await console.getByLabel("Worktree").fill(teamWorktrees[0]);
   await console.getByLabel("Life").fill("steer");
@@ -259,8 +259,8 @@ export async function seatAgentTeam(
   );
   assert.equal(
     await hostSurface.locator(".team-pane").getAttribute("data-team-mode"),
-    "Team",
-    "the first seated team inherits the empty Canvas Team selection",
+    "Info",
+    "the first seated team inherits the empty Canvas Info selection",
   );
   assert.equal(
     await hostSurface.locator(".team-detail-card").count(),
@@ -284,8 +284,8 @@ export async function seatAgentTeam(
   }
   if (beforeReload) await beforeReload(console);
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Team/ }).click();
+  await chooseCanvasView(page, "Chat");
+  await console.getByRole("tab", { name: /^Info/ }).click();
   await waitForElement(page, "seated agents render after reload", CONNECT_MS,
     console.locator(".team-detail-card").nth(3));
   await waitForPage(page, "seated agents publish their session identities", CONNECT_MS, () => {
@@ -677,8 +677,8 @@ async function assertInlineReviewPill(page, console, lane, activityReplay) {
 
 async function assertFlavorAcknowledgementsAfterReload(page, console, activityReplay, cases) {
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await chooseCanvasView(page, "Chat");
+  await console.getByRole("tab", { name: /^Chat/ }).click();
   for (const { key, flavor, count } of cases) {
     await activityReplay.replayAgentMessage(page, key);
     const card = console.locator(`[data-mosaic-card-key="${key}"]`);
@@ -802,7 +802,7 @@ export async function assertAgentConversation(
     teamWorktrees,
   } = team;
 
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await console.getByRole("tab", { name: /^Chat/ }).click();
   await console.locator(".team-agent").nth(3).waitFor();
   assert.equal(await console.locator(".team-surface").count(), 1, "one team renders one surface");
   assert.equal(
@@ -1182,20 +1182,20 @@ export async function assertAgentConversation(
   assert.match(await age.getAttribute("data-age-authored"), /^\d+$/);
   assert.equal(await outgoing.locator(".message-actions button").count(), 3);
 
-  await console.getByRole("tab", { name: /^Board/ }).click();
+  await console.getByRole("tab", { name: /^Work/ }).click();
   await console.locator(".team-task-workspace").waitFor();
   assert.equal(
     await console.locator(".team-task-workspace").count(),
     1,
-    "Board renders one team-scoped operational workspace",
+    "Work renders one team-scoped operational workspace",
   );
-  await console.getByRole("tab", { name: /^Team/ }).click();
+  await console.getByRole("tab", { name: /^Info/ }).click();
   await console.locator(".team-detail-card").nth(3).waitFor();
-  assert.equal(await console.locator(".team-detail-card").count(), 4, "Team reaches all agents");
+  assert.equal(await console.locator(".team-detail-card").count(), 4, "Info reaches all agents");
   await console.getByText(teamWorktrees[0], { exact: true }).waitFor();
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await console.getByRole("tab", { name: /^Chat/ }).click();
   await assertFourAgentDensity(console);
-  await assertAgentWorkspaceGeometry(page, "populated desktop Lanes page");
+  await assertAgentWorkspaceGeometry(page, "populated desktop Chat page");
   await page.screenshot({ path: join(artifacts, "canvas-light-mosaic-agent.png"), fullPage: true });
   await captureMessageStreamBoundaries(page, console, artifacts, "chromium");
   const hiddenContinuity = await assertModeSwitchPreservesDeferredMosaic(

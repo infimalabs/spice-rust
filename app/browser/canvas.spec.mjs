@@ -160,9 +160,9 @@ async function assertDistinctWaitCallSites(page) {
 }
 
 async function assertMosaicComposer(page, fixture, seeded, activityReplay, run) {
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   const console = page.locator('[data-pane="agent-console"]');
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await console.getByRole("tab", { name: /^Chat/ }).click();
   const lane = page.locator(`.team-agent[data-agent-lane="${seeded.lane}"]`);
   const activity = console.locator(`.mosaic-message-card[data-agent-lane="${seeded.lane}"]`);
   const quoteLane = page.locator(`.team-agent[data-agent-lane="${seeded.quoteLane}"]`);
@@ -318,7 +318,7 @@ async function assertStaleGeneration(browser, endpoint, currentEpoch) {
     });
   });
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
-  await chooseCanvasView(page, "Flow");
+  await chooseCanvasView(page, "Work");
   await assertOfflineObserved(page, "refusing a stale generation");
   assert.match(await page.locator(".status-copy").innerText(), /Reconnecting/);
   monitor.assertClean();
@@ -337,7 +337,7 @@ async function assertHalfOpenSocket(browser, endpoint, epoch, fixture, seeded) {
   const monitor = monitorPage(page);
   const route = await routeCanvasSocket(page);
   await page.goto(endpoint, { waitUntil: "domcontentloaded" });
-  await chooseCanvasView(page, "Flow");
+  await chooseCanvasView(page, "Work");
   await assertGenerationOnline(page, epoch, "the half-open page connects", CONNECT_MS);
   await assertHalfOpenSocketRecovers(page, monitor, route, epoch, async () => {
     await reply(fixture, ["task", "note", seeded.task, "written while the socket was half open"]);
@@ -353,7 +353,7 @@ async function assertSameGenerationResume(
   seeded,
   epoch,
 ) {
-  await chooseCanvasView(page, "Flow");
+  await chooseCanvasView(page, "Work");
   monitor.expectNetworkInterruption(true);
   await page.evaluate(() => {
     const socket = window.__canvasSockets.at(-1);
@@ -486,7 +486,7 @@ try {
           "team-seat",
           () => seatAgentTeam(lightPage, fixture, worktrees),
         );
-        await team.console.getByRole("tab", { name: /^Agents/ }).click();
+        await team.console.getByRole("tab", { name: /^Chat/ }).click();
         const surface = team.console.locator(
           `.team-surface[data-team="${team.host.team}"]`,
         );
@@ -633,7 +633,7 @@ try {
           quoteProse: team.quoteProse,
           primaryHeadings: team.primaryHeadings,
         });
-        await team.console.getByRole("tab", { name: /^Agents/ }).first().click();
+        await team.console.getByRole("tab", { name: /^Chat/ }).first().click();
         primary = team.console.locator(
           `.team-surface[data-team="${team.host.team}"]`,
         );
@@ -657,7 +657,7 @@ try {
         const firstCapability = resident.discovery.capability;
         const settingsMenu = lightPage.locator(".canvas-menu");
         await run.phase("persist-settings", async () => {
-          await chooseCanvasView(lightPage, "Lanes");
+          await chooseCanvasView(lightPage, "Chat");
           if ((await settingsMenu.getAttribute("open")) === null) {
             await settingsMenu.locator(":scope > summary").click();
           }
@@ -724,7 +724,7 @@ try {
         await run.phase("restored-surface", async () => {
           lightMonitor.expectNetworkInterruption(false);
           await assertCanvas(lightPage, "light-restarted");
-          await chooseCanvasView(lightPage, "Lanes");
+          await chooseCanvasView(lightPage, "Chat");
           await assertRestartedResidentAcceptsDraft(
             lightPage,
             fixture,
@@ -762,8 +762,8 @@ try {
           await assertNoCredentialOrLandingGap(
             lightPage, [firstCapability, resident.discovery.capability],
           );
-          await chooseCanvasView(lightPage, "Lanes");
-          await captureReportedAgentPage(lightPage, "restored short-content Lanes page");
+          await chooseCanvasView(lightPage, "Chat");
+          await captureReportedAgentPage(lightPage, "restored short-content Chat page");
           lightMonitor.assertClean();
           await light.close();
         });
@@ -864,7 +864,7 @@ try {
           assertTeamArrangement(lightPage, fixture, worktrees, artifacts)
         ));
         const renewedTeam = lightPage.locator('[data-pane="agent-console"]');
-        await renewedTeam.getByRole("tab", { name: /^Agents/ }).first().click();
+        await renewedTeam.getByRole("tab", { name: /^Chat/ }).first().click();
         await run.phase("agent-renewal", () => (
           assertAgentRenewalRequest(
             lightPage,

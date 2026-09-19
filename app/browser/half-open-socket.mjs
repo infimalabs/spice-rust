@@ -72,7 +72,7 @@ export async function routeCanvasSocket(page) {
 /// Without it the replacement operator subscription could begin at the same
 /// horizon and its live-barrier behavior would pass vacuously.
 export async function assertHalfOpenSocketRecovers(page, monitor, route, epoch, duringOutage) {
-  await chooseCanvasView(page, "Flow");
+  await chooseCanvasView(page, "Work");
   // Establishing first is what makes the count below mean something: a page that
   // had not connected yet would also report one socket, or none.
   await assertGenerationOnline(page, epoch, "the page connects", CONNECT_MS);

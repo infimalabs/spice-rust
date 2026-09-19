@@ -310,7 +310,7 @@ export async function assertCursorRelocation(page, artifacts, engine) {
       await assertGlobalNavigation(page, `${label} open Spice menu`);
       assert.deepEqual(
         await navigation.locator(".pill-label").allTextContents(),
-        ["Team", "Board", "Agents"],
+        ["Info", "Work", "Chat"],
         `${label} exposes one ordered navigation rail`,
       );
       assert.deepEqual(
@@ -951,7 +951,7 @@ async function assertPepperDisclosure(page) {
     await waitForDisclosure(page, true, "the pepper disclosure exposes Canvas destinations");
     const destinations = navigation.getByRole("button");
     await destinations.first().focus();
-    for (const [index, label] of ["Team", "Board", "Agents"].entries()) {
+    for (const [index, label] of ["Info", "Work", "Chat"].entries()) {
       assert.match(
         (await page.locator(":focus").innerText()).trim(),
         new RegExp(`^${label}`),
@@ -999,8 +999,8 @@ async function assertPepperDisclosure(page) {
       true,
       "project navigation retains focus on its mounted pill",
     );
-    await chooseCanvasView(page, "Lanes");
-    await waitForDisclosure(page, false, "project navigation check restores the Lanes workspace");
+    await chooseCanvasView(page, "Chat");
+    await waitForDisclosure(page, false, "project navigation check restores the Chat workspace");
   } finally {
     await page.setViewportSize(previous);
   }
@@ -1017,7 +1017,7 @@ async function assertPepperDisclosure(page) {
 
   await trigger.click();
   await waitForDisclosure(page, true, "the pepper disclosure reopens for Escape dismissal");
-  await navigation.getByRole("button", { name: /^Board/ }).focus();
+  await navigation.getByRole("button", { name: /^Work/ }).focus();
   await page.keyboard.press("Escape");
   await waitForDisclosure(page, false, "Escape dismisses the pepper disclosure");
   assert.ok(
@@ -1027,37 +1027,33 @@ async function assertPepperDisclosure(page) {
 
   await trigger.click();
   await waitForDisclosure(page, true, "the pepper disclosure reopens for destination selection");
-  await navigation.getByRole("button", { name: /^Board/ }).click();
-  await page.getByRole("heading", { name: "Board", exact: true }).waitFor({ timeout: TRANSITION_MS });
+  await navigation.getByRole("button", { name: /^Work/ }).click();
+  await page.getByRole("heading", { name: "Work", exact: true }).waitFor({ timeout: TRANSITION_MS });
   await waitForDisclosure(page, false, "a Canvas destination closes the pepper disclosure");
-  await assertUniversalShelfOuterEdge(page, "narrow Board destination");
+  await assertUniversalShelfOuterEdge(page, "narrow Work destination");
   const panel = await openSpiceMenu(page);
   assert.equal(
     await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"),
-    "flow",
+    "Work",
     "the reopened pepper panel belongs to the selected destination",
   );
-  await panel.getByRole("heading", { name: "Board", exact: true }).waitFor();
-  await chooseCanvasView(page, "Lanes");
-  await waitForDisclosure(page, false, "the disclosure check restores the Lanes workspace");
+  await panel.getByRole("heading", { name: "Work", exact: true }).waitFor();
+  await chooseCanvasView(page, "Chat");
+  await waitForDisclosure(page, false, "the disclosure check restores the Chat workspace");
 }
 
 async function assertAxisMenu(page, view, copy) {
-  const visibleView = {
-    Flow: "Board",
-    Topology: "Team",
-  }[view] ?? view;
   await chooseCanvasView(page, view);
-  await assertUniversalShelfOuterEdge(page, `${visibleView} destination`);
+  await assertUniversalShelfOuterEdge(page, `${view} destination`);
   const panel = await openSpiceMenu(page);
   const menuPage = panel.locator(".canvas-menu-page");
   assert.equal(
     await menuPage.getAttribute("data-menu-page"),
-    view.toLowerCase(),
-    `${view} opens its own Spice panel rather than the Lanes panel`,
+    view,
+    `${view} opens its own Spice panel rather than the Chat panel`,
   );
   assert.equal(await panel.locator(".canvas-team").count(), 0, `${view} renders no team manager`);
-  await panel.getByRole("heading", { name: visibleView, exact: true }).waitFor();
+  await panel.getByRole("heading", { name: view, exact: true }).waitFor();
   assert.match(await menuPage.innerText(), copy, `${view} describes its own page context`);
 }
 
@@ -1091,25 +1087,25 @@ async function assertResidentTeam(fixture, lane, team, policyTeam, reason) {
   );
 }
 
-/** Exercise the Lanes-page Spice panel, shared navigation, and durable team moves. */
+/** Exercise the Chat-page Spice panel, shared navigation, and durable team moves. */
 export async function assertTeamMenu(page, fixture, artifacts) {
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   await assertCursorRelocation(page, artifacts, "chromium");
   await assertPepperDisclosure(page);
-  await chooseCanvasView(page, "Topology");
-  await page.getByRole("heading", { name: "Team", exact: true }).waitFor();
+  await chooseCanvasView(page, "Info");
+  await page.getByRole("heading", { name: "Info", exact: true }).waitFor();
   await openSpiceMenu(page);
   assert.equal(
     await page.getByRole("navigation", { name: "Canvas views" })
-      .getByRole("button", { name: /^Agents/ }).count(),
+      .getByRole("button", { name: /^Chat/ }).count(),
     1,
-    "the analytics pages keep the same route back to live Agents",
+    "the analytics pages keep the same route back to Chat",
   );
-  await assertAxisMenu(page, "Topology", /resident teams, seats, capabilities/i);
-  await chooseCanvasView(page, "Lanes");
+  await assertAxisMenu(page, "Info", /resident teams, seats, capabilities/i);
+  await chooseCanvasView(page, "Chat");
 
   let panel = await openSpiceMenu(page);
-  assert.equal(await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"), "lanes");
+  assert.equal(await panel.locator(".canvas-menu-page").getAttribute("data-menu-page"), "Chat");
   await panel.getByRole("heading", { name: "Global", exact: true }).waitFor();
   const fastMode = panel.getByRole("menuitemcheckbox", { name: /Fast mode/i });
   const themeRail = panel.getByRole("group", { name: "Canvas theme" });

@@ -23,9 +23,9 @@ const WAKE_MS = 15_000;
 /// departed one.
 export async function assertVacantWakeSubmission(page, fixture, seeded) {
   const targetLane = seeded.lane;
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   const console_ = page.locator('[data-pane="agent-console"]');
-  await console_.getByRole("tab", { name: /^Agents/ }).click();
+  await console_.getByRole("tab", { name: /^Chat/ }).click();
   const lane = console_.locator(`.team-agent[data-agent-lane="${targetLane}"]`);
   const ticker = console_.locator(`.ticker[data-agent-lane="${targetLane}"]`);
   const form = lane.locator("xpath=ancestor::form[1]");
@@ -54,9 +54,9 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
     "pending direction cannot automatically consume the vacancy under test",
   );
   await reply(fixture, ["lane", "drain", targetLane]);
-  await chooseCanvasView(page, "Flow");
+  await chooseCanvasView(page, "Work");
   await page.getByRole("button", { name: "Refresh", exact: true }).click();
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   await waitForPage(
     page,
     "drained bound lane exposes wake-and-send",
@@ -370,9 +370,9 @@ export async function assertVacantWakeSubmission(page, fixture, seeded) {
   try {
     await reloaded.goto(page.url(), { waitUntil: "networkidle" });
     await reloaded.reload({ waitUntil: "networkidle" });
-    await chooseCanvasView(reloaded, "Lanes");
+    await chooseCanvasView(reloaded, "Chat");
     const reloadedConsole = reloaded.locator('[data-pane="agent-console"]');
-    await reloadedConsole.getByRole("tab", { name: /^Agents/ }).click();
+    await reloadedConsole.getByRole("tab", { name: /^Chat/ }).click();
     await reloadedConsole.locator(`.team-agent[data-agent-lane="${targetLane}"]`).waitFor({
       timeout: WAKE_MS,
     });

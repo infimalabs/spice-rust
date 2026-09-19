@@ -345,8 +345,8 @@ async function profileTabSwitch(page, route) {
   });
   await armProfile(page);
   const console = page.locator('[data-pane="agent-console"]');
-  await console.getByRole("tab", { name: /^Board/ }).click();
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await console.getByRole("tab", { name: /^Work/ }).click();
+  await console.getByRole("tab", { name: /^Chat/ }).click();
   await waitForSettled(page, 768);
   const result = await finishProfile(page);
   delete result.keys;
@@ -367,9 +367,9 @@ async function runEngine(endpoint, fixture, worktrees, engine, seat) {
   const loadBefore = describeLoad();
   try {
     await page.goto(endpoint, { waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Lanes");
+    await chooseCanvasView(page, "Chat");
     if (seat) await seatAgentOrg(page, fixture, worktrees);
-    await page.locator('[data-pane="agent-console"]').getByRole("tab", { name: /^Agents/ }).click();
+    await page.locator('[data-pane="agent-console"]').getByRole("tab", { name: /^Chat/ }).click();
     await page.locator(".lane-mosaic-plane").waitFor();
     const profile = {
       cards75: await profileSnapshot(page, route, 25),

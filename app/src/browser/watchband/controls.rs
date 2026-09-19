@@ -110,7 +110,7 @@ pub(super) struct TeamControl {
 impl Default for TeamControl {
     fn default() -> Self {
         Self {
-            mode: TeamMode::Lanes,
+            mode: TeamMode::Chat,
             menu_open: false,
             import_open: false,
             arrangement_open: false,
@@ -457,17 +457,17 @@ impl TeamControls {
         self.teams.retain(|team, _| live_teams.contains(team));
         self.closed.retain(|team| live_teams.contains(team));
 
-        // A seat submitted from the empty Team view must keep that view when
+        // A seat submitted from the empty Info view must keep that view when
         // its first real surface arrives. The resident's authoritative
         // subscription order resolves the transition: its first team
         // inherits the empty selection exactly once, and every sibling keeps
-        // the explicit Lanes default.
+        // the explicit Chat default.
         if self.teams.is_empty()
-            && self.empty_mode != TeamMode::Lanes
+            && self.empty_mode != TeamMode::Chat
             && let Some(subscription) = answer.subscriptions.first()
         {
             self.teams.entry(subscription.team).or_default().mode = self.empty_mode;
-            self.empty_mode = TeamMode::Lanes;
+            self.empty_mode = TeamMode::Chat;
         }
         for subscription in &answer.subscriptions {
             let team = subscription.team;

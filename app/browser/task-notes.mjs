@@ -7,7 +7,7 @@ import {
 /// Exercise accepted, malformed, and absent task-note submissions through the UI.
 export async function assertTaskNotes(page, task) {
   const content = page.locator("main.content");
-  await chooseCanvasView(page, "Flow");
+  await chooseCanvasView(page, "Work");
   await content.getByLabel("Task").fill(task);
   await content.getByLabel("Observation").fill("browser mutation reached the resident");
   await content.getByRole("button", { name: "Add note" }).click();

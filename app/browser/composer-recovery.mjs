@@ -138,7 +138,7 @@ async function reconnectInPlace(page, monitor, reason, socketCount) {
 /// half lets the resident commit while swallowing its response, proving the
 /// reconnect replay is idempotent rather than a second directive.
 export async function assertComposerRecovery(page, fixture, seeded, monitor) {
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   const lane = page.locator(`.team-agent[data-agent-lane="${seeded.lane}"]`);
   const sibling = page.locator(`.team-agent[data-agent-lane="${seeded.quoteLane}"]`);
   const activity = page.locator(
@@ -179,12 +179,12 @@ export async function assertComposerRecovery(page, fixture, seeded, monitor) {
   await page.evaluate(() => {
     window.__canvasSockets.at(-1).close(4000, "cut before steering durability");
   });
-  await chooseCanvasView(page, "Flow");
+  await chooseCanvasView(page, "Work");
   await assertOfflineObserved(page, "the first steering write is cut before durability");
   await assertOnlineObserved(page, "the cut steering socket reconnects", RECONNECT_MS);
   monitor.expectNetworkInterruption(false);
-  await chooseCanvasView(page, "Lanes");
-  await page.getByRole("tab", { name: /^Agents/ }).first().click();
+  await chooseCanvasView(page, "Chat");
+  await page.getByRole("tab", { name: /^Chat/ }).first().click();
 
   const secondInbox = await waitForInbox(fixture, seeded.lane, second);
   const firstDirective = secondInbox.pending.find((directive) => directive.text.includes(first));
