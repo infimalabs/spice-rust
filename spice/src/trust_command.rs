@@ -161,10 +161,11 @@ pub(crate) fn report(
         Ok(surface) => surface,
         Err(error) => return load_failure(&error),
     };
-    let board = match crate::board_command::current_board(&repository) {
-        Ok(board) => board,
-        Err(outcome) => return retag(outcome),
-    };
+    let board =
+        match crate::board_command::current_board(&repository, wire::intent::BoardRead::Trust) {
+            Ok(board) => board,
+            Err(outcome) => return retag(outcome),
+        };
     if board.residency.body.epoch != epoch {
         return refusal(
             "trust::epoch-moved",

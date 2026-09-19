@@ -24,7 +24,7 @@ use wire::{
 /// Every command body, spelled as WIRE spells it, paired with the kind whose
 /// binding must decode it.
 const BODIES: &[(CommandKind, &str)] = &[
-    (CommandKind::BoardRead, r#"{}"#),
+    (CommandKind::BoardRead, r#"{ "scope": "all" }"#),
     (CommandKind::BoardGraph, r#"{ "view": "dependencies" }"#),
     (CommandKind::BoardHandout, r#"{ "output": "-" }"#),
     (CommandKind::DocLedger, r#"{ "task": "SPICE-1kKRRsDP" }"#),

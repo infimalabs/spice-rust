@@ -508,7 +508,7 @@ fn insert_legacy_board_receipt(connection: &Connection) {
         epoch,
         kind: CommandKind::BoardRead,
         expected: Vec::new(),
-        body: wire::intent::BoardRead { family: None },
+        body: wire::intent::BoardRead::All { family: None },
     };
     let board = wire::intent::BoardAnswer {
         schema: 3,

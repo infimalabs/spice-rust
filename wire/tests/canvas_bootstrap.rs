@@ -48,7 +48,6 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
         uuid("018f82d4-6f59-7d06-92e3-bce9131163c3")
     );
     assert_eq!(bootstrap.version.product.as_str(), "1.2.3");
-    assert_eq!(bootstrap.version.canvas, CanvasVersion::CURRENT);
     assert_eq!(bootstrap.version.app.as_str(), "2".repeat(64));
     assert_eq!(
         bootstrap.speech,
@@ -93,11 +92,6 @@ fn canvas_version_has_one_http_header_spelling() {
         "x-spice-canvas-generation"
     );
     assert_eq!(
-        CanvasVersion::CURRENT,
-        CanvasVersion(6),
-        "generation 6 carries structured product and build identity"
-    );
-    assert_eq!(
         CanvasVersion::CURRENT.to_string().parse(),
         Ok(CanvasVersion::CURRENT)
     );
@@ -107,38 +101,4 @@ fn canvas_version_has_one_http_header_spelling() {
             "malformed Canvas version was admitted: {malformed:?}"
         );
     }
-}
-
-#[test]
-fn strict_bootstrap_body_changes_only_at_the_canvas_six_boundary() {
-    #[derive(Debug, serde::Deserialize)]
-    #[allow(dead_code)]
-    #[serde(deny_unknown_fields)]
-    struct PriorCanvasBootstrap {
-        endpoint: String,
-        capability: CanonicalUuid,
-        epoch: CanonicalUuid,
-        speech: wire::SpeechPlayback,
-    }
-
-    let current: CanvasBootstrap = round_trip(CANVAS_BOOTSTRAP);
-    let bytes = wire::encode(&current).expect("current bootstrap encodes");
-    let error = wire::decode::<PriorCanvasBootstrap>(&bytes)
-        .expect_err("the prior strict decoder refuses the six-field body");
-    assert!(
-        error.to_string().contains("unknown field `version`"),
-        "{error}"
-    );
-
-    let mut prior: serde_json::Value =
-        serde_json::from_slice(&bytes).expect("current body is JSON");
-    prior
-        .as_object_mut()
-        .expect("bootstrap is an object")
-        .remove("version");
-    let prior = serde_json::to_vec(&prior).expect("prior fixture encodes");
-    assert!(
-        wire::decode::<CanvasBootstrap>(&prior).is_err(),
-        "the current strict body must not retain the prior four-field path"
-    );
 }

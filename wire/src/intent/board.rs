@@ -4,17 +4,31 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Actor, TaskHandle};
 
-/// Read the validated current board, optionally restricted to one family.
+/// Read an explicit projection of one authoritative board snapshot.
+///
+/// Scopes never implicitly discard completed tasks.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BoardRead {
-    /// Upper-case task family to retain, when the caller names one.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    pub family: Option<String>,
+#[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
+pub enum BoardRead {
+    /// The complete board, optionally restricted to a public handle family.
+    All {
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        family: Option<String>,
+    },
+    /// Named durable identities plus the context required by the caller.
+    Tasks {
+        tasks: Vec<crate::TaskStamp>,
+        /// Include the transitive dependency closure of the selected tasks.
+        dependencies: bool,
+        /// Also select every active claim held by the authenticated principal.
+        claims: bool,
+    },
+    /// Trust rulings and residency authority, without task rows.
+    Trust,
 }
 
 /// Render one deterministic graph from the validated current board.
@@ -418,14 +432,14 @@ pub struct BoardAnswer {
     pub actor_route: BoardActorRoute,
     /// Urgency distance the resident captured as one equivalent allocation band.
     pub allocation_band: u64,
-    /// Principal's most recently claimed allocator cell, when history has one.
+    /// Principal's most recent allocator cell, included by full-board reads.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     pub recent_cell: Option<crate::ClaimCell>,
-    /// Complete current task evidence bundles in ascending handle order.
+    /// Selected current task evidence, including completed tasks, in stamp order.
     pub tasks: Vec<BoardTask>,
     /// Current executable-configuration trust heads in ascending digest order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]

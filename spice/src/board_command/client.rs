@@ -77,7 +77,7 @@ fn client_board(
         contract,
         CommandKind::BoardRead,
         Vec::new(),
-        &BoardRead {
+        &BoardRead::All {
             family: matches.get_one::<String>("FAMILY").cloned(),
         },
     )
@@ -159,53 +159,59 @@ fn client_ledger(
 fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {
     let mut drain = None;
     let outcome = retry_task_next(|| {
-        mutate_from_board(repository, contract, |board| {
-            let entries = actor_entries(&board)?;
-            let subscription = allocation_subscription(&board.residency.body, &board.principal)?;
-            let environment = board.environment();
-            let selected = board::select(
-                &entries,
-                &board.principal,
-                &subscription,
-                board.allocation_band,
-                board.recent_cell.as_ref(),
-                &environment,
-            )
-            .ok_or_else(|| {
-                // The refusal stays typed for every caller; the readout is
-                // measured from this same snapshot for the rim to speak.
-                drain = drain_reply(&board).ok();
-                refusal(
-                    "board::allocator-empty",
-                    None,
-                    "add or wake eligible work before requesting task next",
+        mutate_from_board(
+            repository,
+            contract,
+            BoardRead::All { family: None },
+            |board| {
+                let entries = actor_entries(&board)?;
+                let subscription =
+                    allocation_subscription(&board.residency.body, &board.principal)?;
+                let environment = board.environment();
+                let selected = board::select(
+                    &entries,
+                    &board.principal,
+                    &subscription,
+                    board.allocation_band,
+                    board.recent_cell.as_ref(),
+                    &environment,
                 )
-            })?;
-            let task = selected.entry().handle().clone();
-            let heads = task_heads(&board, &task)?;
-            let (lane, occupant) = actor_seat(&board)?;
-            let rule = "next".parse::<Name>().expect("next is a wire name");
-            Ok((
-                CommandKind::ClaimWin,
-                vec![
-                    statement_witness(heads),
-                    workflow_witness(heads),
-                    claim_witness(heads),
-                    Witness::Eligibility { rule: rule.clone() },
-                    residency_witness(&board, lane, occupant),
-                ],
-                serde_json::to_value(ClaimWin {
-                    rule,
-                    recovery: None,
-                })
-                .expect("typed intent encodes"),
-            ))
-        })
+                .ok_or_else(|| {
+                    // The refusal stays typed for every caller; the readout is
+                    // measured from this same snapshot for the rim to speak.
+                    drain = drain_reply(&board).ok();
+                    refusal(
+                        "board::allocator-empty",
+                        None,
+                        "add or wake eligible work before requesting task next",
+                    )
+                })?;
+                let task = selected.entry().handle().clone();
+                let heads = task_heads(&board, &task)?;
+                let (lane, occupant) = actor_seat(&board)?;
+                let rule = "next".parse::<Name>().expect("next is a wire name");
+                Ok((
+                    CommandKind::ClaimWin,
+                    vec![
+                        statement_witness(heads),
+                        workflow_witness(heads),
+                        claim_witness(heads),
+                        Witness::Eligibility { rule: rule.clone() },
+                        residency_witness(&board, lane, occupant),
+                    ],
+                    serde_json::to_value(ClaimWin {
+                        rule,
+                        recovery: None,
+                    })
+                    .expect("typed intent encodes"),
+                ))
+            },
+        )
     });
     // The resident can also drain empty after the client selected a row that
     // moved under it; that answer arrives without a snapshot, so read one.
     if drain.is_none() && allocator_empty(&outcome) {
-        drain = current_board(repository)
+        drain = current_board(repository, BoardRead::All { family: None })
             .ok()
             .and_then(|board| drain_reply(&board).ok());
     }
@@ -255,16 +261,13 @@ fn client_reclaim(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    mutate_from_board(repository, contract, |board| {
-        let (task, heads) = match matches.get_one::<String>("HANDLE") {
-            Some(written) => {
-                let task = written.parse::<TaskHandle>().map_err(|error| {
-                    refusal(
-                        "task::handle-invalid",
-                        Some(written.clone()),
-                        &error.to_string(),
-                    )
-                })?;
+    let (task, read) = match submission::mutation_read(matches) {
+        Ok(read) => read,
+        Err(outcome) => return outcome,
+    };
+    mutate_from_board(repository, contract, read, |board| {
+        let (task, heads) = match task {
+            Some(task) => {
                 let heads = task_heads(&board, &task)?;
                 (task, heads)
             }
@@ -399,7 +402,14 @@ fn client_capture(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let board = match current_board(repository) {
+    let board = match current_board(
+        repository,
+        BoardRead::Tasks {
+            tasks: Vec::new(),
+            dependencies: false,
+            claims: true,
+        },
+    ) {
         Ok(board) => board,
         Err(outcome) => return outcome,
     };
@@ -488,7 +498,15 @@ fn client_capture(
             }
         }
     };
-    mutate_from_board(repository, contract, |board| {
+    let read = BoardRead::Tasks {
+        tasks: vec![
+            task.born()
+                .expect("a parsed handle carries a canonical task stamp"),
+        ],
+        dependencies: false,
+        claims: true,
+    };
+    mutate_from_board(repository, contract, read, |board| {
         require_no_plan_implementation(&board, "task capture")?;
         let heads = task_heads(&board, &task)?;
         let (lane, occupant) = actor_seat(&board)?;

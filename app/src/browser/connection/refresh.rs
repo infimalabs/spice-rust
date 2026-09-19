@@ -70,7 +70,7 @@ async fn send_board(
         actions,
         PendingKind::Board,
         CommandKind::BoardRead,
-        BoardRead { family: None },
+        BoardRead::All { family: None },
     )
     .await
 }

@@ -50,7 +50,17 @@ pub(super) fn client_recover(
     if let Some(recovery) = pending {
         return resume_client_recovery(repository, &task, recovery);
     }
-    let board = match current_board(repository) {
+    let board = match current_board(
+        repository,
+        BoardRead::Tasks {
+            tasks: vec![
+                task.born()
+                    .expect("a parsed handle carries a canonical task stamp"),
+            ],
+            dependencies: true,
+            claims: true,
+        },
+    ) {
         Ok(board) => board,
         Err(outcome) => return outcome,
     };
@@ -273,7 +283,14 @@ fn reconcile_client_recovery(
     sealed: spice::task_git::RecoveryClaim,
     outcome: Option<Outcome<CommandAnswer>>,
 ) -> Outcome<CommandAnswer> {
-    let board = match current_board(repository) {
+    let board = match current_board(
+        repository,
+        BoardRead::Tasks {
+            tasks: vec![sealed.task.clone()],
+            dependencies: false,
+            claims: true,
+        },
+    ) {
         Ok(board) => board,
         Err(read) => return read,
     };

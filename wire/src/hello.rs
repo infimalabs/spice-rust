@@ -32,9 +32,8 @@ pub struct CanvasVersion(pub u32);
 impl CanvasVersion {
     /// The one Canvas protocol this build speaks.
     ///
-    /// Version 6 carries the complete structured product and build identity in
-    /// the strict bootstrap body while retaining pre-socket update admission.
-    pub const CURRENT: Self = Self(6);
+    /// Version 7 requires an explicit scope on board reads.
+    pub const CURRENT: Self = Self(7);
 
     /// True when this is the Canvas protocol this build speaks.
     #[must_use]

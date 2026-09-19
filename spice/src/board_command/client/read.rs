@@ -9,7 +9,7 @@ pub(super) fn client_status(
         contract,
         CommandKind::BoardRead,
         Vec::new(),
-        &BoardRead { family: None },
+        &BoardRead::All { family: None },
     ) {
         Outcome::Reply(Reply {
             position,
@@ -44,7 +44,7 @@ pub(super) fn client_list(
         contract,
         CommandKind::BoardRead,
         Vec::new(),
-        &BoardRead { family: None },
+        &BoardRead::All { family: None },
     ) {
         Outcome::Reply(Reply {
             position,
@@ -84,7 +84,14 @@ pub(super) fn client_show(
         contract,
         CommandKind::BoardRead,
         Vec::new(),
-        &BoardRead { family: None },
+        &BoardRead::Tasks {
+            tasks: vec![
+                task.born()
+                    .expect("a parsed handle carries a canonical task stamp"),
+            ],
+            dependencies: true,
+            claims: false,
+        },
     ) {
         Outcome::Reply(Reply {
             position,

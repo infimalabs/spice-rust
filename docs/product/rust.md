@@ -141,6 +141,16 @@ those heads directly, while resident read models advance from admitted journal
 history in memory. Transcript tape preserves vendor bytes without becoming
 semantic authority.
 
+Board reads name their scope explicitly: `all`, `tasks`, or `trust`. A task
+scope selects durable birth stamps and may include transitive dependencies and
+the authenticated principal's active claims at the same snapshot barrier.
+Completed tasks remain addressable, including completed prerequisites, terminal
+completion replay, and historical taste proposals. Trust reports transfer no
+task rows. Allocation, board presentation, document barriers, and fresh
+birth-stamp allocation retain explicit full-board reads; they do not substitute
+a pending-only view for retained authority. Scoped reads omit global allocator
+history rather than presenting partial history as complete.
+
 The journal accepts one schema and an ordered one-way migration chain. Wire and
 browser compatibility have independent versions and resident epochs; runtime
 behavior never branches by release.

@@ -10,14 +10,19 @@ pub(super) fn submit_oops_add(
     contract: &Contract,
     body: TaskOopsAdd,
 ) -> Outcome<CommandAnswer> {
-    mutate_from_board(repository, contract, |board| {
-        let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
-        Ok((
-            CommandKind::TaskOopsAdd,
-            vec![Witness::Absence { task: stamp }],
-            serde_json::to_value(body).expect("typed intent encodes"),
-        ))
-    })
+    mutate_from_board(
+        repository,
+        contract,
+        BoardRead::All { family: None },
+        |board| {
+            let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
+            Ok((
+                CommandKind::TaskOopsAdd,
+                vec![Witness::Absence { task: stamp }],
+                serde_json::to_value(body).expect("typed intent encodes"),
+            ))
+        },
+    )
 }
 
 pub(crate) fn submit_task_add(
@@ -29,14 +34,19 @@ pub(crate) fn submit_task_add(
         Ok(key) => key,
         Err(outcome) => return outcome,
     };
-    let outcome = mutate_from_board(repository, contract, |board| {
-        let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
-        Ok((
-            CommandKind::TaskAdd,
-            vec![Witness::Absence { task: stamp }],
-            serde_json::to_value(body).expect("typed intent encodes"),
-        ))
-    });
+    let outcome = mutate_from_board(
+        repository,
+        contract,
+        BoardRead::All { family: None },
+        |board| {
+            let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
+            Ok((
+                CommandKind::TaskAdd,
+                vec![Witness::Absence { task: stamp }],
+                serde_json::to_value(body).expect("typed intent encodes"),
+            ))
+        },
+    );
     attach_steering_origin_artifacts(repository, steering_origin.as_ref(), outcome)
 }
 
@@ -233,14 +243,19 @@ pub(crate) fn submit_taste_proposal(
     body: TasteProposalAdd,
 ) -> Outcome<CommandAnswer> {
     for attempt in 0..2 {
-        let outcome = mutate_from_board(repository, contract, |board| {
-            let task = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
-            Ok((
-                CommandKind::TasteProposalAdd,
-                vec![Witness::Absence { task }],
-                serde_json::to_value(body.clone()).expect("typed intent encodes"),
-            ))
-        });
+        let outcome = mutate_from_board(
+            repository,
+            contract,
+            BoardRead::All { family: None },
+            |board| {
+                let task = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
+                Ok((
+                    CommandKind::TasteProposalAdd,
+                    vec![Witness::Absence { task }],
+                    serde_json::to_value(body.clone()).expect("typed intent encodes"),
+                ))
+            },
+        );
         if attempt == 0
             && matches!(
                 &outcome,
@@ -285,11 +300,12 @@ where
         &BoardTask,
     ) -> Result<ClientMapping, Outcome<CommandAnswer>>,
 {
-    mutate_from_board(repository, contract, |board| {
-        let written = required(matches, "HANDLE");
-        let task = written
-            .parse::<TaskHandle>()
-            .map_err(|error| refusal("task::handle-invalid", Some(written), &error.to_string()))?;
+    let (task, read) = match mutation_read(matches) {
+        Ok(read) => read,
+        Err(outcome) => return outcome,
+    };
+    let task = task.expect("generated mutation syntax requires a task handle");
+    mutate_from_board(repository, contract, read, |board| {
         let heads = task_heads(&board, &task)?;
         map(&board, task, heads)
     })
@@ -298,12 +314,13 @@ where
 pub(super) fn mutate_from_board<F>(
     repository: &Repository,
     contract: &Contract,
+    read: BoardRead,
     map: F,
 ) -> Outcome<CommandAnswer>
 where
     F: FnOnce(BoardAnswer) -> Result<ClientMapping, Outcome<CommandAnswer>>,
 {
-    let board = match current_board(repository) {
+    let board = match current_board(repository, read) {
         Ok(board) => board,
         Err(outcome) => return outcome,
     };
@@ -316,6 +333,7 @@ where
 
 pub(crate) fn current_board(
     repository: &Repository,
+    read: BoardRead,
 ) -> Result<BoardAnswer, Outcome<CommandAnswer>> {
     let contract = crate::cli::contract(&["board"]).expect("board read contract is registered");
     match crate::command_client::execute_typed(
@@ -323,7 +341,7 @@ pub(crate) fn current_board(
         contract,
         CommandKind::BoardRead,
         Vec::new(),
-        &BoardRead { family: None },
+        &read,
     ) {
         Outcome::Reply(Reply {
             body: CommandAnswer::Board(board),
@@ -336,4 +354,74 @@ pub(crate) fn current_board(
         Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
         Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
     }
+}
+
+/// Read only the mutation's named identities and required graph context.
+/// New followups still need the complete retained birth-stamp inventory.
+pub(super) fn mutation_read(
+    matches: &ArgMatches,
+) -> Result<(Option<TaskHandle>, BoardRead), Outcome<CommandAnswer>> {
+    let task = matches
+        .get_one::<String>("HANDLE")
+        .map(|written| {
+            written.parse::<TaskHandle>().map_err(|error| {
+                refusal(
+                    "task::handle-invalid",
+                    Some(written.clone()),
+                    &error.to_string(),
+                )
+            })
+        })
+        .transpose()?;
+    if matches
+        .try_get_many::<String>("then")
+        .ok()
+        .flatten()
+        .is_some()
+    {
+        return Ok((task, BoardRead::All { family: None }));
+    }
+    let mut tasks: Vec<_> = task
+        .iter()
+        .map(|task| {
+            task.born()
+                .expect("a parsed handle carries a canonical task stamp")
+        })
+        .collect();
+    let mut dependencies = false;
+    for argument in ["AFTER", "followup"] {
+        for written in matches
+            .try_get_many::<String>(argument)
+            .ok()
+            .flatten()
+            .into_iter()
+            .flatten()
+        {
+            let dependency = written.parse::<TaskHandle>().map_err(|error| {
+                refusal(
+                    if argument == "AFTER" {
+                        "task::dependency-invalid"
+                    } else {
+                        "task::handle-invalid"
+                    },
+                    (argument != "AFTER").then(|| written.clone()),
+                    &error.to_string(),
+                )
+            })?;
+            tasks.push(
+                dependency
+                    .born()
+                    .expect("a parsed handle carries a canonical task stamp"),
+            );
+            dependencies = true;
+        }
+    }
+    Ok((
+        task,
+        BoardRead::Tasks {
+            claims: tasks.is_empty(),
+            tasks,
+            dependencies,
+        },
+    ))
 }
