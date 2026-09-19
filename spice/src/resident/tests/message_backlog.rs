@@ -629,20 +629,35 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
         panic!("expected message snapshot")
     };
     let before = Some(messages[0].locus);
-
-    fs::remove_dir_all(&tape_path).expect("old tape source is removed");
-    let error = source
-        .message_history(
+    let history_page = |id, before| {
+        source.message_history(
             &accepted,
             &wire::StreamRequest::MessageHistory {
                 v: wire::WireVersion::CURRENT,
-                id: test_uuid(69),
+                id: test_uuid(id),
                 epoch,
                 lane,
                 before,
             },
         )
-        .expect_err("a missing authenticated source is refused");
+    };
+
+    fs::remove_dir_all(&tape_path).expect("old tape source is removed");
+    let cached = history_page(71, before)
+        .expect("retained history does not reread a missing durable source");
+    let wire::StreamFrame::MessageHistory { messages, more, .. } = cached else {
+        panic!("expected retained look-behind page");
+    };
+    assert_eq!(
+        messages
+            .iter()
+            .map(|message| message.text.as_str())
+            .collect::<Vec<_>>(),
+        ["message 54"],
+    );
+    assert!(more, "the cached page preserves the durable frontier");
+    let before = Some(messages[0].locus);
+    let error = history_page(69, before).expect_err("a missing authenticated source is refused");
     assert!(
         format!("{error:?}").contains("transcript source disappeared"),
         "source disappearance remains explicit: {error:?}",
@@ -653,18 +668,7 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
         .tee(history.as_bytes())
         .expect("replacement history is captured");
 
-    let error = source
-        .message_history(
-            &accepted,
-            &wire::StreamRequest::MessageHistory {
-                v: wire::WireVersion::CURRENT,
-                id: test_uuid(70),
-                epoch,
-                lane,
-                before,
-            },
-        )
-        .expect_err("a stale source cursor is refused");
+    let error = history_page(70, before).expect_err("a stale source cursor is refused");
     assert!(
         format!("{error:?}").contains("transcript source changed"),
         "replacement diagnosis preserves the source mismatch: {error:?}",

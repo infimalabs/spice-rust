@@ -388,6 +388,48 @@ impl MessageHistoryProvider for FixtureHistory {
 }
 
 #[test]
+fn cold_readers_page_a_full_cache_without_reading_the_provider() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    let history = Arc::new(FixtureHistory {
+        messages: Vec::new(),
+        page_limit: usize::MAX,
+        reads: AtomicUsize::new(0),
+    });
+    publisher.set_history_provider(history.clone()).unwrap();
+    for lane in [0xe5, 0xe6] {
+        for offset in 0..MESSAGE_CAPACITY as u64 {
+            publisher.publish(message(lane, offset)).unwrap();
+        }
+    }
+    for reader in [0xc4, 0xc5] {
+        let (_, frames) = source
+            .begin(
+                &accepted(Actor::Operator),
+                &request(reader, vec![ViewSubject::Messages], None),
+            )
+            .unwrap();
+        let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+            panic!("expected initial messages");
+        };
+        for lane in [0xe5, 0xe6] {
+            let restored = complete_lane_history(&source, message(lane, 0).lane, messages, more);
+            assert_eq!(
+                restored
+                    .iter()
+                    .map(|message| message.locus.offset)
+                    .collect::<Vec<_>>(),
+                (0..MESSAGE_CAPACITY as u64).collect::<Vec<_>>(),
+            );
+        }
+    }
+    assert_eq!(history.reads.load(Ordering::Relaxed), 0);
+    drop(source);
+    bus.shutdown().unwrap();
+}
+
+#[test]
 fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
     let bus = fixture(1);
     let source = Source::new(bus.reader(), epoch(), 10);
@@ -449,6 +491,25 @@ fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
         updates.try_recv(),
         Err(tokio::sync::broadcast::error::TryRecvError::Empty)
     ));
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc5, vec![ViewSubject::Messages], None),
+        )
+        .expect("new reader subscribes after source exhaustion");
+    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+        panic!("expected new reader snapshot");
+    };
+    assert_eq!(
+        complete_lane_history(&source, lane, messages, more),
+        restored,
+        "each reader traverses the same retained history, including current presentation",
+    );
+    assert_eq!(
+        history.reads.load(Ordering::Relaxed),
+        2,
+        "a new reader does not reopen the exhausted provider",
+    );
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
@@ -631,6 +692,33 @@ fn a_full_page_that_exhausts_capacity_closes_after_compaction_trimming() {
         history.reads.load(Ordering::Relaxed),
         4,
         "four full pages exhaust the cumulative 256-card budget",
+    );
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc5, vec![ViewSubject::Messages], None),
+        )
+        .expect("new reader subscribes after capacity closure");
+    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+        panic!("expected new reader snapshot");
+    };
+    let restored = complete_lane_history(&source, lane, messages, more);
+    assert_eq!(
+        restored
+            .iter()
+            .map(|message| message.locus.offset)
+            .collect::<Vec<_>>(),
+        (80..300).collect::<Vec<_>>(),
+        "compaction trimming does not make retained pages inaccessible",
+    );
+    let oldest = restored.first().unwrap().locus;
+    let page = publisher.feed.history(lane, Some(oldest)).unwrap().unwrap();
+    assert!(page.messages.is_empty());
+    assert!(!page.more);
+    assert_eq!(
+        history.reads.load(Ordering::Relaxed),
+        4,
+        "space freed by compaction does not reopen the source budget",
     );
 
     drop(source);
