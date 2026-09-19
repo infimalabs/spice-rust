@@ -277,7 +277,6 @@ fn staged_app_seed_callers_are_fully_inventoried() {
             "cli.rs",
             "consent_cli.rs",
             "demo_cli.rs",
-            "gate_admission_benchmark.rs",
             "gate_routing_admission.rs",
             "journal_cli.rs",
             "steering.rs",

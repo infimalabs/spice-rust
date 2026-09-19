@@ -508,13 +508,13 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     let pending = concat!(
         "> [ACK PENDING] First direction.\n\n",
         "Nope 1kQwPZtM: One response.\n",
-        "> Second direction.\n\n",
+        "> [NACK] Second direction.\n\n",
         "Unsafe."
     );
     let acknowledged = concat!(
         "> [ACK] First direction.\n\n",
         "Nope 1kQwPZtM: One response.\n",
-        "> Second direction.\n\n",
+        "> [NACK] Second direction.\n\n",
         "Unsafe."
     );
 
@@ -677,13 +677,20 @@ fn assert_mixed_acknowledgement_message(
             .count(),
         1
     );
-    assert_eq!(messages[0].text.matches("> Second direction.").count(), 1);
+    assert_eq!(
+        messages[0]
+            .text
+            .matches("> [NACK] Second direction.")
+            .count(),
+        1
+    );
     assert_eq!(messages[0].text.matches("[ACK").count(), 1);
     assert_eq!(
         messages[0].badges,
         wire::AgentMessageBadges {
             acknowledgements: u32::from(marker == wire::stream::ACK_MARKER),
             pending: u32::from(marker == wire::stream::ACK_PENDING_MARKER),
+            declines: 1,
             ..wire::AgentMessageBadges::default()
         },
         "the badge counts agree with the card text"

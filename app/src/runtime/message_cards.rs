@@ -294,6 +294,7 @@ mod tests {
             broadcasts: 0,
             reviews: 0,
             pending: 0,
+            declines: 0,
         };
         assert!(cards.merge(std::iter::once(&badged)));
         assert_eq!(cards.entries().len(), 1);
