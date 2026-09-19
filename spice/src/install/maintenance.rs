@@ -5,9 +5,6 @@ use std::fs::File;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[cfg(debug_assertions)]
-use std::sync::OnceLock;
-
 use rustix::fs::{self as unix_fs, AtFlags, Dir, FileType, Mode, OFlags};
 use rustix::io::Errno;
 use rustix::process::{Pid, geteuid, test_kill_process};
@@ -22,11 +19,6 @@ const SUFFIX: &[u8] = b".tmp";
 const ENTRY_LIMIT: usize = 4096;
 const CANDIDATE_LIMIT: usize = 32;
 const STALE_GRACE: Duration = Duration::from_secs(60 * 60);
-#[cfg(debug_assertions)]
-const TEST_NOW_ACTION_PREFIX: &str = "maintenance-now:";
-
-#[cfg(debug_assertions)]
-static TEST_NOW: OnceLock<Result<Option<SystemTime>, String>> = OnceLock::new();
 
 /// Read-only evidence about crashed install-record publication files.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -94,7 +86,7 @@ impl InstallTempInspection {
 pub fn inspect_temporary_records(
     repository: &Repository,
 ) -> Result<InstallTempInspection, InstallError> {
-    let now = current_time()?;
+    let now = SystemTime::now();
     let mut report = scan(repository, false, now, process_state, |_, _| Ok(()))?;
     scan_rollback_blobs(repository, now, false, &mut report)?;
     Ok(report)
@@ -104,7 +96,7 @@ pub fn inspect_temporary_records(
 pub fn reclaim_temporary_records(
     repository: &Repository,
 ) -> Result<InstallTempInspection, InstallError> {
-    let now = current_time()?;
+    let now = SystemTime::now();
     let mut report = scan(repository, true, now, process_state, |_, _| Ok(()))?;
     scan_rollback_blobs(repository, now, true, &mut report)?;
     Ok(report)
@@ -155,44 +147,6 @@ fn scan_rollback_blobs(
         })?;
     report.unsafe_candidates.extend(blobs.unsafe_candidates);
     Ok(())
-}
-
-#[cfg(debug_assertions)]
-pub(super) fn configure_test_now(action: Option<std::ffi::OsString>) {
-    let parsed = parse_test_now(action.as_deref());
-    TEST_NOW
-        .set(parsed)
-        .expect("test maintenance clock is configured once at startup");
-}
-
-#[cfg(debug_assertions)]
-fn parse_test_now(action: Option<&std::ffi::OsStr>) -> Result<Option<SystemTime>, String> {
-    action.map_or(Ok(None), |action| {
-        let action = action
-            .to_str()
-            .ok_or_else(|| "test install action is not UTF-8".to_owned())?;
-        let Some(spelling) = action.strip_prefix(TEST_NOW_ACTION_PREFIX) else {
-            return Ok(None);
-        };
-        let seconds = spelling
-            .parse::<u64>()
-            .map_err(|error| format!("test maintenance time is invalid: {error}"))?;
-        UNIX_EPOCH
-            .checked_add(Duration::from_secs(seconds))
-            .map(Some)
-            .ok_or_else(|| "test maintenance time is unrepresentable".to_owned())
-    })
-}
-
-fn current_time() -> Result<SystemTime, InstallError> {
-    #[cfg(debug_assertions)]
-    if let Some(configured) = TEST_NOW.get() {
-        return configured
-            .clone()
-            .map(|time| time.unwrap_or_else(SystemTime::now))
-            .map_err(InstallError::InvalidRecord);
-    }
-    Ok(SystemTime::now())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -767,17 +721,6 @@ mod tests {
         assert!(timestamp(0, -1).is_none());
         assert!(timestamp(0, 1_000_000_000).is_none());
         assert_eq!(timestamp(0, 0), Some(UNIX_EPOCH));
-    }
-
-    #[test]
-    fn maintenance_clock_uses_one_explicit_install_test_action() {
-        assert_eq!(parse_test_now(None).unwrap(), None);
-        assert_eq!(parse_test_now(Some(OsStr::new("publish"))).unwrap(), None);
-        assert_eq!(
-            parse_test_now(Some(OsStr::new("maintenance-now:123"))).unwrap(),
-            Some(UNIX_EPOCH + Duration::from_secs(123)),
-        );
-        assert!(parse_test_now(Some(OsStr::new("maintenance-now:nope"))).is_err());
     }
 
     #[test]

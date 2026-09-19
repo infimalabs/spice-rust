@@ -214,7 +214,7 @@ pub(in crate::resident) fn present_closed_transcripts(
     command_surface: &command_surface::Surface<'_>,
     message_publisher: &canvas::stream::MessagePublisher,
     mut taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
-    message_state: &mut message_surface::MessageState,
+    message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     for (lane, occupant) in seats.take_vacated() {

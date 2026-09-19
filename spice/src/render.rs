@@ -53,11 +53,6 @@ pub struct Rendering {
 
 impl Rendering {
     #[cfg(test)]
-    pub(crate) const fn stream(&self) -> Stream {
-        self.stream
-    }
-
-    #[cfg(test)]
     pub(crate) fn document(&self) -> &[u8] {
         &self.document
     }

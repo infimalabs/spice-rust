@@ -4,7 +4,7 @@ use super::*;
 mod responses;
 
 use responses::{cover_packed_frames, cover_refusal_frames, cover_reply_frames};
-// Executable samples covering every custom wire-crossing identity.
+// Executable samples for wire-crossing identity.
 
 fn at(text: &str) -> Instant {
     text.parse().expect("instant")
@@ -38,39 +38,32 @@ fn moved_epoch() -> Fault {
 }
 
 #[test]
-fn every_crossing_type_obeys_the_identity_law() {
-    // Coverage accumulates across the families so one assertion can speak for
-    // the whole crate; splitting it per family would let a missing family pass.
-    let mut covered = BTreeSet::new();
-
-    cover_spellings(&mut covered);
-    cover_config_scalars(&mut covered);
-    cover_doctor_vocabularies(&mut covered);
-    cover_environment_requirements(&mut covered);
-    cover_journal_frames(&mut covered);
-    cover_task_heads(&mut covered);
-    cover_claim_heads(&mut covered);
-    cover_policy_heads(&mut covered);
-    cover_steering_heads(&mut covered);
-    cover_residency_heads(&mut covered);
-    cover_head_enums(&mut covered);
-    cover_command_frames(&mut covered);
-    cover_message_badges(&mut covered);
-    cover_history_cursors(&mut covered);
-    cover_stream_frames(&mut covered);
-    cover_packed_frames(&mut covered);
-    cover_refusal_frames(&mut covered);
-    cover_reply_frames(&mut covered);
-    cover_witness_values(&mut covered);
-    cover_vocabularies(&mut covered);
-
-    assert_coverage_is_complete(&covered);
+fn sampled_crossing_values_preserve_identity() {
+    cover_spellings();
+    cover_config_scalars();
+    cover_doctor_vocabularies();
+    cover_environment_requirements();
+    cover_journal_frames();
+    cover_task_heads();
+    cover_claim_heads();
+    cover_policy_heads();
+    cover_steering_heads();
+    cover_residency_heads();
+    cover_head_enums();
+    cover_command_frames();
+    cover_message_badges();
+    cover_history_cursors();
+    cover_stream_frames();
+    cover_packed_frames();
+    cover_refusal_frames();
+    cover_reply_frames();
+    cover_witness_values();
+    cover_vocabularies();
 }
 
 /// Canonical task constraints whose fact variants own their value semantics.
-fn cover_environment_requirements(covered: &mut BTreeSet<String>) {
+fn cover_environment_requirements() {
     law(
-        covered,
         "EnvironmentRequirements",
         &[
             EnvironmentRequirements::default(),
@@ -81,7 +74,7 @@ fn cover_environment_requirements(covered: &mut BTreeSet<String>) {
     );
 }
 
-fn cover_message_badges(covered: &mut BTreeSet<String>) {
+fn cover_message_badges() {
     let empty = AgentMessageBadges::default();
     let one = |select: fn(&mut AgentMessageBadges)| {
         let mut badges = AgentMessageBadges::default();
@@ -89,7 +82,6 @@ fn cover_message_badges(covered: &mut BTreeSet<String>) {
         badges
     };
     law(
-        covered,
         "AgentMessageBadges",
         &[
             empty,
@@ -102,7 +94,6 @@ fn cover_message_badges(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "AutomaticSpeech",
         &[
             AutomaticSpeech {
@@ -117,9 +108,8 @@ fn cover_message_badges(covered: &mut BTreeSet<String>) {
     );
 }
 
-fn cover_history_cursors(covered: &mut BTreeSet<String>) {
+fn cover_history_cursors() {
     law(
-        covered,
         "MessageHistoryCursor",
         &[
             MessageHistoryCursor {
@@ -140,21 +130,16 @@ fn cover_history_cursors(covered: &mut BTreeSet<String>) {
 }
 
 /// Closed Doctor report states and metadata spellings.
-fn cover_doctor_vocabularies(covered: &mut BTreeSet<String>) {
-    spelling_law(covered, "SpiceVariable", SpiceVariable::ALL);
-    ranked_law(covered, "DoctorSubsystem", DoctorSubsystem::ALL);
-    spelling_law(covered, "DoctorToolMode", DoctorToolMode::ALL);
-    ranked_law(covered, "DoctorToolRequirement", DoctorToolRequirement::ALL);
-    ranked_law(covered, "DoctorToolSource", DoctorToolSource::ALL);
-    ranked_law(covered, "DoctorToolBounds", DoctorToolBounds::ALL);
-    spelling_law(
-        covered,
-        "DoctorToolCancellation",
-        DoctorToolCancellation::ALL,
-    );
-    ranked_law(covered, "DoctorToolNetwork", DoctorToolNetwork::ALL);
+fn cover_doctor_vocabularies() {
+    spelling_law("SpiceVariable", SpiceVariable::ALL);
+    ranked_law("DoctorSubsystem", DoctorSubsystem::ALL);
+    spelling_law("DoctorToolMode", DoctorToolMode::ALL);
+    ranked_law("DoctorToolRequirement", DoctorToolRequirement::ALL);
+    ranked_law("DoctorToolSource", DoctorToolSource::ALL);
+    ranked_law("DoctorToolBounds", DoctorToolBounds::ALL);
+    spelling_law("DoctorToolCancellation", DoctorToolCancellation::ALL);
+    ranked_law("DoctorToolNetwork", DoctorToolNetwork::ALL);
     law(
-        covered,
         "DoctorObservation",
         &[
             DoctorObservation::Ready {},
@@ -175,9 +160,8 @@ fn cover_doctor_vocabularies(covered: &mut BTreeSet<String>) {
 }
 
 /// Shared configuration words and the typed provenance surrounding them.
-fn cover_config_scalars(covered: &mut BTreeSet<String>) {
+fn cover_config_scalars() {
     spelling_law(
-        covered,
         "DurationWord",
         &[
             "0s".parse::<DurationWord>().expect("duration word"),
@@ -190,7 +174,6 @@ fn cover_config_scalars(covered: &mut BTreeSet<String>) {
     );
 
     law(
-        covered,
         "Provenance",
         &[
             Provenance::<DurationWord>::Builtin {},
@@ -214,9 +197,8 @@ fn cover_config_scalars(covered: &mut BTreeSet<String>) {
 ///
 /// Instant's samples include sub-millisecond, pre-epoch, and boundary readings,
 /// which is the narrowing path that broke this law before.
-fn cover_spellings(covered: &mut BTreeSet<String>) {
+fn cover_spellings() {
     law(
-        covered,
         "AgentMediaReference",
         &[
             AgentMediaReference::from_media(
@@ -236,7 +218,6 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         ],
     );
     spelling_law(
-        covered,
         "Instant",
         &[
             Instant::new("0000-01-01T00:00:00Z".parse().expect("minimum wire year"))
@@ -251,7 +232,6 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         ],
     );
     spelling_law(
-        covered,
         "CanonicalUuid",
         &[
             uuid("018f82d4-6f59-7d06-92e3-bce9131163c2"),
@@ -259,18 +239,15 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         ],
     );
     spelling_law(
-        covered,
         "TaskHandle",
         &[handle("SPICE-1kKRRsDP"), handle("WIRE-1kJJP2Qc")],
     );
     spelling_law(
-        covered,
         "TaskStamp",
         &[stamp("00000000"), stamp("00000001"), stamp("0000000B")],
     );
-    spelling_law(covered, "Phase", &[phase("todo"), phase("review")]);
+    spelling_law("Phase", &[phase("todo"), phase("review")]);
     spelling_law(
-        covered,
         "Origin",
         &[
             "task:SPICE-1kKRRsDP".parse::<Origin>().expect("origin"),
@@ -278,7 +255,6 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         ],
     );
     spelling_law(
-        covered,
         "FoldName",
         &[
             "board::ready".parse::<FoldName>().expect("fold name"),
@@ -286,7 +262,6 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
         ],
     );
     spelling_law(
-        covered,
         "Actor",
         &[
             Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163c2")),
@@ -297,25 +272,23 @@ fn cover_spellings(covered: &mut BTreeSet<String>) {
     // reads it as a number: `9` before `10`, which is the reverse of how the
     // two spell. Samples span that step so the fixture pins the numeric order
     // rather than a lexical one that happens to agree on the samples chosen.
-    ranked_law(covered, "Seq", &[seq(1), seq(9), seq(10), seq(48213)]);
+    ranked_law("Seq", &[seq(1), seq(9), seq(10), seq(48213)]);
     spelling_law(
-        covered,
         "Name",
         &[
             "next".parse::<Name>().expect("name"),
             "reads".parse::<Name>().expect("name"),
         ],
     );
-    spelling_law(covered, "Digest", &[digest("a"), digest("b")]);
+    spelling_law("Digest", &[digest("a"), digest("b")]);
 }
 
 /// The frames that rest in the journal.
 ///
 /// These derive only Eq and inherit the law structurally, so their samples vary
 /// one field at a time against a shared base.
-fn cover_journal_frames(covered: &mut BTreeSet<String>) {
+fn cover_journal_frames() {
     law(
-        covered,
         "Envelope",
         &[
             Envelope {
@@ -339,7 +312,6 @@ fn cover_journal_frames(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "Fact",
         &[
             Fact::new(body("checked")),
@@ -352,7 +324,6 @@ fn cover_journal_frames(covered: &mut BTreeSet<String>) {
     // get the row back — and the samples are the typed bodies above so a drift
     // between the two readings would show up here as a byte difference.
     law(
-        covered,
         "AnyFact",
         &[
             any_fact(Fact::new(body("checked"))),
@@ -368,12 +339,11 @@ fn any_fact<F: wire::Body>(fact: Fact<F>) -> AnyFact {
 }
 
 /// Task statement and workflow heads.
-fn cover_task_heads(covered: &mut BTreeSet<String>) {
+fn cover_task_heads() {
     let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
     let task = stamp("1kKRRsDP");
 
     law(
-        covered,
         "TaskHead",
         &[
             TaskHead {
@@ -413,7 +383,6 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "WorkflowHead",
         &[
             WorkflowHead {
@@ -445,12 +414,11 @@ fn cover_task_heads(covered: &mut BTreeSet<String>) {
 }
 
 /// Claim possession and lease heads.
-fn cover_claim_heads(covered: &mut BTreeSet<String>) {
+fn cover_claim_heads() {
     let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
     let second_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
 
     law(
-        covered,
         "ClaimHead",
         &[
             ClaimHead {
@@ -484,7 +452,6 @@ fn cover_claim_heads(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "LeaseHead",
         &[
             LeaseHead {
@@ -506,9 +473,8 @@ fn cover_claim_heads(covered: &mut BTreeSet<String>) {
 }
 
 /// Witness, trust, and gate-finding heads.
-fn cover_policy_heads(covered: &mut BTreeSet<String>) {
+fn cover_policy_heads() {
     law(
-        covered,
         "WitnessHead",
         &[
             WitnessHead {
@@ -526,7 +492,6 @@ fn cover_policy_heads(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "TrustHead",
         &[
             TrustHead {
@@ -542,7 +507,6 @@ fn cover_policy_heads(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "FindingHead",
         &[
             FindingHead {
@@ -566,11 +530,10 @@ fn cover_policy_heads(covered: &mut BTreeSet<String>) {
 }
 
 /// Steering heads with absent and present optional history.
-fn cover_steering_heads(covered: &mut BTreeSet<String>) {
+fn cover_steering_heads() {
     let directive = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
     let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
     law(
-        covered,
         "SteeringHead",
         &[
             SteeringHead {
@@ -618,7 +581,7 @@ fn cover_steering_heads(covered: &mut BTreeSet<String>) {
 }
 
 /// Resident generation, lane, and cursor heads.
-fn cover_residency_heads(covered: &mut BTreeSet<String>) {
+fn cover_residency_heads() {
     let first_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
     let second_uuid = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
 
@@ -669,12 +632,8 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
     let recorded_session = occupied.session.clone().expect("occupied session");
     let mut unrecorded_session = recorded_session.clone();
     unrecorded_session.launch = None;
-    law(
-        covered,
-        "LaneSession",
-        &[recorded_session, unrecorded_session],
-    );
-    law(covered, "LaneResidency", &[occupied.clone(), empty.clone()]);
+    law("LaneSession", &[recorded_session, unrecorded_session]);
+    law("LaneResidency", &[occupied.clone(), empty.clone()]);
     let drive = TeamSubscription {
         team: first_uuid,
         policy: wire::intent::TeamLife::Drive,
@@ -683,9 +642,8 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
         team: second_uuid,
         policy: wire::intent::TeamLife::Steer,
     };
-    law(covered, "TeamSubscription", &[drive.clone(), steer.clone()]);
+    law("TeamSubscription", &[drive.clone(), steer.clone()]);
     law(
-        covered,
         "ResidencyHead",
         &[
             ResidencyHead {
@@ -707,7 +665,6 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "CursorHead",
         &[
             CursorHead {
@@ -723,19 +680,13 @@ fn cover_residency_heads(covered: &mut BTreeSet<String>) {
 }
 
 /// Closed enums carried inside authoritative heads.
-fn cover_head_enums(covered: &mut BTreeSet<String>) {
+fn cover_head_enums() {
     law(
-        covered,
         "ClaimDisposition",
         &[ClaimDisposition::Active, ClaimDisposition::Freed],
     );
+    law("FindingState", &[FindingState::Open, FindingState::Cleared]);
     law(
-        covered,
-        "FindingState",
-        &[FindingState::Open, FindingState::Cleared],
-    );
-    law(
-        covered,
         "WitnessClass",
         &[WitnessClass::Assignment, WitnessClass::Transition],
     );
@@ -747,9 +698,8 @@ fn cover_head_enums(covered: &mut BTreeSet<String>) {
 /// generic one, so the pairwise arm reads canonical bytes. Its samples carry
 /// several witnesses in more than one order, because a single-witness sample
 /// cannot tell a sorted encoding from an unsorted one.
-fn cover_command_frames(covered: &mut BTreeSet<String>) {
-    law_under(
-        covered,
+fn cover_command_frames() {
+    assert_identity_law(
         "Command",
         &[
             command("task::done", vec![task_witness()]),
@@ -767,9 +717,7 @@ fn cover_command_frames(covered: &mut BTreeSet<String>) {
         ],
         canonical_command_identity,
     );
-    cover_witness_values(covered);
     law(
-        covered,
         "Hello",
         &[
             Hello {
@@ -785,7 +733,6 @@ fn cover_command_frames(covered: &mut BTreeSet<String>) {
         ],
     );
     law(
-        covered,
         "Accepted",
         &[
             Accepted {
@@ -813,7 +760,7 @@ fn cover_command_frames(covered: &mut BTreeSet<String>) {
 /// cursor and a fault omits an unavailable correlation id. Sampling every arm,
 /// both optional states, and both packed row types proves those renderings are
 /// the complete value rather than an identity-losing fold.
-fn cover_stream_frames(covered: &mut BTreeSet<String>) {
+fn cover_stream_frames() {
     let epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c3");
     let next_epoch = uuid("018f82d4-6f59-7d06-92e3-bce9131163c4");
     let first_id = uuid("018f82d4-6f59-7d06-92e3-bce9131163d1");
@@ -822,9 +769,8 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
         epoch,
         seq: seq(48213),
     };
-    cover_operator_directions(covered, first_id, second_id);
+    cover_operator_directions(first_id, second_id);
     law(
-        covered,
         "AgentMessage",
         &[
             AgentMessage {
@@ -897,13 +843,12 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
         ],
     );
     let requests = stream_request_samples(epoch, first_id, second_id, cursor);
-    law(covered, "StreamRequest", &requests);
+    law("StreamRequest", &requests);
 
     let first_fact = opaque_stream_envelope(48213, None, "checked");
     let second_fact = opaque_stream_envelope(48214, Some(48213), "verified");
     let lane_fact = stream_lane_seated(48215, Some(48214));
     law(
-        covered,
         "StreamFact",
         &[first_fact.clone(), second_fact.clone(), lane_fact],
     );
@@ -931,16 +876,11 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
     frames.extend(stream_boundary_samples(
         epoch, next_epoch, first_id, second_id, cursor,
     ));
-    law(covered, "StreamFrame", &frames);
+    law("StreamFrame", &frames);
 }
 
-fn cover_operator_directions(
-    covered: &mut BTreeSet<String>,
-    first_id: CanonicalUuid,
-    second_id: CanonicalUuid,
-) {
+fn cover_operator_directions(first_id: CanonicalUuid, second_id: CanonicalUuid) {
     law(
-        covered,
         "OperatorDirection",
         &[
             OperatorDirection {
@@ -1184,9 +1124,8 @@ fn stream_lane_seated(position: u64, cause: Option<u64>) -> StreamFact {
 /// than over its spelling, so each states that sequence in full and the
 /// fixture pins it. Reordering a variant is then a failing test naming the
 /// pair that moved, not a silent change to how a rendered column sorts.
-fn cover_witness_values(covered: &mut BTreeSet<String>) {
+fn cover_witness_values() {
     ranked_law(
-        covered,
         "Witness",
         &[
             Witness::Task {

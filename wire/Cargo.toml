@@ -16,7 +16,6 @@ thiserror = "2.0.19"
 uuid = { version = "1.24.0", features = ["serde"] }
 
 [dev-dependencies]
-syn = { version = "3.0.3", features = ["full", "visit"] }
 toml = "1.1.4"
 
 [lints]

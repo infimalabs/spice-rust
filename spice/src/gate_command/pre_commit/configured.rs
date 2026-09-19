@@ -116,10 +116,6 @@ impl StepReport {
         &self.selected_paths
     }
 
-    pub(super) fn argv(&self) -> &[String] {
-        &self.argv
-    }
-
     pub(super) const fn enabled(&self) -> bool {
         self.enabled
     }
@@ -135,17 +131,6 @@ impl StepReport {
 pub(super) struct StepFinding {
     kind: StepFindingKind,
     detail: String,
-}
-
-#[cfg(test)]
-impl StepFinding {
-    pub(super) const fn kind(&self) -> StepFindingKind {
-        self.kind
-    }
-
-    pub(super) fn detail(&self) -> &str {
-        &self.detail
-    }
 }
 
 /// Closed failure vocabulary for configured process supervision.
@@ -929,36 +914,6 @@ fn execute_steps_with_progress(
         source: source.clone(),
         steps: reports,
     })
-}
-
-#[cfg(test)]
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the test seam retains the complete configured execution contract without a live progress sink"
-)]
-fn execute_steps(
-    commands: &[PreCommitStep],
-    source: &Digest,
-    staged_paths: &[String],
-    root: &Path,
-    base_environment: &[(OsString, OsString)],
-    spice: Option<&Path>,
-    bounds: ExecutionBounds,
-    cancellation: Cancellation,
-    verify: &mut impl FnMut() -> Result<(), ConfiguredFailure>,
-) -> Result<ConfiguredReport, ConfiguredFailure> {
-    execute_steps_with_progress(
-        commands,
-        source,
-        staged_paths,
-        root,
-        base_environment,
-        spice,
-        bounds,
-        cancellation,
-        None,
-        verify,
-    )
 }
 
 struct SourceGateProgressObserver {

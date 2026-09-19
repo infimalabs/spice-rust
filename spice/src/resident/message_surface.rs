@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
 use bus::Bus;
@@ -17,6 +18,7 @@ use super::{
 mod acknowledgement;
 mod automatic_speech;
 mod backlog;
+mod live;
 mod pending;
 mod projection;
 mod session_compaction;
@@ -45,6 +47,7 @@ const HISTORY_DURATION: Duration = Duration::from_secs(5);
 #[cfg(test)]
 pub(super) use backlog::restore_agent_messages;
 pub(super) use backlog::{BacklogReader, restore_agent_messages_indexed};
+pub(super) use live::LiveMessages;
 pub(super) use session_compaction::SessionCompactions;
 pub(super) use tool_preview::CallPreviews;
 
@@ -91,12 +94,12 @@ impl<'a, P> CaptureSurfaces<'a, P> {
 
 /// Mutable per-record fold state at the admitted capture boundary.
 pub(super) struct CaptureViews<'a> {
-    state: &'a mut MessageState,
+    state: &'a Mutex<MessageState>,
     diagnostic: &'a mut dyn io::Write,
 }
 
 impl<'a> CaptureViews<'a> {
-    pub(super) fn new(state: &'a mut MessageState, diagnostic: &'a mut dyn io::Write) -> Self {
+    pub(super) fn new(state: &'a Mutex<MessageState>, diagnostic: &'a mut dyn io::Write) -> Self {
         Self { state, diagnostic }
     }
 }
@@ -108,6 +111,15 @@ pub(in crate::resident) struct MessageState {
     prose: BTreeMap<CanonicalUuid, ProseState>,
     pending: pending::PendingPresentations,
     pub(in crate::resident) narration: super::narration::Streaks,
+    presented: BTreeMap<(CanonicalUuid, CanonicalUuid, Option<CanonicalUuid>), listen::Position>,
+}
+
+pub(in crate::resident) fn lock_state(
+    state: &Mutex<MessageState>,
+) -> CommandResult<MutexGuard<'_, MessageState>> {
+    state
+        .lock()
+        .map_err(|error| store_fault("canvas::message-state-unavailable", &error.to_string()))
 }
 
 #[derive(Debug)]
@@ -266,14 +278,13 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
     // responsibility for, rather than leaving the gap for the next start to
     // find. A record the resident did not accept above does not account either.
     //
-    // The sweep is also the unit of presentation. A notice is one datagram
-    // through a finite kernel queue and may never arrive, but every record the
-    // sweep accounted is on the tape, so each of them is presented here rather
-    // than only the one this notice named.
+    // Live projection can already have displayed these bytes without waiting
+    // for the writer. This sweep catches records whose finite-queue notice
+    // never arrived; the shared presentation position prevents duplicates.
     let mut observations =
         super::ingest_transcripts(bus, surfaces.paths, Some(record.lane), views.diagnostic)?;
     let swept = sweep::swept_records(record, &mut observations);
-    views.state.observations.extend(observations);
+    lock_state(views.state)?.observations.extend(observations);
     sweep::present_swept(
         bus,
         epoch,
@@ -298,8 +309,8 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
 /// steering by interjection.
 ///
 /// Such a lane runs no ack command: what it says is its answer, and the
-/// sweep that presented it hears it. A lane that retires its own keys on the
-/// command line is left to that path, or its command would find them gone.
+/// accounting sweep hears it even if live projection displayed it first.
+/// A lane that retires its own keys on the command line keeps that authority.
 fn hear_swept(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -339,10 +350,9 @@ fn hear_swept(
 ///
 /// An occupant writes its last records moments before it exits, and the exit
 /// can be accounted before their notices are read; a notice read afterwards
-/// no longer names the seated occupant and is refused. Nothing else sweeps
-/// the tape until a restart, so the final answer never reached the Canvas.
-/// The closing sweep runs once per vacated seat, in the loop turn that
-/// vacated it, and presents the range in tape order under that occupant.
+/// no longer names the seated occupant and is refused. The closing sweep
+/// runs once per vacated seat, before a successor starts, and projects any
+/// remaining records in tape order under that occupant.
 pub(super) fn present_closed_transcript<P: AgentMessagePublisher>(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -355,7 +365,7 @@ pub(super) fn present_closed_transcript<P: AgentMessagePublisher>(
     let mut observations =
         super::ingest_transcripts(bus, surfaces.paths, Some(lane), views.diagnostic)?;
     let swept = sweep::closing_records(lane, occupant, &mut observations);
-    views.state.observations.extend(observations);
+    lock_state(views.state)?.observations.extend(observations);
     sweep::present_swept(
         bus,
         epoch,

@@ -29,7 +29,7 @@ struct Occupied<'a> {
     occupant: CanonicalUuid,
     tape: tape::Tape,
     seats: Seats,
-    state: MessageState,
+    state: std::sync::Mutex<MessageState>,
     diagnostics: Vec<u8>,
 }
 
@@ -48,7 +48,7 @@ impl Occupied<'_> {
             surfaces,
             None,
             &noticed(self.lane, self.occupant, bytes, locus),
-            CaptureViews::new(&mut self.state, &mut self.diagnostics),
+            CaptureViews::new(&self.state, &mut self.diagnostics),
         )
         .expect("the notice is accepted");
     }
@@ -115,7 +115,7 @@ fn a_silent_lane_is_prodded_through_the_hook_and_falls_silent_once_it_speaks() {
         tape: tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
             .expect("the lane tape opens"),
         seats,
-        state: MessageState::default(),
+        state: std::sync::Mutex::new(MessageState::default()),
         diagnostics: Vec::new(),
     };
     let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
