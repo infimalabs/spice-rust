@@ -677,6 +677,13 @@ async function retainFinalCard(page, console, activityReplay, lane) {
       && !candidate.classList.contains("final")
       && candidate.querySelector(".message-badge--final") === null;
   }, message.key);
+  const ordinary = await finalFlipGeometry(card);
+  assert.ok(ordinary.reserved, "ordinary prose holds a FINAL footprint in its footer");
+  assert.deepEqual(
+    { ...ordinary.reserved, width: ordinary.reserved.width > 0 },
+    { hidden: true, ariaHidden: "true", text: "FINAL", width: true },
+    "the held FINAL footprint is hidden from readers and occupies footer width",
+  );
   await activityReplay.reviseAgentFinal(page, message.key);
   await waitForPage(page, "final message commits", TRANSITION_MS, (key) => {
     const candidate = document.querySelector(`[data-mosaic-card-key="${key}"]`);
@@ -686,7 +693,61 @@ async function retainFinalCard(page, console, activityReplay, lane) {
         .map((badge) => badge.textContent).join(",") === "FINAL"
       && candidate.querySelector("blockquote > p > .message-ack-pill")?.textContent === "ACK";
   }, message.key);
+  const final = await finalFlipGeometry(card);
+  assert.equal(final.reserved, null, "the raised card shows the FINAL badge itself");
+  assert.deepEqual(
+    final.layout,
+    ordinary.layout,
+    "raising a prose card to FINAL changes no measured geometry",
+  );
+  assert.ok(
+    Math.abs(final.badgeWidth - ordinary.reserved.width) <= 1,
+    `the FINAL badge fills the footprint it was held (${final.badgeWidth} vs ${ordinary.reserved.width})`,
+  );
   return card;
+}
+
+// Every rectangle the FINAL flip could move: the card's mosaic placement, its
+// body, and each footer cluster. Colors and the badge are deliberately absent;
+// they are the flip.
+async function finalFlipGeometry(card) {
+  return card.evaluate((article) => {
+    const round = (value) => Math.round(value * 100) / 100;
+    const bounds = (node) => {
+      if (!node) {
+        return null;
+      }
+      const box = node.getBoundingClientRect();
+      return { left: round(box.left), top: round(box.top), width: round(box.width), height: round(box.height) };
+    };
+    const footer = article.querySelector(".message-footer");
+    const reserved = article.querySelector(".message-badges--reserved .message-badge--reserved");
+    const badge = article.querySelector(".message-badge--final");
+    return {
+      layout: {
+        card: bounds(article),
+        rows: article.dataset.rows,
+        span: article.dataset.span,
+        track: article.dataset.track,
+        body: bounds(article.querySelector(".message-body")),
+        quote: bounds(article.querySelector("blockquote")),
+        footer: bounds(footer),
+        columns: getComputedStyle(footer).gridTemplateColumns,
+        footerLeft: bounds(article.querySelector(".message-footer-left")),
+        footerRight: bounds(article.querySelector(".message-footer-right")),
+        age: bounds(article.querySelector(".message-age")),
+        agent: bounds(article.querySelector(".message-agent-name")),
+        actions: bounds(article.querySelector(".message-actions")),
+      },
+      reserved: reserved && {
+        hidden: getComputedStyle(reserved).visibility === "hidden",
+        ariaHidden: reserved.parentElement.getAttribute("aria-hidden"),
+        text: reserved.textContent,
+        width: bounds(reserved).width,
+      },
+      badgeWidth: badge ? bounds(badge).width : null,
+    };
+  });
 }
 
 async function retainToolCard(page, console, activityReplay, lane) {

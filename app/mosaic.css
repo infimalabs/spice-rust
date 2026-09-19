@@ -979,6 +979,11 @@ html[data-command-modifier-held="true"]
   text-transform: uppercase;
   white-space: nowrap;
 }
+/* A prose card holds the FINAL badge's footprint before the turn-ending
+   record raises it, so the flip repaints colors and never moves the footer. */
+.team-surface .message-badges--reserved .message-badge--reserved {
+  visibility: hidden;
+}
 .team-surface .message-badge-count {
   padding: 0 5px;
   border-radius: 999px;
