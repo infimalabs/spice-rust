@@ -22,7 +22,9 @@ mod projection;
 mod session_compaction;
 mod sweep;
 mod tool_preview;
-use acknowledgement::{ContextState, present_steering_acknowledgements_with_directives};
+use acknowledgement::{
+    ContextState, present_steering_acknowledgements_with_directives, scan_presentations,
+};
 pub(in crate::resident) use pending::settle_pending_presentations;
 #[cfg(test)]
 pub(super) use projection::publish_agent_messages;
@@ -646,20 +648,20 @@ fn message_badges(
     }
 }
 
-/// Every key this prose positively acknowledges with authority over this event.
+/// Every key this prose positively acknowledges for display in this source.
 fn positively_acknowledged_keys(
     text: &str,
     standing: &EventDirectives<'_>,
 ) -> BTreeSet<steer::Key> {
     let mut acknowledged = BTreeSet::new();
-    for packet in steer::ack::scan::scan_acknowledgements(text, standing) {
+    for packet in scan_presentations(text, standing) {
         for recognition in packet.recognitions {
             let steer::ack::scan::Outcome::Retired { key, disposition } = recognition.outcome
             else {
                 continue;
             };
             if disposition == wire::Disposition::Acked
-                && standing.recognizes(&key, disposition, recognition.locus)
+                && standing.presents(&key, disposition, recognition.locus)
             {
                 acknowledged.insert(key);
             }
@@ -708,6 +710,30 @@ impl EventDirectives<'_> {
                     && directive.retirement.is_some_and(|retirement| {
                         retirement_matches(retirement, self.event, locus)
                     })))
+    }
+
+    /// Display may repeat an acknowledged context without repeating retirement.
+    /// Keep the lane and transcript-source boundary that authenticates it.
+    fn acknowledged_in_source(&self, key: &steer::Key) -> bool {
+        self.directives.0.get(key).is_some_and(|directive| {
+            directive.lane == self.event.lane
+                && directive.disposition == wire::Disposition::Acked
+                && directive.retirement.is_some_and(|retirement| {
+                    retirement
+                        .source
+                        .is_none_or(|expected| self.event.source == Some(expected))
+                })
+        })
+    }
+
+    fn presents(
+        &self,
+        key: &steer::Key,
+        disposition: wire::Disposition,
+        locus: steer::ack::scan::Locus,
+    ) -> bool {
+        self.recognizes(key, disposition, locus)
+            || (disposition == wire::Disposition::Acked && self.acknowledged_in_source(key))
     }
 
     fn recognizes_authored(
