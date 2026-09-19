@@ -249,7 +249,9 @@ pub(super) fn selection_plan(
         }
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
-            return Err(unclassified_source(inventory, changed, &absolute));
+            let package = removed_uncompiled_data(inventory, &absolute)
+                .ok_or_else(|| unclassified_source(inventory, changed, &absolute))?;
+            select_package_targets(package, changed, &mut tests, &mut edges)?;
         }
         let direct_test_only = exact_test_only_claim(&claims, &absolute);
         for claim in claims {
@@ -338,7 +340,9 @@ pub(super) fn cargo_check_selections(
         let absolute = selected_root.join(changed);
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
-            return Err(unclassified_source(inventory, changed, &absolute));
+            let package = removed_uncompiled_data(inventory, &absolute)
+                .ok_or_else(|| unclassified_source(inventory, changed, &absolute))?;
+            select_package_checks([package], &mut reached)?;
         }
         let direct_test_only = exact_test_only_claim(&claims, &absolute);
         for claim in claims {
@@ -777,6 +781,33 @@ fn containing_package<'a>(
         .max_by_key(|package| package.root.components().count())
 }
 
+/// The package whose own coverage answers for a removed Rust path that no
+/// Cargo target ever compiled, if that is what the change is.
+///
+/// Target roots plus the declared `#[path]` and `include!` reach are the
+/// complete statement of what a package compiles, in the selected tree and in
+/// the base tree alike. A `.rs` path that no target claims in either tree was
+/// therefore data -- parser input, a golden sample -- read at run time by a
+/// test rather than compiled into one. Removing it can only break a test that
+/// read it, and those live in the package whose tree held the file, so that
+/// package's own test-enabled targets are the sound coverage; no compile
+/// contract reaches further, because nothing compiled the bytes.
+///
+/// Absence is what makes the claim checkable. A file still present in the
+/// selected tree keeps refusing: unread source could reach it by a path this
+/// scanner failed to resolve, and a missing owner there is a scanner gap
+/// rather than a statement about the file.
+fn removed_uncompiled_data<'a>(
+    inventory: &'a Inventory,
+    absolute: &Path,
+) -> Option<&'a PackageInventory> {
+    absolute
+        .symlink_metadata()
+        .is_err()
+        .then(|| containing_package(inventory, absolute))
+        .flatten()
+}
+
 fn unclassified_source(
     inventory: &Inventory,
     changed: &str,
@@ -1011,4 +1042,85 @@ fn target_reaches_dependent_tests(target: &TargetIdentity, source: &Path) -> boo
                     .iter()
                     .find(|declared| declared.path == source)
                     .is_none_or(|declared| declared.dependent_tests)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn one_package_fixture(
+        fixture: &crate::test_repository::Fixture,
+    ) -> (Inventory, PackageInventory) {
+        let root = fs::canonicalize(fixture.path()).expect("canonical fixture root");
+        let target = |kind: &str, name: &str, source: &str| TargetIdentity {
+            package: "wire".to_owned(),
+            kind: kind.to_owned(),
+            name: name.to_owned(),
+            required_features: Vec::new(),
+            source: root.join(source),
+            declared_path_sources: Vec::new(),
+            source_bytes: 1,
+        };
+        let targets = vec![
+            target("lib", "wire", "wire/src/lib.rs"),
+            target("test", "absence", "wire/tests/absence.rs"),
+        ];
+        let package = PackageInventory {
+            id: "wire 0.0.0".to_owned(),
+            name: "wire".to_owned(),
+            root: root.join("wire"),
+            dependencies: Vec::new(),
+            namespace_context: FileMacroCrateContext::from_metadata("wire", "2024", &[])
+                .expect("fixture namespace"),
+            compile_time_authority: None,
+            declared_targets: targets.clone(),
+            removed_targets: Vec::new(),
+            targets,
+        };
+        let inventory = Inventory {
+            packages: vec![package.clone()],
+            resolution: CargoResolution::default(),
+            binary_outputs: Vec::new(),
+            target_directory: root.join("target"),
+            build_directory: root.join("target/cargo-build"),
+        };
+        (inventory, package)
+    }
+
+    /// Fixture data a test reads at run time is owned by no Cargo target, so
+    /// deleting it must select the coverage that can actually observe the
+    /// deletion rather than demand an owner that never existed.
+    #[test]
+    fn removing_rust_data_no_target_compiled_selects_its_package() {
+        let fixture = crate::test_repository::Fixture::repository("removed-rust-data");
+        let (inventory, package) = one_package_fixture(&fixture);
+        let data = ["wire/tests/fixture/absence/bare.rs".to_owned()];
+
+        let selected = cargo_check_selections(&inventory, fixture.path(), &data)
+            .expect("removed uncompiled data selects its package");
+
+        let [selection] = selected.as_slice() else {
+            panic!("one package answers for its own data, found {selected:?}");
+        };
+        assert_eq!(selection.name, package.name);
+        assert_eq!(selection.targets.len(), package.targets.len());
+    }
+
+    /// The same path still present is a source whose owner this scanner failed
+    /// to find, and that stays fail-closed.
+    #[test]
+    fn an_unowned_rust_file_still_on_disk_is_refused() {
+        let fixture = crate::test_repository::Fixture::repository("unowned-rust-source");
+        let (inventory, _) = one_package_fixture(&fixture);
+        fixture.write("wire/tests/fixture/absence/bare.rs", b"pub struct Draft;\n");
+        let present = ["wire/tests/fixture/absence/bare.rs".to_owned()];
+
+        let refusal = cargo_check_selections(&inventory, fixture.path(), &present)
+            .expect_err("a present unowned Rust source is refused");
+
+        assert!(
+            refusal.to_string().contains("ownership"),
+            "refusal names the missing ownership: {refusal}"
+        );
+    }
 }
