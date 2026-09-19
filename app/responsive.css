@@ -39,7 +39,6 @@
   }
   .axis-button { padding: 0 11px; }
   .split { grid-template-columns: 1fr; }
-  .seat-panel { border-top: 1px solid var(--line); border-left: 0; }
 }
 
 @media (max-width: 720px) {
@@ -87,7 +86,6 @@
   }
   .team-direction-preview { grid-column: 1 / -1; grid-row: 2; }
   .team-detail-grid { grid-template-columns: 1fr; }
-  .seat-panel { padding: 16px; }
   .page-heading { align-items: start; }
   .page-heading h1 { font-size: 1.35rem; }
   th, td { padding: 10px; }

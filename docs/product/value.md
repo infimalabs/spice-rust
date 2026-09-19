@@ -400,6 +400,11 @@ The member row describes the cross-mode surface, not one field bundle. Compose,
 Metrics, and Info expose lane/worktree identity and their own applicable agent,
 liveness or age, pending, and held-work fields; no pane repeats the whole set.
 
+Info puts the add-agent form before the agent and team information. All six
+fields stay visible in three paired rows, with each label beside its control.
+Long values scroll inside their single-line inputs rather than widening the
+team tile or wrapping the form; admission validation remains inline.
+
 **Why it's the right unit:** the server-owned team topology is exactly what the
 operator arranged. The team tiles as one surface while each member lane remains
 the concrete address of one worktree. That keeps a fused team together without
