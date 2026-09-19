@@ -25,6 +25,15 @@ pub const ACK_PENDING_MARKER: &str = "[ACK PENDING]";
 /// lane never answered.
 pub const NACK_MARKER: &str = "[NACK]";
 
+/// Newest messages every surface keeps for each agent, whatever else it drops.
+///
+/// The floor is per agent and independent: a louder peer, a page of older
+/// history, a reconnect, or a compaction may add or remove context around it,
+/// but none of them may leave an agent showing fewer than this many of its own
+/// messages while it has that many. An agent with fewer shows all of them. It
+/// is a floor and not a cap: a surface may retain more.
+pub const MESSAGE_FLOOR: usize = 25;
+
 use crate::{
     Actor, AnyFact, Body, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name,
     Origin, Packed, Refusal, RefusalDiagnostic, Seq, TrustHead, WireVersion,
@@ -227,22 +236,54 @@ impl AgentActivityKind {
         matches!(self, Self::Turn | Self::Compaction)
     }
 
+    /// Oldest card ordinal still inside this lane's newest `floor` messages.
+    ///
+    /// Turn and compaction cards mark where messages meet; they are not
+    /// messages and never satisfy the floor on a message's behalf. A lane with
+    /// fewer than `floor` messages answers with its oldest message, so markers
+    /// older than anything an operator can read stay prunable.
+    #[must_use]
+    pub fn message_floor_start(activities: &[Self], floor: usize) -> usize {
+        if floor == 0 {
+            return activities.len();
+        }
+        let mut messages = 0;
+        let mut start = activities.len();
+        for (ordinal, activity) in activities.iter().enumerate().rev() {
+            if activity.is_boundary() {
+                continue;
+            }
+            messages += 1;
+            start = ordinal;
+            if messages == floor {
+                break;
+            }
+        }
+        start
+    }
+
     /// Oldest visible-card ordinal retained by one bounded lane history.
     ///
     /// Under capacity pressure, a compaction inside the newest `limit` cards
-    /// is the hard floor: no fragment of the preceding context epoch survives
+    /// is the horizon: no fragment of the preceding context epoch survives
     /// below it. Without such a boundary, the deterministic horizon is the
     /// newest `limit` cards. Histories below the limit remain complete.
+    ///
+    /// Neither horizon may cut into [`MESSAGE_FLOOR`]: an agent that has said
+    /// that many things still shows them all, however recently it compacted
+    /// and however loud its peers are.
     #[must_use]
     pub fn retention_start(activities: &[Self], limit: usize) -> usize {
         if activities.len() < limit {
             return 0;
         }
+        let floor = Self::message_floor_start(activities, MESSAGE_FLOOR);
         let capacity_floor = activities.len().saturating_sub(limit);
         activities[capacity_floor..]
             .iter()
             .position(|activity| *activity == Self::Compaction)
             .map_or(capacity_floor, |boundary| capacity_floor + boundary)
+            .min(floor)
     }
 }
 
@@ -449,11 +490,57 @@ mod message_retention_tests {
             AgentActivityKind::retention_start(&activities[..256], 256),
             20,
         );
-        assert_eq!(AgentActivityKind::retention_start(&activities, 0), 300);
+        assert_eq!(
+            AgentActivityKind::retention_start(&activities, 0),
+            300 - MESSAGE_FLOOR,
+            "no budget is small enough to take an agent's newest messages",
+        );
         assert!(AgentActivityKind::Turn.is_boundary());
         assert!(AgentActivityKind::Compaction.is_boundary());
         assert!(!AgentActivityKind::Prose.is_boundary());
         assert!(!AgentActivityKind::Reasoning.is_boundary());
+    }
+
+    /// Markers stand between messages; only messages pay the floor.
+    #[test]
+    fn the_message_floor_counts_messages_and_not_the_markers_among_them() {
+        let mut activities = vec![AgentActivityKind::Prose; 40];
+        for marker in [5, 12, 30] {
+            activities[marker] = AgentActivityKind::Turn;
+        }
+        activities[35] = AgentActivityKind::Compaction;
+        let start = AgentActivityKind::message_floor_start(&activities, MESSAGE_FLOOR);
+        assert_eq!(
+            activities[start..]
+                .iter()
+                .filter(|activity| !activity.is_boundary())
+                .count(),
+            MESSAGE_FLOOR,
+        );
+        assert!(!activities[start].is_boundary());
+
+        assert_eq!(
+            AgentActivityKind::message_floor_start(&activities[..10], MESSAGE_FLOOR),
+            0,
+            "a lane below the floor answers with everything it has said",
+        );
+        let exact = vec![AgentActivityKind::Prose; MESSAGE_FLOOR];
+        assert_eq!(
+            AgentActivityKind::message_floor_start(&exact, MESSAGE_FLOOR),
+            0,
+        );
+        let sliding = vec![AgentActivityKind::Prose; MESSAGE_FLOOR + 1];
+        assert_eq!(
+            AgentActivityKind::message_floor_start(&sliding, MESSAGE_FLOOR),
+            1,
+            "the floor slides with the newest message",
+        );
+        let markers = vec![AgentActivityKind::Turn; 4];
+        assert_eq!(
+            AgentActivityKind::message_floor_start(&markers, MESSAGE_FLOOR),
+            markers.len(),
+            "markers alone hold no floor open",
+        );
     }
 
     #[test]

@@ -291,7 +291,7 @@ fn retained_message_capacity_is_independent_for_each_lane() {
         panic!("expected retained message snapshot")
     };
     assert_eq!(*limit as usize, MESSAGE_CAPACITY);
-    assert_eq!(messages.len(), INITIAL_MESSAGE_LIMIT * 2);
+    assert_eq!(messages.len(), wire::MESSAGE_FLOOR * 2);
     assert_eq!(more.len(), 2);
     for lane in [0xe5, 0xe6] {
         let lane = message(lane, 0).lane;
@@ -535,7 +535,7 @@ fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
     let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
-    assert_eq!(messages.len(), INITIAL_MESSAGE_LIMIT);
+    assert_eq!(messages.len(), wire::MESSAGE_FLOOR);
     assert_eq!(messages[0].locus.offset, 55);
     assert_eq!(
         more,
@@ -682,8 +682,13 @@ fn explicit_history_hint_bootstraps_a_lane_without_an_initial_card() {
     bus.shutdown().expect("bus shuts down");
 }
 
+/// A compaction inside the newest window never costs the lane its floor.
+///
+/// Trimming below a compaction drops the previous context epoch, which is
+/// what an operator wants once newer messages fill the view. Here they do not:
+/// the epoch that just ended is all this agent has said.
 #[test]
-fn cold_history_starts_at_a_compaction_inside_the_initial_window() {
+fn cold_history_keeps_its_floor_across_a_compaction_inside_the_initial_window() {
     let bus = fixture(1);
     let source = Source::new(bus.reader(), epoch(), 10);
     let publisher = source.message_publisher();
@@ -714,7 +719,15 @@ fn cold_history_starts_at_a_compaction_inside_the_initial_window() {
             .iter()
             .map(|message| message.locus.offset)
             .collect::<Vec<_>>(),
-        (30..40).collect::<Vec<_>>(),
+        (14..40).collect::<Vec<_>>(),
+        "the newest 25 messages stay, and the compaction stands among them",
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.activity.is_prose())
+            .count(),
+        wire::MESSAGE_FLOOR,
     );
     assert!(more.is_empty());
 
@@ -829,7 +842,7 @@ fn retained_tool_status_does_not_consume_visible_lane_capacity() {
             .iter()
             .filter(|message| message.activity.is_prose())
             .count(),
-        INITIAL_MESSAGE_LIMIT,
+        wire::MESSAGE_FLOOR,
     );
     assert_eq!(more.len(), 1);
     assert_eq!(
@@ -843,6 +856,92 @@ fn retained_tool_status_does_not_consume_visible_lane_capacity() {
     let latest = messages.last().expect("latest status");
     assert_eq!(latest.locus.offset, 10_002);
     assert_eq!(latest.activity, wire::AgentActivityKind::Reasoning);
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+/// Lifecycle markers ride beside messages; they never spend the floor.
+///
+/// Turn and compaction cards are boundaries between messages, not messages.
+/// An agent whose recent transcript is dense with them still owes the operator
+/// its newest messages, so the markers are carried in addition to the floor.
+#[test]
+fn interleaved_markers_do_not_spend_an_agents_message_floor() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    for offset in 0..60 {
+        let mut card = message(0xe5, offset);
+        if offset % 3 == 2 {
+            card.activity = wire::AgentActivityKind::Turn;
+        }
+        publisher.publish(card).expect("lane backlog publishes");
+    }
+    publisher
+        .bound_initial_history()
+        .expect("startup bounds the retained page");
+
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages { messages, .. } = &frames[0] else {
+        panic!("expected retained message snapshot")
+    };
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.activity.is_prose())
+            .count(),
+        wire::MESSAGE_FLOOR,
+    );
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+/// A compaction never leaves an agent showing less than its message floor.
+///
+/// Trimming below a compaction drops the previous context epoch, which is
+/// right while messages newer than the compaction still fill the floor. A
+/// compaction that just happened has nothing newer, and the operator still
+/// needs the agent's newest messages.
+#[test]
+fn a_fresh_compaction_does_not_evict_an_agents_message_floor() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    for offset in 0..40 {
+        publisher
+            .publish(message(0xe5, offset))
+            .expect("lane backlog publishes");
+    }
+    let mut compaction = message(0xe5, 40);
+    compaction.activity = wire::AgentActivityKind::Compaction;
+    publisher
+        .publish(compaction)
+        .expect("the compaction publishes");
+    publisher
+        .bound_initial_history()
+        .expect("startup bounds the retained page");
+
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages { messages, .. } = &frames[0] else {
+        panic!("expected retained message snapshot")
+    };
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|message| message.activity.is_prose())
+            .count(),
+        wire::MESSAGE_FLOOR,
+    );
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }

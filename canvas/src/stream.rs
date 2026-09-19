@@ -20,8 +20,8 @@ mod subscription;
 mod tests;
 
 pub use message::{
-    INITIAL_MESSAGE_LIMIT, MESSAGE_CAPACITY, MESSAGE_HISTORY_PAGE_LIMIT, MessageHistoryPage,
-    MessageHistoryProvider, MessagePublishError, MessagePublisher,
+    MESSAGE_CAPACITY, MESSAGE_HISTORY_PAGE_LIMIT, MessageHistoryPage, MessageHistoryProvider,
+    MessagePublishError, MessagePublisher,
 };
 use message::{MessageFeed, message_snapshot_fault};
 pub use policy::Failure;

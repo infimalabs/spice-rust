@@ -471,9 +471,9 @@ impl CompactionRecord {
 fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     if !cursor.initialized {
         if cursor.dialect == listen::Dialect::Codex {
-            return bootstrap_codex(cursor, canvas::stream::INITIAL_MESSAGE_LIMIT + 1);
+            return bootstrap_codex(cursor, wire::MESSAGE_FLOOR + 1);
         }
-        return bootstrap(cursor, canvas::stream::INITIAL_MESSAGE_LIMIT + 1);
+        return bootstrap(cursor, wire::MESSAGE_FLOOR + 1);
     }
     if cursor.validation.is_some() {
         return advance_validation(cursor);
