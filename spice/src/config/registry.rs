@@ -655,7 +655,7 @@ configuration_registry! {
     }
     fixed "steer.resend" {
         kind: DurationList,
-        builtin: Some(Builtin::Strings(&["60s", "30m", "1h"])),
+        builtin: Some(Builtin::Strings(&["60s", "1800s", "3600s"])),
         layers: TRACKED,
         class: Policy,
         flag: None,

@@ -1111,6 +1111,7 @@ fn partition_package(
             declared_targets: package.declared_targets.clone(),
             removed_targets: package.removed_targets.clone(),
             targets,
+            data_roots: package.data_roots.clone(),
         })
         .collect()
 }
@@ -1234,6 +1235,7 @@ mod partition_tests {
                 declared_targets: targets.clone(),
                 removed_targets: Vec::new(),
                 targets,
+                data_roots: Vec::new(),
             }],
             resolution: CargoResolution::default(),
             binary_outputs: Vec::new(),

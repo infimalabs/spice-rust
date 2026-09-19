@@ -132,52 +132,16 @@ pub(super) fn package_inventory(
         .targets
         .into_iter()
         .map(|target| {
-            let test = target.test;
-            let mut required_features = target.required_features;
-            required_features.sort();
-            required_features.dedup();
-            if let Some(feature) = required_features
-                .iter()
-                .find(|feature| !package.features.contains_key(feature.as_str()))
-            {
-                return Err(WorkspaceTestError::new(format!(
-                    "workspace package {:?} target {:?} requires undeclared feature {:?}",
-                    package.name, target.name, feature,
-                )));
-            }
-            if !target.src_path.is_absolute() {
-                return Err(WorkspaceTestError::new(format!(
-                    "workspace package {:?} target {:?} metadata named relative source {}",
-                    package.name,
-                    target.name,
-                    target.src_path.display(),
-                )));
-            }
-            let source = target.src_path;
-            let source = fs::canonicalize(&source).unwrap_or(source);
-            if !source.starts_with(&selected_root) {
-                return Err(WorkspaceTestError::new(format!(
-                    "workspace package {:?} target source {} escapes selected root {}",
-                    package.name,
-                    source.display(),
-                    selected_root.display(),
-                )));
-            }
-            let declared_path_sources =
-                declared_path_sources(&selected_root, &source, namespace_context.clone())?;
-            let source_bytes = target_source_bytes(&source, &declared_path_sources)?;
-            Ok((
-                test,
-                TargetIdentity {
-                    package: package.id.clone(),
-                    kind: target.kind.join("+"),
-                    name: target.name,
-                    required_features,
-                    source,
-                    declared_path_sources,
-                    source_bytes,
+            target_identity(
+                TargetOwner {
+                    id: &package.id,
+                    name: &package.name,
+                    features: &package.features,
+                    namespace_context: &namespace_context,
                 },
-            ))
+                &selected_root,
+                target,
+            )
         })
         .collect::<Result<Vec<_>, _>>()?;
     declared_targets.sort_by(|left, right| left.1.cmp(&right.1));
@@ -186,10 +150,12 @@ pub(super) fn package_inventory(
         .filter(|(test, _)| *test)
         .map(|(_, target)| target.clone())
         .collect();
-    let declared_targets = declared_targets
+    let declared_targets: Vec<TargetIdentity> = declared_targets
         .into_iter()
         .map(|(_, target)| target)
         .collect();
+    let data_roots = declared_data_roots(&package.name, &package.metadata, package_root)?;
+    validate_data_roots(&package.name, &data_roots, &declared_targets)?;
     Ok(PackageInventory {
         id: package.id,
         name: package.name,
@@ -200,7 +166,147 @@ pub(super) fn package_inventory(
         declared_targets,
         removed_targets: Vec::new(),
         targets,
+        data_roots,
     })
+}
+
+/// What a target needs to know about the package declaring it.
+struct TargetOwner<'a> {
+    id: &'a str,
+    name: &'a str,
+    features: &'a BTreeMap<String, Vec<String>>,
+    namespace_context: &'a FileMacroCrateContext,
+}
+
+/// One declared Cargo target resolved to its canonical source reach, paired
+/// with whether Cargo builds it for tests.
+fn target_identity(
+    owner: TargetOwner<'_>,
+    selected_root: &Path,
+    target: MetadataTarget,
+) -> Result<(bool, TargetIdentity), WorkspaceTestError> {
+    let test = target.test;
+    let mut required_features = target.required_features;
+    required_features.sort();
+    required_features.dedup();
+    if let Some(feature) = required_features
+        .iter()
+        .find(|feature| !owner.features.contains_key(feature.as_str()))
+    {
+        return Err(WorkspaceTestError::new(format!(
+            "workspace package {:?} target {:?} requires undeclared feature {:?}",
+            owner.name, target.name, feature,
+        )));
+    }
+    if !target.src_path.is_absolute() {
+        return Err(WorkspaceTestError::new(format!(
+            "workspace package {:?} target {:?} metadata named relative source {}",
+            owner.name,
+            target.name,
+            target.src_path.display(),
+        )));
+    }
+    let source = target.src_path;
+    let source = fs::canonicalize(&source).unwrap_or(source);
+    if !source.starts_with(selected_root) {
+        return Err(WorkspaceTestError::new(format!(
+            "workspace package {:?} target source {} escapes selected root {}",
+            owner.name,
+            source.display(),
+            selected_root.display(),
+        )));
+    }
+    let declared_path_sources =
+        declared_path_sources(selected_root, &source, owner.namespace_context.clone())?;
+    let source_bytes = target_source_bytes(&source, &declared_path_sources)?;
+    Ok((
+        test,
+        TargetIdentity {
+            package: owner.id.to_owned(),
+            kind: target.kind.join("+"),
+            name: target.name,
+            required_features,
+            source,
+            declared_path_sources,
+            source_bytes,
+        },
+    ))
+}
+
+/// Directories a package states hold bytes no Cargo target compiles.
+///
+/// Runtime-read data -- parser input, golden samples, audit corpora -- is Rust
+/// text a test opens as a file, and no target's module graph reaches it. Reach
+/// analysis can prove a path is compiled but never that it is not: a module
+/// introduced by macro expansion is exactly what an unread path looks like. So
+/// the tree states it, in the manifest, beside the compile-time authority that
+/// already lives there:
+///
+/// ```toml
+/// [package.metadata.spice]
+/// data = ["tests/fixture"]
+/// ```
+fn declared_data_roots(
+    package: &str,
+    metadata: &serde_json::Value,
+    package_root: &Path,
+) -> Result<Vec<PathBuf>, WorkspaceTestError> {
+    let Some(declared) = metadata.get("spice").and_then(|spice| spice.get("data")) else {
+        return Ok(Vec::new());
+    };
+    let declared: Vec<String> = serde_json::from_value(declared.clone()).map_err(|error| {
+        WorkspaceTestError::new(format!(
+            "Cargo package {package:?} has invalid package.metadata.spice.data: {error}"
+        ))
+    })?;
+    let mut roots = Vec::new();
+    for entry in declared {
+        let relative = Path::new(&entry);
+        if entry.is_empty()
+            || relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(WorkspaceTestError::new(format!(
+                "Cargo package {package:?} declares data directory {entry:?}, which is not a plain relative path inside the package",
+            )));
+        }
+        roots.push(package_root.join(relative));
+    }
+    roots.sort();
+    roots.dedup();
+    Ok(roots)
+}
+
+/// A declared data directory may not hold source a Cargo target compiles,
+/// which is what keeps the declaration from becoming a way to hide source
+/// from the gate rather than a statement about data.
+fn validate_data_roots(
+    package: &str,
+    roots: &[PathBuf],
+    targets: &[TargetIdentity],
+) -> Result<(), WorkspaceTestError> {
+    for root in roots {
+        let compiled = targets.iter().find_map(|target| {
+            std::iter::once(&target.source)
+                .chain(
+                    target
+                        .declared_path_sources
+                        .iter()
+                        .map(|source| &source.path),
+                )
+                .find(|source| source.starts_with(root))
+        });
+        if let Some(compiled) = compiled {
+            return Err(WorkspaceTestError::new(format!(
+                "Cargo package {package:?} declares data directory {} holding compiled source {}",
+                root.display(),
+                compiled.display(),
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn package_authorities(
@@ -249,7 +355,7 @@ pub(super) fn selection_plan(
         }
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
-            let package = removed_uncompiled_data(inventory, &absolute)
+            let package = uncompiled_data(inventory, &absolute)
                 .ok_or_else(|| unclassified_source(inventory, changed, &absolute))?;
             select_package_targets(package, changed, &mut tests, &mut edges)?;
         }
@@ -340,7 +446,7 @@ pub(super) fn cargo_check_selections(
         let absolute = selected_root.join(changed);
         let claims = source_claims(inventory, changed, &absolute);
         if claims.is_empty() {
-            let package = removed_uncompiled_data(inventory, &absolute)
+            let package = uncompiled_data(inventory, &absolute)
                 .ok_or_else(|| unclassified_source(inventory, changed, &absolute))?;
             select_package_checks([package], &mut reached)?;
         }
@@ -781,32 +887,33 @@ fn containing_package<'a>(
         .max_by_key(|package| package.root.components().count())
 }
 
-/// The package whose own coverage answers for a removed Rust path that no
-/// Cargo target ever compiled, if that is what the change is.
+/// The package whose own coverage answers for a Rust path no Cargo target
+/// compiles, if that is what the change is.
 ///
-/// Target roots plus the declared `#[path]` and `include!` reach are the
-/// complete statement of what a package compiles, in the selected tree and in
-/// the base tree alike. A `.rs` path that no target claims in either tree was
-/// therefore data -- parser input, a golden sample -- read at run time by a
-/// test rather than compiled into one. Removing it can only break a test that
-/// read it, and those live in the package whose tree held the file, so that
-/// package's own test-enabled targets are the sound coverage; no compile
-/// contract reaches further, because nothing compiled the bytes.
+/// A path is data on either of two grounds. The package may declare the
+/// directory it lives in, which covers a data file arriving, moving, or
+/// changing. Or the path may be gone from the selected tree while no target
+/// claims it in the current or the base inventory, which is only true of
+/// something nothing ever compiled: a deleted module still claims its target
+/// through the library fallback or its base-tree removed target.
 ///
-/// Absence is what makes the claim checkable. A file still present in the
-/// selected tree keeps refusing: unread source could reach it by a path this
-/// scanner failed to resolve, and a missing owner there is a scanner gap
-/// rather than a statement about the file.
-fn removed_uncompiled_data<'a>(
-    inventory: &'a Inventory,
-    absolute: &Path,
-) -> Option<&'a PackageInventory> {
-    matches!(
+/// Absence is what makes the undeclared claim checkable, and only absence:
+/// a path that is merely unreadable says nothing about what compiles it, so
+/// every filesystem answer other than "not found" stays a refusal. A file
+/// still present and undeclared keeps refusing too, because unread source
+/// could reach it by a path this scanner failed to resolve, and a missing
+/// owner there is a scanner gap rather than a statement about the file.
+fn uncompiled_data<'a>(inventory: &'a Inventory, absolute: &Path) -> Option<&'a PackageInventory> {
+    let package = containing_package(inventory, absolute)?;
+    let declared = package
+        .data_roots
+        .iter()
+        .any(|root| absolute.starts_with(root));
+    let removed = matches!(
         absolute.symlink_metadata(),
         Err(error) if error.kind() == io::ErrorKind::NotFound
-    )
-    .then(|| containing_package(inventory, absolute))
-    .flatten()
+    );
+    (declared || removed).then_some(package)
 }
 
 fn unclassified_source(
@@ -1051,6 +1158,7 @@ mod tests {
 
     fn package_and_dependent_fixture(
         fixture: &crate::test_repository::Fixture,
+        data: &[&str],
     ) -> (Inventory, PackageInventory) {
         let root = fs::canonicalize(fixture.path()).expect("canonical fixture root");
         let target = |package: &str, kind: &str, name: &str, source: &str| TargetIdentity {
@@ -1077,6 +1185,7 @@ mod tests {
             declared_targets: targets.clone(),
             removed_targets: Vec::new(),
             targets,
+            data_roots: data.iter().map(|data| root.join(data)).collect(),
         };
         let dependent_targets = vec![target("consumer", "lib", "consumer", "consumer/src/lib.rs")];
         let dependent = PackageInventory {
@@ -1106,7 +1215,7 @@ mod tests {
     #[test]
     fn removing_rust_data_no_target_compiled_selects_its_package() {
         let fixture = crate::test_repository::Fixture::repository("removed-rust-data");
-        let (inventory, package) = package_and_dependent_fixture(&fixture);
+        let (inventory, package) = package_and_dependent_fixture(&fixture, &[]);
         let data = ["wire/tests/fixture/absence/bare.rs".to_owned()];
 
         let selected = cargo_check_selections(&inventory, fixture.path(), &data)
@@ -1124,7 +1233,7 @@ mod tests {
     #[test]
     fn an_unowned_rust_file_still_on_disk_is_refused() {
         let fixture = crate::test_repository::Fixture::repository("unowned-rust-source");
-        let (inventory, _) = package_and_dependent_fixture(&fixture);
+        let (inventory, _) = package_and_dependent_fixture(&fixture, &[]);
         fixture.write("wire/tests/fixture/absence/bare.rs", b"pub struct Draft;\n");
         let present = ["wire/tests/fixture/absence/bare.rs".to_owned()];
 
@@ -1134,5 +1243,59 @@ mod tests {
         let inaccessible = ["wire/tests/fixture/absence/bare.rs/child.rs".to_owned()];
         cargo_check_selections(&inventory, fixture.path(), &inaccessible)
             .expect_err("a filesystem error other than absence must remain a refusal");
+    }
+
+    /// Data that arrives, moves, or changes is present on disk, so absence
+    /// cannot classify it and the package's own declaration must.
+    #[test]
+    fn declared_data_on_disk_selects_the_package_that_reads_it() {
+        let fixture = crate::test_repository::Fixture::repository("declared-rust-data");
+        let (inventory, package) = package_and_dependent_fixture(&fixture, &["wire/tests/fixture"]);
+        fixture.write("wire/tests/fixture/absence/bare.rs", b"pub struct Draft;\n");
+        let added = ["wire/tests/fixture/absence/bare.rs".to_owned()];
+
+        let selected = cargo_check_selections(&inventory, fixture.path(), &added)
+            .expect("declared data selects its package");
+
+        let [selection] = selected.as_slice() else {
+            panic!("one package answers for its own data, found {selected:?}");
+        };
+        assert_eq!(selection.name, package.name);
+        assert_eq!(selection.targets.len(), package.targets.len());
+    }
+
+    /// The declaration states what is not compiled, so it cannot be used to
+    /// hide source that is.
+    #[test]
+    fn a_data_declaration_covering_compiled_source_is_refused() {
+        let fixture = crate::test_repository::Fixture::repository("data-over-source");
+        fixture.write("wire/Cargo.toml", b"[package]\nname = \"wire\"\n");
+        fixture.write("wire/src/lib.rs", b"pub mod absence;\n");
+        fixture.write("wire/src/absence.rs", b"pub struct Draft;\n");
+        let manifest = fixture.join("wire/Cargo.toml");
+
+        let refusal = package_inventory(
+            serde_json::from_value(serde_json::json!({
+                "id": "wire 0.0.0",
+                "name": "wire",
+                "edition": "2024",
+                "manifest_path": manifest,
+                "targets": [{
+                    "name": "wire",
+                    "kind": ["lib"],
+                    "test": true,
+                    "src_path": fixture.join("wire/src/lib.rs"),
+                }],
+                "metadata": {"spice": {"data": ["src"]}},
+            }))
+            .expect("fixture package metadata"),
+            fixture.path(),
+        )
+        .expect_err("a data declaration over compiled source is refused");
+
+        assert!(
+            refusal.to_string().contains("holding compiled source"),
+            "refusal names the compiled source: {refusal}"
+        );
     }
 }

@@ -228,6 +228,19 @@ sets. The planner refuses the shard as non-cacheable when the declaration is
 absent or incomplete, a path escapes the selected tree, an observable read is
 undeclared, or executable code names process, network, or dynamic authority.
 
+Selection asks which Cargo targets a changed Rust path reaches. Target roots
+and the declared `#[path]` and `include!` reach answer that for source, and a
+path they do not claim is refused, because an unclaimed path is also what a
+module the scanner failed to follow looks like. Rust text that no target
+compiles -- parser input, golden samples, audit corpora a test opens at run
+time -- is declared instead, with `[package.metadata.spice]` and `data`
+holding package-relative directories. A change under a declared directory
+selects that package's own test-enabled targets and nothing downstream, since
+no compile contract reaches bytes no compiler read; the declaration is refused
+when it covers source a target compiles. A path gone from the selected tree
+that no target claims in the current or base inventory is treated the same way
+without a declaration, because nothing it could have been compiled by remains.
+
 | Action | Class | Required authority |
 | --- | --- | --- |
 | `merge-integrity` | ancestry-sensitive | candidate tree, `HEAD`, `MERGE_HEAD`, merge-tree tool identity |

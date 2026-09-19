@@ -238,6 +238,8 @@ pub(super) struct PackageInventory {
     pub(super) declared_targets: Vec<TargetIdentity>,
     pub(super) removed_targets: Vec<TargetIdentity>,
     pub(super) targets: Vec<TargetIdentity>,
+    /// Directories this package declares as bytes no Cargo target compiles.
+    pub(super) data_roots: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -417,6 +419,7 @@ impl Inventory {
                     declared_targets: package.declared_targets.clone(),
                     removed_targets: package.removed_targets.clone(),
                     targets,
+                    data_roots: package.data_roots.clone(),
                 })
             })
             .collect::<Vec<_>>();
@@ -937,6 +940,7 @@ mod declared_source_tests {
                 declared_targets: vec![target.clone()],
                 removed_targets: Vec::new(),
                 targets: vec![target],
+                data_roots: Vec::new(),
             }],
             resolution: CargoResolution::default(),
             binary_outputs: Vec::new(),
