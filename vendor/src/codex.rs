@@ -135,6 +135,12 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
             vendor: "Codex",
         });
     }
+    if launch.lsp.is_some() {
+        return Err(ContractError::Unsupported {
+            path: "vendor.codex.lsp",
+            vendor: "Codex",
+        });
+    }
     let mut arguments = vec![
         OsString::from("exec"),
         OsString::from("--cd"),

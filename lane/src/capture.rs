@@ -316,6 +316,7 @@ mod tests {
         let mut launch = launch();
         launch.model_context_window = None;
         launch.config_overlay = Some(root.join("omp.yml"));
+        launch.lsp = Some(false);
         let record =
             vendor::omp::record("/bin/sh", &launch).expect("fixture vendor record contract");
         let reports = Arc::new(Reports::default());
@@ -645,6 +646,7 @@ mod tests {
             model_context_window: Some(1_050_000),
             auto_compact_window_tokens: Some(272_000),
             config_overlay: None,
+            lsp: None,
             attribution: Attribution::Harness,
             hook: SteeringHook {
                 command: "true".to_owned(),

@@ -771,6 +771,13 @@ configuration_registry! {
         class: Policy,
         flag: None,
     }
+    fixed "vendor.omp.lsp" {
+        kind: Boolean,
+        builtin: Some(Builtin::Boolean(false)),
+        layers: TRACKED,
+        class: Policy,
+        flag: None,
+    }
     fixed "vendor.omp.auto_compact_window_tokens" {
         kind: UnsignedInteger,
         builtin: None,

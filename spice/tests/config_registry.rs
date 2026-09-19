@@ -607,6 +607,7 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "vendor.omp.model",
     "vendor.omp.effort",
     "vendor.omp.fast_mode",
+    "vendor.omp.lsp",
     "vendor.omp.auto_compact_window_tokens",
     "listen.window",
     "lock.busy",

@@ -487,6 +487,7 @@ fn codex_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
         fast_mode: Some(configured.fast_mode()),
         model_context_window: Some(configured.model_context_window()),
         auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
+        lsp: None,
     }
 }
 
@@ -500,6 +501,7 @@ fn claude_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> 
         fast_mode: None,
         model_context_window: None,
         auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
+        lsp: None,
     }
 }
 
@@ -513,6 +515,7 @@ fn omp_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
         fast_mode: Some(configured.fast_mode()),
         model_context_window: None,
         auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
+        lsp: Some(configured.lsp()),
     }
 }
 

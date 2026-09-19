@@ -175,6 +175,7 @@ fn compose_with_registry(
             model_context_window: configured.model_context_window,
             auto_compact_window_tokens: configured.auto_compact_window_tokens,
             config_overlay: inputs.config_overlay,
+            lsp: configured.lsp,
             attribution,
             hook,
             steering_key,
@@ -264,6 +265,7 @@ mod tests {
             fast_mode: Some(configured.fast_mode()),
             model_context_window: Some(configured.model_context_window()),
             auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
+            lsp: None,
         }
     }
 

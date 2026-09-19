@@ -294,6 +294,7 @@ pub struct OmpConfig {
     model: LaunchValue,
     effort: ClaudeEffort,
     fast_mode: bool,
+    lsp: bool,
     #[serde(
         deserialize_with = "omp_window",
         skip_serializing_if = "Option::is_none"
@@ -308,6 +309,7 @@ impl Default for OmpConfig {
             model: LaunchValue::new(DEFAULT_OMP_MODEL),
             effort: ClaudeEffort::Xhigh,
             fast_mode: false,
+            lsp: false,
             auto_compact_window_tokens: None,
         }
     }
@@ -336,6 +338,16 @@ impl OmpConfig {
     #[must_use]
     pub const fn fast_mode(&self) -> bool {
         self.fast_mode
+    }
+
+    /// Whether omp's own language-server tooling is admitted for this lane.
+    ///
+    /// Off by default: the tool starts language servers, and a worktree that
+    /// wants them states so alongside the `.omp/lsp.json` describing what to
+    /// start. Nothing here names a server or a toolchain.
+    #[must_use]
+    pub const fn lsp(&self) -> bool {
+        self.lsp
     }
 
     /// The window omp is asked to compact against: the one policy names, or

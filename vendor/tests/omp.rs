@@ -36,6 +36,7 @@ fn fixture(resume: Resume) -> Launch {
         model_context_window: None,
         auto_compact_window_tokens: Some(220_000),
         config_overlay: Some(CONFIG_OVERLAY.into()),
+        lsp: Some(false),
         attribution: Attribution::Harness,
         hook: SteeringHook {
             command: "/usr/bin/spice hook omp".to_owned(),
@@ -143,10 +144,12 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
 #[test]
 fn the_lanes_shell_is_registered_essential_in_place_of_omps_own_executors() {
     for executor in ["bash", "eval", "hub", "task"] {
-        assert!(
-            !omp::TOOLS.split(',').any(|tool| tool == executor),
-            "{executor} would run a process the lane cannot see"
-        );
+        for roster in [omp::TOOLS, omp::LSP_TOOLS] {
+            assert!(
+                !roster.split(',').any(|tool| tool == executor),
+                "{executor} would run a process the lane cannot see"
+            );
+        }
     }
     let frame: serde_json::Value = serde_json::from_slice(
         omp::host_tools_request()
@@ -416,8 +419,8 @@ fn the_compaction_threshold_rides_an_overlay_the_lane_must_have_written() {
     // The exact document omp 18.2.1 resolved to a 170,000-token limit through
     // its `--config` overlay; the layout is omp's own config.yml.
     assert_eq!(
-        omp::config_overlay(170_000),
-        "compaction:\n  thresholdTokens: 170000\n"
+        omp::config_overlay(170_000, false),
+        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: false\n"
     );
 
     let mut unwritten = fixture(Resume::Fresh);
@@ -428,6 +431,47 @@ fn the_compaction_threshold_rides_an_overlay_the_lane_must_have_written() {
             path: "vendor.omp.config_overlay"
         }
     );
+}
+
+#[test]
+fn the_language_server_disposition_names_the_tool_and_keeps_its_servers_in_the_lane() {
+    let declined = omp::record("/opt/omp", &fixture(Resume::Fresh)).expect("valid record");
+    assert_eq!(roster(&declined), Some(OsStr::new(omp::TOOLS)));
+    assert!(!omp::TOOLS.split(',').any(|tool| tool == "lsp"));
+    assert!(omp::config_overlay(170_000, false).contains("lsp:\n  enabled: false\n"));
+
+    let mut admitted = fixture(Resume::Fresh);
+    admitted.lsp = Some(true);
+    let record = omp::record("/opt/omp", &admitted).expect("valid record");
+    assert_eq!(roster(&record), Some(OsStr::new(omp::LSP_TOOLS)));
+    assert_eq!(
+        omp::LSP_TOOLS,
+        format!("{},lsp", omp::TOOLS),
+        "the admitted roster is the declined roster plus the tool"
+    );
+    // Shared servers are brokered by a daemon built to outlive one session,
+    // which is exactly the process the lane could neither see nor reap.
+    assert_eq!(
+        omp::config_overlay(170_000, true),
+        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: true\n  shared: false\n"
+    );
+
+    let mut implicit = fixture(Resume::Fresh);
+    implicit.lsp = None;
+    assert_eq!(
+        omp::record("/opt/omp", &implicit).expect_err("refused"),
+        ContractError::Missing {
+            path: "vendor.omp.lsp"
+        }
+    );
+}
+
+fn roster(record: &vendor::Record) -> Option<&OsStr> {
+    record
+        .arguments()
+        .windows(2)
+        .find(|pair| pair[0] == OsStr::new("--tools"))
+        .map(|pair| pair[1].as_os_str())
 }
 
 #[test]

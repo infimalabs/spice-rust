@@ -133,7 +133,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 64);
+    assert_eq!(missing.provenance().len(), 65);
     assert!(
         missing
             .provenance()
@@ -804,6 +804,7 @@ binary = "/opt/omp"
 model = "omp-current"
 effort = "max"
 fast_mode = true
+lsp = true
 auto_compact_window_tokens = 250000
 
 [listen]
