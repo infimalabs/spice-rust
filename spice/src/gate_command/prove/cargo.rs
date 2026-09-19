@@ -17,7 +17,7 @@ pub(super) struct Execution {
 
 #[derive(Clone)]
 pub(super) struct SourceExecution {
-    home: PathBuf,
+    home: std::sync::Arc<spice::cargo_isolation::PreparedHome>,
     lockfile: Vec<u8>,
     root: PathBuf,
     host: spice::cargo_isolation::Host,
@@ -57,9 +57,14 @@ pub(super) fn prepare(
         .derive_reached_arm(staged.selection(), GateId::RustTypecheck)
         .map_err(ProveFailure::run)?;
     let context = arm.context().map_err(ProveFailure::run)?;
-    let authority = authority(arm.root(), arm.compiler_environment())?;
+    let mut authority = authority(arm.root(), arm.compiler_environment())?;
     let (source_execution, external_source) =
         source_authority(writable_root, arm.root(), &authority.execution_environment)?;
+    for (name, value) in &mut authority.execution_environment {
+        if name == OsStr::new(spice::cargo_isolation::CARGO_HOME_VARIABLE) {
+            *value = source_execution.home.home().as_os_str().to_owned();
+        }
+    }
     let environment = Environment::new(authority.execution_environment.iter().cloned())
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-environment-refused", error))?;
     let base = arm.materialize_staged_base().map_err(ProveFailure::run)?;
@@ -251,7 +256,7 @@ pub(super) fn source_authority(
     // immutable staged source. Neither authority can stand in for the other.
     let lockfile = fs::read(selected_root.join("Cargo.lock"))
         .map_err(|error| ProveFailure::refusal("gate::prove-cargo-source-unavailable", error))?;
-    let source = spice::cargo_isolation::readmit_source_generation(
+    let (home, source) = spice::cargo_isolation::select_source_generation(
         Path::new(cargo_home),
         &lockfile,
         root,
@@ -265,7 +270,7 @@ pub(super) fn source_authority(
     .map_err(ProveFailure::cargo)?;
     Ok((
         SourceExecution {
-            home: PathBuf::from(cargo_home),
+            home: std::sync::Arc::new(home),
             lockfile,
             root: root.to_path_buf(),
             host,
@@ -333,7 +338,7 @@ pub(super) fn execute(execution: Execution) -> Result<Digest, ProveFailure> {
     )
     .map_err(ProveFailure::cargo)?;
     let observed = spice::cargo_isolation::readmit_source_generation(
-        &source.home,
+        source.home.home(),
         &source.lockfile,
         &source.root,
         &source.host,

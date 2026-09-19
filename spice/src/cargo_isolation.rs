@@ -402,6 +402,21 @@ pub fn readmit_source_generation(
     store::readmit_source_generation(home, lockfile, current_worktree, host)
 }
 
+/// Select an already-admitted private home for the exact staged lock generation.
+///
+/// An occupied lane's home is never advanced. If its generation is stale, only
+/// the same worktree's admitted development home can supply the selected source.
+/// This neither prepares dependencies nor changes the caller's environment.
+/// The returned home pins its immutable generation for the consumer's lifetime.
+pub fn select_source_generation(
+    home: &Path,
+    lockfile: &[u8],
+    current_worktree: &Path,
+    host: &Host,
+) -> Result<(PreparedHome, SourceGenerationAuthority), IsolationError> {
+    store::select_source_generation(home, lockfile, current_worktree, host)
+}
+
 /// Reclaim only old recognized temporaries and unreferenced generations.
 pub fn cleanup(host: &Host) -> Result<CleanupReport, IsolationError> {
     store::cleanup(host)
