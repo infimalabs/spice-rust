@@ -190,6 +190,15 @@ impl MessageObservations {
         self.find(lane, locus).map(|observation| observation.source)
     }
 
+    /// Whether a known batch already spans one tape position on this lane.
+    fn covers(&self, lane: CanonicalUuid, position: (u64, u64)) -> bool {
+        self.0.iter().any(|observation| {
+            observation.lane == lane
+                && (observation.from.member, observation.from.offset) <= position
+                && position < (observation.to.member, observation.to.offset)
+        })
+    }
+
     fn find(&self, lane: CanonicalUuid, locus: listen::Locus) -> Option<&MessageObservation> {
         let position = (locus.member, locus.offset);
         self.0.iter().rev().find(|observation| {

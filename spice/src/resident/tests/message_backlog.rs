@@ -307,6 +307,196 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
     fs::remove_dir_all(root).expect("backlog fixture cleanup");
 }
 
+/// An older page carries the real observation time, not the synthetic one.
+///
+/// Startup hydrates only the window it scanned, so a record older than that
+/// window has no observation among the startup facts. Its card then reports
+/// the synthetic ordering instant a timestamp-less record is given, which
+/// renders as an age of years. The page that finally serves that record has
+/// to find its own accounting fact.
+#[test]
+fn an_older_history_page_carries_the_durable_observation_of_its_own_window() {
+    let (root, paths) = resident_fixture("message-history-observation");
+    let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
+        .expect("backlog bus starts");
+    let epoch = test_uuid(84);
+    let lane = test_uuid(85);
+    let empty_lane = test_uuid(86);
+    let author = test_uuid(87);
+    seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+        .expect("the backlog tape opens");
+
+    let (oldest_observed, newest_observed) = deep_backlog_instants(&bus, &paths, &tape, lane);
+
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let publisher = source.message_publisher();
+    let bus_reader = bus.reader();
+    let mut reader = message_surface::BacklogReader::indexed();
+    let mut diagnostic = Vec::new();
+    let residency = current_residency(&bus, epoch).expect("residency reads");
+    message_surface::restore_agent_messages_indexed(
+        &bus_reader,
+        &paths,
+        residency.body(),
+        &publisher,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("durable backlog restores");
+    assert!(
+        diagnostic.is_empty(),
+        "restore diagnosed: {}",
+        String::from_utf8_lossy(&diagnostic),
+    );
+
+    let accepted = wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    };
+    let (_, frames) = source
+        .begin(
+            &accepted,
+            &wire::StreamRequest::Subscribe {
+                v: wire::WireVersion::CURRENT,
+                id: test_uuid(88),
+                epoch,
+                subjects: vec![wire::ViewSubject::Messages],
+                after: None,
+            },
+        )
+        .expect("Canvas subscription begins");
+    let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
+        panic!("expected message snapshot")
+    };
+    assert_eq!(
+        messages
+            .last()
+            .expect("the startup window published cards")
+            .observed
+            .as_ref(),
+        Some(&newest_observed),
+        "the startup window already knows its own observation",
+    );
+
+    let oldest = oldest_observed_card(
+        &source,
+        &accepted,
+        lane,
+        messages
+            .first()
+            .expect("the startup window published cards"),
+    );
+
+    assert_eq!(oldest.text, "durable restart backlog");
+    assert!(oldest.authored_synthetic);
+    assert_eq!(
+        oldest.observed.as_ref(),
+        Some(&oldest_observed),
+        "the oldest page reported an observation from another window",
+    );
+
+    drop(source);
+    bus.shutdown().expect("backlog bus stops");
+    fs::remove_dir_all(root).expect("backlog fixture cleanup");
+}
+
+/// Capture the oldest timestamp-less prose, then enough separately accounted
+/// records that one backward fact page cannot reach the oldest fact. Answers
+/// the accounting instants of the first and last batches.
+fn deep_backlog_instants(
+    bus: &Bus,
+    paths: &crate::resident::RuntimePaths,
+    tape: &tape::Tape,
+    lane: wire::CanonicalUuid,
+) -> (wire::Instant, wire::Instant) {
+    tape.tee(CODEX_PROSE_WITHOUT_TIME)
+        .expect("the oldest prose is captured");
+    let oldest = accounted_instant(bus, paths, lane);
+    let filler = "x".repeat(8 * 1024);
+    let mut newest = oldest;
+    for index in 0..160 {
+        tape.tee(
+            format!(
+                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"message {index} {filler}\"}}}}\n"
+            )
+            .as_bytes(),
+        )
+        .expect("durable history is captured");
+        newest = accounted_instant(bus, paths, lane);
+    }
+    assert_ne!(
+        oldest, newest,
+        "the fixture needs two distinct accounting instants"
+    );
+    (oldest, newest)
+}
+
+/// Page back through every older window, requiring each served card to carry
+/// its own observation, and answer with the oldest card served.
+fn oldest_observed_card(
+    source: &canvas::stream::Source,
+    accepted: &wire::Accepted,
+    lane: wire::CanonicalUuid,
+    newest: &wire::AgentMessage,
+) -> wire::AgentMessage {
+    let mut before = newest.locus;
+    let mut oldest = newest.clone();
+    for page in 0..8 {
+        let frame = source
+            .message_history(
+                accepted,
+                &wire::StreamRequest::MessageHistory {
+                    v: wire::WireVersion::CURRENT,
+                    id: test_uuid(90 + page),
+                    epoch: accepted.epoch,
+                    lane,
+                    before: Some(before),
+                },
+            )
+            .expect("older history reads");
+        let wire::StreamFrame::MessageHistory { messages, more, .. } = frame else {
+            panic!("expected message history page")
+        };
+        if let Some(first) = messages.first() {
+            before = first.locus;
+            oldest = first.clone();
+        }
+        for message in &messages {
+            assert!(
+                message.observed.is_some(),
+                "an older page served {} without its observation",
+                message.text.chars().take(24).collect::<String>(),
+            );
+        }
+        if !more {
+            break;
+        }
+    }
+    oldest
+}
+
+/// Account everything the tape has gained and answer with that batch's instant.
+fn accounted_instant(
+    bus: &Bus,
+    paths: &crate::resident::RuntimePaths,
+    lane: wire::CanonicalUuid,
+) -> wire::Instant {
+    let mut diagnostic = Vec::new();
+    let (observations, _) = ingest_transcripts(
+        bus,
+        paths,
+        Some(lane),
+        lane::ingest::Bound::IMMEDIATE,
+        lane::ingest::Coalescing::new(),
+        &mut diagnostic,
+    )
+    .expect("durable tape is accounted");
+    assert!(diagnostic.is_empty());
+    observations.first().expect("one batch accounted").at
+}
+
 #[test]
 fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_append() {
     let (root, paths) = resident_fixture("message-backlog-resume");

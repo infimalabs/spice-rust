@@ -238,7 +238,7 @@ fn restore_agent_messages_with(
             reader.startup_work.add(work);
         }
     }
-    let history = Arc::new(DurableHistory::new(paths, residency, reader));
+    let history = Arc::new(DurableHistory::new(bus, paths, residency, reader));
     let history_open = history.lanes.keys().copied().collect::<Vec<_>>();
     publisher
         .set_history_provider(history)
@@ -256,9 +256,32 @@ fn restore_agent_messages_with(
 struct DurableHistory {
     lanes: BTreeMap<CanonicalUuid, DurableLane>,
     continuations: Mutex<HashMap<(CanonicalUuid, Option<wire::MessageLocus>), HistoryContinuation>>,
-    observations: MessageObservations,
+    hydration: Mutex<Hydration>,
+    bus: Option<bus::BusReader>,
     steering: PresentationDirectives,
     worktrees: SessionWorktrees,
+}
+
+/// Observation times known to this provider, and how far each lane's walk got.
+///
+/// Startup hydrates only the window it scanned, so an older page names loci no
+/// startup fact covers. The provider therefore keeps walking the same lane's
+/// ingested facts backwards across pages: each walk resumes where the last one
+/// stopped and what it reads stays, so no page pays for a position an earlier
+/// page already crossed.
+#[derive(Debug, Default)]
+struct Hydration {
+    observations: MessageObservations,
+    walks: HashMap<CanonicalUuid, LaneWalk>,
+}
+
+/// Where one lane's backward observation walk stands.
+#[derive(Clone, Copy, Debug)]
+enum LaneWalk {
+    /// The walk resumes strictly before this fact.
+    At(wire::Seq),
+    /// The lane has no older ingested fact to read.
+    Exhausted,
 }
 
 #[derive(Debug)]
@@ -287,7 +310,12 @@ struct HistoryContinuation {
 }
 
 impl DurableHistory {
-    fn new(paths: &RuntimePaths, residency: &wire::ResidencyHead, reader: &BacklogReader) -> Self {
+    fn new(
+        bus: Option<&bus::BusReader>,
+        paths: &RuntimePaths,
+        residency: &wire::ResidencyHead,
+        reader: &BacklogReader,
+    ) -> Self {
         let environment = crate::session_environment();
         let lanes = residency
             .lanes
@@ -335,7 +363,11 @@ impl DurableHistory {
         Self {
             lanes,
             continuations: Mutex::new(HashMap::new()),
-            observations: reader.state.observations.clone(),
+            hydration: Mutex::new(Hydration {
+                observations: reader.state.observations.clone(),
+                walks: HashMap::new(),
+            }),
+            bus: bus.cloned(),
             steering: reader.steering.clone(),
             worktrees: reader.worktrees.clone(),
         }
@@ -377,6 +409,7 @@ impl DurableHistory {
         limit: usize,
         continuation: &HistoryContinuation,
     ) -> Result<Option<HistorySources>, String> {
+        let known = self.known_observations()?;
         let session = source
             .session
             .as_ref()
@@ -389,7 +422,7 @@ impl DurableHistory {
                     thread: session.thread.clone(),
                     lane,
                     author: source.author,
-                    observations: &self.observations,
+                    observations: &known,
                     before,
                     end,
                     limit,
@@ -525,11 +558,12 @@ impl DurableHistory {
         let end = tail.scan.checkpoint.clone();
         let work = tail.work;
         let messages = CollectedMessages::new(limit);
+        let scan = tail.scan;
         let mut reader = BacklogReader {
             cursors: BTreeMap::new(),
             startup_work: StartupWork::default(),
             state: MessageState {
-                observations: self.observations.clone(),
+                observations: self.window_observations(lane, &scan)?,
                 ..MessageState::default()
             },
             steering: self.steering.clone(),
@@ -537,7 +571,7 @@ impl DurableHistory {
         };
         let mut diagnostic = Vec::new();
         publish_scan(
-            tail.scan,
+            scan,
             lane,
             source.author,
             &source.worktree,
@@ -568,6 +602,58 @@ impl DurableHistory {
             end,
             work,
         })
+    }
+
+    /// Observation times known right now, without reading the journal.
+    fn known_observations(&self) -> Result<MessageObservations, String> {
+        Ok(self
+            .hydration
+            .lock()
+            .map_err(|_| "durable history observations are unavailable".to_owned())?
+            .observations
+            .clone())
+    }
+
+    /// Observation times covering one window's records, reading only what the
+    /// already-walked facts do not answer.
+    ///
+    /// Batches tile a source generation without gaps, so a fact covering the
+    /// oldest locus of this window means every newer locus in it is covered
+    /// too. That makes one containment test the whole decision, and leaves the
+    /// walk to run exactly when a page reaches past what earlier pages read.
+    ///
+    /// The walk runs while the lock is held so two concurrent pages cannot
+    /// read the same facts twice and retain both copies. That costs no real
+    /// concurrency: every fact read crosses the one writer queue anyway.
+    fn window_observations(
+        &self,
+        lane: CanonicalUuid,
+        scan: &listen::Scan,
+    ) -> Result<MessageObservations, String> {
+        let mut hydration = self
+            .hydration
+            .lock()
+            .map_err(|_| "durable history observations are unavailable".to_owned())?;
+        let (Some(bus), Some(oldest)) = (self.bus.as_ref(), oldest_scan_locus(scan)) else {
+            return Ok(hydration.observations.clone());
+        };
+        if hydration.observations.covers(lane, oldest)
+            || matches!(hydration.walks.get(&lane), Some(LaneWalk::Exhausted))
+        {
+            return Ok(hydration.observations.clone());
+        }
+        let source = scan_source(scan).map_err(|error| format!("{error:?}"))?;
+        let resume = match hydration.walks.get(&lane) {
+            Some(LaneWalk::At(seq)) => Some(*seq),
+            Some(LaneWalk::Exhausted) | None => None,
+        };
+        let walk = walk_observations(bus, lane, source, oldest, scan.records.len(), resume)
+            .map_err(|error| format!("{error:?}"))?;
+        hydration
+            .walks
+            .insert(lane, walk.resume.map_or(LaneWalk::Exhausted, LaneWalk::At));
+        hydration.observations.append(walk.observations);
+        Ok(hydration.observations.clone())
     }
 }
 
@@ -757,8 +843,18 @@ fn hydrate_observations(
     scan: &listen::Scan,
     reader: &mut BacklogReader,
 ) -> CommandResult<()> {
-    let Some(oldest) = scan
-        .records
+    let Some(oldest) = oldest_scan_locus(scan) else {
+        return Ok(());
+    };
+    let source = scan_source(scan)?;
+    let walk = walk_observations(bus, lane, source, oldest, scan.records.len(), None)?;
+    reader.state.observations.append(walk.observations);
+    Ok(())
+}
+
+/// Oldest tape position any decoded event in one scan names.
+fn oldest_scan_locus(scan: &listen::Scan) -> Option<(u64, u64)> {
+    scan.records
         .iter()
         .flat_map(|record| match &record.payload {
             listen::RecordPayload::Events(events) => events
@@ -768,20 +864,45 @@ fn hydrate_observations(
             _ => Vec::new(),
         })
         .min()
-    else {
-        return Ok(());
-    };
-    let source = scan
-        .checkpoint
+}
+
+/// Source generation the scan read, as the accounting facts name it.
+fn scan_source(scan: &listen::Scan) -> CommandResult<CanonicalUuid> {
+    scan.checkpoint
         .source
         .as_str()
         .parse::<CanonicalUuid>()
-        .map_err(|error| store_fault("canvas::message-source-invalid", &error.to_string()))?;
+        .map_err(|error| store_fault("canvas::message-source-invalid", &error.to_string()))
+}
+
+/// One bounded backward walk of a lane's accounting facts.
+struct ObservationWalk {
+    observations: MessageObservations,
+    /// Fact the next walk resumes strictly before, or `None` once the lane's
+    /// oldest accounting fact has been read.
+    resume: Option<wire::Seq>,
+}
+
+/// Read this lane's accounting facts backwards until one covers `oldest`.
+///
+/// The walk is capped rather than exhaustive: a window deep in a long tape may
+/// stop before it reaches its own batch, and then reports where it stopped so
+/// the next request continues from there instead of paying for the same facts
+/// again. Only batches naming this lane and this source generation can end the
+/// walk, so a replaced generation never lends its times to the current one.
+fn walk_observations(
+    bus: &bus::BusReader,
+    lane: CanonicalUuid,
+    source: CanonicalUuid,
+    oldest: (u64, u64),
+    records: usize,
+    resume: Option<wire::Seq>,
+) -> CommandResult<ObservationWalk> {
     let origin = format!("lane:{lane}")
         .parse::<wire::Origin>()
         .map_err(|error| store_fault("canvas::message-origin-invalid", &error.to_string()))?;
-    let mut remaining = scan.records.len().saturating_mul(4).clamp(32, 4_096);
-    let mut before = None;
+    let mut remaining = records.saturating_mul(4).clamp(32, 4_096);
+    let mut before = resume;
     let mut facts = Vec::new();
     while remaining > 0 {
         let limit = remaining.min(128);
@@ -796,6 +917,7 @@ fn hydrate_observations(
             )
             .map_err(|error| store_fault("canvas::message-time-unavailable", &error.to_string()))?;
         if page.rows.is_empty() {
+            before = None;
             break;
         }
         before = page.rows.last().map(|fact| fact.seq);
@@ -816,11 +938,10 @@ fn hydrate_observations(
         }
     }
     facts.sort_by_key(|fact| fact.seq);
-    reader
-        .state
-        .observations
-        .append(MessageObservations::from_facts(&facts));
-    Ok(())
+    Ok(ObservationWalk {
+        observations: MessageObservations::from_facts(&facts),
+        resume: before,
+    })
 }
 
 fn scan_steering_keys(scan: &listen::Scan) -> BTreeSet<steer::Key> {
