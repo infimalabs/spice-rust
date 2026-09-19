@@ -207,6 +207,22 @@ fn the_omp_roster_names_the_language_server_tool_only_where_policy_admits_it() {
 }
 
 #[test]
+fn omp_containment_overrides_an_inherited_external_mux_opt_in() {
+    let inherited = Environment::new([("PI_DISABLE_LSPMUX", "0")]).expect("fixture environment");
+    let plan = compose(
+        &root("[vendor.omp]\nlsp = true\n"),
+        inputs("omp", inherited, Resume::Fresh),
+    )
+    .expect("omp plan composes without duplicate environment keys");
+
+    assert_eq!(
+        environment_value(plan.environment(), "PI_DISABLE_LSPMUX"),
+        Some("1"),
+        "the child must not connect to an external mux outside its owner"
+    );
+}
+
+#[test]
 fn inherited_claude_compact_window_is_preserved_exactly_once() {
     let inherited = Environment::new([
         ("HOME", "/home/operator"),

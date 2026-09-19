@@ -12,6 +12,8 @@ use crate::config::Root;
 
 /// Child variable understood by Claude Code's auto-compaction boundary.
 pub const CLAUDE_AUTO_COMPACT_WINDOW: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
+/// OMP's external multiplexer opt-out, independent of its shared-broker setting.
+pub const OMP_DISABLE_LSPMUX: &str = "PI_DISABLE_LSPMUX";
 /// Child variable binding every supervised Rust shell to its durable lane.
 pub const SPICE_RS_LANE: &str = wire::SpiceVariable::Lane.as_str();
 /// Claude's native commit attribution trailer.
@@ -142,6 +144,18 @@ fn compose_with_registry(
         .vendor(inputs.vendor.as_str())
         .ok_or_else(|| ComposeError::UnsupportedVendor(inputs.vendor.as_str().to_owned()))?;
     let configured = declared.launch_values(root);
+    if declared.dialect() == listen::Dialect::Omp {
+        // OMP checks the external mux before its own lsp.shared setting.
+        // The lane owns this pin even when the parent enabled multiplexing.
+        if let Some((_, value)) = environment
+            .iter_mut()
+            .find(|(key, _)| key == OMP_DISABLE_LSPMUX)
+        {
+            *value = OsString::from("1");
+        } else {
+            environment.push((OsString::from(OMP_DISABLE_LSPMUX), OsString::from("1")));
+        }
+    }
     // Claude alone takes its window from the environment; Codex renders its
     // limit inline and omp reads the overlay the lane wrote.
     if let Some(window) = configured.auto_compact_window_tokens
