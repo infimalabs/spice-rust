@@ -2,6 +2,10 @@
 
 use super::*;
 
+pub(super) const RUNNER: &str = "spice-cargo-proof-shard";
+pub(super) const INPUT_STRATEGY: &str = "cargo-package-closure-v2";
+pub(super) const TEST_SHARD_DECLARATION: &str = "gate::cargo-workspace-tests::proof-shard-v3";
+
 pub(super) struct Execution {
     shard: CargoGateShard,
     root: PathBuf,
@@ -140,7 +144,7 @@ fn prepare_action(
     let inventory = digest_encoded(Domain::GateInventory, &shard)?;
     let declaration = match shard.kind() {
         CargoGateShardKind::Typecheck => typecheck_declaration,
-        CargoGateShardKind::Test => "gate::cargo-workspace-tests::proof-shard-v3",
+        CargoGateShardKind::Test => TEST_SHARD_DECLARATION,
     };
     let non_files = vec![
         non_file(
@@ -176,14 +180,14 @@ fn prepare_action(
     argv.extend_from_slice(shard.argv());
     let spec = ActionSpec::new(ActionSpecFields {
         action_id: shard.action_id().to_owned(),
-        runner: "spice-cargo-proof-shard".to_owned(),
+        runner: RUNNER.to_owned(),
         runner_version: RUNNER_VERSION,
         declaration: declaration.to_owned(),
         argv,
         cwd: ".".to_owned(),
         environment_names,
         tools,
-        input_strategy: "cargo-package-closure-v2".to_owned(),
+        input_strategy: INPUT_STRATEGY.to_owned(),
         reuse: ActionReuseClass::Cacheable,
     })
     .map_err(ProveFailure::action_input)?;

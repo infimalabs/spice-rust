@@ -7,7 +7,7 @@ use crate::ChangeSelectionReport;
 
 use super::{
     ActionKey, EvidenceStoreError, Layout, MAX_RECEIPT_BYTES, ReceiptExpectation,
-    derive_action_key, publish_immutable,
+    derive_action_key, publish_immutable, publish_json,
 };
 
 const FINGERPRINT_AUTHORITY_VERSION: u64 = 2;
@@ -394,10 +394,15 @@ pub(super) fn publish_with(
     let bytes = manifest.encode()?;
     let id = manifest.id()?;
     let key = manifest.authority.key()?;
+    // Validate the previous object before replacing its derived index. Corrupt
+    // evidence remains a refusal; a valid obsolete plan is only a cache entry.
+    if lookup(layout, &manifest.authority)?.as_ref() == Some(manifest) {
+        return Ok(key);
+    }
     publish_immutable(&layout.fingerprint_objects.join(id.as_str()), &bytes)?;
     after_object()?;
-    let index = ActionFingerprintIndex::new(manifest.authority.clone(), id).encode()?;
-    publish_immutable(&layout.fingerprints.join(key.as_str()), &index)?;
+    let index = ActionFingerprintIndex::new(manifest.authority.clone(), id);
+    publish_json(&layout.fingerprints.join(key.as_str()), &index)?;
     Ok(key)
 }
 
@@ -530,13 +535,6 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        assert!(
-            store
-                .layout
-                .fingerprint_objects
-                .join(interrupted.id().unwrap().as_str())
-                .is_file()
-        );
         store.publish_action_fingerprints(&interrupted).unwrap();
         assert_eq!(
             store
@@ -544,6 +542,56 @@ mod tests {
                 .unwrap(),
             Some(interrupted),
         );
+    }
+
+    #[test]
+    fn replanning_replaces_the_fingerprint_without_reusing_obsolete_receipts() {
+        let fixture = Fixture::new("fingerprint-replan");
+        let store = fixture.store();
+        let authority = authority(b"unchanged");
+        let old = receipt(&derive_action_key(b"old contract"), b"old result");
+        let new = receipt(&derive_action_key(b"new contract"), b"new result");
+        let expectation = |pass: &super::super::PassReceipt| {
+            ReceiptExpectation::new(
+                "cargo:test:fixture::lib:fixture",
+                pass.action().clone(),
+                pass.action_spec().clone(),
+                pass.input_manifest().clone(),
+            )
+            .unwrap()
+        };
+        let old_manifest = manifest(authority.clone(), true, vec![expectation(&old)]);
+        let new_manifest = manifest(authority.clone(), true, vec![expectation(&new)]);
+        store.publish(&old).unwrap();
+        store.publish_action_fingerprints(&old_manifest).unwrap();
+        let interrupted = store.with_lock(|layout| {
+            publish_with(layout, &new_manifest, || {
+                Err(EvidenceStoreError::new(
+                    "fixture::interrupted",
+                    "before index",
+                ))
+            })
+        });
+        assert_eq!(interrupted.unwrap_err().reason(), "fixture::interrupted");
+        assert_eq!(
+            store.lookup_action_fingerprints(&authority).unwrap(),
+            Some(old_manifest),
+        );
+        store.publish_action_fingerprints(&new_manifest).unwrap();
+        let (selected, receipts) = store
+            .lookup_fingerprint_receipts(&authority)
+            .unwrap()
+            .unwrap()
+            .into_parts();
+        assert_eq!(selected, new_manifest);
+        assert_eq!(receipts, vec![None]);
+        store.publish(&new).unwrap();
+        let (_, receipts) = store
+            .lookup_fingerprint_receipts(&authority)
+            .unwrap()
+            .unwrap()
+            .into_parts();
+        assert_eq!(receipts[0].as_ref().unwrap().action_key(), new.action());
     }
 
     fn authority(environment: &[u8]) -> ActionFingerprintAuthority {

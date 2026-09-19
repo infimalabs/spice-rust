@@ -141,6 +141,18 @@ Leases coordinate duplicate producers but grant no proof and expire by an
 explicit recorded deadline. Readers preserve corrupt or unsupported bytes for
 inspection and refuse them.
 
+Fingerprint objects remain immutable, but their authority index is a replaceable
+cache pointer. Fresh planning validates the previous indexed object and publishes
+the new object before atomically replacing that pointer under the store lock.
+An interrupted replacement leaves the previous plan selected; corrupt indexed
+evidence still refuses. Replacing a plan grants no proof: the newly selected
+action keys must resolve their own exact receipts.
+
+Fast lookup also binds the compiled proof runner version and Cargo runner,
+input-strategy, and test-shard declarations. Installing a changed proof contract
+therefore selects a new fingerprint namespace even when the staged tree and
+external compiler tools did not change.
+
 Pre-commit captures one index authority, computes `candidate_tree`, resolves
 the owed action set, verifies all receipts in one read phase, runs live-only
 checks, revalidates the index authority, and atomically publishes one admission
