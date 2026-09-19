@@ -355,6 +355,14 @@ stream — the transcript remains the record.
 synthesis instead settles on `onend` or `onerror`; if the browser emits neither,
 the active queue head remains until the operator uses the global stop.
 
+**Invariant —** A browser publishes its voice list asynchronously, so an empty
+list is a pre-publication state rather than a missing voice. A system request
+waits for `voiceschanged` under its own bound and then speaks once with the
+configured voice; a published list that omits that voice refuses while naming
+the voices the browser does offer, and no other voice is ever substituted.
+While system synthesis plays, Canvas names the voice the browser reported and
+a failed utterance carries the browser's own error code.
+
 **Invariant —** The clip is played back under the media type the backend
 declared, never a guessed one.
 

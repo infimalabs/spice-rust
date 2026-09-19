@@ -1,10 +1,11 @@
 //! Browser-owned playback for the effective resident speech contract.
 
-use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
+use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    Blob, BlobPropertyBag, Event, HtmlAudioElement, SpeechSynthesis, SpeechSynthesisUtterance, Url,
+    Blob, BlobPropertyBag, Event, HtmlAudioElement, SpeechSynthesis, SpeechSynthesisUtterance,
+    SpeechSynthesisVoice, Url,
 };
 
 use crate::speech_owner::PlaybackOwnership;
@@ -12,6 +13,30 @@ use crate::speech_owner::PlaybackOwnership;
 const REFERENCE_WORDS_PER_MINUTE: f32 = 175.0;
 const MIN_SYSTEM_RATE: f32 = 0.5;
 const MAX_SYSTEM_RATE: f32 = 2.0;
+
+/// How many offered voice names a refusal names before eliding the rest, so
+/// a browser carrying hundreds of voices still yields one readable sentence.
+const MAX_OFFERED_VOICES: usize = 8;
+
+/// What the browser did with one system-speech request.
+pub enum SystemStart {
+    /// The utterance is with the browser, speaking as this reported voice.
+    Speaking(String),
+    /// The browser has published no voices yet, so no voice can be selected
+    /// and no utterance was started. The installed `voiceschanged` observer
+    /// calls the caller's resume once the browser publishes its list.
+    AwaitingVoices,
+}
+
+/// What one system utterance reports back to the playback owner.
+pub struct SystemObservers<Voices, Ended, Failed> {
+    /// The browser published its voice list, so the request can resume.
+    pub voices: Voices,
+    /// The utterance finished speaking.
+    pub ended: Ended,
+    /// The utterance failed, carrying the browser's own error code.
+    pub failed: Failed,
+}
 
 /// One browser playback owner. Replacements always stop the prior media first.
 #[derive(Default)]
@@ -24,6 +49,7 @@ pub struct Controller {
     on_end: Option<Closure<dyn FnMut(Event)>>,
     on_error: Option<Closure<dyn FnMut(Event)>>,
     on_pause: Option<Closure<dyn FnMut(Event)>>,
+    on_voices: Option<Closure<dyn FnMut(Event)>>,
 }
 
 impl Controller {
@@ -39,6 +65,13 @@ impl Controller {
         self.ownership.is_current(generation)
     }
 
+    /// Whether this generation's request still waits on the browser's voice
+    /// list. The installed observer is the wait: speaking detaches it, and
+    /// so does every stop.
+    pub const fn is_awaiting_voices(&self, generation: u64) -> bool {
+        self.on_voices.is_some() && self.is_current(generation)
+    }
+
     /// Stop current system or external playback and invalidate pending work.
     pub fn stop(&mut self) {
         self.ownership.stop();
@@ -52,6 +85,7 @@ impl Controller {
             utterance.set_onerror(None);
         }
         if let Some(synthesis) = &self.synthesis {
+            synthesis.set_onvoiceschanged(None);
             synthesis.cancel();
         }
         if let Some(audio) = &self.audio {
@@ -70,18 +104,37 @@ impl Controller {
         self.on_end = None;
         self.on_error = None;
         self.on_pause = None;
+        self.on_voices = None;
     }
 
     /// Start exact-voice system synthesis for the current generation.
-    pub fn start_system(
+    ///
+    /// A browser publishes its voice list asynchronously: on a fresh page
+    /// `get_voices` answers an empty list until the engine has enumerated the
+    /// installed voices and fired `voiceschanged`. An empty list is therefore
+    /// no verdict on the configured voice, and refusing on it is what makes a
+    /// present voice look intermittently unavailable. Only a published list
+    /// that omits the configured name is a naming mismatch; an empty one
+    /// installs the observer that resumes this request and reports
+    /// [`SystemStart::AwaitingVoices`], leaving the entry the queue head.
+    pub fn start_system<Voices, Ended, Failed>(
         &mut self,
         generation: u64,
         text: &str,
         voice_name: &str,
         words_per_minute: u32,
-        on_end: impl Fn() + 'static,
-        on_error: impl Fn() + 'static,
-    ) -> Result<(), String> {
+        observers: SystemObservers<Voices, Ended, Failed>,
+    ) -> Result<SystemStart, String>
+    where
+        Voices: Fn() + 'static,
+        Ended: Fn() + 'static,
+        Failed: Fn(String) + 'static,
+    {
+        let SystemObservers {
+            voices: on_voices,
+            ended: on_end,
+            failed: on_error,
+        } = observers;
         if !self.is_current(generation) {
             return Err("speech request was superseded".to_owned());
         }
@@ -89,29 +142,44 @@ impl Controller {
             .ok_or_else(|| "browser window is unavailable".to_owned())?
             .speech_synthesis()
             .map_err(|_| "system speech backend is unavailable".to_owned())?;
-        let voice = synthesis
+        let offered: Vec<SpeechSynthesisVoice> = synthesis
             .get_voices()
             .iter()
-            .filter_map(|value| value.dyn_into::<web_sys::SpeechSynthesisVoice>().ok())
-            .find(|voice| voice.name() == voice_name)
-            .ok_or_else(|| format!("system voice {voice_name:?} is unavailable"))?;
+            .filter_map(|value| value.dyn_into::<SpeechSynthesisVoice>().ok())
+            .collect();
+        let Some(voice) = offered.iter().find(|voice| voice.name() == voice_name) else {
+            if !offered.is_empty() {
+                return Err(unavailable_voice(voice_name, &offered));
+            }
+            let observed =
+                Closure::wrap(Box::new(move |_event: Event| on_voices()) as Box<dyn FnMut(_)>);
+            synthesis.set_onvoiceschanged(Some(observed.as_ref().unchecked_ref()));
+            self.synthesis = Some(synthesis);
+            self.on_voices = Some(observed);
+            return Ok(SystemStart::AwaitingVoices);
+        };
         let utterance = SpeechSynthesisUtterance::new_with_text(text)
             .map_err(|_| "system speech utterance could not be created".to_owned())?;
-        utterance.set_voice(Some(&voice));
+        utterance.set_voice(Some(voice));
         utterance.set_rate(
             (words_per_minute as f32 / REFERENCE_WORDS_PER_MINUTE)
                 .clamp(MIN_SYSTEM_RATE, MAX_SYSTEM_RATE),
         );
         let ended = Closure::wrap(Box::new(move |_event: Event| on_end()) as Box<dyn FnMut(_)>);
-        let failed = Closure::wrap(Box::new(move |_event: Event| on_error()) as Box<dyn FnMut(_)>);
+        let failed = Closure::wrap(
+            Box::new(move |event: Event| on_error(system_failure(&event))) as Box<dyn FnMut(_)>,
+        );
         utterance.set_onend(Some(ended.as_ref().unchecked_ref()));
         utterance.set_onerror(Some(failed.as_ref().unchecked_ref()));
+        synthesis.set_onvoiceschanged(None);
         synthesis.speak(&utterance);
+        let speaking = voice.name();
         self.synthesis = Some(synthesis);
         self.utterance = Some(utterance);
         self.on_end = Some(ended);
         self.on_error = Some(failed);
-        Ok(())
+        self.on_voices = None;
+        Ok(SystemStart::Speaking(speaking))
     }
 
     /// Install externally rendered bytes and ask the browser to play them.
@@ -164,6 +232,49 @@ impl Drop for Controller {
     fn drop(&mut self) {
         self.stop();
     }
+}
+
+/// Refuse an absent configured voice while naming what the browser published.
+///
+/// The operator configured one exact voice and gets that voice or silence:
+/// naming the published alternatives is what makes a mismatch diagnosable
+/// without a substitution nobody asked for. The list is bounded because a
+/// browser can offer hundreds of voices and this sentence is shown whole.
+fn unavailable_voice(voice_name: &str, offered: &[SpeechSynthesisVoice]) -> String {
+    let mut names: Vec<String> = offered
+        .iter()
+        .take(MAX_OFFERED_VOICES)
+        .map(SpeechSynthesisVoice::name)
+        .collect();
+    if let Some(elided) = offered
+        .len()
+        .checked_sub(MAX_OFFERED_VOICES)
+        .filter(|elided| *elided > 0)
+    {
+        names.push(format!("and {elided} more"));
+    }
+    format!(
+        "system voice {voice_name:?} is unavailable; this browser offers {}",
+        names.join(", "),
+    )
+}
+
+/// Report a failed utterance with the browser's own error code.
+///
+/// `SpeechSynthesisErrorEvent.error` distinguishes a refused start from an
+/// interrupted one and from a voice the engine could not load, which one
+/// generic sentence hides. The member is read as a string rather than through
+/// the typed `SpeechSynthesisErrorCode`: an engine reporting a code outside
+/// the enumerated set panics that conversion, and an unenumerated code is
+/// exactly the one worth showing.
+fn system_failure(event: &Event) -> String {
+    let Some(code) = js_sys::Reflect::get(event, &JsValue::from_str("error"))
+        .ok()
+        .and_then(|code| code.as_string())
+    else {
+        return "system speech playback failed".to_owned();
+    };
+    format!("system speech playback failed: {code}")
 }
 
 /// Await the browser's asynchronous media-play admission.

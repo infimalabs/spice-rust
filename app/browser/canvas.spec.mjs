@@ -80,6 +80,7 @@ import {
   assertSurvivingVendorsAreReported,
 } from "./canvas-vendor-reap.mjs";
 import {
+  assertDeferredVoicePublication,
   assertSpeechVariants,
   installBrowserSpeech,
   installSocketControl,
@@ -825,6 +826,9 @@ try {
         ));
         await run.phase("speech-variants", () => (
           assertSpeechVariants(browser, resident.discovery.endpoint)
+        ));
+        await run.phase("deferred-voices", () => (
+          assertDeferredVoicePublication(browser, resident.discovery.endpoint)
         ));
         await run.phase("stale-generation", () => (
           assertStaleGeneration(browser, resident.discovery.endpoint, resident.discovery.epoch)
