@@ -3,6 +3,12 @@
 //! The command fold reports the shell an agent issued and audits how much
 //! of it went through the recorded wrapper rather than around it, which is why
 //! the pipeline reading here is structural rather than a substring search.
+//!
+//! Completion is a recorded outcome, not the presence of a numeric exit code.
+//! An explicit tool result may complete a command while leaving that code
+//! unknown; numeric failure filters never infer a code from that absence.
+//! Select the newest qualifying invocation timestamps before clipping or
+//! reversing presentation, even when their results arrive in a different order.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
@@ -64,7 +70,7 @@ impl CommandQuery {
     }
 
     fn completed(row: &CommandRecord) -> bool {
-        row.exit_code.is_some() && row.status != "running"
+        row.status == "completed"
     }
 
     fn matches(&self, row: &CommandRecord, latest_compaction: Option<&str>) -> bool {
@@ -410,7 +416,8 @@ impl CommandSourceFold {
             } else if CommandQuery::completed(&command)
                 && query.matches(&command, latest_compaction)
             {
-                self.frontier.push(command);
+                self.frontier
+                    .push_ordered_by(command, |left, right| left.ts.cmp(&right.ts));
             }
         }
         drain_command_turns(&mut self.scratch, &mut self.state, at)
@@ -644,3 +651,6 @@ fn command_label(command: &str) -> String {
         .find(|word| !environment_assignment(word))
         .unwrap_or_else(|| "-".to_owned())
 }
+
+#[cfg(test)]
+mod tests;
