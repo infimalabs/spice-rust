@@ -1,8 +1,6 @@
 use super::super::launch::test_support::AdvisoryRtkFixture;
 use super::*;
 
-mod trust_ice;
-
 #[test]
 fn automatic_wake_refuses_an_already_seated_drain_lane() {
     let fixture = AdvisoryRtkFixture::new();

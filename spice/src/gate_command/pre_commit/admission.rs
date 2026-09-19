@@ -270,15 +270,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_proofs_name_each_exact_command_and_the_aggregate() {
-        let detail = missing_proof_detail(&["canvas:build", "formatters"]);
-
-        assert!(detail.contains("command=`spice gate prove canvas:build`"));
-        assert!(detail.contains("command=`spice gate prove formatters`"));
-        assert!(detail.ends_with("aggregate-command=`spice gate prove --missing`"));
-    }
-
-    #[test]
     fn admission_retries_share_one_bounded_time_epoch() {
         let first = jiff::Timestamp::new(601, 1).expect("valid first timestamp");
         let second = jiff::Timestamp::new(899, 999_999_999).expect("valid second timestamp");

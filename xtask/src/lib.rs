@@ -11,7 +11,6 @@ mod develop;
 mod gate_command;
 mod proof_image;
 mod release;
-mod test_classification;
 #[cfg(not(target_arch = "wasm32"))]
 mod test_evidence;
 mod verify_error;
@@ -20,7 +19,7 @@ mod verify_timing;
 #[cfg(not(target_arch = "wasm32"))]
 mod workspace_tests;
 
-pub use app::{AppBuildError, app, app_to, proof_app};
+pub use app::{AppBuildError, app};
 pub use build_cache::{
     BuildCacheContext, BuildCacheDisposition, BuildCacheError, BuildCacheReport, BuildCacheRequest,
     BuildCacheRootKind, BuildCacheRootReport, BuildCacheTargetDirectory, build_cache,
@@ -38,10 +37,6 @@ pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use release::{
     CommandRecord, MacSymbols, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target,
 };
-pub use test_classification::{
-    ClassificationError, list as list_slow_tests, run_fast as run_fast_tests,
-    run_slow as run_slow_tests,
-};
 #[cfg(not(target_arch = "wasm32"))]
 pub use test_evidence::{TestEvidenceRunError, run as run_test_evidence};
 #[cfg(not(target_arch = "wasm32"))]
@@ -56,7 +51,7 @@ pub use workspace_tests::{
 ///
 /// These strings are deliberately not executable commands or scheduler arms;
 /// they explain which retired repository-wide surfaces a package check omits.
-const RETIRED_REPOSITORY_ACTIONS: [&str; 13] = [
+const RETIRED_REPOSITORY_ACTIONS: [&str; 12] = [
     "cargo build --locked -p spice --bin spice (freshness reference and canvas resident)",
     "repository completion publication boundary",
     "rustfmt --edition <workspace> --check --files-with-diff <gate::formatter_sources>",
@@ -64,7 +59,6 @@ const RETIRED_REPOSITORY_ACTIONS: [&str; 13] = [
     "cargo canvas-wasm-typecheck",
     "cargo check --locked --workspace --target wasm32-unknown-unknown",
     "spice dev xtask -- app (canvas compiler evidence)",
-    "npm run test:canvas (Canvas browser guard)",
     "deterministic sharded cargo test --locked --workspace --all-targets",
     "cargo doc --locked --workspace --lib --bins --no-deps",
     "cargo test --locked --workspace --doc",
@@ -181,21 +175,7 @@ impl Runner for SystemRunner {
         cargo_jobs: usize,
     ) -> Result<CommandRun, RunError> {
         let label = command.label(package);
-        let arguments: Vec<OsString> = match command {
-            ScopedCommand::Test => test_classification::fast_argv(package)
-                .map(|argv| argv.into_iter().skip(1).collect())
-                .map_err(|error| {
-                    RunError::Launch(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        error.to_string(),
-                    ))
-                })?,
-            _ => command
-                .arguments(package)
-                .into_iter()
-                .map(OsString::from)
-                .collect(),
-        };
+        let arguments = command.arguments(package).into_iter().map(OsString::from);
         verify_execution::run_process(&label, "cargo", arguments, cancellation, cargo_jobs, &[])
     }
 }

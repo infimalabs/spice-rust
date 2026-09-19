@@ -17,8 +17,6 @@ mod action_input;
 mod action_spec;
 pub mod battery;
 pub mod camp;
-#[cfg(not(target_arch = "wasm32"))]
-mod canvas_actions;
 mod change_selection;
 pub mod config;
 pub mod core;
@@ -84,12 +82,6 @@ pub use camp::{
     CampStanding, DistributionReport, LocusDistance, SharedBound,
 };
 #[cfg(not(target_arch = "wasm32"))]
-pub use canvas_actions::{
-    CANVAS_ACTION_GROUP, CANVAS_ACTION_PREFIX, CANVAS_ACTION_REGISTRY, CANVAS_BUILD_ACTION,
-    CANVAS_PREDECESSOR_RELEASE, CanvasActionError, CanvasActionPlan, CanvasActionPlanning,
-    CanvasShard,
-};
-#[cfg(not(target_arch = "wasm32"))]
 pub use change_selection::compile_language_reach;
 pub use change_selection::{
     CHANGE_SELECTION_REPORT_VERSION, ChangeArmReach, ChangeReachAuthority, ChangeReachEdge,
@@ -152,6 +144,18 @@ pub use jurisdiction::{
 // jurisdiction module is deliberately type-checked on the browser target too.
 #[cfg(target_arch = "wasm32")]
 const _: fn(&Jurisdiction, &[String]) -> Jurisdiction = Jurisdiction::select_paths;
+#[cfg(not(target_arch = "wasm32"))]
+pub use action_input::{
+    ACTION_INPUT_MANIFEST_VERSION, ActionInputClosure, ActionInputError, ActionInputExpansion,
+    ActionInputInventory, ActionInputManifest, ActionInputManifestEntry, ActionNonCacheable,
+    ActionNonFileInput, ActionNonFileKind, ActionReuseClass, GitFileMode, compile_action_input,
+    compile_explicit_action_input, gate_action_reuse_class,
+};
+#[cfg(not(target_arch = "wasm32"))]
+pub use action_spec::{
+    ACTION_KEY_VERSION, ACTION_SPEC_VERSION, ActionKeyAuthority, ActionPolicyAuthority, ActionSpec,
+    ActionSpecFields, ActionToolRequirement, derive_authority_bound_action_key,
+};
 pub use kill::{
     AttemptEvidence, AttemptKind, Kill, KillBounds, KillError, KillRun, MutantDisposition,
     MutantEvidence, MutationBattery, MutationInventory, MutationMovement, MutationTool,
@@ -195,6 +199,10 @@ pub use state::{
     PeerClaim, PendingState, RenameMap, StateDecision, StateError, StateErrorKind, StateKey,
     StateLedger, StateReceipt, current_state_path, varied_elastic_limit,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use structural::{
+    StructuralCapture, StructuralMatch, StructuralPattern, StructuralScanError, scan_structural,
+};
 pub use test_evidence::{
     CanonicalTestExecution, CoverageCompleteness, CoveredSource, MutationCoverageFinding,
     MutationCoverageReport, MutationExecution, MutationObservation, StandingMutationWaiver,
@@ -202,27 +210,6 @@ pub use test_evidence::{
     TEST_SELECTION_REPORT_VERSION, TestCoverage, TestEvidenceError, TestEvidenceGraph,
     TestEvidenceReport, TestEvidenceStanding, TestSelectionEdge, TestSelectionReport,
     TestSubsumptionFinding, TestSubsumptionReport,
-};
-/// Retired private developer-app argument retained for a named refusal.
-pub const VERIFIER_APP_PUBLISH_FLAG: &str = "--spice-verifier-publish-root";
-/// Complete stdout record emitted after Trunk's Cargo process succeeds and
-/// before source validation and atomic app publication finish.
-pub const VERIFIER_APP_COMPILER_READY_RECORD: &str = "[app] compiler-ready";
-#[cfg(not(target_arch = "wasm32"))]
-pub use action_input::{
-    ACTION_INPUT_MANIFEST_VERSION, ActionInputClosure, ActionInputError, ActionInputExpansion,
-    ActionInputInventory, ActionInputManifest, ActionInputManifestEntry, ActionNonCacheable,
-    ActionNonFileInput, ActionNonFileKind, ActionReuseClass, GitFileMode, compile_action_input,
-    compile_explicit_action_input, gate_action_reuse_class,
-};
-#[cfg(not(target_arch = "wasm32"))]
-pub use action_spec::{
-    ACTION_KEY_VERSION, ACTION_SPEC_VERSION, ActionKeyAuthority, ActionPolicyAuthority, ActionSpec,
-    ActionSpecFields, ActionToolRequirement, derive_authority_bound_action_key,
-};
-#[cfg(not(target_arch = "wasm32"))]
-pub use structural::{
-    StructuralCapture, StructuralMatch, StructuralPattern, StructuralScanError, scan_structural,
 };
 pub use toolchain::{
     ArmFinding, ArmMeasurement, ArmObservation, ArmOutcome, ArmTiming, ConfigurationSource,

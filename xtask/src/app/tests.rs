@@ -67,52 +67,6 @@ fn publish_fixture(root: &Path, label: &str) {
     .expect("fixture generation publishes");
 }
 
-#[test]
-fn selected_source_build_publishes_only_into_the_separate_live_root() {
-    let root = fixture("selected-source-publication");
-    let source_root = root.join("selection");
-    let publish_root = root.join("repository");
-    fs::create_dir(&source_root).expect("selected source root");
-    fs::create_dir(&publish_root).expect("live publication root");
-    let sources = fixture_source();
-    let mut output = Vec::new();
-
-    app_build_at(
-        &source_root,
-        &publish_root,
-        &sources,
-        &mut output,
-        |stage, _| {
-            write_raw_generation(stage, "selected", &sources, true);
-            Ok(())
-        },
-        || Ok(()),
-    )
-    .expect("selected source generation publishes");
-
-    assert!(publish_root.join(spice::canvas::APP_STAGE).is_dir());
-    assert!(!source_root.join(spice::canvas::APP_STAGE).exists());
-    assert!(!source_root.join("dist").exists());
-    let output = String::from_utf8(output).expect("app output is UTF-8");
-    let readiness = output
-        .find(gate::VERIFIER_APP_COMPILER_READY_RECORD)
-        .expect("post-compiler readiness is reported");
-    let publication = output
-        .find(" generation ")
-        .expect("published generation is reported");
-    assert!(readiness < publication);
-    assert!(output.contains(&source_root.display().to_string()));
-    assert!(
-        output.contains(
-            &publish_root
-                .join(spice::canvas::APP_STAGE)
-                .display()
-                .to_string()
-        )
-    );
-    fs::remove_dir_all(root).expect("remove publication fixture");
-}
-
 fn fail_partial_build(stage: &Path) -> Result<(), AppBuildError> {
     fs::create_dir_all(stage).expect("create partial build");
     fs::write(stage.join("canvas-app.html"), b"partial build").expect("write partial build");

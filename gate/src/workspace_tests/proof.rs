@@ -152,60 +152,6 @@ pub struct CargoGateShardPlanning<'a> {
     pub include_tests: bool,
 }
 
-pub(crate) struct CargoPackageInputClosure {
-    pub(crate) input_paths: Vec<String>,
-    pub(crate) target_source_paths: Vec<String>,
-    pub(crate) file_macro_paths: Vec<String>,
-    pub(crate) compile_time_paths: Vec<String>,
-    pub(crate) workspace_configuration_paths: Vec<String>,
-    pub(crate) non_cacheable_reason: Option<String>,
-}
-
-pub(crate) fn cargo_package_input_closure_at(
-    root: &Path,
-    selected_paths: &[String],
-    changed_sources: &[String],
-    environment: &Environment,
-    cargo: &OsStr,
-    external_source: Option<&CargoExternalSourceAuthority>,
-    package_names: &[&str],
-) -> Result<CargoPackageInputClosure, WorkspaceTestError> {
-    let inventory = acquire_resolved_inventory(root, environment, cargo)?;
-    let mut input_paths = BTreeSet::new();
-    let mut target_source_paths = BTreeSet::new();
-    let mut file_macro_paths = BTreeSet::new();
-    let mut compile_time_paths = BTreeSet::new();
-    let mut workspace_configuration_paths = BTreeSet::new();
-    let mut reasons = BTreeSet::new();
-    for package in package_names {
-        let authority = package_input_authority(
-            &inventory,
-            root,
-            package,
-            selected_paths,
-            changed_sources,
-            external_source,
-        )?;
-        input_paths.extend(authority.input_paths);
-        target_source_paths.extend(authority.target_source_paths);
-        file_macro_paths.extend(authority.file_macro_paths);
-        compile_time_paths.extend(authority.compile_time_paths);
-        workspace_configuration_paths.extend(authority.workspace_configuration_paths);
-        if let CargoShardReuse::NonCacheable { reason } = authority.reuse {
-            reasons.insert(reason);
-        }
-    }
-    Ok(CargoPackageInputClosure {
-        input_paths: input_paths.into_iter().collect(),
-        target_source_paths: target_source_paths.into_iter().collect(),
-        file_macro_paths: file_macro_paths.into_iter().collect(),
-        compile_time_paths: compile_time_paths.into_iter().collect(),
-        workspace_configuration_paths: workspace_configuration_paths.into_iter().collect(),
-        non_cacheable_reason: (!reasons.is_empty())
-            .then(|| reasons.into_iter().collect::<Vec<_>>().join("; ")),
-    })
-}
-
 impl CargoGateShardPlan {
     #[must_use]
     pub fn typechecks(&self) -> &[CargoGateShard] {
@@ -459,10 +405,6 @@ fn test_shard(
 
 struct CargoPackageInputAuthority {
     input_paths: Vec<String>,
-    target_source_paths: Vec<String>,
-    file_macro_paths: Vec<String>,
-    compile_time_paths: Vec<String>,
-    workspace_configuration_paths: Vec<String>,
     producers: Vec<CargoCompileTimeProducer>,
     compile_time: Vec<CargoCompileTimeAuthority>,
     external_source: Option<CargoExternalSourceAuthority>,
@@ -500,26 +442,18 @@ fn package_input_authority(
         &canonical_root,
         &roots,
         selected_paths,
-        &mut inputs.paths,
+        &mut inputs,
         &producers,
         CompileTimeExternal {
             local_dependencies: &external_local_dependencies,
             source: external_source,
         },
     );
-    let compile_time_paths = compile_time
-        .iter()
-        .flat_map(|authority| authority.input_paths.iter().cloned())
-        .collect::<BTreeSet<_>>();
     let uses_external_source = producers
         .iter()
         .any(|producer| producer.source_generation_eligible);
     Ok(CargoPackageInputAuthority {
-        input_paths: inputs.paths.into_iter().collect(),
-        target_source_paths: inputs.target_sources.into_iter().collect(),
-        file_macro_paths: inputs.file_macros.into_iter().collect(),
-        compile_time_paths: compile_time_paths.into_iter().collect(),
-        workspace_configuration_paths: inputs.workspace_configuration.into_iter().collect(),
+        input_paths: inputs.into_iter().collect(),
         producers,
         compile_time,
         external_source: uses_external_source

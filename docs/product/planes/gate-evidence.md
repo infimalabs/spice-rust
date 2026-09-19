@@ -46,14 +46,14 @@ modes, empty identities, unordered arrays, and an absent required baseline
 refuse key construction.
 
 `action_id` is a stable namespace such as `gate:rust-typecheck` or
-`canvas:shard:interaction`; display labels never enter it. `argv` contains no
+`cargo:typecheck:app::lib:app`; display labels never enter it. `argv` contains no
 shell text. The relevant environment map is closed by the spec: an undeclared
 environment dependency makes the action non-reusable until its declaration is
 repaired. Tool identities use the existing `ReceiptTool` name and executable
 digest model. Policy-consuming focused actions retain the complete compiled
-policy and resolved configuration as typed input-manifest entries. Cargo and
-Canvas use `resolved-execution` only after their complete shard or plan
-inventory, exact source closure, command, tools, environment, gate set,
+policy and resolved configuration as typed input-manifest entries. Cargo uses
+`resolved-execution` only after its complete shard inventory, exact source
+closure, command, tools, environment, gate set,
 external-source authority, and build dependencies are bound; unrelated
 selection-only policy does not enter those action keys. Compiled declarations,
 process bounds, and baseline state reuse the existing `Verdict` digests rather
@@ -106,12 +106,10 @@ exit status copied from another process, or a hand-written receipt is not proof
 because it does not establish the immutable source, declaration, command,
 environment, tool, and result as one execution.
 
-Release 0.31.0's `BROWSER-1kKSWhZk browser coverage complete` marker and its
-`--spice-coverage-receipt` writer are retired together. Current Canvas
-completion is the registry-derived set containing `canvas:build` and exactly
-one `canvas:shard:<name>` receipt for every current shard. Supplying the retired
-writer flag is a refusal naming release 0.31.0; marker bytes are never executed,
-translated, or admitted as a second completion path.
+Canvas compilation remains a native gate action. The process-backed browser
+suite and its build/shard proof actions are removed; there is no browser action
+registry or legacy marker admission path. Disposable browser experiments can
+validate the actual UI, but cannot publish trusted commit receipts.
 
 ## Storage and lifecycle
 

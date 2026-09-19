@@ -107,7 +107,7 @@ test_engines = ["cargo-workspace"]
 # private writable scratch so that isolation remains valid on a read-only proof
 # host.
 #
-# Twenty-eight foreign environment names are admitted here. Rust's configured-command
+# Foreign environment names are admitted here. Rust's configured-command
 # executor strips Git's three local-environment names before it execs an exact
 # configured argv, and the hooks fixture exports exactly those three to prove
 # the child sees none of them. The Git shadow writes three more, and it is
@@ -116,8 +116,7 @@ test_engines = ["cargo-workspace"]
 # publishes, counts the command-scope pairs it appends in `GIT_CONFIG_COUNT`,
 # and sets `GIT_EDITOR` to `echo` for the one probe that asks Git to print its
 # own system config path. The hygiene acquisition fixture fixes the seventh,
-# `TMPDIR`, at its own writable scratch. The verifier writes the eighth to pass
-# the Canvas battery its binary inside that family's isolated Cargo root. Spice
+# `TMPDIR`, at its own writable scratch. Spice
 # owns none of these names; the tree either writes or deliberately observes
 # them. RTK's upstream `RTK_DB_PATH` is likewise foreign: Rust selects its
 # lane-scoped value but does not own the companion's variable. The ledger
@@ -128,7 +127,7 @@ test_engines = ["cargo-workspace"]
 # name is a whole name and a trailing underscore is a prefix. Their access
 # waiver is a separate arm and does not account them; a waived name is still a
 # name, and one written without being counted here is one nobody can find
-# again. Doctor reports only the typed Spice variables, so these thirty are the
+# again. Doctor reports only the typed Spice variables, so these names are the
 # difference wire pins between this manifest and SpiceVariable. The `SPICE_RS_`
 # rows are this runtime's live handoff names; the predecessor `SPICE_` rows are
 # retained only as coexistence sentinels. The predecessor's self-exec root and
@@ -148,8 +147,6 @@ env_names = [
     "RTK_DB_PATH",
     "SPICE_AGENT_VENDOR",
     "SPICE_APP_SOURCE_IDENTITY",
-    "SPICE_CANVAS_BINARY",
-    "SPICE_CANVAS_SHARD",
     "SPICE_COMMAND_PLAN_EXECUTION_DIGEST",
     "SPICE_FIXTURE_RERUN",
     "SPICE_GATE_TEST_CARGO_METADATA_MARKER",

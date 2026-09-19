@@ -48,30 +48,24 @@ impl AdvisoryRtkFixture {
         fs::write(root.join("src/lib.rs"), "pub fn fixture() {}\n").expect("fixture source writes");
         fs::create_dir(root.join(".git")).expect("fixture Git directory creates");
 
-        let probe_log = root.join("rtk-probes");
         let rtk = root.join("advisory-rtk");
         fs::write(
             &rtk,
-            format!(
-                concat!(
-                    "#!/bin/sh\n",
-                    "set -eu\n",
-                    "printf '%s|%s\\n' \"$PWD\" \"$*\" >> '{}'\n",
-                    "if [ \"$#\" -eq 1 ] && [ \"$1\" = --version ]; then\n",
-                    "  printf '\\377'\n",
-                    "  exit 0\n",
-                    "fi\n",
-                    "exit 91\n",
-                ),
-                probe_log.display(),
+            concat!(
+                "#!/bin/sh\n",
+                "set -eu\n",
+                "if [ \"$#\" -eq 1 ] && [ \"$1\" = --version ]; then\n",
+                "  printf '\\377'\n",
+                "  exit 0\n",
+                "fi\n",
+                "exit 91\n",
             ),
         )
         .expect("fixture RTK writes");
         executable(&rtk);
 
-        let occupant_environment = root.join("occupant-environment");
         let vendor = root.join("fake-claude");
-        write_vendor(&vendor, &occupant_environment);
+        write_vendor(&vendor);
         fs::write(
             root.join("spice-rust.toml"),
             format!(
@@ -152,26 +146,17 @@ fn executable(path: &Path) {
     let _ = path;
 }
 
-fn write_vendor(path: &Path, environment: &Path) {
+fn write_vendor(path: &Path) {
     fs::write(
         path,
         format!(
             concat!(
                 "#!/bin/sh\n",
                 "set -eu\n",
-                "if [ \"${{SPICE_RS_RTK_EXECUTABLE+x}}\" = x ] || ",
-                "[ \"${{RTK_DB_PATH+x}}\" = x ]; then\n",
-                "  printf '%s\\n' present > '{}'\n",
-                "else\n",
-                "  printf '%s\\n' absent > '{}'\n",
-                "  exit 92\n",
-                "fi\n",
                 "printf '%s\\n' '",
                 "{{\"type\":\"system\",\"subtype\":\"init\",",
                 "\"session_id\":\"{}\"}}'\n",
             ),
-            environment.display(),
-            environment.display(),
             SESSION,
         ),
     )

@@ -442,7 +442,16 @@ fn source_claims<'a>(
                 } else {
                     explicit.into_iter().map(|(target, _)| target).collect()
                 };
-            let package_wide = package_wide_source(changed, package, absolute);
+            // A removed, unclaimed input may have been runtime fixture data
+            // rather than a Rust module. Its effect cannot be narrowed below
+            // the containing package; present unclaimed sources still refuse.
+            let package_wide = package_wide_source(changed, package, absolute)
+                || (targets.is_empty()
+                    && containing.is_some_and(|owner| owner.id == package.id)
+                    && matches!(
+                        fs::symlink_metadata(absolute),
+                        Err(error) if error.kind() == io::ErrorKind::NotFound
+                    ));
             (!targets.is_empty() || package_wide).then_some(SourceClaim {
                 package,
                 targets,
