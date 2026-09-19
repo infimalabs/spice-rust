@@ -7,7 +7,7 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
     let snapshot = bus.task_snapshot().expect("iced snapshot reads");
     let iced_target = target(&snapshot, &projection);
     assert!(!iced_target.pending_inbox);
-    assert!(!iced_target.held_claim);
+    assert_eq!(iced_target.held_claim, Available::None);
     assert_eq!(iced_target.drain_queue, Available::None);
     assert_eq!(iced_target.available, Available::None);
     assert_eq!(
@@ -57,10 +57,105 @@ fn iced_claim_suppresses_work_wakes_but_not_operator_direction_and_grant_thaws_h
     bus.shutdown().expect("direction fixture stops");
 }
 
+#[test]
+fn held_recovery_preserves_the_ready_deadline_across_projection_restart() {
+    let digest = digest();
+    let (bus, projects, mut projection) = iced_fixture(&digest);
+    committed(bus.commit(grant_write(&digest)).expect("grant commits"));
+    assert_recovery_deadline(&bus, &projects, &mut projection, 4);
+    bus.shutdown().expect("held recovery fixture stops");
+}
+
+#[test]
+fn reclaiming_a_released_task_preserves_its_new_ready_origin() {
+    let digest = digest();
+    let (bus, projects, mut projection) = iced_fixture(&digest);
+    committed(bus.commit(grant_write(&digest)).expect("grant commits"));
+    let snapshot = bus.task_snapshot().expect("held snapshot reads");
+    let heads = &snapshot.tasks()[0];
+    let task = heads.statement().body().born.clone();
+    let claim = heads.claim().expect("active claim").body().clone();
+    let mut release = JournalWrite::new(
+        Actor::Lane(lane()),
+        format!("task:{}", handle(TASK_MOMENT))
+            .parse()
+            .expect("task origin"),
+        instant(5),
+        Producer::CommandDoor,
+    );
+    let freed = release
+        .fact(
+            body::ClaimFreed {
+                task: task.clone(),
+                actor: claim.actor.clone(),
+            },
+            FactCause::Root,
+        )
+        .expect("release fact builds");
+    release.claim_head(task, freed, move |position| wire::ClaimHead {
+        fact: position,
+        disposition: wire::ClaimDisposition::Freed,
+        ..claim
+    });
+    committed(bus.commit(release).expect("release commits"));
+    projection
+        .advance(&bus.task_snapshot().expect("released snapshot"), &projects)
+        .expect("release projects");
+    committed(
+        bus.commit(iced_claim_write(&bus, &digest, instant(6)))
+            .expect("new claim commits"),
+    );
+    assert_recovery_deadline(&bus, &projects, &mut projection, 8);
+    bus.shutdown().expect("reclaimed fixture stops");
+}
+
+fn assert_recovery_deadline(
+    bus: &Bus,
+    projects: &ProjectPolicy,
+    projection: &mut Projection,
+    deadline: u8,
+) {
+    let snapshot = bus.task_snapshot().expect("held snapshot reads");
+    projection
+        .advance(&snapshot, projects)
+        .expect("grant projection advances");
+    let mut restarted = Projection::new();
+    restarted
+        .advance(&snapshot, projects)
+        .expect("restarted projection rehydrates");
+
+    for projection in [&*projection, &restarted] {
+        for second in [deadline - 1, deadline, 50] {
+            let now = instant(second);
+            let targets = project_targets(
+                &snapshot,
+                projection,
+                now,
+                &Holds::new(3),
+                &board::NextConfig::default(),
+            )
+            .expect("held recovery target projects");
+            let expected = if second < deadline {
+                Resolution::Wait {
+                    trigger: Trigger::HeldClaim,
+                    lane: lane(),
+                    deadline: instant(deadline),
+                }
+            } else {
+                Resolution::Attempt {
+                    trigger: Trigger::HeldClaim,
+                    lane: lane(),
+                }
+            };
+            assert_eq!(resolve(&targets, &Backoff::default(), now), expected);
+        }
+    }
+}
+
 fn iced_fixture(digest: &wire::Digest) -> (Bus, ProjectPolicy, Projection) {
     let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Drive, false);
     committed(
-        bus.commit(iced_claim_write(&bus, digest))
+        bus.commit(iced_claim_write(&bus, digest, instant(2)))
             .expect("iced claim commits"),
     );
     projection
@@ -85,7 +180,7 @@ fn target(snapshot: &bus::TaskSnapshot, projection: &Projection) -> Target {
     targets[0]
 }
 
-fn iced_claim_write(bus: &Bus, digest: &wire::Digest) -> JournalWrite {
+fn iced_claim_write(bus: &Bus, digest: &wire::Digest, at: Instant) -> JournalWrite {
     let snapshot = bus.task_snapshot().expect("seed snapshot reads");
     let heads = &snapshot.tasks()[0];
     let task = heads.statement().body().born.clone();
@@ -95,7 +190,6 @@ fn iced_claim_write(bus: &Bus, digest: &wire::Digest) -> JournalWrite {
         wire::EnvironmentRequirement::trust_grant(digest.clone()),
     );
     let horizon = spice::claim_lease::indefinite_horizon();
-    let at = instant(2);
     let occupant = uuid(9);
     let mut write = JournalWrite::new(
         Actor::Lane(lane()),

@@ -34,7 +34,7 @@ pub(super) fn project_targets(
             continue;
         }
         let pending_inbox = projection.has_operator_steering(row.lane);
-        let (held_claim, trust_blocked) = held_claim(entries, row, &environment, now)?;
+        let (held_claim, trust_blocked) = held_claim(entries, ready_at, row, &environment, now)?;
         let subscription = subscription(projected_residency, row)?;
         let first_drain_member = !projected_residency.lanes.iter().any(|member| {
             member.team == row.team && member.occupant.is_some() && member.disposition == "occupied"
@@ -65,17 +65,18 @@ pub(super) fn project_targets(
 
 fn held_claim(
     entries: &[Entry],
+    ready_at: &BTreeMap<TaskStamp, Instant>,
     row: &wire::LaneResidency,
     environment: &wire::Environment,
     now: Instant,
-) -> CommandResult<(bool, bool)> {
+) -> CommandResult<(Available, bool)> {
     let mut held = entries.iter().filter(|entry| {
         entry.claim().is_some_and(|claim| {
             claim.disposition == ClaimDisposition::Active && claim.lane == row.lane
         })
     });
     let Some(entry) = held.next() else {
-        return Ok((false, false));
+        return Ok((Available::None, false));
     };
     if held.next().is_some() {
         return Err(store_fault(
@@ -97,7 +98,12 @@ fn held_claim(
         })?
         .expiry
         > now;
-    Ok((live && !trust_blocked, trust_blocked))
+    let available = if live && !trust_blocked {
+        Available::At(after(ready_instant(entry, ready_at)?, SETTLE_SECONDS)?)
+    } else {
+        Available::None
+    };
+    Ok((available, trust_blocked))
 }
 
 /// The effective task-allocation lifetime of one vacant lane's team.

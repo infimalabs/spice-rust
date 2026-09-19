@@ -17,6 +17,7 @@ pub(super) struct Projection {
     heads: BTreeMap<TaskStamp, TaskHeads>,
     fact_instants: BTreeMap<Seq, Instant>,
     ready_at: BTreeMap<TaskStamp, Instant>,
+    claim_releases: BTreeMap<TaskStamp, Seq>,
     dependents: BTreeMap<TaskStamp, BTreeSet<TaskStamp>>,
     creator_teams: BTreeMap<TaskStamp, Option<CanonicalUuid>>,
 }
@@ -33,6 +34,7 @@ struct AdvancePlan {
     entries: BTreeMap<TaskStamp, EntryUpdate>,
     creator_teams: BTreeMap<TaskStamp, Option<CanonicalUuid>>,
     ready_at: BTreeMap<TaskStamp, Instant>,
+    claim_releases: BTreeMap<TaskStamp, Seq>,
 }
 
 type FactDelta<'a> = Vec<&'a wire::Envelope<wire::AnyFact>>;
@@ -47,6 +49,7 @@ impl Projection {
             heads: BTreeMap::new(),
             fact_instants: BTreeMap::new(),
             ready_at: BTreeMap::new(),
+            claim_releases: BTreeMap::new(),
             dependents: BTreeMap::new(),
             creator_teams: BTreeMap::new(),
         }
@@ -145,6 +148,23 @@ impl Projection {
     ) -> CommandResult<AdvancePlan> {
         let changed = self.changed_tasks(snapshot, delta)?;
         let creator_teams = creator_team_events(delta)?;
+        let claim_releases = delta
+            .iter()
+            .filter_map(|envelope| {
+                let task = match envelope.fact.kind() {
+                    wire::FactKind::ClaimFreed => envelope
+                        .fact
+                        .read::<wire::body::ClaimFreed>()
+                        .map(|body| body.task),
+                    wire::FactKind::ClaimLapsed => envelope
+                        .fact
+                        .read::<wire::body::ClaimLapsed>()
+                        .map(|body| body.task),
+                    _ => None,
+                };
+                task.map(|task| (task, envelope.seq))
+            })
+            .collect::<BTreeMap<_, _>>();
         let entries = self.entry_updates(snapshot, projects, &changed, &creator_teams)?;
         let affected = self.affected_tasks(&changed, &entries);
         let fact_instants = delta
@@ -164,7 +184,7 @@ impl Projection {
         let ready_at = affected
             .into_iter()
             .map(|task| {
-                self.projected_ready_instant(&task, &entries, &fact_instants)
+                self.projected_ready_instant(&task, &entries, &fact_instants, &claim_releases)
                     .map(|ready| (task, ready))
             })
             .collect::<CommandResult<BTreeMap<_, _>>>()?;
@@ -175,6 +195,7 @@ impl Projection {
             entries,
             creator_teams,
             ready_at,
+            claim_releases,
         })
     }
 
@@ -280,6 +301,7 @@ impl Projection {
         }
         self.creator_teams.extend(plan.creator_teams);
         self.ready_at.extend(plan.ready_at);
+        self.claim_releases.extend(plan.claim_releases);
         self.cursor = Some(plan.cursor);
     }
 
@@ -345,6 +367,7 @@ impl Projection {
         task: &TaskStamp,
         entries: &BTreeMap<TaskStamp, EntryUpdate>,
         fact_instants: &BTreeMap<Seq, Instant>,
+        claim_releases: &BTreeMap<TaskStamp, Seq>,
     ) -> CommandResult<Instant> {
         let entry = self.projected_entry(entries, task).ok_or_else(|| {
             store_fault(
@@ -365,6 +388,14 @@ impl Projection {
             && let Some(claim) = heads.claim()
         {
             transition = transition.max(claim.position());
+        }
+        // A new active claim replaces its release head, not the READY origin
+        // that release established. Retain that origin through carry and replay.
+        if let Some(released) = claim_releases
+            .get(task)
+            .or_else(|| self.claim_releases.get(task))
+        {
+            transition = transition.max(*released);
         }
         for dependency in &entry.statement().dependencies {
             let dependency_heads = self.projected_heads(entries, dependency).ok_or_else(|| {
