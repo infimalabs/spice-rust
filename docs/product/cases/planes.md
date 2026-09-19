@@ -46,6 +46,9 @@
 | A decoded record is residue | its batch increments `residue_records` | [Transcript accounting retains typed usage and record counts](../invariants/session.md#metrics-transcript-accounting-retains-typed-usage-and-record-counts) |
 | A transcript is replaced under the same path | ingestion restarts at member 1, offset 0 and names the superseded source generation | [A source head is generation and position, not an offset](../invariants/session.md#metrics-a-source-head-is-generation-and-position-not-an-offset) |
 | Ingestion fails before its journal transaction commits | neither the batch nor the advanced head crosses; the same continuation remains eligible on retry | [An accounted batch and its advanced source head commit together](../invariants/session.md#metrics-an-accounted-batch-and-its-advanced-source-head-commit-together) |
+| A live pass reads records under the accounting bound | the records are presented and held; no batch and no head movement cross yet | [A held span costs a re-read, never a record](../invariants/session.md#metrics-a-held-span-costs-a-re-read-never-a-record) |
+| A pass reads a record carrying usage, or the seat closes | the held span is accounted at once as one batch spanning every held record | [A held span costs a re-read, never a record](../invariants/session.md#metrics-a-held-span-costs-a-re-read-never-a-record) |
+| A resident stops while a span is held | the next start resumes from the stored head and reads the held records again | [A held span costs a re-read, never a record](../invariants/session.md#metrics-a-held-span-costs-a-re-read-never-a-record) |
 
 ### Task documents
 

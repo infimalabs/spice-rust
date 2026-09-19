@@ -112,6 +112,12 @@ pub(in crate::resident) struct MessageState {
     pending: pending::PendingPresentations,
     pub(in crate::resident) narration: super::narration::Streaks,
     presented: BTreeMap<(CanonicalUuid, CanonicalUuid, Option<CanonicalUuid>), listen::Position>,
+    /// Transcript spans read and presented but not yet accounted.
+    ///
+    /// Held here because the accounting bound spans sweeps: the state that
+    /// outlives one record is the only place a later sweep can find what an
+    /// earlier one held.
+    accounting: lane::ingest::Coalescing,
 }
 
 pub(in crate::resident) fn lock_state(
@@ -281,10 +287,21 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
     // Live projection can already have displayed these bytes without waiting
     // for the writer. This sweep catches records whose finite-queue notice
     // never arrived; the shared presentation position prevents duplicates.
-    let mut observations =
-        super::ingest_transcripts(bus, surfaces.paths, Some(record.lane), views.diagnostic)?;
+    let held = std::mem::take(&mut lock_state(views.state)?.accounting);
+    let (mut observations, held) = super::ingest_transcripts(
+        bus,
+        surfaces.paths,
+        Some(record.lane),
+        lane::ingest::Bound::LIVE,
+        held,
+        views.diagnostic,
+    )?;
     let swept = sweep::swept_records(record, &mut observations);
-    lock_state(views.state)?.observations.extend(observations);
+    {
+        let mut state = lock_state(views.state)?;
+        state.accounting = held;
+        state.observations.extend(observations);
+    }
     sweep::present_swept(
         bus,
         epoch,
@@ -362,10 +379,24 @@ pub(super) fn present_closed_transcript<P: AgentMessagePublisher>(
     occupant: CanonicalUuid,
     mut views: CaptureViews<'_>,
 ) -> CommandResult<()> {
-    let mut observations =
-        super::ingest_transcripts(bus, surfaces.paths, Some(lane), views.diagnostic)?;
+    // A seat that closed writes nothing more, so nothing may stay held: the
+    // closing sweep accounts every span this lane still owes before its
+    // successor opens a generation against the same head.
+    let held = std::mem::take(&mut lock_state(views.state)?.accounting);
+    let (mut observations, held) = super::ingest_transcripts(
+        bus,
+        surfaces.paths,
+        Some(lane),
+        lane::ingest::Bound::IMMEDIATE,
+        held,
+        views.diagnostic,
+    )?;
     let swept = sweep::closing_records(lane, occupant, &mut observations);
-    lock_state(views.state)?.observations.extend(observations);
+    {
+        let mut state = lock_state(views.state)?;
+        state.accounting = held;
+        state.observations.extend(observations);
+    }
     sweep::present_swept(
         bus,
         epoch,

@@ -108,8 +108,15 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
     tape.tee(CODEX_COMPACTION_WITHOUT_TIME)
         .expect("durable compaction is captured");
     let mut ingest_diagnostic = Vec::new();
-    let observations = ingest_transcripts(&bus, &paths, Some(lane), &mut ingest_diagnostic)
-        .expect("durable tape is accounted");
+    let (observations, _) = ingest_transcripts(
+        &bus,
+        &paths,
+        Some(lane),
+        lane::ingest::Bound::IMMEDIATE,
+        lane::ingest::Coalescing::new(),
+        &mut ingest_diagnostic,
+    )
+    .expect("durable tape is accounted");
     assert_eq!(observations.len(), 1);
     assert!(ingest_diagnostic.is_empty());
     let observed = observations[0].at;
@@ -217,8 +224,15 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
     }
     tape.tee(&history).expect("compaction history is durable");
     let mut ingest_diagnostic = Vec::new();
-    ingest_transcripts(&bus, &paths, Some(lane), &mut ingest_diagnostic)
-        .expect("durable tape is accounted");
+    ingest_transcripts(
+        &bus,
+        &paths,
+        Some(lane),
+        lane::ingest::Bound::IMMEDIATE,
+        lane::ingest::Coalescing::new(),
+        &mut ingest_diagnostic,
+    )
+    .expect("durable tape is accounted");
     assert!(ingest_diagnostic.is_empty());
 
     let mut generation_windows = Vec::new();

@@ -68,6 +68,7 @@
 | <a id="metrics-transcript-accounting-retains-typed-usage-and-record-counts"></a>**Transcript accounting retains typed usage and record counts** | Each normalized usage sample retains its exact ordered byte spans and event ordinal. Complete records carrying no usage and residue records remain separate counts rather than invented activity facts. |
 | <a id="metrics-a-source-head-is-generation-and-position-not-an-offset"></a>**A source head is generation and position, not an offset** | Resumption requires the exact source generation and next member/offset position. A replacement restarts at member 1, offset 0 and explicitly names the superseded generation. |
 | <a id="metrics-an-accounted-batch-and-its-advanced-source-head-commit-together"></a>**An accounted batch and its advanced source head commit together** | One guarded journal transaction commits the accounted batch and its advanced source head together; failure leaves neither, and discontinuity refuses both. |
+| <a id="metrics-a-held-span-costs-a-re-read-never-a-record"></a>**A held span costs a re-read, never a record** | Accounting may lag presentation by a bounded span so several passes share one batch, and every pass still hands back the records it read. The stored head names only accounted bytes, so a resident that stops mid-hold reads the held records again rather than losing them, and a record carrying usage is accounted at once however wide the bound. |
 
 ## Extension, wire, and configuration
 
