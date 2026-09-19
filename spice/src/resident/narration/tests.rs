@@ -1,4 +1,4 @@
-//! The narration fold counts tool calls, not time, and only inside a turn.
+//! Fast checks for call thresholds, prose, turn completion, and occupant changes.
 
 use super::*;
 

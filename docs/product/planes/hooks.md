@@ -166,6 +166,36 @@ exactly once. That is what makes rewriting possible at all: it is the last point
 at which the command still exists as one string rather than as a running
 process.
 
+#### Active-work narration
+
+The resident owns one narration streak per current occupant. The configured
+`lane.narration` bound remains 24 tool calls by default. A monotonic deadline
+also makes the first reminder due after three minutes without visible assistant
+prose, and the second reminder due by five minutes. Calls and elapsed time share
+the prod ordinal: reaching both thresholds does not send the same reminder
+twice. Further call-count bounds retain their existing repeat behavior.
+
+Turn start, assistant prose, reasoning, or a tool call establishes active work.
+Prose resets its clock and call count; explicit turn completion stops the clock.
+Tool results, an outstanding shell command, and `job.wait` do not reset it.
+The resident sleeps until the next exact deadline in its existing event loop;
+there is no periodic narration poll. A moved or exited occupant cannot receive
+a successor's reminder.
+
+Each due reminder commits an occupant-guarded `narration::prodded` fact. OMP's
+existing supervisor command channel then interjects a progress notice and
+interrupts outstanding tool waits, **not their underlying commands**. The
+second prod asks for progress as overdue. No ACK key is minted or required.
+Shell/hook meters retain the durable reminder for their next delivery boundary;
+hook-only vendors cannot be interrupted in the middle of an arbitrary tool.
+
+The guarantee is deadline-driven recording and an immediate best-effort local
+notification attempt while the resident is serving, subject to event-loop and
+OS scheduling. An unavailable supervisor channel, a blocked hook-only vendor,
+or a hung model can delay receipt or prose. The three/five-minute targets do
+not claim the ability to force a model to speak or justify cancelling healthy
+work.
+
 #### Cadence is reachability
 
 A live directive may be rendered through whichever admitted delivery path is

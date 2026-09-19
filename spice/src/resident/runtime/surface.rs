@@ -519,6 +519,7 @@ async fn drive_surface(
     mut lifecycle_reconciliation: lifecycle::Reconciliation,
 ) -> CommandResult<()> {
     loop {
+        let narration_deadline = message_state.narration.next_deadline();
         tokio::select! {
             // Notices already read off the supervisor door come before any
             // arm that reconciles, and the seat sweep every reconcile runs
@@ -530,6 +531,12 @@ async fn drive_surface(
                 taste_submitter.as_deref_mut(), &mut lifecycle,
                 supervisor_reports.batch(report), &mut message_state, diagnostic,
             )?,
+            () = narration::wait(narration_deadline) => {
+                let steps = message_state.narration.due(std::time::Instant::now(), |lane, occupant| {
+                    seats.activity(lane).is_some_and(|activity| activity.occupant() == occupant)
+                });
+                narration::record(bus, command_surface.paths, epoch, steps, diagnostic)?;
+            },
             (turn, request) = control_projection_turn(
                 &mut control, &inbox_projections, lifecycle_reconciliation.control_enabled(),
             ) => match turn {

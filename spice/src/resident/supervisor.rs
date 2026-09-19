@@ -572,7 +572,12 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
             let driver = command::Driver::new(running.take_stdin()?, launch.inbox, terminal);
             reporter.drive(Arc::clone(&driver));
             driver.open(&opening)?;
-            let door = command::listen_for_kicks(&paths, request.lane, Arc::clone(&driver))?;
+            let door = command::listen_for_kicks(
+                &paths,
+                request.lane,
+                request.occupant,
+                Arc::clone(&driver),
+            )?;
             driver.catch_up();
             Ok::<_, io::Error>(door)
         })

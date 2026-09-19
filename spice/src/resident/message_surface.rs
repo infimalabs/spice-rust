@@ -107,7 +107,7 @@ pub(in crate::resident) struct MessageState {
     observations: MessageObservations,
     prose: BTreeMap<CanonicalUuid, ProseState>,
     pending: pending::PendingPresentations,
-    narration: super::narration::Streaks,
+    pub(in crate::resident) narration: super::narration::Streaks,
 }
 
 #[derive(Debug)]

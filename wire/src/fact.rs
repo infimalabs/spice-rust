@@ -298,8 +298,8 @@ vocabulary! {
     /// A taste fired on authored prose and raised one live directive.
     TasteReminded = "taste::reminded" by ResidentRecognition;
 
-    /// A seated occupant kept running tools mid-turn without visible prose
-    /// past the configured bound, and the resident prodded it once more.
+    /// A seated occupant exceeded the call-count or active-silence bound
+    /// for visible progress, and the resident prodded it once more.
     NarrationProdded = "narration::prodded" by ResidentRecognition;
     /// A prodded occupant's silent streak ended.
     NarrationCleared = "narration::cleared" by ResidentRecognition;

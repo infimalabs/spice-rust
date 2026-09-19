@@ -65,8 +65,8 @@ impl Config {
         &self.hold
     }
 
-    /// Tool moments an occupant may run mid-turn without visible prose before
-    /// the resident prods it, and the interval between repeat prods.
+    /// Tool calls per narration prod. Independent active-work deadlines remind
+    /// at three minutes and escalate at five; both share the prod ordinal.
     #[must_use]
     pub const fn narration(&self) -> u32 {
         self.narration

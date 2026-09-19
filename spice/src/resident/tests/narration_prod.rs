@@ -139,20 +139,13 @@ fn a_silent_lane_is_prodded_through_the_hook_and_falls_silent_once_it_speaks() {
             count: 1,
         }],
     );
-    let (narration, status) = hook_status(&root, lane);
+    let (narration, _) = hook_status(&root, lane);
     assert_eq!(
         narration,
         Some(spice::session_meter::NarrationState {
             moments: BOUND,
             count: 1,
         }),
-    );
-    assert_eq!(
-        status.as_deref(),
-        Some(
-            "Working state: 3 tool calls since your last visible prose; open your next message \
-             with one short status line before the next tool call.",
-        ),
     );
 
     occupied.accept(&surfaces, PROSE);

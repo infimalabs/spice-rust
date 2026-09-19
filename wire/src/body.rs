@@ -297,15 +297,12 @@ pub use lane::{
     TeamConfigured, TeamStanding,
 };
 
-/// A seated occupant kept running tools mid-turn without visible prose past
-/// the configured bound, and the resident prodded it once more.
+/// A seated occupant exceeded a call-count or active-silence narration bound.
 ///
-/// One prod is one row. `moments` is how many tool calls the occupant has
-/// issued since its last authored prose, and `count` numbers the prods in
-/// that streak from one; the resident records the next prod after each
-/// further bound of tool calls. The streak ends with a `NarrationCleared`
-/// row, so the meter reads the lane's newest prod and the newest clearance
-/// and nothing else.
+/// One prod is one row. `moments` counts calls since visible prose; `count`
+/// is shared by call and elapsed-time thresholds, so the same reminder is not
+/// repeated when both become due. Prose or turn completion records a
+/// `NarrationCleared` row. The meter reads the newest prod and clearance.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NarrationProdded {
     /// Lane whose occupant went silent.
