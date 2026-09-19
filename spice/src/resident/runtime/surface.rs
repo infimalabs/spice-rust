@@ -200,7 +200,7 @@ pub(super) async fn run_surface(
     let channels = capture::channels();
     let mut supervisor_reports = capture::SupervisorReports::bind(paths)?;
     lane_surface::restore_seats(bus, paths, epoch, seats, progress)?;
-    ingest_transcripts(bus, paths, None, progress)?;
+    recover_transcripts(bus, paths, epoch, progress)?;
     let mut message_startup = launch_message_startup(bus, paths, epoch, &message_publisher)?;
     let reads = read_materializations::CurrentReads::start(bus, paths, &config.consent)
         .map_err(|error| store_fault("resident::read-materialization-failed", &error))?;
@@ -1153,8 +1153,8 @@ fn accept_commit(
 }
 
 /// Follow every commit with the cards that spoke an acknowledgement ahead of
-/// the journal, so a key retired by spice ack or exit disposal re-presents
-/// its card from the journal disposition. Canvas being unavailable is a
+/// the journal, so any committed retirement re-presents its card from the
+/// journal disposition. Canvas being unavailable is a
 /// diagnostic, as it is for live publication, not a resident fault.
 fn settle_spoken_acknowledgements(
     bus: &Bus,
