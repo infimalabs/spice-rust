@@ -137,3 +137,31 @@ pub fn decode<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> Result<T, serde_j
 pub fn encode<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, serde_json::Error> {
     serde_json::to_vec(value)
 }
+
+/// Count encoded DTO bytes without allocating an encoded copy.
+///
+/// # Errors
+///
+/// Returns the encoder error when the value cannot be represented or its
+/// encoded length cannot fit in memory.
+pub fn encoded_len<T: serde::Serialize>(value: &T) -> Result<usize, serde_json::Error> {
+    let mut length = EncodedLength(0);
+    serde_json::to_writer(&mut length, value)?;
+    Ok(length.0)
+}
+
+struct EncodedLength(usize);
+
+impl std::io::Write for EncodedLength {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0 = self
+            .0
+            .checked_add(bytes.len())
+            .ok_or_else(|| std::io::Error::other("encoded wire length overflow"))?;
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}

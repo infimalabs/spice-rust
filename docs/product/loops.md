@@ -460,7 +460,14 @@ stateDiagram-v2
 - The band reports state the operator did not ask for: age, run state,
    pending, claimed task. It is a status surface first and a composer second.
 
-**Policy** — up to 8 attachments per message, 8 MiB each after decoding.
+**Policy** — up to 8 attachments per steering send, with at most 3,145,728
+combined data-URL bytes (3 MiB, including base64 expansion and URL prefixes).
+The complete durable envelope must fit within 4,194,304 bytes (4 MiB),
+including escaped text, attachment metadata, and reserved journal cursor width.
+Admission names the violated bound before commit; rejection restores the draft.
+Existing directives and transcript media retain their canonical decoding
+contract: up to 8 images, each at most 8 MiB decoded. Reading or presenting
+those bytes is not a new steering send.
 
 **Incidental** — visual styling, concrete column and track sizing, truncation,
 and iconography. Horizontal ordered columns, strip-owned east/west overflow,

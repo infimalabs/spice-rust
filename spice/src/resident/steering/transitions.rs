@@ -95,6 +95,9 @@ pub(in crate::resident) fn send(
         Ok(pending) => pending,
         Err(error) => return typed_store_fault("steer::fact-invalid", &error.to_string()),
     };
+    if let Err(outcome) = admit_send_envelope(&proposal) {
+        return outcome;
+    }
     proposal.steering_head(pending, move |seq| {
         steer::Ledger::sent_head(&sent, origin, at, seq)
             .expect("the admitted send body builds its authority head")
@@ -119,9 +122,9 @@ fn admit_send_content(send: &wire::intent::SteerSend) -> Result<(), Outcome<Comm
         return Err(refusal(
             "steer::media-invalid",
             Some(format!(
-                "at most {} admitted images of at most {} decoded bytes each",
+                "at most {} admitted images with at most {} combined data-URL bytes",
                 wire::media::MAX_MEDIA_ITEMS,
-                wire::media::MAX_MEDIA_BYTES,
+                wire::media::MAX_MEDIA_DATA_URL_BYTES,
             )),
             Some(error.to_string()),
             "remove or replace the invalid attachment and retry the same authored message",
@@ -133,6 +136,24 @@ fn admit_send_content(send: &wire::intent::SteerSend) -> Result<(), Outcome<Comm
             Some("non-empty direction".to_owned()),
             Some(send.message.clone()),
             "supply direction text that the lane can act on",
+        ));
+    }
+    Ok(())
+}
+
+fn admit_send_envelope(proposal: &JournalWrite) -> Result<(), Outcome<CommandAnswer>> {
+    let bytes = proposal
+        .envelope_byte_bound()
+        .map_err(|error| typed_store_fault("steer::fact-invalid", &error.to_string()))?;
+    let maximum = journal::MAX_DURABLE_FACT_ENVELOPE_BYTES;
+    if bytes > maximum {
+        return Err(refusal(
+            "steer::envelope-too-large",
+            Some(format!("at most {maximum} durable envelope bytes")),
+            Some(format!(
+                "{bytes} bytes including reserved journal cursor width"
+            )),
+            "shorten the direction or reduce its attachments and retry the same authored message",
         ));
     }
     Ok(())
