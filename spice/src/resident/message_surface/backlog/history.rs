@@ -113,19 +113,9 @@ impl HistorySources {
 /// Drop each captured announcement whose preserved record this page also
 /// carries, so one compaction is one boundary however the window read it.
 fn reconcile_boundaries(visible: &mut Vec<wire::AgentMessage>) {
-    if !visible.iter().any(|card| card.boundary.is_some()) {
-        return;
+    for position in wire::superseded_boundaries(visible).into_iter().rev() {
+        visible.remove(position);
     }
-    let kept = visible
-        .iter()
-        .filter(|card| {
-            !visible
-                .iter()
-                .any(|other| card.boundary_superseded_by(other))
-        })
-        .cloned()
-        .collect();
-    *visible = kept;
 }
 
 fn retain_covered(

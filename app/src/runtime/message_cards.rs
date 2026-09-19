@@ -181,26 +181,13 @@ impl MessageCards {
 /// arrives live while the preserved record arrives with an older page or a
 /// reconnect. The same rule applied here leaves one boundary either way.
 fn reconcile_boundaries(entries: &mut Vec<Rc<AgentMessage>>) -> bool {
-    if !entries.iter().any(|card| card.boundary.is_some()) {
+    let superseded = wire::superseded_boundaries(entries);
+    if superseded.is_empty() {
         return false;
     }
-    let superseded = entries
-        .iter()
-        .map(|card| {
-            entries
-                .iter()
-                .any(|other| card.boundary_superseded_by(other))
-        })
-        .collect::<Vec<_>>();
-    if !superseded.contains(&true) {
-        return false;
+    for position in superseded.into_iter().rev() {
+        entries.remove(position);
     }
-    let mut index = 0;
-    entries.retain(|_| {
-        let keep = !superseded[index];
-        index += 1;
-        keep
-    });
     true
 }
 
