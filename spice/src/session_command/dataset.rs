@@ -447,6 +447,32 @@ impl<T> ResultFrontier<T> {
         }
     }
 
+    /// Retain results by their report order when completion order differs.
+    /// All insertions into this frontier must use the same comparator.
+    pub(crate) fn push_ordered_by(
+        &mut self,
+        row: T,
+        compare: impl Fn(&T, &T) -> std::cmp::Ordering,
+    ) {
+        let mut index = self
+            .rows
+            .partition_point(|existing| compare(existing, &row).is_le());
+        if self.is_full() {
+            match self.direction {
+                FrontierDirection::Newest if index == 0 => return,
+                FrontierDirection::Newest => {
+                    self.rows.pop_front();
+                    index -= 1;
+                }
+                FrontierDirection::Oldest if index == self.rows.len() => return,
+                FrontierDirection::Oldest => {
+                    self.rows.pop_back();
+                }
+            }
+        }
+        self.rows.insert(index, row);
+    }
+
     fn is_full(&self) -> bool {
         self.rows.len() == self.limit.get()
     }
