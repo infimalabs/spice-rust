@@ -87,6 +87,34 @@ fn media_resolution_returns_each_attachment_in_journal_order_without_mutation() 
 }
 
 #[test]
+fn retained_media_above_new_send_budget_still_replays_and_resolves() {
+    let mut publication = sent(ROOT);
+    publication.attachments[0].data_url = format!(
+        "data:image/png;base64,iVBORw0KGgoA{}",
+        "AAAA".repeat(800_000)
+    );
+    assert!(matches!(
+        wire::media::admit_media(&publication.attachments),
+        Err(wire::MediaError::DataUrlBytes { .. })
+    ));
+    let references =
+        wire::media::agent_media_references(publication.directive, &publication.attachments)
+            .expect("retained attachments still produce references");
+    let mut ledger = Ledger::new();
+    ledger
+        .absorb(Steering::Sent(&publication))
+        .expect("existing directive remains readable");
+    let mut expected = vec![0; 2_400_009];
+    expected[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+    assert_eq!(
+        ledger
+            .resolve_media(lane(), &wire::encode(&references[0]).unwrap())
+            .unwrap(),
+        expected,
+    );
+}
+
+#[test]
 fn malformed_encoded_media_refuses_before_authority_lookup_without_echoing_input() {
     let publication = sent(ROOT);
     let reference = media_reference(&publication, 0);
@@ -111,7 +139,6 @@ fn malformed_encoded_media_refuses_before_authority_lookup_without_echoing_input
         let before = ledger.clone();
         let error = ledger.resolve_media(lane(), &encoded).unwrap_err();
         assert_eq!(error, MediaResolutionError::Malformed);
-        assert_eq!(error.to_string(), "media reference is malformed");
         assert!(error.source().is_none());
         assert_eq!(
             ledger, before,

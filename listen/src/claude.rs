@@ -197,9 +197,11 @@ fn user(record: &Object, locus: Locus) -> Events {
                 .media;
                 if let Some(Event::Prose(prose)) = events.last_mut() {
                     prose.media.extend(media);
-                    wire::media::admit_media(&prose.media).map_err(|_| ResidueKind::Malformed {
-                        field: "message.content[].media",
-                        expected: "at most eight admitted images",
+                    wire::media::validate_media(&prose.media).map_err(|_| {
+                        ResidueKind::Malformed {
+                            field: "message.content[].media",
+                            expected: "at most eight admitted images",
+                        }
                     })?;
                 } else if !media.is_empty() {
                     events.push(Event::Prose(Prose {

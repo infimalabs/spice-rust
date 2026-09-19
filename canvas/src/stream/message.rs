@@ -359,9 +359,9 @@ impl MessagePublisher {
     ///
     /// Returns an error when retained state is unavailable or one durable
     /// transcript identity is reused for different content, or when an
-    /// upstream emitter presents media outside the shared admission law.
+    /// upstream emitter presents media outside the canonical decoding law.
     pub fn publish(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
-        wire::media::admit_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+        wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
         let mut retained = self
             .feed
             .retained
@@ -382,7 +382,7 @@ impl MessagePublisher {
     /// `final_answer` from false to true and may replace the derived automatic
     /// speech instruction; every authored field and payload byte must match.
     pub fn revise_final(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
-        wire::media::admit_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+        wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
         let mut retained = self
             .feed
             .retained

@@ -720,7 +720,7 @@ fn admit_attachments(
     directive: CanonicalUuid,
     attachments: &[DirectiveAttachment],
 ) -> Result<(), Refusal> {
-    wire::media::admit_media(attachments)
+    wire::media::validate_media(attachments)
         .map_err(|error| Refusal::InvalidMedia { directive, error })
 }
 

@@ -141,6 +141,8 @@ pub const MAX_RETAINED_FACT_PAGE_BYTES: usize = 1024 * 1024;
 /// may decode when that row is larger than its aggregate byte target.
 pub const MAX_DURABLE_FACT_ENVELOPE_BYTES: usize = 4 * 1024 * 1024;
 
+const _: () = assert!(wire::media::MAX_MEDIA_DATA_URL_BYTES < MAX_DURABLE_FACT_ENVELOPE_BYTES);
+
 /// Positive, repository-bounded work admitted for one retained-fact page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FactReadBudget {
@@ -548,6 +550,36 @@ impl JournalWrite {
         };
         self.facts.push(ProposedFact { fact, cause });
         Ok(pending)
+    }
+
+    /// Bound the largest proposed envelope before entering the commit door.
+    ///
+    /// Fact bytes and attribution are borrowed or fixed. Unknown assigned
+    /// positions reserve the widest wire cursor, so a concurrent append cannot
+    /// make an admitted envelope outgrow this bound. No encoded copy is retained.
+    ///
+    /// # Errors
+    ///
+    /// Returns an encoder error when a proposed envelope cannot be represented.
+    pub fn envelope_byte_bound(&self) -> Result<usize, serde_json::Error> {
+        let widest = wire::Seq::new(u64::MAX).expect("positive wire cursor");
+        self.facts.iter().try_fold(0, |maximum, proposed| {
+            let cause = match proposed.cause {
+                FactCause::Root => None,
+                FactCause::Existing(seq) => Some(seq),
+                FactCause::Pending(_) => Some(widest),
+            };
+            let envelope = wire::Envelope {
+                v: wire::WireVersion::CURRENT,
+                seq: widest,
+                at: self.at,
+                actor: self.actor.clone(),
+                origin: self.origin.clone(),
+                cause,
+                fact: &proposed.fact,
+            };
+            wire::encoded_len(&envelope).map(|bytes| maximum.max(bytes))
+        })
     }
 
     /// Replace the current task statement head at the assigned fact position.

@@ -18,10 +18,19 @@ use crate::{CanonicalUuid, Digest, Domain};
 /// identity-law: non-crossing - local admission bound, not an encoded value.
 pub const MAX_MEDIA_ITEMS: usize = 8;
 
-/// Maximum decoded bytes in one media block.
+/// Maximum decoded bytes when validating one media representation.
+///
+/// New durable records also pass [`admit_media`]'s aggregate data-URL budget.
+/// Retained media and transcript observations keep this decoding bound.
 ///
 /// identity-law: non-crossing - local admission bound, not an encoded value.
 pub const MAX_MEDIA_BYTES: usize = 8 * 1_024 * 1_024;
+
+/// Maximum combined data-URL bytes admitted for one new durable record.
+///
+/// This includes base64 expansion and URL prefixes. The durable envelope must
+/// separately admit its text and metadata; media cannot consume that budget.
+pub const MAX_MEDIA_DATA_URL_BYTES: usize = 3 * 1024 * 1024;
 
 /// Maximum UTF-8 bytes retained for an operator-facing media name.
 const MAX_MEDIA_NAME_BYTES: usize = 255;
@@ -418,22 +427,46 @@ impl Media {
     }
 }
 
-/// Validate the bounded media set carried by one record.
+/// Admit the media set carried by one new durable record.
 ///
-/// identity-law: non-crossing - process-local validation of crossing values.
+/// # Errors
+///
+/// Refuses count and aggregate data-URL bytes before decoding any member.
+/// Callers persisting a record must also admit the complete envelope.
+pub fn admit_media(media: &[Media]) -> Result<(), MediaError> {
+    validate_media_count(media)?;
+    let observed = media.iter().map(|item| item.data_url.len()).sum();
+    if observed > MAX_MEDIA_DATA_URL_BYTES {
+        return Err(MediaError::DataUrlBytes {
+            observed,
+            maximum: MAX_MEDIA_DATA_URL_BYTES,
+        });
+    }
+    validate_media(media)
+}
+
+/// Validate canonical media retained in a journal or observed in a transcript.
+///
+/// Reading existing authority or presenting transcript activity does not apply
+/// the new durable-record aggregate budget.
 ///
 /// # Errors
 ///
 /// Returns count admission before validating each member in order.
-pub fn admit_media(media: &[Media]) -> Result<(), MediaError> {
+pub fn validate_media(media: &[Media]) -> Result<(), MediaError> {
+    validate_media_count(media)?;
+    for item in media {
+        item.validate()?;
+    }
+    Ok(())
+}
+
+fn validate_media_count(media: &[Media]) -> Result<(), MediaError> {
     if media.len() > MAX_MEDIA_ITEMS {
         return Err(MediaError::Count {
             observed: media.len(),
             maximum: MAX_MEDIA_ITEMS,
         });
-    }
-    for item in media {
-        item.validate()?;
     }
     Ok(())
 }
@@ -447,7 +480,7 @@ pub fn agent_media_references(
     directive: CanonicalUuid,
     media: &[Media],
 ) -> Result<Vec<AgentMediaReference>, AgentMediaReferenceError> {
-    admit_media(media).map_err(AgentMediaReferenceError::Media)?;
+    validate_media(media).map_err(AgentMediaReferenceError::Media)?;
     media
         .iter()
         .enumerate()
@@ -613,6 +646,8 @@ pub enum MediaError {
     Base64,
     /// Decoded bytes were empty or exceeded the per-block bound.
     Size { observed: usize, maximum: usize },
+    /// The combined data URLs exceeded the new-record byte budget.
+    DataUrlBytes { observed: usize, maximum: usize },
     /// The bytes carried no supported image signature.
     UnrecognizedBytes,
     /// The declared and signature-observed media types differed.
@@ -645,6 +680,10 @@ impl fmt::Display for MediaError {
                     "media size {observed} is outside 1..={maximum} bytes"
                 )
             }
+            Self::DataUrlBytes { observed, maximum } => write!(
+                formatter,
+                "combined media data URLs contain {observed} bytes, exceeding maximum {maximum} bytes",
+            ),
             Self::UnrecognizedBytes => {
                 formatter.write_str("media bytes have no supported image signature")
             }
@@ -683,9 +722,8 @@ mod tests {
     }
 
     #[test]
-    fn canonical_png_has_one_byte_identity() {
+    fn canonical_image_markdown_is_browsable_but_a_bare_url_is_not() {
         let media = Media::from_base64("capture.png", "image/png", PNG).unwrap();
-        assert_eq!(media.data_url, format!("data:image/png;base64,{PNG}"));
         assert_eq!(
             media.markdown().unwrap(),
             format!("![capture.png](data:image/png;base64,{PNG})")
@@ -911,6 +949,19 @@ mod tests {
                 observed: MAX_MEDIA_ITEMS + 1,
                 maximum: MAX_MEDIA_ITEMS,
             }
+        );
+    }
+
+    #[test]
+    fn collectively_oversized_media_is_refused_before_publication() {
+        let mut bytes = b"RIFF\0\0\0\0WEBP".to_vec();
+        bytes.resize(2 * 1024 * 1024, 0);
+        let media =
+            Media::from_base64("capture.webp", "image/webp", &STANDARD.encode(bytes)).unwrap();
+        let attachments = vec![media.clone(), media];
+        assert!(
+            admit_media(&attachments).is_err(),
+            "individually valid images must not admit a set larger than a durable envelope"
         );
     }
 

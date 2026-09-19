@@ -356,7 +356,7 @@ fn project_agent_event(
     let observed = authored_synthetic
         .then(|| observed.or_else(|| observations.at(lane, locus)))
         .flatten();
-    wire::media::admit_media(&media)
+    wire::media::validate_media(&media)
         .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
     let published = wire::AgentMessage {
         lane,
