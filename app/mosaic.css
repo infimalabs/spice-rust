@@ -1330,6 +1330,7 @@ html[data-command-modifier-held="true"]
 
 .team-detail-pane {
   display: grid;
+  align-content: start;
   overflow: auto;
   padding: 8px;
 }
@@ -1372,11 +1373,3 @@ html[data-command-modifier-held="true"]
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .64rem;
 }
-.team-detail-pane .seat-panel {
-  padding: 12px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-}
-.team-detail-pane .seat-form { margin-top: 10px; }
-.team-detail-pane .seat-form input { padding: 6px 7px; font-size: .68rem; }
-.team-detail-pane .seat-form button { min-height: 29px; font-size: .7rem; }

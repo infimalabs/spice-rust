@@ -189,37 +189,47 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
     html! {
         <aside class="seat-panel">
             <div class="seat-panel-heading">
-                <span class="eyebrow">{"Add agent"}</span>
-                <h2>{"Assign a worktree"}</h2>
-                <p>{"Add one agent member from an existing worktree in this repository."}</p>
+                <h2>{"Add agent"}</h2>
             </div>
             <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
-                <label for="seat-name">{"Name"}</label>
-                <input id="seat-name" type="text" placeholder="Ava"
-                    value={(*draft.name).clone()}
-                    oninput={state_from_input(draft.name.clone())} />
-                <label for="seat-worktree">{"Worktree"}</label>
-                <input id="seat-worktree" type="text" placeholder="/absolute/path/to/worktree"
-                    value={(*draft.worktree).clone()}
-                    oninput={state_from_input(draft.worktree.clone())} />
-                <label for="seat-vendor">{"Vendor"}</label>
-                <input id="seat-vendor" type="text" value={(*draft.vendor).clone()}
-                    oninput={state_from_input(draft.vendor.clone())} />
-                <label for="seat-life">{"Life"}</label>
-                <input id="seat-life" type="text" list="lane-lives"
-                    value={(*draft.life).clone()}
-                    oninput={state_from_input(draft.life.clone())} />
+                <label>
+                    <span>{"Name"}</span>
+                    <input type="text" placeholder="Ava"
+                        value={(*draft.name).clone()}
+                        oninput={state_from_input(draft.name.clone())} />
+                </label>
+                <label>
+                    <span>{"Worktree"}</span>
+                    <input type="text" placeholder="/absolute/path/to/worktree"
+                        value={(*draft.worktree).clone()}
+                        oninput={state_from_input(draft.worktree.clone())} />
+                </label>
+                <label>
+                    <span>{"Vendor"}</span>
+                    <input type="text" value={(*draft.vendor).clone()}
+                        oninput={state_from_input(draft.vendor.clone())} />
+                </label>
+                <label>
+                    <span>{"Life"}</span>
+                    <input type="text" list="lane-lives"
+                        value={(*draft.life).clone()}
+                        oninput={state_from_input(draft.life.clone())} />
+                </label>
                 <datalist id="lane-lives">
                     <option value="steer" /><option value="drive" /><option value="drain" />
                 </datalist>
-                <label for="seat-model">{"Model"}</label>
-                <input id="seat-model" type="text" placeholder="vendor default"
-                    value={(*draft.model).clone()}
-                    oninput={state_from_input(draft.model.clone())} />
-                <label for="seat-effort">{"Effort"}</label>
-                <input id="seat-effort" type="text" list="lane-efforts" placeholder="vendor default"
-                    value={(*draft.effort).clone()}
-                    oninput={state_from_input(draft.effort.clone())} />
+                <label>
+                    <span>{"Model"}</span>
+                    <input type="text" placeholder="vendor default"
+                        value={(*draft.model).clone()}
+                        oninput={state_from_input(draft.model.clone())} />
+                </label>
+                <label>
+                    <span>{"Effort"}</span>
+                    <input type="text" list="lane-efforts" placeholder="vendor default"
+                        value={(*draft.effort).clone()}
+                        oninput={state_from_input(draft.effort.clone())} />
+                </label>
                 <datalist id="lane-efforts">
                     <option value="low" /><option value="medium" /><option value="high" />
                     <option value="xhigh" /><option value="max" />

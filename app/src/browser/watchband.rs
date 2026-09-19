@@ -391,14 +391,14 @@ fn render_details(
             "team-detail-pane",
             (mode == TeamMode::Info).then_some("with-seat")
         )}>
+            if mode == TeamMode::Info {
+                {view::render_seat_panel(Some(runtime), controls)}
+            }
             <div class="team-detail-grid">
                 {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
                     render_agent_details(member, standing, mode)
                 })}
             </div>
-            if mode == TeamMode::Info {
-                {view::render_seat_panel(Some(runtime), controls)}
-            }
         </div>
     }
 }

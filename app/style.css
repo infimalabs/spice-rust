@@ -273,7 +273,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .agent-console-heading h1 { margin-top: 3px; font-size: 1.65rem; }
 .agent-console-heading p,
-.seat-panel-heading p,
 .conversation-heading p {
   margin: 5px 0 0;
   color: var(--muted);
@@ -556,21 +555,41 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 .seat-panel {
-  padding: 20px;
-  border-left: 1px solid var(--line);
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
   background: var(--control-surface-soft);
 }
-.seat-panel-heading h2 { margin-top: 3px; font-size: 1rem; }
-.seat-form { display: grid; gap: 8px; margin-top: 18px; }
-.seat-form label { margin-top: 3px; color: var(--muted); font-size: .72rem; font-weight: 650; }
-.seat-form input { width: 100%; min-width: 0; padding: 9px 10px; background: var(--control); }
+.seat-panel-heading h2 { font-size: .8rem; }
+.seat-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+  margin-top: 8px;
+}
+.seat-form label {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 650;
+}
+.seat-form label > span { white-space: nowrap; }
+.seat-form input { width: 100%; min-width: 0; height: 28px; padding: 4px 6px; background: var(--control); }
 .seat-form button {
+  grid-column: 1 / -1;
   justify-self: start;
-  margin-top: 7px;
+  min-height: 29px;
+  font-size: .7rem;
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
 }
+.seat-form .form-refusal { grid-column: 1 / -1; min-width: 0; margin: 0; }
 
 /* Why a submission was refused. Rendered only while one is outstanding, so
    the form never reserves space for a sentence it is not showing. */
