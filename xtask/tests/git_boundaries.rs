@@ -45,7 +45,7 @@ const SELF_PATH: &str = "xtask/tests/git_boundaries.rs";
 /// Counts make each exception closed: another spelling in one of these files
 /// still has to be reviewed and declared. The policy test below separately
 /// rejects executable constructors that name Git through `PATH`.
-const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 10] = [
+const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 9] = [
     ("proof/src/bin/spice-proof-darwin-runner/tests.rs", 1),
     ("spice/src/cargo_isolation/tests.rs", 1),
     // Canvas proves an overlay entered its synthetic private index by querying
@@ -54,7 +54,6 @@ const INERT_ABSOLUTE_GIT_TEST_SITES: [(&str, usize); 10] = [
     // These fixture helpers create and stage only their own temporary
     // repositories; absolute resolution keeps the tests independent of PATH.
     ("spice/src/gate_command/prove/tests.rs", 1),
-    ("spice/tests/gate_admission_benchmark.rs", 1),
     ("spice/tests/gate_routing_admission.rs", 1),
     ("spice/tests/gate_single_flight/fixture.rs", 1),
     // The instrumented rustfmt script deliberately moves its fixture index to

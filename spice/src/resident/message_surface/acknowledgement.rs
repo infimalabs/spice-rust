@@ -83,7 +83,9 @@ pub(super) enum ContextState {
     Acknowledged,
     /// Positively acknowledged in prose while the journal still holds the key.
     Pending,
-    /// Declined here, or historical context for a key retired elsewhere.
+    /// Declined here: the lane answered and refused.
+    Declined,
+    /// Historical context for a key retired elsewhere.
     Unmarked,
 }
 
@@ -185,14 +187,16 @@ fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str
     }
 }
 
-/// The quoted context text for one acknowledged directive.
+/// The quoted context text for one answered directive.
 ///
 /// An ordinary directive retired by a positive acknowledgement carries the
 /// canonical ACK marker so Canvas can badge it inline; while the journal still
 /// holds its key pending it carries the pending marker instead, so a spoken
-/// acknowledgment never reads as credit before steer::acked lands. A taste,
-/// broadcast, or review directive already opens with its own flavor marker,
-/// and a declined or merely historical context earns no badge.
+/// acknowledgment never reads as credit before steer::acked lands. A declined
+/// directive carries the NACK marker, because a refusal is an answer the
+/// operator must be able to see at a glance. A taste, broadcast, or review
+/// directive already opens with its own flavor marker, and merely historical
+/// context earns no badge.
 fn acknowledged_context_text(
     directive: &PresentationDirective,
     state: ContextState,
@@ -200,6 +204,7 @@ fn acknowledged_context_text(
     let marker = match state {
         ContextState::Acknowledged => wire::stream::ACK_MARKER,
         ContextState::Pending => wire::stream::ACK_PENDING_MARKER,
+        ContextState::Declined => wire::stream::NACK_MARKER,
         ContextState::Unmarked => return Cow::Borrowed(&directive.text),
     };
     if !is_ordinary(directive) {

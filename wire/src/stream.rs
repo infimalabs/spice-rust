@@ -19,6 +19,11 @@ pub const ACK_MARKER: &str = "[ACK]";
 /// The plain ACK marker replaces it once the key retires through steer::acked,
 /// so a spoken acknowledgment never reads as credit before the journal grants it.
 pub const ACK_PENDING_MARKER: &str = "[ACK PENDING]";
+/// Canonical semantic prefix the resident places on an ordinary directive the
+/// agent declined. A decline answers the operator as surely as credit does, so
+/// the quoted context carries its own marker instead of reading as prose the
+/// lane never answered.
+pub const NACK_MARKER: &str = "[NACK]";
 
 use crate::{
     Actor, AnyFact, Body, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name,
@@ -124,6 +129,10 @@ pub struct AgentMessageBadges {
     /// holds pending, awaiting retirement before they read as acknowledged.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub pending: u32,
+    /// Ordinary directives this prose declined, which the quoted context
+    /// carries as a refusal mark rather than as credit.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub declines: u32,
 }
 
 impl AgentMessageBadges {
@@ -135,6 +144,7 @@ impl AgentMessageBadges {
             && self.broadcasts == 0
             && self.reviews == 0
             && self.pending == 0
+            && self.declines == 0
     }
 }
 

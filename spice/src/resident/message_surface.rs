@@ -618,7 +618,7 @@ fn message_badges(
         return wire::AgentMessageBadges::default();
     };
     let standing = EventDirectives { directives, event };
-    let acknowledged = positively_acknowledged_keys(text, &standing);
+    let acknowledged = answered_keys(text, &standing, wire::Disposition::Acked);
     let count = |select: &dyn Fn(&PresentationDirective) -> bool| {
         let matched = acknowledged
             .iter()
@@ -634,6 +634,15 @@ fn message_badges(
     let pending = count(&|directive| {
         is_ordinary(directive) && directive.disposition == wire::Disposition::Live
     });
+    // A decline is an answer, not credit: it authorizes the refusal mark on
+    // the quoted directive and never adds to the acknowledged total.
+    let declines = u32::try_from(
+        answered_keys(text, &standing, wire::Disposition::Declined)
+            .iter()
+            .filter(|key| directives.0.get(*key).is_some_and(is_ordinary))
+            .count(),
+    )
+    .unwrap_or(u32::MAX);
     wire::AgentMessageBadges {
         acknowledgements: u32::try_from(acknowledged.len())
             .unwrap_or(u32::MAX)
@@ -643,29 +652,30 @@ fn message_badges(
         broadcasts,
         reviews,
         pending,
+        declines,
     }
 }
 
-/// Every key this prose positively acknowledges with authority over this event.
-fn positively_acknowledged_keys(
+/// Every key this prose answers with authority over this event, by how it
+/// answered: `Acked` keys earn credit, `Declined` keys earn a refusal mark.
+fn answered_keys(
     text: &str,
     standing: &EventDirectives<'_>,
+    answer: wire::Disposition,
 ) -> BTreeSet<steer::Key> {
-    let mut acknowledged = BTreeSet::new();
+    let mut answered = BTreeSet::new();
     for packet in steer::ack::scan::scan_acknowledgements(text, standing) {
         for recognition in packet.recognitions {
             let steer::ack::scan::Outcome::Retired { key, disposition } = recognition.outcome
             else {
                 continue;
             };
-            if disposition == wire::Disposition::Acked
-                && standing.recognizes(&key, disposition, recognition.locus)
-            {
-                acknowledged.insert(key);
+            if disposition == answer && standing.recognizes(&key, disposition, recognition.locus) {
+                answered.insert(key);
             }
         }
     }
-    acknowledged
+    answered
 }
 
 /// Whether a directive carries no flavor marker of its own, so its
@@ -736,12 +746,11 @@ impl EventDirectives<'_> {
     }
 
     fn context_state(&self, key: &steer::Key, disposition: wire::Disposition) -> ContextState {
-        if disposition != wire::Disposition::Acked {
-            ContextState::Unmarked
-        } else if self.pending(key) {
-            ContextState::Pending
-        } else {
-            ContextState::Acknowledged
+        match disposition {
+            wire::Disposition::Acked if self.pending(key) => ContextState::Pending,
+            wire::Disposition::Acked => ContextState::Acknowledged,
+            wire::Disposition::Declined => ContextState::Declined,
+            _ => ContextState::Unmarked,
         }
     }
 

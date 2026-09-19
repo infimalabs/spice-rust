@@ -43,6 +43,27 @@ function readAcknowledgementRender(page, lane, replyText) {
   }, { lane, replyText });
 }
 
+// The badge's own box and where the quoted words start beside it, so the
+// pending and settled renders can be compared as geometry rather than prose.
+function readAcknowledgementMetric(card) {
+  return card.locator(".message-ack-pill").evaluate((pill) => {
+    const round = (value) => Math.round(value * 100) / 100;
+    const box = pill.getBoundingClientRect();
+    const range = document.createRange();
+    range.selectNodeContents(pill.parentElement);
+    range.setStartAfter(pill);
+    const prose = range.getBoundingClientRect();
+    return {
+      state: pill.dataset.acknowledgement,
+      label: pill.textContent,
+      width: round(box.width),
+      height: round(box.height),
+      proseLeft: round(prose.left - box.left),
+      proseTop: round(prose.top - box.top),
+    };
+  });
+}
+
 export async function assertExternalOperatorReplay(page, fixture, console, lane, worktree) {
   const quotedText = `external operator premise ${crypto.randomUUID()}`;
   const replyText = `approved ${crypto.randomUUID()}`;
@@ -94,15 +115,18 @@ export async function assertExternalOperatorReplay(page, fixture, console, lane,
         && card.dataset.messageAckCount === "0"
         && card.dataset.messagePendingCount === "1"
         && card.dataset.messageTasteCount === "0"
-        && [...card.querySelectorAll("blockquote > p > .message-ack-pending-pill")]
-          .map((badge) => badge.textContent).join(",") === "ACK PENDING"
+        && [...card.querySelectorAll("blockquote > p > .message-ack-pill")]
+          .map((badge) => `${badge.dataset.acknowledgement}:${badge.textContent}`)
+          .join(",") === "pending:ACK"
     )), { lane, replyText });
   assert.equal(await acknowledgedCard.count(), 1, "a spoken acknowledgement renders one assistant card");
   assert.deepEqual(
-    await acknowledgedCard.locator(".message-ack-pill, .message-ack-pending-pill").allTextContents(),
-    ["ACK PENDING"],
-    "a key the journal still holds live renders one pending pill and no ACK credit",
+    await acknowledgedCard.locator(".message-ack-pill").allTextContents(),
+    ["ACK"],
+    "a key the journal still holds live renders one badge and no credit",
   );
+  const pendingMetric = await readAcknowledgementMetric(acknowledgedCard);
+  assert.equal(pendingMetric.state, "pending", "the held key reads as pending");
   assert.doesNotMatch(
     await acknowledgedCard.locator(".message-body").innerText(),
     /\[ACK PENDING\]/u,
@@ -160,6 +184,13 @@ export async function assertExternalOperatorReplay(page, fixture, console, lane,
     await acknowledgedCard.locator(".message-ack-pill").allTextContents(),
     ["ACK"],
     "authenticated acknowledgement evidence renders one uncounted inline ACK pill",
+  );
+  const settledMetric = await readAcknowledgementMetric(acknowledgedCard);
+  assert.equal(settledMetric.state, "acked", "retirement credits the same badge");
+  assert.deepEqual(
+    { ...settledMetric, state: "pending" },
+    pendingMetric,
+    "settling a spoken acknowledgement moves neither the badge nor the words beside it",
   );
   assert.equal(
     await acknowledgedCard.locator(".message-classifiers, .message-ack-pill .message-badge-count").count(),
@@ -227,7 +258,7 @@ export async function assertExternalOperatorReplay(page, fixture, console, lane,
     "durable replay restores the inline ACK pill inside its quote",
   );
   assert.equal(
-    await acknowledgedCard.locator(".message-ack-pending-pill").count(),
+    await acknowledgedCard.locator('.message-ack-pill[data-acknowledgement="pending"]').count(),
     0,
     "durable replay reads the retired key from the journal and never re-pends it",
   );

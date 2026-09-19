@@ -34,7 +34,7 @@ impl PendingPresentation {
             directives: directives?,
             event,
         };
-        let keys = positively_acknowledged_keys(text, &standing)
+        let keys = answered_keys(text, &standing, wire::Disposition::Acked)
             .into_iter()
             .filter(|key| standing.pending(key))
             .collect::<BTreeSet<_>>();

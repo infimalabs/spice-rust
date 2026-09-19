@@ -81,11 +81,20 @@ fn message_badges_require_authenticated_positive_directive_evidence() {
             broadcasts: 0,
             reviews: 0,
             pending: 1,
+            declines: 0,
         },
     );
+    assert_eq!(
+        message_badges("NACK 1kQnrzNZ: unsafe.", Some(&directives), event()),
+        wire::AgentMessageBadges {
+            declines: 1,
+            ..wire::AgentMessageBadges::default()
+        },
+        "a refusal is an answer, counted apart from credit",
+    );
     for text in [
-        "NACK 1kQnrzNZ: unsafe.",
         "ACK not-a-key: prose only.",
+        "NACK not-a-key: prose only.",
         "Ordinary prose mentions ACK without a key.",
     ] {
         assert!(
@@ -107,6 +116,7 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
             broadcasts: 1,
             reviews: 0,
             pending: 0,
+            declines: 0,
         },
     );
     assert!(message_badges("NACK 1kQnrzNZ: refused.", Some(&directives), event()).is_empty());
@@ -158,6 +168,7 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             broadcasts: 0,
             reviews: 1,
             pending: 0,
+            declines: 0,
         },
     );
     let mut other_source = original;
@@ -228,7 +239,7 @@ fn non_key_text_after_a_recognized_header_remains_response_prose() {
         );
         let context = match marker {
             "ACK" => "> [ACK PENDING] Keep the recognized direction visible.",
-            _ => "> Keep the recognized direction visible.",
+            _ => "> [NACK] Keep the recognized direction visible.",
         };
         let expected =
             format!("{context}\n\nNope 1kQwPZtM: Shared prose remains attached to the attempt.");
@@ -258,7 +269,10 @@ fn mixed_acknowledgement_dispositions_keep_their_own_keys_and_contexts() {
             event(),
         )
         .expect("mixed acknowledgments present"),
-        "> [ACK PENDING] Apply the current path.\n\nApplied.\n> Remove the safety check.\n\nUnsafe.",
+        concat!(
+            "> [ACK PENDING] Apply the current path.\n\nApplied.\n",
+            "> [NACK] Remove the safety check.\n\nUnsafe."
+        ),
     );
 }
 
@@ -423,6 +437,7 @@ fn task_contract_acknowledgment_hides_framing_and_earns_no_authored_context() {
             broadcasts: 0,
             reviews: 0,
             pending: 0,
+            declines: 0,
         },
     );
 }
@@ -491,6 +506,7 @@ fn task_contract_badge_reaches_canvas_without_speech_eligibility() {
             broadcasts: 0,
             reviews: 0,
             pending: 0,
+            declines: 0,
         },
     );
     assert!(messages[0].automatic_speech.is_none());
@@ -692,6 +708,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
             broadcasts: 0,
             reviews: 0,
             pending: 0,
+            declines: 0,
         },
     );
 }
@@ -749,6 +766,7 @@ fn current_task_contract_and_taste_ack_hide_one_shared_protocol_header() {
             broadcasts: 0,
             reviews: 0,
             pending: 0,
+            declines: 0,
         },
     );
     assert_eq!(
@@ -816,6 +834,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
             broadcasts: 0,
             reviews: 0,
             pending: 0,
+            declines: 0,
         },
     );
 }

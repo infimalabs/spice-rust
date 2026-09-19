@@ -359,6 +359,7 @@ fn automatic_speech_is_typed_and_has_one_absence_spelling() {
             broadcasts: 1,
             reviews: 1,
             pending: 1,
+            declines: 1,
         },
         automatic_speech: Some(AutomaticSpeech {
             kind: AutomaticSpeechKind::Final,

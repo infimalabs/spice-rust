@@ -46,6 +46,7 @@ pub(crate) fn render_received_with_badges(
             broadcasts: badges.broadcasts,
             acknowledgements: ordinary_acknowledgements(&badges),
             pending: badges.pending,
+            declines: badges.declines,
         },
     )
 }
@@ -70,6 +71,7 @@ struct Classifications {
     broadcasts: u32,
     acknowledgements: u32,
     pending: u32,
+    declines: u32,
 }
 
 /// Render received text and replace authenticated quoted classification markers inline.
@@ -155,6 +157,7 @@ struct RemainingClassifications {
     broadcasts: usize,
     acknowledgements: usize,
     pending: usize,
+    declines: usize,
 }
 
 impl From<Classifications> for RemainingClassifications {
@@ -166,6 +169,7 @@ impl From<Classifications> for RemainingClassifications {
             broadcasts: remaining(classifications.broadcasts),
             acknowledgements: remaining(classifications.acknowledgements),
             pending: remaining(classifications.pending),
+            declines: remaining(classifications.declines),
         }
     }
 }
@@ -192,12 +196,17 @@ fn inline_classification_marker<'a>(
         (
             &mut remaining.pending,
             wire::stream::ACK_PENDING_MARKER,
-            ack_pending_pill_html(),
+            acknowledgement_pill_html(AcknowledgementState::Pending),
+        ),
+        (
+            &mut remaining.declines,
+            wire::stream::NACK_MARKER,
+            acknowledgement_pill_html(AcknowledgementState::Declined),
         ),
         (
             &mut remaining.acknowledgements,
             wire::stream::ACK_MARKER,
-            ack_pill_html(),
+            acknowledgement_pill_html(AcknowledgementState::Acknowledged),
         ),
     ];
     for (count, marker, pill) in plain {
@@ -264,15 +273,45 @@ fn review_pill_html() -> &'static str {
      aria-label=\"Review classification\">REVIEW</span>"
 }
 
-fn ack_pill_html() -> &'static str {
-    "<span class=\"message-ack-pill\" data-message-classification=\"ack\" \
-     aria-label=\"Acknowledgement classification\">ACK</span>"
+/// How the quoted directive beside this pill was answered.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AcknowledgementState {
+    /// The journal retired the key: the answer is credited.
+    Acknowledged,
+    /// The answer was spoken; the journal still holds the key.
+    Pending,
+    /// The lane refused the direction.
+    Declined,
 }
 
-/// The spoken acknowledgement whose key the journal still holds pending.
-fn ack_pending_pill_html() -> &'static str {
-    "<span class=\"message-ack-pending-pill\" data-message-classification=\"ack-pending\" \
-     aria-label=\"Acknowledgement awaiting retirement\">ACK PENDING</span>"
+/// One acknowledgement badge, in the one metric every state shares.
+///
+/// The badge sits inline at the head of the quoted directive, so any width it
+/// gains or loses when the state settles pushes the operator's own words
+/// sideways. Every state therefore renders the same element with the same
+/// reserved label width, and the state reaches the reader as color plus the
+/// word itself, never as a change of geometry. Pending carries no word of its
+/// own: it is a transient the reader cannot act on, so it wears the ACK label
+/// unfilled until the journal retires the key, and only the fill changes when
+/// it settles. A decline keeps its word, condensed into the metric ACK owns.
+fn acknowledgement_pill_html(state: AcknowledgementState) -> &'static str {
+    match state {
+        AcknowledgementState::Acknowledged => {
+            "<span class=\"message-ack-pill\" data-message-classification=\"ack\" \
+             data-acknowledgement=\"acked\" aria-label=\"Acknowledgement classification\">\
+             <span class=\"message-ack-label\">ACK</span></span>"
+        }
+        AcknowledgementState::Pending => {
+            "<span class=\"message-ack-pill\" data-message-classification=\"ack-pending\" \
+             data-acknowledgement=\"pending\" aria-label=\"Acknowledgement awaiting retirement\">\
+             <span class=\"message-ack-label\">ACK</span></span>"
+        }
+        AcknowledgementState::Declined => {
+            "<span class=\"message-ack-pill\" data-message-classification=\"nack\" \
+             data-acknowledgement=\"declined\" aria-label=\"Declined classification\">\
+             <span class=\"message-ack-label\">NACK</span></span>"
+        }
+    }
 }
 
 fn markdown_is_image_only(events: &[MarkdownEvent<'_>]) -> bool {
@@ -885,6 +924,7 @@ mod tests {
                 broadcasts: 1,
                 reviews: 1,
                 pending: 0,
+                declines: 0,
             },
         );
         assert!(!rendered.html.contains("compatibility:"));
@@ -1042,7 +1082,7 @@ mod tests {
             rendered.html
         );
         assert!(rendered.html.contains(
-            "aria-label=\"Acknowledgement classification\">ACK</span> Keep the current path."
+            "<span class=\"message-ack-label\">ACK</span></span> Keep the current path."
         ));
         assert!(
             rendered
@@ -1079,7 +1119,11 @@ mod tests {
             rendered.html.matches("class=\"message-ack-pill\"").count(),
             1,
         );
-        assert!(rendered.html.contains("classification\">ACK</span></p>"));
+        assert!(
+            rendered
+                .html
+                .contains("<span class=\"message-ack-label\">ACK</span></span></p>")
+        );
         assert!(rendered.html.contains(
             "<blockquote>\n<p>The original assertion remains visible.</p>\n</blockquote>"
         ));
@@ -1111,11 +1155,9 @@ mod tests {
             "the pill heads the innermost quote: {}",
             rendered.html
         );
-        assert!(
-            rendered
-                .html
-                .contains("classification\">ACK</span> Tell me what the task is even about</p>")
-        );
+        assert!(rendered.html.contains(
+            "<span class=\"message-ack-label\">ACK</span></span> Tell me what the task is even about</p>"
+        ));
         assert!(!rendered.html.contains("[ACK]"));
         assert!(rendered.html.contains("<p>Delete it</p>"));
     }
@@ -1132,6 +1174,7 @@ mod tests {
                 broadcasts: 1,
                 reviews: 0,
                 pending: 0,
+                declines: 0,
             },
         );
         assert_eq!(
@@ -1167,7 +1210,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pending_acknowledgement_renders_its_own_pill_apart_from_credit() {
+    fn every_acknowledgement_state_renders_one_badge_in_the_same_metric() {
         let pending = render_received_with_badges(
             "> [ACK PENDING] Keep the current path.\n\n\
              > [ACK] Stray credit stays literal.\n\n\
@@ -1178,17 +1221,14 @@ mod tests {
             },
         );
         assert_eq!(
-            pending
-                .html
-                .matches("class=\"message-ack-pending-pill\"")
-                .count(),
+            pending.html.matches("class=\"message-ack-pill\"").count(),
             1
         );
         assert!(pending.html.contains(
-            "data-message-classification=\"ack-pending\" \
-             aria-label=\"Acknowledgement awaiting retirement\">ACK PENDING</span> Keep the current path."
+            "data-acknowledgement=\"pending\" \
+             aria-label=\"Acknowledgement awaiting retirement\">\
+             <span class=\"message-ack-label\">ACK</span></span> Keep the current path."
         ));
-        assert!(!pending.html.contains("class=\"message-ack-pill\""));
         assert!(pending.html.contains("[ACK] Stray credit stays literal."));
 
         let retired = render_received_with_badges(
@@ -1202,11 +1242,32 @@ mod tests {
             retired.html.matches("class=\"message-ack-pill\"").count(),
             1
         );
-        assert!(!retired.html.contains("message-ack-pending-pill"));
+        assert!(retired.html.contains("data-acknowledgement=\"acked\""));
         assert!(
             retired
                 .html
                 .contains("[ACK PENDING] Stray marker stays literal.")
+        );
+
+        let declined = render_received_with_badges(
+            "> [NACK] Keep the current path.\n\n> [NACK] Stray refusal stays literal.",
+            wire::AgentMessageBadges {
+                declines: 1,
+                ..wire::AgentMessageBadges::default()
+            },
+        );
+        assert_eq!(
+            declined.html.matches("class=\"message-ack-pill\"").count(),
+            1
+        );
+        assert!(declined.html.contains(
+            "data-acknowledgement=\"declined\" aria-label=\"Declined classification\">\
+             <span class=\"message-ack-label\">NACK</span></span> Keep the current path."
+        ));
+        assert!(
+            declined
+                .html
+                .contains("[NACK] Stray refusal stays literal.")
         );
     }
 

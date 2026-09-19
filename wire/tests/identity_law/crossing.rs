@@ -83,51 +83,22 @@ fn cover_environment_requirements(covered: &mut BTreeSet<String>) {
 
 fn cover_message_badges(covered: &mut BTreeSet<String>) {
     let empty = AgentMessageBadges::default();
-    let acknowledgements = AgentMessageBadges {
-        acknowledgements: 2,
-        tastes: 0,
-        broadcasts: 0,
-        reviews: 0,
-        pending: 0,
-    };
-    let tastes = AgentMessageBadges {
-        acknowledgements: 0,
-        tastes: 1,
-        broadcasts: 0,
-        reviews: 0,
-        pending: 0,
-    };
-    let broadcasts = AgentMessageBadges {
-        acknowledgements: 0,
-        tastes: 0,
-        broadcasts: 1,
-        reviews: 0,
-        pending: 0,
-    };
-    let reviews = AgentMessageBadges {
-        acknowledgements: 0,
-        tastes: 0,
-        broadcasts: 0,
-        reviews: 1,
-        pending: 0,
-    };
-    let pending = AgentMessageBadges {
-        acknowledgements: 0,
-        tastes: 0,
-        broadcasts: 0,
-        reviews: 0,
-        pending: 1,
+    let one = |select: fn(&mut AgentMessageBadges)| {
+        let mut badges = AgentMessageBadges::default();
+        select(&mut badges);
+        badges
     };
     law(
         covered,
         "AgentMessageBadges",
         &[
             empty,
-            acknowledgements,
-            tastes,
-            broadcasts,
-            reviews,
-            pending,
+            one(|badges| badges.acknowledgements = 2),
+            one(|badges| badges.tastes = 1),
+            one(|badges| badges.broadcasts = 1),
+            one(|badges| badges.reviews = 1),
+            one(|badges| badges.pending = 1),
+            one(|badges| badges.declines = 1),
         ],
     );
     law(
@@ -877,6 +848,7 @@ fn cover_stream_frames(covered: &mut BTreeSet<String>) {
                     broadcasts: 0,
                     reviews: 0,
                     pending: 0,
+                    declines: 0,
                 },
                 automatic_speech: None,
                 unavailable_tool_terminals: Vec::new(),

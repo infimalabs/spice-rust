@@ -518,6 +518,68 @@ async function assertInlineBroadcastPill(page, console, lane, activityReplay) {
   return { key, replyText };
 }
 
+// Every acknowledgement state shares one badge metric, so the operator's own
+// words beside it never move when a spoken answer settles or is refused.
+async function assertAcknowledgementBadgeMetric(page, console, lane, activityReplay) {
+  const replyText = "ACK: the badge holds one metric.";
+  const text = [
+    "> [ACK] Credit is retired.",
+    "",
+    "> [ACK PENDING] Credit is spoken.",
+    "",
+    "> [NACK] The direction is refused.",
+    "",
+    replyText,
+  ].join("\n");
+  const { key } = await activityReplay.injectClassifiedAgentProse(page, lane, text, {
+    acknowledgements: 1,
+    pending: 1,
+    declines: 1,
+  });
+  const card = console.locator(`[data-mosaic-card-key="${key}"]`);
+  await card.waitFor({ timeout: TRANSITION_MS });
+  const badges = await card.locator(".message-ack-pill").evaluateAll((pills) => (
+    pills.map((pill) => {
+      const round = (value) => Math.round(value * 100) / 100;
+      const box = pill.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(pill.parentElement);
+      range.setStartAfter(pill);
+      return {
+        state: pill.dataset.acknowledgement,
+        label: pill.textContent,
+        width: round(box.width),
+        height: round(box.height),
+        proseOrigin: round(range.getBoundingClientRect().left - box.left),
+      };
+    })
+  ));
+  assert.deepEqual(
+    badges.map((badge) => badge.state),
+    ["acked", "pending", "declined"],
+    "each answered context carries its own state on one badge element",
+  );
+  assert.deepEqual(
+    badges.map((badge) => badge.label),
+    ["ACK", "ACK", "NACK"],
+    "pending spends no word of its own; a refusal keeps its word",
+  );
+  const [credit] = badges;
+  for (const badge of badges) {
+    assert.deepEqual(
+      { width: badge.width, height: badge.height, proseOrigin: badge.proseOrigin },
+      { width: credit.width, height: credit.height, proseOrigin: credit.proseOrigin },
+      `the ${badge.state} badge holds the metric ACK owns`,
+    );
+  }
+  assert.ok(credit.width > 0, "the measured badge has a real box");
+  const quotes = await card.locator("blockquote").evaluateAll((nodes) => (
+    nodes.map((node) => getComputedStyle(node).borderLeftColor)
+  ));
+  assert.equal(new Set(quotes).size, 3, "each acknowledgement state reads as its own color");
+  return { key, replyText };
+}
+
 async function assertInlineReviewPill(page, console, lane, activityReplay) {
   const handle = "CANVAS-1kKRRsDR";
   const replyText = "ACK: review guidance is internalized.";
@@ -1176,6 +1238,12 @@ export async function assertAgentConversation(
     activityReplay,
   );
   const review = await assertInlineReviewPill(
+    page,
+    console,
+    seated[3].lane,
+    activityReplay,
+  );
+  await assertAcknowledgementBadgeMetric(
     page,
     console,
     seated[3].lane,
