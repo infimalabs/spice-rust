@@ -23,6 +23,8 @@ export async function mosaicScrollSnapshot(plane) {
       const box = card.getBoundingClientRect();
       return {
         key: card.dataset.mosaicCardKey,
+        activity: card.dataset.agentActivity,
+        height: box.height,
         offset: box.top - viewport.top,
         visible: box.bottom > viewport.top && box.top < viewport.bottom,
         lifecycle: card.classList.contains("frozen") ? "frozen" : "liquid",
@@ -166,10 +168,19 @@ export async function assertMosaicScrollInputs(page, plane) {
     () => document.querySelector('[data-pane="agent-console"] .lane-mosaic-plane')?.scrollTop <= 80);
 }
 
+// The plane anchors on the committed card nearest its top edge and, after a
+// change, scrolls so that same card keeps its viewport offset. The card is
+// looked up by key here because a reflow may stack a neighbour above it that
+// now straddles the top edge; the promise is about the card that was anchored,
+// not about which card is nearest afterwards.
 export function assertMosaicAnchorPreserved(before, after, label) {
-  assert.equal(after.anchor.key, before.anchor.key, `${label} retains the visible anchor identity`);
+  const anchored = after.cards.find((card) => card.key === before.anchor.key);
   assert.ok(
-    Math.abs(after.anchor.offset - before.anchor.offset) <= 1,
+    anchored,
+    `${label} retains the anchored card: ${JSON.stringify({ before, after })}`,
+  );
+  assert.ok(
+    Math.abs(anchored.offset - before.anchor.offset) <= 1,
     `${label} retains the anchor viewport offset: ${JSON.stringify({ before, after })}`,
   );
 }

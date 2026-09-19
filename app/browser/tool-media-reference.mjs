@@ -69,11 +69,11 @@ async function descriptor(card) {
     activity: article.dataset.agentActivity,
     aria: article.getAttribute("aria-label"),
     imageOnly: article.classList.contains("mosaic-message-card--image-only"),
-    text: article.querySelector(".message-body")?.textContent?.trim() ?? "",
-    tool: article.querySelector(".message-badge--tool")?.textContent,
     agent: article.querySelector(".message-agent-name")?.getAttribute("aria-label"),
     names: [...article.querySelectorAll(".message-attachments img")]
       .map((image) => image.getAttribute("alt")),
+    labels: [...article.querySelectorAll(".message-attachments .message-image")]
+      .map((link) => [link.getAttribute("title"), link.getAttribute("aria-label")]),
     identities: [...article.querySelectorAll(".message-attachments img")]
       .map((image) => image.dataset.mediaIdentity),
     sources: [...article.querySelectorAll(".message-attachments img")]
@@ -81,15 +81,30 @@ async function descriptor(card) {
   }));
 }
 
+// A tool card is its image: the preview line the resident wrote for the
+// result shows as the image's description with every path cut to its base
+// name. No negative assertions; the card is measured by what it shows.
 async function assertCard(card, expected, label) {
   const observed = await descriptor(card);
+  const description = (media) => expected.description ?? media.name;
   assert.equal(observed.activity, "tool", `${label} retains typed tool activity`);
   assert.match(observed.aria, /^Tool result from /, `${label} exposes tool and agent attribution`);
-  assert.equal(observed.tool, "TOOL", `${label} visibly identifies tool activity`);
+  assert.equal(
+    observed.aria.endsWith(`: ${expected.description}`),
+    expected.description !== undefined,
+    `${label} names its description in the card label: ${observed.aria}`,
+  );
   assert.match(observed.agent, /^Copy agent id for /, `${label} keeps accessible agent identity`);
-  assert.equal(observed.imageOnly, expected.text.length === 0, `${label} chooses the image-only tier`);
-  assert.equal(observed.text, expected.text, `${label} retains its bounded textual outcome`);
-  assert.deepEqual(observed.names, expected.media.map(({ name }) => name), `${label} keeps image order`);
+  assert.equal(observed.imageOnly, true, `${label} takes the image-only tier`);
+  assert.deepEqual(observed.names, expected.media.map(description), `${label} describes every image`);
+  assert.deepEqual(
+    observed.labels,
+    expected.media.map((media) => [
+      `Open ${description(media)} full size`,
+      `Open ${description(media)} full size`,
+    ]),
+    `${label} labels every full-size link with the description`,
+  );
   assert.ok(observed.identities.every(Boolean), `${label} exposes every admitted media identity`);
   assert.equal(new Set(observed.identities).size, expected.unique, `${label} keeps exact byte identities`);
   assert.deepEqual(observed.sources, expected.media.map(({ data_url: source }) => source));
@@ -140,7 +155,8 @@ export async function assertRuntimeToolMediaCards(
   const cases = [
     {
       name: "mixed",
-      text: "view image: capture.png succeeded",
+      text: "read: /tmp/shots/capture.png succeeded",
+      description: "read: capture.png succeeded",
       media: [png("mixed-capture.png")],
       state: "loaded",
       unique: 1,
@@ -182,7 +198,7 @@ export async function assertRuntimeToolMediaCards(
     const card = console.locator(`[data-mosaic-card-key="${injected.key}"]`);
     await waitForImages(page, injected.key, expected.state);
     const observed = await assertCard(card, expected, `${label} ${expected.name}`);
-    const previewHeight = expected.text.length === 0 ? 252 : 140;
+    const previewHeight = 252;
     for (let index = 0; index < expected.media.length; index += 1) {
       const preview = card.locator(".message-attachments .message-image").nth(index);
       await assertImageLifecycle(preview, `${label} ${expected.name} image ${index + 1}`, expected.state);
@@ -209,7 +225,9 @@ export async function assertRuntimeToolMediaCards(
     Element.prototype.setAttributeNS = window.__toolMediaSetAttributeNs;
     return [...new Set(window.__toolMediaPendingNodes.map((image) => image.alt))];
   });
-  for (const expected of cases.flatMap((entry) => entry.media.map(({ name }) => name))) {
+  for (const expected of cases.flatMap(
+    (entry) => entry.media.map(({ name }) => entry.description ?? name),
+  )) {
     assert.ok(pending.includes(expected), `${label} observed ${expected} while pending`);
   }
   assert.equal(
@@ -237,7 +255,8 @@ export async function assertRuntimeToolMediaCards(
   if (history) {
     const expected = {
       name: "older-history",
-      text: "view image: archived.gif succeeded",
+      text: "view image: /tmp/shots/archived.gif succeeded",
+      description: "view image: archived.gif succeeded",
       media: [gif("archived-capture.gif")],
       state: "loaded",
       unique: 1,
