@@ -179,7 +179,7 @@ impl ProjectVisibility {
     }
 }
 
-/// Actor-facing task statement evidence, excluding authored title prose.
+/// Current task statement evidence, with the title carried once beside it.
 ///
 /// Environmental requirements remain on the authoritative [`crate::TaskHead`]
 /// until the requirement-aware board surface projects their observed standing;
@@ -244,7 +244,7 @@ impl From<&crate::TaskHead> for BoardStatement {
 }
 
 impl BoardStatement {
-    /// Reconstruct a client-side statement using its actor-facing title.
+    /// Reconstruct a client-side statement from this row and its title.
     ///
     /// This actor view predates environmental standing, so its client-side
     /// reconstruction is unconstrained. Authoritative allocation always reads
@@ -283,9 +283,9 @@ pub struct BoardTask {
         deserialize_with = "crate::optional::present"
     )]
     pub creator_team: Option<crate::CanonicalUuid>,
-    /// Actor-facing title derived from that classification.
+    /// Authored title, carried beside the statement rather than inside it.
     pub presentation_title: String,
-    /// Current statement evidence projected without authored title prose.
+    /// Current statement evidence; the title sits in `presentation_title`.
     pub statement: Positioned<BoardStatement>,
     pub workflow: Positioned<crate::WorkflowHead>,
     #[serde(
@@ -341,7 +341,11 @@ pub struct BoardActorRoute {
 }
 
 impl BoardTask {
-    /// Project authoritative heads into one actor-facing task row.
+    /// Project authoritative heads into one task row.
+    ///
+    /// A hidden project is one the allocator does not offer by default, not a
+    /// confidence: nothing here rewrites a title or drops authored prose, and
+    /// [`Self::is_active_public`] remains the only thing visibility decides.
     #[must_use]
     pub fn from_authoritative(
         visibility: ProjectVisibility,
@@ -369,7 +373,6 @@ impl BoardTask {
             claim_context: None,
             git_context: None,
         }
-        .into_actor_facing()
     }
 
     /// Attach compact recovery references derived from the same authoritative snapshot.
@@ -384,24 +387,13 @@ impl BoardTask {
         self
     }
 
-    /// Normalize this row to the title its actor may retain.
-    #[must_use]
-    pub fn into_actor_facing(mut self) -> Self {
-        if self.visibility.is_hidden() {
-            self.presentation_title = "Hidden task".to_owned();
-            self.statement.body.description = None;
-            self.statement.body.acceptance.clear();
-        }
-        self
-    }
-
     /// Client-side statement reconstructed from actor-facing evidence.
     #[must_use]
     pub fn client_statement(&self) -> crate::TaskHead {
         self.statement.body.with_title(&self.presentation_title)
     }
 
-    /// Actor-facing title that does not expose hidden system task prose.
+    /// Authored title of this task.
     #[must_use]
     pub fn presentation_title(&self) -> &str {
         &self.presentation_title

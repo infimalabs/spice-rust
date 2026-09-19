@@ -1,8 +1,9 @@
 use super::*;
 
 // Hidden-visibility board tests, split from the sibling module by the law
-// they share: authoritative hidden evidence never crosses into any public
-// presentation, while the actor who owns it still reads it in full.
+// they share: a hidden project is one the allocator does not offer by
+// default, and nothing else. Every read renders its prose in full, because
+// an unreadable row cannot be triaged.
 
 pub(super) fn add_oops(
     bus: &Bus,
@@ -36,17 +37,23 @@ fn assert_hidden_actor_document(
     actor: &Actor,
     hidden: &TaskHandle,
     public: &TaskHandle,
-    secret: &str,
+    title: &str,
 ) {
     assert_eq!(&answer.principal, actor);
     let hidden_heads = at(answer, hidden);
     assert_eq!(hidden_heads.visibility.hidden_stem(), Some("oops"));
     assert_eq!(hidden_heads.statement.body.handle, *hidden);
     assert_eq!(hidden_heads.statement.body.project, ".oops");
-    assert_eq!(hidden_heads.presentation_title(), "Hidden task");
+    assert_eq!(hidden_heads.presentation_title(), title);
+    assert_eq!(
+        hidden_heads.statement.body.description.as_deref(),
+        Some(title)
+    );
     assert_eq!(hidden_heads.workflow.body.status, "pending");
+    assert!(!hidden_heads.is_active_public());
     let public_heads = at(answer, public);
     assert_eq!(public_heads.presentation_title(), "Visible allocator work");
+    assert!(public_heads.is_active_public());
 
     let json = serde_json::to_value(answer).expect("board answer encodes");
     let hidden_json = json["tasks"]
@@ -59,8 +66,8 @@ fn assert_hidden_actor_document(
         hidden_json["visibility"],
         serde_json::json!({"kind": "hidden", "stem": "oops"})
     );
-    assert_eq!(hidden_json["presentation_title"], "Hidden task");
-    assert!(hidden_json["statement"]["body"].get("title").is_none());
+    assert_eq!(hidden_json["presentation_title"], title);
+    assert_eq!(hidden_json["statement"]["body"]["description"], title);
     assert_eq!(hidden_json["workflow"]["body"]["status"], "pending");
     let public_json = json["tasks"]
         .as_array()
@@ -69,7 +76,6 @@ fn assert_hidden_actor_document(
         .find(|task| task["statement"]["body"]["handle"] == public.to_string())
         .expect("public JSON row");
     assert_eq!(public_json["presentation_title"], "Visible allocator work");
-    assert!(public_json["statement"]["body"].get("title").is_none());
 
     let rendered = Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(answer.cursor),
@@ -81,8 +87,7 @@ fn assert_hidden_actor_document(
             .document()
             .to_vec();
         let document = String::from_utf8(document).expect("presentation is UTF-8");
-        assert!(!document.contains(secret), "{form:?} leaked hidden prose");
-        assert!(document.contains("Hidden task"), "{form:?} presentation");
+        assert!(document.contains(title), "{form:?} withheld hidden prose");
         assert!(
             document.contains("Visible allocator work"),
             "{form:?} public title"
@@ -91,7 +96,7 @@ fn assert_hidden_actor_document(
 }
 
 #[test]
-fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() {
+fn board_read_carries_hidden_prose_while_next_stays_public() {
     let (root, bus, epoch, seats) = fixture("hidden-visibility", 1);
     let lane = Actor::Lane(seats[0].lane);
     let hidden = add_oops(
@@ -99,7 +104,7 @@ fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() 
         epoch,
         Actor::Operator,
         "HIDDEN-oops1",
-        "secret allocator failure details",
+        "Allocator failure needing triage",
     );
     let public = add_project(
         &bus,
@@ -117,7 +122,7 @@ fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() 
         &Actor::Operator,
         &hidden,
         &public,
-        "secret allocator failure details",
+        "Allocator failure needing triage",
     );
     let available = board(&bus, epoch, lane.clone());
     assert_hidden_actor_document(
@@ -125,7 +130,7 @@ fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() 
         &lane,
         &hidden,
         &public,
-        "secret allocator failure details",
+        "Allocator failure needing triage",
     );
     let observed = bus.task_snapshot().expect("task authority is readable");
     let authoritative = observed
@@ -135,7 +140,7 @@ fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() 
         .expect("hidden authoritative statement remains present");
     assert_eq!(
         authoritative.statement().body().title,
-        "secret allocator failure details"
+        "Allocator failure needing triage"
     );
 
     let rule: Name = "next".parse().expect("allocator rule");
@@ -157,10 +162,10 @@ fn board_read_retains_hidden_evidence_while_next_and_presentation_stay_public() 
 }
 
 #[test]
-fn document_ledgers_keep_hidden_titles_actor_facing_and_public_bytes_stable() {
+fn document_ledgers_render_hidden_tasks_in_full() {
     let (root, bus, epoch, seats) = fixture("hidden-ledger", 1);
-    let secret = "secret document ledger details";
-    let hidden = add_oops(&bus, epoch, Actor::Operator, "HIDDEN-ledger1", secret);
+    let title = "Document ledger triage detail";
+    let hidden = add_oops(&bus, epoch, Actor::Operator, "HIDDEN-ledger1", title);
     let public = add_project(
         &bus,
         epoch,
@@ -171,6 +176,7 @@ fn document_ledgers_keep_hidden_titles_actor_facing_and_public_bytes_stable() {
         Some("todo"),
     );
 
+    let mut hidden_ledgers = Vec::new();
     let mut public_ledgers = Vec::new();
     for actor in [Actor::Operator, Actor::Lane(seats[0].lane)] {
         let actor_board = board(&bus, epoch, actor.clone());
@@ -194,24 +200,35 @@ fn document_ledgers_keep_hidden_titles_actor_facing_and_public_bytes_stable() {
             },
         );
         let Outcome::Reply(Reply {
-            body: CommandAnswer::Text(ref answer),
+            body: CommandAnswer::Text(answer),
             ..
-        }) = hidden_ledger
+        }) = &hidden_ledger
         else {
             panic!("hidden ledger was not a text snapshot: {hidden_ledger:?}");
         };
-        assert_eq!(answer.text, "# Hidden task\nFlow: plan, todo, review\n");
+        assert!(
+            answer.text.starts_with(&format!("# {title}\n")),
+            "hidden ledger withheld its title: {}",
+            answer.text
+        );
+        assert!(
+            answer.text.contains("Flow: plan, todo, review"),
+            "hidden ledger dropped its flow: {}",
+            answer.text
+        );
+        assert!(
+            answer.text.contains(&format!("~~~\n{title}\n~~~")),
+            "hidden ledger dropped the oops note a triager reads: {}",
+            answer.text
+        );
+        hidden_ledgers.push(answer.text.clone());
         for form in [crate::render::Form::Text, crate::render::Form::Json] {
             let document = crate::render::render(&hidden_ledger, form)
                 .expect("hidden ledger renders")
                 .document()
                 .to_vec();
             let document = String::from_utf8(document).expect("ledger rendering is UTF-8");
-            assert!(!document.contains(secret), "{form:?} leaked hidden title");
-            assert!(
-                document.contains("Hidden task"),
-                "{form:?} omitted actor-facing title"
-            );
+            assert!(document.contains(title), "{form:?} withheld hidden title");
         }
 
         let retained_public = actor_board
@@ -246,15 +263,16 @@ fn document_ledgers_keep_hidden_titles_actor_facing_and_public_bytes_stable() {
         );
         public_ledgers.push(answer.text);
     }
+    assert_eq!(hidden_ledgers[0], hidden_ledgers[1]);
     assert_eq!(public_ledgers[0], public_ledgers[1]);
     clean(&root, bus);
 }
 
 #[test]
-fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
+fn graph_and_handout_reads_carry_hidden_rows_beside_public_ones() {
     let (root, bus, epoch, seats) = fixture("hidden-board-documents", 1);
-    let secret = "secret graph and handout details";
-    let hidden = add_oops(&bus, epoch, Actor::Operator, "HIDDEN-graph1", secret);
+    let title = "Graph and handout triage detail";
+    let hidden = add_oops(&bus, epoch, Actor::Operator, "HIDDEN-graph1", title);
     let public = add_project(
         &bus,
         epoch,
@@ -285,9 +303,9 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
             },
         );
         let Outcome::Reply(Reply {
-            body: CommandAnswer::Text(ref answer),
+            body: CommandAnswer::Text(answer),
             ..
-        }) = graph
+        }) = &graph
         else {
             panic!("graph was not a text snapshot: {graph:?}");
         };
@@ -299,7 +317,10 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
                 .document()
                 .to_vec();
             let document = String::from_utf8(document).expect("graph rendering is UTF-8");
-            assert!(!document.contains(secret), "{form:?} leaked hidden title");
+            assert!(
+                document.contains(&format!("{hidden}: plan [pending]")),
+                "{form:?} dropped the hidden graph row"
+            );
             assert!(
                 document.contains(&format!("{public}: todo [pending]")),
                 "{form:?} changed public graph row"
@@ -320,9 +341,9 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
         },
     );
     let Outcome::Reply(Reply {
-        body: CommandAnswer::Text(ref answer),
+        body: CommandAnswer::Text(answer),
         ..
-    }) = handout
+    }) = &handout
     else {
         panic!("handout was not a text snapshot: {handout:?}");
     };
@@ -342,14 +363,16 @@ fn graph_and_handout_reads_never_cross_the_hidden_title_boundary() {
             .unwrap_or_else(|| panic!("missing {section} in {}", answer.text))
     });
     assert!(positions.windows(2).all(|window| window[0] < window[1]));
-    assert!(!answer.text.contains(secret), "handout leaked hidden title");
     for form in [crate::render::Form::Text, crate::render::Form::Json] {
         let document = crate::render::render(&handout, form)
             .expect("handout renders")
             .document()
             .to_vec();
         let document = String::from_utf8(document).expect("handout rendering is UTF-8");
-        assert!(!document.contains(secret), "{form:?} leaked hidden title");
+        assert!(
+            document.contains(&format!("{hidden}: plan [pending]")),
+            "{form:?} dropped the hidden handout row"
+        );
         assert!(
             document.contains(&format!("{public}: todo [pending]")),
             "{form:?} changed public handout row"

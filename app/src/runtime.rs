@@ -47,7 +47,7 @@ pub struct BoardView {
     pub schema: u32,
     /// Greatest durable position covered by every task head.
     pub cursor: Seq,
-    /// Current actor-facing task evidence bundles.
+    /// Current task evidence bundles.
     pub tasks: Vec<BoardTask>,
     /// Current resident state.
     pub resident: wire::ResidentState,
@@ -55,12 +55,7 @@ pub struct BoardView {
 
 impl From<&BoardAnswer> for BoardView {
     fn from(answer: &BoardAnswer) -> Self {
-        let tasks = answer
-            .tasks
-            .iter()
-            .cloned()
-            .map(BoardTask::into_actor_facing)
-            .collect();
+        let tasks = answer.tasks.clone();
         Self {
             schema: answer.schema,
             cursor: answer.cursor,
