@@ -90,15 +90,15 @@ body:has(.shell--mosaic),
 }
 .task-pill.dormant .task-pill-count { background: var(--muted); }
 .task-pill.system .task-pill-count { background: var(--warning); }
-/* The connection state sits between the pills and the menu in every layout:
-   the surface keeps its last runtime on screen through an outage, so the one
-   thing that says whether a composer can submit must never leave the bar. */
+/* The connection dot stays between the pills and the menu in every layout.
+   Online identity is tooltip-only; transitional copy remains bounded because
+   the retained surface must not look ready to submit during an outage. */
 .commandbar--mosaic .status {
   grid-area: 1 / 2;
   gap: 6px;
-  max-width: 26ch;
   font-size: .62rem;
 }
+.commandbar--mosaic .status:not(.online) { max-width: 26ch; }
 .canvas-menu { position: static; grid-area: 1 / 3; }
 .canvas-menu > summary {
   --canvas-menu-accent: var(--accent);

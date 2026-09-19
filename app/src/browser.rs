@@ -133,7 +133,7 @@ struct CanvasIdentity {
 enum Connection {
     Starting,
     Connecting,
-    Online { actor: String, epoch: String },
+    Online { epoch: String },
     Offline(String),
 }
 
@@ -440,7 +440,7 @@ impl Connection {
         match self {
             Self::Starting => "Loading embedded canvas".to_owned(),
             Self::Connecting => "Opening current resident".to_owned(),
-            Self::Online { actor, epoch } => format!("{actor} / {epoch}"),
+            Self::Online { epoch } => format!("Connected to resident {epoch}"),
             Self::Offline(reason) => format!("Reconnecting / {reason}"),
         }
     }

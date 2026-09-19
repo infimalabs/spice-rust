@@ -84,7 +84,9 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 </nav>
                 <div class={render.connection.class()} title={render.connection.label()}>
                     <span class="status-dot"></span>
-                    <span class="status-copy">{render.connection.label()}</span>
+                    if !render.connection.is_online() {
+                        <span class="status-copy">{render.connection.label()}</span>
+                    }
                 </div>
                 if **render.menu_open {
                     {render_navigation(&render, runtime)}
