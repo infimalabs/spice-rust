@@ -174,6 +174,12 @@ export async function assertTeamResponsiveLayout(page, console_) {
     await page.setViewportSize({ width: 700, height: 988 });
     await settleLayout(page);
     assertTrack(await fleetGeometry(fleet), "narrow three-lane track", true);
+    // The fleet re-pins itself to its right edge from a ResizeObserver
+    // (use_team_fleet_right_edge), which is delivered after the frame this
+    // resize lands in. Pressing before that pin arrives lets the pin undo the
+    // traversal, and lets the pin's own scrollend satisfy the settle below, so
+    // the keyboard scroll is armed only once the fleet is quiet at its edge.
+    await settleRightEdge(page, fleet);
     await fleet.focus();
     await settleFleetScroll(page, fleet, "keyboard traversal", () => (
       page.keyboard.press("ArrowLeft")
