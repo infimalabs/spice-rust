@@ -370,14 +370,83 @@ mod tests {
         assert!(cards.entries()[0].automatic_speech.is_none());
     }
 
+    /// No budget is small enough to drop what an agent just said.
     #[test]
-    fn zero_capacity_live_replay_is_a_stable_noop() {
+    fn a_zero_card_budget_still_keeps_the_message_floor() {
         let mut cards = MessageCards::default();
         cards.snapshot(0, &[]);
         let prose = message(1, AgentActivityKind::Prose);
 
-        assert!(!cards.merge(std::iter::once(&prose)));
-        assert!(!cards.merge(std::iter::once(&prose)));
-        assert!(cards.entries().is_empty());
+        assert!(cards.merge(std::iter::once(&prose)));
+        assert!(
+            !cards.merge(std::iter::once(&prose)),
+            "replaying the same card changes nothing",
+        );
+        assert_eq!(cards.entries().len(), 1);
+    }
+
+    /// A loud peer spends its own floor, never a quiet agent's.
+    #[test]
+    fn a_busy_lane_does_not_evict_a_quiet_lanes_floor() {
+        let quiet = "018f82d4-6f59-7d06-92e3-bce9131163e6"
+            .parse::<CanonicalUuid>()
+            .expect("quiet lane");
+        let mut incoming = (0..5)
+            .map(|offset| {
+                let mut card = message(offset, AgentActivityKind::Prose);
+                card.lane = quiet;
+                card
+            })
+            .collect::<Vec<_>>();
+        incoming.extend((100..300).map(|offset| message(offset, AgentActivityKind::Prose)));
+        let mut cards = MessageCards::default();
+        cards.snapshot(wire::MESSAGE_FLOOR, &incoming);
+
+        assert_eq!(
+            cards
+                .entries()
+                .iter()
+                .filter(|card| card.lane == quiet)
+                .count(),
+            5,
+            "a lane below the floor keeps everything it has said",
+        );
+        assert_eq!(
+            cards
+                .entries()
+                .iter()
+                .filter(|card| card.lane != quiet)
+                .count(),
+            wire::MESSAGE_FLOOR,
+        );
+    }
+
+    /// The epoch a compaction closed is all this agent has said so far.
+    #[test]
+    fn a_fresh_compaction_does_not_evict_the_message_floor() {
+        let mut incoming = (0..40)
+            .map(|offset| message(offset, AgentActivityKind::Prose))
+            .collect::<Vec<_>>();
+        incoming.push(message(40, AgentActivityKind::Compaction));
+        let mut cards = MessageCards::default();
+        cards.snapshot(wire::MESSAGE_FLOOR + 1, &incoming);
+
+        assert_eq!(
+            cards
+                .entries()
+                .iter()
+                .filter(|card| card.activity.is_prose())
+                .count(),
+            wire::MESSAGE_FLOOR,
+        );
+        assert_eq!(
+            cards
+                .entries()
+                .iter()
+                .filter(|card| card.activity == AgentActivityKind::Compaction)
+                .count(),
+            1,
+            "the boundary is carried beside the floor, not instead of it",
+        );
     }
 }

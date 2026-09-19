@@ -285,7 +285,7 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
         assert_eq!(*limit as usize, canvas::stream::MESSAGE_CAPACITY);
         assert_eq!(
             messages.len(),
-            canvas::stream::INITIAL_MESSAGE_LIMIT,
+            wire::MESSAGE_FLOOR,
             "one fixed startup window fills the whole initial page"
         );
         assert_bootstrap(more, empty_lane);

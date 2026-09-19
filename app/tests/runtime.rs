@@ -696,18 +696,20 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
     assert!(!lane.offers(CommandKind::ConsentDecide));
 }
 
-#[test]
-fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
-    let first = serde_json::json!({
-        "lane": LANE,
-        "author": LANE_CAPABILITY,
-        "locus": {"member": 1, "offset": 10, "length": 20, "event": 0},
-        "authored": "2030-04-12T18:44:09.271Z",
-        "text": "first author",
-    });
+/// One lane filled to its message floor beside a lane that said one thing.
+fn lane_floor_snapshot() -> (Vec<serde_json::Value>, serde_json::Value, Vec<u8>) {
+    let floor = u64::try_from(wire::MESSAGE_FLOOR).expect("the floor fits an offset");
+    let busy = (0..floor)
+        .map(|offset| {
+            serde_json::json!({
+                "lane": LANE,
+                "author": LANE_CAPABILITY,
+                "locus": {"member": 1, "offset": 10 + offset, "length": 20, "event": 0},
+                "authored": "2030-04-12T18:44:09.271Z",
+                "text": format!("first author {offset}"),
+            })
+        })
+        .collect::<Vec<_>>();
     let second = serde_json::json!({
         "lane": SECOND_LANE,
         "author": SECRET_LANE_CAPABILITY,
@@ -715,31 +717,39 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
         "authored": "2030-04-12T18:44:10.271Z",
         "text": "second author",
     });
+    let mut incoming = busy.clone();
+    incoming.push(second.clone());
     let snapshot = serde_json::to_vec(&serde_json::json!({
         "stream": "messages",
         "v": 1,
         "id": REQUEST,
         "epoch": EPOCH,
-        "limit": 1,
-        "messages": [first.clone(), second.clone()],
+        "limit": wire::MESSAGE_FLOOR,
+        "messages": incoming,
     }))
     .expect("message snapshot serializes");
+    (busy, second, snapshot)
+}
+
+#[test]
+fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let (busy, second, snapshot) = lane_floor_snapshot();
     assert!(
         runtime
             .apply_stream(&admitted_stream(&session, &snapshot))
             .is_empty()
     );
+    assert_eq!(runtime.messages().len(), wire::MESSAGE_FLOOR + 1);
     assert_eq!(
         runtime
-            .messages()
+            .activities()
             .iter()
-            .map(|message| message.author)
-            .collect::<Vec<_>>(),
-        [uuid(LANE_CAPABILITY), uuid(SECRET_LANE_CAPABILITY)]
-    );
-    assert_eq!(
-        runtime.activities().len(),
-        2,
+            .filter(|activity| activity.lane() == uuid(SECOND_LANE))
+            .count(),
+        1,
         "the same tape coordinates in two lanes are two activities"
     );
     assert!(
@@ -750,12 +760,12 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
     );
     assert_eq!(
         runtime.activities().len(),
-        2,
+        wire::MESSAGE_FLOOR + 1,
         "snapshot replay is idempotent"
     );
     assert_eq!(
         runtime.messages().len(),
-        2,
+        wire::MESSAGE_FLOOR + 1,
         "snapshot replay restores prose cards"
     );
 
@@ -773,7 +783,7 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
             .changed(),
         "a duplicate live message does not invalidate the surface"
     );
-    assert_eq!(runtime.messages().len(), 2);
+    assert_eq!(runtime.messages().len(), wire::MESSAGE_FLOOR + 1);
 
     let newest = serde_json::to_vec(&serde_json::json!({
         "stream": "message",
@@ -790,17 +800,36 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
     }))
     .expect("live message serializes");
     runtime.apply_stream(&admitted_stream(&session, &newest));
+    let retained = runtime.messages();
     assert_eq!(
-        runtime
-            .messages()
+        retained
             .iter()
-            .map(|message| message.author)
+            .filter(|message| message.lane == uuid(LANE))
+            .map(|message| message.locus.offset)
             .collect::<Vec<_>>(),
-        [uuid(SECRET_LANE_CAPABILITY), uuid(THIRD_LANE)]
+        busy.iter()
+            .skip(1)
+            .map(|card| card["locus"]["offset"].as_u64().expect("fixture offset"))
+            .chain(std::iter::once(50))
+            .collect::<Vec<_>>(),
+        "the busy lane slides its own floor forward",
     );
     assert_eq!(
-        runtime.activities().len(),
-        2,
+        retained
+            .iter()
+            .filter(|message| message.lane == uuid(SECOND_LANE))
+            .map(|message| message.author)
+            .collect::<Vec<_>>(),
+        [uuid(SECRET_LANE_CAPABILITY)],
+        "the quiet sibling keeps everything it said",
+    );
+    assert_eq!(
+        runtime
+            .activities()
+            .iter()
+            .filter(|activity| activity.lane() == uuid(SECOND_LANE))
+            .count(),
+        1,
         "one lane's new activity replaces only that lane's prior status"
     );
 }

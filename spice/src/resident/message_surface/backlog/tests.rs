@@ -357,7 +357,7 @@ fn collect_merged_history_pages(
             source,
             Some(&fixture.future),
             &fixture.source_end,
-            canvas::stream::INITIAL_MESSAGE_LIMIT,
+            wire::MESSAGE_FLOOR,
         )
         .expect("initial tape tail reads");
     let initial_before = initial.messages[0].clone();
@@ -519,7 +519,7 @@ fn startup_tail_reads_one_fixed_window_before_byte_zero() {
 
     let tail = tail_backlog(&root, listen::Dialect::Codex).expect("season tail scans");
     assert!(
-        visible_cards(&tail.scan) > canvas::stream::INITIAL_MESSAGE_LIMIT,
+        visible_cards(&tail.scan) > wire::MESSAGE_FLOOR,
         "one startup window carries more than the initial page of a dense lane",
     );
     assert!(visible_cards(&tail.scan) < DENSE_LANE_MESSAGES);
@@ -719,7 +719,7 @@ fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
     );
     assert_eq!(
         restored.len(),
-        140 - canvas::stream::INITIAL_MESSAGE_LIMIT + 3,
+        140 - wire::MESSAGE_FLOOR + 3,
         "every message before the initial page and every compaction is restored",
     );
     assert_eq!(
@@ -748,7 +748,7 @@ fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
         .iter()
         .filter(|message| message.activity == wire::AgentActivityKind::Prose)
         .collect::<Vec<_>>();
-    assert_eq!(prose.len(), 140 - canvas::stream::INITIAL_MESSAGE_LIMIT);
+    assert_eq!(prose.len(), 140 - wire::MESSAGE_FLOOR);
     for (index, message) in prose.into_iter().enumerate() {
         assert!(
             message.text.starts_with(&format!("message {index} ")),

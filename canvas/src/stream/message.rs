@@ -12,9 +12,6 @@ use super::Failure;
 /// Newest visible transcript cards retained per lane for a reconnecting Canvas.
 pub const MESSAGE_CAPACITY: usize = 256;
 
-/// Newest visible cards published per lane on a cold Canvas subscription.
-pub const INITIAL_MESSAGE_LIMIT: usize = 25;
-
 /// Older visible cards returned for one member-local history request.
 pub const MESSAGE_HISTORY_PAGE_LIMIT: usize = 50;
 
@@ -91,7 +88,7 @@ impl MessageFeed {
                 .iter()
                 .filter(|message| message.lane == lane && visible_message(message))
                 .collect::<Vec<_>>();
-            let start = visible.len().saturating_sub(INITIAL_MESSAGE_LIMIT);
+            let start = message_floor_start(&visible);
             if start > 0 || history_open.contains(&lane) {
                 more.push(wire::MessageHistoryCursor {
                     lane,
@@ -353,7 +350,7 @@ impl MessagePublisher {
             .map(|message| message.lane)
             .collect::<BTreeSet<_>>();
         for lane in lanes {
-            trim_visible_lane(&mut retained, lane, INITIAL_MESSAGE_LIMIT + 1);
+            trim_visible_lane(&mut retained, lane, wire::MESSAGE_FLOOR + 1);
         }
         Ok(())
     }
@@ -529,6 +526,21 @@ fn revise_presented_message(
 /// Whether one activity consumes a lane's visible-card retention budget.
 fn visible_message(message: &AgentMessage) -> bool {
     message.activity.is_visible() || !message.media.is_empty()
+}
+
+/// Oldest card a cold subscription serves for one lane.
+///
+/// The page carries the newest [`wire::MESSAGE_FLOOR`] messages of the lane,
+/// with the turn and compaction markers standing among them, and never fewer
+/// cards than that floor: a lane whose recent cards are all markers still
+/// opens with something to read.
+fn message_floor_start(visible: &[&AgentMessage]) -> usize {
+    let activities = visible
+        .iter()
+        .map(|message| message.activity)
+        .collect::<Vec<_>>();
+    wire::AgentActivityKind::message_floor_start(&activities, wire::MESSAGE_FLOOR)
+        .min(visible.len().saturating_sub(wire::MESSAGE_FLOOR))
 }
 
 fn trim_visible_lane(
