@@ -209,6 +209,13 @@ compiles what changed rather than the whole local graph. Both phases must
 succeed before a receipt is published. The test action declaration binds this
 two-phase contract; source admission, output bounds, and cleanup remain required.
 
+Removing Rust fixture data that no current or base-tree target compiled selects
+the containing package's checks and tests, not reverse-dependent suites. This
+fallback applies only after ordinary target ownership finds no claim and the
+path is confirmed absent. Present unowned sources and other filesystem errors
+remain refusals; compiled-source and package-authority changes retain their
+ordinary dependency reach.
+
 Workspace packages that execute a build script or proc macro opt into reusable
 Cargo proof with `[package.metadata.spice.cargo-proof]`, `version = 1`, and
 `complete = true`. That flag is the package owner's closed-world assertion that
@@ -251,8 +258,6 @@ undeclared, or executable code names process, network, or dynamic authority.
 | `assertion-free-tests` | cacheable | reached test source, parser and policy |
 | `private-internals` | cacheable | complete Python dependency closure, parser and policy |
 | configured `Spice source gate` | decomposed | It mints no reusable wrapper receipt; its selected packaged actions use the rows above until the configured wrapper is removed. |
-| Canvas build | cacheable | admitted selected-tree source closure, parsed local build-launcher graph, Cargo build and file-macro authority, app source derivation, package lock, Node and compiler identities, exact build command and environment |
-| each Canvas browser shard | cacheable | build receipt, shard registry entry, scenario closure, browser and Node identities, exact command and environment |
 
 For ancestry-sensitive metric rows, actor and ledger state are decision inputs,
 not producer attribution. They therefore enter the manifest as typed non-file

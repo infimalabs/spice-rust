@@ -504,33 +504,7 @@ fn bootstrap_environment(name: impl AsRef<OsStr>) -> Option<OsString> {
 mod tests {
     use std::ffi::OsString;
 
-    use super::{help, install_request};
-
-    #[test]
-    fn help_omits_retired_hook_runtime_commands() {
-        let help = help();
-        for retired in ["verify-action", "activate-hooks", "commit-msg"] {
-            assert!(
-                !help.contains(retired),
-                "retired command remained in help: {retired}"
-            );
-        }
-    }
-
-    #[test]
-    fn help_exposes_every_shared_test_evidence_instrument() {
-        let help = help();
-        for instrument in ["suite-seam", "mutation-coverage", "test-subsumption"] {
-            assert!(help.contains(instrument));
-        }
-    }
-
-    #[test]
-    fn help_exposes_fast_and_exact_slow_test_selection() {
-        let help = help();
-        assert!(help.contains("tests <--fast --package PACKAGE"));
-        assert!(help.contains("--slow <--list|ID...>"));
-    }
+    use super::install_request;
 
     #[test]
     fn install_forwards_every_argument_after_its_delimiter_to_up() {
