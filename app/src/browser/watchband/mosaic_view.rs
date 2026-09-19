@@ -115,16 +115,31 @@ impl ActivityCard {
         }
     }
 
-    pub(super) fn chronology_key(&self) -> (i64, u8, String) {
+    /// Total display chronology for one team, shared by the packed plane and
+    /// the narration cursor reading its live suffix.
+    ///
+    /// Equal-time ties break on the canonical numeric locus, never on the
+    /// rendered identity: that identity formats the locus as text, so inside
+    /// one display millisecond a newer record with a longer offset ("2102")
+    /// sorts before older ones ("938"). Every consumer of this order then
+    /// reads that arrival as history -- the plane renders it mid-list, and
+    /// the narration cursor, which admits only the suffix after its remembered
+    /// key, drops it without ever speaking it.
+    pub(super) fn chronology_key(&self) -> (i64, u8, CanonicalUuid, u64, u64, u64, u32) {
         match self {
-            Self::Agent { message, .. } => (
-                crate::runtime::agent_message_display_millis(message),
-                0,
-                self.key(),
-            ),
-            Self::Lifecycle { boundary, .. } => {
-                (boundary.observed().get().as_millisecond(), 1, self.key())
+            Self::Agent { message, .. } => {
+                let (millis, lane, member, offset, length, event) = message.chronology_key();
+                (millis, 0, lane, member, offset, length, event)
             }
+            Self::Lifecycle { boundary, .. } => (
+                boundary.observed().get().as_millisecond(),
+                1,
+                boundary.lane(),
+                0,
+                0,
+                boundary.seq().get(),
+                0,
+            ),
         }
     }
 
