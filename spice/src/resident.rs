@@ -173,6 +173,7 @@ mod daemon;
 mod lane_recovery;
 mod lane_surface;
 mod lifecycle;
+mod log;
 mod message_surface;
 mod narration;
 mod policy_surface;
