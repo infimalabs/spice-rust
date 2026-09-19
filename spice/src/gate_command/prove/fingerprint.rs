@@ -47,6 +47,20 @@ pub(super) fn authority(
         )
     };
     let needs_cargo = anchor.root().join("Cargo.lock").is_file();
+    // A running appliance can change these compiled contracts while the staged
+    // tree and external tools stay fixed. Its cache must name that generation.
+    let tools = digest_encoded(
+        Domain::GateTool,
+        &(
+            tools,
+            RUNNER_VERSION,
+            needs_cargo.then_some((
+                cargo::RUNNER,
+                cargo::INPUT_STRATEGY,
+                cargo::TEST_SHARD_DECLARATION,
+            )),
+        ),
+    )?;
     let (cargo_environment, cargo_source) = if needs_cargo {
         let cargo = cargo_authority(anchor.root(), anchor.compiler_environment())?;
         let (_, environment) = environment(&cargo.action_environment)?;
