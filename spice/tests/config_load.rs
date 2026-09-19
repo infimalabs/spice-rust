@@ -485,7 +485,14 @@ fn non_regular_and_non_utf8_documents_are_accumulated() {
 
     let scratch = Scratch::new();
     let root = repository(&scratch, "non regular");
-    let _socket = UnixListener::bind(root.join("spice-rust.toml")).expect("bind fixture socket");
+    // A socket address is bounded by SUN_LEN, which the private temporary root
+    // a proof shard hands its tests already spends most of. Bind somewhere
+    // short and move the socket into place; the document under test is the
+    // file kind, not the path it was created at.
+    let bound = PathBuf::from(format!("/tmp/spice-non-regular-{}", std::process::id()));
+    let _ = fs::remove_file(&bound);
+    let _socket = UnixListener::bind(&bound).expect("bind fixture socket");
+    fs::rename(&bound, root.join("spice-rust.toml")).expect("place the non-regular document");
     write(local_path(&root), [0xff, 0xfe]);
 
     let error = load(&root, &[]).expect_err("both acquisition issues refuse");
