@@ -139,7 +139,7 @@ async function mediaCard(surface, key) {
     "production Codex media reaches loaded Canvas state",
     TRANSITION_MS * 4,
     (expected) => document
-      .querySelector(`[data-mosaic-card-key="${expected}"] img[alt="tool-image"]`)
+      .querySelector(`[data-mosaic-card-key="${expected}"] .message-attachments img`)
       ?.dataset.mosaicImageState === "loaded",
     key,
   );
@@ -151,11 +151,10 @@ async function cardIdentity(card) {
     key: article.dataset.mosaicCardKey,
     activity: article.dataset.agentActivity,
     aria: article.getAttribute("aria-label"),
-    text: article.querySelector(".message-body")?.textContent?.trim(),
-    tool: article.querySelector(".message-badge--tool")?.textContent,
     agent: article.querySelector(".message-agent-name")?.getAttribute("aria-label"),
-    source: article.querySelector('img[alt="tool-image"]')?.getAttribute("src"),
-    media: article.querySelector('img[alt="tool-image"]')?.dataset.mediaIdentity,
+    alt: article.querySelector(".message-attachments img")?.getAttribute("alt"),
+    source: article.querySelector(".message-attachments img")?.getAttribute("src"),
+    media: article.querySelector(".message-attachments img")?.dataset.mediaIdentity,
   }));
 }
 
@@ -286,12 +285,12 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
     "one production Codex image result reaches Canvas",
     TRANSITION_MS * 4,
     (lane) => document.querySelectorAll(
-      `.team-surface .mosaic-message-card[data-agent-lane="${lane}"] img[alt="tool-image"]`,
+      `.team-surface .mosaic-message-card[data-agent-lane="${lane}"] .message-attachments img`,
     ).length === 1,
     member.lane,
   );
   let card = surface.locator(
-    `.mosaic-message-card[data-agent-lane="${member.lane}"]:has(img[alt="tool-image"])`,
+    `.mosaic-message-card[data-agent-lane="${member.lane}"]:has(.message-attachments img)`,
   );
   assert.equal(await card.count(), 1, "call, result, and duplicate companions render one image card");
   const key = await card.getAttribute("data-mosaic-card-key");
@@ -299,15 +298,17 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
   card = await mediaCard(surface, key);
   const identity = await cardIdentity(card);
   assert.equal(identity.activity, "tool");
-  assert.match(identity.aria, /^Tool result from /);
-  assert.match(identity.text, /^const r = await tools\.view_image.* completed$/);
-  assert.equal(identity.tool, "TOOL");
+  // The card is its image: the preview line the resident wrote for the call
+  // is the image's description and the card label.
+  assert.match(identity.alt, /^const r = await tools\.view_image.* completed$/);
+  const attribution = identity.agent.slice("Copy agent id for ".length);
+  assert.equal(identity.aria, `Tool result from ${attribution}: ${identity.alt}`);
   assert.match(identity.agent, /^Copy agent id for /);
   assert.equal(identity.source, dataUrl);
   assert.match(identity.media, /^[0-9a-f]{64}$/);
-  const preview = card.locator('.message-image:has(img[alt="tool-image"])');
+  const preview = card.locator(".message-attachments .message-image");
   await assertImageLifecycle(preview, "production Codex tool image", "loaded");
-  await assertImagePreview(preview, "production Codex tool image", 140);
+  await assertImagePreview(preview, "production Codex tool image", 252);
   await assertFullSizeTarget(preview, "production Codex tool image", dataUrl);
   await openAndAssertIsolated(page, preview, "production Codex tool image", /^blob:/);
 
@@ -326,7 +327,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
   )));
   assert.equal(
     await surface.locator(
-      `.mosaic-message-card[data-agent-lane="${member.lane}"]:has(img[alt="tool-image"])`,
+      `.mosaic-message-card[data-agent-lane="${member.lane}"]:has(.message-attachments img)`,
     ).count(),
     1,
     "a stale ImageView companion creates no second card",
@@ -371,7 +372,7 @@ export async function assertBidirectionalMediaExchange(page, fixture, worktree) 
   );
   assert.equal(
     await surface.locator(
-      `.mosaic-message-card[data-agent-lane="${member.lane}"]:has(img[alt="tool-image"])`,
+      `.mosaic-message-card[data-agent-lane="${member.lane}"]:has(.message-attachments img)`,
     ).count(),
     1,
     "history restoration retains one tool-image card",

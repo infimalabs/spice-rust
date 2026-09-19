@@ -195,8 +195,10 @@ fn render_agent_message_card(
         attribution,
         footer_label,
         is_boundary,
+        shown_text,
         rendered_html,
         unlinked_media,
+        media_description,
         image_only,
         card_label,
         badges,
@@ -249,9 +251,10 @@ fn render_agent_message_card(
                 {render_agent_boundary(message, &footer_label)}
             } else {
                 <div class="message-body markdown-body">{rendered_html}</div>
-                {render_agent_message_media(unlinked_media)}
+                {render_agent_message_media(unlinked_media, media_description.as_deref())}
                 {render_agent_message_footer(
                     message,
+                    shown_text,
                     correspondent,
                     crate::runtime::agent_message_display_millis(message),
                     &footer_label,
@@ -267,8 +270,12 @@ struct AgentMessagePresentation<'a> {
     attribution: String,
     footer_label: String,
     is_boundary: bool,
+    /// The text the card shows; a tool card shows none.
+    shown_text: &'a str,
     rendered_html: Html,
     unlinked_media: Vec<&'a wire::Media>,
+    /// What a tool card says about its images in place of its preview line.
+    media_description: Option<String>,
     image_only: bool,
     card_label: String,
     badges: wire::AgentMessageBadges,
@@ -288,17 +295,23 @@ fn agent_message_presentation<'a>(
         watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned();
     let is_boundary = message.activity.is_boundary();
     let badges = message.badges;
+    // A tool card is its image. The resident's preview line stays on the wire
+    // for the ticker and the hook, but here it becomes the image's description
+    // rather than visible words, and the resident withholds it altogether when
+    // a result carried only images.
+    let is_tool = message.activity == wire::AgentActivityKind::Tool;
+    let media_description = (is_tool && !message.text.trim().is_empty())
+        .then(|| watchband::tool_media_description(&message.text));
+    let shown_text = if is_tool { "" } else { message.text.as_str() };
     let rendered_markdown =
-        crate::composer_markdown::render_received_with_badges(&message.text, badges);
+        crate::composer_markdown::render_received_with_badges(shown_text, badges);
     let card_label = match message.activity {
         wire::AgentActivityKind::Turn => unreachable!("turn events are not message cards"),
         wire::AgentActivityKind::Compaction => format!("Context compacted by {footer_label}"),
-        wire::AgentActivityKind::Tool if message.text.trim().is_empty() => {
-            format!("Tool result from {attribution}")
-        }
-        wire::AgentActivityKind::Tool => {
-            format!("Tool result from {attribution}: {}", message.text)
-        }
+        wire::AgentActivityKind::Tool => media_description.as_ref().map_or_else(
+            || format!("Tool result from {attribution}"),
+            |description| format!("Tool result from {attribution}: {description}"),
+        ),
         wire::AgentActivityKind::Reasoning => format!("Thinking from {attribution}"),
         wire::AgentActivityKind::Prose => format!("Agent message from {attribution}"),
     };
@@ -307,19 +320,21 @@ fn agent_message_presentation<'a>(
         .iter()
         .filter(|media| {
             !media
-                .is_embedded_in(&message.text)
+                .is_embedded_in(shown_text)
                 .expect("message media passed admission before browser rendering")
         })
         .collect::<Vec<_>>();
     let image_only = rendered_markdown.image_only
-        || (!unlinked_media.is_empty() && message.text.trim().is_empty());
+        || (!unlinked_media.is_empty() && shown_text.trim().is_empty());
     AgentMessagePresentation {
         source_id: agent_message_source_id(message),
         attribution,
         footer_label,
         is_boundary,
+        shown_text,
         rendered_html: Html::from_html_unchecked(AttrValue::from(rendered_markdown.html)),
         unlinked_media,
+        media_description,
         image_only,
         card_label,
         badges,
@@ -379,14 +394,18 @@ fn agent_message_correspondent(
     }
 }
 
-fn render_agent_message_media(unlinked_media: Vec<&wire::Media>) -> Html {
+fn render_agent_message_media(
+    unlinked_media: Vec<&wire::Media>,
+    description: Option<&str>,
+) -> Html {
     if unlinked_media.is_empty() {
         return Html::default();
     }
     html! {
         <div class="message-attachments">
             {for unlinked_media.into_iter().map(|media| {
-                let action = format!("Open {} full size", media.name);
+                let description = description.unwrap_or(&media.name).to_owned();
+                let action = format!("Open {description} full size");
                 html! {
                     <a
                         class="message-image message-image--openable"
@@ -399,7 +418,7 @@ fn render_agent_message_media(unlinked_media: Vec<&wire::Media>) -> Html {
                     >
                         <img
                             src={media.data_url.clone()}
-                            alt={media.name.clone()}
+                            alt={description}
                             data-media-identity={media.identity().expect("admitted message media has identity").to_string()}
                             data-mosaic-image-state="pending"
                         />
@@ -419,6 +438,7 @@ fn render_agent_message_media(unlinked_media: Vec<&wire::Media>) -> Html {
 
 fn render_agent_message_footer(
     message: &wire::AgentMessage,
+    shown_text: &str,
     correspondent: &view::chrome::Correspondent,
     display_millis: i64,
     producer_label: &str,
@@ -428,7 +448,7 @@ fn render_agent_message_footer(
         "tape {}:{}+{}#{}",
         message.locus.member, message.locus.offset, message.locus.length, message.locus.event,
     );
-    let has_actions = !message.text.trim().is_empty();
+    let has_actions = !shown_text.trim().is_empty();
     let producer_label = producer_label.to_owned();
     let attribution = attribution.to_owned();
     let author = message.author.to_string();
@@ -454,7 +474,7 @@ fn render_agent_message_footer(
             <div class="message-footer-right">
                 {producer_identity}
                 if has_actions {
-                    {view::chrome::render_card_actions(&message.text, correspondent)}
+                    {view::chrome::render_card_actions(shown_text, correspondent)}
                 }
             </div>
         </footer>
@@ -462,18 +482,12 @@ fn render_agent_message_footer(
 }
 
 fn render_agent_message_badges(message: &wire::AgentMessage) -> Html {
-    let tool = message.activity == wire::AgentActivityKind::Tool;
-    if !tool && !message.final_answer {
+    if !message.final_answer {
         return Html::default();
     }
     html! {
         <span class="message-badges" role="list" aria-label="Message classifications">
-            if tool {
-                {render_agent_message_badge("TOOL", "tool", None)}
-            }
-            if message.final_answer {
-                {render_agent_message_badge("FINAL", "final", None)}
-            }
+            {render_agent_message_badge("FINAL", "final", None)}
         </span>
     }
 }

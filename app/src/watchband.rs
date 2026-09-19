@@ -511,6 +511,38 @@ pub fn leaf(worktree: &str) -> &str {
         .unwrap_or(worktree)
 }
 
+/// The words an image tool card keeps for its image.
+///
+/// A tool card shows its image alone, so the resident's preview line -- the
+/// call and its outcome, `read: /tmp/shots/emblem.png succeeded` -- lives on
+/// as the image's description instead of as visible text. Directories are the
+/// part a reader cannot use there, so every path is cut to its base name:
+/// `read: emblem.png succeeded`. A path is a run of characters a shell or JSON
+/// argument leaves unquoted, so `view_image("/tmp/shots/emblem.png")` keeps
+/// its call and its quotes around `emblem.png`.
+#[must_use]
+pub fn tool_media_description(preview: &str) -> String {
+    preview
+        .split_inclusive(bounds_path)
+        .map(|piece| {
+            let run = piece.trim_end_matches(bounds_path);
+            if run.contains('/') {
+                format!("{}{}", leaf(run), &piece[run.len()..])
+            } else {
+                piece.to_owned()
+            }
+        })
+        .collect()
+}
+
+/// The punctuation a shell or JSON argument wraps a path in.
+const PATH_BOUNDS: &str = "\"'`()[]{}<>,;=|&";
+
+/// Whitespace and punctuation end a path inside a preview line.
+fn bounds_path(character: char) -> bool {
+    character.is_whitespace() || PATH_BOUNDS.contains(character)
+}
+
 /// An identity abbreviated to what a card has room for.
 #[must_use]
 pub fn short(id: CanonicalUuid) -> String {
@@ -903,7 +935,7 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, agent_message_attribution, agent_message_label, quote_label,
-        team_visual_weight, ticker_accessible_label, ticker_chunks,
+        team_visual_weight, ticker_accessible_label, ticker_chunks, tool_media_description,
     };
 
     #[test]
@@ -1026,5 +1058,43 @@ mod tests {
         assert_eq!(bounded.chars().count(), 120);
         assert!(bounded.starts_with("Agent: tool: "));
         assert!(bounded.ends_with('…'));
+    }
+
+    #[test]
+    fn an_image_description_keeps_the_preview_line_with_paths_cut_to_base_names() {
+        assert_eq!(
+            tool_media_description(
+                "read: /tmp/spice-pi-badge-visual-k/canvas-vendor-emblem-light.png succeeded"
+            ),
+            "read: canvas-vendor-emblem-light.png succeeded"
+        );
+        assert_eq!(
+            tool_media_description("file change: spice/src/a.rs, app/mosaic.css (add) succeeded"),
+            "file change: a.rs, mosaic.css (add) succeeded"
+        );
+        assert_eq!(
+            tool_media_description("cat --output=/tmp/shots/x.png | tee ~/keep/y.png completed"),
+            "cat --output=x.png | tee y.png completed"
+        );
+    }
+
+    #[test]
+    fn an_image_description_keeps_the_call_and_quotes_around_a_quoted_path() {
+        assert_eq!(
+            tool_media_description(
+                r#"const r = await tools.view_image("/tmp/shots/emblem.png") completed"#
+            ),
+            r#"const r = await tools.view_image("emblem.png") completed"#
+        );
+        assert_eq!(
+            tool_media_description("view image: capture.png succeeded"),
+            "view image: capture.png succeeded"
+        );
+        assert_eq!(tool_media_description("ls / succeeded"), "ls / succeeded");
+        assert_eq!(
+            tool_media_description("ls shots/ succeeded"),
+            "ls shots succeeded"
+        );
+        assert_eq!(tool_media_description(""), "");
     }
 }
