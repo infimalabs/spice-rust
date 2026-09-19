@@ -574,6 +574,11 @@ fn up_from_with(
     };
 
     let mut seats = Seats::new();
+    // Every resident diagnostic reaches the log through this one stream, so
+    // the duplicate rollup is installed once, here, rather than at each of
+    // the callers that supply the stream. The wrapper is settled below,
+    // before the surface's answer is returned.
+    let mut progress = log::Rollup::new(progress);
     let surface = match tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -590,7 +595,7 @@ fn up_from_with(
                 version,
                 binding,
                 open,
-                progress,
+                progress: &mut progress,
                 endpoint,
                 daemon,
             },
@@ -600,6 +605,7 @@ fn up_from_with(
             &error.to_string(),
         )),
     };
+    drop(progress);
     let answer = settle_surface(&bus, &paths, epoch, startup, &mut seats, surface);
     let shutdown = bus.shutdown();
     drop(resident_lock);
