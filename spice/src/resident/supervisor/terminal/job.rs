@@ -47,7 +47,7 @@ const WAKE: &str = "wake";
 
 /// Bytes of the log a reading keeps: the end, where a failure explains
 /// itself.
-pub(super) const LOG_TAIL: usize = 64 * 1024;
+pub(super) const LOG_TAIL: usize = 16 * 1024;
 
 /// How long a command has to leave on its own once the keeper ends it.
 const TERMINATE_GRACE: Duration = Duration::from_secs(1);
@@ -775,13 +775,18 @@ impl Job {
         File::create(self.directory.join(DELIVERED)).map(drop)
     }
 
+    /// Complete keeper-owned output, including bytes omitted from previews.
+    pub(super) fn log_path(&self) -> PathBuf {
+        self.directory.join(LOG)
+    }
+
     /// The last of the log, bounded.
     ///
     /// # Errors
     ///
     /// Returns the failure of reading the log; a log not yet written is empty.
     pub(in crate::resident) fn tail(&self) -> io::Result<Tail> {
-        let mut file = match File::open(self.directory.join(LOG)) {
+        let mut file = match File::open(self.log_path()) {
             Ok(file) => file,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Tail::default()),
             Err(error) => return Err(error),
@@ -798,9 +803,16 @@ impl Job {
         Read::by_ref(&mut file)
             .take(limit)
             .read_to_end(&mut bytes)?;
+        let text = String::from_utf8_lossy(&bytes);
+        // Lossy decoding can expand invalid bytes. Keep the displayed UTF-8
+        // body within the same byte budget without cutting a code point.
+        let mut start = text.len().saturating_sub(LOG_TAIL);
+        while !text.is_char_boundary(start) {
+            start += 1;
+        }
         Ok(Tail {
-            text: String::from_utf8_lossy(&bytes).into_owned(),
-            truncated,
+            text: text[start..].to_owned(),
+            truncated: truncated || start > 0,
         })
     }
 

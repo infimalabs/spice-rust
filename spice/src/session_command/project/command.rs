@@ -562,54 +562,21 @@ fn command_view(row: &CommandRecord, max_text: usize) -> CommandView {
     }
 }
 
-fn split_pipeline(command: &str) -> Vec<String> {
-    let mut rows = Vec::new();
-    let mut start = 0;
-    let mut quote = None;
-    let mut escaped = false;
-    let bytes = command.as_bytes();
-    for (index, character) in command.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        if character == '\\' {
-            escaped = true;
-            continue;
-        }
-        if let Some(open) = quote {
-            if character == open {
-                quote = None;
-            }
-            continue;
-        }
-        if matches!(character, '\'' | '"') {
-            quote = Some(character);
-            continue;
-        }
-        if character == '|'
-            && index.checked_sub(1).and_then(|offset| bytes.get(offset)) != Some(&b'|')
-            && bytes.get(index + 1) != Some(&b'|')
-        {
-            rows.push(command[start..index].trim().to_owned());
-            start = index + 1;
-        }
-    }
-    if rows.is_empty() {
-        vec![command.trim().to_owned()]
-    } else {
-        rows.push(command[start..].trim().to_owned());
-        rows
-    }
-}
-
 fn has_pipeline(command: &str) -> bool {
-    split_pipeline(command).len() > 1
+    spice::command_advice::pipeline_stages(command)
+        .nth(1)
+        .is_some()
 }
 
 fn canonical_pipeline(command: &str) -> bool {
-    let segments = split_pipeline(command);
-    segments.len() > 1 && segments.iter().all(|segment| starts_with_wrapper(segment))
+    let mut segments = spice::command_advice::pipeline_stages(command);
+    let Some(first) = segments.next() else {
+        return false;
+    };
+    let Some(second) = segments.next() else {
+        return false;
+    };
+    starts_with_wrapper(first) && starts_with_wrapper(second) && segments.all(starts_with_wrapper)
 }
 
 fn noncanonical_pipeline(command: &str) -> bool {
