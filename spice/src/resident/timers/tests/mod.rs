@@ -804,7 +804,8 @@ fn retirement_winning_the_race_makes_a_fired_escalation_append_nothing() {
 
 #[test]
 fn overdue_startup_catches_up_all_missing_stages_in_order_on_one_identity() {
-    let (bus, directive, key) = steering_fixture_with_age(600);
+    let overdue = horizons().last().copied().expect("a cadence with rungs") + 1;
+    let (bus, directive, key) = steering_fixture_with_age(overdue);
     let mut timers =
         Runtime::start(projects(), steer::Config::default()).expect("timer runtime starts");
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -854,8 +855,21 @@ fn overdue_startup_catches_up_all_missing_stages_in_order_on_one_identity() {
     bus.shutdown().expect("fixture bus stops");
 }
 
+/// The horizons the shipped cadence names, in seconds since publication.
+///
+/// Ages taken from the cadence keep these tests immediate whatever the
+/// cadence says: a directive published before a rung is already due, so the
+/// runtime fires it at once instead of sleeping out the horizon.
+fn horizons() -> Vec<i64> {
+    steer::Config::default()
+        .resend()
+        .iter()
+        .map(|rung| i64::try_from(rung.get().as_secs()).expect("a horizon in range"))
+        .collect()
+}
+
 fn steering_fixture() -> (Bus, CanonicalUuid, steer::Key) {
-    steering_fixture_with_age(30)
+    steering_fixture_with_age(horizons()[0] + 1)
 }
 
 fn steering_fixture_with_age(age_seconds: i64) -> (Bus, CanonicalUuid, steer::Key) {

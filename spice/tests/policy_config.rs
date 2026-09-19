@@ -198,7 +198,7 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
             .iter()
             .map(ToString::to_string)
             .collect::<Vec<_>>(),
-        ["15s", "60s", "300s"]
+        ["60s", "1800s", "3600s"]
     );
     assert_eq!(root.vendor().claude().binary().as_str(), "claude");
     assert_eq!(vendor::DEFAULT_CLAUDE_MODEL, "claude-opus-5");
