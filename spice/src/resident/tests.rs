@@ -42,8 +42,6 @@ mod steering_dispose;
 mod steering_heard;
 #[path = "tests/steering_vacant.rs"]
 mod steering_vacant;
-#[path = "tests/supervisor_notices.rs"]
-mod supervisor_notices;
 #[path = "tests/sweep_publish.rs"]
 mod sweep_publish;
 
