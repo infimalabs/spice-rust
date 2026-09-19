@@ -35,7 +35,7 @@ use wire::CanonicalUuid;
 use super::super::RuntimePaths;
 use super::terminal::{Control, Handle, Job, Report, Run, Terminal};
 
-/// Bytes one kick datagram may carry: a consent answer names one request.
+/// Bytes one kick datagram may carry, including an occupant-scoped narration prod.
 const KICK_BYTES: usize = 256;
 
 /// One child's command stream and what has already been said on it.
@@ -75,6 +75,8 @@ pub(in crate::resident) enum Kick {
         request: CanonicalUuid,
         confirmed: bool,
     },
+    /// A committed progress reminder for this exact occupant.
+    Narration(wire::body::NarrationProdded),
     /// The lane is being drained: interrupt the turn and end the input.
     Abort,
 }
@@ -113,6 +115,30 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// rather than once the command ends.
     pub(in crate::resident) fn deliver_inbox(&self) {
         self.interject(true);
+    }
+
+    fn deliver_narration(&self, prod: &wire::body::NarrationProdded) {
+        for handle in self
+            .calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+        {
+            handle.interrupt();
+        }
+        let urgency = if prod.count > 1 {
+            "Progress update overdue"
+        } else {
+            "Progress update due"
+        };
+        let message = format!(
+            "<system-notice>\n{urgency}: {} tool calls since your last visible prose \
+             (reminder {}). Give the operator one short status line now, including \
+             any job you are awaiting. Keep healthy work running; do not cancel it \
+             to answer this reminder. No acknowledgment key is required.\n</system-notice>",
+            prod.moments, prod.count,
+        );
+        let _sent = self.steer(&message);
     }
 
     /// Interject the rendering the inbox holds now, once per rendering.
@@ -433,6 +459,12 @@ pub(in crate::resident) fn kick(paths: &RuntimePaths, lane: CanonicalUuid) {
     send(paths, lane, &Kick::Inbox);
 }
 
+/// A committed prod is also available at the next shell/hook meter boundary.
+/// Command-driven occupants can hear it now without cancelling their jobs.
+pub(in crate::resident) fn narrate(paths: &RuntimePaths, prod: &wire::body::NarrationProdded) {
+    send(paths, prod.lane, &Kick::Narration(prod.clone()));
+}
+
 /// Tell whichever driver listens for this lane how consent ruled on one of
 /// its requests.
 ///
@@ -494,6 +526,7 @@ fn send_to(door: &Path, kick: &Kick) -> io::Result<()> {
 pub(in crate::resident) fn listen_for_kicks(
     paths: &RuntimePaths,
     lane: CanonicalUuid,
+    occupant: CanonicalUuid,
     driver: Arc<Driver>,
 ) -> io::Result<KickDoor> {
     let path = kick_path(paths, lane);
@@ -511,6 +544,10 @@ pub(in crate::resident) fn listen_for_kicks(
                         Ok(Kick::Answer { request, confirmed }) => {
                             driver.answer(request, confirmed);
                         }
+                        Ok(Kick::Narration(prod)) if prod.occupant == occupant => {
+                            driver.deliver_narration(&prod);
+                        }
+                        Ok(Kick::Narration(_)) => {}
                         Ok(Kick::Abort) => driver.abort(),
                         Err(_) => {}
                     }
