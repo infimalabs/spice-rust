@@ -507,7 +507,7 @@ fn dispatch_hook(leaf: &clap::ArgMatches, contract: &cli::Contract, form: Form) 
                 steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE));
             deliver_inbox_hook(&outcome, harness, form)
         }
-        steering_command::HookInvocation::Rewrite(request) => {
+        steering_command::HookInvocation::PreTool(request) => {
             let executable = bootstrap_environment(spice::rtk::EXECUTABLE_VARIABLE);
             match request.answer(executable.as_deref()) {
                 Ok(reply) => {

@@ -16,21 +16,25 @@ struct HookInput {
     tool_name: Option<String>,
     #[serde(default)]
     tool_input: Option<Value>,
+    #[serde(default)]
+    cwd: Option<Value>,
 }
 
 /// Work selected from one vendor hook invocation.
 pub(crate) enum Invocation {
     /// Post-tool steering delivery retains its existing resident round trip.
     Steering,
-    /// A Codex shell command may be replaced through RTK.
-    Rewrite(RewriteRequest),
+    /// Inspect authored shell input; only Codex also selects an RTK rewrite.
+    PreTool(PreToolRequest),
     /// An event outside the two installed hook contracts needs no output.
     Ignore,
 }
 
-/// Canonical Codex Bash input admitted for RTK selection.
-pub(crate) struct RewriteRequest {
+/// Authored Bash input and its optional, pre-execution working-directory advice.
+pub(crate) struct PreToolRequest {
     command: String,
+    advice: Option<&'static str>,
+    rewrite: bool,
 }
 
 /// Bytes and advisory stderr produced by one pre-tool invocation.
@@ -63,6 +67,8 @@ struct HookSpecificOutput {
     permission_decision: Option<&'static str>,
     #[serde(rename = "updatedInput", skip_serializing_if = "Option::is_none")]
     updated_input: Option<Value>,
+    #[serde(rename = "additionalContext", skip_serializing_if = "Option::is_none")]
+    additional_context: Option<&'static str>,
 }
 
 struct Selection {
@@ -83,18 +89,17 @@ pub(crate) fn read(reader: &mut impl Read, harness: &str) -> Result<Invocation, 
         .map_err(|error| format!("hook input is not valid JSON: {error}"))?;
     match input.hook_event_name.as_str() {
         POST_TOOL_USE => Ok(Invocation::Steering),
-        PRE_TOOL_USE if harness != "codex" => Err(format!(
-            "unsupported pre-tool rewrite harness {harness:?}; expected \"codex\""
-        )),
+        PRE_TOOL_USE if !matches!(harness, "codex" | "claude") => Ok(Invocation::Ignore),
         PRE_TOOL_USE => {
             let tool_name = input
                 .tool_name
-                .ok_or_else(|| "Codex pre-tool hook input is missing tool_name".to_owned())?;
+                .ok_or_else(|| "pre-tool hook input is missing tool_name".to_owned())?;
             if tool_name != BASH_TOOL {
                 return Ok(Invocation::Ignore);
             }
             let command = input
                 .tool_input
+                .as_ref()
                 .and_then(|value| {
                     value
                         .get("command")
@@ -102,16 +107,30 @@ pub(crate) fn read(reader: &mut impl Read, harness: &str) -> Result<Invocation, 
                         .map(str::to_owned)
                 })
                 .ok_or_else(|| {
-                    "Codex Bash pre-tool hook input is missing tool_input.command".to_owned()
+                    "Bash pre-tool hook input is missing tool_input.command".to_owned()
                 })?;
-            Ok(Invocation::Rewrite(RewriteRequest { command }))
+            let advice = input.cwd.as_ref().and_then(Value::as_str).and_then(|cwd| {
+                // A tool-specific cwd override means the hook's session cwd is
+                // not proof of where this command starts. Remain silent.
+                let tool = input.tool_input.as_ref()?;
+                if tool.get("workdir").is_some() || tool.get("cwd").is_some() {
+                    return None;
+                }
+                spice::command_advice::for_shell(&command, std::path::Path::new(cwd))
+            });
+            Ok(Invocation::PreTool(PreToolRequest {
+                command,
+                advice,
+                rewrite: harness == "codex",
+            }))
         }
         _ => Ok(Invocation::Ignore),
     }
 }
 
-impl RewriteRequest {
-    /// Ask RTK once and encode a valid Codex pre-tool answer.
+impl PreToolRequest {
+    /// Encode advice without a permission decision or input replacement.
+    /// Codex's independently configured RTK selection retains its prior contract.
     pub(crate) fn answer(self, executable: Option<&OsStr>) -> Result<Reply, String> {
         self.answer_with(executable, |command, executable| {
             let native = [OsString::from("sh"), OsString::from("-lc"), command.into()];
@@ -134,6 +153,7 @@ impl RewriteRequest {
         executable: Option<&OsStr>,
         select: impl FnOnce(&str, &OsStr) -> Selection,
     ) -> Result<Reply, String> {
+        let executable = executable.filter(|_| self.rewrite);
         let selection = executable.map_or_else(
             || Selection {
                 command: self.command.clone(),
@@ -149,6 +169,7 @@ impl RewriteRequest {
                 hook_event_name: PRE_TOOL_USE,
                 permission_decision,
                 updated_input,
+                additional_context: self.advice,
             },
         })
         .map_err(|error| error.to_string())?;
@@ -165,8 +186,10 @@ pub(crate) fn validate_rtk_hook_contract() -> Result<(), String> {
     const ORIGINAL: &str = "git status";
     const REWRITTEN: &str = "rtk git status";
 
-    let changed = RewriteRequest {
+    let changed = PreToolRequest {
         command: ORIGINAL.to_owned(),
+        advice: None,
+        rewrite: true,
     }
     .answer_with(Some(OsStr::new("rtk")), |_, _| Selection {
         command: REWRITTEN.to_owned(),
@@ -181,8 +204,10 @@ pub(crate) fn validate_rtk_hook_contract() -> Result<(), String> {
         }
     }
 
-    let unchanged = RewriteRequest {
+    let unchanged = PreToolRequest {
         command: ORIGINAL.to_owned(),
+        advice: None,
+        rewrite: true,
     }
     .answer(None)?;
     match vendor::codex::decode_rtk_pre_tool_output(unchanged.document())? {
@@ -220,7 +245,7 @@ mod tests {
 
     #[test]
     fn codex_bash_rewrite_updates_only_the_canonical_command_input() {
-        let Invocation::Rewrite(request) =
+        let Invocation::PreTool(request) =
             invocation(&pre_tool("git status"), "codex").expect("valid pre-tool input")
         else {
             panic!("Codex Bash input selects rewriting");
@@ -257,7 +282,7 @@ mod tests {
 
     #[test]
     fn unchanged_selection_emits_no_updated_input_and_preserves_diagnostics() {
-        let Invocation::Rewrite(request) =
+        let Invocation::PreTool(request) =
             invocation(&pre_tool("git status"), "codex").expect("valid pre-tool input")
         else {
             panic!("Codex Bash input selects rewriting");
@@ -286,8 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_tool_rewrite_is_codex_only_and_non_bash_tools_are_ignored() {
-        assert!(invocation(&pre_tool("git status"), "claude").is_err());
+    fn non_bash_tools_are_ignored() {
         let input = json!({
             "hook_event_name": PRE_TOOL_USE,
             "tool_name": "Read",

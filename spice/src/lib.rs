@@ -15,6 +15,7 @@ pub mod cargo_isolation;
 pub mod change_gate;
 pub mod claim_lease;
 pub mod cli;
+pub mod command_advice;
 pub mod commit_message;
 pub mod config;
 pub mod extension;
