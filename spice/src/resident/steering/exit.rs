@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::io;
 
 use super::*;
+use crate::resident::ingest_vendor;
 
 /// Retire every live directive the ended occupant answered in its transcript.
 ///
@@ -36,6 +37,35 @@ pub(in crate::resident) fn dispose_at_exit(
     );
 }
 
+/// Recover spoken answers before startup publishes or resends pending steering.
+///
+/// Accounting may already cover an answer whose live notice was lost during
+/// the outage, so the transcript checkpoint is not a retirement checkpoint.
+pub(in crate::resident) fn dispose_at_startup(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    let residency = current_residency(bus, epoch)?;
+    for row in &residency.body().lanes {
+        let interjected = ingest_vendor(&row.vendor)
+            .is_some_and(|vendor| vendor.steering() == vendor::SteeringChannel::Interjection);
+        if interjected {
+            dispose_pending(
+                bus,
+                paths,
+                epoch,
+                row.lane,
+                &row.vendor,
+                &Reading::AtStartup,
+                diagnostic,
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Retire the live directives the occupant's newest prose answered, as that
 /// prose lands.
 ///
@@ -61,6 +91,8 @@ pub(in crate::resident) fn dispose_heard(
 enum Reading<'a> {
     /// The whole transcript, once the occupant has ended.
     AtExit,
+    /// Recovered transcript evidence, independent of accounting progress.
+    AtStartup,
     /// The keys the prose that just landed headed.
     OnLanding(&'a BTreeSet<steer::Key>),
 }
@@ -69,13 +101,14 @@ impl Reading<'_> {
     fn moment(&self) -> &'static str {
         match self {
             Self::AtExit => "at exit",
+            Self::AtStartup => "at startup",
             Self::OnLanding(_) => "on landing",
         }
     }
 
     fn answered(&self, key: &str) -> bool {
         match self {
-            Self::AtExit => true,
+            Self::AtExit | Self::AtStartup => true,
             Self::OnLanding(keys) => keys.iter().any(|heard| heard.as_str() == key),
         }
     }

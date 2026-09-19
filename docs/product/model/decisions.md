@@ -252,6 +252,12 @@ rides a stable lineage key so it reads as one intent insisting.
 none of them. The ladder describes how loudly intent is presented, never how
 its identity changes.
 
+**Invariant —** Interjected acknowledgements are retired from assistant prose
+both on landing and during resident startup recovery, before pending steering
+is published again. A transcript accounting checkpoint is not proof that its
+answers were retired. Later quoted or buried mentions do not erase a placed
+answer; without a placed answer, those mentions remain non-retiring evidence.
+
 **Invariant —** `lapsed` and `deadlettered` remain recoverable. Recovery
 restores the same directive to live with its presentation stage intact. An item
 nobody answered, a pending directive parked after its lane's terminal automatic

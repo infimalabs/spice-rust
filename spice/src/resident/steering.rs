@@ -30,7 +30,7 @@ mod tests;
 mod transcript;
 mod transitions;
 
-pub(super) use exit::{dispose_at_exit, dispose_heard};
+pub(super) use exit::{dispose_at_exit, dispose_at_startup, dispose_heard};
 use preview::directive_preview;
 use transcript::transcript_recognition;
 use transitions::evidence_refusal;

@@ -124,11 +124,10 @@ fn quoted_line(text: &str) -> String {
     quoted
 }
 
-/// Find the latest assistant prose recognizing `token`, newest record first.
+/// Find the latest placed assistant answer to `token`, newest record first.
 ///
-/// Within one prose the placed header decides the token even when the same
-/// prose later quotes or buries the key, so a lane that cites its own header
-/// while explaining itself is judged by the header the operator reads.
+/// A later quotation or buried mention cannot erase an answer already spoken.
+/// If no placed answer exists, preserve the newest miss for the refusal.
 ///
 /// A requested `disposition` must match the marker the transcript carries;
 /// `None` accepts whichever terminal marker the transcript shows, which is
@@ -182,6 +181,7 @@ pub(super) fn transcript_recognition(
         typed_store_fault("steer::transcript-tape-unreadable", &error.to_string())
     })?;
     let mut newest = NewestMessage::default();
+    let mut latest_miss = None;
     for extent in extents.into_iter().rev() {
         let whole = tape::Locus::new(extent.member, 0, extent.length);
         let bytes = tape.read(whole).map_err(|error| {
@@ -203,7 +203,7 @@ pub(super) fn transcript_recognition(
                 standing,
                 &mut newest,
             )? {
-                return Ok(TranscriptRecognition {
+                let recognition = TranscriptRecognition {
                     locus: TranscriptLocus {
                         source: Some(source),
                         member: extent.member,
@@ -214,11 +214,15 @@ pub(super) fn transcript_recognition(
                         column: recognition.column,
                     },
                     outcome: recognition.outcome,
-                });
+                };
+                if matches!(recognition.outcome, ScanOutcome::Retired { .. }) {
+                    return Ok(recognition);
+                }
+                latest_miss.get_or_insert(recognition);
             }
         }
     }
-    Err(newest.evidence_absent(token))
+    latest_miss.ok_or_else(|| newest.evidence_absent(token))
 }
 
 struct RecordRecognition {
@@ -239,6 +243,7 @@ fn scan_record(
     let registry = spice::extension::registry().map_err(|error| {
         typed_protocol_fault("steer::extension-registry-invalid", &error.to_string())
     })?;
+    let mut latest_miss = None;
     for vendor in registry.vendors() {
         let decoded = vendor.decode(bytes, locus).map_err(|error| {
             typed_protocol_fault("steer::transcript-locus-invalid", &error.to_string())
@@ -271,15 +276,19 @@ fn scan_record(
                     "make the ack command disposition match the latest transcript marker",
                 ));
             }
-            return Ok(Some(RecordRecognition {
+            let recognition = RecordRecognition {
                 event: checked_locus_part(event_index)?,
                 line: checked_locus_part(recognition.locus.line)?,
                 column: checked_locus_part(recognition.locus.column)?,
                 outcome: recognition.outcome,
-            }));
+            };
+            if matches!(recognition.outcome, ScanOutcome::Retired { .. }) {
+                return Ok(Some(recognition));
+            }
+            latest_miss.get_or_insert(recognition);
         }
     }
-    Ok(None)
+    Ok(latest_miss)
 }
 
 fn checked_locus_part(part: usize) -> Result<u32, Outcome<CommandAnswer>> {

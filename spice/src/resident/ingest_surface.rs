@@ -27,6 +27,20 @@ fn ingest_vendor_from(
     registry.vendor(vendor.as_str())
 }
 
+/// Recover both transcript accounting and spoken interjection answers.
+///
+/// Retirement is replayed independently: a prior resident may have committed
+/// the accounting checkpoint before it could retire the captured answer.
+pub(super) fn recover_transcripts(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    ingest_transcripts(bus, paths, None, diagnostic)?;
+    steering::dispose_at_startup(bus, paths, epoch, diagnostic)
+}
+
 /// Account every complete record the named lanes' tapes have gained.
 ///
 /// Live capture passes the one lane whose record just landed; startup catch-up

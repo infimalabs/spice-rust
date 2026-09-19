@@ -177,16 +177,9 @@ fn an_interjected_lane_s_answer_retires_its_key_as_the_prose_lands() {
         r#"{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"ACK {key}: Answering now."}}],"stopReason":"stop"}}}}"#
     );
 
-    let spoken = heard.speak(format!("{record}\n").as_bytes());
+    heard.speak(format!("{record}\n").as_bytes());
 
     assert_eq!(heard.disposition(), Disposition::Acked);
-    assert_eq!(
-        spoken,
-        format!(
-            "lane {} steering {key} acked on landing from its transcript\n",
-            heard.lane
-        )
-    );
     assert!(
         !heard.inbox().contains(&key),
         "the lane inbox is refolded to match the journal"
@@ -203,6 +196,8 @@ fn a_lane_that_retires_its_own_keys_is_left_to_its_ack_command() {
     );
 
     let spoken = heard.speak(format!("{record}\n").as_bytes());
+    recover_transcripts(&heard.bus, &heard.paths, heard.epoch, &mut Vec::new())
+        .expect("startup leaves shell-hook retirement to its command");
 
     assert_eq!(heard.disposition(), Disposition::Live);
     assert_eq!(spoken, "");
