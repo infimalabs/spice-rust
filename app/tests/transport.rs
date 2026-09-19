@@ -280,6 +280,7 @@ fn a_pre_clock_lane_decoder_reproduces_the_topology_revision_failure() {
                 lanes: Vec::new(),
                 subscriptions: Vec::new(),
                 renewals: Vec::new(),
+                refresh_after_millis: None,
             },
         }),
     );

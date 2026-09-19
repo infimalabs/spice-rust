@@ -137,6 +137,7 @@ async fn pump_session(
     drain_submissions(&principal, &mut writer, actions, &handles.submissions).await?;
     actions.rearm().map_err(|error| error.to_string())?;
     let mut silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
+    let mut lane_refresh = futures_util::future::Fuse::terminated();
     let mut probed = false;
     while active.get() {
         let incoming = reader.next().fuse();
@@ -144,15 +145,23 @@ async fn pump_session(
         futures_util::pin_mut!(incoming, action_wake);
         let mut rearm = false;
         futures_util::select_biased! {
+            () = lane_refresh => {
+                refresh::send_lanes(&principal, &mut writer, actions, &handles.submissions).await?;
+            },
             frame = incoming => {
                 // Any frame proves socket traffic; a refusal names a reachable
                 // resident, so a probe response need not be Pong specifically.
                 rearm = true;
                 probed = false;
-                apply_incoming_frame(
+                if let Some(deadline) = apply_incoming_frame(
                     frame, &session, handles, data, &principal, &mut writer, actions,
                     !hydrating,
-                ).await?;
+                ).await? {
+                    lane_refresh = match deadline {
+                        Some(millis) => TimeoutFuture::new(millis).fuse(),
+                        None => futures_util::future::Fuse::terminated(),
+                    };
+                }
                 if hydrating && actions.current_reads_settled() {
                     finish_hydration(handles, data, &principal)?;
                     hydrating = false;
@@ -233,25 +242,25 @@ async fn apply_incoming_frame(
     writer: &mut SocketWriter,
     actions: &ActionQueue,
     publish: bool,
-) -> Result<(), String> {
+) -> Result<Option<Option<u32>>, String> {
     let frame = frame
         .ok_or_else(|| "resident closed the socket".to_owned())?
         .map_err(websocket_error)?;
     let bytes = binary_message(frame)?;
-    let (directives, refresh, stale) =
-        handle_incoming(session, handles, data, actions, &bytes, publish)?;
-    relay_directives(principal, writer, directives).await?;
+    let application = handle_incoming(session, handles, data, actions, &bytes, publish)?;
+    relay_directives(principal, writer, application.directives).await?;
     send_after_frame(
         principal,
         writer,
         actions,
         &handles.submissions,
-        refresh,
-        stale,
+        application.refresh,
+        application.stale,
     )
     .await?;
     drain_submissions(principal, writer, actions, &handles.submissions).await?;
-    actions.rearm().map_err(|error| error.to_string())
+    actions.rearm().map_err(|error| error.to_string())?;
+    Ok(application.lane_refresh)
 }
 
 #[allow(clippy::too_many_arguments)]

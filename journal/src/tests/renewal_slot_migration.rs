@@ -255,6 +255,7 @@ fn insert_receipts(
         lanes: Vec::new(),
         subscriptions: residency.subscriptions.clone(),
         renewals: renewals.to_vec(),
+        refresh_after_millis: None,
     };
     let board_answer = wire::intent::BoardAnswer {
         schema: 16,

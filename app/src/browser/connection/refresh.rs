@@ -75,7 +75,7 @@ async fn send_board(
     .await
 }
 
-async fn send_lanes(
+pub(super) async fn send_lanes(
     principal: &Principal,
     writer: &mut SocketWriter,
     actions: &ActionQueue,
