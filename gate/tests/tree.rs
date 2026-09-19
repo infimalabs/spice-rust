@@ -137,11 +137,56 @@ fn staged_and_revision_sources_never_read_checkout_only_bytes() {
         );
     }
 
-    let staged_root = staged.root().to_path_buf();
-    drop(staged);
+    let revision_root = revision.root().to_path_buf();
+    drop(revision);
     assert!(
-        !staged_root.exists(),
-        "dropping a selection removes its root"
+        !revision_root.exists(),
+        "dropping a revision selection removes its root"
+    );
+}
+
+/// A staged selection is refilled in place instead of rewritten, because the
+/// modification times of its unchanged files are what keeps a build reading
+/// the tree from recompiling everything on every gate run.
+#[test]
+fn a_staged_selection_keeps_the_times_of_bytes_that_did_not_change() {
+    let tree = repository("staged-retention");
+    tree.write("src/lib.rs", "first\n");
+    tree.write("src/other.rs", "steady\n");
+    commit_all(&tree, "committed state");
+
+    let staged = Selector::staged()
+        .materialize(&tree.root)
+        .expect("materialize the captured index");
+    let staged_root = staged.root().to_path_buf();
+    let stamp = |name: &str| {
+        fs::metadata(staged_root.join(name))
+            .expect("inspect a selected file")
+            .modified()
+            .expect("selected file modification time")
+    };
+    let (changing, steady) = (stamp("src/lib.rs"), stamp("src/other.rs"));
+    drop(staged);
+    assert!(staged_root.exists(), "a staged selection root is retained");
+
+    tree.write("src/lib.rs", "second\n");
+    tree.stage(&["src/lib.rs"]);
+    let refilled = Selector::staged()
+        .materialize(&tree.root)
+        .expect("refill the retained selection");
+    assert_eq!(refilled.root(), staged_root, "one root per repository");
+    assert_eq!(
+        fs::read(refilled.root().join("src/lib.rs")).expect("read refilled bytes"),
+        b"second\n"
+    );
+    assert!(
+        stamp("src/lib.rs") > changing,
+        "changed bytes are stamped newer than anything built from the bytes they replace"
+    );
+    assert_eq!(
+        stamp("src/other.rs"),
+        steady,
+        "unchanged bytes keep their modification time"
     );
 }
 

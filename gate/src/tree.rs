@@ -15,9 +15,6 @@
 //! lock is what lets a later run tell a killed run's wreckage from a tree a live
 //! gate is measuring, and reclaim only the first.
 
-use std::collections::BTreeSet;
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use gix::objs::WriteTo as _;
@@ -30,16 +27,18 @@ const STAGED_RENAME_SIMILARITY: f32 = 0.5;
 /// Zero is the plumbing API's explicit unlimited-candidate setting.
 const STAGED_RENAME_LIMIT: usize = 0;
 
-#[cfg(target_family = "unix")]
-use std::os::unix::fs::{DirBuilderExt as _, MetadataExt as _, PermissionsExt as _};
-
 mod error;
+mod materialize;
 mod source;
 mod workspace;
 
 pub use error::TreeError;
+use materialize::{
+    create_private_directory_tree, create_private_workspace, make_immutable, make_removable,
+    materialize_items, private_directory, verify_immutable, write_private_source,
+};
 use source::{IndexSeal, RevisionSeal, SelectionSeal, head_seal};
-use workspace::{BuildRoot, release_workspace};
+use workspace::{BuildRoot, retire_workspace};
 
 /// Which immutable Git source a gate should measure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,7 +84,15 @@ impl Selector {
         after_capture: impl FnOnce(&Path),
     ) -> Result<SelectedTree, TreeError> {
         let repo = open_repository(repository)?;
-        let mut build = BuildRoot::create()?;
+        // The staged selection is the tree gates compile, so it is the one
+        // worth refilling in place: unchanged files keep the modification
+        // times the artifacts beside them were built against. A revision
+        // selection is read for planning and comparison rather than built,
+        // and stays ephemeral.
+        let mut build = match self {
+            Self::Staged => BuildRoot::retained(repository)?,
+            Self::Revision(_) => BuildRoot::create()?,
+        };
 
         let (items, source, renames, staged_authority, publishes_state) = match self {
             Self::Staged => {
@@ -240,6 +247,7 @@ pub struct SelectedTree {
     renames: RenameMap,
     staged_authority: Option<StagedAuthority>,
     publishes_state: bool,
+    retained: bool,
     possession: Option<Possession>,
 }
 
@@ -471,20 +479,8 @@ fn write_index_tree(repo: &gix::Repository, items: &[Item]) -> Result<String, Tr
 impl Drop for SelectedTree {
     fn drop(&mut self) {
         if let Some(possession) = self.possession.take() {
-            let _ = release_workspace(&self.workspace, &possession);
+            retire_workspace(&self.workspace, &possession, self.retained);
         }
-    }
-}
-
-fn create_private_workspace(path: &Path) -> io::Result<()> {
-    #[cfg(target_family = "unix")]
-    {
-        let mut builder = fs::DirBuilder::new();
-        builder.mode(0o700).create(path)
-    }
-    #[cfg(not(target_family = "unix"))]
-    {
-        fs::create_dir(path)
     }
 }
 
@@ -931,46 +927,6 @@ pub(crate) fn normalized_component(component: &[u8]) -> Result<String, TreeError
     Ok(component.to_owned())
 }
 
-fn materialize_items(repo: &gix::Repository, root: &Path, items: &[Item]) -> Result<(), TreeError> {
-    let mut directories = BTreeSet::new();
-    directories.insert(root.to_path_buf());
-    for item in items {
-        let destination = root.join(&item.path);
-        let parent = destination
-            .parent()
-            .expect("a normalized relative path has a parent below its root");
-        if directories.insert(parent.to_path_buf()) {
-            fs::create_dir_all(parent).map_err(|source| {
-                TreeError::io("creating a selected tree directory", parent, source)
-            })?;
-            private_directory_chain(root, parent)?;
-        }
-
-        let object = verified_object(repo, item.id, &item.path)?;
-        if object.kind != gix::objs::Kind::Blob {
-            return Err(TreeError::UnexpectedObject {
-                path: item.path.clone(),
-                object: item.id.to_string(),
-                expected: "blob",
-                actual: object.kind.to_string(),
-            });
-        }
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&destination)
-            .map_err(|source| {
-                TreeError::io("creating a selected tree file", &destination, source)
-            })?;
-        file.write_all(&object.data).map_err(|source| {
-            TreeError::io("writing a selected tree file", &destination, source)
-        })?;
-        drop(file);
-        immutable_file(&destination, item.mode)?;
-    }
-    Ok(())
-}
-
 pub(crate) fn verified_object<'repo>(
     repo: &'repo gix::Repository,
     id: gix::ObjectId,
@@ -1000,285 +956,12 @@ pub(crate) fn verified_object<'repo>(
     Ok(object)
 }
 
-fn private_directory(path: &Path) -> Result<(), TreeError> {
-    #[cfg(target_family = "unix")]
-    let permissions = fs::Permissions::from_mode(0o700);
-    #[cfg(not(target_family = "unix"))]
-    let permissions = {
-        let mut permissions = fs::metadata(path)
-            .map_err(|source| TreeError::io("inspecting a private directory", path, source))?
-            .permissions();
-        permissions.set_readonly(false);
-        permissions
-    };
-    fs::set_permissions(path, permissions)
-        .map_err(|source| TreeError::io("making a selected directory private", path, source))
-}
-
-fn private_directory_chain(root: &Path, directory: &Path) -> Result<(), TreeError> {
-    let relative = directory
-        .strip_prefix(root)
-        .expect("selected directory remains below its private root");
-    let mut current = root.to_path_buf();
-    for component in relative.components() {
-        current.push(component);
-        private_directory(&current)?;
-    }
-    Ok(())
-}
-
-fn create_private_directory_tree(root: &Path, directory: &Path) -> Result<(), TreeError> {
-    fs::create_dir_all(directory).map_err(|source| {
-        TreeError::io("creating captured source directories", directory, source)
-    })?;
-    private_directory_chain(root, directory)
-}
-
-fn write_private_source(root: &Path, path: &Path, bytes: &[u8]) -> Result<(), TreeError> {
-    let parent = path
-        .parent()
-        .expect("a captured source file has a parent below its root");
-    create_private_directory_tree(root, parent)?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|source| TreeError::io("creating a captured source file", path, source))?;
-    file.write_all(bytes)
-        .map_err(|source| TreeError::io("writing a captured source file", path, source))?;
-    drop(file);
-    immutable_file(path, FileMode::Regular)
-}
-
-fn immutable_file(path: &Path, mode: FileMode) -> Result<(), TreeError> {
-    #[cfg(target_family = "unix")]
-    let permissions = fs::Permissions::from_mode(match mode {
-        FileMode::Regular => 0o400,
-        FileMode::Executable => 0o500,
-    });
-    #[cfg(not(target_family = "unix"))]
-    let permissions = {
-        let mut permissions = fs::metadata(path)
-            .map_err(|source| TreeError::io("inspecting a selected file", path, source))?
-            .permissions();
-        permissions.set_readonly(true);
-        permissions
-    };
-    fs::set_permissions(path, permissions)
-        .map_err(|source| TreeError::io("making a selected file immutable", path, source))
-}
-
-fn make_immutable(root: &Path) -> Result<(), TreeError> {
-    let mut directories = vec![root.to_path_buf()];
-    let mut index = 0;
-    while index < directories.len() {
-        let directory = directories[index].clone();
-        index += 1;
-        let listing = fs::read_dir(&directory)
-            .map_err(|source| TreeError::io("sealing a selected directory", &directory, source))?;
-        for entry in listing {
-            let entry = entry.map_err(|source| {
-                TreeError::io("reading a selected directory", &directory, source)
-            })?;
-            if entry
-                .file_type()
-                .map_err(|source| {
-                    TreeError::io("inspecting a selected path", &entry.path(), source)
-                })?
-                .is_dir()
-            {
-                directories.push(entry.path());
-            }
-        }
-    }
-    for directory in directories.into_iter().rev() {
-        #[cfg(target_family = "unix")]
-        let permissions = fs::Permissions::from_mode(0o500);
-        #[cfg(not(target_family = "unix"))]
-        let permissions = {
-            let mut permissions = fs::metadata(&directory)
-                .map_err(|source| {
-                    TreeError::io("inspecting a selected directory", &directory, source)
-                })?
-                .permissions();
-            permissions.set_readonly(true);
-            permissions
-        };
-        fs::set_permissions(&directory, permissions).map_err(|source| {
-            TreeError::io("making a selected directory immutable", &directory, source)
-        })?;
-    }
-    Ok(())
-}
-
-fn verify_immutable(root: &Path, items: &[Item]) -> Result<(), TreeError> {
-    let expected_files = items
-        .iter()
-        .map(|item| item.path.clone())
-        .collect::<BTreeSet<_>>();
-    let mut expected_directories = BTreeSet::from([String::new()]);
-    for item in items {
-        let mut parent = Path::new(&item.path).parent();
-        while let Some(path) = parent.filter(|path| !path.as_os_str().is_empty()) {
-            expected_directories.insert(path.to_string_lossy().into_owned());
-            parent = path.parent();
-        }
-    }
-    let mut observed_files = BTreeSet::new();
-    let mut observed_directories = BTreeSet::new();
-    let mut directories = vec![(root.to_path_buf(), String::new())];
-    while let Some((directory, relative)) = directories.pop() {
-        observed_directories.insert(relative.clone());
-        verify_directory(
-            &directory,
-            if relative.is_empty() { "." } else { &relative },
-        )?;
-        let listing = fs::read_dir(&directory).map_err(|source| {
-            TreeError::io("verifying a selected directory", &directory, source)
-        })?;
-        for entry in listing {
-            let entry = entry.map_err(|source| {
-                TreeError::io("reading a selected directory", &directory, source)
-            })?;
-            let name = entry.file_name().into_string().map_err(|name| {
-                TreeError::MaterializationChanged {
-                    path: directory.join(name).display().to_string(),
-                }
-            })?;
-            let path = if relative.is_empty() {
-                name
-            } else {
-                format!("{relative}/{name}")
-            };
-            let file_type = entry.file_type().map_err(|source| {
-                TreeError::io("inspecting a selected path", &entry.path(), source)
-            })?;
-            if file_type.is_dir() {
-                directories.push((entry.path(), path));
-            } else if file_type.is_file() {
-                observed_files.insert(path);
-            } else {
-                return Err(TreeError::MaterializationChanged { path });
-            }
-        }
-    }
-    if expected_directories != observed_directories {
-        let path = expected_directories
-            .symmetric_difference(&observed_directories)
-            .next()
-            .cloned()
-            .unwrap_or_else(|| "selected tree".to_owned());
-        return Err(TreeError::MaterializationChanged { path });
-    }
-    if expected_files != observed_files {
-        let path = expected_files
-            .symmetric_difference(&observed_files)
-            .next()
-            .cloned()
-            .unwrap_or_else(|| "selected tree".to_owned());
-        return Err(TreeError::MaterializationChanged { path });
-    }
-
-    for item in items {
-        let path = root.join(&item.path);
-        let metadata = fs::symlink_metadata(&path)
-            .map_err(|source| TreeError::io("verifying a selected file", &path, source))?;
-        if !metadata.is_file() {
-            return Err(TreeError::MaterializationChanged {
-                path: item.path.clone(),
-            });
-        }
-        let bytes = fs::read(&path)
-            .map_err(|source| TreeError::io("verifying selected bytes", &path, source))?;
-        let actual = gix::objs::compute_hash(item.id.kind(), gix::objs::Kind::Blob, &bytes)
-            .map_err(|_| TreeError::MaterializationChanged {
-                path: item.path.clone(),
-            })?;
-        if actual != item.id {
-            return Err(TreeError::MaterializationChanged {
-                path: item.path.clone(),
-            });
-        }
-        #[cfg(target_family = "unix")]
-        {
-            let expected = match item.mode {
-                FileMode::Regular => 0o400,
-                FileMode::Executable => 0o500,
-            };
-            if metadata.mode() & 0o777 != expected {
-                return Err(TreeError::MaterializationChanged {
-                    path: item.path.clone(),
-                });
-            }
-        }
-        #[cfg(not(target_family = "unix"))]
-        if !metadata.permissions().readonly() {
-            return Err(TreeError::MaterializationChanged {
-                path: item.path.clone(),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn verify_directory(path: &Path, relative: &str) -> Result<(), TreeError> {
-    let metadata = fs::symlink_metadata(path)
-        .map_err(|source| TreeError::io("verifying a selected directory", path, source))?;
-    if !metadata.is_dir() {
-        return Err(TreeError::MaterializationChanged {
-            path: relative.to_owned(),
-        });
-    }
-    #[cfg(target_family = "unix")]
-    if metadata.mode() & 0o777 != 0o500 {
-        return Err(TreeError::MaterializationChanged {
-            path: relative.to_owned(),
-        });
-    }
-    #[cfg(not(target_family = "unix"))]
-    if !metadata.permissions().readonly() {
-        return Err(TreeError::MaterializationChanged {
-            path: relative.to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn make_removable(root: &Path) {
-    let Ok(metadata) = fs::symlink_metadata(root) else {
-        return;
-    };
-    if metadata.is_dir() {
-        set_owner_writable(root, &metadata);
-        if let Ok(listing) = fs::read_dir(root) {
-            for entry in listing.flatten() {
-                make_removable(&entry.path());
-            }
-        }
-    } else if metadata.is_file() {
-        set_owner_writable(root, &metadata);
-    }
-}
-
-fn set_owner_writable(path: &Path, metadata: &fs::Metadata) {
-    #[cfg(target_family = "unix")]
-    {
-        let mode = if metadata.is_dir() { 0o700 } else { 0o600 };
-        let _ = fs::set_permissions(path, fs::Permissions::from_mode(mode));
-    }
-    #[cfg(not(target_family = "unix"))]
-    {
-        let mut permissions = metadata.permissions();
-        permissions.set_readonly(false);
-        let _ = fs::set_permissions(path, permissions);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_repository;
     use std::collections::BTreeMap;
+    use std::fs;
 
     #[test]
     fn byte_identical_index_replacement_refuses_the_captured_source() {
