@@ -36,7 +36,12 @@ impl JournalRead<'_> {
             .optional()
             .map_err(GuardError::Store)?;
         let Some((actor, kind, request, response, epoch)) = row else {
-            return Ok(None);
+            let historical = self.connection.query_row(
+                "SELECT EXISTS (SELECT 1 FROM historical_command_receipts WHERE command_id = ?1)",
+                [command.id().to_string()],
+                |row| row.get::<_, bool>(0),
+            ).map_err(GuardError::Store)?;
+            return Ok(historical.then_some(CommandReplay::Conflict));
         };
         if actor != command.actor().to_string() || kind != command.kind().as_str() {
             return Ok(Some(CommandReplay::Conflict));

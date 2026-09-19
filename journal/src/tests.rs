@@ -28,6 +28,7 @@ mod boundary;
 mod claim_index;
 mod creation_context_migration;
 mod fact_bounds;
+mod historical_receipts;
 mod identity_migration;
 mod lane_compaction;
 mod lineage_migration;
@@ -1397,6 +1398,7 @@ fn expected_tables() -> BTreeSet<String> {
         "cursor_head",
         "fact_envelopes",
         "finding_heads",
+        "historical_command_receipts",
         "journal_schema",
         "lease_heads",
         "residency_head",
