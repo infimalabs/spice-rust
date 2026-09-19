@@ -6,7 +6,7 @@
 /// open when `migrate::MIGRATIONS` carries the step, and refused by name when it
 /// does not. A newer version is always refused: this build cannot know what the
 /// release that wrote it added.
-pub const SCHEMA_VERSION: u32 = 26;
+pub const SCHEMA_VERSION: u32 = 27;
 
 /// How long a connection to the on-disk authority waits on a lock another
 /// process holds before giving up, instead of refusing on the first try.
@@ -24,6 +24,8 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[cfg(not(target_arch = "wasm32"))]
 mod guard;
+#[cfg(not(target_arch = "wasm32"))]
+mod historical_receipts;
 #[cfg(not(target_arch = "wasm32"))]
 mod migrate;
 #[cfg(not(target_arch = "wasm32"))]

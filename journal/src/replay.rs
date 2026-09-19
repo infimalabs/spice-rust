@@ -124,7 +124,11 @@ pub struct Violation {
 }
 
 impl Violation {
-    fn new(class: ViolationClass, subject: impl Into<String>, detail: impl Into<String>) -> Self {
+    pub(crate) fn new(
+        class: ViolationClass,
+        subject: impl Into<String>,
+        detail: impl Into<String>,
+    ) -> Self {
         Self {
             class,
             subject: subject.into(),
@@ -394,7 +398,8 @@ pub(crate) fn verify_connection_after_facts(
     let threads = verify_threads(connection, &facts, &mut violations)?;
     let mut heads = verify_heads(connection, &mut violations)?;
     heads += steering::verify(connection, &facts, &mut violations)?;
-    let receipts = verify_receipts(connection, &mut violations)?;
+    let receipts = verify_receipts(connection, &mut violations)?
+        + crate::historical_receipts::verify(connection, &mut violations)?;
     verify_cursor(connection, &facts, &mut violations)?;
 
     if !violations.is_empty() {
@@ -1033,20 +1038,7 @@ fn verify_receipts(
         .prepare("SELECT command_id, actor, command_kind, request, evaluated_witnesses, response, first_seq, last_seq, snapshot_seq, epoch FROM command_receipts ORDER BY command_id")
         .map_err(VerifyError::Sqlite)?;
     let rows = statement
-        .query_map([], |row| {
-            Ok(ReceiptRow {
-                id: row.get(0)?,
-                actor: row.get(1)?,
-                kind: row.get(2)?,
-                request: row.get(3)?,
-                witnesses: row.get(4)?,
-                response: row.get(5)?,
-                first: row.get(6)?,
-                last: row.get(7)?,
-                snapshot: row.get(8)?,
-                epoch: row.get(9)?,
-            })
-        })
+        .query_map([], ReceiptRow::read)
         .map_err(VerifyError::Sqlite)?;
     let mut count = 0;
     for row in rows {
@@ -1057,17 +1049,34 @@ fn verify_receipts(
     Ok(count)
 }
 
-struct ReceiptRow {
-    id: String,
-    actor: String,
-    kind: String,
-    request: Vec<u8>,
+pub(crate) struct ReceiptRow {
+    pub(crate) id: String,
+    pub(crate) actor: String,
+    pub(crate) kind: String,
+    pub(crate) request: Vec<u8>,
     witnesses: Vec<u8>,
     response: Vec<u8>,
     first: Option<i64>,
     last: Option<i64>,
     snapshot: Option<i64>,
-    epoch: String,
+    pub(crate) epoch: String,
+}
+
+impl ReceiptRow {
+    pub(crate) fn read(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        Ok(Self {
+            id: row.get(0)?,
+            actor: row.get(1)?,
+            kind: row.get(2)?,
+            request: row.get(3)?,
+            witnesses: row.get(4)?,
+            response: row.get(5)?,
+            first: row.get(6)?,
+            last: row.get(7)?,
+            snapshot: row.get(8)?,
+            epoch: row.get(9)?,
+        })
+    }
 }
 
 fn verify_receipt(row: &ReceiptRow, violations: &mut Vec<Violation>) {
@@ -1093,8 +1102,17 @@ fn verify_receipt(row: &ReceiptRow, violations: &mut Vec<Violation>) {
             "request identity or canonical bytes disagree with the receipt",
         );
     }
+    verify_receipt_witnesses(row, &command.expected, violations);
+    verify_response(row, violations);
+}
+
+pub(crate) fn verify_receipt_witnesses(
+    row: &ReceiptRow,
+    expected: &[wire::Witness],
+    violations: &mut Vec<Violation>,
+) {
     match decode_canonical::<Vec<wire::Witness>>(&row.witnesses) {
-        Ok(witnesses) if witnesses == command.expected => {}
+        Ok(witnesses) if witnesses == expected => {}
         Ok(_) => receipt_violation(
             row,
             violations,
@@ -1106,10 +1124,9 @@ fn verify_receipt(row: &ReceiptRow, violations: &mut Vec<Violation>) {
             "evaluated witnesses are not canonical wire bytes",
         ),
     }
-    verify_response(row, violations);
 }
 
-fn verify_response(row: &ReceiptRow, violations: &mut Vec<Violation>) {
+pub(crate) fn verify_response(row: &ReceiptRow, violations: &mut Vec<Violation>) {
     let response = match decode_canonical::<wire::Response<serde_json::Value>>(&row.response) {
         Ok(response) => response,
         Err(detail) => {
@@ -1157,7 +1174,11 @@ fn verify_response(row: &ReceiptRow, violations: &mut Vec<Violation>) {
     }
 }
 
-fn receipt_violation(row: &ReceiptRow, violations: &mut Vec<Violation>, detail: impl Into<String>) {
+pub(crate) fn receipt_violation(
+    row: &ReceiptRow,
+    violations: &mut Vec<Violation>,
+    detail: impl Into<String>,
+) {
     violations.push(Violation::new(ViolationClass::Receipt, &row.id, detail));
 }
 

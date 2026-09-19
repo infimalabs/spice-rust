@@ -62,6 +62,8 @@ fn baseline_with(
         transaction
             .execute_batch(BASELINE_SQL)
             .map_err(OpenError::Sqlite)?;
+        crate::historical_receipts::create_schema(&transaction)?;
+        crate::historical_receipts::reserve_identities(&transaction)?;
         transaction
             .execute_batch(&fact_bounds::bounds_sql())
             .map_err(OpenError::Sqlite)?;
@@ -626,6 +628,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (23, MigrationStep::Sql(MIGRATE_23_TO_24_SQL)),
     (24, MigrationStep::Sql(MIGRATE_24_TO_25_SQL)),
     (25, MigrationStep::Rust(team::migrate)),
+    (26, MigrationStep::Rust(crate::historical_receipts::migrate)),
 ];
 
 /// Schema 24 to 25: exact-project current task lookup.
@@ -963,8 +966,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 26, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 27, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 26;
+PRAGMA user_version = 27;
 "#;
