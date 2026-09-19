@@ -230,6 +230,7 @@ fn publish_turn_boundary(
             badges: wire::AgentMessageBadges::default(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
+            boundary: None,
             media: Vec::new(),
         },
     )
@@ -376,6 +377,7 @@ fn project_agent_event(
         badges,
         automatic_speech,
         unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
+        boundary: event_boundary(decoded),
         media,
     };
     let pending = pending_presentation(decoded, steering, presentation_event, published.locus);
@@ -385,6 +387,14 @@ fn project_agent_event(
         terminal,
         pending,
     }))
+}
+
+/// Vendor identity of the compaction this event records, if it records one.
+fn event_boundary(decoded: &listen::Event) -> Option<wire::MessageBoundary> {
+    match decoded {
+        listen::Event::Compaction(compaction) => compaction.boundary.clone(),
+        _ => None,
+    }
 }
 
 /// The keys an assistant prose card acknowledged ahead of the journal.

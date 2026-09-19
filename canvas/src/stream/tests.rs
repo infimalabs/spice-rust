@@ -47,6 +47,7 @@ fn message(lane: u8, offset: u64) -> AgentMessage {
         badges: Default::default(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
+        boundary: None,
         media: Vec::new(),
     }
 }

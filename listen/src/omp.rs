@@ -348,13 +348,54 @@ fn compaction(record: &Object, locus: Locus) -> Events {
     {
         return Ok(Vec::new());
     }
-    let summary = record
+    let body = record
         .get("result")
         .and_then(Value::as_object)
-        .map_or_else(|| record.get("summary"), |result| result.get("summary"))
+        .unwrap_or(record);
+    let summary = body
+        .get("summary")
         .and_then(Value::as_str)
         .map(str::to_owned);
-    Ok(vec![Event::Compaction(Compaction { summary, locus })])
+    Ok(vec![Event::Compaction(Compaction {
+        summary,
+        boundary: compaction_boundary(record, body),
+        locus,
+    })])
+}
+
+/// Vendor identity both records of one compaction carry.
+///
+/// The captured announcement keeps its fields under `result` and names no
+/// record identity of its own; the preserved session entry keeps the same
+/// fields at the top level beside its own id and timestamp. A remote
+/// compaction names the provider entry that replaced the compacted history,
+/// which is the strongest identity the vendor states. Otherwise the first
+/// entry the compaction kept, with the token count it compacted, names it:
+/// history only moves forward, so a later compaction keeps a later entry.
+fn compaction_boundary(record: &Object, body: &Object) -> Option<wire::MessageBoundary> {
+    let id = replacement_identity(body).or_else(|| kept_identity(body))?;
+    Some(wire::MessageBoundary {
+        id,
+        preserved: record.get("type").and_then(Value::as_str) == Some("compaction"),
+    })
+}
+
+/// Identity of the provider entry that replaced the compacted history.
+fn replacement_identity(body: &Object) -> Option<String> {
+    body.get("preserveData")?
+        .as_object()?
+        .values()
+        .filter_map(|provider| provider.as_object()?.get("replacementHistory")?.as_array())
+        .flatten()
+        .find_map(|entry| entry.as_object()?.get("id")?.as_str())
+        .map(str::to_owned)
+}
+
+/// Identity built from the first entry the compaction kept.
+fn kept_identity(body: &Object) -> Option<String> {
+    let kept = body.get("firstKeptEntryId")?.as_str()?;
+    let tokens = body.get("tokensBefore")?.as_u64()?;
+    Some(format!("kept:{kept}:{tokens}"))
 }
 
 fn notice(record: &Object, locus: Locus) -> Events {

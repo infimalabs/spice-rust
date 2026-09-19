@@ -362,7 +362,7 @@ pub(super) enum Event {
     Closed(Result<(), tokio::sync::watch::error::RecvError>),
     Retired,
     Journal(Result<bus::JournalCommit, tokio::sync::broadcast::error::RecvError>),
-    Message(Result<wire::AgentMessage, tokio::sync::broadcast::error::RecvError>),
+    Message(Result<Box<wire::AgentMessage>, tokio::sync::broadcast::error::RecvError>),
     Inbound(Option<Result<Message, ::axum::Error>>),
     Command(Option<CommandCompletion>),
     Continuation,
@@ -497,12 +497,13 @@ async fn recv_journal(
 /// Read one agent message from the enabled transcript broadcast.
 async fn recv_message(
     messages: &mut Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
-) -> Result<wire::AgentMessage, tokio::sync::broadcast::error::RecvError> {
+) -> Result<Box<wire::AgentMessage>, tokio::sync::broadcast::error::RecvError> {
     messages
         .as_mut()
         .expect("enabled branch has a message broadcast")
         .recv()
         .await
+        .map(Box::new)
 }
 
 async fn route_message_broadcast(
@@ -511,7 +512,7 @@ async fn route_message_broadcast(
     accepted: &wire::Accepted,
     capability: wire::CanonicalUuid,
     subscription: &crate::stream::Subscription,
-    notice: Result<wire::AgentMessage, tokio::sync::broadcast::error::RecvError>,
+    notice: Result<Box<wire::AgentMessage>, tokio::sync::broadcast::error::RecvError>,
 ) -> SessionFlow {
     if !state.capabilities.matches(capability, &accepted.actor) {
         send_replaced(socket, state.epoch, Some(subscription.id())).await;
@@ -519,7 +520,7 @@ async fn route_message_broadcast(
     }
     match notice {
         Ok(message) => {
-            let Some(frame) = subscription.message(message) else {
+            let Some(frame) = subscription.message(*message) else {
                 return SessionFlow::Continue;
             };
             if send_encoded(socket, &frame).await {

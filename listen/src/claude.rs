@@ -16,6 +16,7 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
         "result" => result(record, locus),
         "summary" => Ok(vec![Event::Compaction(Compaction {
             summary: Some(string(record, "summary")?.to_owned()),
+            boundary: None,
             locus,
         })]),
         "rate_limit_event" => rate_limit(record, locus),
@@ -261,6 +262,7 @@ fn system(record: &Object, locus: Locus) -> Events {
         })]),
         "compact_boundary" => Ok(vec![Event::Compaction(Compaction {
             summary: None,
+            boundary: None,
             locus,
         })]),
         "api_error" => {

@@ -971,6 +971,7 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
                 }),
                 listen::Event::Compaction(listen::Compaction {
                     summary: None,
+                    boundary: None,
                     locus,
                 }),
                 listen::Event::Failure(listen::Failure {

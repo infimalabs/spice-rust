@@ -110,6 +110,74 @@ fn terminal_revision_replaces_one_retained_message_and_broadcasts_the_change() {
     bus.shutdown().expect("bus shuts down");
 }
 
+/// Either arrival order leaves the vendor's own record of one compaction.
+///
+/// The captured stream announces a compaction without a vendor timestamp and
+/// the vendor's session file preserves the same compaction with one. Which
+/// record reaches the feed first depends on when the session file is polled,
+/// so the retained view has to settle on the preserved record either way.
+#[test]
+fn a_preserved_compaction_replaces_the_announcement_in_either_arrival_order() {
+    for announcement_first in [true, false] {
+        let bus = fixture(1);
+        let source = Source::new(bus.reader(), epoch(), 10);
+        let publisher = source.message_publisher();
+        let mut announced = message(0xe5, 7);
+        announced.activity = wire::AgentActivityKind::Compaction;
+        announced.text = "Context compacted".to_owned();
+        announced.authored_synthetic = true;
+        announced.boundary = Some(wire::MessageBoundary {
+            id: "cmp_03f3".to_owned(),
+            preserved: false,
+        });
+        let mut preserved = announced.clone();
+        preserved.locus = wire::MessageLocus {
+            member: 0x8000_0000_0000_0001,
+            offset: 44,
+            length: 20,
+            event: 0,
+        };
+        preserved.authored_synthetic = false;
+        preserved.boundary = Some(wire::MessageBoundary {
+            id: "cmp_03f3".to_owned(),
+            preserved: true,
+        });
+        let order = if announcement_first {
+            [announced.clone(), preserved.clone()]
+        } else {
+            [preserved.clone(), announced.clone()]
+        };
+        assert!(
+            publisher
+                .publish(order[0].clone())
+                .expect("first publishes"),
+            "the first record of a compaction enters the view",
+        );
+        assert_eq!(
+            publisher.publish(order[1].clone()),
+            Ok(announcement_first),
+            "only the preserved record changes what the view holds",
+        );
+
+        let (_, frames) = source
+            .begin(
+                &accepted(Actor::Operator),
+                &request(0xc4, vec![ViewSubject::Messages], None),
+            )
+            .expect("message subscription begins");
+        let StreamFrame::Messages { messages, .. } = &frames[0] else {
+            panic!("expected retained message snapshot")
+        };
+        assert_eq!(
+            messages,
+            &[preserved],
+            "one compaction is one boundary, and it is the vendor's own record",
+        );
+        drop(source);
+        bus.shutdown().expect("bus shuts down");
+    }
+}
+
 #[test]
 fn presentation_revision_moves_only_text_and_badges_and_keeps_the_final_state() {
     let bus = fixture(1);

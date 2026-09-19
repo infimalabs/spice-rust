@@ -446,6 +446,18 @@ fn retain_message(
             Err(MessagePublishError::IdentityConflict)
         };
     }
+    if retained
+        .iter()
+        .any(|existing| message.boundary_superseded_by(existing))
+    {
+        return Ok(false);
+    }
+    if let Some(announced) = retained
+        .iter()
+        .position(|existing| existing.boundary_superseded_by(&message))
+    {
+        retained.remove(announced);
+    }
     let visible = visible_message(&message);
     if !visible {
         retained.retain(|existing| existing.lane != message.lane || visible_message(existing));

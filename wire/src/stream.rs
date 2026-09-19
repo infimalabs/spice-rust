@@ -158,6 +158,23 @@ pub struct AutomaticSpeech {
     pub text: String,
 }
 
+/// Vendor identity of the context compaction one boundary card represents.
+///
+/// A compaction is announced once on the captured stream and written again as
+/// the vendor's own preserved session entry. Both records name the same
+/// compaction, so consumers collapse representations that share an `id` into
+/// one boundary and keep the preserved one, which is the representation that
+/// carries the vendor's timestamp and its own record identity.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageBoundary {
+    /// Vendor-authored value naming the exact compaction.
+    pub id: String,
+    /// Whether this card projects the preserved session entry.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub preserved: bool,
+}
+
 impl AgentActivityKind {
     /// Whether this activity belongs in the prose card plane.
     #[must_use]
@@ -272,6 +289,17 @@ pub struct AgentMessage {
     /// preserve the context transition while discarding the unresolved status.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub unavailable_tool_terminals: Vec<String>,
+    /// Vendor identity of the compaction a boundary card represents.
+    ///
+    /// Only compaction activities carry one, and only when the vendor record
+    /// names the compaction. Its absence means this card cannot be reconciled
+    /// against another representation of the same event.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub boundary: Option<MessageBoundary>,
     /// Admitted media carried beside this exact transcript event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<crate::Media>,
@@ -294,6 +322,27 @@ impl AgentMessage {
             .unwrap_or(&self.authored)
             .get()
             .as_millisecond()
+    }
+
+    /// Whether `other` is the preserved record of the same compaction this
+    /// card announces, making this card a duplicate representation.
+    ///
+    /// One compaction reaches Canvas twice: the captured stream announces it
+    /// without a vendor timestamp, and the vendor's own session file preserves
+    /// it with one. Every surface that merges cards applies this same rule, so
+    /// arrival order, paging, reload, and restart all leave one boundary per
+    /// compaction, and the one they leave is the vendor's own record.
+    #[must_use]
+    pub fn boundary_superseded_by(&self, other: &Self) -> bool {
+        match (&self.boundary, &other.boundary) {
+            (Some(announced), Some(preserved)) => {
+                self.lane == other.lane
+                    && preserved.id == announced.id
+                    && preserved.preserved
+                    && !announced.preserved
+            }
+            _ => false,
+        }
     }
 
     /// Total display chronology shared by every message producer and consumer.
@@ -348,6 +397,7 @@ mod message_retention_tests {
             badges: AgentMessageBadges::default(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
+            boundary: None,
             media: Vec::new(),
         }
     }

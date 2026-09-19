@@ -330,6 +330,52 @@ fn session_file_bookkeeping_is_owned_ambiently_and_says_nothing() {
     );
 }
 
+/// Both records of one compaction name the same boundary.
+///
+/// omp announces a compaction on the stream and writes it again into its own
+/// session file. The announcement keeps the compaction's fields under
+/// `result` and states no identity or time of its own; the session entry
+/// repeats those fields beside its own record id and timestamp. A remote
+/// compaction additionally names the provider entry that replaced the
+/// compacted history, and that entry is the strongest identity either record
+/// states.
+#[test]
+fn both_records_of_one_compaction_name_the_same_boundary() {
+    const PRESERVED: &[u8] = br#"{"type":"compaction","id":"k1","parentId":"d1","timestamp":"2026-09-16T06:43:23.000Z","summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000}"#;
+    const LATER: &[u8] = br#"{"type":"auto_compaction_end","action":"context-full","result":{"summary":"so far","firstKeptEntryId":"e9","tokensBefore":910000},"aborted":false,"willRetry":false}"#;
+    const REMOTE: &[u8] = br#"{"type":"auto_compaction_end","action":"remote","result":{"summary":"remote","firstKeptEntryId":"e2","tokensBefore":260848,"preserveData":{"openaiRemoteCompaction":{"version":"v2","replacementHistory":[{"id":"cmp_03f3","type":"compaction"}]}}},"aborted":false,"willRetry":false}"#;
+    const REMOTE_PRESERVED: &[u8] = br#"{"type":"compaction","id":"f6188ab9","parentId":"947360c4","timestamp":"2026-09-19T21:00:53.430Z","summary":"remote","firstKeptEntryId":"e2","tokensBefore":260848,"preserveData":{"openaiRemoteCompaction":{"version":"v2","replacementHistory":[{"id":"cmp_03f3","type":"compaction"}]}}}"#;
+
+    let announced = boundary(COMPACTION);
+    let preserved = boundary(PRESERVED);
+    assert_eq!(announced.id, "kept:e1:900000");
+    assert_eq!(preserved.id, announced.id, "one compaction, one identity");
+    assert!(!announced.preserved);
+    assert!(preserved.preserved, "the session entry is the vendor's own");
+
+    assert_eq!(boundary(REMOTE).id, "cmp_03f3");
+    assert_eq!(boundary(REMOTE_PRESERVED).id, "cmp_03f3");
+    assert!(boundary(REMOTE_PRESERVED).preserved);
+
+    assert_ne!(
+        boundary(LATER).id,
+        announced.id,
+        "a later compaction repeating the summary is its own boundary",
+    );
+}
+
+/// The boundary identity one compaction record states.
+fn boundary(bytes: &[u8]) -> wire::MessageBoundary {
+    let record = decoded(bytes);
+    let [Event::Compaction(compaction)] = record.events() else {
+        panic!("a compaction record decodes to one compaction");
+    };
+    compaction
+        .boundary
+        .clone()
+        .expect("the record names its compaction")
+}
+
 #[test]
 fn partials_are_restated_by_the_frames_that_end_them_and_decode_to_nothing() {
     for partial in [PARTIAL, TOOL_PARTIAL] {
