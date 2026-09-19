@@ -254,7 +254,7 @@ fn render_agent_message_card(
                 {render_agent_message_media(unlinked_media, media_description.as_deref())}
                 {render_agent_message_footer(
                     message,
-                    shown_text,
+                    &shown_text,
                     correspondent,
                     crate::runtime::agent_message_display_millis(message),
                     &footer_label,
@@ -271,7 +271,7 @@ struct AgentMessagePresentation<'a> {
     footer_label: String,
     is_boundary: bool,
     /// The text the card shows; a tool card shows none.
-    shown_text: &'a str,
+    shown_text: std::borrow::Cow<'a, str>,
     rendered_html: Html,
     unlinked_media: Vec<&'a wire::Media>,
     /// What a tool card says about its images in place of its preview line.
@@ -303,8 +303,10 @@ fn agent_message_presentation<'a>(
     let media_description = (is_tool && !message.text.trim().is_empty())
         .then(|| watchband::tool_media_description(&message.text));
     let shown_text = if is_tool { "" } else { message.text.as_str() };
+    let shown_text = wire::media::with_media_payloads(shown_text, &message.media)
+        .expect("message media passed admission before browser rendering");
     let rendered_markdown =
-        crate::composer_markdown::render_received_with_badges(shown_text, badges);
+        crate::composer_markdown::render_received_with_badges(&shown_text, badges);
     let card_label = match message.activity {
         wire::AgentActivityKind::Turn => unreachable!("turn events are not message cards"),
         wire::AgentActivityKind::Compaction => format!("Context compacted by {footer_label}"),
@@ -320,7 +322,7 @@ fn agent_message_presentation<'a>(
         .iter()
         .filter(|media| {
             !media
-                .is_embedded_in(shown_text)
+                .is_embedded_in(&shown_text)
                 .expect("message media passed admission before browser rendering")
         })
         .collect::<Vec<_>>();
