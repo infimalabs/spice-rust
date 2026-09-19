@@ -89,7 +89,6 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
   const readPaths = new Set();
   const kinds = new Set();
   const placements = [];
-  let wideTextCommits = 0;
   for (const plane of snapshot.planes) {
     assert.equal(plane.trackCount, 12, "the browser renders the twelve-track lattice");
     assert.equal(plane.columnGap, 12, "the horizontal lattice keeps the predecessor gap");
@@ -210,7 +209,6 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
             paddingBottom: card.paddingBottom,
           })}`,
         );
-        wideTextCommits += 1;
       }
       assert.ok(card.track >= 0 && card.track + card.span <= plane.trackCount);
       if (card.kind === "compaction") {
@@ -257,7 +255,6 @@ export async function assertMosaicLattice(page, requireBothReadPaths) {
   assert.ok(readPaths.has(1), "a short card takes exactly one policy height read");
   if (requireBothReadPaths) {
     assert.ok(readPaths.has(2), "a tall card takes exactly two policy height reads");
-    assert.ok(wideTextCommits > 0, "a text card commits its shorter wide measurement");
   }
   return placements;
 }

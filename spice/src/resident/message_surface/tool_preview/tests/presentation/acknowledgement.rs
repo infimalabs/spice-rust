@@ -586,7 +586,7 @@ fn live_key_for_another_lane_preserves_the_original_message() {
 }
 
 #[test]
-fn historical_key_is_presented_only_at_its_exact_retirement_locus() {
+fn repeated_acknowledgement_keeps_context_without_reearning_speech() {
     let key = "1kQwPZtK"
         .parse::<steer::Key>()
         .expect("fixture key parses");
@@ -622,8 +622,27 @@ fn historical_key_is_presented_only_at_its_exact_retirement_locus() {
     later.locus = listen::Locus::new(1, 8, 1);
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &directives, later)
-            .expect("historical duplicate remains visible"),
-        text,
+            .expect("repeated acknowledgement presents"),
+        "> [ACK] Keep the original response context.\n\nApplied.",
+    );
+    assert_eq!(
+        message_badges(text, Some(&directives), later).acknowledgements,
+        1,
+    );
+    assert!(
+        automatic_speech::classify(
+            &listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: text.to_owned(),
+                phase: None,
+                media: Vec::new(),
+                locus: later.locus,
+            },
+            Some(&directives),
+            later,
+        )
+        .is_none(),
+        "displaying the retired context does not authorize automatic speech",
     );
 }
 
@@ -679,7 +698,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
         present_steering_acknowledgements_with_directives(text, &directives, event())
             .expect("mixed historical and current keys present"),
         concat!(
-            "> Continue\n\n",
+            "> [ACK] Continue\n\n",
             "> [TASTE] fallbacks: Keep one deterministic path.\n\n",
             "Continuing with the explicit two-context contract only."
         ),
@@ -687,7 +706,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
     assert_eq!(
         message_badges(text, Some(&directives), event()),
         wire::AgentMessageBadges {
-            acknowledgements: 1,
+            acknowledgements: 2,
             tastes: 1,
             broadcasts: 0,
             reviews: 0,

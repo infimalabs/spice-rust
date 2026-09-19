@@ -2,9 +2,9 @@
 //!
 //! An assistant header such as `ACK KEY: applied` presents as the directive it
 //! answers, quoted above the response prose. The quote carries the plain ACK
-//! marker only once the journal retired the key at this event; while the key
-//! is still pending the quote says so, so the Canvas card and the Agents tile
-//! count read the same state.
+//! marker once the journal retired the key in this source, including repeated
+//! responses; while the key is still pending the quote says so. Presentation
+//! never grants a repeated response retirement or automatic-speech authority.
 
 use std::borrow::Cow;
 
@@ -20,11 +20,11 @@ pub(super) fn present_steering_acknowledgements_with_directives(
     let mut cursor = 0;
     let mut changed = false;
     let mut capitalize_body = false;
-    for acknowledgement in steer::ack::scan::scan_acknowledgements(text, &standing) {
+    for acknowledgement in scan_presentations(text, &standing) {
         let separator = acknowledgement.separator;
         let packet = classify_packet(&standing, acknowledgement.recognitions);
-        // Historical keys add display context only when this packet also
-        // carries a retirement authenticated to the current event.
+        // Other historical dispositions add context only alongside a recognized
+        // response; an acknowledged key can present again in its own source.
         if packet.recognized.is_empty() {
             continue;
         }
@@ -76,10 +76,30 @@ pub(super) fn present_steering_acknowledgements_with_directives(
     Ok(rendered)
 }
 
+/// Reuse the protocol scanner with display standing, not retirement authority.
+pub(super) fn scan_presentations(
+    text: &str,
+    standing: &EventDirectives<'_>,
+) -> Vec<steer::ack::scan::Acknowledgement> {
+    steer::ack::scan::scan_acknowledgements(text, &DisplayStanding(standing))
+}
+
+struct DisplayStanding<'a>(&'a EventDirectives<'a>);
+
+impl steer::Standing for DisplayStanding<'_> {
+    fn disposition(&self, key: &steer::Key) -> Option<wire::Disposition> {
+        if self.0.acknowledged_in_source(key) {
+            Some(wire::Disposition::Live)
+        } else {
+            steer::Standing::disposition(self.0, key)
+        }
+    }
+}
+
 /// How one authored directive presents inside an acknowledgement quote.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ContextState {
-    /// Positively acknowledged and retired by the journal at this event.
+    /// Positively acknowledged and retired by the journal in this source.
     Acknowledged,
     /// Positively acknowledged in prose while the journal still holds the key.
     Pending,
@@ -106,7 +126,7 @@ fn classify_packet(
     for recognition in recognitions {
         match recognition.outcome {
             steer::ack::scan::Outcome::Retired { key, disposition }
-                if standing.recognizes(&key, disposition, recognition.locus) =>
+                if standing.presents(&key, disposition, recognition.locus) =>
             {
                 if !packet
                     .recognized
