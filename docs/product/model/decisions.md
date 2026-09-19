@@ -137,7 +137,10 @@ for this derived trigger, not a fourth claim disposition.
 ```mermaid
 flowchart TD
   L["vacant lane"] --> C{"claim disposition<br/>still active?"}
-  C -- yes --> R["launch successor onto the task<br/>same ensure path, no new claim"]
+  C -- yes --> S{"task READY origin<br/>at least 3 seconds old?"}
+  S -- yes --> R["launch successor onto the task<br/>same ensure path, no new claim"]
+  S -- no --> T["arm the existing READY deadline"]
+  T --> S
   C -- no --> A["available-work arm"]
   R --> D["successor decides:<br/>continue, or free the claim"]
 ```
@@ -146,6 +149,14 @@ flowchart TD
 row back if the new process and session are never proven, and releasing this one
 would put a task on the board whose worktree still holds the predecessor
 occupant's uncommitted changes.
+
+**Invariant —** Recovery respects the same three-second minimum from the task's
+durable READY origin. A running agent may claim immediately, but a successor
+cannot start before that origin plus three seconds. Claiming or carrying the
+task does not erase the origin established by its latest release or lapse.
+An already-aged task recovers without a fresh interval; resident restart
+reconstructs the same deadline. Explicit operator direction remains a separate
+message-driven wake.
 
 **Invariant —** Because the arm takes no new work, it applies to **every driven
 lane**, not only those permitted to expand onto the board.

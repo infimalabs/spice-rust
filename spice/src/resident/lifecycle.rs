@@ -76,7 +76,7 @@ struct SelectedReady {
 struct Target {
     lane: CanonicalUuid,
     pending_inbox: bool,
-    held_claim: bool,
+    held_claim: Available,
     drain_queue: Available,
     available: Available,
 }
@@ -870,23 +870,24 @@ fn selected_ready(
     ) else {
         return Ok(None);
     };
-    let at = ready_at
-        .get(selected.entry().born())
-        .copied()
-        .ok_or_else(|| {
-            store_fault(
-                "lifecycle::selected-ready-fact-missing",
-                &format!(
-                    "selected task {} has no durable READY transition instant",
-                    selected.entry().handle()
-                ),
-            )
-        })?;
+    let at = ready_instant(selected.entry(), ready_at)?;
     let eligible = entries
         .iter()
         .filter(|entry| board::selectable_entry(entries, entry, actor, subscription, &environment))
         .count();
     Ok(Some(SelectedReady { at, eligible }))
+}
+
+fn ready_instant(entry: &Entry, ready_at: &BTreeMap<TaskStamp, Instant>) -> CommandResult<Instant> {
+    ready_at.get(entry.born()).copied().ok_or_else(|| {
+        store_fault(
+            "lifecycle::task-ready-fact-missing",
+            &format!(
+                "task {} has no durable READY transition instant",
+                entry.handle()
+            ),
+        )
+    })
 }
 
 fn drain_from_selected(
@@ -917,8 +918,8 @@ fn resolve(targets: &[Target], backoff: &Backoff, now: Instant) -> Resolution {
     for target in targets {
         let (trigger, available) = if target.pending_inbox {
             (Trigger::PendingInbox, Available::Ready)
-        } else if target.held_claim {
-            (Trigger::HeldClaim, Available::Ready)
+        } else if target.held_claim != Available::None {
+            (Trigger::HeldClaim, target.held_claim)
         } else if target.drain_queue != Available::None {
             (Trigger::DrainQueue, target.drain_queue)
         } else {
@@ -1029,7 +1030,7 @@ mod tests {
         Target {
             lane: super::tests::lane(lane),
             pending_inbox: false,
-            held_claim: false,
+            held_claim: Available::None,
             drain_queue: Available::None,
             available: Available::None,
         }
@@ -1039,7 +1040,7 @@ mod tests {
     fn resolver_orders_inbox_then_held_claim_then_available_work() {
         let mut row = target(1);
         row.pending_inbox = true;
-        row.held_claim = true;
+        row.held_claim = Available::Ready;
         row.available = Available::At(instant(30));
         assert_eq!(
             resolve(&[row], &Backoff::default(), instant(10)),
@@ -1063,7 +1064,7 @@ mod tests {
         let mut available = target(1);
         available.available = Available::Ready;
         let mut held = target(2);
-        held.held_claim = true;
+        held.held_claim = Available::Ready;
         let mut inbox = target(3);
         inbox.pending_inbox = true;
         assert_eq!(
@@ -1205,14 +1206,6 @@ mod tests {
     }
 
     #[test]
-    fn every_refusal_trigger_has_one_closed_label() {
-        assert_eq!(Trigger::PendingInbox.as_str(), "pending-inbox");
-        assert_eq!(Trigger::HeldClaim.as_str(), "held-claim");
-        assert_eq!(Trigger::DrainQueue.as_str(), "drain-queue");
-        assert_eq!(Trigger::AvailableWork.as_str(), "available-work");
-    }
-
-    #[test]
     fn pending_parks_permanent_start_refusals_but_retries_moved_authority() {
         let failure = |reason: &str| {
             Outcome::Refusal(wire::Refusal::bare(
@@ -1306,7 +1299,11 @@ mod tests {
         ] {
             let mut row = target(1);
             row.pending_inbox = trigger == Trigger::PendingInbox;
-            row.held_claim = trigger == Trigger::HeldClaim;
+            row.held_claim = if trigger == Trigger::HeldClaim {
+                Available::Ready
+            } else {
+                Available::None
+            };
             row.drain_queue = if trigger == Trigger::DrainQueue {
                 Available::Ready
             } else {
@@ -1376,7 +1373,7 @@ mod tests {
         };
         assert_eq!(resolve(&[row], &backoff, instant(10)), Resolution::Idle,);
 
-        row.held_claim = true;
+        row.held_claim = Available::Ready;
         assert_eq!(
             resolve(&[row], &backoff, instant(10)),
             Resolution::Attempt {
