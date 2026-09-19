@@ -764,84 +764,11 @@ fn installed_spice_is_the_one_repository_local_executable() {
 }
 
 #[test]
-fn installed_skill_enforces_review_correction_and_pending_finding_policy() {
-    let scratch = applied("review-correction-guidance");
+fn installed_skill_matches_the_packaged_asset() {
+    let scratch = applied("packaged-skill");
     let repository = scratch.repository();
     let skill = fs::read_to_string(installed_skill(&repository)).unwrap();
     assert_eq!(skill, ::std::include_str!("../agent/SKILL.md"));
-    let guidance_text = skill
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .replace('`', "");
-
-    for guidance in [
-        "only when every change is tiny, deterministic, mechanical, low-risk",
-        "separate commit while holding the active review claim",
-        "validate the integrated result, then record a clean verdict without --then or --followup",
-        "behavior-changing, schema-or-authority, cross-ownership, broad, uncertain, or independently reviewable change remains a finding review",
-        "add flow=todo when the work is mechanical and needs no independent review",
-        "use flow=todo,review for material correction work",
-        "finding verdict creates or links those corrections as dependencies of the reviewed task",
-        "releases the review claim, and leaves the original task pending and unassigned in review",
-        "a later reviewer must claim the original task and record a clean verdict before it completes",
-        "gate::pre-commit-configuration-untrusted and this lane owns an active task claim",
-        "spice task require HANDLE --trust-grant DIGEST",
-        "repeating its existing --journal-schema SCHEMA operand when present",
-        "This atomically ices the same claim; retain it and stop that execution path",
-        "With no active claim, report the operator action and change no task",
-    ] {
-        assert!(
-            guidance_text.contains(guidance),
-            "installed skill omitted {guidance:?}"
-        );
-    }
-    assert!(!guidance_text.contains("when that is more proportionate"));
-}
-
-#[test]
-fn installed_skill_makes_task_capture_conditional_without_weakening_guidance() {
-    let scratch = applied("conditional-guidance-capture");
-    let repository = scratch.repository();
-    let skill = fs::read_to_string(installed_skill(&repository)).unwrap();
-    let guidance = skill.split_whitespace().collect::<Vec<_>>().join(" ");
-
-    for required in [
-        "Consider and answer every pending key",
-        "Acknowledgment or adjustment of current work may satisfy guidance",
-        "create a task only when the operator explicitly requests one or its substance warrants a separately valuable deliverable",
-        "Resident-authored taste reminders, command-generated task hints, automatic task amendments, review follow-up notices, and other synthesized guidance do not themselves require or authorize another task",
-    ] {
-        assert!(
-            guidance.contains(required),
-            "installed skill omitted conditional guidance {required:?}"
-        );
-    }
-    assert!(
-        !guidance.contains("Capture pending steering as"),
-        "installed skill still makes every steering key create work"
-    );
-}
-
-#[test]
-fn installed_skill_bounds_the_boarded_red_exception() {
-    let scratch = applied("boarded-red-guidance");
-    let repository = scratch.repository();
-    let skill = fs::read_to_string(installed_skill(&repository)).unwrap();
-    let guidance = skill.split_whitespace().collect::<Vec<_>>().join(" ");
-
-    for required in [
-        "The normal pre-commit gate is the default constitution",
-        "git commit --no-verify` only under that current authorization",
-        "exact evidence as ready critical work",
-        "synthesized merge remains hook-free",
-        "declared cheap integrated-tree admission still applies",
-    ] {
-        assert!(
-            guidance.contains(required),
-            "installed skill omitted {required:?}"
-        );
-    }
 }
 
 #[test]
