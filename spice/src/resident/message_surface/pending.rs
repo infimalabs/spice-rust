@@ -34,9 +34,10 @@ impl PendingPresentation {
             directives: directives?,
             event,
         };
-        let keys = answered_keys(text, &standing, wire::Disposition::Acked)
-            .into_iter()
-            .filter(|key| standing.pending(key))
+        let keys = recognized_answers(text, &standing)
+            .filter_map(|(key, disposition)| {
+                (disposition == wire::Disposition::Acked && standing.pending(&key)).then_some(key)
+            })
             .collect::<BTreeSet<_>>();
         (!keys.is_empty()).then(|| Self {
             lane: event.lane,
