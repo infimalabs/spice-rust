@@ -104,6 +104,7 @@ impl MessageCards {
                 .unwrap_or_else(|| Rc::new(message.clone()));
             next.push(retained);
         }
+        reconcile_boundaries(&mut next);
         next.sort_by_key(|message| message.chronology_key());
         trim_all_lanes(&mut next, limit);
         let changed = self.entries != next;
@@ -153,6 +154,7 @@ impl MessageCards {
                 (None, None) => {}
             }
         }
+        mutated |= reconcile_boundaries(&mut self.entries);
         if mutated {
             self.entries.sort_by_key(|message| message.chronology_key());
             if let Some(limit) = self.limit {
@@ -170,6 +172,36 @@ impl MessageCards {
             true
         }
     }
+}
+
+/// Drop each captured announcement whose preserved record is also retained.
+///
+/// The resident already collapses a pair it merges itself, but the two records
+/// reach the browser through different frames: the captured announcement
+/// arrives live while the preserved record arrives with an older page or a
+/// reconnect. The same rule applied here leaves one boundary either way.
+fn reconcile_boundaries(entries: &mut Vec<Rc<AgentMessage>>) -> bool {
+    if !entries.iter().any(|card| card.boundary.is_some()) {
+        return false;
+    }
+    let superseded = entries
+        .iter()
+        .map(|card| {
+            entries
+                .iter()
+                .any(|other| card.boundary_superseded_by(other))
+        })
+        .collect::<Vec<_>>();
+    if !superseded.contains(&true) {
+        return false;
+    }
+    let mut index = 0;
+    entries.retain(|_| {
+        let keep = !superseded[index];
+        index += 1;
+        keep
+    });
+    true
 }
 
 fn trim_all_lanes(messages: &mut Vec<Rc<AgentMessage>>, limit: usize) {
@@ -230,6 +262,7 @@ mod tests {
             badges: Default::default(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
+            boundary: None,
             media: Vec::new(),
         }
     }
@@ -278,6 +311,54 @@ mod tests {
         assert_eq!(
             cards.entries()[0].automatic_speech,
             terminal.automatic_speech
+        );
+    }
+
+    /// A compaction the browser learns about twice renders once.
+    ///
+    /// The captured announcement arrives live while the vendor's preserved
+    /// record of the same compaction arrives with an older page, so the two
+    /// reach the browser as separate cards through separate frames.
+    #[test]
+    fn a_preserved_compaction_replaces_the_announcement_it_duplicates() {
+        let mut announced = message(1, AgentActivityKind::Compaction);
+        announced.authored_synthetic = true;
+        announced.boundary = Some(wire::MessageBoundary {
+            id: "cmp_03f3".to_owned(),
+            preserved: false,
+        });
+        let mut preserved = announced.clone();
+        preserved.locus.member = 0x8000_0000_0000_0001;
+        preserved.authored_synthetic = false;
+        preserved.boundary = Some(wire::MessageBoundary {
+            id: "cmp_03f3".to_owned(),
+            preserved: true,
+        });
+        let mut unpaired = message(2, AgentActivityKind::Compaction);
+        unpaired.text = announced.text.clone();
+        unpaired.boundary = Some(wire::MessageBoundary {
+            id: "cmp_9999".to_owned(),
+            preserved: false,
+        });
+
+        let mut live = MessageCards::default();
+        live.snapshot(10, &[announced.clone(), unpaired.clone()]);
+        assert!(live.merge(std::iter::once(&preserved)));
+        assert_eq!(
+            live.entries()
+                .iter()
+                .map(|entry| entry.boundary.clone())
+                .collect::<Vec<_>>(),
+            [unpaired.boundary.clone(), preserved.boundary.clone()],
+            "the announcement gives way to the preserved record, and an \
+             unrelated compaction repeating its text stays",
+        );
+
+        let mut paged = MessageCards::default();
+        paged.snapshot(10, &[preserved.clone(), unpaired.clone()]);
+        assert!(
+            !paged.merge(std::iter::once(&announced)),
+            "an announcement the preserved record already covers changes nothing",
         );
     }
 

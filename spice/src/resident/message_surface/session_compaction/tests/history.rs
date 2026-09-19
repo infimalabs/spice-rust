@@ -125,6 +125,7 @@ fn page_boundary_marker() -> wire::AgentMessage {
         badges: Default::default(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
+        boundary: None,
         media: Vec::new(),
     }
 }

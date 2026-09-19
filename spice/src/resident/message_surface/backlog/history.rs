@@ -101,12 +101,31 @@ impl HistorySources {
         retain_covered(&mut visible, self.tape.as_ref(), self.session.as_ref());
         visible.sort_by_key(wire::AgentMessage::chronology_key);
         visible.dedup_by(|right, left| right.locus == left.locus);
+        reconcile_boundaries(&mut visible);
         let end = before.map_or(visible.len(), |before| {
             visible.partition_point(|message| message.chronology_key() < before.chronology_key())
         });
         let start = end.saturating_sub(limit);
         (visible[start..end].to_vec(), more || start > 0)
     }
+}
+
+/// Drop each captured announcement whose preserved record this page also
+/// carries, so one compaction is one boundary however the window read it.
+fn reconcile_boundaries(visible: &mut Vec<wire::AgentMessage>) {
+    if !visible.iter().any(|card| card.boundary.is_some()) {
+        return;
+    }
+    let kept = visible
+        .iter()
+        .filter(|card| {
+            !visible
+                .iter()
+                .any(|other| card.boundary_superseded_by(other))
+        })
+        .cloned()
+        .collect();
+    *visible = kept;
 }
 
 fn retain_covered(

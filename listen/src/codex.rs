@@ -28,6 +28,7 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
         "response_item" => rollout_item(record, locus),
         "compacted" => Ok(vec![Event::Compaction(Compaction {
             summary: None,
+            boundary: None,
             locus,
         })]),
         "turn_context" | "world_state" => Ok(Vec::new()),

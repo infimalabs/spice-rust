@@ -798,6 +798,7 @@ fn cover_stream_frames() {
                 },
                 automatic_speech: None,
                 unavailable_tool_terminals: Vec::new(),
+                boundary: None,
                 media: Vec::new(),
             },
             AgentMessage {
@@ -818,6 +819,7 @@ fn cover_stream_frames() {
                 badges: Default::default(),
                 automatic_speech: None,
                 unavailable_tool_terminals: Vec::new(),
+                boundary: None,
                 media: Vec::new(),
             },
             AgentMessage {
@@ -838,6 +840,7 @@ fn cover_stream_frames() {
                 badges: Default::default(),
                 automatic_speech: None,
                 unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
+                boundary: None,
                 media: Vec::new(),
             },
         ],
@@ -981,6 +984,7 @@ fn stream_data_samples(
         badges: Default::default(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
+        boundary: None,
         media: Vec::new(),
     };
     vec![

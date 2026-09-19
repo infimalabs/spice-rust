@@ -323,6 +323,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         badges: Default::default(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
+        boundary: None,
         media: Vec::new(),
     };
     MergedHistoryFixture {
@@ -884,4 +885,161 @@ fn session_history_chains_windows_until_one_request_fills_its_page() {
         "the page ends at the newest compaction",
     );
     fs::remove_dir_all(&root).expect("session horizon fixture cleanup");
+}
+
+/// One compaction both sources recorded is one boundary.
+///
+/// omp announces a compaction on the stream Spice captures and writes it again
+/// into its own session file. Both records state the same vendor identity, so
+/// the merged page keeps the preserved entry, which is the record that carries
+/// the vendor's own timestamp. A compaction only the stream recorded keeps its
+/// announcement even when another compaction repeats its summary.
+#[test]
+fn a_compaction_both_sources_recorded_is_one_preserved_boundary() {
+    let (root, history, lane, future) = paired_boundary_fixture();
+    let page = (0..128)
+        .find_map(|_| {
+            let page = canvas::stream::MessageHistoryProvider::history(
+                &history,
+                lane,
+                Some(&future),
+                canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
+            )
+            .expect("merged history reads")
+            .expect("fixture lane is owned");
+            (!page.messages.is_empty()).then_some(page)
+        })
+        .expect("session authentication settles before the page is served");
+    let boundaries = page
+        .messages
+        .iter()
+        .filter(|message| message.activity == wire::AgentActivityKind::Compaction)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        boundaries.len(),
+        2,
+        "the paired records collapse and the unpaired announcement remains: {boundaries:#?}",
+    );
+    let paired = boundary_card(&boundaries, "kept:e1:900000");
+    assert!(
+        paired.boundary.as_ref().is_some_and(|it| it.preserved),
+        "the vendor's own record represents the compaction it also announced",
+    );
+    assert!(
+        !paired.authored_synthetic,
+        "the preserved record carries the vendor timestamp the announcement lacks",
+    );
+    let unpaired = boundary_card(&boundaries, "kept:e9:910000");
+    assert!(
+        unpaired.boundary.as_ref().is_some_and(|it| !it.preserved),
+        "a compaction only the stream recorded keeps its announcement",
+    );
+    assert_eq!(
+        unpaired.text, paired.text,
+        "the two boundaries are distinguished by identity, not by summary text",
+    );
+    fs::remove_dir_all(root).expect("paired boundary fixture cleanup");
+}
+
+fn boundary_card<'a>(boundaries: &[&'a wire::AgentMessage], id: &str) -> &'a wire::AgentMessage {
+    boundaries
+        .iter()
+        .copied()
+        .find(|message| message.boundary.as_ref().is_some_and(|it| it.id == id))
+        .unwrap_or_else(|| panic!("the page serves boundary {id}: {boundaries:#?}"))
+}
+
+/// A lane whose captured tape and preserved session both recorded one
+/// compaction, beside a second compaction only the tape recorded that repeats
+/// the same summary.
+fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::AgentMessage) {
+    const TAPE: &str = concat!(
+        r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"before"}],"timestamp":1789525452596}}"#,
+        "\n",
+        r#"{"type":"auto_compaction_end","action":"context-full","result":{"summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000},"aborted":false}"#,
+        "\n",
+        r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"between"}],"timestamp":1789525453596}}"#,
+        "\n",
+        r#"{"type":"auto_compaction_end","action":"context-full","result":{"summary":"so far","firstKeptEntryId":"e9","tokensBefore":910000},"aborted":false}"#,
+        "\n",
+        r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"after"}],"timestamp":1789525454596}}"#,
+        "\n",
+    );
+    const SESSION: &str = concat!(
+        r#"{"type":"session","version":3,"id":"01a0a807-666f-7524-be0d-2ee476b6c15c","timestamp":"2026-09-16T02:24:12.399Z","cwd":"/work/tree"}"#,
+        "\n",
+        r#"{"type":"compaction","id":"k1","parentId":"d1","timestamp":"2026-09-16T06:43:23.000Z","summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000}"#,
+        "\n",
+    );
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "spice-backlog-paired-boundary-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
+    let tape_root = root.join("tape");
+    let session_path = root.join("session.jsonl");
+    fs::create_dir_all(&root).expect("paired fixture root exists");
+    let tape = tape::Tape::open(&tape_root).expect("paired tape opens");
+    tape.tee(TAPE.as_bytes()).expect("paired tape is durable");
+    fs::write(&session_path, SESSION).expect("preserved session is durable");
+    let lane: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e5"
+        .parse()
+        .expect("fixture lane");
+    let author: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163ef"
+        .parse()
+        .expect("fixture author");
+    let source_end = listen::scan(&tape_root, listen::Dialect::Omp, None)
+        .expect("paired tape scans")
+        .checkpoint;
+    let session_source = session_compaction::history_checkpoint(&session_path)
+        .expect("preserved session checkpoint reads");
+    let history = DurableHistory {
+        lanes: BTreeMap::from([(
+            lane,
+            DurableLane {
+                tape: tape_root,
+                worktree: root.join("worktree"),
+                dialect: listen::Dialect::Omp,
+                author,
+                source: Some(source_end.clone()),
+                session: Some(DurableSession {
+                    path: session_path,
+                    worktree: root.join("worktree"),
+                    dialect: listen::Dialect::Omp,
+                    thread: "01a0a807-666f-7524-be0d-2ee476b6c15c".to_owned(),
+                    source: session_source,
+                }),
+            },
+        )]),
+        continuations: Mutex::new(HashMap::new()),
+        hydration: Mutex::new(Hydration::default()),
+        bus: None,
+        steering: PresentationDirectives::default(),
+        worktrees: SessionWorktrees::default(),
+    };
+    let future = wire::AgentMessage {
+        lane,
+        author,
+        locus: wire::MessageLocus {
+            member: source_end.next.member,
+            offset: source_end.next.offset,
+            length: 0,
+            event: 0,
+        },
+        authored: "2031-04-12T18:44:09.271Z"
+            .parse()
+            .expect("future fixture instant"),
+        authored_synthetic: false,
+        observed: None,
+        activity: wire::AgentActivityKind::Prose,
+        final_answer: false,
+        text: "future".to_owned(),
+        badges: Default::default(),
+        automatic_speech: None,
+        unavailable_tool_terminals: Vec::new(),
+        boundary: None,
+        media: Vec::new(),
+    };
+    (root, history, lane, future)
 }

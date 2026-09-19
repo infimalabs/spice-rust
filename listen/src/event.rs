@@ -235,6 +235,12 @@ pub struct Usage {
 pub struct Compaction {
     /// Vendor-provided summary when this record carries one.
     pub summary: Option<String>,
+    /// Vendor identity of the compaction, when the record names one.
+    ///
+    /// The captured stream announcement and the preserved session entry are
+    /// two records of one compaction. This identity is what lets a consumer
+    /// recognize the pair instead of comparing summary text.
+    pub boundary: Option<wire::MessageBoundary>,
     /// Source bytes.
     pub locus: Locus,
 }
