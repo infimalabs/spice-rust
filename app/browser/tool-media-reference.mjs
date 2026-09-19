@@ -261,15 +261,15 @@ export async function assertRuntimeToolMediaCards(
       state: "loaded",
       unique: 1,
     };
-    await chooseCanvasView(page, "Flow");
+    await chooseCanvasView(page, "Work");
     const injected = await activityReplay.injectAgentToolMediaHistory(
       page,
       lane,
       expected.media,
       expected.text,
     );
-    await chooseCanvasView(page, "Lanes");
-    await console.getByRole("tab", { name: /^Agents/ }).click();
+    await chooseCanvasView(page, "Chat");
+    await console.getByRole("tab", { name: /^Chat/ }).click();
     const card = console.locator(`[data-mosaic-card-key="${injected.key}"]`);
     await waitForImages(page, injected.key, expected.state);
     retained.push({
@@ -281,8 +281,8 @@ export async function assertRuntimeToolMediaCards(
 
   if (reconnect) {
     await page.reload({ waitUntil: "networkidle" });
-    await chooseCanvasView(page, "Lanes");
-    await console.getByRole("tab", { name: /^Agents/ }).click();
+    await chooseCanvasView(page, "Chat");
+    await console.getByRole("tab", { name: /^Chat/ }).click();
     await assertRetained(console, retained, `${label} reconnect snapshot`);
   }
   return retained;

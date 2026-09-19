@@ -101,9 +101,9 @@ export async function assertOmpEmblemRoles(page, fixture, worktrees, seeded, art
   }
 
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
+  await chooseCanvasView(page, "Chat");
   const console_ = page.locator('[data-pane="agent-console"]');
-  await console_.getByRole("tab", { name: /^Agents/ }).click();
+  await console_.getByRole("tab", { name: /^Chat/ }).click();
   const member = (lane) => console_.locator(`.team-agent[data-agent-lane="${lane}"]`);
   for (const lane of [knownLane, unknownLane]) {
     await waitForLocator(page, "an oh-my-pi seat renders its composer emblem", CONNECT_MS,

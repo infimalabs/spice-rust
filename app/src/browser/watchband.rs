@@ -160,7 +160,7 @@ fn render_compose(
     controls: &view::AgentControls,
 ) -> Html {
     if team.members.is_empty() {
-        return empty("No agents are assigned. Open Team to add one.");
+        return empty("No agents are assigned. Open Info to add one.");
     }
     let authoritative_life = team.subscription;
     let control = team_controls.current(team.lane, authoritative_life);
@@ -389,14 +389,14 @@ fn render_details(
     html! {
         <div class={classes!(
             "team-detail-pane",
-            (mode == TeamMode::Team).then_some("with-seat")
+            (mode == TeamMode::Info).then_some("with-seat")
         )}>
             <div class="team-detail-grid">
                 {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
                     render_agent_details(member, standing, mode)
                 })}
             </div>
-            if mode == TeamMode::Team {
+            if mode == TeamMode::Info {
                 {view::render_seat_panel(Some(runtime), controls)}
             }
         </div>
@@ -576,7 +576,7 @@ fn render_agent_details(
                 <span>{standing.vendor.clone()}</span>
             </header>
             {match mode {
-                TeamMode::Team => html! {
+                TeamMode::Info => html! {
                     <dl>
                         <div><dt>{"Agent channel"}</dt><dd>{standing.lane.to_string()}</dd></div>
                         <div><dt>{"Occupant"}</dt><dd>{occupant}</dd></div>
@@ -601,7 +601,7 @@ fn render_agent_details(
                         })}
                     </dl>
                 },
-                TeamMode::Lanes | TeamMode::Tasks => Html::default(),
+                TeamMode::Chat | TeamMode::Work => Html::default(),
             }}
         </article>
     }

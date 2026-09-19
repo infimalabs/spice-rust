@@ -1,4 +1,4 @@
-//! Lanes-page team content for the global Spice menu.
+//! Chat-page team content for the global Spice menu.
 
 use web_sys::DragEvent;
 
@@ -25,7 +25,7 @@ pub(super) fn render(
     if !mosaic {
         return render_axis(active_axis, axis_count, runtime, context);
     }
-    render_lanes(runtime, context)
+    render_chat(runtime, context)
 }
 
 fn render_axis(
@@ -37,15 +37,15 @@ fn render_axis(
     let (noun, description) = match axis {
         Axis::Flow => (
             "active tasks",
-            "Board follows ready, active, deferred, and completed work across projects.",
+            "Work follows ready, active, deferred, and completed work across projects.",
         ),
         Axis::Topology => (
             "teams",
-            "Team connects resident teams, seats, capabilities, and current ownership.",
+            "Info connects resident teams, seats, capabilities, and current ownership.",
         ),
     };
     html! {
-        <div class="canvas-menu-page" data-menu-page={axis.as_str()}>
+        <div class="canvas-menu-page" data-menu-page={super::axis_label(axis)}>
             {render_global_settings(runtime, context.sender)}
             <section class="canvas-menu-section canvas-menu-context">
                 <h2>{super::axis_label(axis)}</h2>
@@ -60,10 +60,10 @@ fn render_axis(
     }
 }
 
-fn render_lanes(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
+fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
     let Some(runtime) = runtime else {
         return html! {
-            <div class="canvas-menu-page" data-menu-page="lanes">
+            <div class="canvas-menu-page" data-menu-page="Chat">
                 {render_global_settings(None, context.sender)}
                 <p>{"Waiting for resident teams…"}</p>
                 {render_version_footer(context.cursor, context.identity, context.update)}
@@ -72,7 +72,7 @@ fn render_lanes(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html 
     };
     let Some(lanes) = runtime.lanes() else {
         return html! {
-            <div class="canvas-menu-page" data-menu-page="lanes">
+            <div class="canvas-menu-page" data-menu-page="Chat">
                 {render_global_settings(Some(runtime), context.sender)}
                 <p>{"Waiting for agent state…"}</p>
                 {render_version_footer(context.cursor, context.identity, context.update)}
@@ -108,7 +108,7 @@ fn render_lanes(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html 
         team_controls: context.team_controls,
     };
     html! {
-        <div class="canvas-menu-page" data-menu-page="lanes">
+        <div class="canvas-menu-page" data-menu-page="Chat">
             {render_global_settings(Some(runtime), context.sender)}
             <section class="canvas-menu-section canvas-open-teams">
                 <h2>{"Open Team"}</h2>

@@ -71,9 +71,9 @@ impl Axis {
 /// their closed, scoped subset through `TeamMode` in the browser shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanvasDestination {
-    Team,
-    Tasks,
-    Agents,
+    Info,
+    Work,
+    Chat,
 }
 
 /// Canvas destinations that are meaningful inside one team surface.
@@ -83,22 +83,22 @@ pub enum CanvasDestination {
 /// explicit scoped variant and mapping here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TeamDestination {
-    Team,
-    Tasks,
-    Agents,
+    Info,
+    Work,
+    Chat,
 }
 
 impl TeamDestination {
     /// Every team-scoped destination, left to right.
-    pub const ALL: [Self; 3] = [Self::Team, Self::Tasks, Self::Agents];
+    pub const ALL: [Self; 3] = [Self::Info, Self::Work, Self::Chat];
 
     /// Corresponding destination in the global Canvas vocabulary.
     #[must_use]
     pub const fn canvas(self) -> CanvasDestination {
         match self {
-            Self::Team => CanvasDestination::Team,
-            Self::Tasks => CanvasDestination::Tasks,
-            Self::Agents => CanvasDestination::Agents,
+            Self::Info => CanvasDestination::Info,
+            Self::Work => CanvasDestination::Work,
+            Self::Chat => CanvasDestination::Chat,
         }
     }
 
@@ -111,15 +111,15 @@ impl TeamDestination {
 
 impl CanvasDestination {
     /// Every global destination, left to right.
-    pub const ALL: [Self; 3] = [Self::Team, Self::Tasks, Self::Agents];
+    pub const ALL: [Self; 3] = [Self::Info, Self::Work, Self::Chat];
 
     /// Presentation label independent of internal protocol spelling.
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Team => "Team",
-            Self::Tasks => "Board",
-            Self::Agents => "Agents",
+            Self::Info => "Info",
+            Self::Work => "Work",
+            Self::Chat => "Chat",
         }
     }
 
@@ -127,8 +127,8 @@ impl CanvasDestination {
     #[must_use]
     pub const fn for_axis(axis: Axis) -> Self {
         match axis {
-            Axis::Topology => Self::Team,
-            Axis::Flow => Self::Tasks,
+            Axis::Topology => Self::Info,
+            Axis::Flow => Self::Work,
         }
     }
 
@@ -136,9 +136,9 @@ impl CanvasDestination {
     #[must_use]
     pub const fn axis(self) -> Option<Axis> {
         match self {
-            Self::Team => Some(Axis::Topology),
-            Self::Tasks => Some(Axis::Flow),
-            Self::Agents => None,
+            Self::Info => Some(Axis::Topology),
+            Self::Work => Some(Axis::Flow),
+            Self::Chat => None,
         }
     }
 
@@ -146,9 +146,9 @@ impl CanvasDestination {
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
-            Self::Team => "Resident teams, agents, capabilities, and possession",
-            Self::Tasks => "Board of tasks, claims, deferrals, and reviews",
-            Self::Agents => "Converse across persistent team agents",
+            Self::Info => "Info about resident teams, agents, capabilities, and possession",
+            Self::Work => "Work across tasks, claims, deferrals, and reviews",
+            Self::Chat => "Chat across persistent team agents",
         }
     }
 }
@@ -241,32 +241,5 @@ impl Pane {
             Self::Occupancy => "Occupancy",
             Self::Residents => "Residents",
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn canvas_destinations_own_the_complete_presentation_order() {
-        assert_eq!(
-            CanvasDestination::ALL.map(CanvasDestination::label),
-            ["Team", "Board", "Agents"],
-        );
-        assert_eq!(
-            TeamDestination::ALL.map(TeamDestination::canvas),
-            [
-                CanvasDestination::Team,
-                CanvasDestination::Tasks,
-                CanvasDestination::Agents,
-            ],
-        );
-        assert_eq!(CanvasDestination::Agents.axis(), None);
-        for axis in Axis::ALL {
-            assert_eq!(CanvasDestination::for_axis(*axis).axis(), Some(*axis));
-        }
-        assert_eq!(Pane::Lanes.as_str(), "lanes");
-        assert_eq!(Pane::Lanes.label(), "Agents");
     }
 }

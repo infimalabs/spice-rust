@@ -1135,8 +1135,8 @@ export async function assertComposerShards({
   );
   assert.equal(
     await console.locator(".team-pane").getAttribute("data-team-mode"),
-    "Lanes",
-    "the agent drawer does not switch the team pane to its Team mode",
+    "Chat",
+    "the agent drawer does not switch the team pane to Info",
   );
   assert.equal(await console.locator(".team-detail-pane").count(), 0);
   await drawerToggle.click();

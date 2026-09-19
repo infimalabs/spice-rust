@@ -121,7 +121,7 @@ export async function assertHandshakeTimeout(browser, residentEndpoint) {
       })
       .catch((error) => ({ error }));
     await page.getByLabel("Open Spice Canvas menu").waitFor();
-    await chooseCanvasView(page, "Flow");
+    await chooseCanvasView(page, "Work");
     await new Promise(setImmediate);
     assert.equal(first.closed, false, "the stalled Fetch stays open before its deadline advances");
     assert.equal(attempts.length, 1, "no retry starts before the first deadline advances");

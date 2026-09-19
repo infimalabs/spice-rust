@@ -221,7 +221,7 @@ async function touchJoinTeam(page, fixture, dragged, target) {
 /// Dragging a team reorders teams; dropping on an edge joins them.
 export async function assertTeamArrangement(page, fixture, worktrees, artifacts) {
   const agents = page.locator('[data-pane="agent-console"]');
-  await agents.getByRole("tab", { name: /^Agents/ }).first().click();
+  await agents.getByRole("tab", { name: /^Chat/ }).first().click();
   const seated = durableTeams((await reply(fixture, ["lane"])).body.lanes);
   assert.equal(seated.length, 2, "arranging teams needs two durable teams");
   const [primary, secondary] = seated;
@@ -343,11 +343,11 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
     `.team-surface[data-team="${secondary.team}"]`,
   );
   const selectedMode = (surface) => surface.locator(".team-pane").getAttribute("data-team-mode");
-  await primarySurface.getByRole("tab", { name: /^Board/ }).click();
-  await secondarySurface.getByRole("tab", { name: /^Team/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Work/ }).click();
+  await secondarySurface.getByRole("tab", { name: /^Info/ }).click();
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(secondarySurface)],
-    ["Tasks", "Team"],
+    ["Work", "Info"],
     "the teams hold distinct views immediately before one team retires",
   );
 
@@ -375,16 +375,16 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
   );
   assert.equal(
     await selectedMode(primarySurface),
-    "Tasks",
+    "Work",
     "retiring a sibling preserves the surviving team's selected view",
   );
-  await primarySurface.getByRole("tab", { name: /^Agents/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Chat/ }).click();
   assert.deepEqual(
     await renderedTeams(agents),
     [{ team: primary.team, lanes: [...primary.lanes, ...secondary.lanes] }],
     "the canvas draws one team whose first composer never moved",
   );
-  await primarySurface.getByRole("tab", { name: /^Board/ }).click();
+  await primarySurface.getByRole("tab", { name: /^Work/ }).click();
 
   await reply(fixture, [
     "lane", "add", worktrees[5],
@@ -398,7 +398,7 @@ export async function assertTeamArrangement(page, fixture, worktrees, artifacts)
   await recreatedSurface.waitFor({ timeout: TRANSITION_MS });
   assert.deepEqual(
     [await selectedMode(primarySurface), await selectedMode(recreatedSurface)],
-    ["Tasks", "Lanes"],
+    ["Work", "Chat"],
     "a recreated team starts clean instead of reviving its retired view state",
   );
   await page.evaluate(() => {

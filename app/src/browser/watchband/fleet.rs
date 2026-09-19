@@ -31,29 +31,29 @@ pub(super) fn carries_team(transfer: &web_sys::DataTransfer) -> bool {
         .any(|media| media.as_string().as_deref() == Some(TEAM_DRAG_MEDIA))
 }
 
-/// The four one-click views of one live team.
+/// The three one-click views of one live team.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::browser) enum TeamMode {
-    Team,
-    Tasks,
+    Info,
+    Work,
     #[default]
-    Lanes,
+    Chat,
 }
 
 impl TeamMode {
     pub(super) const fn key(self) -> &'static str {
         match self {
-            Self::Team => "Team",
-            Self::Tasks => "Tasks",
-            Self::Lanes => "Lanes",
+            Self::Info => "Info",
+            Self::Work => "Work",
+            Self::Chat => "Chat",
         }
     }
 
     const fn from_destination(destination: TeamDestination) -> Self {
         match destination {
-            TeamDestination::Team => Self::Team,
-            TeamDestination::Tasks => Self::Tasks,
-            TeamDestination::Agents => Self::Lanes,
+            TeamDestination::Info => Self::Info,
+            TeamDestination::Work => Self::Work,
+            TeamDestination::Chat => Self::Chat,
         }
     }
 }
@@ -98,11 +98,11 @@ pub(super) fn render_empty_fleet(
                 )}
                 <div class="team-pane" data-team-mode={mode.key()}>
                     {match mode {
-                        TeamMode::Lanes => {
-                            empty("No agents are assigned. Open Team to add one.")
+                        TeamMode::Chat => {
+                            empty("No agents are assigned. Open Info to add one.")
                         }
-                        TeamMode::Tasks => render_tasks(runtime, &empty_team, &[]),
-                        TeamMode::Team => {
+                        TeamMode::Work => render_tasks(runtime, &empty_team, &[]),
+                        TeamMode::Info => {
                             render_details(runtime, &empty_team, &[], mode, controls)
                         }
                     }}
@@ -163,10 +163,10 @@ pub(super) fn render_populated_fleet(
                         <div class="team-pane" data-team-mode={mode.key()}>
                             <div
                                 class="team-mode-pane"
-                                data-mode="Lanes"
-                                data-active={(mode == TeamMode::Lanes).to_string()}
-                                aria-hidden={(mode != TeamMode::Lanes).to_string()}
-                                inert={(mode != TeamMode::Lanes).then_some("true")}
+                                data-mode="Chat"
+                                data-active={(mode == TeamMode::Chat).to_string()}
+                                aria-hidden={(mode != TeamMode::Chat).to_string()}
+                                inert={(mode != TeamMode::Chat).then_some("true")}
                             >
                                 {render_compose(
                                     render.runtime,
@@ -184,7 +184,7 @@ pub(super) fn render_populated_fleet(
                                     render.controls,
                                 )}
                             </div>
-                            if mode != TeamMode::Lanes {
+                            if mode != TeamMode::Chat {
                                 <div
                                     class="team-mode-pane"
                                     data-mode={mode.key()}
@@ -192,19 +192,19 @@ pub(super) fn render_populated_fleet(
                                     aria-hidden="false"
                                 >
                                     {match mode {
-                                        TeamMode::Tasks => render_tasks(
+                                        TeamMode::Work => render_tasks(
                                             render.runtime,
                                             team,
                                             &team_standings,
                                         ),
-                        TeamMode::Team => render_details(
+                        TeamMode::Info => render_details(
                                             render.runtime,
                                             team,
                                             &team_standings,
                                             mode,
                                             render.controls,
                                         ),
-                                        TeamMode::Lanes => Html::default(),
+                                        TeamMode::Chat => Html::default(),
                                     }}
                                 </div>
                             }
@@ -368,14 +368,14 @@ fn render_empty_toolbar(
             <button
                 class="team-menu"
                 type="button"
-                aria-label="Team and agent details"
-                title="Team and agent details"
+                aria-label="Info about team and agents"
+                title="Info about team and agents"
                 onclick={{
                     let choose = team_controls.clone();
                     Callback::from(move |_| {
                         choose.dispatch(TeamControlAction::SetMode {
                             team: None,
-                            mode: TeamMode::Team,
+                            mode: TeamMode::Info,
                         });
                     })
                 }}
@@ -551,12 +551,12 @@ fn team_arrangement_key(
 
 fn mode_badge(mode: TeamMode, standings: &[Standing]) -> Option<String> {
     let count = match mode {
-        TeamMode::Lanes => standings.iter().map(|standing| standing.pending).sum(),
-        TeamMode::Tasks => standings
+        TeamMode::Chat => standings.iter().map(|standing| standing.pending).sum(),
+        TeamMode::Work => standings
             .iter()
             .filter(|standing| standing.handle.is_some())
             .count(),
-        TeamMode::Team => standings.len(),
+        TeamMode::Info => standings.len(),
     };
     watchband::badge(count)
 }

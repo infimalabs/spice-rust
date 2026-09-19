@@ -93,7 +93,7 @@ async function assertAgentHistoryDepth(plane, lanes, minimum) {
 }
 
 async function readTeamWorktrees(console) {
-  await console.getByRole("tab", { name: /^Team/ }).click();
+  await console.getByRole("tab", { name: /^Info/ }).click();
   const cards = console.locator(".team-detail-card");
   await cards.nth(3).waitFor();
   const worktrees = await cards.evaluateAll((elements) => elements.map((card) => {
@@ -105,7 +105,7 @@ async function readTeamWorktrees(console) {
   assert.equal(worktrees.length, 4, "the progressive team exposes four fixture worktrees");
   assert.ok(worktrees.every((worktree) => worktree.startsWith("/")),
     "each progressive fixture worktree is an absolute path");
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await console.getByRole("tab", { name: /^Chat/ }).click();
   return worktrees;
 }
 
@@ -361,9 +361,9 @@ export async function assertStagedMosaicHydration(
   await waitForReady(page, "the integrated hydration viewport restores");
 
   const hiddenProbe = await armPlacementProbe(plane);
-  await surface.getByRole("tab", { name: /^Board/ }).click();
+  await surface.getByRole("tab", { name: /^Work/ }).click();
   history.sendLive();
-  await surface.getByRole("tab", { name: /^Agents/ }).click();
+  await surface.getByRole("tab", { name: /^Chat/ }).click();
   await waitForCard(page, history.keys.live, "live work received while Lanes is hidden appears");
   const revealed = await finishPlacementProbe(plane, hiddenProbe);
   assertPlacementStable(hiddenProbe, revealed, "the hidden live append reveal");
@@ -446,12 +446,12 @@ export async function assertStagedMosaicHydration(
   await replayPage.reload({ waitUntil: "networkidle" });
   const reloadGeneration = await history.waitForSocketAfter(openedGeneration);
   await history.waitForServerSnapshot(reloadGeneration);
-  await chooseCanvasView(replayPage, "Lanes");
+  await chooseCanvasView(replayPage, "Chat");
   const replayTeam = replayPage.locator('[data-pane="agent-console"]');
   const restoredSurface = replayTeam.locator(
     `.team-surface[data-team="${team}"]`,
   );
-  await restoredSurface.getByRole("tab", { name: /^Agents/ }).click();
+  await restoredSurface.getByRole("tab", { name: /^Chat/ }).click();
   history.sendHeads("reload", history.lanes, reloadGeneration);
   const reloadRequests = await history.waitForRequests(
     history.lanes, reloadGeneration, reloadRequestStart,

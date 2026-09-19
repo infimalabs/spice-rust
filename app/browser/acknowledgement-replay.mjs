@@ -98,8 +98,8 @@ export async function assertExternalOperatorReplay(page, fixture, console, lane,
   await assertOperatorProseHidden(console, replyText, "external live steering");
 
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await chooseCanvasView(page, "Chat");
+  await console.getByRole("tab", { name: /^Chat/ }).click();
   await assertOperatorProseHidden(console, replyText, "pre-acknowledgement replay");
 
   await writeFile(join(worktree, ".spice-ack-trigger"), `${sent.body.key}\n`);
@@ -248,8 +248,8 @@ export async function assertExternalOperatorReplay(page, fixture, console, lane,
       && element.dataset.measurementPending === "0";
   });
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Agents/ }).click();
+  await chooseCanvasView(page, "Chat");
+  await console.getByRole("tab", { name: /^Chat/ }).click();
   await acknowledgedCard.waitFor({ timeout: CONNECT_MS });
   assert.equal(await acknowledgedCard.count(), 1, "bootstrap restores one acknowledged assistant card");
   assert.deepEqual(

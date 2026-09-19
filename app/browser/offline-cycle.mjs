@@ -28,9 +28,9 @@
 /// justified against the distribution of the thing it bounds.
 ///
 /// Usage: node app/browser/offline-cycle.mjs [--iterations N] [--bound MS]
-///                                           [--view Lanes|Flow|Topology]
+///                                           [--view Chat|Work|Info]
 ///
-/// The reported incident was a wait pointed at Lanes while the status lived in
+/// The reported incident was a wait pointed at Chat while the status lived in
 /// the analytics topbar the mosaic never rendered; the status is now command
 /// bar chrome in every view, so `--view` selects which layout's flip is timed.
 
@@ -56,13 +56,13 @@ import {
 
 /// The views the cycle can be pointed at, which is the whole set the canvas has.
 ///
-/// `Lanes` is the mosaic and is the reason this is an option at all: until
+/// `Chat` is the mosaic and is the reason this is an option at all: until
 /// BROWSER-dStDhMQS1 the topbar carrying `.status` rendered only outside the
 /// mosaic, so a cycle pointed there waited for an element that was not in the
 /// document, which is what proved the reported failure was a deaf wait rather
 /// than a slow transition. The status is command bar chrome in every view now,
-/// so a cycle pointed at Lanes times the flip the live team view shows.
-const VIEWS = ["Lanes", "Flow", "Topology"];
+/// so a cycle pointed at Chat times the flip the live team view shows.
+const VIEWS = ["Chat", "Work", "Info"];
 
 function argument(name) {
   const index = process.argv.indexOf(name);
@@ -76,7 +76,7 @@ function refuse(name, raw, expected) {
 
 /// Read a numeric option, refusing anything that would silently measure nothing.
 ///
-/// `Number(undefined)` and `Number("Lanes")` are both NaN, and a NaN iteration
+/// `Number(undefined)` and `Number("Chat")` are both NaN, and a NaN iteration
 /// count makes the loop body unreachable while the closing comparison of zero
 /// passes against zero results still exits 0. A harness whose entire product is
 /// a pass rate must not be able to report success having run no cycles, so an
@@ -100,7 +100,7 @@ function viewOption(name, fallback) {
 
 const iterations = numericOption("--iterations", 20);
 const bound = numericOption("--bound", 10_000);
-const view = viewOption("--view", "Flow");
+const view = viewOption("--view", "Work");
 
 /// Time one transition, carrying the instrument's view out when it never lands.
 ///

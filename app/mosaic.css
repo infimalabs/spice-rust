@@ -466,7 +466,7 @@
   opacity: 1;
   pointer-events: auto;
 }
-.team-mode-pane[data-mode="Lanes"] { overflow: hidden; }
+.team-mode-pane[data-mode="Chat"] { overflow: hidden; }
 .team-pane > .empty { flex: 1 1 auto; }
 
 .team-compose {

@@ -630,17 +630,12 @@ export const CONNECT_MS = HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
 export const RECONNECT_MS = RECONNECT_BASE_MS + HANDSHAKE_TIMEOUT_MS + RENDER_SLACK_MS;
 
 export async function chooseCanvasView(page, name) {
-  const visibleName = {
-    Flow: "Board",
-    Topology: "Team",
-    Lanes: "Agents",
-  }[name] ?? name;
   const navigation = page.getByRole("navigation", { name: "Canvas views" });
   if (!(await navigation.isVisible())) {
     await page.getByLabel("Open Spice Canvas menu").click();
   }
   const button = navigation.getByRole("button", {
-    name: new RegExp(`^${visibleName}(?:\\s|$)`),
+    name: new RegExp(`^${name}(?:\\s|$)`),
   });
   await button.click();
   const openMenu = page.locator(".canvas-menu[open]");
@@ -649,9 +644,9 @@ export async function chooseCanvasView(page, name) {
   }
   // The destination button leaves the DOM when selection closes the disclosure,
   // so observe the durable destination rather than an ephemeral selected pill.
-  const applied = visibleName === "Agents"
+  const applied = name === "Chat"
     ? page.locator('.mosaic-workspace[data-active="true"]')
-    : page.locator(".page-heading h1", { hasText: visibleName });
+    : page.locator(".page-heading h1", { hasText: name });
   await applied.waitFor({ timeout: TRANSITION_MS });
 }
 

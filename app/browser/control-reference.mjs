@@ -1195,8 +1195,8 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
   assert.equal(await renew.isVisible(), false, "renewal hides again when its drawer closes");
 
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
-  await surface.getByRole("tab", { name: /^Agents/ }).click();
+  await chooseCanvasView(page, "Chat");
+  await surface.getByRole("tab", { name: /^Chat/ }).click();
   const restoredRenew = surface.locator(
     `.agent-renew-request[data-renewal-lane="${renewalLane}"]`,
   );
@@ -1229,8 +1229,8 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
   await assertRenewalClaimUnchanged(fixture, renewalLane, surface, claim, "cancel");
 
   await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
-  await surface.getByRole("tab", { name: /^Agents/ }).click();
+  await chooseCanvasView(page, "Chat");
+  await surface.getByRole("tab", { name: /^Chat/ }).click();
   const canceledRenew = surface.locator(
     `.agent-renew-request[data-renewal-lane="${renewalLane}"]`,
   );
@@ -1246,7 +1246,7 @@ export async function assertAgentRenewalRequest(page, surface, fixture) {
 }
 
 async function claimRenewalWitness(fixture, lane, surface) {
-  const taskTab = surface.getByRole("tab", { name: /^Board/ });
+  const taskTab = surface.getByRole("tab", { name: /^Work/ });
   const badge = taskTab.locator(".team-mode-badge");
   const priorCount = await badge.count() === 0 ? 0 : Number(await badge.innerText());
   assert.ok(Number.isInteger(priorCount), "renewal fixture reads the prior task badge");
@@ -1269,7 +1269,7 @@ async function claimRenewalWitness(fixture, lane, surface) {
         `.team-surface[data-team="${team}"] [role="tab"]`,
       );
       const tasks = [...tabs].find(
-        (tab) => tab.querySelector(".team-mode-label")?.textContent === "Board",
+        (tab) => tab.querySelector(".team-mode-label")?.textContent === "Work",
       );
       return Number(tasks?.querySelector(".team-mode-badge")?.textContent) === expected;
     },
@@ -1319,7 +1319,7 @@ async function assertRenewalClaimUnchanged(fixture, lane, surface, expected, lab
     `${label} preserves task phase, expiry, claimed fact, and source provenance`,
   );
   assert.equal(
-    Number(await surface.getByRole("tab", { name: /^Board/ })
+    Number(await surface.getByRole("tab", { name: /^Work/ })
       .locator(".team-mode-badge").innerText()),
     expected.badge,
     `${label} preserves the active-task badge count`,
