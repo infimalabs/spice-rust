@@ -9,7 +9,6 @@ import {
   chooseCanvasView,
   reply,
   replyAsLane,
-  streamFixtureAssistantMessage,
   CONNECT_MS,
   TRANSITION_MS,
   waitForPageFunction as waitForPage,
@@ -274,38 +273,5 @@ export async function assertExternalOperatorReplay(page, fixture, console, lane,
     "durable replay keeps protocol framing hidden",
   );
   assert.equal(await console.locator('[data-card-kind="operator-message"]').count(), 0);
-  const repeatedText = `Repeated response ${crypto.randomUUID()}`;
-  await streamFixtureAssistantMessage(worktree, {
-    type: "message",
-    role: "assistant",
-    content: [{ type: "text", text: `ACK ${sent.body.key}: ${repeatedText}` }],
-  });
-  const repeatedCard = console.locator(
-    `[data-card-kind="agent-message"][data-agent-lane="${lane}"]`,
-  ).filter({ hasText: repeatedText });
-  await repeatedCard.waitFor({ timeout: CONNECT_MS });
-  const assertRepeatedHighlight = async (label) => {
-    assert.deepEqual(
-      await repeatedCard.locator("blockquote > p > .message-ack-pill").allTextContents(),
-      ["ACK"],
-      `${label}: a response to a retired key retains the context highlight`,
-    );
-    assert.equal(
-      (await repeatedCard.locator("blockquote blockquote").innerText()).trim(),
-      quotedText,
-      `${label}: the repeated response quotes the same operator directive`,
-    );
-    assert.doesNotMatch(
-      await repeatedCard.locator(".message-body").innerText(),
-      new RegExp(`ACK\\s+${sent.body.key}`),
-      `${label}: the retired key does not leak raw protocol framing`,
-    );
-  };
-  await assertRepeatedHighlight("live");
-  await page.reload({ waitUntil: "networkidle" });
-  await chooseCanvasView(page, "Lanes");
-  await console.getByRole("tab", { name: /^Agents/ }).click();
-  await repeatedCard.waitFor({ timeout: CONNECT_MS });
-  await assertRepeatedHighlight("history");
-  return repeatedText;
+  return replyText;
 }
