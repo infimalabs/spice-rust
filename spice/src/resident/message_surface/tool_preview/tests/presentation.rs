@@ -8,8 +8,9 @@ const CLAUDE_IMAGE_TURN_START: &str = r#"{"type":"user","promptId":"turn-1","mes
 const CLAUDE_TOOL_RESULT: &str = r#"{"type":"user","promptId":"turn-1","message":{"type":"message","role":"user","content":[{"type":"tool_result","tool_use_id":"tool-1","content":"done"}]}}"#;
 const CLAUDE_PROSE: &str = r#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"new work"}]}}"#;
 
+/// Published cards by identity, and how many final revisions reached them.
 #[derive(Default)]
-struct Messages(Mutex<Vec<wire::AgentMessage>>);
+struct Messages(Mutex<Vec<wire::AgentMessage>>, Mutex<usize>);
 
 impl AgentMessagePublisher for Messages {
     fn publish(
@@ -24,6 +25,7 @@ impl AgentMessagePublisher for Messages {
         &self,
         message: wire::AgentMessage,
     ) -> Result<bool, canvas::stream::MessagePublishError> {
+        *self.1.lock().expect("revision lock") += 1;
         let mut messages = self.0.lock().expect("message lock");
         let Some(existing) = messages
             .iter_mut()
@@ -255,6 +257,82 @@ fn claude_promotes_terminal_stop_reasons_but_not_tool_use() {
     assert!(!messages[0].final_answer);
     assert_eq!(messages[1].text, "terminal prose");
     assert!(messages[1].final_answer);
+}
+
+#[test]
+fn claude_prose_carrying_a_terminal_stop_reason_is_final_on_first_publish() {
+    let publisher = Messages::default();
+    let mut state = MessageState::default();
+    let records = [
+        CLAUDE_TURN_START.as_bytes(),
+        br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"settled answer"}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}}"#.as_slice(),
+    ];
+    let mut offset = 0;
+    for bytes in records {
+        let record = capture_record_for(listen::Dialect::Claude, bytes, offset);
+        offset += bytes.len() as u64;
+        publish_agent_messages(&publisher, &record, &mut state, None)
+            .expect("Claude transcript record publishes");
+    }
+
+    let messages = publisher.0.lock().expect("message lock");
+    let prose = messages.last().expect("the turn's prose publishes");
+    assert_eq!(prose.activity, wire::AgentActivityKind::Prose);
+    assert_eq!(prose.text, "settled answer");
+    assert!(
+        prose.final_answer,
+        "the record's own stop reason paints FINAL"
+    );
+    assert_eq!(
+        *publisher.1.lock().expect("revision lock"),
+        0,
+        "a card final on first publish needs no revision round trip",
+    );
+    assert!(
+        state.prose.is_empty(),
+        "the completed turn holds no prose to revise"
+    );
+}
+
+#[test]
+fn claude_streamed_prose_is_raised_by_the_turn_ending_delta_alone() {
+    let publisher = Messages::default();
+    let mut state = MessageState::default();
+    let records = [
+        CLAUDE_TURN_START.as_bytes(),
+        br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"streamed answer"}],"stop_reason":null,"usage":{"input_tokens":1,"output_tokens":1}}}"#.as_slice(),
+        br#"{"type":"stream_event","event":{"type":"content_block_stop","index":0}}"#.as_slice(),
+    ];
+    let mut offset = 0;
+    for bytes in records {
+        let record = capture_record_for(listen::Dialect::Claude, bytes, offset);
+        offset += bytes.len() as u64;
+        publish_agent_messages(&publisher, &record, &mut state, None)
+            .expect("Claude transcript record publishes");
+    }
+    {
+        let messages = publisher.0.lock().expect("message lock");
+        let prose = messages.last().expect("the streamed prose publishes");
+        assert!(
+            !prose.final_answer,
+            "no record has proved the turn ended yet"
+        );
+        assert_eq!(*publisher.1.lock().expect("revision lock"), 0);
+    }
+
+    let delta = br#"{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":1,"output_tokens":1}}}"#;
+    let record = capture_record_for(listen::Dialect::Claude, delta, offset);
+    publish_agent_messages(&publisher, &record, &mut state, None).expect("the delta publishes");
+
+    let messages = publisher.0.lock().expect("message lock");
+    let prose = messages.last().expect("the streamed prose remains");
+    assert_eq!(prose.text, "streamed answer");
+    assert!(prose.final_answer, "the turn-ending delta raises the card");
+    assert_eq!(
+        *publisher.1.lock().expect("revision lock"),
+        1,
+        "exactly one revision, on the record that ended the turn",
+    );
 }
 
 #[test]
