@@ -192,20 +192,26 @@ impl MessageObservations {
 
     /// Whether a known batch already spans one tape position on this lane.
     fn covers(&self, lane: CanonicalUuid, position: (u64, u64)) -> bool {
-        self.0.iter().any(|observation| {
-            observation.lane == lane
-                && (observation.from.member, observation.from.offset) <= position
-                && position < (observation.to.member, observation.to.offset)
-        })
+        self.0
+            .iter()
+            .any(|observation| observation.spans(lane, position))
     }
 
     fn find(&self, lane: CanonicalUuid, locus: listen::Locus) -> Option<&MessageObservation> {
         let position = (locus.member, locus.offset);
-        self.0.iter().rev().find(|observation| {
-            observation.lane == lane
-                && (observation.from.member, observation.from.offset) <= position
-                && position < (observation.to.member, observation.to.offset)
-        })
+        self.0
+            .iter()
+            .rev()
+            .find(|observation| observation.spans(lane, position))
+    }
+}
+
+impl MessageObservation {
+    /// Whether this batch read that tape position on that lane.
+    fn spans(&self, lane: CanonicalUuid, position: (u64, u64)) -> bool {
+        self.lane == lane
+            && (self.from.member, self.from.offset) <= position
+            && position < (self.to.member, self.to.offset)
     }
 }
 
