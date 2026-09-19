@@ -709,6 +709,26 @@ pub fn run_cargo_gate_shard_at(
     entries.insert(OsString::from("RUSTC_WORKSPACE_WRAPPER"), OsString::new());
     let environment =
         Environment::new(entries).map_err(|error| WorkspaceTestError::new(error.to_string()))?;
+    if shard.kind == CargoGateShardKind::Test {
+        // Match the full verifier: compile the exact selected targets before
+        // starting their execution clock. A fresh staged path can invalidate
+        // Cargo fingerprints even when the selected source bytes are unchanged.
+        let arguments = shard
+            .argv
+            .iter()
+            .map(String::as_str)
+            .take_while(|argument| *argument != "--")
+            .chain(std::iter::once("--no-run"));
+        prebuild::run_prebuild_command(
+            root,
+            &environment,
+            cargo,
+            output,
+            "cargo test --no-run (proof shard)",
+            arguments,
+            shard.action_id(),
+        )?;
+    }
     let spec = process_spec(
         cargo,
         shard.argv.iter().map(String::as_str),

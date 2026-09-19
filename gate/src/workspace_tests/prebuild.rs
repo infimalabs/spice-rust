@@ -861,7 +861,7 @@ pub(super) fn prebuild_canvas_launcher(
     )
 }
 
-fn run_prebuild_command<I, S>(
+pub(super) fn run_prebuild_command<I, S>(
     root: &Path,
     environment: &Environment,
     cargo: &OsStr,
