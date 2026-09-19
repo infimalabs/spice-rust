@@ -99,9 +99,10 @@ pub const SHELL_TIMEOUT_MAX: u64 = 3600;
 /// What the model reads about the lane's shell, in place of omp's `bash`.
 const SHELL_DESCRIPTION: &str = "Runs one shell command in the worktree and returns its \
 output. This is the only way to execute anything: the lane runs the command in its own \
-environment and ends it at the deadline. Chain order-dependent commands with `&&`. Output \
-is bounded, so narrow it in the command itself rather than paging with `head` or `tail`. A \
-command still running after 60 seconds, or when a message arrives for you, is kept as a \
+environment and ends it at the deadline. Chain order-dependent commands with `&&`. The \
+native wrapper bounds inline output and supplies a readable full-log path when needed; \
+do not append `tail` just to limit output. A command still running after 60 seconds, or \
+when a message arrives for you, is kept as a \
 job: you get its output so far at once, it keeps running, and its result is delivered \
 automatically when it ends.";
 

@@ -182,13 +182,21 @@ the command, permission decision, child output, or exit status. Independently
 configured Codex RTK rewriting retains its existing behavior; Claude's pre-tool
 advice does not invoke RTK.
 
-No trailing-`tail` advice is emitted without a verified equivalent native output
-selector. Spice's OMP host-shell and job tools expose no last-N-lines option;
-their fixed 64 KiB tail is not a selectable line range. OMP can spill a large
-returned host-tool payload to an artifact and range it with `read`, but that
-artifact cannot recover command output omitted before the payload reached OMP.
-The host-shell result does not publish a reference to its complete command log.
-Codex's token cap is likewise not equivalent to `tail -n`.
+A final `tail` pipeline stage receives a gentle hint that it is probably
+unnecessary: rely on the tool's native output wrapping instead of arbitrarily
+pre-truncating unknown output. This advice has no native-capability, flag, or
+working-directory gate. Standalone `tail`, an intermediate pipeline stage, and
+quoted or escaped pipe characters do not trigger it. Both hints can appear
+together; neither rewrites the pipeline or claims an equivalent transformation.
+
+Spice's OMP shell and job results show at most 16 KiB of log text, preserving
+UTF-8 character boundaries. When bytes are omitted, the native wrapper includes
+the path to the complete keeper-owned log. Use `read` on that path with a line
+range to recover earlier output or inspect the end. Foreground results,
+background snapshots, completion delivery, and later job reads share this
+preview. Small output has no additional recovery metadata. The complete log is
+not an OMP artifact of an already-truncated payload: it retains the command's
+original captured bytes.
 
 #### Active-work narration
 

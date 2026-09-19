@@ -145,7 +145,7 @@ impl Terminal {
     pub(in crate::resident) fn run(&self, call: &ShellCall, control: &Control) -> Run {
         let (argv, diagnostic) = self.argv(call);
         let mut notices = std::borrow::Cow::Borrowed(call.notices.as_slice());
-        if let Some(advice) = spice::command_advice::for_shell(&call.command, &self.cwd) {
+        for advice in spice::command_advice::for_shell(&call.command, Some(&self.cwd)) {
             notices.to_mut().push(advice.to_owned());
         }
         let started = self.jobs.start(
@@ -460,7 +460,7 @@ fn still(job: &Job, why: &str) -> Report {
     report
 }
 
-/// The last of the log, with earlier output noted as dropped.
+/// A bounded log preview; omitted bytes remain readable in the keeper's log.
 fn transcript(job: &Job) -> String {
     let tail = job.tail().unwrap_or_else(|error| Tail {
         text: format!("log unreadable: {error}"),
@@ -468,7 +468,11 @@ fn transcript(job: &Job) -> String {
     });
     let mut output = String::new();
     if tail.truncated {
-        output.push_str("[earlier output dropped; the last 64 KiB follow]\n");
+        output.push_str(&format!(
+            "[Showing the last {} KiB; full output: {}]\n",
+            job::LOG_TAIL / 1024,
+            job.log_path().display()
+        ));
     }
     output.push_str(&tail.text);
     output

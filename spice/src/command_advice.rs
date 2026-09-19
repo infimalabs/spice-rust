@@ -2,19 +2,22 @@
 
 use std::path::Path;
 
-/// Suggest omitting a leading literal `cd` to the command's admitted working
-/// directory. The caller supplies the cwd before execution, not a shell's
-/// post-command cwd or the resident process's directory.
-///
-/// Only a plain `cd [--] ABSOLUTE_PATH` followed by `&&`, `;`, or a newline is
-/// admitted. Expansions, redirections, pipelines, options, and uncertain syntax
-/// remain silent. In particular, do not resolve symlinks: changing the logical
-/// directory spelling can change what subsequent relative paths mean.
-///
-/// There is deliberately no `tail` suggestion: the admitted shell tools expose
-/// no verified native last-N-lines selector. A token cap is not equivalent.
-#[must_use]
-pub fn for_shell(command: &str, cwd: &Path) -> Option<&'static str> {
+/// Suggestions about authored input, never a replacement command. Unknown cwd
+/// suppresses only the directory hint, not advice about a final pipeline stage.
+pub fn for_shell(command: &str, cwd: Option<&Path>) -> impl Iterator<Item = &'static str> {
+    [
+        cwd.and_then(|cwd| redundant_cd(command, cwd)),
+        trailing_tail(command).then_some(
+            "A final `tail` is probably unnecessary; rely on the tool's native output wrapping.",
+        ),
+    ]
+    .into_iter()
+    .flatten()
+}
+
+/// Only literal directory operands are comparable. Do not resolve symlinks:
+/// their logical spelling can change subsequent relative-path interpretation.
+fn redundant_cd(command: &str, cwd: &Path) -> Option<&'static str> {
     if !cwd.is_absolute() {
         return None;
     }
@@ -68,4 +71,58 @@ fn literal_prefix(command: &str) -> Option<&str> {
         }
     }
     None
+}
+
+fn trailing_tail(command: &str) -> bool {
+    let mut stages = pipeline_stages(command);
+    stages.next();
+    let Some(last) = stages.last() else {
+        return false;
+    };
+    // `|&` also pipes stderr. Flags do not gate this advisory.
+    let last = last.strip_prefix('&').unwrap_or(last).trim_start();
+    shell_words::split(last).is_ok_and(|words| {
+        words.first().is_some_and(|word| {
+            Path::new(word)
+                .file_name()
+                .is_some_and(|name| name == "tail")
+        })
+    })
+}
+
+/// Borrow shell pipeline stages, keeping quoted/escaped pipes and `||` intact.
+/// Shared with session command projection; this is lexical, not shell evaluation.
+pub fn pipeline_stages(command: &str) -> impl Iterator<Item = &str> {
+    let mut chars = command.char_indices();
+    let mut start = Some(0);
+    std::iter::from_fn(move || {
+        let beginning = start?;
+        let mut quote = None;
+        while let Some((index, character)) = chars.next() {
+            if character == '\\' && quote != Some('\'') {
+                chars.next();
+                continue;
+            }
+            if let Some(open) = quote {
+                if character == open {
+                    quote = None;
+                }
+                continue;
+            }
+            if matches!(character, '\'' | '"') {
+                quote = Some(character);
+                continue;
+            }
+            let bytes = command.as_bytes();
+            if character == '|'
+                && index.checked_sub(1).and_then(|offset| bytes.get(offset)) != Some(&b'|')
+                && bytes.get(index + 1) != Some(&b'|')
+            {
+                start = Some(index + 1);
+                return Some(command[beginning..index].trim());
+            }
+        }
+        start = None;
+        Some(command[beginning..].trim())
+    })
 }

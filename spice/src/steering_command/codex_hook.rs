@@ -30,10 +30,10 @@ pub(crate) enum Invocation {
     Ignore,
 }
 
-/// Authored Bash input and its optional, pre-execution working-directory advice.
+/// Authored Bash input, read-only advice, and independent RTK selection.
 pub(crate) struct PreToolRequest {
     command: String,
-    advice: Option<&'static str>,
+    advice: Option<String>,
     rewrite: bool,
 }
 
@@ -68,7 +68,7 @@ struct HookSpecificOutput {
     #[serde(rename = "updatedInput", skip_serializing_if = "Option::is_none")]
     updated_input: Option<Value>,
     #[serde(rename = "additionalContext", skip_serializing_if = "Option::is_none")]
-    additional_context: Option<&'static str>,
+    additional_context: Option<String>,
 }
 
 struct Selection {
@@ -109,18 +109,25 @@ pub(crate) fn read(reader: &mut impl Read, harness: &str) -> Result<Invocation, 
                 .ok_or_else(|| {
                     "Bash pre-tool hook input is missing tool_input.command".to_owned()
                 })?;
-            let advice = input.cwd.as_ref().and_then(Value::as_str).and_then(|cwd| {
+            let cwd = input.cwd.as_ref().and_then(Value::as_str).and_then(|cwd| {
                 // A tool-specific cwd override means the hook's session cwd is
                 // not proof of where this command starts. Remain silent.
                 let tool = input.tool_input.as_ref()?;
                 if tool.get("workdir").is_some() || tool.get("cwd").is_some() {
                     return None;
                 }
-                spice::command_advice::for_shell(&command, std::path::Path::new(cwd))
+                Some(std::path::Path::new(cwd))
             });
+            let mut advice = String::new();
+            for next in spice::command_advice::for_shell(&command, cwd) {
+                if !advice.is_empty() {
+                    advice.push('\n');
+                }
+                advice.push_str(next);
+            }
             Ok(Invocation::PreTool(PreToolRequest {
                 command,
-                advice,
+                advice: (!advice.is_empty()).then_some(advice),
                 rewrite: harness == "codex",
             }))
         }
