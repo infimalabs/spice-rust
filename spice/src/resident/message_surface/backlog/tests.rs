@@ -298,7 +298,8 @@ fn merged_history_fixture() -> MergedHistoryFixture {
             },
         )]),
         continuations: Mutex::new(HashMap::new()),
-        observations: MessageObservations::default(),
+        hydration: Mutex::new(Hydration::default()),
+        bus: None,
         steering: PresentationDirectives::default(),
         worktrees: SessionWorktrees::default(),
     };
@@ -499,7 +500,8 @@ fn season_history(root: &Path) -> (DurableHistory, CanonicalUuid, listen::Checkp
             },
         )]),
         continuations: Mutex::new(HashMap::new()),
-        observations: MessageObservations::default(),
+        hydration: Mutex::new(Hydration::default()),
+        bus: None,
         steering: PresentationDirectives::default(),
         worktrees: SessionWorktrees::default(),
     };
@@ -818,7 +820,8 @@ fn season_session_horizon(root: &Path, groups: usize) -> (DurableHistory, Canoni
             },
         )]),
         continuations: Mutex::new(HashMap::new()),
-        observations: MessageObservations::default(),
+        hydration: Mutex::new(Hydration::default()),
+        bus: None,
         steering: PresentationDirectives::default(),
         worktrees: SessionWorktrees::default(),
     };
