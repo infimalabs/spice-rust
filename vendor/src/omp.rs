@@ -55,6 +55,17 @@ pub const SESSION_ENVIRONMENT: &str = wire::SpiceVariable::Session.as_str();
 /// later joins only by being named.
 pub const TOOLS: &str = "read,write,edit,glob,grep,todo,web_search";
 
+/// [`TOOLS`] plus omp's language-server tool, for a lane whose repository
+/// policy admits it.
+///
+/// The tool starts language servers, which is why it is named only on that
+/// explicit disposition rather than sitting in the roster above. The servers
+/// stay inside the occupant's own process tree: [`config_overlay`] declines
+/// omp's shared broker, whose daemon is built to outlive any one session.
+/// What each server is and how it runs is the worktree's own business, read
+/// from the repository's `.omp/lsp.json`; this crate names no server.
+pub const LSP_TOOLS: &str = "read,write,edit,glob,grep,todo,web_search,lsp";
+
 /// Request identity of the `set_host_tools` command that registers the
 /// lane's shell ahead of the first turn.
 pub const TOOLS_REQUEST_ID: &str = "spice-tools";
@@ -138,6 +149,9 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
     let fast_mode = launch.fast_mode.ok_or(ContractError::Missing {
         path: "vendor.omp.fast_mode",
     })?;
+    let lsp = launch.lsp.ok_or(ContractError::Missing {
+        path: "vendor.omp.lsp",
+    })?;
     let config_overlay = launch
         .config_overlay
         .as_ref()
@@ -169,7 +183,7 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         OsString::from("--service-tier"),
         OsString::from(if fast_mode { "priority" } else { "none" }),
         OsString::from("--tools"),
-        OsString::from(TOOLS),
+        OsString::from(if lsp { LSP_TOOLS } else { TOOLS }),
         OsString::from("--append-system-prompt"),
         OsString::from(system_prompt(launch)),
     ];
@@ -192,14 +206,28 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
     .with_environment(environment))
 }
 
-/// The configuration overlay a lane writes before launch so omp compacts at
-/// this fixed token limit rather than at its own share of the model's window.
+/// The configuration overlay a lane writes before launch, stating the
+/// compaction threshold and the language-server disposition this seat runs.
 ///
 /// omp reads `compaction.thresholdTokens` ahead of every percentage or
 /// reserve it would otherwise derive, clamped beneath the model's window.
+///
+/// The `lsp` block is stated either way rather than left to omp's defaults.
+/// A declined lane turns the integration off outright, because omp otherwise
+/// starts a language server behind the lane's back on the first write to a
+/// file some server claims, whether or not the tool is in the roster. An
+/// admitted lane declines the shared broker instead, so the servers it starts
+/// belong to this occupant's process tree rather than a daemon built to
+/// outlive it. Which servers those are stays the worktree's own business.
 #[must_use]
-pub fn config_overlay(auto_compact_threshold_tokens: u64) -> String {
-    format!("compaction:\n  thresholdTokens: {auto_compact_threshold_tokens}\n")
+pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool) -> String {
+    let mut overlay = format!("compaction:\n  thresholdTokens: {auto_compact_threshold_tokens}\n");
+    overlay.push_str(if lsp {
+        "lsp:\n  enabled: true\n  shared: false\n"
+    } else {
+        "lsp:\n  enabled: false\n"
+    });
+    overlay
 }
 
 /// The session file a lane writes before launch so the identity is known.

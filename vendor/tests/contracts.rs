@@ -323,6 +323,16 @@ fn vendor_specific_knobs_refuse_instead_of_being_silently_ignored() {
         }
     );
 
+    claude_launch.config_overlay = None;
+    claude_launch.lsp = Some(true);
+    assert_eq!(
+        claude::record("/opt/claude", &claude_launch).expect_err("language servers refuse"),
+        ContractError::Unsupported {
+            path: "vendor.claude.lsp",
+            vendor: "Claude",
+        }
+    );
+
     let mut codex_launch = fixture(CODEX_MODEL, Resume::Fresh);
     codex_launch.fast_mode = None;
     assert_eq!(
@@ -356,6 +366,16 @@ fn vendor_specific_knobs_refuse_instead_of_being_silently_ignored() {
         codex::record("/opt/codex", &codex_launch).expect_err("overlay refuses"),
         ContractError::Unsupported {
             path: "vendor.codex.config_overlay",
+            vendor: "Codex",
+        }
+    );
+
+    codex_launch.config_overlay = None;
+    codex_launch.lsp = Some(true);
+    assert_eq!(
+        codex::record("/opt/codex", &codex_launch).expect_err("language servers refuse"),
+        ContractError::Unsupported {
+            path: "vendor.codex.lsp",
             vendor: "Codex",
         }
     );
@@ -513,6 +533,7 @@ fn fixture(model: &str, resume: Resume) -> Launch {
         model_context_window: (model == CODEX_MODEL).then_some(CODEX_CONTEXT_WINDOW),
         auto_compact_window_tokens: (model == CODEX_MODEL).then_some(AUTO_COMPACT_WINDOW),
         config_overlay: None,
+        lsp: None,
         attribution: Attribution::Harness,
         hook: SteeringHook {
             command: HOOK_COMMAND.to_owned(),

@@ -75,6 +75,12 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
             vendor: "Claude",
         });
     }
+    if launch.lsp.is_some() {
+        return Err(ContractError::Unsupported {
+            path: "vendor.claude.lsp",
+            vendor: "Claude",
+        });
+    }
     let system_prompt = system_prompt(launch);
     let mut arguments = vec![
         OsString::from("--print"),

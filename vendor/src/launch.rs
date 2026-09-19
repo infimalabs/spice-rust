@@ -201,6 +201,13 @@ pub struct Launch {
     /// writes before launch. Claude and Codex state theirs inline and refuse
     /// an overlay rather than ignore it.
     pub config_overlay: Option<PathBuf>,
+    /// Whether the dialect runs its own language-server tooling.
+    ///
+    /// omp is the only dialect with a seam for one: its roster names the tool
+    /// and its overlay states the disposition, so a lane that declines starts
+    /// no server on write either. Claude and Codex have no language-server
+    /// surface and refuse an explicit disposition rather than ignore it.
+    pub lsp: Option<bool>,
     /// Caller-resolved disposition for Claude's native commit attribution.
     ///
     /// The repository-policy read stays outside this I/O-free crate. Codex has

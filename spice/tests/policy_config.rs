@@ -65,6 +65,7 @@ binary = "/opt/omp"
 model = "omp-current"
 effort = "max"
 fast_mode = true
+lsp = true
 auto_compact_window_tokens = 250000
 
 [proof]
@@ -158,6 +159,7 @@ fn every_policy_shape_round_trips_without_losing_order_or_templates() {
     assert_eq!(decoded.vendor().omp().model(), "omp-current");
     assert_eq!(decoded.vendor().omp().effort(), vendor::Effort::Max);
     assert!(decoded.vendor().omp().fast_mode());
+    assert!(decoded.vendor().omp().lsp());
     assert_eq!(decoded.vendor().omp().auto_compact_window_tokens(), 250_000);
     assert_eq!(
         decoded.vendor().omp().auto_compact_threshold_tokens(),
@@ -219,6 +221,10 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
     );
     assert_eq!(root.vendor().codex().personality(), None);
     assert!(!root.vendor().codex().fast_mode());
+    assert!(
+        !root.vendor().omp().lsp(),
+        "language servers are admitted only where a repository asks for them"
+    );
     assert_eq!(
         root.vendor().omp().auto_compact_window_tokens(),
         vendor::DEFAULT_OMP_LONG_CONTEXT_AUTO_COMPACT_WINDOW_TOKENS,

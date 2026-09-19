@@ -114,6 +114,8 @@ pub struct LaunchValues<'a> {
     pub model_context_window: Option<u64>,
     /// Optional child auto-compaction window.
     pub auto_compact_window_tokens: Option<u64>,
+    /// Optional language-server disposition supported by this vendor.
+    pub lsp: Option<bool>,
 }
 
 type RecordRenderer = fn(OsString, &Launch) -> Result<Record, ContractError>;

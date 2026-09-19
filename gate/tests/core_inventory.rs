@@ -408,6 +408,7 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
     let expected = [
         config_path(&["vendor", "codex", "fast_mode"]),
         config_path(&["vendor", "omp", "fast_mode"]),
+        config_path(&["vendor", "omp", "lsp"]),
     ];
 
     assert_eq!(evidence.declared(), expected);

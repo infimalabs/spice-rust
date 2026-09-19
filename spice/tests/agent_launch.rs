@@ -171,6 +171,42 @@ fn omp_plan_carries_the_global_fast_mode_as_its_service_tier() {
 }
 
 #[test]
+fn the_omp_roster_names_the_language_server_tool_only_where_policy_admits_it() {
+    let declined = compose(
+        &Root::default(),
+        inputs("omp", Environment::empty(), Resume::Fresh),
+    )
+    .expect("omp plan composes");
+    assert_eq!(declined.launch().lsp, Some(false));
+    assert!(
+        arguments(&declined.record().expect("omp plan renders"))
+            .windows(2)
+            .any(|pair| pair == ["--tools", vendor::omp::TOOLS])
+    );
+
+    let root = root("[vendor.omp]\nlsp = true\n");
+    let admitted = compose(&root, inputs("omp", Environment::empty(), Resume::Fresh))
+        .expect("omp plan composes");
+    assert_eq!(admitted.launch().lsp, Some(true));
+    assert!(
+        arguments(&admitted.record().expect("omp plan renders"))
+            .windows(2)
+            .any(|pair| pair == ["--tools", vendor::omp::LSP_TOOLS])
+    );
+
+    let claude = compose(
+        &Root::default(),
+        inputs("claude", Environment::empty(), Resume::Fresh),
+    )
+    .expect("Claude plan composes");
+    assert_eq!(
+        claude.launch().lsp,
+        None,
+        "a dialect with no language-server seam is never handed a disposition"
+    );
+}
+
+#[test]
 fn inherited_claude_compact_window_is_preserved_exactly_once() {
     let inherited = Environment::new([
         ("HOME", "/home/operator"),

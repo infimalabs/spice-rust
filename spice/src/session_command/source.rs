@@ -857,6 +857,7 @@ mod tests {
             fast_mode: Some(configured.fast_mode()),
             model_context_window: Some(configured.model_context_window()),
             auto_compact_window_tokens: None,
+            lsp: None,
         }
     }
 
