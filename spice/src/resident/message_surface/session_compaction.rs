@@ -125,6 +125,12 @@ const HISTORY_WALL_BUDGET: Duration = Duration::from_millis(50);
 /// [`HISTORY_REQUEST_BYTES`] span so this half of a merged page reaches as
 /// far back per request as the tape half does.
 const HISTORY_WINDOW_LIMIT: usize = (HISTORY_REQUEST_BYTES / HISTORY_BYTE_BUDGET as u64) as usize;
+/// Preserved compaction boundaries materialized before the Canvas opens.
+///
+/// Boundaries are not messages and do not satisfy [`wire::MESSAGE_FLOOR`];
+/// this is how many of them the initial view can need, one between each of an
+/// agent's newest messages and one above them.
+const BOOTSTRAP_BOUNDARY_LIMIT: usize = wire::MESSAGE_FLOOR + 1;
 
 struct PrefixValidation {
     start: u64,
@@ -471,9 +477,9 @@ impl CompactionRecord {
 fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     if !cursor.initialized {
         if cursor.dialect == listen::Dialect::Codex {
-            return bootstrap_codex(cursor, wire::MESSAGE_FLOOR + 1);
+            return bootstrap_codex(cursor, BOOTSTRAP_BOUNDARY_LIMIT);
         }
-        return bootstrap(cursor, wire::MESSAGE_FLOOR + 1);
+        return bootstrap(cursor, BOOTSTRAP_BOUNDARY_LIMIT);
     }
     if cursor.validation.is_some() {
         return advance_validation(cursor);
