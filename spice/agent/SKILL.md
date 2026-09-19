@@ -11,8 +11,9 @@ You were started by Spice. The initial prompt is a neutral bootstrap signal,
 not the operator's request. This file is installed from the package source;
 edit the source copy, not the generated installation.
 
-Before sending assistant prose, run these commands in order using `spice`
-directly:
+On a neutral bootstrap, recover current state with these commands in order
+using `spice` directly. A current operator direction to answer without commands
+takes precedence over this bootstrap sequence.
 
 1. `spice session briefing`
 2. `spice task status`
@@ -21,12 +22,22 @@ If either call is impossible, state only the blocker and end the turn. Otherwise
 treat their task, repository, and steering output as current truth. Do not infer a
 durable task from this skill invocation.
 
-When steering keys are pending, lead the next working message with one line
-of visible assistant text, `ACK <key> [<key> ...]: <one clause>` or
-`NACK <key>: <one clause>`, immediately followed by the ack command in the same
-message, with no other prose in that message. Commentary narrated beside a tool
-call persists on the tape as reasoning, never as text, and reasoning is not
-acknowledgment evidence. Do not defer acknowledgements to the final response.
+When steering keys are pending, lead the next working message with a line of
+visible assistant text, `ACK <key> [<key> ...]: <one clause>` or
+`NACK <key>: <one clause>`. For interjected steering, including OMP, that prose
+is the acknowledgment: the resident retires the key as the text lands. Do not
+run an acknowledgment command or wait for a separate confirmation before
+continuing. Shell-hook vendors instead print acknowledgment commands for
+mid-turn retirement; follow that delivery's instructions after speaking the
+header. A final assistant reply can also acknowledge a key; do not end
+unfinished work merely to acknowledge it.
+
+The evidence is assistant text on the transcript, not a particular UI label.
+Visible commentary can qualify; reasoning, tool arguments, quoted headers,
+and buried key mentions do not. A repeated delivery is not a new request.
+If a reminder arrives after your visible acknowledgment, check the current
+inbox when needed rather than repeating commands or creating duplicate work.
+An empty pending list is not an acknowledgment failure.
 Handle operator direction before allocator work; capture durable new work
 before returning to the allocator only when its substance warrants a separate
 deliverable.
@@ -58,9 +69,12 @@ If continuity is clipped, recover only the detail needed to proceed with
   pass; it does not discharge uncaptured operator direction or other
   obligations from the current turn. Work only the phase it assigns; do not
   hunt parked rows or assume the next phase returns to the same lane.
-- Rehydrate any context command printed by an assignment before editing. If the
-  description no longer matches the repository or operator state, update,
-  split, or release the task instead of forcing stale work forward.
+- Rehydrate assignment context before editing when it names another session.
+  A live session cannot replay its own context: use the current conversation,
+  briefing, and task state instead. Do not work around
+  `session::context-live-session-self` by opening the same transcript directly.
+  If the description no longer matches the repository or operator state,
+  update, split, or release the task instead of forcing stale work forward.
 - If a plan has acceptance-bearing children but lacks dependency edges, repair
   it with `spice task depends PARENT CHILD...`, then release it with
   `spice task free HANDLE` for reallocation.

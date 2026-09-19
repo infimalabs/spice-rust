@@ -226,9 +226,10 @@ operator can read it.
 ```mermaid
 flowchart TD
   H["ACK or NACK header"] --> W{"where does it reach the tape?"}
-  W -- "assistant text before the command" --> M["ack command finds the record;<br/>the key retires mid-turn"]
-  W -- "tool input or reasoning only" --> A["steer::transcript-evidence-absent;<br/>the key stays live"]
-  W -- "assistant text ending the turn" --> X["occupant exit retires it<br/>from the final transcript"]
+  W -- "interjected vendor assistant text" --> M["resident retires the key<br/>as prose lands; no command"]
+  W -- "shell-hook vendor assistant text" --> C["printed ack command finds the record;<br/>the key retires mid-turn"]
+  W -- "tool input or reasoning only" --> A["not acknowledgment evidence;<br/>the key stays live"]
+  W -- "assistant text ending the turn" --> X["retired on landing or at exit<br/>from the final transcript"]
   W -- "quoted or buried in assistant text" --> Q["steer::ack-missed names the miss;<br/>the key stays live"]
   A --> N["speak the header as visible text,<br/>or let the turn end on it"]
   Q --> N
@@ -238,11 +239,14 @@ flowchart TD
 evidence. The tool call that runs the ack command, its arguments, and reasoning
 blocks never retire a key, even when they spell the header exactly.
 
-**Invariant —** A header spoken as visible text before the command is
-persisted by the vendor as its own assistant record ahead of the tool record,
-so a lane retires a key without ending its turn. A header that first lands as
-the turn ends is retired at occupant exit under the same recognition rules,
-with no successor woken to cite it.
+**Invariant —** Delivery determines who retires the key. For interjected
+steering, including OMP, the resident recognizes the visible assistant header
+as prose lands; no acknowledgment command is required. Shell-hook vendors
+retain their printed command path for mid-turn retirement. At occupant exit,
+the resident also retires keys answered in the final transcript under the same
+recognition rules, with no successor woken to cite them. Visible commentary
+counts when persisted as assistant text; reasoning does not, regardless of how
+the harness labels or displays it.
 
 **Invariant —** Within one assistant prose the placed header decides its key.
 A later citation of the same key in backticks or mid-sentence is the prose
