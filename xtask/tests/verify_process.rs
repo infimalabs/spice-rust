@@ -110,14 +110,6 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
             cargo_log.display()
         ),
     );
-    let browser_marker = fixture.root.join("browser-invoked");
-    executable(
-        &programs.join("npm"),
-        &format!(
-            "#!/bin/sh\nprintf 'invoked\\n' > '{}'\nexit 99\n",
-            browser_marker.display()
-        ),
-    );
 
     let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
         .args(["verify", "--package", "verify-process-fixture"])
@@ -141,10 +133,6 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
             "jobs=1 test --locked --package verify-process-fixture --doc",
         ]
     );
-    assert!(
-        !browser_marker.exists(),
-        "scoped verification launched the full browser suite"
-    );
 
     let stdout = String::from_utf8(output.stdout.clone()).expect("scoped stdout is UTF-8");
     assert!(stdout.contains(concat!(
@@ -162,7 +150,6 @@ fn scoped_verifier_runs_one_package_without_any_full_only_action() {
         FORMAT_ACTION,
         "cargo clippy --locked --workspace --all-targets -- -D warnings",
         "cargo check --locked --workspace --target wasm32-unknown-unknown",
-        "npm run test:canvas (Canvas browser guard)",
         WORKSPACE_TEST_ACTION,
         "canonical Rust gate battery",
         "contract landing",
@@ -199,28 +186,6 @@ fn bare_verify_refuses_before_any_repository_wide_action_starts() {
         streams(&output),
     );
     assert!(!stderr.contains("stage="), "{}", streams(&output));
-}
-
-#[test]
-fn retired_verifier_app_publication_refuses_before_compiler_work() {
-    let destination = std::env::temp_dir().join("retired-verifier-app-publication");
-    let output = Command::new(env!("CARGO_BIN_EXE_xtask"))
-        .args(["app", gate::VERIFIER_APP_PUBLISH_FLAG])
-        .arg(&destination)
-        .output()
-        .expect("launch retired verifier app publication");
-
-    assert!(!output.status.success(), "{}", streams(&output));
-    assert!(output.stdout.is_empty(), "{}", streams(&output));
-    assert!(
-        String::from_utf8_lossy(&output.stderr).contains("verifier app publication is retired"),
-        "{}",
-        streams(&output),
-    );
-    assert!(
-        !destination.exists(),
-        "retired app publication wrote output"
-    );
 }
 
 #[test]

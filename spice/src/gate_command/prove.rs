@@ -9,10 +9,10 @@ use gate::{
     ActionFingerprintAuthority, ActionFingerprintAuthorityFields, ActionFingerprintManifest,
     ActionFingerprintManifestFields, ActionInputClosure, ActionInputInventory, ActionKey,
     ActionKeyAuthority, ActionNonFileInput, ActionNonFileKind, ActionPolicyAuthority,
-    ActionReuseClass, ActionSpec, ActionSpecFields, ActionToolRequirement, ArmDisposition,
-    BatteryManifest, CargoExternalSourceAuthority, CargoGateShard, CargoGateShardKind,
-    CargoGateShardPlanning, EvidenceProducerRecord, EvidenceStore, FocusedArmReport, GateId,
-    PassReceipt, PassReceiptFields,
+    ActionReuseClass, ActionSpec, ActionSpecFields, ArmDisposition, BatteryManifest,
+    CargoExternalSourceAuthority, CargoGateShard, CargoGateShardKind, CargoGateShardPlanning,
+    EvidenceProducerRecord, EvidenceStore, FocusedArmReport, GateId, PassReceipt,
+    PassReceiptFields,
 };
 use serde::Serialize;
 use sill::Environment;
@@ -22,7 +22,6 @@ use spice::change_gate::{ChangeGateError, StagedActionSelection};
 use spice::repository::Repository;
 
 mod action;
-mod canvas;
 mod cargo;
 #[cfg(test)]
 #[path = "prove/cargo_authority_tests.rs"]
@@ -378,7 +377,6 @@ enum PreparedExecution {
         tools: Vec<gate::ToolEvidence>,
     },
     Cargo(Box<cargo::Execution>),
-    Canvas(Box<canvas::CanvasExecution>),
 }
 
 struct PendingReceipt {
@@ -471,19 +469,14 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
         spice::change_gate::prepare_staged_actions_from_anchor(anchor)
             .map_err(ProveFailure::selection)?
     };
-    let (mut actions, pending, expectations) = match prepare_actions(
-        &staged,
-        &store,
-        request,
-        repository.worktree_root(),
-        repository.common_dir(),
-    ) {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            let _ = staged.reject_state();
-            return Err(error);
-        }
-    };
+    let (mut actions, pending, expectations) =
+        match prepare_actions(&staged, &store, request, repository.worktree_root()) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                let _ = staged.reject_state();
+                return Err(error);
+            }
+        };
     if let Some(authority) = fingerprint.as_ref()
         && let Err(error) = ActionFingerprintManifest::new(ActionFingerprintManifestFields {
             authority: authority.clone(),
@@ -562,10 +555,8 @@ fn prepare_actions(
     store: &EvidenceStore,
     request: Request<'_>,
     writable_root: &Path,
-    common: &Path,
 ) -> Result<PreparedActions, ProveFailure> {
-    let prepared_actions =
-        prepare_action_authorities(staged, store, request, writable_root, common)?;
+    let prepared_actions = prepare_action_authorities(staged, request, writable_root)?;
     let mut expectations = prepared_actions
         .iter()
         .map(PreparedAction::expectation)
@@ -582,7 +573,7 @@ fn prepare_actions(
     {
         return Err(ProveFailure::refusal(
             "gate::prove-action-unregistered",
-            format!("{action:?} is not a selected registered gate, Cargo shard, or Canvas action"),
+            format!("{action:?} is not a selected registered gate or Cargo shard"),
         ));
     }
     present.sort_by(|left, right| proof_action_order(&left.action, &right.action));
@@ -592,10 +583,8 @@ fn prepare_actions(
 
 fn prepare_action_authorities(
     staged: &StagedActionSelection,
-    store: &EvidenceStore,
     request: Request<'_>,
     writable_root: &Path,
-    common: &Path,
 ) -> Result<Vec<PreparedAction>, ProveFailure> {
     let requested = requested_actions(staged.selection(), request)?;
     let manifest = BatteryManifest::canonical()
@@ -627,16 +616,6 @@ fn prepare_action_authorities(
         )?);
     }
 
-    if canvas::request(request) {
-        prepared.extend(canvas::prepare(
-            staged,
-            store,
-            &gate_set,
-            request,
-            writable_root,
-            common,
-        )?);
-    }
     Ok(prepared)
 }
 
@@ -737,7 +716,6 @@ fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
             tools: expected_tools,
         } => tools::execute(*arm, expected_tools)?,
         PreparedExecution::Cargo(execution) => cargo::execute(*execution)?,
-        PreparedExecution::Canvas(execution) => canvas::execute(*execution, &action.action)?,
     };
     let duration_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let finished_at = now()?;
@@ -805,7 +783,6 @@ fn registered_request(action: &str) -> bool {
         || action == "cargo-tests"
         || action.starts_with("cargo:typecheck:")
         || action.starts_with("cargo:test:")
-        || canvas::registered(action)
 }
 
 fn request_matches_any(
@@ -828,7 +805,6 @@ fn request_matches_any(
                 .map(|row| row.action.as_str())
                 .chain(pending.iter().map(|row| row.action.as_str()))
                 .any(|action| action.starts_with("cargo:test:")))
-        || canvas::matches_group(requested, present, pending)
 }
 
 fn declaration(manifest: &BatteryManifest, gate_id: GateId) -> Result<&str, ProveFailure> {
@@ -924,12 +900,6 @@ fn proof_action_position(action: &str) -> usize {
     if action.starts_with("cargo:test:") {
         return GateId::BATTERY.len();
     }
-    if action == gate::CANVAS_BUILD_ACTION {
-        return GateId::BATTERY.len() + 1;
-    }
-    if action.starts_with(gate::CANVAS_ACTION_PREFIX) {
-        return GateId::BATTERY.len() + 2;
-    }
     gate_id(action).map_or(GateId::BATTERY.len() + 1, gate_position)
 }
 
@@ -1021,10 +991,6 @@ impl ProveFailure {
 
     fn cargo_isolation(error: spice::cargo_isolation::IsolationError) -> Self {
         Self::refusal(error.reason(), error.detail())
-    }
-
-    fn canvas(error: gate::CanvasActionError) -> Self {
-        Self::refusal("gate::prove-canvas-action-refused", error)
     }
 
     fn outcome<B>(self) -> Outcome<B> {

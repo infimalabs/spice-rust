@@ -40,7 +40,6 @@ pub use inventory::cargo_declared_compile_time_sources_at;
 use inventory::*;
 pub(crate) use inventory::{RustCheckUnit, workspace_package_reach_at};
 use prebuild::*;
-pub(crate) use proof::cargo_package_input_closure_at;
 pub use proof::{
     CargoExternalSourceAuthority, CargoGateShard, CargoGateShardKind, CargoGateShardPlan,
     CargoGateShardPlanning, CargoGateShardResult, plan_cargo_gate_shards_at,
@@ -391,10 +390,8 @@ pub fn run_at(
 ///
 /// The full verifier calls this setup boundary after native compiler admission
 /// and before starting the supervised test branches. [`run_prebuilt_shared_at`]
-/// then reuses that completed native build cache after wasm analysis and the
-/// Canvas compiler-ready boundary, without repeating setup inside the test
-/// clock. The launcher build keeps the app xtask from recompiling its native
-/// entry point before it can start Trunk.
+/// then reuses that completed native build cache without repeating setup
+/// inside the test clock.
 ///
 /// # Errors
 ///
@@ -516,10 +513,12 @@ fn policy_from_environment(
 /// package; workspace/toolchain and gate-policy authorities reach the complete
 /// workspace because their effect cannot be narrowed further.
 ///
-/// Every Rust source must resolve to a declared Cargo target. An unclaimed
-/// source or a source with no proven test-enabled reach refuses before any
-/// compiler or test process starts. A complete report is emitted only after
-/// every selected target succeeds through this coordinator.
+/// Present Rust sources must resolve to a declared Cargo target. Removed,
+/// unclaimed inputs conservatively reach their containing package because they
+/// may have been runtime fixture data rather than modules. Sources outside any
+/// package or with no proven test-enabled reach refuse before a compiler or test
+/// process starts. A complete report is emitted only after every selected target
+/// succeeds through this coordinator.
 ///
 /// # Errors
 ///

@@ -7,7 +7,6 @@ use super::*;
 struct FingerprintEnvironments {
     gate: Digest,
     cargo: Option<Digest>,
-    canvas: Option<Digest>,
 }
 
 pub(super) type PreparedActions = (
@@ -33,19 +32,7 @@ pub(super) fn authority(
     let gate_environment = normalized_action_environment(anchor.compiler_environment());
     let (_, gate_environment) = environment(&gate_environment)?;
     let proof_tools = anchor.proof_tool_authority().map_err(ProveFailure::run)?;
-    let (tools, canvas_environment) = if canvas_authority_present(anchor, repository) {
-        let (tools, environment) =
-            canvas::fingerprint_authorities(anchor, context, repository.worktree_root())?;
-        (
-            digest_encoded(Domain::GateTool, &(tools, &proof_tools))?,
-            Some(environment),
-        )
-    } else {
-        (
-            digest_encoded(Domain::GateTool, &(context.tools(), &proof_tools))?,
-            None,
-        )
-    };
+    let tools = digest_encoded(Domain::GateTool, &(context.tools(), &proof_tools))?;
     let needs_cargo = anchor.root().join("Cargo.lock").is_file();
     let (cargo_environment, cargo_source) = if needs_cargo {
         let cargo = cargo_authority(anchor.root(), anchor.compiler_environment())?;
@@ -65,7 +52,6 @@ pub(super) fn authority(
     let environments = FingerprintEnvironments {
         gate: gate_environment,
         cargo: cargo_environment,
-        canvas: canvas_environment,
     };
     let environment = digest_encoded(Domain::GateConfiguration, &environments)?;
     ActionFingerprintAuthority::new(ActionFingerprintAuthorityFields {
@@ -118,17 +104,6 @@ pub(super) fn admission_authority(
         policy,
         gate_set,
     )
-}
-
-fn canvas_authority_present(
-    anchor: &spice::gate::PreparedArm<'_>,
-    repository: &Repository,
-) -> bool {
-    anchor.root().join("package-lock.json").is_file()
-        && repository
-            .worktree_root()
-            .join("node_modules/playwright")
-            .is_dir()
 }
 
 #[cfg(test)]

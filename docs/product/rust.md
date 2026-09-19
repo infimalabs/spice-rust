@@ -199,9 +199,9 @@ Authorities: [`wire/src/stream.rs`](../../wire/src/stream.rs),
 [`canvas/src/stream.rs`](../../canvas/src/stream.rs),
 [`app/src/browser.rs`](../../app/src/browser.rs),
 [`app/src/runtime.rs`](../../app/src/runtime.rs), and
-[`app/src/mosaic.rs`](../../app/src/mosaic.rs). Browser-edge coverage lives in
-[`app/browser/canvas.spec.mjs`](../../app/browser/canvas.spec.mjs) and its
-focused neighboring modules.
+[`app/src/mosaic.rs`](../../app/src/mosaic.rs). Browser-edge behavior is verified
+through disposable actual-surface experiments; the retained app checks exercise
+the pure Rust client contracts.
 
 ## Mosaic implementation boundary
 
@@ -277,11 +277,10 @@ Authorities: [`app/src/runtime/message_cards.rs`](../../app/src/runtime/message_
 and
 [`app/src/browser/watchband/mosaic_view/image_resolution.rs`](../../app/src/browser/watchband/mosaic_view/image_resolution.rs).
 Executable parity and cost evidence lives in
-[`app/tests/mosaic_sequences.rs`](../../app/tests/mosaic_sequences.rs),
-[`app/tests/mosaic_stability.rs`](../../app/tests/mosaic_stability.rs),
-[`app/browser/mosaic-history-pagination.mjs`](../../app/browser/mosaic-history-pagination.mjs),
-[`app/browser/mosaic-integrated-proof.mjs`](../../app/browser/mosaic-integrated-proof.mjs),
-and [`app/browser/startup-profile.mjs`](../../app/browser/startup-profile.mjs).
+[`app/tests/mosaic_sequences.rs`](../../app/tests/mosaic_sequences.rs) and
+[`app/tests/mosaic_stability.rs`](../../app/tests/mosaic_stability.rs).
+Browser history, image resolution, and painting require disposable actual-surface
+verification against the production app.
 
 ## Steering and warnings
 

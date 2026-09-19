@@ -1,20 +1,12 @@
 use super::*;
 
-#[derive(Default)]
-pub(super) struct SelectedPackageInputs {
-    pub(super) paths: BTreeSet<String>,
-    pub(super) target_sources: BTreeSet<String>,
-    pub(super) file_macros: BTreeSet<String>,
-    pub(super) workspace_configuration: BTreeSet<String>,
-}
-
 pub(super) fn selected_package_input_paths(
     inventory: &Inventory,
     canonical_root: &Path,
     roots: &BTreeSet<PathBuf>,
     selected_paths: &[String],
     changed_sources: &[String],
-) -> Result<SelectedPackageInputs, WorkspaceTestError> {
+) -> Result<BTreeSet<String>, WorkspaceTestError> {
     let relative_roots = roots
         .iter()
         .map(|path| {
@@ -29,7 +21,7 @@ pub(super) fn selected_package_input_paths(
                 })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    let mut inputs = SelectedPackageInputs::default();
+    let mut inputs = BTreeSet::new();
     for path in selected_paths {
         let candidate = Path::new(path.as_str());
         if relative_roots
@@ -37,13 +29,10 @@ pub(super) fn selected_package_input_paths(
             .any(|root| candidate.starts_with(root))
             || workspace_cargo_authority(candidate)
         {
-            inputs.paths.insert(path.clone());
-        }
-        if workspace_cargo_authority(candidate) {
-            inputs.workspace_configuration.insert(path.clone());
+            inputs.insert(path.clone());
         }
     }
-    inputs.paths.extend(changed_sources.iter().cloned());
+    inputs.extend(changed_sources.iter().cloned());
     for package in inventory
         .packages
         .iter()
@@ -62,8 +51,7 @@ pub(super) fn selected_package_input_paths(
                 ))
             })?;
             let target_source = path_text(target_source)?;
-            inputs.paths.insert(target_source.clone());
-            inputs.target_sources.insert(target_source);
+            inputs.insert(target_source);
             for declared in &target.declared_path_sources {
                 let relative = declared.path.strip_prefix(canonical_root).map_err(|_| {
                     WorkspaceTestError::new(format!(
@@ -73,24 +61,7 @@ pub(super) fn selected_package_input_paths(
                     ))
                 })?;
                 let relative = path_text(relative)?;
-                inputs.paths.insert(relative.clone());
-                if declared.origins.iter().any(|origin| {
-                    matches!(
-                        origin,
-                        DeclaredPathSourceOrigin::IncludedRust | DeclaredPathSourceOrigin::Module
-                    )
-                }) {
-                    inputs.target_sources.insert(relative.clone());
-                }
-                if declared.origins.iter().any(|origin| {
-                    matches!(
-                        origin,
-                        DeclaredPathSourceOrigin::FileMacro
-                            | DeclaredPathSourceOrigin::IncludedRust
-                    )
-                }) {
-                    inputs.file_macros.insert(relative);
-                }
+                inputs.insert(relative);
             }
         }
     }

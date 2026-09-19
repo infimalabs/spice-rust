@@ -36,8 +36,7 @@ struct EnvironmentPolicy {
 /// verify, and the hooks fixture proves it by exporting exactly those three and
 /// asserting the child sees none of them. The Git shadow owns three more Git
 /// configuration references, and the hygiene acquisition fixture fixes
-/// `TMPDIR` at private writable scratch. The verifier passes Canvas its binary
-/// inside an isolated build root. The four predecessor Spice names are
+/// `TMPDIR` at private writable scratch. The four predecessor Spice names are
 /// collision sentinels in the coexistence tests, not variables this port owns.
 /// The workspace-test coordinator also passes its writable fixture root and
 /// shared-output authority while compiling tests from an immutable selected
@@ -48,8 +47,7 @@ struct EnvironmentPolicy {
 /// to account all twenty-three original names. Compiler-receipt admission also
 /// observes six operational launcher and fixture names which remain outside the
 /// typed product-variable vocabulary. RTK's upstream history override and the
-/// Canvas proof runner's injected shard selector are also foreign. The Bash and
-/// zsh startup selectors complete the class. All are named here rather than added to
+/// Bash and zsh startup selectors are also foreign. All are named here rather than added to
 /// [`SpiceVariable`],
 /// because Doctor reports the variables Spice owns and a row for one of these
 /// would claim ownership Spice does not have.
@@ -67,8 +65,6 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "GIT_INDEX_FILE",                               // env-policy: allow
     "GIT_WORK_TREE",                                // env-policy: allow
     "RTK_DB_PATH",                                  // env-policy: allow
-    "SPICE_CANVAS_BINARY",                          // env-policy: allow
-    "SPICE_CANVAS_SHARD",                           // env-policy: allow
     "SPICE_COMMAND_PLAN_EXECUTION_DIGEST",          // env-policy: allow
     "SPICE_FIXTURE_RERUN",                          // env-policy: allow
     "SPICE_HOOKS",                                  // env-policy: allow

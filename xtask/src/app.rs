@@ -42,66 +42,25 @@ static NEXT_BUILD: AtomicU64 = AtomicU64::new(0);
 /// missing Cargo home, Trunk execution failure, or a refused generated stage.
 pub fn app(environment: &ReleaseEnvironment, output: &mut impl Write) -> Result<(), AppBuildError> {
     let root = workspace_root()?;
-    app_from(&root, &root, environment, output)
-}
-
-/// Compile one proof runner's selected source into its private publication root.
-///
-/// Both roots are explicit because the selected source is not a Git worktree;
-/// the proof runner owns source identity and lifecycle outside this compiler.
-pub fn proof_app(
-    source_root: &Path,
-    publish_root: &Path,
-    environment: &ReleaseEnvironment,
-    output: &mut impl Write,
-) -> Result<(), AppBuildError> {
-    app_from(source_root, publish_root, environment, output)
-}
-
-/// Refuse the retired cross-worktree verifier app publication path.
-///
-/// The function remains as a compatibility boundary for the former hidden
-/// command spelling; it performs no source capture, compilation, or write.
-///
-/// # Errors
-///
-/// Always returns [`AppBuildError::VerifierPublicationRetired`].
-pub fn app_to(
-    _environment: &ReleaseEnvironment,
-    _publish_root: &Path,
-    _output: &mut impl Write,
-) -> Result<(), AppBuildError> {
-    Err(AppBuildError::VerifierPublicationRetired)
+    app_from(&root, environment, output)
 }
 
 fn app_from(
     root: &Path,
-    publish_root: &Path,
     environment: &ReleaseEnvironment,
     output: &mut impl Write,
 ) -> Result<(), AppBuildError> {
     let sources = source::SourceSnapshot::capture(root)?;
     let source_identity = sources.identity().clone();
-    app_build_at(
+    app_at(
         root,
-        publish_root,
         &source_identity,
         output,
-        |stage, output| {
-            run_trunk(
-                root,
-                publish_root,
-                environment,
-                stage,
-                &source_identity,
-                output,
-            )
-        },
+        |stage, output| run_trunk(root, environment, stage, &source_identity, output),
         || sources.verify_unchanged(root),
     )
 }
 
-#[cfg(test)]
 fn app_at<W: Write>(
     root: &Path,
     source_identity: &Digest,
@@ -109,19 +68,8 @@ fn app_at<W: Write>(
     build: impl FnOnce(&Path, &mut W) -> Result<(), AppBuildError>,
     verify_sources: impl FnOnce() -> Result<(), AppBuildError>,
 ) -> Result<(), AppBuildError> {
-    app_build_at(root, root, source_identity, output, build, verify_sources)
-}
-
-fn app_build_at<W: Write>(
-    source_root: &Path,
-    publish_root: &Path,
-    source_identity: &Digest,
-    output: &mut W,
-    build: impl FnOnce(&Path, &mut W) -> Result<(), AppBuildError>,
-    verify_sources: impl FnOnce() -> Result<(), AppBuildError>,
-) -> Result<(), AppBuildError> {
-    let stage = publish_root.join(spice::canvas::APP_STAGE);
-    let temporary = publish_root.join("dist").join(format!(
+    let stage = root.join(spice::canvas::APP_STAGE);
+    let temporary = root.join("dist").join(format!(
         ".stage-app-build-{}-{}",
         std::process::id(),
         NEXT_BUILD.fetch_add(1, Ordering::Relaxed)
@@ -134,9 +82,6 @@ fn app_build_at<W: Write>(
     }
     let result = (|| {
         build(&temporary, output)?;
-        writeln!(output, "{}", gate::VERIFIER_APP_COMPILER_READY_RECORD)
-            .map_err(AppBuildError::Output)?;
-        output.flush().map_err(AppBuildError::Output)?;
         verify_sources()?;
         let identity = finalize_stage(&temporary, source_identity)?;
         publish_generation(&stage, &temporary, &identity)?;
@@ -145,7 +90,7 @@ fn app_build_at<W: Write>(
             "[app] {} generation {identity} from selected sources {} ({source_identity}) is ready \
              for `spice up` in this worktree",
             stage.display(),
-            source_root.display(),
+            root.display(),
         )
         .map_err(AppBuildError::Output)
     })();
@@ -232,14 +177,13 @@ fn read_regular(path: &Path) -> Result<Vec<u8>, AppBuildError> {
 
 fn run_trunk(
     root: &Path,
-    cache_identity_root: &Path,
     environment: &ReleaseEnvironment,
     stage: &Path,
     source_identity: &Digest,
     output: &mut impl Write,
 ) -> Result<(), AppBuildError> {
     let build_root = environment.build_root(root);
-    let worktree_identity = worktree_identity(cache_identity_root)?;
+    let worktree_identity = worktree_identity(root)?;
     let cargo_home = environment
         .cargo_home()
         .ok_or(AppBuildError::MissingCargoHome)?;
@@ -529,7 +473,6 @@ fn workspace_root() -> Result<PathBuf, AppBuildError> {
 
 #[derive(Debug)]
 pub enum AppBuildError {
-    VerifierPublicationRetired,
     Output(io::Error),
     Launch(io::Error),
     Exit(Option<i32>),
@@ -544,9 +487,6 @@ pub enum AppBuildError {
 impl fmt::Display for AppBuildError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::VerifierPublicationRetired => formatter.write_str(
-                "verifier app publication is retired; run `spice dev xtask -- app` in the target worktree",
-            ),
             Self::Output(error) => write!(formatter, "app build output failed: {error}"),
             Self::Launch(error) => write!(formatter, "trunk did not launch: {error}"),
             Self::Exit(Some(code)) => write!(formatter, "trunk failed with exit {code}"),

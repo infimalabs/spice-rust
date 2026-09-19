@@ -115,9 +115,9 @@ proof runner publishes trusted receipts; ad hoc Cargo, Canvas, or shell output
 is useful feedback but is not reusable commit evidence. A trust refusal remains
 an operator boundary and is never bypassed by proof generation.
 
-Canvas proof is `canvas:build` plus one `canvas:shard:<name>` receipt per current
-registry shard. Release 0.31.0's `BROWSER-1kKSWhZk browser coverage complete`
-marker and `--spice-coverage-receipt` writer are retired; see
+Canvas keeps its Rust checks and production app compiler. Browser interactions
+are verified with disposable actual-surface experiments, not a permanent
+process-backed suite or browser-shard proof actions. See
 [Gate evidence](docs/product/planes/gate-evidence.md) for the receipt and cache
 contract.
 

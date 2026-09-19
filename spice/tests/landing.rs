@@ -518,37 +518,6 @@ fn the_placeholder_inventory_carries_exactly_the_documented_sentences() {
     );
 }
 
-/// The browser's absence assertion follows the canonical placeholder sentence.
-///
-/// JavaScript cannot import the Rust inventory, so this source-boundary test
-/// makes the relationship explicit in the suite that owns the inventory. A
-/// renamed reason must fail here and name the browser fixture that still holds
-/// the old spelling, rather than leaving the browser to search for dead text.
-#[test]
-fn the_browser_landing_gap_guard_reads_the_not_landed_sentence() {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../app/browser/canvas.spec.mjs");
-    let source = fs::read_to_string(&path)
-        .unwrap_or_else(|error| panic!("read browser spec {}: {error}", path.display()));
-    let reason = PlaceholderReason::NotLanded.as_str();
-    let assertion = format!("assert.doesNotMatch(content, /{reason}/);");
-
-    assert!(
-        source.contains(&assertion),
-        concat!(
-            "{} must bind its landing-gap assertion to ",
-            "PlaceholderReason::NotLanded; missing {:?}"
-        ),
-        path.display(),
-        assertion
-    );
-    assert_eq!(
-        source.matches(reason).count(),
-        1,
-        "{} must contain exactly one landing-gap search for {reason:?}",
-        path.display()
-    );
-}
-
 fn assert_no_placeholder(output: &Output, path: &str) {
     for reason in PlaceholderReason::ALL {
         let placeholder = reason.as_str();

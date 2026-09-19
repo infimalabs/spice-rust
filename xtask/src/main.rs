@@ -13,7 +13,7 @@ const USAGE_EXIT: u8 = 2;
 type CommandResult = Result<(), Box<dyn std::error::Error>>;
 const USAGE: &str = concat!(
     "usage: spice dev xtask -- <help|verify --package PACKAGE|",
-    "gate [--report] ARM|app|tests <--fast --package PACKAGE|--slow <--list|ID...>>|",
+    "gate [--report] ARM|app|",
     "install [--host IP] [--port PORT] [--release] [--no-symbols] [--no-resident] ",
     "[-- UP-OPTION...]|",
     "build-cache [--dry-run|--apply] [--max-bytes BYTES] ",
@@ -61,11 +61,7 @@ fn main() -> ExitCode {
         Some(value) if value == OsStr::new("gate") => {
             run_gate(arguments.collect(), &mut output, &mut io::stderr().lock())
         }
-        Some(value) if value == OsStr::new("tests") => run_tests(arguments.collect(), &mut output),
         Some(value) if value == OsStr::new("app") => run_app(arguments.collect(), &mut output),
-        Some(value) if value == OsStr::new("__canvas-proof-app") => {
-            run_canvas_proof_app(arguments.collect(), &mut output)
-        }
         Some(value) if value == OsStr::new("build-cache") => {
             run_build_cache(arguments.collect(), &mut output)
         }
@@ -128,53 +124,11 @@ fn run_verify(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandR
 fn run_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
     match arguments.as_slice() {
         [] => xtask::app(&release_environment(), output).map_err(Into::into),
-        [flag, publish_root] if flag == OsStr::new(gate::VERIFIER_APP_PUBLISH_FLAG) => {
-            xtask::app_to(&release_environment(), Path::new(publish_root), output)
-                .map_err(Into::into)
-        }
         _ => {
             eprintln!("{}", help());
             Err(usage_error().into())
         }
     }
-}
-
-fn run_tests(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
-    match arguments.as_slice() {
-        [class, package_flag, package]
-            if class == OsStr::new("--fast") && package_flag == OsStr::new("--package") =>
-        {
-            let package = package.to_str().ok_or_else(usage_error)?;
-            xtask::run_fast_tests(package, output).map_err(Into::into)
-        }
-        [class, list] if class == OsStr::new("--slow") && list == OsStr::new("--list") => {
-            xtask::list_slow_tests(output).map_err(Into::into)
-        }
-        [class, ids @ ..] if class == OsStr::new("--slow") => {
-            let ids = ids
-                .iter()
-                .map(|id| id.to_str().map(str::to_owned).ok_or_else(usage_error))
-                .collect::<Result<Vec<_>, _>>()?;
-            xtask::run_slow_tests(&ids, output).map_err(Into::into)
-        }
-        _ => {
-            eprintln!("{}", help());
-            Err(usage_error().into())
-        }
-    }
-}
-
-fn run_canvas_proof_app(arguments: Vec<OsString>, output: &mut impl io::Write) -> CommandResult {
-    let [source_root, publish_root] = arguments.as_slice() else {
-        return Err(usage_error().into());
-    };
-    xtask::proof_app(
-        Path::new(source_root),
-        Path::new(publish_root),
-        &release_environment(),
-        output,
-    )
-    .map_err(Into::into)
 }
 
 fn run_gate(

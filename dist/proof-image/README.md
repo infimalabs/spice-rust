@@ -70,10 +70,10 @@ name Docker or Podman without contacting a daemon. Any additional production
 invocation must declare its constraint or native replacement here.
 
 The native default is deliberately broader than the exceptions. The
-interactive app uses `spice dev xtask -- app`; `npm run test:canvas` exercises it in a
-real browser; package-scoped verification and staged selection run local
-validation; and ordinary workspace tests use host tooling. None loads, builds,
-or runs the proof image.
+interactive app uses `spice dev xtask -- app`; disposable browser experiments
+exercise it on the actual surface; package-scoped verification and staged
+selection run local validation; and ordinary workspace tests use host tooling.
+None loads, builds, or runs the proof image.
 On Darwin, `dist/proof-runner/build.sh` also seals and exercises the target
 proof runner natively.
 

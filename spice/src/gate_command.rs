@@ -9,8 +9,6 @@ use std::io;
 use std::path::Path;
 
 use gate::{BatteryReport, CampReport, KillReport, ReportMutationMovement, Selector};
-#[cfg(test)]
-use gate::{GateReport, Standing};
 use wire::{Digest, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 use spice::repository::Repository;
@@ -39,22 +37,6 @@ pub(crate) fn run(
         Ok(Err(error)) => battery_failure(error),
         Err(failure) => failure.outcome(),
     }
-}
-
-#[cfg(test)]
-fn run_report(result: Result<GateReport, gate::RunError>) -> Outcome<GateReport> {
-    let report = match result {
-        Ok(report) => report,
-        Err(error) => return Failure::run("gate::run-refused", error).outcome(),
-    };
-    if report.standing() == Standing::Refused {
-        return Outcome::Refusal(Refusal::evidence(
-            "gate::regressed",
-            report.render(),
-            "remove the regression; never lower baseline.toml to admit it",
-        ));
-    }
-    direct(report)
 }
 
 /// Run the release-scoped native staged-change gate without command recursion.
@@ -427,6 +409,3 @@ impl Failure {
         }
     }
 }
-
-#[cfg(all(test, unix))]
-mod fixtures;
