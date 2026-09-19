@@ -803,15 +803,18 @@ impl Job {
         Read::by_ref(&mut file)
             .take(limit)
             .read_to_end(&mut bytes)?;
-        let text = String::from_utf8_lossy(&bytes);
+        let mut text = String::from_utf8_lossy(&bytes).into_owned();
         // Lossy decoding can expand invalid bytes. Keep the displayed UTF-8
         // body within the same byte budget without cutting a code point.
         let mut start = text.len().saturating_sub(LOG_TAIL);
         while !text.is_char_boundary(start) {
             start += 1;
         }
+        if start > 0 {
+            text.drain(..start);
+        }
         Ok(Tail {
-            text: text[start..].to_owned(),
+            text,
             truncated: truncated || start > 0,
         })
     }
