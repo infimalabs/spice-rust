@@ -620,7 +620,21 @@ fn message_badges(
         return wire::AgentMessageBadges::default();
     };
     let standing = EventDirectives { directives, event };
-    let acknowledged = answered_keys(text, &standing, wire::Disposition::Acked);
+    let mut acknowledged = BTreeSet::new();
+    let mut declined = BTreeSet::new();
+    for (key, disposition) in recognized_answers(text, &standing) {
+        match disposition {
+            wire::Disposition::Acked => {
+                acknowledged.insert(key);
+            }
+            wire::Disposition::Declined => {
+                if directives.0.get(&key).is_some_and(is_ordinary) {
+                    declined.insert(key);
+                }
+            }
+            _ => {}
+        }
+    }
     let count = |select: &dyn Fn(&PresentationDirective) -> bool| {
         let matched = acknowledged
             .iter()
@@ -638,13 +652,7 @@ fn message_badges(
     });
     // A decline is an answer, not credit: it authorizes the refusal mark on
     // the quoted directive and never adds to the acknowledged total.
-    let declines = u32::try_from(
-        answered_keys(text, &standing, wire::Disposition::Declined)
-            .iter()
-            .filter(|key| directives.0.get(*key).is_some_and(is_ordinary))
-            .count(),
-    )
-    .unwrap_or(u32::MAX);
+    let declines = u32::try_from(declined.len()).unwrap_or(u32::MAX);
     wire::AgentMessageBadges {
         acknowledgements: u32::try_from(acknowledged.len())
             .unwrap_or(u32::MAX)
@@ -658,26 +666,24 @@ fn message_badges(
     }
 }
 
-/// Every key this prose answers with authority over this event, by how it
-/// answered: `Acked` keys earn credit, `Declined` keys earn a refusal mark.
-fn answered_keys(
+/// Recognized answers from one presentation scan. Callers select dispositions
+/// before collecting distinct keys, so pending cards need no refusal set.
+fn recognized_answers<'a>(
     text: &str,
-    standing: &EventDirectives<'_>,
-    answer: wire::Disposition,
-) -> BTreeSet<steer::Key> {
-    let mut answered = BTreeSet::new();
-    for packet in scan_presentations(text, standing) {
-        for recognition in packet.recognitions {
+    standing: &'a EventDirectives<'_>,
+) -> impl Iterator<Item = (steer::Key, wire::Disposition)> + 'a {
+    scan_presentations(text, standing)
+        .into_iter()
+        .flat_map(|packet| packet.recognitions)
+        .filter_map(move |recognition| {
             let steer::ack::scan::Outcome::Retired { key, disposition } = recognition.outcome
             else {
-                continue;
+                return None;
             };
-            if disposition == answer && standing.presents(&key, disposition, recognition.locus) {
-                answered.insert(key);
-            }
-        }
-    }
-    answered
+            standing
+                .presents(&key, disposition, recognition.locus)
+                .then_some((key, disposition))
+        })
 }
 
 /// Whether a directive carries no flavor marker of its own, so its
