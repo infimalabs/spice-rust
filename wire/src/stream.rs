@@ -175,6 +175,36 @@ pub struct MessageBoundary {
     pub preserved: bool,
 }
 
+/// Positions in `cards` whose boundary another card in the same set supersedes.
+///
+/// Surfaces that hold a whole window of cards -- an older page, a browser
+/// store -- reconcile with this scan instead of pairwise insertion checks.
+/// Boundary cards are rare, so only they are compared with each other.
+/// Positions ascend, so removing them in reverse leaves the rest in place.
+#[must_use]
+pub fn superseded_boundaries<M: std::borrow::Borrow<AgentMessage>>(cards: &[M]) -> Vec<usize> {
+    let boundaries = cards
+        .iter()
+        .enumerate()
+        .filter_map(|(position, card)| {
+            let card = card.borrow();
+            card.boundary.is_some().then_some((position, card))
+        })
+        .collect::<Vec<_>>();
+    if boundaries.len() < 2 {
+        return Vec::new();
+    }
+    boundaries
+        .iter()
+        .filter(|(_, card)| {
+            boundaries
+                .iter()
+                .any(|(_, other)| card.boundary_superseded_by(other))
+        })
+        .map(|(position, _)| *position)
+        .collect()
+}
+
 impl AgentActivityKind {
     /// Whether this activity belongs in the prose card plane.
     #[must_use]
