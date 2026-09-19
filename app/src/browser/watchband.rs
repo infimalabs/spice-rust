@@ -595,8 +595,8 @@ fn render_agent_details(
                         </div>
                         {for standing.jobs.iter().map(|job| html! {
                             <div>
-                                <dt>{format!("Job {}", job.id)}</dt>
-                                <dd>{format!("{} · {}", job.standing.as_str(), job.command)}</dd>
+                                <dt>{format!("Job {} ({})", job.id, job.standing.as_str())}</dt>
+                                <dd>{job.command.clone()}</dd>
                             </div>
                         })}
                     </dl>
