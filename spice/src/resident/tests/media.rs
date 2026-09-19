@@ -90,7 +90,12 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     let send = wire::intent::SteerSend {
         fanout: test_uuid(31),
         lane,
-        message: "inspect this capture".to_owned(),
+        message: format!(
+            "inspect this capture\n\n{}",
+            media
+                .reference_markdown()
+                .expect("placement marker renders"),
+        ),
         attachments: vec![media.clone()],
     };
     let send_command = Command {
@@ -131,6 +136,31 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
         rendered.matches(&media.data_url).count(),
         0,
         "typed direct-send authority bytes stay out of disposable lane prose",
+    );
+    let snapshot = bus.fact_snapshot().expect("sent authority reads");
+    let sent = snapshot
+        .facts()
+        .iter()
+        .find_map(|envelope| envelope.fact.read::<wire::body::SteerSent>())
+        .expect("directive was retained");
+    let encoded = serde_json::to_string(&sent).expect("directive encodes");
+    assert_eq!(
+        encoded.matches(&media.data_url).count(),
+        1,
+        "durable directive must retain the image bytes exactly once",
+    );
+    let ledger = steer::Ledger::from_snapshot(&snapshot).expect("steering replays");
+    assert_eq!(
+        ledger
+            .resolve_media(lane, encoded_reference.as_bytes())
+            .unwrap(),
+        media.decoded_bytes().unwrap(),
+    );
+    let display = wire::media::with_media_payloads(&sent.text, &sent.attachments).unwrap();
+    assert_eq!(
+        wire::media::parse_markdown(&display),
+        [Ok(media.clone())],
+        "Canvas display must recover the original image",
     );
     bus.verify()
         .expect("published directive authority verifies");

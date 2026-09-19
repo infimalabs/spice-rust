@@ -320,6 +320,15 @@ flowchart TD
 transient upload. Screenshots and captures stay browsable beside the message
 they arrived with.
 
+**Invariant —** A steering directive retains image bytes only in its attachment
+values. Its prose uses bounded, digest-bound `attachment:` Markdown markers to
+preserve placement beside quoted replies and body text. Display projections
+expand those markers from the same record's attachments; they are not fetch
+authority. Agent delivery continues to use lane-authenticated
+`AgentMediaReference` values. New sends duplicating attachment data URLs in
+prose are refused before journal mutation; historical inline images remain
+browsable without rewriting the record.
+
 **Invariant —** Paired view-image tool output collapses to one rendered image
 rather than duplicating.
 

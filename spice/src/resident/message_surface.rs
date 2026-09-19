@@ -524,20 +524,25 @@ impl PresentationDirectives {
                     let retirement = retirements.get(&key).copied();
                     let taste = tastes.contains(&key);
                     let review = is_review_feedback(directive.control());
-                    (
+                    Ok((
                         key,
                         PresentationDirective {
                             lane: directive.lane(),
-                            text: directive.text().to_owned(),
+                            text: wire::media::with_media_payloads(
+                                directive.text(),
+                                directive.attachments(),
+                            )
+                            .map_err(|error| error.to_string())?
+                            .into_owned(),
                             authored: presents_as_authored_steering(directive.control()),
                             taste,
                             review,
                             disposition: directive.disposition(),
                             retirement,
                         },
-                    )
+                    ))
                 })
-                .collect(),
+                .collect::<Result<_, String>>()?,
         ))
     }
 
@@ -572,7 +577,9 @@ impl PresentationDirectives {
                 key,
                 PresentationDirective {
                     lane: head.lane,
-                    text: head.text.clone(),
+                    text: wire::media::with_media_payloads(&head.text, &head.attachments)
+                        .map_err(|error| error.to_string())?
+                        .into_owned(),
                     authored: presents_as_authored_steering(head.control.as_deref()),
                     taste,
                     review: is_review_feedback(head.control.as_deref()),

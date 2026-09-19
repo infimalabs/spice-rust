@@ -127,6 +127,18 @@ fn admit_send_content(send: &wire::intent::SteerSend) -> Result<(), Outcome<Comm
             "remove or replace the invalid attachment and retry the same authored message",
         ));
     }
+    if send
+        .attachments
+        .iter()
+        .any(|media| send.message.contains(&media.data_url))
+    {
+        return Err(refusal(
+            "steer::media-duplicated",
+            Some("attachment bytes retained only in attachments".to_owned()),
+            None,
+            "use bounded attachment Markdown references instead of inline data URLs",
+        ));
+    }
     if send.message.trim().is_empty() {
         return Err(refusal(
             "steer::message-empty",
@@ -811,4 +823,25 @@ pub(super) fn evidence_refusal(
         Some(observed.to_owned()),
         repair,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn send_refuses_duplicate_attachment_payloads() {
+        let media = wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
+            .expect("fixture image admits");
+        let send = wire::intent::SteerSend {
+            fanout: "5f72a0b1-6273-4495-9f46-0718293a4b5c".parse().unwrap(),
+            lane: "5f72a0b1-6273-4495-9f46-0718293a4b5d".parse().unwrap(),
+            message: media.markdown().unwrap(),
+            attachments: vec![media],
+        };
+        assert!(matches!(
+            admit_send_content(&send),
+            Err(Outcome::Refusal(refusal)) if refusal.reason() == "steer::media-duplicated"
+        ));
+    }
 }

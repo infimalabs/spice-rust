@@ -491,15 +491,22 @@ mod tests {
             .push(attachment("b"));
 
         let prepared = store.prepare("agent-a").unwrap();
+        assert!(
+            prepared
+                .attachments
+                .iter()
+                .all(|media| !prepared.message.contains(&media.data_url)),
+            "directive prose must not duplicate its attachment payloads",
+        );
         assert_eq!(
             prepared.message,
             format!(
                 "> quoted\n> line\n\nreply\n\n{}\n\nbody\n\n{}",
                 quote_attachment
-                    .markdown()
+                    .reference_markdown()
                     .expect("fixture Markdown renders"),
                 primary_attachment
-                    .markdown()
+                    .reference_markdown()
                     .expect("fixture Markdown renders"),
             ),
         );

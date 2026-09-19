@@ -730,7 +730,7 @@ pub(crate) fn compose(body: &str, quotes: &[QuotedReply<'_>], attachments: &[Med
 
 fn attachment_markdown(attachment: &Media) -> String {
     attachment
-        .markdown()
+        .reference_markdown()
         .expect("composer attachments passed admission before storage")
 }
 
@@ -802,7 +802,9 @@ mod tests {
             .expect("fixture attachment admits");
         assert_eq!(
             compose("", &[], std::slice::from_ref(&attachment)),
-            attachment.markdown().expect("fixture Markdown renders"),
+            attachment
+                .reference_markdown()
+                .expect("fixture Markdown renders"),
         );
     }
 

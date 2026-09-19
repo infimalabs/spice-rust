@@ -335,6 +335,20 @@ impl Media {
         Ok(format!("![{name}]({})", self.data_url))
     }
 
+    /// Render a bounded placement marker for bytes retained in the same record.
+    ///
+    /// This local Markdown marker is not authority to fetch media. Agent access
+    /// still requires an authenticated [`AgentMediaReference`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an admission error rather than referencing a forged value.
+    pub fn reference_markdown(&self) -> Result<String, MediaError> {
+        let identity = self.identity()?;
+        let name = self.name.replace('\\', "\\\\").replace(']', "\\]");
+        Ok(format!("![{name}](attachment:{identity})"))
+    }
+
     /// Whether authored text already carries these canonical media bytes.
     ///
     /// Admitted media has one canonical data URL spelling and its observed byte
@@ -450,6 +464,31 @@ pub fn without_media_payloads(text: &str, media: &[Media]) -> String {
     media.iter().fold(text.to_owned(), |projected, item| {
         projected.replace(&item.data_url, "")
     })
+}
+
+/// Expand canonical placement markers for a disposable display projection.
+///
+/// Only images supplied by the same record can supply bytes. Historical inline
+/// images are left intact; this never rewrites durable authored text.
+///
+/// # Errors
+///
+/// Returns an admission error if referenced media is invalid.
+pub fn with_media_payloads<'a>(
+    text: &'a str,
+    media: &[Media],
+) -> Result<std::borrow::Cow<'a, str>, MediaError> {
+    let mut projected = std::borrow::Cow::Borrowed(text);
+    if text.contains("](attachment:") {
+        for item in media {
+            let reference = item.reference_markdown()?;
+            if projected.contains(&reference) {
+                projected =
+                    std::borrow::Cow::Owned(projected.replace(&reference, &item.markdown()?));
+            }
+        }
+    }
+    Ok(projected)
 }
 
 /// Extract every data-backed image block from Markdown in source order.
@@ -659,6 +698,31 @@ mod tests {
                 .unwrap(),
             "a bare URL is not browsable authored Markdown",
         );
+    }
+
+    #[test]
+    fn placement_markers_preserve_images_without_retaining_payloads() {
+        let media = [
+            Media::from_base64(r"quote]\雪.png", "image/png", PNG).unwrap(),
+            Media::from_base64("primary.png", "image/png", SECOND_PNG).unwrap(),
+        ];
+        let text = format!(
+            "> quoted\n\n{}\n\nbody\n\n{}",
+            media[0].reference_markdown().unwrap(),
+            media[1].reference_markdown().unwrap(),
+        );
+        assert!(media.iter().all(|item| !text.contains(&item.data_url)));
+        let projected = with_media_payloads(&text, &media).unwrap();
+        assert_eq!(
+            projected,
+            format!(
+                "> quoted\n\n{}\n\nbody\n\n{}",
+                media[0].markdown().unwrap(),
+                media[1].markdown().unwrap(),
+            ),
+        );
+        assert_eq!(parse_markdown(&projected), media.map(Ok));
+        assert_eq!(with_media_payloads(&text, &[]).unwrap(), text);
     }
 
     #[test]
