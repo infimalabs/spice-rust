@@ -7,6 +7,7 @@
 
 use std::io;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use lane::capture::{
@@ -21,6 +22,7 @@ pub(super) struct DurableReporter {
     socket: std::os::unix::net::UnixDatagram,
     path: PathBuf,
     driver: Mutex<Option<Arc<command::Driver>>>,
+    driving: AtomicBool,
 }
 
 impl DurableReporter {
@@ -30,6 +32,7 @@ impl DurableReporter {
             Ok(Self {
                 path: capture_path(paths),
                 driver: Mutex::new(None),
+                driving: AtomicBool::new(false),
             })
         }
         #[cfg(unix)]
@@ -38,6 +41,7 @@ impl DurableReporter {
                 socket: std::os::unix::net::UnixDatagram::unbound()?,
                 path: capture_path(paths),
                 driver: Mutex::new(None),
+                driving: AtomicBool::new(false),
             })
         }
     }
@@ -64,12 +68,14 @@ impl DurableReporter {
 
 impl CaptureReporter for DurableReporter {
     fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
+        self.driving.store(true, Ordering::Relaxed);
         let asked = self
             .driver
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
             .and_then(|driver| driver.observe(&record.decoded));
+        self.driving.store(false, Ordering::Relaxed);
         // The lane observer committed the bytes to tape before this callback.
         // Resident notification is best effort; durability never depends on a
         // resident generation being present.
@@ -102,6 +108,14 @@ impl CaptureReporter for DurableReporter {
             });
         }
         Ok(())
+    }
+
+    fn stage(&self) -> &'static str {
+        if self.driving.load(Ordering::Relaxed) {
+            "driver"
+        } else {
+            "notice"
+        }
     }
 
     fn failed(&self, _failure: CaptureFailure) {}

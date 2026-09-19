@@ -76,18 +76,22 @@ pub(in crate::resident) fn occupant_launch(
     let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;
-    let omp = resolved.root().vendor().omp();
-    let threshold = omp.auto_compact_threshold_tokens_for(model.unwrap_or_else(|| omp.model()));
-    let pinned = pin_omp(
-        paths,
-        &repository,
-        threshold,
-        omp.lsp(),
-        name,
-        resume,
-        lane,
-        occupant,
-    )?;
+    let pinned = if name.as_str() == vendor::OMP.name() {
+        pin_omp(
+            paths,
+            &repository,
+            resolved.root().vendor().omp(),
+            model,
+            resume,
+            lane,
+            occupant,
+        )?
+    } else {
+        Pinned {
+            resume,
+            config_overlay: None,
+        }
+    };
     let selection = Selection {
         vendor: name,
         lane,
@@ -735,29 +739,22 @@ struct Pinned {
 
 /// Pin what an oh-my-pi occupant reads from disk before it launches: the
 /// session it resumes and the overlay carrying its compaction threshold and
-/// language-server disposition. Every other vendor passes through untouched.
+/// language-server disposition. The caller selects omp before entering.
 fn pin_omp(
     paths: &RuntimePaths,
     repository: &Repository,
-    auto_compact_threshold_tokens: u64,
-    lsp: bool,
-    name: &wire::Name,
+    omp: &vendor::config::OmpConfig,
+    model: Option<&str>,
     resume: vendor::Resume,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> CommandResult<Pinned> {
-    if name.as_str() != vendor::OMP.name() {
-        return Ok(Pinned {
-            resume,
-            config_overlay: None,
-        });
-    }
     let resume = match resume.session_id() {
         Some(_) => resume,
         None => pin_session(repository)?,
     };
-    let config_overlay =
-        pin_config_overlay(paths, auto_compact_threshold_tokens, lsp, lane, occupant)?;
+    let threshold = omp.auto_compact_threshold_tokens_for(model.unwrap_or_else(|| omp.model()));
+    let config_overlay = pin_config_overlay(paths, threshold, omp.lsp(), lane, occupant)?;
     Ok(Pinned {
         resume,
         config_overlay: Some(config_overlay),

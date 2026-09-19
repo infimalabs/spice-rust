@@ -18,8 +18,8 @@ pub use config::{
 };
 pub use lock::{Acquisition, Availability, LockFile, LockName, LockNameError, Possession};
 pub use observe::{
-    Observation, ObservationFailure, ObservationSpecError, ObserveError, ObservedRecord,
-    OutputStream, RecordBoundary, RecordObserver,
+    Observation, ObservationFailure, ObservationSpecError, ObservationStall, ObserveError,
+    ObservedRecord, OutputStream, RecordBoundary, RecordObserver,
 };
 #[cfg(unix)]
 pub use process_tree::DescendantGroups;

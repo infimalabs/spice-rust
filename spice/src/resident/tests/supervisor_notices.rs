@@ -175,3 +175,49 @@ fn a_sweep_asks_the_door_and_the_notice_arm_reads_what_it_staged_in_order() {
     drop(entered);
     fs::remove_dir_all(root).expect("notice fixture cleanup");
 }
+
+#[test]
+fn capture_stall_attribution_survives_supervisor_degradation() {
+    let (root, paths) = resident_fixture("supervisor-stall");
+    let repository = Repository::discover(&root).expect("fixture repository");
+    let surface = crate::trust_command::Surface::load(&repository).expect("fixture trust");
+    let journal = journal::Journal::open(&paths.journal).expect("fixture journal");
+    let bus = Bus::start(journal).expect("fixture bus");
+    let epoch = test_uuid(1);
+    commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+    let lane = test_uuid(2);
+    let occupant = test_uuid(3);
+    seed_lane(&bus, epoch, lane, occupant, &root);
+    let failure = ObservationFailure::SinkBackpressure {
+        stream: OutputStream::Stdout,
+        capacity: 64,
+        deadline: Duration::from_secs(30),
+        stall: Box::new(sill::ObservationStall {
+            elapsed: Duration::from_millis(30_250),
+            waiting: "callback completion",
+            stage: "tee sync",
+        }),
+    };
+    lane_surface::supervisor_failed(&bus, epoch, lane, occupant, &failure.to_string())
+        .expect("stall degradation commits");
+    let snapshot = bus.fact_snapshot().expect("degradation facts");
+    let degraded = snapshot
+        .facts()
+        .iter()
+        .find(|fact| fact.fact.kind() == wire::FactKind::LaneDegraded)
+        .expect("degradation is durable");
+    let marker = degraded.fact.body()["marker"]
+        .as_str()
+        .expect("failure marker");
+    assert!(
+        marker.contains("30.25s"),
+        "actual stall duration lost: {marker}"
+    );
+    assert!(marker.contains("tee sync"), "stalled stage lost: {marker}");
+    assert!(
+        marker.contains("callback completion"),
+        "wait location lost: {marker}"
+    );
+    bus.shutdown().expect("fixture stops");
+    fs::remove_dir_all(root).expect("fixture cleanup");
+}

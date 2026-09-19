@@ -241,8 +241,8 @@ fn selected_records_and_opaque_diagnostics_drain_before_wait() {
         StreamPolicy::Capture { limit: 1024 },
         StreamPolicy::Capture { limit: 1024 },
     );
-    let observation =
-        Observation::new(OutputStream::Stdout, 128, 64, observer).expect("bounded observation");
+    let observation = Observation::new(OutputStream::Stdout, 128, 64, OBSERVER_BOUND, observer)
+        .expect("bounded observation");
     let running = spawn_observed(spec, observation).expect("observed child launches");
 
     let records = completed
@@ -305,8 +305,14 @@ fn one_blocked_sink_call_terminates_and_reaps_without_more_output() {
         release: Arc::clone(&release),
         failures,
     });
-    let observation =
-        Observation::new(OutputStream::Stdout, 32, 1, observer).expect("bounded observation");
+    let observation = Observation::new(
+        OutputStream::Stdout,
+        32,
+        1,
+        Duration::from_millis(50),
+        observer,
+    )
+    .expect("bounded observation");
     let running = spawn_observed(
         test_spec(
             "/bin/sh",
@@ -330,8 +336,11 @@ fn one_blocked_sink_call_terminates_and_reaps_without_more_output() {
         ObservationFailure::SinkBackpressure {
             stream: OutputStream::Stdout,
             capacity: 1,
-            ..
-        }
+            deadline,
+            stall,
+        } if stall.elapsed >= deadline
+            && stall.waiting == "callback completion"
+            && stall.stage == "observe"
     ));
     let outcome = running.wait().expect("backpressured child was reaped");
     assert!(matches!(
@@ -438,7 +447,6 @@ fn opaque_capture_interrupts_and_joins_before_foreign_writer_eof() {
                 stream,
                 observation: None,
                 failure_observer: None,
-                sink_deadline: Duration::from_millis(50),
                 failure: Arc::clone(&context),
                 wake: running
                     .cancellation_wake
@@ -518,11 +526,16 @@ fn an_observer_still_working_at_the_drain_deadline_is_named_rather_than_read_as_
         CaptureWorker {
             stream: OutputStream::Stderr,
             observation: Some(
-                Observation::new(OutputStream::Stderr, 32, 1, Arc::clone(&observer))
-                    .expect("abandoned-drain observation"),
+                Observation::new(
+                    OutputStream::Stderr,
+                    32,
+                    1,
+                    OBSERVER_BOUND,
+                    Arc::clone(&observer),
+                )
+                .expect("abandoned-drain observation"),
             ),
             failure_observer: Some(Arc::clone(&observer)),
-            sink_deadline: OBSERVER_BOUND,
             failure: context,
             wake: running
                 .cancellation_wake
@@ -594,6 +607,7 @@ fn sink_refusal_is_named_and_reaped() {
         OutputStream::Stdout,
         32,
         1,
+        OBSERVER_BOUND,
         Arc::new(RefusingObserver { failures }),
     )
     .expect("refusing observation");
@@ -628,6 +642,7 @@ fn oversized_record_truncates_and_observation_survives() {
         OutputStream::Stdout,
         16,
         4,
+        OBSERVER_BOUND,
         Arc::new(ForwardObserver { records, failures }),
     )
     .expect("truncating observation");
@@ -684,6 +699,7 @@ fn eof_while_discarding_ends_without_a_terminal_record() {
         OutputStream::Stdout,
         4,
         1,
+        OBSERVER_BOUND,
         Arc::new(ForwardObserver { records, failures }),
     )
     .expect("eof observation");
@@ -752,8 +768,14 @@ fn selected_reader_failure_uses_the_same_bounded_cleanup_path() {
     let (records, _received) = mpsc::channel();
     let (failures, failed) = mpsc::channel();
     let observer: Arc<dyn RecordObserver> = Arc::new(ForwardObserver { records, failures });
-    let observation = Observation::new(OutputStream::Stdout, 32, 1, Arc::clone(&observer))
-        .expect("reader-failure observation");
+    let observation = Observation::new(
+        OutputStream::Stdout,
+        32,
+        1,
+        OBSERVER_BOUND,
+        Arc::clone(&observer),
+    )
+    .expect("reader-failure observation");
     let context = Arc::new(FailureContext {
         pid: running.pid,
         group: running.spec.group,
@@ -775,7 +797,6 @@ fn selected_reader_failure_uses_the_same_bounded_cleanup_path() {
             stream: OutputStream::Stdout,
             observation: Some(observation),
             failure_observer: Some(observer),
-            sink_deadline: Duration::from_millis(50),
             failure: context,
             wake: running
                 .cancellation_wake
@@ -836,7 +857,6 @@ fn opaque_reader_failure_uses_the_selected_observer_cleanup_path() {
             stream: OutputStream::Stderr,
             observation: None,
             failure_observer: Some(observer),
-            sink_deadline: Duration::from_millis(50),
             failure: context,
             wake: running
                 .cancellation_wake
@@ -886,6 +906,7 @@ fn observer_panic_is_named_as_loss_and_reaped() {
         OutputStream::Stdout,
         32,
         1,
+        OBSERVER_BOUND,
         Arc::new(PanickingObserver { failures }),
     )
     .expect("panic observation");

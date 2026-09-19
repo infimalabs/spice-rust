@@ -1,6 +1,7 @@
 use super::{CapturedOutput, IoFailure, ProcessState, WAKE_BYTE, fail_observation, platform};
 use crate::observe::{
-    Observation, ObservationFailure, ObservedRecord, OutputStream, RecordBoundary, RecordObserver,
+    Observation, ObservationFailure, ObservationStall, ObservedRecord, OutputStream,
+    RecordBoundary, RecordObserver,
 };
 use crate::spec::ProcessGroup;
 use std::io::{self, Read};
@@ -93,7 +94,6 @@ pub(super) struct CaptureWorker {
     pub(super) stream: OutputStream,
     pub(super) observation: Option<Observation>,
     pub(super) failure_observer: Option<Arc<dyn RecordObserver>>,
-    pub(super) sink_deadline: Duration,
     pub(super) failure: Arc<FailureContext>,
     pub(super) wake: std::os::unix::net::UnixDatagram,
     pub(super) observer_wake: Option<std::os::unix::net::UnixDatagram>,
@@ -119,7 +119,6 @@ where
         stream,
         observation,
         failure_observer,
-        sink_deadline,
         failure,
         wake,
         observer_wake,
@@ -148,7 +147,6 @@ where
         let mut framer = observation.map(|observation| {
             SelectedFramer::new(
                 observation,
-                sink_deadline,
                 Arc::clone(&failure),
                 Arc::clone(&worker_state),
                 observer_wake.expect("selected capture has a preallocated observer wake"),
@@ -322,7 +320,6 @@ struct SelectedFramer {
 impl SelectedFramer {
     fn new(
         observation: Observation,
-        sink_deadline: Duration,
         failure: Arc<FailureContext>,
         state: Arc<Mutex<CaptureState>>,
         wake: std::os::unix::net::UnixDatagram,
@@ -331,6 +328,7 @@ impl SelectedFramer {
         let stream = observation.stream();
         let limit = observation.frame_limit();
         let capacity = observation.queue_capacity();
+        let sink_deadline = observation.sink_deadline();
         let (sender, receiver) = mpsc::sync_channel(capacity);
         start_observer_worker(
             receiver,
@@ -419,6 +417,11 @@ impl SelectedFramer {
                             stream: self.stream,
                             capacity: self.capacity,
                             deadline: self.sink_deadline,
+                            stall: Box::new(ObservationStall {
+                                elapsed: started.elapsed(),
+                                waiting: "queue admission",
+                                stage: self.observer.stage(),
+                            }),
                         });
                         return false;
                     }
@@ -492,6 +495,7 @@ fn start_observer_worker(receiver: mpsc::Receiver<Frame>, worker: ObserverWorker
                 );
                 break;
             }
+            let started = Instant::now();
             match result_receiver.recv_timeout(sink_deadline) {
                 Ok(ObserverResult::Accepted) => {}
                 Ok(ObserverResult::Refused(error)) => {
@@ -521,6 +525,11 @@ fn start_observer_worker(receiver: mpsc::Receiver<Frame>, worker: ObserverWorker
                             stream,
                             capacity,
                             deadline: sink_deadline,
+                            stall: Box::new(ObservationStall {
+                                elapsed: started.elapsed(),
+                                waiting: "callback completion",
+                                stage: observer.stage(),
+                            }),
                         },
                     );
                     break;

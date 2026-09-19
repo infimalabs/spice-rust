@@ -92,6 +92,7 @@ fn spawn_observed(
         OutputStream::Stdout,
         OUTPUT_LIMIT,
         OUTPUT_QUEUE,
+        OUTPUT_DRAIN,
         Arc::new(WatchObserver { events: sender }),
     )
     .map_err(|error| error.to_string())?;

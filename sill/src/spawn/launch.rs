@@ -103,7 +103,6 @@ fn spawn_inner_with_guardian(
         failure_observer,
         observer_wake: wakes.observer,
         selected_stream: wakes.selected_stream,
-        sink_deadline: spec.deadlines.output_drain(),
         failure,
     };
     let stdout = pipes.stdout.map(|(reader, limit, retention)| {
@@ -223,7 +222,6 @@ struct CaptureSetup {
     failure_observer: Option<Arc<dyn crate::observe::RecordObserver>>,
     observer_wake: Option<UnixDatagram>,
     selected_stream: Option<OutputStream>,
-    sink_deadline: std::time::Duration,
     failure: Arc<FailureContext>,
 }
 
@@ -239,7 +237,6 @@ impl CaptureSetup {
             stream,
             observation: selected,
             failure_observer: self.failure_observer.as_ref().map(Arc::clone),
-            sink_deadline: self.sink_deadline,
             failure: Arc::clone(&self.failure),
             wake: wake.expect("captured stream has a preallocated wake"),
             observer_wake: (self.selected_stream == Some(stream)).then(|| {
