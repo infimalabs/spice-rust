@@ -435,6 +435,7 @@ fn lane_response_with_renewals(
                 lanes,
                 subscriptions,
                 renewals,
+                refresh_after_millis: None,
             },
         }),
     )

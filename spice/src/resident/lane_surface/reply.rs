@@ -48,12 +48,25 @@ fn answer_at(
     now: Monotonic,
     activity: impl Fn(CanonicalUuid) -> Option<lane::occupant::Activity>,
 ) -> CommandResult<LaneAnswer> {
+    let mut refresh_after_millis: Option<u32> = None;
     let lanes = head
         .lanes
         .iter()
         .filter(|row| selected.is_none_or(|lane| row.lane == lane))
         .map(|row| {
-            let liveness = liveness(row, activity(row.lane), now)?;
+            let observed = activity(row.lane);
+            let liveness = liveness(row, observed, now)?;
+            if liveness == wire::intent::LaneLiveness::Running
+                && let Some(observed) = observed
+            {
+                // Round past the boundary so a sub-millisecond remainder
+                // cannot return another still-running snapshot.
+                let remaining = QUIET_HORIZON - now.duration_since(observed.at());
+                let millis = u32::try_from(remaining.as_millis() + 1)
+                    .expect("the quiet horizon fits in browser milliseconds");
+                refresh_after_millis =
+                    Some(refresh_after_millis.map_or(millis, |current| current.min(millis)));
+            }
             Ok(wire::intent::LaneAnswerRow {
                 lane: row.lane,
                 team: row.team,
@@ -115,6 +128,7 @@ fn answer_at(
         lanes,
         subscriptions,
         renewals: head.renewals.clone(),
+        refresh_after_millis,
     })
 }
 

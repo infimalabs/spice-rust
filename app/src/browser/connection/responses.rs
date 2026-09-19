@@ -1,3 +1,12 @@
+#[derive(Default)]
+pub(super) struct FrameApplication {
+    pub(super) directives: Vec<StreamDirective>,
+    pub(super) refresh: bool,
+    pub(super) stale: crate::Stale,
+    /// An applied lane answer arms or cancels the one-shot quiet deadline.
+    pub(super) lane_refresh: Option<Option<u32>>,
+}
+
 /// Apply one admitted stream frame, publishing the surface it changed.
 ///
 /// A liveness answer reports no state, and the caller has already taken the
@@ -10,14 +19,14 @@ fn handle_stream_frame(
     data: &SurfaceData,
     bytes: &[u8],
     publish: bool,
-) -> Result<(Vec<StreamDirective>, bool, crate::Stale), String> {
+) -> Result<FrameApplication, String> {
     let admitted = session
         .admit_stream(bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
     if matches!(admitted.get(), wire::StreamFrame::Pong { .. }) {
-        return Ok((Vec::new(), false, crate::Stale::default()));
+        return Ok(FrameApplication::default());
     }
-    let stale = stale_reads(&admitted);
+    let mut stale = stale_reads(&admitted);
     let (directives, changed) = {
         let mut data = data.write();
         let runtime = data
@@ -25,12 +34,19 @@ fn handle_stream_frame(
             .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?;
         let application = runtime.apply_stream_frame(&admitted);
         let changed = application.changed();
+        if changed && let wire::StreamFrame::Message { message, .. } = admitted.get() {
+            stale.invalidate_quiet_lane(runtime.lanes(), message.lane);
+        }
         (application.into_directives(), changed)
     };
     if changed && publish {
         surface.set(data.publication());
     }
-    Ok((directives, false, stale))
+    Ok(FrameApplication {
+        directives,
+        stale,
+        ..FrameApplication::default()
+    })
 }
 
 pub(super) fn handle_incoming(
@@ -40,7 +56,7 @@ pub(super) fn handle_incoming(
     actions: &ActionQueue,
     bytes: &[u8],
     publish: bool,
-) -> Result<(Vec<StreamDirective>, bool, crate::Stale), String> {
+) -> Result<FrameApplication, String> {
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
     if crossing.get("stream").is_some() {
         return handle_stream_frame(session, &handles.surface, data, bytes, publish);
@@ -84,11 +100,21 @@ pub(super) fn handle_incoming(
             actions.await_topology_authority(committed);
         }
     }
+    let lane_refresh = application.lane_authority.then(|| {
+        runtime
+            .lanes()
+            .expect("an applied lane answer installs its snapshot")
+            .refresh_after_millis
+    });
     drop(runtime_slot);
     if publish {
         handles.surface.set(data.publication());
     }
-    Ok((Vec::new(), application.refresh, crate::Stale::default()))
+    Ok(FrameApplication {
+        refresh: application.refresh,
+        lane_refresh,
+        ..FrameApplication::default()
+    })
 }
 
 struct CommandApplication {

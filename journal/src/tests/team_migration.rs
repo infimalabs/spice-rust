@@ -199,6 +199,7 @@ fn schema_twenty_five_authority(path: &Path) -> Carriers {
         lanes: Vec::new(),
         subscriptions: residency.subscriptions.clone(),
         renewals: residency.renewals.clone(),
+        refresh_after_millis: None,
     })
     .expect("lane answer encodes");
     insert_receipt_row(

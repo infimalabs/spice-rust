@@ -99,6 +99,8 @@ pub struct LaneView {
     pub topology_revision: u64,
     /// Safe current lane rows.
     pub lanes: Vec<LaneRow>,
+    /// One-shot resident deadline for re-reading the lane liveness snapshot.
+    pub refresh_after_millis: Option<u32>,
     /// Durable renewal state keyed by the independently steerable member.
     renewals: BTreeMap<CanonicalUuid, wire::LaneRenewalRecord>,
 }
@@ -303,6 +305,7 @@ impl From<&LaneAnswer> for LaneView {
             state: answer.state,
             topology_revision: answer.topology_revision,
             lanes: teams,
+            refresh_after_millis: answer.refresh_after_millis,
             renewals,
         }
     }
@@ -838,6 +841,19 @@ impl Stale {
             }
             _ => {}
         }
+    }
+
+    /// Re-read a quiet occupant when a live message may have resumed activity.
+    ///
+    /// The resident still decides liveness; replayed messages cannot make a
+    /// process running locally. Already-running rows need no redundant read.
+    pub fn invalidate_quiet_lane(&mut self, view: Option<&LaneView>, lane: CanonicalUuid) {
+        self.lanes |= view.is_some_and(|view| {
+            view.lanes.iter().any(|team| {
+                team.member(lane)
+                    .is_some_and(|member| member.liveness == LaneLiveness::RunningStale)
+            })
+        });
     }
 
     /// Whether the board read went stale.
