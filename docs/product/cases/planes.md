@@ -119,7 +119,7 @@
 | An authored task supplies another nonempty `class:value` origin | the open wire shape is accepted and preserved; no closed realm enum is imposed | [Every task names an origin realm](../invariants/identity.md#work-every-task-names-an-origin-realm) |
 | A phase advance is replayed from history | it is recoverable without a parallel event log | [A phase advance is a publication](../invariants/identity.md#work-a-phase-advance-is-a-publication) |
 | A review finds nothing | the phase advances; no merge is produced | [A review that changes nothing still advances the phase](../invariants/identity.md#work-a-review-that-changes-nothing-still-advances-the-phase) |
-| An agent files an admission of a mistake | it lands on a hidden channel, not the public board | [Hidden channels keep admissions private](../invariants/identity.md#work-hidden-channels-keep-admissions-private) |
+| An agent files an admission of a mistake | it lands on a hidden channel, off the default allocation queue but fully readable | [Hidden channels keep admissions off the queue](../invariants/identity.md#work-hidden-channels-keep-admissions-off-the-queue) |
 | A claim begins | the tree is fast-forwarded to the baseline first | [Claim synchronization](../invariants/lifecycle.md#integration-claim-synchronization) |
 | An agent hits an integration conflict | it is described as an overlap with the baseline | [Content conflicts are framed as baseline overlap](../invariants/lifecycle.md#integration-content-conflicts-are-framed-as-baseline-overlap) |
 

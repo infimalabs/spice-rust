@@ -1,4 +1,8 @@
-//! Visibility-aware task-pill aggregation shared with the browser chrome.
+//! Task-pill aggregation shared with the browser chrome.
+//!
+//! Visibility decides pill order, never pill content: a hidden stem is one
+//! the allocator does not offer by default, and its counts read exactly like
+//! a public stem's so the operator can triage it from the same glance.
 
 use std::collections::BTreeMap;
 
@@ -13,17 +17,10 @@ pub(crate) struct TaskPill {
 
 impl TaskPill {
     pub(crate) fn count(&self) -> String {
-        if self.hidden {
-            (self.ready + self.active + self.unavailable).to_string()
-        } else {
-            format!("{}·{}·{}", self.ready, self.active, self.unavailable)
-        }
+        format!("{}·{}·{}", self.ready, self.active, self.unavailable)
     }
 
     pub(crate) fn title(&self) -> String {
-        if self.hidden {
-            return format!("{} deferred or system tasks", self.count());
-        }
         format!(
             "{} ready, {} active or in flight, {} blocked or deferred across {}.*",
             self.ready, self.active, self.unavailable, self.stem
@@ -112,8 +109,12 @@ mod tests {
             pills[1].title(),
             "1 ready, 0 active or in flight, 1 blocked or deferred across zeta.*"
         );
-        assert_eq!(pills[2].count(), "2");
-        assert_eq!(pills[2].title(), "2 deferred or system tasks");
-        assert_eq!(pills[3].count(), "1");
+        assert_eq!(pills[2].count(), "0·1·1");
+        assert_eq!(
+            pills[2].title(),
+            "0 ready, 1 active or in flight, 1 blocked or deferred across alpha.*",
+            "a hidden stem reads exactly like a public one"
+        );
+        assert_eq!(pills[3].count(), "1·0·0");
     }
 }

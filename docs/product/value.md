@@ -574,15 +574,15 @@ the board reflows, so every reading-contract rule is load-bearing on its own.
 flowchart LR
   P["status pip<br/>per agent liveness"] --> L["saturation = recency"]
   G["lane lights<br/>per member in a team"] --> L
-  F["task pills<br/>per project stem"] --> V["public: ready · active · unavailable counts"]
-  F --> H["hidden system: one aggregate count"]
+  F["task pills<br/>per project stem"] --> V["ready · active · unavailable counts<br/>(public and hidden alike)"]
   V --> T["base, active, or dormant presentation"]
 ```
 
-Lane indicators use saturation for recency. Public project task pills never ask
-colour to carry exact work state: their three-slot string spells ready, active
-or in-flight, and blocked or deferred counts. A hidden-system pill intentionally
-shows one aggregate count rather than exposing that public breakdown.
+Lane indicators use saturation for recency. Task pills never ask colour to
+carry exact work state: their three-slot string spells ready, active or
+in-flight, and blocked or deferred counts. A hidden-system stem sorts after
+the public ones and reads the same breakdown, because a stem the allocator
+skips is exactly the one an operator has to triage by eye.
 
 **Value:** the operator gets fast peripheral liveness and exact work counts at
 the same time. The three semantic slots are always present, but the unpadded,

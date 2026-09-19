@@ -80,91 +80,8 @@ fn validated_snapshot_from_with_occupant(
         )
     })?;
     let mut residency = positioned(residency);
-    let (origin_threads, creator_teams, (claim_contexts, git_contexts)) =
-        if selected.is_some_and(std::collections::BTreeSet::is_empty) {
-            (Default::default(), Default::default(), Default::default())
-        } else {
-            (
-                task_origin_threads(observed.facts().iter(), &residency.body, selected)?,
-                task_creator_teams(observed.facts().iter(), selected)?,
-                task_contexts(observed.facts(), selected),
-            )
-        };
-    let capacity = selected.map_or(observed.tasks().len(), std::collections::BTreeSet::len);
-    let mut tasks = Vec::with_capacity(capacity);
-    let mut entries = Vec::with_capacity(capacity);
-    for heads in observed.tasks() {
-        if selected.is_some_and(|tasks| !tasks.contains(&heads.statement().body().born)) {
-            continue;
-        }
-        let statement = positioned(heads.statement());
-        let workflow = positioned(heads.workflow());
-        let claim = heads.claim().map(positioned);
-        let lease = heads.lease().map(positioned);
-        let claim_context = current_claim_context(
-            &statement.body.born,
-            claim.as_ref().map(|head| &head.body),
-            &claim_contexts,
-        )?;
-        let git_context = git_contexts.get(&statement.body.born).cloned();
-        let handle = TaskHandle::for_project(&statement.body.project, &statement.body.born);
-        let creator_team = creator_teams.get(&statement.body.born).copied().flatten();
-        let entry = Entry::new(
-            statement.body.clone(),
-            workflow.body.clone(),
-            claim.as_ref().map(|head| head.body.clone()),
-            lease.as_ref().map(|head| head.body.clone()),
-            projects,
-        )
-        .map_err(|error| {
-            store_fault(
-                "board::head-invalid",
-                &format!("task {handle} current heads are invalid: {error}"),
-            )
-        })?
-        .with_creator_team(creator_team);
-        let visibility = entry.project().visibility().clone();
-        let origin_thread = origin_threads
-            .get(&statement.body.born)
-            .cloned()
-            .ok_or_else(|| {
-                protocol_fault(
-                    "board::task-origin-missing",
-                    &format!("task {handle} has no authoritative creation fact"),
-                )
-            })?;
-        entries.push(entry);
-        tasks.push(
-            BoardTask::from_authoritative(
-                visibility,
-                origin_thread,
-                creator_team,
-                statement,
-                workflow,
-                claim,
-                lease,
-            )
-            .with_context(claim_context, git_context),
-        );
-    }
-    // Allocation history and graph history are global projections. Scoped
-    // preflights neither consume nor synthesize a partial version of either.
-    let recent_cell = selected
-        .is_none()
-        .then(|| {
-            board::recent_claim_cell(
-                &entries,
-                observed.facts().latest_claim(&principal),
-                &principal,
-            )
-        })
-        .flatten();
-    let review_history = if selected.is_none() {
-        board::graph::review_history(observed.facts().iter(), &entries)
-            .map_err(|error| error.to_string())
-    } else {
-        Ok(Vec::new())
-    };
+    let (entries, tasks) = project_task_rows(observed, projects, &residency.body, selected)?;
+    let (recent_cell, review_history) = snapshot_history(observed, &entries, &principal, selected);
     for lane in &mut residency.body.lanes {
         lane.capabilities.clear();
     }
@@ -194,6 +111,140 @@ fn validated_snapshot_from_with_occupant(
         entries,
         review_history,
     })
+}
+
+/// Project every selected task row from one snapshot.
+///
+/// The fact log is read once here, so each row is a lookup rather than
+/// another pass.
+fn project_task_rows(
+    observed: &bus::TaskSnapshot,
+    projects: &ProjectPolicy,
+    residency: &wire::ResidencyHead,
+    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
+) -> Result<(Vec<Entry>, Vec<BoardTask>), Outcome<CommandAnswer>> {
+    let (origin_threads, creator_teams, (claim_contexts, git_contexts)) =
+        if selected.is_some_and(std::collections::BTreeSet::is_empty) {
+            (Default::default(), Default::default(), Default::default())
+        } else {
+            (
+                task_origin_threads(observed.facts().iter(), residency, selected)?,
+                task_creator_teams(observed.facts().iter(), selected)?,
+                task_contexts(observed.facts(), selected),
+            )
+        };
+    let projection = TaskProjection {
+        projects,
+        origin_threads: &origin_threads,
+        creator_teams: &creator_teams,
+        claim_contexts: &claim_contexts,
+        git_contexts: &git_contexts,
+    };
+    let capacity = selected.map_or(observed.tasks().len(), std::collections::BTreeSet::len);
+    let mut tasks = Vec::with_capacity(capacity);
+    let mut entries = Vec::with_capacity(capacity);
+    for heads in observed.tasks() {
+        if selected.is_some_and(|tasks| !tasks.contains(&heads.statement().body().born)) {
+            continue;
+        }
+        let (entry, task) = projection.project(heads)?;
+        entries.push(entry);
+        tasks.push(task);
+    }
+    Ok((entries, tasks))
+}
+
+/// Allocation history and graph history are global projections. Scoped
+/// preflights neither consume nor synthesize a partial version of either.
+fn snapshot_history(
+    observed: &bus::TaskSnapshot,
+    entries: &[Entry],
+    principal: &wire::Actor,
+    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
+) -> (
+    Option<wire::ClaimCell>,
+    Result<Vec<board::graph::ReviewEdge>, String>,
+) {
+    if selected.is_some() {
+        return (None, Ok(Vec::new()));
+    }
+    (
+        board::recent_claim_cell(entries, observed.facts().latest_claim(principal), principal),
+        board::graph::review_history(observed.facts().iter(), entries)
+            .map_err(|error| error.to_string()),
+    )
+}
+
+/// Everything one task row needs beyond its own authoritative heads.
+///
+/// The maps are built once per snapshot, so projecting a row is a lookup
+/// rather than another pass over the fact log.
+struct TaskProjection<'a> {
+    projects: &'a ProjectPolicy,
+    origin_threads: &'a std::collections::BTreeMap<wire::TaskStamp, String>,
+    creator_teams: &'a std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>>,
+    claim_contexts: &'a ClaimContexts,
+    git_contexts: &'a std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskGitContext>,
+}
+
+impl TaskProjection<'_> {
+    fn project(
+        &self,
+        heads: &journal::TaskHeads,
+    ) -> Result<(Entry, BoardTask), Outcome<CommandAnswer>> {
+        let statement = positioned(heads.statement());
+        let workflow = positioned(heads.workflow());
+        let claim = heads.claim().map(positioned);
+        let lease = heads.lease().map(positioned);
+        let claim_context = current_claim_context(
+            &statement.body.born,
+            claim.as_ref().map(|head| &head.body),
+            self.claim_contexts,
+        )?;
+        let git_context = self.git_contexts.get(&statement.body.born).cloned();
+        let handle = TaskHandle::for_project(&statement.body.project, &statement.body.born);
+        let creator_team = self
+            .creator_teams
+            .get(&statement.body.born)
+            .copied()
+            .flatten();
+        let entry = Entry::new(
+            statement.body.clone(),
+            workflow.body.clone(),
+            claim.as_ref().map(|head| head.body.clone()),
+            lease.as_ref().map(|head| head.body.clone()),
+            self.projects,
+        )
+        .map_err(|error| {
+            store_fault(
+                "board::head-invalid",
+                &format!("task {handle} current heads are invalid: {error}"),
+            )
+        })?
+        .with_creator_team(creator_team);
+        let visibility = entry.project().visibility().clone();
+        let origin_thread = self
+            .origin_threads
+            .get(&statement.body.born)
+            .cloned()
+            .ok_or_else(|| {
+                protocol_fault(
+                    "board::task-origin-missing",
+                    &format!("task {handle} has no authoritative creation fact"),
+                )
+            })?;
+        let task = BoardTask::from_authoritative(
+            visibility,
+            origin_thread,
+            creator_team,
+            statement,
+            workflow,
+            claim,
+            lease,
+        )
+        .with_context(claim_context, git_context);
+        Ok((entry, task))
+    }
 }
 
 fn positioned_trust(observed: &bus::TaskSnapshot) -> Vec<Positioned<wire::TrustHead>> {
@@ -1087,15 +1138,13 @@ pub(super) fn read_ledger(
         .cloned()
         .collect();
     node.description = statement.description.clone().unwrap_or_default();
-    if !task.visibility.is_hidden() {
-        node.annotations = snapshot
-            .facts
-            .iter()
-            .filter_map(|envelope| envelope.fact.read::<body::TaskNoted>())
-            .filter(|noted| noted.task == statement.born)
-            .map(|noted| note_annotation(&noted.note))
-            .collect();
-    }
+    node.annotations = snapshot
+        .facts
+        .iter()
+        .filter_map(|envelope| envelope.fact.read::<body::TaskNoted>())
+        .filter(|noted| noted.task == statement.born)
+        .map(|noted| note_annotation(&noted.note))
+        .collect();
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Text(TextAnswer {

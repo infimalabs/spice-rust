@@ -1199,23 +1199,23 @@ fn team_ticker_prose_leads_with_the_first_authored_line_after_borrowed_quotes() 
 }
 
 #[test]
-fn browser_state_retains_hidden_evidence_without_hidden_title_prose() {
+fn browser_state_retains_hidden_rows_with_their_authored_prose() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
-    let secret = "secret allocator failure details";
-    let response = board_response(&session, secret);
+    let title = "Allocator failure needing triage";
+    let response = board_response(&session, title);
     let wire::Outcome::Reply(reply) = &response.get().outcome else {
         panic!("board fixture is a reply");
     };
-    assert_eq!(reply.body.tasks[0].presentation_title(), secret);
+    assert_eq!(reply.body.tasks[0].presentation_title(), title);
 
     runtime.apply_board(&response);
 
     let board = runtime.board().expect("board response is retained");
     assert_eq!(board.schema, 1);
     let hidden = &board.tasks[0];
-    assert_eq!(hidden.presentation_title(), "Hidden task");
+    assert_eq!(hidden.presentation_title(), title);
     assert_eq!(
         hidden.statement.body.handle,
         wire::TaskHandle::for_project(".oops.correctness", &fixture_stamp("HIDDEN-oops1"))
@@ -1223,9 +1223,8 @@ fn browser_state_retains_hidden_evidence_without_hidden_title_prose() {
     assert_eq!(hidden.statement.body.project, ".oops.correctness");
     assert_eq!(hidden.visibility.hidden_stem(), Some("oops"));
     assert_eq!(hidden.workflow.body.status, "pending");
-    assert!(!format!("{hidden:?}").contains(secret));
     let hidden_json = serde_json::to_value(hidden).expect("browser row serializes");
-    assert!(hidden_json["statement"]["body"].get("title").is_none());
+    assert_eq!(hidden_json["presentation_title"], title);
     assert_eq!(
         board.tasks[1].presentation_title(),
         "Visible allocator work"
@@ -1235,8 +1234,6 @@ fn browser_state_retains_hidden_evidence_without_hidden_title_prose() {
         !board.environment_satisfies(&board.tasks[1]),
         "the Canvas snapshot evaluates requirements against its observed schema",
     );
-    let public_json = serde_json::to_value(&board.tasks[1]).expect("public browser row serializes");
-    assert!(public_json["statement"]["body"].get("title").is_none());
 }
 
 /// A liveness answer proves the socket carries traffic and nothing else.
