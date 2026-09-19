@@ -13,6 +13,7 @@
 //! forward migration for an identity-less tape belongs to its producer, which
 //! adopts one through `tape::Tape::open`.
 
+use std::collections::BTreeMap;
 use std::error::Error;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -83,6 +84,19 @@ pub enum Ingested {
         /// depending on a per-record notification that may never have arrived.
         records: Vec<listen::Record>,
     },
+    /// A pass read complete records that are held for a later batch.
+    ///
+    /// The records are returned exactly as an accounted pass returns them, so
+    /// presentation never waits on accounting. Only the durable fact waits:
+    /// the held span joins the next batch this stream accounts, and until then
+    /// the stored head names the position the last batch reached.
+    Deferred {
+        /// Span and tallies this pass alone read, for callers that index a
+        /// record's position against the pass that observed it.
+        batch: body::JournalIngested,
+        /// Every complete record the pass read, in tape order.
+        records: Vec<listen::Record>,
+    },
 }
 
 /// Why one ingestion pass accounted nothing.
@@ -128,27 +142,161 @@ impl fmt::Display for IngestError {
 
 impl Error for IngestError {}
 
-/// Read one transcript forward from its stored head and account what it holds.
+/// How much one stream may hold before its held records are accounted.
+///
+/// A pass that accounts everything it read writes one fact per record, because
+/// the resident reads a lane the moment a record lands. That fact is small and
+/// the transcript behind it is smaller still: the durable cost of saying where
+/// the cursor reached approaches the cost of the bytes it reached over. A
+/// bound lets several passes share one batch, and costs only lag: the stored
+/// head names the last accounted position, so a resident that stops mid-hold
+/// re-reads the held span on its next start rather than losing it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Bound {
+    bytes: u64,
+    records: usize,
+}
+
+impl Bound {
+    /// Account every pass, holding nothing.
+    ///
+    /// Startup catch-up, a closing seat, and every caller that needs the head
+    /// level with the tape it just read use this.
+    pub const IMMEDIATE: Self = Self {
+        bytes: 0,
+        records: 0,
+    };
+
+    /// Live accounting bound for a seated lane.
+    ///
+    /// Both operands are ceilings on how far the stored head may trail the
+    /// records a caller has already been handed, which is also how much a
+    /// restart re-reads and how stale a source boundary read against the head
+    /// can be.
+    pub const LIVE: Self = Self {
+        bytes: 64 * 1024,
+        records: 64,
+    };
+
+    /// One bound of `bytes` durable transcript or `records` complete records.
+    #[must_use]
+    pub const fn new(bytes: u64, records: usize) -> Self {
+        Self { bytes, records }
+    }
+
+    /// Whether a held span has grown past what this bound tolerates.
+    ///
+    /// Usage ends the hold whatever the operands say. A held prose record is
+    /// already on the caller's screen, so the only thing its fact adds is a
+    /// cursor; a held usage record is spend that no reader can see until it is
+    /// accounted. Turn completions are a small fraction of a transcript's
+    /// records, so accounting them at once keeps every reported total as
+    /// timely as it was while still coalescing the bulk.
+    fn reached(self, held: &Held) -> bool {
+        !held.batch.usage.is_empty() || held.bytes >= self.bytes || held.records >= self.records
+    }
+}
+
+/// Records read but not yet accounted, one entry per transcript stream.
+///
+/// The map is the caller's, not the journal's: holding it across passes is
+/// what lets a bound span them, and dropping it costs nothing but a re-read
+/// from the stored head.
+#[derive(Debug, Default)]
+pub struct Coalescing(BTreeMap<TranscriptStreamKey, Held>);
+
+impl Coalescing {
+    /// A coalescing map holding nothing.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// One stream's held span, folded as each pass reads more of it.
+#[derive(Debug)]
+struct Held {
+    batch: body::JournalIngested,
+    checkpoint: Checkpoint,
+    bytes: u64,
+    records: usize,
+}
+
+impl Held {
+    /// Fold one pass into the held batch, extending the span it will account.
+    fn absorb(&mut self, pass: &body::JournalIngested, checkpoint: &Checkpoint, records: usize) {
+        self.batch.to = pass.to;
+        self.batch.usage.extend(pass.usage.iter().cloned());
+        self.batch.non_usage_records += pass.non_usage_records;
+        self.batch.residue_records += pass.residue_records;
+        self.bytes += span(pass);
+        self.records += records;
+        self.checkpoint = checkpoint.clone();
+    }
+}
+
+/// Durable bytes one pass read, counted within the member it ended in.
+///
+/// A pass that crossed a member seal read the sealed member's tail as well,
+/// but the head names positions rather than a byte total, and a bound that
+/// undercounts a rollover only accounts sooner than it had to.
+fn span(pass: &body::JournalIngested) -> u64 {
+    if pass.from.member == pass.to.member {
+        pass.to.offset.saturating_sub(pass.from.offset)
+    } else {
+        pass.to.offset
+    }
+}
+
+/// Read one transcript forward, accounting only once `bound` is reached.
 ///
 /// The stored head alone decides where the read resumes and whether the
-/// observed generation supersedes an earlier one. Both decisions are made again
-/// by the accounting guard inside the transaction, so a head that moves between
-/// this read and that commit refuses the batch rather than accounting it from a
-/// position that is no longer current.
+/// observed generation supersedes an earlier one. Both decisions are made
+/// again by the accounting guard inside the transaction, so a head that moves
+/// between this read and that commit refuses the batch rather than accounting
+/// it from a position that is no longer current.
+///
+/// Records are returned by every pass, held or accounted, so a bound never
+/// delays presentation. What it delays is the fact and the head that cross
+/// with it, which are exactly the two that must move together: a held span is
+/// either accounted whole or read again from the head that never moved.
 ///
 /// # Errors
 ///
 /// Returns [`IngestError`] when the head cannot be read, the tape has no
 /// readable identity, the scan cannot continue, or the batch is refused. Every
-/// one of them leaves the stored head exactly as it was found.
-pub fn ingest(journal: &mut Journal, ingestion: Ingestion) -> Result<Ingested, IngestError> {
+/// one of them leaves the stored head exactly as it was found; a refused batch
+/// releases the held span rather than retrying it, so the next pass resumes
+/// from that head and reads those records again.
+pub fn ingest_bounded(
+    journal: &mut Journal,
+    ingestion: Ingestion,
+    coalescing: &mut Coalescing,
+    bound: Bound,
+) -> Result<Ingested, IngestError> {
     let key = TranscriptStreamKey::new(&ingestion.lane, &ingestion.vendor, &ingestion.stream);
-    let stored = journal
-        .read(|read| read.transcript_source_head(&key))
-        .map_err(IngestError::Head)?
-        .map(JournalHead::into_body);
     let observed = observe(&ingestion.root)?;
-    let resume = Resume::decide(stored.as_ref(), &observed)?;
+    let source = canonical(&observed)?;
+    if coalescing
+        .0
+        .get(&key)
+        .is_some_and(|held| held.batch.source != source)
+    {
+        // The generation the held span was read from is gone. Its spend is
+        // accounted against the head it continued before the successor claims
+        // that head, and the successor's first bytes wait for the next pass.
+        return account_held(journal, &ingestion, coalescing, &key, Vec::new());
+    }
+    let resume = match coalescing.0.get(&key) {
+        Some(held) => Resume::held(held),
+        None => {
+            let stored = journal
+                .read(|read| read.transcript_source_head(&key))
+                .map_err(IngestError::Head)?
+                .map(JournalHead::into_body);
+            Resume::decide(stored.as_ref(), &observed)?
+        }
+    };
     let scan = listen::scan(
         &ingestion.root,
         ingestion.dialect,
@@ -156,15 +304,68 @@ pub fn ingest(journal: &mut Journal, ingestion: Ingestion) -> Result<Ingested, I
     )
     .map_err(IngestError::Scan)?;
     if scan.records.is_empty() {
-        return Ok(Ingested::Unchanged);
+        return if coalescing
+            .0
+            .get(&key)
+            .is_some_and(|held| bound.reached(held))
+        {
+            account_held(journal, &ingestion, coalescing, &key, Vec::new())
+        } else {
+            Ok(Ingested::Unchanged)
+        };
     }
-    let batch = fold(&ingestion, &resume, &scan);
+    let pass = fold(&ingestion, &resume, &scan);
+    let records = scan.records.len();
+    match coalescing.0.get_mut(&key) {
+        Some(held) => held.absorb(&pass, &scan.checkpoint, records),
+        None => {
+            coalescing.0.insert(
+                key.clone(),
+                Held {
+                    batch: pass.clone(),
+                    checkpoint: scan.checkpoint.clone(),
+                    bytes: span(&pass),
+                    records,
+                },
+            );
+        }
+    }
+    if coalescing
+        .0
+        .get(&key)
+        .is_some_and(|held| bound.reached(held))
+    {
+        account_held(journal, &ingestion, coalescing, &key, scan.records)
+    } else {
+        Ok(Ingested::Deferred {
+            batch: pass,
+            records: scan.records,
+        })
+    }
+}
+
+/// Account one stream's held batch, releasing it either way.
+///
+/// The hold is taken before the transaction so a refusal cannot leave a span
+/// that no head agrees with: the stored head stands, and the next pass reads
+/// those records again from it.
+fn account_held(
+    journal: &mut Journal,
+    ingestion: &Ingestion,
+    coalescing: &mut Coalescing,
+    key: &TranscriptStreamKey,
+    records: Vec<listen::Record>,
+) -> Result<Ingested, IngestError> {
+    let Some(held) = coalescing.0.remove(key) else {
+        return Ok(Ingested::Unchanged);
+    };
+    let batch = held.batch;
     let retained = batch.clone();
     let applied = account(
         journal,
         Accounting {
-            actor: ingestion.actor,
-            origin: ingestion.origin,
+            actor: ingestion.actor.clone(),
+            origin: ingestion.origin.clone(),
             at: ingestion.at,
             batch,
         },
@@ -173,7 +374,7 @@ pub fn ingest(journal: &mut Journal, ingestion: Ingestion) -> Result<Ingested, I
     Ok(Ingested::Accounted {
         applied,
         batch: retained,
-        records: scan.records,
+        records,
     })
 }
 
@@ -201,6 +402,21 @@ struct Resume {
 }
 
 impl Resume {
+    /// Resume where the held span left the stream, not where the head stands.
+    ///
+    /// The held span already begins at the stored head, so a pass that
+    /// continues it reads only the bytes after the last one held. Its own
+    /// `from` is that boundary, which is what lets a caller place a record
+    /// against the pass that read it while the batch still spans them all.
+    fn held(held: &Held) -> Self {
+        Self {
+            checkpoint: Some(held.checkpoint.clone()),
+            source: held.batch.source,
+            from: held.batch.to,
+            supersedes: None,
+        }
+    }
+
     /// Decide the resume point from the stored head and the live generation.
     ///
     /// The three arms are exactly the ones the accounting guard recognizes: no
@@ -324,7 +540,10 @@ mod tests {
     use listen::{Dialect, ScanError};
     use tape::Tape;
 
-    use super::{IngestError, Ingested, Ingestion, Journal, TranscriptStreamKey, ingest};
+    use super::{
+        Bound, Coalescing, IngestError, Ingested, Ingestion, Journal, TranscriptStreamKey,
+        ingest_bounded,
+    };
 
     const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116305";
     const PROSE: &[u8] =
@@ -507,6 +726,218 @@ mod tests {
         scratch.remove();
     }
 
+    /// A bound holds the head back without holding the records back.
+    ///
+    /// Every pass hands its records to the caller, so display never waits for
+    /// accounting. What waits is the fact: passes under the bound write none,
+    /// and the batch that finally crosses spans all of them exactly once, with
+    /// every tally the held passes read.
+    #[test]
+    fn records_held_under_a_bound_account_once_as_the_span_they_cover() {
+        let scratch = Scratch::new("holding");
+        let tape = Tape::open(scratch.path()).expect("tape opens");
+        tape.tee(&line(PROSE)).expect("prose is durable");
+        let journal = &mut authority();
+        let coalescing = &mut Coalescing::new();
+        let bound = Bound::new(4096, 3);
+
+        match ingest_bounded(journal, ingestion(scratch.path()), coalescing, bound) {
+            Ok(Ingested::Deferred { records, .. }) => assert_eq!(records.len(), 1),
+            other => panic!("the first pass did not hold its record: {other:?}"),
+        }
+        assert!(batches(journal).is_empty(), "a held pass wrote a fact");
+        assert!(head(journal).is_none(), "a held pass moved the head");
+
+        tape.tee(&line(RESIDUE)).expect("residue is durable");
+        match ingest_bounded(journal, ingestion(scratch.path()), coalescing, bound) {
+            Ok(Ingested::Deferred { records, .. }) => assert_eq!(records.len(), 1),
+            other => panic!("the second pass did not hold its record: {other:?}"),
+        }
+        assert!(
+            batches(journal).is_empty(),
+            "two records crossed a bound of three"
+        );
+
+        tape.tee(&line(PROSE)).expect("more prose is durable");
+        let span = (line(PROSE).len() * 2 + line(RESIDUE).len()) as u64;
+        match ingest_bounded(journal, ingestion(scratch.path()), coalescing, bound) {
+            Ok(Ingested::Accounted { batch, records, .. }) => {
+                assert_eq!(records.len(), 1, "an accounting pass replayed held records");
+                assert_eq!(batch.from, position(1, 0), "the batch lost held bytes");
+                assert_eq!(batch.to, position(1, span));
+                assert_eq!((batch.non_usage_records, batch.residue_records), (2, 1));
+            }
+            other => panic!("the bound did not account the held span: {other:?}"),
+        }
+        assert_eq!(
+            batches(journal).len(),
+            1,
+            "the held passes each wrote a fact"
+        );
+        assert_eq!(
+            head(journal).expect("a head stands").next,
+            position(1, span)
+        );
+        scratch.remove();
+    }
+
+    /// Spend is never held: a usage record accounts the pass that read it.
+    ///
+    /// A held prose record is already displayed, so its fact only records a
+    /// cursor. A held usage record is spend no reader can see until it is
+    /// accounted, so the bound yields to it and the batch lands at once,
+    /// carrying the prose held ahead of it.
+    #[test]
+    fn a_usage_record_accounts_at_once_however_wide_the_bound() {
+        let scratch = Scratch::new("spend");
+        let tape = Tape::open(scratch.path()).expect("tape opens");
+        tape.tee(&line(PROSE)).expect("prose is durable");
+        let journal = &mut authority();
+        let coalescing = &mut Coalescing::new();
+        let bound = Bound::new(1 << 20, 4096);
+
+        let held = ingest_bounded(journal, ingestion(scratch.path()), coalescing, bound);
+        assert!(matches!(held, Ok(Ingested::Deferred { .. })), "{held:?}");
+
+        tape.tee(&line(USAGE)).expect("usage is durable");
+        match ingest_bounded(journal, ingestion(scratch.path()), coalescing, bound) {
+            Ok(Ingested::Accounted { batch, .. }) => {
+                assert_eq!(batch.usage.len(), 1, "the accounted batch lost the spend");
+                assert_eq!(batch.non_usage_records, 1, "the held prose was dropped");
+                assert_eq!(batch.from, position(1, 0));
+            }
+            other => panic!("spend waited on the bound: {other:?}"),
+        }
+        scratch.remove();
+    }
+
+    /// A bound reached with nothing new still accounts what is held.
+    ///
+    /// This is the seat-closing and shutdown path: the tape has stopped
+    /// growing, so a pass that waited for more records would hold the span
+    /// forever. An immediate bound accounts it on the spot, and the pass after
+    /// it has nothing left to say.
+    #[test]
+    fn an_immediate_pass_accounts_a_held_span_the_tape_no_longer_grows() {
+        let scratch = Scratch::new("draining");
+        let tape = Tape::open(scratch.path()).expect("tape opens");
+        tape.tee(&line(PROSE)).expect("the record is durable");
+        let journal = &mut authority();
+        let coalescing = &mut Coalescing::new();
+
+        let held = ingest_bounded(
+            journal,
+            ingestion(scratch.path()),
+            coalescing,
+            Bound::new(4096, 64),
+        );
+        assert!(matches!(held, Ok(Ingested::Deferred { .. })), "{held:?}");
+
+        match ingest_bounded(
+            journal,
+            ingestion(scratch.path()),
+            coalescing,
+            Bound::IMMEDIATE,
+        ) {
+            Ok(Ingested::Accounted { batch, records, .. }) => {
+                assert!(records.is_empty(), "the drain replayed held records");
+                assert_eq!(batch.to, position(1, line(PROSE).len() as u64));
+                assert_eq!(batch.non_usage_records, 1, "the drain lost the held record");
+            }
+            other => panic!("the drain did not account the held span: {other:?}"),
+        }
+        assert!(
+            matches!(
+                ingest_bounded(
+                    journal,
+                    ingestion(scratch.path()),
+                    coalescing,
+                    Bound::IMMEDIATE
+                ),
+                Ok(Ingested::Unchanged)
+            ),
+            "a drained stream still had something to account",
+        );
+        assert_eq!(batches(journal).len(), 1);
+        scratch.remove();
+    }
+
+    /// Dropping the held span costs a re-read, never a gap.
+    ///
+    /// A resident that stops mid-hold leaves the head where the last batch put
+    /// it, so the next start reads the held records again and accounts them
+    /// from that same position. Nothing is accounted twice, because nothing
+    /// was accounted the first time.
+    #[test]
+    fn a_forgotten_hold_is_read_again_from_the_head_that_never_moved() {
+        let scratch = Scratch::new("forgotten");
+        let tape = Tape::open(scratch.path()).expect("tape opens");
+        tape.tee(&line(PROSE)).expect("prose is durable");
+        let journal = &mut authority();
+        let opening = accounted(journal, scratch.path());
+
+        tape.tee(&line(RESIDUE)).expect("the record is durable");
+        let mut forgotten = Coalescing::new();
+        let held = ingest_bounded(
+            journal,
+            ingestion(scratch.path()),
+            &mut forgotten,
+            Bound::new(4096, 64),
+        );
+        assert!(matches!(held, Ok(Ingested::Deferred { .. })), "{held:?}");
+        drop(forgotten);
+
+        let batch = accounted(journal, scratch.path());
+        assert_eq!(batch.from, opening.to, "the restart lost the held bytes");
+        assert_eq!(batch.residue_records, 1, "the held record was never read");
+        assert_eq!(batches(journal).len(), 2, "the dropped hold wrote a fact");
+        scratch.remove();
+    }
+
+    /// A generation replaced mid-hold accounts the held span before it goes.
+    ///
+    /// The held bytes belong to the generation that is being retired, and the
+    /// head can only carry one generation at a time. Accounting the hold first
+    /// keeps that span, and leaves the successor to claim the head with the
+    /// supersession the guard checks.
+    #[test]
+    fn a_replacement_generation_accounts_the_span_the_hold_still_carries() {
+        let scratch = Scratch::new("handover");
+        let root = scratch.path().join("selected");
+        let first = Tape::open(&root).expect("the first generation opens");
+        first.tee(&line(PROSE)).expect("the record is durable");
+        let journal = &mut authority();
+        let coalescing = &mut Coalescing::new();
+        let bound = Bound::new(4096, 64);
+
+        let held = ingest_bounded(journal, ingestion(&root), coalescing, bound);
+        assert!(matches!(held, Ok(Ingested::Deferred { .. })), "{held:?}");
+
+        fs::remove_dir_all(&root).expect("the generation is withdrawn");
+        let second = Tape::open(&root).expect("the replacement opens");
+        second.tee(&line(PROSE)).expect("the record is durable");
+
+        match ingest_bounded(journal, ingestion(&root), coalescing, bound) {
+            Ok(Ingested::Accounted { batch, records, .. }) => {
+                assert!(records.is_empty(), "the handover replayed held records");
+                assert_eq!(batch.non_usage_records, 1, "the retired span was dropped");
+                assert!(
+                    batch.supersedes.is_none(),
+                    "the hold claimed a supersession"
+                );
+            }
+            other => panic!("the handover did not account the hold: {other:?}"),
+        }
+
+        let replacement = accounted(journal, &root);
+        assert_eq!(replacement.from, position(1, 0));
+        assert!(
+            replacement.supersedes.is_some(),
+            "the successor claimed no supersession",
+        );
+        scratch.remove();
+    }
+
     fn authority() -> Journal {
         Journal::in_memory().expect("in-memory authority")
     }
@@ -522,6 +953,11 @@ mod tests {
             origin: format!("lane:{LANE}").parse().expect("lane origin"),
             at: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
         }
+    }
+
+    /// One unheld pass, the shape every pre-coalescing case is stated in.
+    fn ingest(journal: &mut Journal, ingestion: Ingestion) -> Result<Ingested, IngestError> {
+        ingest_bounded(journal, ingestion, &mut Coalescing::new(), Bound::IMMEDIATE)
     }
 
     /// One pass that must have accounted a batch, returned as that batch.

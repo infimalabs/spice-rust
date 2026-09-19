@@ -37,7 +37,14 @@ pub(super) fn recover_transcripts(
     epoch: CanonicalUuid,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    ingest_transcripts(bus, paths, None, diagnostic)?;
+    ingest_transcripts(
+        bus,
+        paths,
+        None,
+        lane::ingest::Bound::IMMEDIATE,
+        lane::ingest::Coalescing::new(),
+        diagnostic,
+    )?;
     steering::dispose_at_startup(bus, paths, epoch, diagnostic)
 }
 
@@ -48,24 +55,32 @@ pub(super) fn recover_transcripts(
 /// one accounting resume rule over the transcript checkpoint. Live display
 /// may read ahead of that checkpoint, but only this guarded sweep advances it.
 ///
+/// `bound` decides how much a stream may hold before the sweep accounts it,
+/// and the returned coalescing carries whatever is still held to the next
+/// sweep. It is passed by value because the writer runs the sweep on its own
+/// thread, which cannot borrow the caller's state for the length of a
+/// transaction.
+///
 /// The residency read and every accounting share one writer transaction, so a
 /// lane cannot be seated into or out of the sweep midway through it.
 pub(super) fn ingest_transcripts(
     bus: &Bus,
     paths: &RuntimePaths,
     only: Option<CanonicalUuid>,
+    bound: lane::ingest::Bound,
+    coalescing: lane::ingest::Coalescing,
     diagnostic: &mut dyn io::Write,
-) -> CommandResult<Vec<TranscriptObservation>> {
+) -> CommandResult<(Vec<TranscriptObservation>, lane::ingest::Coalescing)> {
     let at = Instant::new(jiff::Timestamp::now())
         .map_err(|error| environment_fault("resident::clock-invalid", &error.to_string()))?;
     let tapes = paths.tape.clone();
-    let (refusals, observations) = bus
-        .transact(move |journal| sweep(journal, &tapes, only, at))
+    let (refusals, observations, coalescing) = bus
+        .transact(move |journal| sweep(journal, &tapes, only, at, bound, coalescing))
         .map_err(|error| store_fault("resident::ingest-bus-closed", &error.to_string()))?;
     for refusal in refusals {
         let _ = writeln!(diagnostic, "{refusal}");
     }
-    Ok(observations)
+    Ok((observations, coalescing))
 }
 
 /// Ingest each selected lane, keeping the journal range the sweep committed.
@@ -78,7 +93,13 @@ fn sweep(
     tapes: &Path,
     only: Option<CanonicalUuid>,
     at: Instant,
-) -> bus::JournalTransaction<(Vec<String>, Vec<TranscriptObservation>)> {
+    bound: lane::ingest::Bound,
+    mut coalescing: lane::ingest::Coalescing,
+) -> bus::JournalTransaction<(
+    Vec<String>,
+    Vec<TranscriptObservation>,
+    lane::ingest::Coalescing,
+)> {
     let mut refusals = Vec::new();
     let mut observations = Vec::new();
     let mut range: Option<(wire::Seq, wire::Seq)> = None;
@@ -86,21 +107,22 @@ fn sweep(
         if only.is_some_and(|lane| lane != row.lane) {
             continue;
         }
-        match ingest_lane_transcript(journal, tapes, &row, at) {
+        match ingest_lane_transcript(journal, tapes, &row, at, bound, &mut coalescing) {
             Ok(Some((applied, observation))) => {
-                let first = range.map_or(applied.first(), |(first, _)| first);
-                range = Some((first, applied.last()));
+                if let Some(applied) = applied {
+                    let first = range.map_or(applied.first(), |(first, _)| first);
+                    range = Some((first, applied.last()));
+                }
                 observations.push(observation);
             }
             Ok(None) => {}
             Err(refusal) => refusals.push(refusal),
         }
     }
+    let result = (refusals, observations, coalescing);
     match range {
-        Some((first, last)) => {
-            bus::JournalTransaction::committed((refusals, observations), first, last)
-        }
-        None => bus::JournalTransaction::settled((refusals, observations)),
+        Some((first, last)) => bus::JournalTransaction::committed(result, first, last),
+        None => bus::JournalTransaction::settled(result),
     }
 }
 
@@ -129,7 +151,9 @@ fn ingest_lane_transcript(
     tapes: &Path,
     row: &wire::LaneResidency,
     at: Instant,
-) -> Result<Option<(journal::Applied, TranscriptObservation)>, String> {
+    bound: lane::ingest::Bound,
+    coalescing: &mut lane::ingest::Coalescing,
+) -> Result<Option<(Option<journal::Applied>, TranscriptObservation)>, String> {
     let Some(vendor) = ingest_vendor(&row.vendor) else {
         return Err(format!(
             "lane {} transcript not accounted: vendor {} has no decoder dialect",
@@ -154,15 +178,18 @@ fn ingest_lane_transcript(
         origin,
         at,
     };
-    match lane::ingest::ingest(journal, ingestion) {
+    match lane::ingest::ingest_bounded(journal, ingestion, coalescing, bound) {
         Ok(lane::ingest::Ingested::Accounted {
             applied,
             batch,
             records,
         }) => Ok(Some((
-            applied,
+            Some(applied),
             TranscriptObservation { batch, at, records },
         ))),
+        Ok(lane::ingest::Ingested::Deferred { batch, records }) => {
+            Ok(Some((None, TranscriptObservation { batch, at, records })))
+        }
         Ok(lane::ingest::Ingested::Unchanged) => Ok(None),
         Err(error) => Err(format!(
             "lane {} transcript not accounted: {error}",
