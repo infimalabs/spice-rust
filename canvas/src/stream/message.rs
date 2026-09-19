@@ -140,17 +140,11 @@ impl MessageFeed {
         let Some(history) = history else {
             return before.map_or(Ok(None), |before| retained_history(&retained, lane, before));
         };
-        if self
+        let source_closed = self
             .history_closed
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?
-            .contains(&lane)
-        {
-            return Ok(Some(MessageHistoryPage {
-                messages: Vec::new(),
-                more: false,
-            }));
-        }
+            .contains(&lane);
         let remaining = self.capacity.saturating_sub(visible.len());
         if remaining == 0 {
             self.history_closed
@@ -161,6 +155,17 @@ impl MessageFeed {
                 .lock()
                 .map_err(|_| MessagePublishError::Unavailable)?
                 .remove(&lane);
+        }
+        // Source closure limits new durable reads, not another reader's cursor
+        // through messages this generation already retains.
+        if let Some(before) = before
+            && let Some(mut page) = retained_history(&retained, lane, before)?
+            && !page.messages.is_empty()
+        {
+            page.more |= !source_closed && remaining > 0;
+            return Ok(Some(page));
+        }
+        if source_closed || remaining == 0 {
             return Ok(Some(MessageHistoryPage {
                 messages: Vec::new(),
                 more: false,

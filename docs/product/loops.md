@@ -509,6 +509,11 @@ flowchart TD
    Enforced by skipping the write, not by relying on idempotence.
 - New content places by insert. Existing cards are never re-decided,
    re-measured, or re-spanned.
+- Each reader pages retained member history from its own cursor. Exhausting the
+   shared durable source or reaching its retention budget closes further source
+   reads, not access to cached older cards. Cache-backed pages precede new
+   durable reads; reload does not reopen a closed source, even when compaction
+   trimming subsequently frees cache space.
 - A card's column and span stay latched between full geometry replays. During
    incremental content changes, only its vertical position may settle; nothing
    hops sideways.
