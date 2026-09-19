@@ -65,6 +65,73 @@ pub fn keys(rendered: &str) -> impl Iterator<Item = &str> {
         })
 }
 
+/// What a directive costs the second time, once its telling is already in the
+/// occupant's context.
+///
+/// The header still carries the key and the stage, so the pointer names the
+/// direction and what answering it looks like without spending the text again.
+pub const NUDGE: &str = "[NUDGE] told in full above and still unanswered; ACK or NACK this key";
+
+/// Condenses every directive the occupant was already told into a pointer.
+///
+/// A resend exists to say a directive is still unanswered, not to say the
+/// direction again: the words are already verbatim in the occupant's context,
+/// so repeating them charges the occupant a second time for text it holds.
+/// `told` answers whether this occupant still holds the telling — a context
+/// that dropped it, by compaction or by never having heard it, is told in
+/// full. The header line is never condensed, because the key, the stage, and
+/// any control field are what the resend is for, and a telling shorter than
+/// the pointer is simply said again.
+#[must_use]
+pub fn nudge(rendered: &str, told: impl Fn(&str) -> bool) -> String {
+    let mut condensed = String::with_capacity(rendered.len());
+    let mut body = String::new();
+    let mut held = false;
+    let mut lines = rendered.split_inclusive('\n').peekable();
+    while let Some(line) = lines.next() {
+        if lines.peek().is_none() {
+            // The closing seal belongs to the rendering rather than to the
+            // directive body it follows.
+            push_body(&mut condensed, &body, held);
+            condensed.push_str(line);
+            break;
+        }
+        if let Some(key) = header_key(line) {
+            push_body(&mut condensed, &body, held);
+            body.clear();
+            held = told(key);
+            condensed.push_str(line);
+        } else {
+            body.push_str(line);
+        }
+    }
+    condensed
+}
+
+/// The key a directive header names, for a line that is one.
+fn header_key(line: &str) -> Option<&str> {
+    line.strip_prefix("directive=")
+        .and_then(|fields| {
+            fields
+                .split(' ')
+                .find_map(|field| field.strip_prefix("key="))
+        })
+        .map(str::trim_end)
+}
+
+/// Spend the body, or the pointer when the occupant holds the body already
+/// and the pointer is the cheaper of the two.
+fn push_body(condensed: &mut String, body: &str, held: bool) {
+    // What the pointer itself costs, its own line ending included.
+    let pointer = NUDGE.len() + "\n".len();
+    if held && body.len() > pointer {
+        condensed.push_str(NUDGE);
+        condensed.push('\n');
+    } else {
+        condensed.push_str(body);
+    }
+}
+
 fn render_directive_body(directive: &Directive) -> String {
     let mut rendered =
         wire::media::without_media_payloads(directive.text(), directive.attachments());
@@ -148,7 +215,7 @@ impl std::error::Error for Error {
 
 #[cfg(test)]
 mod tests {
-    use super::keys;
+    use super::{NUDGE, keys, nudge};
 
     #[test]
     fn a_rendering_names_its_keys_in_order_and_nothing_else() {
@@ -157,5 +224,75 @@ mod tests {
                         expires=never control=stop\ngo\n</seal>\n";
         assert_eq!(keys(rendered).collect::<Vec<_>>(), ["1kJK6N3R", "1kJK6M0V"]);
         assert_eq!(keys("").count(), 0);
+    }
+
+    /// One directive from a real delivery, shaped and sized as the lane
+    /// received it: the operator's broadcast dSvXD9bv3 cost 2702 bytes the
+    /// first time and 2701 the second, the whole text over again.
+    fn delivered(stage: &str) -> String {
+        // Sentences enough to size the fixture to that real delivery.
+        const SENTENCES: usize = 66;
+
+        let body =
+            "[BROADCAST] ".to_owned() + &"measure the cost before changing it. ".repeat(SENTENCES);
+        format!(
+            "<Qk8zdj5rQ>\ndirective=1bea6ea6-a894-4899-923e-16df120968b3 key=dSvXD9bv3 \
+             stage={stage} expires=2026-09-20T02:25:15.856Z\n{body}\n</Qk8zdj5rQ>\n",
+        )
+    }
+
+    #[test]
+    fn a_resend_costs_a_pointer_and_still_names_what_to_answer() {
+        let first = delivered("published");
+        let again = delivered("reminded");
+        let resent = nudge(&again, |key| key == "dSvXD9bv3");
+
+        // What a pointer is allowed to cost against the telling it replaces.
+        const SHARE: usize = 10;
+
+        assert!(
+            resent.len() * SHARE < first.len(),
+            "a resend of {} bytes against a telling of {} bytes is not a pointer",
+            resent.len(),
+            first.len(),
+        );
+        assert_eq!(keys(&resent).collect::<Vec<_>>(), ["dSvXD9bv3"]);
+        assert!(
+            resent.contains("stage=reminded") && resent.contains("key=dSvXD9bv3"),
+            "the pointer must still name the directive and why it arrived: {resent}",
+        );
+        assert!(resent.contains(NUDGE), "the pointer must say what it wants");
+        assert!(
+            !resent.contains("measure the cost"),
+            "the telling is already in the occupant's context: {resent}",
+        );
+        assert!(
+            resent.starts_with("<Qk8zdj5rQ>\n") && resent.ends_with("</Qk8zdj5rQ>\n"),
+            "the seal authenticates the pointer exactly as it authenticates a telling: {resent}",
+        );
+    }
+
+    #[test]
+    fn a_telling_this_context_never_heard_is_spent_in_full() {
+        let held = "hold the line while the suite runs, and say so when it finishes running";
+        let rendering = format!(
+            "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{held}\n{}",
+            &delivered("published")["<Qk8zdj5rQ>\n".len()..],
+        );
+        let resent = nudge(&rendering, |key| key == "1kJK6N3R");
+
+        assert!(
+            !resent.contains(held),
+            "the key this context holds is pointed at, not repeated: {resent}",
+        );
+        assert!(
+            resent.contains("measure the cost"),
+            "a key this context never heard is told in full: {resent}",
+        );
+        assert_eq!(
+            keys(&resent).collect::<Vec<_>>(),
+            ["1kJK6N3R", "dSvXD9bv3"],
+            "condensing one directive does not drop another",
+        );
     }
 }

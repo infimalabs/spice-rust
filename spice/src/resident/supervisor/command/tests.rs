@@ -327,12 +327,15 @@ fn a_withdrawn_call_and_a_drain_end_the_commands_they_cover() {
     settled(&scratch);
 }
 
-/// A rendering carrying one directive the lane has not heard.
-const NEWS: &str =
-    "<seal>\ndirective=d1 key=1kJK6N3R stage=new expires=never\nlook at this\n</seal>\n";
+/// A rendering carrying one directive the lane has not heard, as long as a
+/// short operator sentence: a telling shorter than the pointer that would
+/// replace it is simply said again.
+const NEWS: &str = "<seal>\ndirective=d1 key=1kJK6N3R stage=new expires=never\n\
+                    look at this and answer it before the next call, because the operator is \
+                    waiting on the answer\n</seal>\n";
 
 #[test]
-fn a_rendering_that_restates_heard_direction_leaves_the_running_command_alone() {
+fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_alone() {
     let scratch = Scratch::new("restated");
     let sink = Sink::default();
     let driver = Driver::new(sink.clone(), scratch.inbox(), Some(scratch.terminal()));
@@ -350,12 +353,21 @@ fn a_rendering_that_restates_heard_direction_leaves_the_running_command_alone() 
         br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
     ));
 
-    // The same key said again, as a reminder is, waits for the turn.
+    // The same key said again, as a reminder is, waits for the turn and
+    // points at the telling the occupant is still holding.
     let reminder = NEWS.replace("stage=new", "stage=reminded");
     fs::write(scratch.inbox(), &reminder).expect("inbox renders");
     driver.deliver_inbox();
+    let pointer = format!(
+        "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{}\n</seal>\n",
+        steer::inbox::NUDGE,
+    );
     let frames = sink.answered(2);
-    assert_eq!(frames, [steer(1, NEWS), steer(2, &reminder)]);
+    assert_eq!(frames, [steer(1, NEWS), steer(2, &pointer)]);
+    assert!(
+        pointer.len() < reminder.len(),
+        "a pointer that costs the telling is not a pointer",
+    );
     assert_eq!(
         driver
             .calls
@@ -365,18 +377,43 @@ fn a_rendering_that_restates_heard_direction_leaves_the_running_command_alone() 
         1
     );
 
-    // A second key is news, so the call answers now.
-    let more = format!("{reminder}directive=d2 key=1kJK6M0V stage=new expires=never\ngo\n");
+    // A second key is news, so the call answers now, and the news is told in
+    // full beside the pointer that replaced the heard one.
+    let more = reminder.replace(
+        "</seal>\n",
+        "directive=d2 key=1kJK6M0V stage=new expires=never\ngo\n</seal>\n",
+    );
     fs::write(scratch.inbox(), &more).expect("inbox renders");
     driver.deliver_inbox();
+    let told = format!(
+        "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{}\n\
+         directive=d2 key=1kJK6M0V stage=new expires=never\ngo\n</seal>\n",
+        steer::inbox::NUDGE,
+    );
     let frames = sink.answered(4);
-    assert!(frames.contains(&steer(3, &more)), "{frames:?}");
+    assert!(frames.contains(&steer(3, &told)), "{frames:?}");
     assert!(
         frames.iter().any(|frame| frame["id"] == "h1"),
         "the call is answered: {frames:?}"
     );
     release(&fifo);
     settled(&scratch);
+}
+
+#[test]
+fn a_compaction_spends_the_telling_again_because_the_context_lost_it() {
+    let scratch = Scratch::new("compacted");
+    let sink = Sink::default();
+    let driver = Driver::new(sink.clone(), scratch.inbox(), Some(scratch.terminal()));
+    fs::write(scratch.inbox(), NEWS).expect("inbox renders");
+    driver.deliver_inbox();
+    driver.observe(&decoded(br#"{"type":"compaction"}"#));
+    let frames = sink.answered(2);
+    assert_eq!(
+        frames,
+        [steer(1, NEWS), steer(2, NEWS)],
+        "a context that dropped the telling is told again in full",
+    );
 }
 
 #[test]

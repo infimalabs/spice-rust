@@ -62,39 +62,34 @@ fn elapsed_time_from_publication_selects_each_named_stage_at_its_exact_horizon()
     let published: wire::Instant = "2026-08-01T06:00:00.000Z"
         .parse()
         .expect("publication instant");
+    let elapsed = |seconds: i64| {
+        wire::Instant::new(
+            published
+                .get()
+                .checked_add(jiff::SignedDuration::from_secs(seconds))
+                .expect("fixture instant"),
+        )
+        .expect("fixture instant")
+    };
     let config = steer::Config::default();
-    for (at, expected) in [
-        (
-            "2026-08-01T06:00:14.000Z",
-            wire::body::SteeringStage::Published,
-        ),
-        (
-            "2026-08-01T06:00:15.000Z",
-            wire::body::SteeringStage::Reminded,
-        ),
-        (
-            "2026-08-01T06:00:59.000Z",
-            wire::body::SteeringStage::Reminded,
-        ),
-        (
-            "2026-08-01T06:01:00.000Z",
-            wire::body::SteeringStage::Escalated,
-        ),
-        (
-            "2026-08-01T06:04:59.000Z",
-            wire::body::SteeringStage::Escalated,
-        ),
-        (
-            "2026-08-01T06:05:00.000Z",
-            wire::body::SteeringStage::Overdue,
-        ),
-    ] {
-        let at = at.parse().expect("fixture instant");
+    let mut standing = SteeringStage::Published;
+    for (rung, due) in config.resend().iter().zip([
+        SteeringStage::Reminded,
+        SteeringStage::Escalated,
+        SteeringStage::Overdue,
+    ]) {
+        let horizon = i64::try_from(rung.get().as_secs()).expect("a horizon in range");
         assert_eq!(
-            due_stage(published, at, &config).expect("configured horizon is representable"),
-            expected,
-            "stage due at {at}"
+            due_stage(published, elapsed(horizon - 1), &config).expect("representable horizon"),
+            standing,
+            "the second before the {due:?} horizon still stands at {standing:?}"
         );
+        assert_eq!(
+            due_stage(published, elapsed(horizon), &config).expect("representable horizon"),
+            due,
+            "{due:?} is due exactly at its horizon"
+        );
+        standing = due;
     }
 }
 

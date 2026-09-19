@@ -20,7 +20,7 @@
 //! publication or consent answer; a lane with no command-driven occupant has
 //! nobody listening, and the kick is lost by design.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -44,6 +44,10 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     inbox: PathBuf,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
+    /// Keys whose telling this occupant still holds verbatim, so a resend can
+    /// point at it instead of spending it again. A compaction drops the
+    /// context, and with it this set.
+    told: Mutex<BTreeSet<String>>,
     /// The confirm dialog each open consent request will answer.
     asks: Mutex<HashMap<CanonicalUuid, String>>,
     /// Where the occupant's commands run, for an occupant that has a shell.
@@ -92,6 +96,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             inbox: inbox.into(),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
+            told: Mutex::new(BTreeSet::new()),
             asks: Mutex::new(HashMap::new()),
             terminal,
             calls: Mutex::new(HashMap::new()),
@@ -121,6 +126,11 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// agent sees it as early as it can; a rendering that only restates what
     /// the lane heard, a reminder or a re-render, waits for the turn's next
     /// boundary like any steering. After a compaction nothing is news.
+    ///
+    /// A directive this occupant was already told is resent as a pointer to
+    /// the telling it still holds rather than as the telling again: the resend
+    /// says the direction is unanswered, which the header already carries, and
+    /// the words are verbatim in the context this occupant is reading from.
     fn interject(&self, news: bool) {
         let Ok(rendered) = fs::read(&self.inbox) else {
             return;
@@ -138,12 +148,8 @@ impl<W: Write + Send + 'static> Driver<W> {
         let Ok(message) = std::str::from_utf8(&rendered) else {
             return;
         };
-        let heard = delivered
-            .as_deref()
-            .and_then(|heard| std::str::from_utf8(heard).ok())
-            .unwrap_or_default();
-        let unheard =
-            steer::inbox::keys(message).any(|key| !steer::inbox::keys(heard).any(|h| h == key));
+        let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+        let unheard = steer::inbox::keys(message).any(|key| !told.contains(key));
         if news && unheard {
             for handle in self
                 .calls
@@ -154,7 +160,11 @@ impl<W: Write + Send + 'static> Driver<W> {
                 handle.interrupt();
             }
         }
-        if self.steer(message).is_ok() {
+        let resent = steer::inbox::keys(message)
+            .any(|key| told.contains(key))
+            .then(|| steer::inbox::nudge(message, |key| told.contains(key)));
+        if self.steer(resent.as_deref().unwrap_or(message)).is_ok() {
+            told.extend(steer::inbox::keys(message).map(str::to_owned));
             *delivered = Some(rendered);
         }
     }
@@ -206,6 +216,10 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .take();
+            self.told
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
             self.interject(false);
         }
         let completed = decoded

@@ -260,7 +260,15 @@ them would make silence or a start failure look like a decision. Deadlettering
 does not generalize to held-claim, capacity, operator-start, nonterminal-error,
 or arbitrary delivery-failure paths.
 
-**Policy —** reminded 15s, escalated 60s, overdue 300s, lapse threshold 24h.
+**Policy —** reminded 60s, escalated 30m, overdue 1h, lapse threshold 24h. The
+rungs are sized against the calls the appliance itself requires: an occupant
+blocked on a proof or a browser shard is working, not silent, so the first
+reminder waits out an ordinary answer and escalation outlasts the longest
+single call the repository admits.
+
+**Policy —** A rung a context already holds is resent as a pointer to the
+telling it names, never as the telling again. A context that lost the words,
+by compaction or by never having heard them, is told in full.
 
 ### Stream generation, ordering, and resumption
 

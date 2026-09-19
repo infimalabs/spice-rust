@@ -59,15 +59,37 @@ impl Config {
     }
 }
 
+/// The longest a lane can legitimately be unable to answer steering.
+///
+/// A lane hears steering between the calls it makes, so it cannot answer
+/// while one call holds its turn, and the calls that hold it longest are the
+/// ones the appliance itself requires: the repository verifier admits a
+/// single child process for thirty minutes, and one measured
+/// `spice gate prove --missing` in this repository ran 714 seconds against a
+/// `cargo test --locked --package spice` of 215 seconds. Alarming a lane
+/// before that window closes alarms it for doing exactly what it was told.
+pub const BLOCKED_TURN: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// How long an unanswered directive waits for its first nudge.
+///
+/// A lane that is about to answer should not be nudged on the way: measured
+/// in one lane's own tape, an answer followed its telling by 12.4 to 19.5
+/// seconds across five directives, all of them delivered mid-turn.
+pub const FIRST_NUDGE: std::time::Duration = std::time::Duration::from_secs(60);
+
 impl Default for Config {
     fn default() -> Self {
         Self {
             expiry: "24h"
                 .parse()
                 .expect("the compiled steering expiry is valid"),
-            resend: ["15s", "60s", "300s"]
+            resend: [FIRST_NUDGE, BLOCKED_TURN, 2 * BLOCKED_TURN]
                 .into_iter()
-                .map(|word| word.parse().expect("compiled resend words are valid"))
+                .map(|horizon| {
+                    format!("{}s", horizon.as_secs())
+                        .parse()
+                        .expect("compiled resend words are valid")
+                })
                 .collect(),
         }
     }
@@ -111,5 +133,37 @@ impl<'de> Deserialize<'de> for Config {
             expiry: raw.expiry,
             resend: raw.resend,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BLOCKED_TURN, Config, FIRST_NUDGE};
+
+    /// The escalation horizon is a claim about the lane: that a lane silent
+    /// this long is ignoring direction rather than working under it. The
+    /// claim is false for any window shorter than the longest call the
+    /// appliance itself requires a lane to make, so the shipped ladder is
+    /// held to that window rather than to a number somebody liked.
+    #[test]
+    fn escalation_outlasts_the_longest_call_the_appliance_requires() {
+        let [reminded, escalated, overdue] = Config::default().stage_horizons();
+        assert!(
+            escalated >= BLOCKED_TURN,
+            "escalating at {escalated:?} alarms a lane still inside a call the appliance admits \
+             for {BLOCKED_TURN:?}",
+        );
+        assert!(
+            overdue > escalated,
+            "an overdue directive must outlast the escalation that precedes it",
+        );
+        assert!(
+            reminded >= FIRST_NUDGE,
+            "nudging before {FIRST_NUDGE:?} lands on a lane that is still composing its answer",
+        );
+        assert!(
+            reminded < escalated,
+            "a nudge that arrives with its escalation is not a nudge",
+        );
     }
 }
