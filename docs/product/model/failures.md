@@ -131,13 +131,13 @@ sequenceDiagram
   participant L as lane
   participant P as predecessor
   participant N as successor
-  L->>L: renewal requested
-  alt predecessor occupied
+  L->>L: renewal requested, lane marked for replacement
+  opt predecessor occupied
     L->>P: ordinary handoff steering
-    P->>P: finishes its turn
-  else predecessor vacant with retained session
-    Note over L,P: no predecessor start or notification
+    P->>P: finishes its turn and exits
   end
+  Note over L,N: the mark waits; renewal starts nothing
+  L->>L: next start of this lane consumes the mark
   L->>N: launch fresh successor
   opt active claim retained
     L->>N: ClaimCarried fact, disposition remains active

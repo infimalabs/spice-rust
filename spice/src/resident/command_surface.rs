@@ -186,7 +186,14 @@ impl<'a> Surface<'a> {
                 ))
             }
             (CommandKind::LaneState, Intent::LaneState(state)) => Some(lane_surface::state(
-                self.bus, self.paths, self.epoch, seats, &self.lane, command, state,
+                self.bus,
+                self.paths,
+                self.epoch,
+                seats,
+                &self.lane,
+                &self.config.steering,
+                command,
+                state,
             )),
             (CommandKind::LaneRenewal, Intent::LaneRenewal(renewal)) => Some(lane_surface::renew(
                 self.bus,

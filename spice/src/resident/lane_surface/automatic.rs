@@ -2,12 +2,17 @@
 
 use super::*;
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one manual wake needs the whole command context"
+)]
 pub(super) fn wake(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     runtime: &Runtime<'_>,
+    steering: &steer::Config,
     command: &wire::AdmittedCommand,
     request: &LaneState,
 ) -> Outcome<CommandAnswer> {
@@ -35,9 +40,13 @@ pub(super) fn wake(
     if let Err(outcome) = super::super::steering::lane_capability(row) {
         return typed_outcome(outcome);
     }
-    let resume = match launch_resume(paths, row) {
-        Ok(resume) => resume,
+    let renewal = match super::renewal::pending_for(observed.body(), request.lane) {
+        Ok(renewal) => renewal,
         Err(outcome) => return typed_outcome(outcome),
+    };
+    let resume = match wake_resume(bus, paths, epoch, steering, runtime, row, renewal.as_ref()) {
+        Ok(resume) => resume,
+        Err(outcome) => return outcome,
     };
     let fast_mode = match super::super::settings_surface::fast_mode(bus) {
         Ok(fast_mode) => fast_mode,
@@ -84,7 +93,15 @@ pub(super) fn wake(
             .as_ref()
             .and_then(|launch| launch.rtk.clone()),
     };
-    let proposal = propose_wake(command, request, &observed, epoch, &proven, answer.clone());
+    let proposal = propose_wake(
+        command,
+        request,
+        &observed,
+        epoch,
+        &proven,
+        renewal.as_ref(),
+        answer.clone(),
+    );
     let proposal = match proposal {
         Ok(proposal) => proposal,
         Err(outcome) => {
@@ -99,6 +116,28 @@ pub(super) fn wake(
             typed_outcome(outcome)
         }
     }
+}
+
+/// The successor's resume posture, with any renewal context published first.
+///
+/// A replacement starts fresh: its predecessor's session is exactly what the
+/// operator asked to leave behind, and the rehydration context reaches the
+/// successor's first inbox read because it is published before the launch.
+fn wake_resume(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    steering: &steer::Config,
+    runtime: &Runtime<'_>,
+    row: &wire::LaneResidency,
+    renewal: Option<&wire::LaneRenewalRecord>,
+) -> Result<vendor::Resume, Outcome<CommandAnswer>> {
+    let Some(renewal) = renewal else {
+        return launch_resume(paths, row).map_err(typed_outcome);
+    };
+    super::renewal::prepare(bus, paths, epoch, steering, runtime, renewal)
+        .map_err(typed_outcome)?;
+    Ok(vendor::Resume::Fresh)
 }
 
 /// Launch one occupant selected by the resident lifecycle authority.
@@ -141,6 +180,7 @@ pub(in crate::resident) fn wake_automatic(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     runtime: &Runtime<'_>,
+    steering: &steer::Config,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     decision: Option<&bus::TaskSnapshot>,
@@ -152,37 +192,12 @@ pub(in crate::resident) fn wake_automatic(
         epoch,
         seats,
         runtime,
+        steering,
         WakeRequest {
             lane,
             occupant,
             decision,
             reserved,
-            renewal: None,
-        },
-    )
-}
-
-pub(super) fn wake_renewal(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    runtime: &Runtime<'_>,
-    renewal: &wire::LaneRenewalRecord,
-    occupant: CanonicalUuid,
-) -> CommandResult<AutomaticWake> {
-    wake_automatic_with(
-        bus,
-        paths,
-        epoch,
-        seats,
-        runtime,
-        WakeRequest {
-            lane: renewal.lane,
-            occupant,
-            decision: None,
-            reserved: None,
-            renewal: Some(renewal),
         },
     )
 }
@@ -192,7 +207,6 @@ struct WakeRequest<'a> {
     occupant: CanonicalUuid,
     decision: Option<&'a bus::TaskSnapshot>,
     reserved: Option<&'a crate::board_command::AutomaticClaim>,
-    renewal: Option<&'a wire::LaneRenewalRecord>,
 }
 
 struct WakeAdmission {
@@ -202,6 +216,8 @@ struct WakeAdmission {
     claim: Option<AutomaticClaimAuthority>,
     resume: vendor::Resume,
     fast_mode: bool,
+    /// The durable replacement this start consumes, when the lane carries one.
+    renewal: Option<wire::LaneRenewalRecord>,
 }
 
 fn wake_automatic_with(
@@ -210,9 +226,13 @@ fn wake_automatic_with(
     epoch: CanonicalUuid,
     seats: &mut Seats,
     runtime: &Runtime<'_>,
+    steering: &steer::Config,
     request: WakeRequest<'_>,
 ) -> CommandResult<AutomaticWake> {
     let admitted = admit_automatic_wake(bus, paths, epoch, seats, &request)?;
+    if let Some(renewal) = admitted.renewal.as_ref() {
+        super::renewal::prepare(bus, paths, epoch, steering, runtime, renewal)?;
+    }
     let launch = match super::super::supervisor::launch(
         paths,
         OccupantLaunchRequest {
@@ -252,7 +272,7 @@ fn wake_automatic_with(
         WakeCommitAuthority {
             expected_cursor: admitted.expected_cursor,
             claim: admitted.claim.as_ref(),
-            renewal: request.renewal,
+            renewal: admitted.renewal.as_ref(),
         },
     ) {
         stop_lane(seats, request.lane);
@@ -291,7 +311,7 @@ fn admit_automatic_wake(
             "reconcile after observing the current occupant",
         ));
     }
-    if row.life == "drain" && request.renewal.is_none() {
+    if row.life == "drain" {
         return Err(automatic_refusal(
             "lifecycle::wake-life-ended",
             "lane.life",
@@ -314,9 +334,11 @@ fn admit_automatic_wake(
             "the exact pre-launch claim is no longer active",
         ));
     }
-    let resume = match request.renewal {
-        Some(_) => vendor::Resume::Fresh,
-        None => launch_resume(paths, &row)?,
+    let renewal = super::renewal::pending_for(observed.body(), request.lane)?;
+    let resume = if renewal.is_some() {
+        vendor::Resume::Fresh
+    } else {
+        launch_resume(paths, &row)?
     };
     let fast_mode = super::super::settings_surface::fast_mode(bus)?;
     Ok(WakeAdmission {
@@ -326,6 +348,7 @@ fn admit_automatic_wake(
         claim,
         resume,
         fast_mode,
+        renewal,
     })
 }
 
@@ -566,19 +589,13 @@ fn commit_automatic_wake(
         }
     }
     if let Some(renewal) = renewal {
-        let successor =
-            super::renewal::successor_record(renewal, &proven.session, next.topology_revision)?;
-        super::renewal::replace_renewal(&mut next, row.lane, Some(successor.clone()));
-        head = write
-            .fact(
-                wire::body::LaneRenewalChanged {
-                    team: successor.team,
-                    lane: successor.lane,
-                    renewal: Some(successor),
-                },
-                FactCause::Pending(head),
-            )
-            .map_err(|error| store_fault("lane::renewal-fact-invalid", &error.to_string()))?;
+        head = super::renewal::append_successor(
+            &mut write,
+            &mut next,
+            renewal,
+            &proven.session,
+            head,
+        )?;
     }
     write.residency_head(head, move |_| next);
     commit(bus, write).map(|_| ())

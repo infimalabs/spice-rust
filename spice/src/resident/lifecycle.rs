@@ -327,14 +327,7 @@ impl Runtime {
         config: &SurfaceConfig,
         diagnostic: &mut dyn std::io::Write,
     ) -> CommandResult<Option<WakeDeadline>> {
-        if lane_surface::reconcile_renewal(bus, paths, epoch, seats, lane_runtime, config)? {
-            self.backoff.release_all();
-            return Ok(self.holds.next().map(|(lane, at)| WakeDeadline {
-                lane,
-                at,
-                kind: WakeKind::Hold,
-            }));
-        }
+        lane_surface::reconcile_renewal(bus, paths, epoch, &config.steering)?;
         let mut snapshot = bus
             .task_snapshot()
             .map_err(|error| store_fault("lifecycle::snapshot-unreadable", &error.to_string()))?;
@@ -694,6 +687,7 @@ impl Runtime {
                     epoch,
                     seats,
                     lane_runtime,
+                    &config.steering,
                     lane,
                     occupant,
                     Some(snapshot),
@@ -722,6 +716,7 @@ impl Runtime {
                 epoch,
                 seats,
                 lane_runtime,
+                &config.steering,
                 lane,
                 occupant,
                 Some(snapshot),
@@ -748,6 +743,7 @@ impl Runtime {
                     epoch,
                     seats,
                     lane_runtime,
+                    &config.steering,
                     lane,
                     occupant,
                     None,

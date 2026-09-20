@@ -4,8 +4,6 @@ use wire::{LaneRenewalRecord, LaneRenewalState};
 
 /// The resident does not offer steering to this session.
 pub const CANNOT_SEND_BLOCK: &str = "steering is not offered to this session";
-/// The predecessor already stopped and its successor has not seated yet.
-pub const HANDOFF_BLOCK: &str = "handoff in progress";
 
 /// Complete presentation and next intent for one agent-renewal control.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,7 +33,9 @@ pub struct AgentRenewalControl {
 /// Derive one renewal control from durable lane state and current authority.
 ///
 /// A disabled control always names its condition: the operator must be able to
-/// distinguish missing authority from a pending handoff without a working hover.
+/// see that authority is missing without a working hover. Nothing else
+/// withholds the control, because renewal is intent the operator can place and
+/// withdraw until a successor actually starts.
 #[must_use]
 pub fn agent_renewal_control(
     agent: &str,
@@ -43,21 +43,12 @@ pub fn agent_renewal_control(
     renewal: Option<&LaneRenewalRecord>,
 ) -> AgentRenewalControl {
     let state = renewal.map(|renewal| &renewal.state);
-    let blocked = match state {
-        Some(LaneRenewalState::HandoffPending { .. }) => Some(HANDOFF_BLOCK),
-        None
-        | Some(
-            LaneRenewalState::SuccessorStarted { .. }
-            | LaneRenewalState::Requested { .. }
-            | LaneRenewalState::LaunchRefused { .. },
-        ) => (!can_send).then_some(CANNOT_SEND_BLOCK),
-    };
     let mut control = presentation(agent, state);
-    if let Some(block) = blocked {
+    if !can_send {
         control.disabled = true;
-        control.blocked = Some(block);
-        control.label = format!("{} (unavailable: {block})", control.label);
-        control.title = format!("{}. Unavailable: {block}", control.title);
+        control.blocked = Some(CANNOT_SEND_BLOCK);
+        control.label = format!("{} (unavailable: {CANNOT_SEND_BLOCK})", control.label);
+        control.title = format!("{}. Unavailable: {CANNOT_SEND_BLOCK}", control.title);
     }
     control
 }
@@ -94,10 +85,10 @@ fn presentation(agent: &str, state: Option<&LaneRenewalState>) -> AgentRenewalCo
             pressed: true,
             disabled: false,
             next_requested: false,
-            label: format!("Agent renewal handoff pending for {agent}"),
-            title: format!("The predecessor stopped; {agent}'s successor is starting"),
-            heading: "Renewing agent",
-            detail: "handoff pending",
+            label: format!("Cancel pending replacement for {agent}"),
+            title: format!("{agent} is replaced the next time this lane starts; cancel that"),
+            heading: "Cancel renewal",
+            detail: "replacement pending",
             refusal: None,
             blocked: None,
         },
@@ -188,8 +179,13 @@ mod tests {
         });
         let handoff = agent_renewal_control("Ada", true, Some(&handoff_record));
         assert_eq!(
-            (handoff.state, handoff.pressed, handoff.disabled),
-            ("handoff-pending", true, true),
+            (
+                handoff.state,
+                handoff.pressed,
+                handoff.disabled,
+                handoff.next_requested,
+            ),
+            ("handoff-pending", true, false, false),
         );
 
         let succeeded_record = renewal(LaneRenewalState::SuccessorStarted {
@@ -260,13 +256,7 @@ mod tests {
         for record in &records {
             for can_send in [true, false] {
                 let control = agent_renewal_control("Ada", can_send, record.as_ref());
-                assert_eq!(
-                    control.disabled,
-                    !can_send
-                        || record.as_ref().is_some_and(|record| {
-                            matches!(record.state, LaneRenewalState::HandoffPending { .. })
-                        }),
-                );
+                assert_eq!(control.disabled, !can_send);
                 assert_eq!(
                     control.disabled,
                     control.blocked.is_some(),
