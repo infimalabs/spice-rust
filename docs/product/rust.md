@@ -269,35 +269,30 @@ have restrictive CSP and hashed owned import maps. Parent CSP and Host/origin
 checks stay unchanged. Publication retains each prior generation's actual
 receipt-owned members, not the current generation's membership.
 
-Mermaid is the full 12.0.0 ESM release, not Tiny: 105 unchanged upstream modules
-plus the owned `renderer-000.html` import map and `renderer-000.mjs` bridge.
+Mermaid uses full 12.0.0 ESM, not Tiny: 105 unchanged upstream modules, owned
+`renderer-000.html` import map and `renderer-000.mjs` bridge.
 [`renderer-000.txt`](../../app/renderer/renderer-000.txt) records tarball integrity,
-original members, renamed-file checksums, licenses, and source revisions.
-Reproduction extracts verified members to their recorded filenames and aliases
-each original `dist/` path and basename in the import map. Builds use checked-in
-bytes only; there are no runtime CDN/package requests. Math uses native MathML
-and system fonts.
+original members, renamed-file checksums, licenses and source revisions.
+Reproduce recorded filenames and original `dist/` path/basename import aliases.
+Builds use checked-in bytes; no runtime CDN/package requests. Math uses native
+MathML and system fonts.
 
-[`app/src/browser/mermaid.rs`](../../app/src/browser/mermaid.rs) owns one lazy,
-measurable, offscreen `allow-scripts` sandbox pinned to the **loaded page's**
-generation. It observes Canvas's existing effective theme. Protocol v1 admits
-only the expected window, origin, generation, channel, request ID, revision, and
-theme. The child uses strict security, locks host configuration, never invokes
-click bindings, normalizes SVG namespaces, and clears temporary render nodes.
-The parent admits at most 8 MiB of UTF-8 SVG and decodes it as a base64 data image;
-SVG nodes and styles never enter the parent DOM.
+[`mermaid.rs`](../../app/src/browser/mermaid.rs) owns a lazy, measurable, offscreen
+`allow-scripts` sandbox pinned to the **loaded page's** generation and effective
+Canvas theme. Protocol v1 checks window, origin, generation, channel, request ID,
+revision and theme. Strict child security locks host configuration, never invokes
+click bindings, normalizes SVG namespaces and clears temporary nodes. The parent
+admits ≤8 MiB UTF-8 SVG as a base64 image, never SVG nodes/styles in its DOM.
 
-Source is capped at 50,000 UTF-16 units; errors at 500 characters. Rendering is
-serial, identical requests are shared, and pending revisions coalesce over
-80 ms. The queue holds 16 jobs/1 MiB of source, with 64 pending subscribers.
-The LRU holds 32 source/theme/generation entries and 16 MiB of source plus
-encoded images. Superseded/detached cards receive no late repaint. Card-owned
-slots keep the shared Markdown sanitizer and ordinary code behavior intact.
-Failures retain source, the last valid same-theme preview, and explicit retry.
-Teardown removes listeners/frame, cancels decodes, and clears queue/cache state.
-The 30-second response deadline runs **only when the event loop runs**: this is
-not CPU isolation or a hard main-thread timeout.
-Loaded modules render offline; reopening the iframe requires the local appliance.
+Limits: 50,000 UTF-16 source units, 500 error characters. Rendering is serial;
+identical requests share work, pending revisions coalesce over 80 ms. Queue:
+16 jobs/1 MiB source, 64 subscribers. LRU: 32 source/theme/generation entries,
+16 MiB source+encoded images. Superseded/detached cards receive no late repaint.
+Card-owned slots preserve shared sanitization and ordinary code. Failures retain
+source, last valid same-theme preview and retry. Teardown removes listeners/frame,
+cancels decodes and clears queue/cache. The 30-second deadline needs a running
+event loop: **not CPU isolation or a hard timeout**. Loaded modules work offline;
+reopening the iframe needs the local appliance.
 
 Diagrams reserve full-width `cover` slots: 15.75rem media-only, 8.75rem mixed.
 Source/error stays in-place. All images share an inert modal, closed by
