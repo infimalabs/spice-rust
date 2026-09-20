@@ -112,10 +112,22 @@ UTF-8, or logical JSON refuse capture. An incomplete sequence at EOF also
 refuses: SILL delivers stream finalization in order through the same bounded
 observer worker and failure path as records, including newline-terminated
 streams. Chunk envelopes presented directly to the logical decoder are
-accounted residue, not silent content. Reassembly support itself does not
-negotiate a protocol version.
+accounted residue, not silent content.
 
-Authorities: [`vendor/src/omp/frame.rs`](../../vendor/src/omp/frame.rs),
+The lane states the wire it reads rather than inheriting one. Its opening
+request negotiates RPC protocol version 2 before any other command, because
+OMP switches its frame encoder on that reply and only that version chunks an
+oversized frame whole instead of compacting, shrinking, or replacing it. The
+same request states the steering, follow-up, and interrupt dispositions,
+which OMP otherwise takes from whatever the host machine's own settings say:
+steering and follow-up drain every queued message at a boundary rather than
+one per turn, and an interrupt is noticed immediately rather than after the
+running tool batch. A refused command answers explicitly, and a refused
+negotiation is a lane failure naming the version Spice requires, not a
+launch that proceeds on an undecodable wire.
+
+Authorities: [`vendor/src/omp.rs`](../../vendor/src/omp.rs),
+[`vendor/src/omp/frame.rs`](../../vendor/src/omp/frame.rs),
 [`lane/src/capture.rs`](../../lane/src/capture.rs), and
 [`sill/src/spawn/capture.rs`](../../sill/src/spawn/capture.rs).
 

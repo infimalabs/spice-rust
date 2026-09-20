@@ -38,6 +38,46 @@ pub const STEER_REQUEST_ID_PREFIX: &str = "spice-steer-";
 /// Request identity of the interrupt a drain sends.
 pub const ABORT_REQUEST_ID: &str = "spice-abort";
 
+/// Request identity of the protocol negotiation that opens every launch.
+pub const PROTOCOL_REQUEST_ID: &str = "spice-protocol";
+
+/// Request identity of the steering disposition the lane states at open.
+pub const STEERING_MODE_REQUEST_ID: &str = "spice-steering-mode";
+
+/// Request identity of the follow-up disposition the lane states at open.
+pub const FOLLOW_UP_MODE_REQUEST_ID: &str = "spice-follow-up-mode";
+
+/// Request identity of the interrupt disposition the lane states at open.
+pub const INTERRUPT_MODE_REQUEST_ID: &str = "spice-interrupt-mode";
+
+/// How omp drains the steering queue at a boundary: every message the lane
+/// has interjected, in order.
+///
+/// Steering is how the operator reaches an occupant mid-turn, and two
+/// interjections a second apart are one instruction in two lines. Draining
+/// one per boundary would deliver the correction without the sentence that
+/// qualifies it and spend a turn on each, so the lane takes the whole queue.
+const STEERING_MODE: &str = "all";
+
+/// How omp drains messages queued for the next turn: all of them together.
+///
+/// The lane interjects with [`steer_request`] rather than queueing follow-ups,
+/// so this queue fills only when a prompt arrives while omp is busy. One turn
+/// that reads everything waiting beats a turn apiece, for the same reason
+/// steering drains whole.
+const FOLLOW_UP_MODE: &str = "all";
+
+/// What omp does with a running tool batch when steering arrives: notice it
+/// immediately.
+///
+/// omp never kills a tool with side effects for a steering message either
+/// way; the disposition decides whether it looks. On `wait` it does not, so
+/// a batch of pure waits runs to the end before the operator's message is
+/// read. On `immediate` a not-yet-started wait is skipped and the message
+/// lands at the next boundary, which is the latency the lane's steering
+/// contract assumes.
+const INTERRUPT_MODE: &str = "immediate";
+
 /// Environment name carrying the session identity the lane pinned at launch.
 ///
 /// omp exports nothing of its own to the tools it runs, so the lane mints the
@@ -349,16 +389,47 @@ pub fn system_prompt(launch: &Launch) -> String {
     prompt
 }
 
-/// The request lines that open a launch: a state query, then the first turn.
+/// The request lines that open a launch: the wire, the queue dispositions,
+/// the lane's shell, a state query, then the first turn.
 ///
 /// omp writes its `ready` frame before reading stdin, so every request may be
-/// queued before the child has answered anything. The lane's shell is
-/// registered first so the first turn's schema carries it; the state reply
-/// declares the session; the prompt starts the turn with the same composed
-/// system prompt the arguments carry, so the agent re-grounds in the skill.
+/// queued before the child has answered anything. The version is negotiated
+/// first because omp switches its frame encoder on the reply, and everything
+/// after it — a `get_state` answer over a megabyte included — is then framed
+/// the way the lane's capture reads. The three queue dispositions follow:
+/// omp leaves them to whatever the machine's own settings say, so a lane
+/// that depends on how steering drains states them rather than inheriting
+/// them. The lane's shell is registered next so the first turn's schema
+/// carries it; the state reply declares the session; the prompt starts the
+/// turn with the same composed system prompt the arguments carry, so the
+/// agent re-grounds in the skill.
+///
+/// A refused command answers `success: false`, which the lane reads as a
+/// vendor failure and reaps; a refused negotiation therefore ends the launch
+/// instead of leaving the occupant on a wire nothing can decode.
 #[must_use]
 pub fn opening_request(launch: &Launch) -> Vec<u8> {
-    let mut bytes = host_tools_request();
+    let mut bytes = request_line(&Negotiation {
+        id: PROTOCOL_REQUEST_ID,
+        kind: "negotiate_protocol",
+        protocol_version: listen::OMP_PROTOCOL_VERSION,
+    });
+    for (id, kind, mode) in [
+        (STEERING_MODE_REQUEST_ID, "set_steering_mode", STEERING_MODE),
+        (
+            FOLLOW_UP_MODE_REQUEST_ID,
+            "set_follow_up_mode",
+            FOLLOW_UP_MODE,
+        ),
+        (
+            INTERRUPT_MODE_REQUEST_ID,
+            "set_interrupt_mode",
+            INTERRUPT_MODE,
+        ),
+    ] {
+        bytes.extend(request_line(&ModeRequest { id, kind, mode }));
+    }
+    bytes.extend(host_tools_request());
     bytes.extend(request_line(&Request {
         id: STATE_REQUEST_ID.to_owned(),
         kind: "get_state",
@@ -479,6 +550,23 @@ struct Request {
     message: Option<String>,
     #[serde(rename = "streamingBehavior", skip_serializing_if = "Option::is_none")]
     streaming_behavior: Option<&'static str>,
+}
+
+#[derive(Serialize)]
+struct Negotiation {
+    id: &'static str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    #[serde(rename = "protocolVersion")]
+    protocol_version: u8,
+}
+
+#[derive(Serialize)]
+struct ModeRequest {
+    id: &'static str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    mode: &'static str,
 }
 
 /// The `set_host_tools` command that registers the lane's shell.

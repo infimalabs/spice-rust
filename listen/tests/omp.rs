@@ -157,6 +157,22 @@ fn compaction_and_refusals_are_typed_while_lifecycle_frames_stay_silent() {
         [Event::Failure(failure)]
             if failure.message == "prompt refused: Agent is already processing"
     ));
+    let unsupported = br#"{"id":"spice-protocol","type":"response","command":"negotiate_protocol","success":false,"error":"Unsupported RPC protocol version: 2"}"#;
+    let refused = decoded(unsupported);
+    assert!(
+        matches!(
+            refused.events(),
+            [Event::Failure(failure)]
+                if failure.message
+                    == format!(
+                        "negotiate_protocol refused: Unsupported RPC protocol version: 2; \
+                         this lane requires RPC protocol version {}",
+                        listen::OMP_PROTOCOL_VERSION
+                    )
+        ),
+        "a refused wire must name the version the lane requires: {:?}",
+        refused.events()
+    );
     for silent in SILENT {
         let decoded = decoded(silent);
         assert!(

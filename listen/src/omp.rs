@@ -17,6 +17,14 @@ use crate::{
     object, optional_boolean, optional_string, optional_unsigned, required, string,
 };
 
+/// RPC protocol version a lane states at open, and the grammar below decodes.
+///
+/// omp answers `ready` on version 1 and negotiates 2. Version 2 is the one
+/// whose oversized frames are chunked whole rather than compacted, shrunk,
+/// or replaced by an overflow notice, so a lane that must read every record
+/// it captures asks for it by name and refuses to run on anything else.
+pub const PROTOCOL_VERSION: u8 = 2;
+
 /// RPC frames and session entries that carry no listening moment of their own.
 ///
 /// Every partial, lifecycle, and transport frame is named here rather than
@@ -322,17 +330,21 @@ fn response(record: &Object, locus: Locus) -> Events {
             field: "success",
             expected: "boolean",
         })?;
+    let command = string(record, "command")?;
     if !success {
-        return Ok(vec![Event::Failure(Failure {
-            message: format!(
-                "{} refused: {}",
-                string(record, "command")?,
-                optional_string(record, "error")?.unwrap_or("no reason given")
-            ),
-            locus,
-        })]);
+        let reason = optional_string(record, "error")?.unwrap_or("no reason given");
+        let mut message = format!("{command} refused: {reason}");
+        if command == "negotiate_protocol" {
+            // The wire spice cannot read is not a wire it may run on, so the
+            // refusal states what the lane asked for rather than leaving the
+            // operator to infer it from omp's own wording.
+            message.push_str(&format!(
+                "; this lane requires RPC protocol version {PROTOCOL_VERSION}"
+            ));
+        }
+        return Ok(vec![Event::Failure(Failure { message, locus })]);
     }
-    if string(record, "command")? != "get_state" {
+    if command != "get_state" {
         return Ok(Vec::new());
     }
     Ok(vec![Event::Session(SessionDeclaration {
