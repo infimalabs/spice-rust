@@ -415,14 +415,13 @@ fn render_agent_message_media(
                 let description = description.unwrap_or(&media.name).to_owned();
                 let action = format!("Open {description} full size");
                 html! {
-                    <a
+                    <button
+                        type="button"
                         class="message-image message-image--openable"
-                        href={media.data_url.clone()}
-                        target="_blank"
-                        rel="noopener"
                         title={action.clone()}
                         aria-label={action}
-                        data-full-size-data-image="true"
+                        data-image-preview=""
+                        data-image-name={media.name.clone()}
                     >
                         <img
                             src={media.data_url.clone()}
@@ -437,7 +436,7 @@ fn render_agent_message_media(
                         >
                             {"Loading image"}
                         </span>
-                    </a>
+                    </button>
                 }
             })}
         </div>
@@ -662,7 +661,9 @@ pub(super) fn render_image_indicators(
                         class="composer-shard-image-indicator"
                         title={attachment.name.clone()}
                     >
-                        <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
+                        <button type="button" class="composer-shard-image-open" data-image-preview="" data-image-name={attachment.name.clone()} aria-label={format!("Open {} full size", attachment.name)}>
+                            <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
+                        </button>
                         <button
                             type="button"
                             class="composer-shard-image-remove"

@@ -37,6 +37,7 @@ use crate::{
 
 mod clock;
 mod connection;
+mod image_viewer;
 mod mermaid;
 mod view;
 mod watchband;
@@ -556,7 +557,7 @@ fn canvas_app() -> Html {
         submit_note,
         refresh,
     });
-    html! { <mermaid::Provider>{canvas}</mermaid::Provider> }
+    html! { <image_viewer::Provider><mermaid::Provider>{canvas}</mermaid::Provider></image_viewer::Provider> }
 }
 
 #[hook]

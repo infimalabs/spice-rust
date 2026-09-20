@@ -6,11 +6,10 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
 
-mod controls;
 mod frame;
 mod service;
 
-use controls::{use_button, use_viewer};
+use super::image_viewer::use_button;
 use service::{Service, Shared};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -259,7 +258,6 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
         shown.set(!**shown);
     });
     let source_button = use_button(toggle_source);
-    let (preview_button, viewer) = use_viewer(previous.clone());
     let source_action = if *show_source {
         "Show diagram preview"
     } else {
@@ -267,7 +265,7 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
     };
     html! {
         <div ref={host} class="mermaid-render" data-mermaid-revision={revision.as_ref().clone()} data-mermaid-state={state} data-source-visible={show_source.to_string()}>
-            <button ref={preview_button} type="button" class="message-image message-image--openable" disabled={previous.is_none()} aria-label="View full-size diagram" title="View full-size diagram">
+            <button type="button" class="message-image message-image--openable" data-image-preview="" data-image-name="diagram.svg" disabled={previous.is_none()} aria-label="View full-size diagram" title="View full-size diagram">
                 if let Some(image) = previous {
                     <img src={image} alt="Mermaid diagram" data-mosaic-image-state="loaded" />
                 }
@@ -281,7 +279,6 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
                 <pre><code>{props.source.clone()}</code></pre>
                 <button ref={retry_button} type="button">{"Retry diagram"}</button>
             </div>
-            {viewer}
         </div>
     }
 }

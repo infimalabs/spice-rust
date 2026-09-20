@@ -25,7 +25,7 @@ pulldown-cmark = { version = "0.13.4", default-features = false, features = ["ht
 serde_json = "1.0.151"
 wasm-bindgen = "0.2.106"
 wasm-bindgen-futures = "0.4.56"
-web-sys = { version = "0.3.83", features = ["AbortController", "AbortSignal", "Blob", "BlobPropertyBag", "ClipboardEvent", "Crypto", "CssStyleDeclaration", "DataTransfer", "Document", "DomRect", "DragEvent", "Element", "Event", "File", "FileList", "FileReader", "HtmlAudioElement", "HtmlDialogElement", "HtmlElement", "HtmlIFrameElement", "HtmlImageElement", "HtmlInputElement", "HtmlMediaElement", "HtmlTextAreaElement", "Location", "MessageEvent", "MutationObserver", "MutationObserverInit", "NodeList", "ProgressEvent", "ResizeObserver", "SpeechSynthesis", "SpeechSynthesisUtterance", "SpeechSynthesisVoice", "Storage", "Url", "Window"] }
+web-sys = { version = "0.3.83", features = ["AbortController", "AbortSignal", "Blob", "BlobPropertyBag", "CanvasRenderingContext2d", "ClipboardEvent", "Crypto", "CssStyleDeclaration", "DataTransfer", "Document", "DomRect", "DragEvent", "Element", "Event", "File", "FileList", "FileReader", "HtmlAnchorElement", "HtmlAudioElement", "HtmlCanvasElement", "HtmlDialogElement", "HtmlElement", "HtmlIFrameElement", "HtmlImageElement", "HtmlInputElement", "HtmlMediaElement", "HtmlTextAreaElement", "Location", "MessageEvent", "MutationObserver", "MutationObserverInit", "NodeList", "ProgressEvent", "ResizeObserver", "Response", "SpeechSynthesis", "SpeechSynthesisUtterance", "SpeechSynthesisVoice", "Storage", "Url", "Window"] }
 yew = { version = "0.21.0", features = ["csr"] }
 
 [dev-dependencies]
