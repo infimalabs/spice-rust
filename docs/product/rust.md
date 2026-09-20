@@ -291,6 +291,7 @@ Failures retain source, the last valid same-theme preview, and explicit retry.
 Teardown removes listeners/frame, cancels decodes, and clears queue/cache state.
 The 30-second response deadline runs **only when the event loop runs**: this is
 not CPU isolation or a hard main-thread timeout.
+Loaded modules render offline; reopening the iframe requires the local appliance.
 
 Diagram previews use full-width `cover` slots: 15.75rem for media-only messages,
 8.75rem with prose, plus a fixed source-control row. Geometry is reserved from
