@@ -14,7 +14,6 @@ pub(in crate::resident) struct OccupantLaunch {
     pub(in crate::resident) spec: Spec,
     pub(in crate::resident) observation: Observation,
     pub(in crate::resident) session: SessionProof,
-    pub(in crate::resident) session_id: Option<String>,
     pub(in crate::resident) git: String,
     /// Request bytes a command-driven vendor reads first, or nothing for a
     /// vendor driven entirely by its arguments.
@@ -141,7 +140,7 @@ pub(in crate::resident) fn occupant_launch(
         rtk,
         epoch,
         stream,
-        expected: expected.clone(),
+        expected,
         state: Arc::clone(&state),
     });
     let observation = lane::capture::observation(
@@ -162,7 +161,6 @@ pub(in crate::resident) fn occupant_launch(
             state,
             horizon: session_proof_horizon(paths),
         },
-        session_id: expected,
         git,
         opening,
         inbox,

@@ -18,8 +18,6 @@ struct HookInput {
     tool_input: Option<Value>,
     #[serde(default)]
     cwd: Option<Value>,
-    #[serde(default)]
-    session_id: Option<Value>,
 }
 
 /// Work selected from one vendor hook invocation.
@@ -120,21 +118,8 @@ pub(crate) fn read(reader: &mut impl Read, harness: &str) -> Result<Invocation, 
                 }
                 Some(std::path::Path::new(cwd))
             });
-            let repository_start = input
-                .cwd
-                .as_ref()
-                .and_then(Value::as_str)
-                .map(std::path::Path::new);
             let mut advice = String::new();
-            for next in repository_start.into_iter().flat_map(|start| {
-                spice::command_advice::for_session(
-                    &command,
-                    cwd,
-                    start,
-                    harness,
-                    input.session_id.as_ref().and_then(Value::as_str),
-                )
-            }) {
+            for next in spice::command_advice::for_shell(&command, cwd) {
                 if !advice.is_empty() {
                     advice.push('\n');
                 }

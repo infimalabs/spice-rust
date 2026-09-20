@@ -62,7 +62,6 @@ pub(in crate::resident) struct Terminal {
     cwd: PathBuf,
     environment: Environment,
     jobs: Jobs,
-    advice_session: Option<String>,
     /// How long a command runs in the foreground before it is kept.
     foreground: Duration,
 }
@@ -98,7 +97,6 @@ impl Terminal {
             cwd: cwd.into(),
             environment,
             jobs,
-            advice_session: None,
             foreground: Duration::from_secs(vendor::omp::SHELL_FOREGROUND),
         }
     }
@@ -122,11 +120,7 @@ impl Terminal {
     /// in its working directory, under its environment with the interception
     /// lifted and `SHELL` naming the native shell. An occupant launched with
     /// no shell has no terminal.
-    pub(in crate::resident) fn from_launch(
-        spec: &Spec,
-        jobs: Jobs,
-        advice_session: Option<String>,
-    ) -> Option<Self> {
+    pub(in crate::resident) fn from_launch(spec: &Spec, jobs: Jobs) -> Option<Self> {
         let entries = spec.environment.entries();
         let value = |name: &str| {
             entries
@@ -143,10 +137,7 @@ impl Terminal {
                 .chain([(OsString::from("SHELL"), shell.clone())]),
         )
         .expect("lifting entries from a valid environment preserves validity");
-        Some(Self {
-            advice_session,
-            ..Self::new(shell, spec.cwd(), environment, jobs)
-        })
+        Some(Self::new(shell, spec.cwd(), environment, jobs))
     }
 
     /// Run one command: to its end within the foreground window, or until a
@@ -154,13 +145,7 @@ impl Terminal {
     pub(in crate::resident) fn run(&self, call: &ShellCall, control: &Control) -> Run {
         let mut run = self.run_command(call, control);
         let (Run::Ended(report) | Run::Backgrounded(report, _)) = &mut run;
-        for advice in spice::command_advice::for_session(
-            &call.command,
-            Some(&self.cwd),
-            &self.cwd,
-            vendor::OMP.name(),
-            self.advice_session.as_deref(),
-        ) {
+        for advice in spice::command_advice::for_shell(&call.command, Some(&self.cwd)) {
             append(&mut report.output, advice);
         }
         run
