@@ -177,7 +177,9 @@ not resolved to equate different logical directory spellings.
 
 Claude and Codex inspect authored Bash input at `PreToolUse`, before any
 vendor-generated shell envelope; advice uses `additionalContext`. OMP attaches
-the same advice to its existing host-shell result notices. Advice never changes
+the same advice only to the initial host-shell response seen by the agent.
+It is not stored in job notices, replayed by completion or log reads, or sent as
+an operator notification. Advice never changes
 the command, permission decision, child output, or exit status. Independently
 configured Codex RTK rewriting retains its existing behavior; Claude's pre-tool
 advice does not invoke RTK.
@@ -188,6 +190,17 @@ pre-truncating unknown output. This advice has no native-capability, flag, or
 working-directory gate. Standalone `tail`, an intermediate pipeline stage, and
 quoted or escaped pipe characters do not trigger it. Both hints can appear
 together; neither rewrites the pipeline or claims an equivalent transformation.
+
+Each hint is one-shot per vendor session in the repository, independently:
+seeing `cd` advice does not consume `tail` advice. Hook payload `session_id`
+and OMP's pinned launch session identify the agent. The common-root
+`command-advice.json` records which hints have been shown; a kernel lock and
+atomic publication suppress duplicates across concurrent calls, process
+restarts, and linked worktrees. Nonmatches consume nothing. Missing identity,
+unavailable state, or lock contention silently omits optional advice rather
+than delaying or refusing the command. Recording precedes delivery, so a crash
+can lose a hint but cannot cause a repeat. No ACK, escalation, or reminder is
+attached to either hint.
 
 Spice's OMP shell and job results show at most 16 KiB of log text, preserving
 UTF-8 character boundaries. When bytes are omitted, the native wrapper includes

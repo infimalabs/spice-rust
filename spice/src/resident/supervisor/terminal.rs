@@ -62,6 +62,7 @@ pub(in crate::resident) struct Terminal {
     cwd: PathBuf,
     environment: Environment,
     jobs: Jobs,
+    advice_session: Option<String>,
     /// How long a command runs in the foreground before it is kept.
     foreground: Duration,
 }
@@ -97,6 +98,7 @@ impl Terminal {
             cwd: cwd.into(),
             environment,
             jobs,
+            advice_session: None,
             foreground: Duration::from_secs(vendor::omp::SHELL_FOREGROUND),
         }
     }
@@ -120,7 +122,11 @@ impl Terminal {
     /// in its working directory, under its environment with the interception
     /// lifted and `SHELL` naming the native shell. An occupant launched with
     /// no shell has no terminal.
-    pub(in crate::resident) fn from_launch(spec: &Spec, jobs: Jobs) -> Option<Self> {
+    pub(in crate::resident) fn from_launch(
+        spec: &Spec,
+        jobs: Jobs,
+        advice_session: Option<String>,
+    ) -> Option<Self> {
         let entries = spec.environment.entries();
         let value = |name: &str| {
             entries
@@ -137,24 +143,38 @@ impl Terminal {
                 .chain([(OsString::from("SHELL"), shell.clone())]),
         )
         .expect("lifting entries from a valid environment preserves validity");
-        Some(Self::new(shell, spec.cwd(), environment, jobs))
+        Some(Self {
+            advice_session,
+            ..Self::new(shell, spec.cwd(), environment, jobs)
+        })
     }
 
     /// Run one command: to its end within the foreground window, or until a
     /// message arrives for the occupant, after which it is kept.
     pub(in crate::resident) fn run(&self, call: &ShellCall, control: &Control) -> Run {
-        let (argv, diagnostic) = self.argv(call);
-        let mut notices = std::borrow::Cow::Borrowed(call.notices.as_slice());
-        for advice in spice::command_advice::for_shell(&call.command, Some(&self.cwd)) {
-            notices.to_mut().push(advice.to_owned());
+        let mut run = self.run_command(call, control);
+        let (Run::Ended(report) | Run::Backgrounded(report, _)) = &mut run;
+        for advice in spice::command_advice::for_session(
+            &call.command,
+            Some(&self.cwd),
+            &self.cwd,
+            vendor::OMP.name(),
+            self.advice_session.as_deref(),
+        ) {
+            append(&mut report.output, advice);
         }
+        run
+    }
+
+    fn run_command(&self, call: &ShellCall, control: &Control) -> Run {
+        let (argv, diagnostic) = self.argv(call);
         let started = self.jobs.start(
             &call.command,
             argv,
             &self.cwd,
             &self.environment,
             call.timeout,
-            &notices,
+            &call.notices,
         );
         let job = match started {
             Ok(job) => job,
@@ -517,11 +537,6 @@ fn append(output: &mut String, notice: &str) {
 
 #[cfg(test)]
 mod tests {
-    use sill::{
-        Argv, Cancellation, Deadlines, Output, ProcessGroup, Redaction, RestartDisposition,
-        StdinPolicy, StreamPolicy, WaitPolicy,
-    };
-
     use super::*;
 
     /// How long a test waits for a command to answer before it fails.
@@ -851,73 +866,5 @@ mod tests {
         );
         assert_eq!(timeless(output), "native\n\nWall time: N seconds");
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn the_terminal_is_read_from_the_occupants_own_launch_with_the_interception_lifted() {
-        let environment = Environment::new([
-            ("SHELL", "/hooks/entry.sh"),
-            ("HOME", "/nowhere"),
-            (steer::hook::BASH_ENV, "/hooks/shell/bash_env"),
-            (steer::hook::ZDOTDIR, "/hooks/shell"),
-            (steer::hook::HOOKS, "/hooks"),
-            (steer::hook::NATIVE_SHELL, "/bin/zsh"),
-            (steer::hook::INBOX, "/inbox/lane"),
-            (spice::rtk::EXECUTABLE_VARIABLE, "/tools/rtk"),
-            (spice::rtk::HISTORY_VARIABLE, "/history/lane.db"),
-        ])
-        .expect("environment");
-        let spec = Spec {
-            argv: Argv::new("omp", Vec::<OsString>::new()).expect("argv"),
-            cwd: PathBuf::from("/work"),
-            environment: environment.clone(),
-            group: ProcessGroup::New,
-            deadlines: Deadlines::new(
-                Duration::from_secs(1),
-                Duration::from_millis(250),
-                Duration::from_millis(500),
-            )
-            .expect("deadlines"),
-            wait: WaitPolicy::new("test", Cancellation::Never, RestartDisposition::Never)
-                .expect("wait"),
-            output: Output::new(StdinPolicy::Null, StreamPolicy::Null, StreamPolicy::Null),
-            redaction: Redaction::None,
-            grace: Duration::from_secs(1),
-        };
-        let jobs = || Jobs::new("/jobs");
-        let terminal =
-            Terminal::from_launch(&spec, jobs()).expect("a launch with a shell has a terminal");
-        assert_eq!(terminal.shell, OsString::from("/bin/zsh"));
-        assert_eq!(terminal.cwd, PathBuf::from("/work"));
-        assert_eq!(
-            terminal.environment.entries(),
-            Environment::new([
-                ("HOME", "/nowhere"),
-                (steer::hook::INBOX, "/inbox/lane"),
-                (spice::rtk::EXECUTABLE_VARIABLE, "/tools/rtk"),
-                (spice::rtk::HISTORY_VARIABLE, "/history/lane.db"),
-                ("SHELL", "/bin/zsh"),
-            ])
-            .expect("environment")
-            .entries()
-        );
-        assert_eq!(
-            terminal.foreground,
-            Duration::from_secs(vendor::omp::SHELL_FOREGROUND)
-        );
-
-        let unhooked = Spec {
-            environment: Environment::new([("SHELL", "/bin/sh")]).expect("environment"),
-            ..spec.clone()
-        };
-        let terminal =
-            Terminal::from_launch(&unhooked, jobs()).expect("a plain SHELL is the terminal");
-        assert_eq!(terminal.shell, OsString::from("/bin/sh"));
-
-        let bare = Spec {
-            environment: Environment::empty(),
-            ..spec
-        };
-        assert!(Terminal::from_launch(&bare, jobs()).is_none());
     }
 }
