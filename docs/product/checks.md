@@ -112,6 +112,11 @@ capability.
 every named refusal state. The commit decision admits only passed and
 contract-owned absence or exclusion; it never erases the evidence distinctions.
 
+Compiler failures without parsed findings retain the already-bounded captured
+output in their refusal reason, with line breaks flattened for the report's
+single-line contract. Human-readable refusals and machine reports expose that
+evidence without inventing findings or changing the exit classification.
+
 ### The ledger follows the verdict
 
 ```mermaid

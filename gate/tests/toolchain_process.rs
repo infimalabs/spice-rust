@@ -25,11 +25,13 @@ fn canvas_public_acquisition_retains_unparsed_nonzero_without_running_trunk() {
     assert_eq!(observation.outcome, ArmOutcome::NonzeroAnalysis);
     assert_eq!(observation.exit_code, Some(17));
     assert!(observation.findings.is_empty());
+    assert!(observation.reason.contains("compiling fixture"));
     assert!(
         observation
             .reason
-            .contains("cargo canvas-wasm-typecheck refused with 17")
+            .contains("error: lint configuration rejected")
     );
+    assert!(observation.reason.contains("invalid lint level"));
     assert!(
         !stubs.path("trunk-analysis-ran").exists(),
         "trunk ran after the cargo analysis refused"
