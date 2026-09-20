@@ -61,23 +61,33 @@ pub(super) fn apply_with_interruption(
 fn apply_file_operations(
     repository: &Repository,
     record: &mut InstallRecord,
-    generated: &[FileImage],
+    generated: &[Option<FileImage>],
     mut record_generation: ReceiptGeneration,
     interrupt_after_write: Option<usize>,
 ) -> Result<ReceiptGeneration, InstallError> {
+    let mut durable_completed = record.completed;
     while record.completed < record.plan.operations.len() {
         let index = record.completed;
-        record_generation = apply_operation(
+        let (generation, changed) = apply_operation(
             repository,
             record,
-            &generated[index],
+            generated[index].as_ref(),
             index,
             record_generation,
+            durable_completed,
         )?;
+        record_generation = generation;
         if interrupt_after_write == Some(index) {
+            write_record(repository, record, record_generation)?;
             return Err(InstallError::Interrupted { operation: index });
         }
         record.completed += 1;
+        if changed {
+            record_generation = write_record(repository, record, record_generation)?;
+            durable_completed = record.completed;
+        }
+    }
+    if durable_completed != record.completed {
         record_generation = write_record(repository, record, record_generation)?;
     }
     Ok(record_generation)
@@ -92,6 +102,7 @@ fn apply_retirements(
     while record.completed < record.plan.operations.len() + record.plan.retirements.len() {
         let index = record.completed - record.plan.operations.len();
         let step = record.completed;
+        record.plan.retirements[index].validate_binding(repository)?;
         if record.plan.retirements[index].discards_payload()
             && record.retired_parents[index].is_none()
         {
@@ -101,8 +112,8 @@ fn apply_retirements(
         }
         let parent = retire_path(repository, &record.plan.retirements[index], index)?;
         record.retired_parents[index] = parent;
-        record_generation = write_record(repository, record, record_generation)?;
         if interrupt_after_write == Some(step) {
+            write_record(repository, record, record_generation)?;
             return Err(InstallError::Interrupted { operation: step });
         }
         record.completed += 1;
@@ -116,12 +127,22 @@ fn materialize_operations(
     spice_binary: Option<&Path>,
     app: Option<&app::Source>,
     symbols: Option<&symbols::Source>,
-) -> Result<Vec<FileImage>, InstallError> {
+) -> Result<Vec<Option<FileImage>>, InstallError> {
     record
         .plan
         .operations
         .iter()
         .map(|operation| {
+            // A retained immutable generation has no source bytes to publish.
+            // Its exact installed image is still checked by admission and the
+            // operation itself; do not copy every historical payload into RAM.
+            if operation.superseded.as_ref() == Some(&operation.generated)
+                && app::operation_generation(operation.asset, &operation.path).is_some_and(
+                    |generation| app.is_some_and(|source| source.generation() != &generation),
+                )
+            {
+                return Ok(None);
+            }
             materialize_generated(
                 operation,
                 spice_binary,
@@ -129,6 +150,7 @@ fn materialize_operations(
                 symbols,
                 &record.plan.repository.common_git,
             )
+            .map(Some)
         })
         .collect()
 }
@@ -283,17 +305,20 @@ fn refresh_required(
 fn apply_operation(
     repository: &Repository,
     record: &mut InstallRecord,
-    generated: &FileImage,
+    generated: Option<&FileImage>,
     index: usize,
-    record_generation: ReceiptGeneration,
-) -> Result<ReceiptGeneration, InstallError> {
+    mut record_generation: ReceiptGeneration,
+    durable_completed: usize,
+) -> Result<(ReceiptGeneration, bool), InstallError> {
     let operation = &record.plan.operations[index];
+    operation.validate_binding(repository)?;
     let (current, parent) = observe_bound(
         operation.location.root(repository),
         &operation.destination,
         &operation.parent,
     )?;
-    let (generation, parent) = if matches_generated(current.as_ref(), operation) {
+    let changed = !matches_generated(current.as_ref(), operation);
+    let (generation, parent) = if !changed {
         (
             validate_existing_generation(
                 repository,
@@ -306,13 +331,23 @@ fn apply_operation(
             parent.ok_or_else(|| InstallError::ParentChanged(operation.destination(repository)))?,
         )
     } else if operation.expects_in_place(current.as_ref()) {
-        publish_operation(repository, operation, generated)?
+        // Unchanged operations need no checkpoint. Before the next mutation,
+        // persist their progress so a crash can leave only the recorded
+        // frontier's file ahead of its receipt, exactly as resume expects.
+        if durable_completed != index {
+            record_generation = write_record(repository, record, record_generation)?;
+        }
+        publish_operation(
+            repository,
+            operation,
+            generated.ok_or(InstallError::BinaryContextChanged)?,
+        )?
     } else {
         return Err(drift(operation, current));
     };
     record.installed[index] = Some(generation);
     record.installed_parents[index] = Some(parent);
-    write_record(repository, record, record_generation)
+    Ok((record_generation, changed))
 }
 
 fn validate_existing_generation(
@@ -446,6 +481,7 @@ fn reverse_retirement(
     }
     let index = record.plan.retirements.len() - 1 - completed;
     let retirement = &record.plan.retirements[index];
+    retirement.validate_binding(repository)?;
     let previous = retirement_previous(retirement, rollback, index);
     let (current, parent) = observe_bound(
         repository.common_dir(),
@@ -462,9 +498,9 @@ fn reverse_retirement(
     } else {
         record.restored_retirements[index] = current.map(|observed| observed.generation);
     }
-    record_generation = write_record(repository, record, record_generation)?;
     let reverse = record.plan.operations.len() + index;
     if interrupt_after_write == Some(reverse) {
+        write_record(repository, record, record_generation)?;
         return Err(InstallError::Interrupted { operation: reverse });
     }
     record.completed += 1;
@@ -488,8 +524,8 @@ fn reverse_activation(
     };
     let reverse = record.plan.operation_count() - 1;
     hook_activation::restore(activation)?;
-    record_generation = write_record(repository, record, record_generation)?;
     if interrupt_after_write == Some(reverse) {
+        write_record(repository, record, record_generation)?;
         return Err(InstallError::Interrupted { operation: reverse });
     }
     record.completed += 1;
@@ -501,7 +537,7 @@ fn reverse_file_operation(
     repository: &Repository,
     record: &mut InstallRecord,
     rollback: Option<&RollbackState>,
-    mut record_generation: ReceiptGeneration,
+    record_generation: ReceiptGeneration,
     interrupt_after_write: Option<usize>,
 ) -> Result<ReceiptGeneration, InstallError> {
     let non_file_offset =
@@ -509,6 +545,7 @@ fn reverse_file_operation(
     let file_completed = record.completed - non_file_offset;
     let reverse = record.plan.operations.len() - 1 - file_completed;
     let operation = &record.plan.operations[reverse];
+    operation.validate_binding(repository)?;
     let previous = operation_previous(operation, rollback, reverse);
     let (current, parent) = observe_bound(
         operation.location.root(repository),
@@ -528,8 +565,8 @@ fn reverse_file_operation(
     if needs_cleanup {
         cleanup_operation(repository, operation)?;
     }
-    record_generation = write_record(repository, record, record_generation)?;
     if interrupt_after_write == Some(reverse) {
+        write_record(repository, record, record_generation)?;
         return Err(InstallError::Interrupted { operation: reverse });
     }
     record.completed += 1;
@@ -763,7 +800,7 @@ fn verify_activation_progress(record: &InstallRecord) -> Result<(), InstallError
                 if record.completed
                     < record.plan.operations.len() + record.plan.retirements.len() =>
             {
-                hook_activation::verify(activation, false)?;
+                hook_activation::verify_pristine(activation)?;
             }
             InstallStatus::Applying => hook_activation::verify_transition(activation)?,
             InstallStatus::Complete => hook_activation::verify(activation, true)?,

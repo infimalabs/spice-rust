@@ -402,24 +402,27 @@ impl InstallRecord {
                 "install record plan digest does not match its canonical plan".to_owned(),
             ));
         }
-        let reversals = self
+        if !self
             .plan
             .operations
             .iter()
-            .map(|operation| operation.previous.clone())
-            .collect::<Vec<_>>();
-        if self.reversals != reversals {
+            .map(|operation| &operation.previous)
+            .eq(self.reversals.iter())
+        {
             return Err(InstallError::InvalidRecord(
                 "install reversal images do not close over the plan".to_owned(),
             ));
         }
-        let destinations = self
+        if !self
             .plan
             .operations
             .iter()
-            .map(|operation| (operation.location, operation.destination.clone()))
-            .collect::<Vec<_>>();
-        if self.destinations != destinations {
+            .map(|operation| (operation.location, operation.destination.as_str()))
+            .eq(self
+                .destinations
+                .iter()
+                .map(|(location, path)| (*location, path.as_str())))
+        {
             return Err(InstallError::InvalidRecord(
                 "install destination inventory is not exact and ordered".to_owned(),
             ));
@@ -549,19 +552,38 @@ impl InstallRecord {
         self.plan.validate_repository_binding(repository)
     }
 
-    /// Validate only mutable progress and repository bindings before a trusted
-    /// in-process checkpoint. The immutable plan was deeply validated when it
-    /// was built or loaded; re-inflating a large rollback archive for every
-    /// counter write adds no new evidence.
+    /// A checkpoint mutates only the receipt. Each operation checks its own
+    /// binding before mutation; transaction admission and terminal publication
+    /// check the entire inventory. Rechecking every destination at every
+    /// counter write makes an N-file installation perform O(N²) filesystem work.
     fn validate_for_write(&self, repository: &Repository) -> Result<(), InstallError> {
-        self.validate_progress_content()?;
+        // Progress arrays are admitted on construction/load and retain their
+        // shape in this process. Check them in full at the terminal boundary,
+        // not once per element updated.
+        if self.completed > self.plan.operation_count() {
+            return Err(InstallError::InvalidRecord(
+                "install progress is past the operation inventory".to_owned(),
+            ));
+        }
         if self.repository != self.plan.repository {
             return Err(InstallError::InvalidRecord(
                 "install record repository does not close over its plan".to_owned(),
             ));
         }
         self.repository.validate(repository)?;
-        self.plan.validate_repository_binding(repository)
+        if matches!(
+            self.status,
+            InstallStatus::Complete | InstallStatus::Uninstalled
+        ) {
+            self.validate_progress_content()?;
+            self.plan.validate_repository_binding(repository)
+        } else {
+            super::binding::validate_record_binding(
+                repository.common_dir(),
+                &self.plan.record,
+                super::RECORD_PATH,
+            )
+        }
     }
 
     pub(super) fn validate_loaded_for_repository(

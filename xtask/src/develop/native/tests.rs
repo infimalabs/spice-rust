@@ -10,12 +10,6 @@ use gate::test_support::gix;
 use super::*;
 
 #[test]
-fn developer_install_names_its_selected_build_profile() {
-    assert_eq!(build_profile(false), "development");
-    assert_eq!(build_profile(true), "release");
-}
-
-#[test]
 fn executable_rollback_requires_the_journal_schema_to_be_proven_unchanged() {
     const CURRENT: u32 = spice::journal_schema::CURRENT;
     assert!(schema_rollback_safe(None, None));

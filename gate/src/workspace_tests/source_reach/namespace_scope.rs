@@ -1,12 +1,15 @@
 use super::*;
+use std::sync::Arc;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct NamespaceScopes {
-    visible: BTreeMap<String, NamespaceResolution>,
-    module: BTreeMap<String, NamespaceResolution>,
-    parents: Vec<BTreeMap<String, NamespaceResolution>>,
-    root: BTreeMap<String, NamespaceResolution>,
-    global: BTreeMap<String, NamespaceResolution>,
+    // Statement and block visitors clone scopes without changing most bindings.
+    // Share those snapshots; copy-on-write keeps sibling scopes independent.
+    visible: Arc<BTreeMap<String, NamespaceResolution>>,
+    module: Arc<BTreeMap<String, NamespaceResolution>>,
+    parents: Arc<Vec<Arc<BTreeMap<String, NamespaceResolution>>>>,
+    root: Arc<BTreeMap<String, NamespaceResolution>>,
+    global: Arc<BTreeMap<String, NamespaceResolution>>,
 }
 
 #[derive(Clone)]
@@ -20,10 +23,11 @@ enum NamespaceTarget {
 
 impl NamespaceScopes {
     pub(super) fn new(global: BTreeMap<String, NamespaceResolution>) -> Self {
+        let global = Arc::new(global);
         Self {
             visible: global.clone(),
             module: global.clone(),
-            parents: Vec::new(),
+            parents: Arc::new(Vec::new()),
             root: global.clone(),
             global,
         }
@@ -46,7 +50,7 @@ impl NamespaceScopes {
     }
 
     pub(super) fn enter_child_module(&mut self) {
-        self.parents.push(self.module.clone());
+        Arc::make_mut(&mut self.parents).push(self.module.clone());
         self.visible = self.global.clone();
         self.module = self.global.clone();
     }
@@ -85,7 +89,7 @@ impl NamespaceScopes {
 
         let mut resolved = self.visible.clone();
         for name in targets.keys() {
-            resolved.insert(name.clone(), NamespaceResolution::Unresolved);
+            Arc::make_mut(&mut resolved).insert(name.clone(), NamespaceResolution::Unresolved);
         }
         for _ in 0..=targets.len() {
             let mut next = resolved.clone();
@@ -101,7 +105,7 @@ impl NamespaceScopes {
                         resolution = NamespaceResolution::Unresolved;
                     }
                 }
-                next.insert(name.clone(), resolution);
+                Arc::make_mut(&mut next).insert(name.clone(), resolution);
             }
             if next == resolved {
                 break;
@@ -109,7 +113,7 @@ impl NamespaceScopes {
             resolved = next;
         }
         if generated {
-            for resolution in resolved.values_mut() {
+            for resolution in Arc::make_mut(&mut resolved).values_mut() {
                 if *resolution == NamespaceResolution::Compiler {
                     *resolution = NamespaceResolution::Unresolved;
                 }
@@ -127,7 +131,7 @@ impl NamespaceScopes {
             } else {
                 for name in explicit_externs {
                     if let Some(resolution) = resolved.get(&name) {
-                        self.global.insert(name, *resolution);
+                        Arc::make_mut(&mut self.global).insert(name, *resolution);
                     }
                 }
             }
@@ -338,7 +342,7 @@ fn single_name_resolution(
 
 fn resolve_parent_namespace(
     path: &[String],
-    parents: &[BTreeMap<String, NamespaceResolution>],
+    parents: &[Arc<BTreeMap<String, NamespaceResolution>>],
 ) -> NamespaceResolution {
     let supers = path
         .iter()

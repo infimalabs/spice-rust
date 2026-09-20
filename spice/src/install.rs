@@ -2,7 +2,7 @@
 //!
 //! Plans are side-effect free; apply re-plans and reverses only exact images.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -327,12 +327,10 @@ impl InstallPlan {
                 "migration rollback archive has the wrong image inventory length".to_owned(),
             ));
         }
+        let prior_operations = operation_index(Some(&prior.plan));
         for (image, operation) in rollback.operations.iter().zip(&self.operations) {
-            let valid = prior
-                .plan
-                .operations
-                .iter()
-                .find(|prior| same_operation(prior, operation))
+            let valid = prior_operations
+                .get(&operation_key(operation.asset, &operation.path))
                 .map_or_else(
                     || image.as_ref().is_none_or(FileImage::validate),
                     |prior| {
@@ -628,10 +626,11 @@ fn append_planned_operations(
     let mut virtual_directories = BTreeSet::new();
     let mut operations = Vec::new();
     let mut observed_operations = Vec::new();
+    let installed_operations = operation_index(installed);
 
     append_fixed_operations(
         repository,
-        installed,
+        &installed_operations,
         app.map(app::Source::generation),
         archiving,
         (
@@ -645,6 +644,7 @@ fn append_planned_operations(
         append_app_operations(
             repository,
             installed,
+            &installed_operations,
             app,
             archiving,
             (
@@ -657,7 +657,7 @@ fn append_planned_operations(
 
     append_binary_operation(
         repository,
-        installed,
+        &installed_operations,
         spice_binary,
         binary_superseded,
         app.map(app::Source::generation),
@@ -672,7 +672,7 @@ fn append_planned_operations(
     if let Some(symbols) = symbols {
         symbols::append_operations(
             repository,
-            installed,
+            &installed_operations,
             symbols,
             archiving,
             (
@@ -808,21 +808,31 @@ fn current_rollback_archive(
     }
 
     let mut rollback = archive.decode(repository)?;
+    let installed_operations = installed
+        .operations
+        .iter()
+        .enumerate()
+        .map(|(index, operation)| (operation_key(operation.asset, &operation.path), index))
+        .collect::<BTreeMap<_, _>>();
     rollback.operations = operations
         .iter()
         .zip(observed_operations)
         .map(|(operation, observed)| {
-            installed
-                .operations
-                .iter()
-                .position(|installed| same_operation(installed, operation))
+            installed_operations
+                .get(&operation_key(operation.asset, &operation.path))
                 .map_or_else(
                     || observed.clone(),
-                    |index| rollback.operations[index].clone(),
+                    |index| rollback.operations[*index].clone(),
                 )
         })
         .collect();
     let previous_retirements = std::mem::take(&mut rollback.retirements);
+    let installed_retirements = installed
+        .retirements
+        .iter()
+        .enumerate()
+        .map(|(index, retirement)| (retirement.path.as_str(), index))
+        .collect::<BTreeMap<_, _>>();
     rollback.retirements = retirements
         .iter()
         .zip(observed_retirements)
@@ -830,13 +840,11 @@ fn current_rollback_archive(
             if retirement.discards_payload() {
                 return None;
             }
-            installed
-                .retirements
-                .iter()
-                .position(|installed| installed.path == retirement.path)
+            installed_retirements
+                .get(retirement.path.as_str())
                 .map_or_else(
                     || observed.clone(),
-                    |index| previous_retirements[index].clone(),
+                    |index| previous_retirements[*index].clone(),
                 )
         })
         .collect();
@@ -908,18 +916,14 @@ fn retirement(
 /// the install it supersedes reversed to, because the destination it observes
 /// now is that install's own output rather than operator state.
 fn reversal_context(
-    installed: Option<&InstallPlan>,
+    installed: &InstalledOperations<'_>,
     asset: Asset,
     path: &str,
     observed: Option<ObservedFile>,
     reconciled: Option<&GeneratedImage>,
     compacting: bool,
 ) -> (Option<ObservedFile>, Option<GeneratedImage>) {
-    match installed.and_then(|plan| {
-        plan.operations.iter().find(|operation| {
-            operation.asset == asset && (app::file(asset).is_none() || operation.path == path)
-        })
-    }) {
+    match installed.get(&operation_key(asset, path)) {
         Some(superseded) => (
             if compacting {
                 None
@@ -937,8 +941,25 @@ fn reversal_context(
     }
 }
 
-fn same_operation(left: &Operation, right: &Operation) -> bool {
-    left.asset == right.asset && (app::file(left.asset).is_none() || left.path == right.path)
+type InstalledOperations<'a> = BTreeMap<(Asset, &'a str), &'a Operation>;
+
+fn operation_index(installed: Option<&InstallPlan>) -> InstalledOperations<'_> {
+    installed
+        .into_iter()
+        .flat_map(|plan| &plan.operations)
+        .map(|operation| (operation_key(operation.asset, &operation.path), operation))
+        .collect()
+}
+
+fn operation_key(asset: Asset, path: &str) -> (Asset, &str) {
+    // Fixed assets have one identity across receipt versions. Immutable app
+    // assets additionally belong to the generation embedded in their path.
+    let path = if app::generation_spelling(asset, path).is_some() {
+        path
+    } else {
+        ""
+    };
+    (asset, path)
 }
 
 struct PlannedAppAsset {
@@ -989,7 +1010,7 @@ type AppPlanState<'a> = (
 
 fn append_fixed_operations(
     repository: &Repository,
-    installed: Option<&InstallPlan>,
+    installed: &InstalledOperations<'_>,
     app: Option<&Digest>,
     archiving: bool,
     (directories, operations, observed_operations): AppPlanState<'_>,
@@ -1030,6 +1051,7 @@ fn append_fixed_operations(
 fn append_app_operations(
     repository: &Repository,
     installed: Option<&InstallPlan>,
+    installed_operations: &InstalledOperations<'_>,
     source: &app::Source,
     archiving: bool,
     (directories, operations, observed_operations): AppPlanState<'_>,
@@ -1040,8 +1062,14 @@ fn append_app_operations(
         if archiving {
             observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
         }
-        let (previous, superseded) =
-            reversal_context(installed, planned.asset, &path, observed, None, archiving);
+        let (previous, superseded) = reversal_context(
+            installed_operations,
+            planned.asset,
+            &path,
+            observed,
+            None,
+            archiving,
+        );
         operations.push(operation(
             directories,
             planned.asset,
@@ -1057,7 +1085,7 @@ fn append_app_operations(
 
 fn append_binary_operation(
     repository: &Repository,
-    installed: Option<&InstallPlan>,
+    installed: &InstalledOperations<'_>,
     binary: Option<&Path>,
     reconciled: Option<&GeneratedImage>,
     app: Option<&Digest>,

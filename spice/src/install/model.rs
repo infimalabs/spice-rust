@@ -285,6 +285,16 @@ const fn is_false(value: &bool) -> bool {
 }
 
 impl Retirement {
+    pub(super) fn validate_binding(&self, repository: &Repository) -> Result<(), InstallError> {
+        super::binding::validate_operation_binding(
+            repository,
+            Location::CommonGit,
+            &self.path,
+            &self.destination,
+            &self.parent,
+        )
+    }
+
     /// Retired repository-relative path.
     #[must_use]
     pub fn path(&self) -> &str {
@@ -324,6 +334,16 @@ impl Retirement {
 }
 
 impl Operation {
+    pub(super) fn validate_binding(&self, repository: &Repository) -> Result<(), InstallError> {
+        super::binding::validate_operation_binding(
+            repository,
+            self.location,
+            &self.path,
+            &self.destination,
+            &self.parent,
+        )
+    }
+
     /// Kind of asset this operation owns.
     #[must_use]
     pub const fn asset(&self) -> Asset {

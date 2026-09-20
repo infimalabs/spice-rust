@@ -66,16 +66,17 @@ impl Source {
         if plan.app.as_ref() != Some(&self.generation) {
             return true;
         }
+        let installed = plan
+            .operations
+            .iter()
+            .map(|operation| (operation.path.as_str(), &operation.generated))
+            .collect::<BTreeMap<_, _>>();
         self.assets().chain([Asset::CanvasCurrent]).any(|asset| {
             let path = operation_path(asset, Some(&self.generation))
                 .expect("the source generation is present")
                 .expect("the source inventory contains only Canvas operations");
             let expected = self.image(asset);
-            plan.operations
-                .iter()
-                .find(|operation| operation.path == path)
-                .map(|operation| &operation.generated)
-                != expected.as_ref()
+            installed.get(path.as_str()).copied() != expected.as_ref()
         })
     }
 }
