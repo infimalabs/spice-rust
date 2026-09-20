@@ -128,7 +128,8 @@ impl Service {
             revision,
             callback,
         };
-        let lease = Lease {
+        // Rejection must not drop a lease while the mutable service borrow is held.
+        let lease = || Lease {
             service: Rc::downgrade(shared),
             id,
         };
@@ -138,7 +139,7 @@ impl Service {
             service.cache.push_back(entry);
             drop(service);
             subscriber.deliver(Ok(image));
-            return Ok(lease);
+            return Ok(lease());
         }
         service.prune();
         let subscribers = service
@@ -174,7 +175,7 @@ impl Service {
         }
         drop(service);
         Self::schedule(shared);
-        Ok(lease)
+        Ok(lease())
     }
 
     fn prune(&mut self) {
