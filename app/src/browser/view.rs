@@ -188,29 +188,27 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
         && !draft.life.trim().is_empty();
     html! {
         <aside class="seat-panel">
-            <div class="seat-panel-heading">
-                <h2>{"Add agent"}</h2>
-            </div>
             <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
+                <button type="submit" disabled={!ready}>{"Seat agent"}</button>
                 <label>
-                    <span>{"Name"}</span>
+                    <span title="Name">{"Name"}</span>
                     <input type="text" placeholder="Ava"
                         value={(*draft.name).clone()}
                         oninput={state_from_input(draft.name.clone())} />
                 </label>
                 <label>
-                    <span>{"Worktree"}</span>
+                    <span title="Worktree">{"Worktree"}</span>
                     <input type="text" placeholder="/absolute/path/to/worktree"
                         value={(*draft.worktree).clone()}
                         oninput={state_from_input(draft.worktree.clone())} />
                 </label>
                 <label>
-                    <span>{"Vendor"}</span>
+                    <span title="Vendor">{"Vendor"}</span>
                     <input type="text" value={(*draft.vendor).clone()}
                         oninput={state_from_input(draft.vendor.clone())} />
                 </label>
                 <label>
-                    <span>{"Life"}</span>
+                    <span title="Life">{"Life"}</span>
                     <input type="text" list="lane-lives"
                         value={(*draft.life).clone()}
                         oninput={state_from_input(draft.life.clone())} />
@@ -219,13 +217,13 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                     <option value="steer" /><option value="drive" /><option value="drain" />
                 </datalist>
                 <label>
-                    <span>{"Model"}</span>
+                    <span title="Model">{"Model"}</span>
                     <input type="text" placeholder="vendor default"
                         value={(*draft.model).clone()}
                         oninput={state_from_input(draft.model.clone())} />
                 </label>
                 <label>
-                    <span>{"Effort"}</span>
+                    <span title="Effort">{"Effort"}</span>
                     <input type="text" list="lane-efforts" placeholder="vendor default"
                         value={(*draft.effort).clone()}
                         oninput={state_from_input(draft.effort.clone())} />
@@ -234,7 +232,6 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                     <option value="low" /><option value="medium" /><option value="high" />
                     <option value="xhigh" /><option value="max" />
                 </datalist>
-                <button type="submit" disabled={!ready}>{"Seat agent"}</button>
                 {render_notice(&draft.notice)}
             </form>
         </aside>
