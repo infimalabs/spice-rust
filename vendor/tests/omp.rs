@@ -84,7 +84,6 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
         CONFIG_OVERLAY,
         "--approval-mode",
         "yolo",
-        "--no-title",
         "--model",
         "claude-opus-5",
         "--thinking",
