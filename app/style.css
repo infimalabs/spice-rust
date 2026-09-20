@@ -162,41 +162,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .mobile-brand { display: none; font-size: .84rem; font-weight: 760; }
 
-.status {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 9px;
-  color: var(--muted);
-  font-size: .84rem;
-}
-
-.status-dot {
-  flex: 0 0 auto;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--warning);
-  box-shadow: 0 0 0 3px var(--warning-soft);
-}
-
-.status.online .status-dot {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px var(--accent-soft);
-}
-
-.status.offline .status-dot {
-  background: var(--danger);
-  box-shadow: 0 0 0 3px var(--danger-soft);
-}
-
-.status-copy {
-  min-width: 0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .refresh { background: var(--control); }
 
 .topbar-actions {

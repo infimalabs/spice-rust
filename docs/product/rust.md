@@ -248,10 +248,11 @@ Authorities: [`spice/src/extension.rs`](../../spice/src/extension.rs),
 
 ## Canvas and transport
 
-Rust/WASM owns Canvas; optional JavaScript renderer assets are not a second
-client. `wire` owns its DTOs. An authenticated, epoch-bound socket carries
-bounded pages and retention with per-request correlation. Reconnect pacing and
-a liveness probe recover half-open connections. App generations are immutable.
+Rust/WASM owns Canvas; JS assets only render. `wire` owns DTOs. Epoch-bound,
+authenticated sockets carry bounded pages/retention and correlate requests.
+Paced retries and liveness probes recover half-open links; app generations are
+immutable. The Spice icon replaces the connection pip: gray when unhealthy,
+pulsing during connect/retry at the fire's 5s cadence (steady with reduced motion).
 
 The Info seating form has one upper-right submit action. Label/control pairs
 share intrinsic grid tracks, with right-aligned labels capped at `8rem` and
@@ -259,15 +260,13 @@ single-line ellipsis; the full label remains accessible and available on hover.
 Two pairs fit per row at a panel content width of `32rem` or more; narrower
 panels use one pair per row without changing submission or draft state.
 
-Generations contain eight shell files and optional `app/renderer` members using
-the closed vocabulary in [`wire/src/manifest/renderer.rs`](../../wire/src/manifest/renderer.rs).
-Their HTML inventory carries exact byte digests and participates in build
-identity, bounded to 512 files/64 MiB; absence means no renderer files.
-Admission rejects undeclared, missing, mismatched, or non-regular members.
-Generation-qualified renderer routes alone admit origin `null`; child documents
-have restrictive CSP and hashed owned import maps. Parent CSP and Host/origin
-checks stay unchanged. Publication retains each prior generation's actual
-receipt-owned members, not the current generation's membership.
+Generations have eight shell files and optional `app/renderer` members from
+[`wire`'s closed vocabulary](../../wire/src/manifest/renderer.rs). HTML inventory
+binds exact byte digests into build identity: ≤512 files/64 MiB; absent inventory
+means no renderers. Admission rejects undeclared, missing, mismatched or non-regular
+members. Only generation-qualified renderer routes admit origin `null`; children
+use restrictive CSP and hashed owned import maps. Parent CSP and Host/origin
+checks remain. Publication retains prior receipt-owned members, not current ones.
 
 Mermaid uses full 12.0.0 ESM, not Tiny: 105 unchanged upstream modules, owned
 `renderer-000.html` import map and `renderer-000.mjs` bridge.

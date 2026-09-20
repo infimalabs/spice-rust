@@ -1,6 +1,6 @@
 //! The chrome standing above the feed.
 //!
-//! One bar of pills across the top with the connection state beside them, one
+//! One bar of pills and the connectivity-bearing Spice button across the top, one
 //! band of lane standings under it, one line of the newest command outcome
 //! under that, and the card the feed packs. All four are placement and markup
 //! only: every number they show is derived in [`crate::watchband`], which a
@@ -45,6 +45,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let surface = render.surface.read();
     let runtime = surface.as_ref();
     let task_pills = task_pills(runtime);
+    let connection_label: AttrValue = render.connection.label().into();
     html! {
         <header class="commandbar commandbar--mosaic">
             <div
@@ -82,16 +83,11 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                         }
                     })}
                 </nav>
-                <div class={render.connection.class()} title={render.connection.label()}>
-                    <span class="status-dot"></span>
-                    if !render.connection.is_online() {
-                        <span class="status-copy">{render.connection.label()}</span>
-                    }
-                </div>
+                <span class="visually-hidden" role="status">{connection_label.clone()}</span>
                 if **render.menu_open {
                     {render_navigation(&render, runtime)}
                 }
-                {render_canvas_menu(&render, runtime)}
+                {render_canvas_menu(&render, runtime, &connection_label)}
             </div>
         </header>
     }
@@ -139,18 +135,23 @@ fn navigation_badge(
     )
 }
 
-fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
+fn render_canvas_menu(
+    render: &CommandBarRender<'_>,
+    runtime: Option<&CanvasRuntime>,
+    connection_label: &str,
+) -> Html {
     let fast_mode = runtime
         .and_then(CanvasRuntime::settings)
         .is_some_and(|settings| settings.fast_mode);
     let menu_open = render.menu_open.clone();
     let update = (**render.canvas_update).as_ref();
     let trigger_label = match (update, fast_mode) {
-        (Some(_), true) => "Open Spice Canvas menu - update available; fast mode on".to_owned(),
-        (Some(_), false) => "Open Spice Canvas menu - update available".to_owned(),
-        (None, true) => "Open Spice Canvas menu - fast mode on".to_owned(),
-        (None, false) => "Open Spice Canvas menu".to_owned(),
+        (Some(_), true) => "Open Spice Canvas menu - update available; fast mode on",
+        (Some(_), false) => "Open Spice Canvas menu - update available",
+        (None, true) => "Open Spice Canvas menu - fast mode on",
+        (None, false) => "Open Spice Canvas menu",
     };
+    let trigger_label = format!("{trigger_label} - {connection_label}");
     let toggle = Callback::from(move |event: MouseEvent| {
         event.prevent_default();
         menu_open.set(!*menu_open);
@@ -162,6 +163,7 @@ fn render_canvas_menu(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunt
                     fast_mode.then_some("canvas-menu-trigger--fast"),
                     update.is_some().then_some("canvas-menu-trigger--update"),
                 )}
+                data-connection={render.connection.indicator_state()}
                 aria-label={trigger_label.clone()}
                 aria-haspopup="menu"
                 aria-expanded={(**render.menu_open).to_string()}

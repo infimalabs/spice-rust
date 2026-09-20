@@ -430,11 +430,12 @@ impl Connection {
         matches!(self, Self::Online { .. })
     }
 
-    fn class(&self) -> &'static str {
+    fn indicator_state(&self) -> &'static str {
         match self {
-            Self::Online { .. } => "status online",
-            Self::Offline(_) => "status offline",
-            Self::Starting | Self::Connecting => "status",
+            Self::Online { .. } => "online",
+            Self::Offline(_) => "reconnecting",
+            Self::Starting => "starting",
+            Self::Connecting => "connecting",
         }
     }
 
