@@ -23,7 +23,7 @@ pub(super) fn extract<'a>(events: Vec<Event<'a>>) -> (Vec<Event<'a>>, Vec<String
                 let index = diagrams.len();
                 diagrams.push(source.take().expect("closed Mermaid fence"));
                 output.push(Event::Html(CowStr::from(format!(
-                    "<div data-mermaid-slot=\"{index}\"></div>\n"
+                    "<div class=\"mermaid-slot\" data-mermaid-slot=\"{index}\"></div>\n"
                 ))));
             }
             event => output.push(event),

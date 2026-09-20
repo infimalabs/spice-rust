@@ -292,6 +292,11 @@ Teardown removes listeners/frame, cancels decodes, and clears queue/cache state.
 The 30-second response deadline runs **only when the event loop runs**: this is
 not CPU isolation or a hard main-thread timeout.
 
+Diagram previews use full-width `cover` slots: 15.75rem for media-only messages,
+8.75rem with prose, plus a fixed source-control row. Geometry is reserved from
+the first fence. Source/error inspection overlays that same slot; opening,
+closing, rendering, and theme changes never resize it or invalidate Mosaic.
+
 Lane/team topology and attribution remain server-owned product invariants.
 Reading, motion, scroll, no-launch behavior, and composer-draft restoration bind
 the browser client. Drafts survive lane reorder and renewal within the live

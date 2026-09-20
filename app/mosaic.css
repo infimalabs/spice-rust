@@ -229,7 +229,8 @@
   flex-flow: row nowrap; margin: .5em 0; white-space: normal;
 }
 .message-attachments { flex-flow: row nowrap; }
-.mosaic-message-card--image-only .message-image {
+.mosaic-message-card--image-only .message-image,
+.mosaic-message-card--image-only .mermaid-slot {
   --message-image-size: var(--mosaic-image-large-size);
 }
 .mosaic-message-card:not(.mosaic-message-card--image-only)
@@ -274,6 +275,50 @@
   max-width: 100%;
   max-height: 100%;
 }
+
+/* The raw slot reserves both preview and source summary before the portal mounts. */
+.mermaid-slot {
+  --message-image-size: var(--mosaic-image-size);
+  display: block; min-width: 0; margin: .5em 0;
+  height: calc(var(--message-image-size) + 1.5rem);
+}
+.mermaid-render { position: relative; height: 100%; }
+.mermaid-render > .message-image,
+.mermaid-slot:empty::before {
+  display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  width: 100%; min-width: 0; height: var(--message-image-size);
+  aspect-ratio: auto; overflow: hidden; vertical-align: top;
+}
+.mermaid-slot:empty::before {
+  content: "Rendering diagram"; box-sizing: border-box; place-items: center;
+  border: 1px solid var(--line); border-radius: 5px;
+  background: var(--control-surface-soft); color: var(--muted);
+  font: 600 .68rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.mermaid-render > .message-image img {
+  min-width: 0; min-height: 0; max-width: 100%; max-height: 100%;
+  aspect-ratio: auto;
+}
+.mermaid-render .message-image-status {
+  min-width: 0; min-height: 0; overflow: auto; overflow-wrap: anywhere;
+}
+.mermaid-render .message-image:has(img) > .message-image-status {
+  align-self: end; height: auto; max-height: 3rem; padding: 4px;
+}
+.message-image-status[data-mermaid-status="ready"] { display: none; }
+.message-image-status[data-mermaid-status="error"] {
+  border-color: color-mix(in srgb, var(--danger) 38%, var(--line)); color: var(--danger);
+}
+.mermaid-source { margin: 0; min-width: 0; }
+.mermaid-source > summary { height: 1.5rem; line-height: 1.5rem; white-space: nowrap; }
+/* Source/error inspection replaces the preview; opening it never resizes the floor. */
+.mermaid-source-body {
+  position: absolute; inset: 0 0 1.5rem; z-index: 1;
+  overflow: auto; overscroll-behavior: contain;
+  border: 1px solid var(--line); border-radius: 5px;
+  background: var(--panel); padding: 8px;
+}
+.mermaid-render:has(.mermaid-source[open]) > .message-image { visibility: hidden; }
 
 .mosaic-message-empty {
   padding: 28px 12px;

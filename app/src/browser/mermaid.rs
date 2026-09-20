@@ -253,15 +253,17 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
         <div ref={host} class="mermaid-render" data-mermaid-revision={revision.as_ref().clone()} data-mermaid-state={state}>
             <span class="message-image" title="Diagram preview">
                 if let Some(image) = previous {
-                    <img src={image} alt="Mermaid diagram" />
+                    <img src={image} alt="Mermaid diagram" data-mosaic-image-state="loaded" />
                 }
-                <span class="message-image-status" role="status" data-mosaic-image-status={if state == "ready" { "loaded" } else { state }}>{status}</span>
+                <span class="message-image-status" role="status" data-mermaid-status={if error.is_some() && !props.final_answer { "pending" } else { state }}>{status}</span>
             </span>
             <details class="mermaid-source">
                 <summary>{"Diagram source"}</summary>
+                <div class="mermaid-source-body">
                 if let Some(error) = error { <p>{error}</p> }
                 <pre><code>{props.source.clone()}</code></pre>
                 <button ref={retry_button} type="button">{"Retry diagram"}</button>
+                </div>
             </details>
         </div>
     }
