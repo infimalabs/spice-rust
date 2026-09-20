@@ -185,6 +185,38 @@ fn a_window_that_begins_inside_a_record_pays_for_its_retreat_once() {
 }
 
 #[test]
+fn a_window_inside_the_tapes_first_record_retreats_to_byte_zero() {
+    let scratch = Scratch::new("retreat-to-start");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let mut oversized = vec![b'x'; OVERSIZED_RECORD_BYTES];
+    oversized.push(b'\n');
+    tape.tee(&oversized).expect("first record is durable");
+    tape.tee(&line(PROSE)).expect("newest record is durable");
+
+    // No newline precedes the record the window begins inside, because it is
+    // the first one on the tape. Its own first byte is the boundary; a
+    // retreat that reaches byte zero has found it, not run out of allowance.
+    let retreat = u64::try_from(OVERSIZED_RECORD_BYTES).expect("retreat fits");
+    let budget = TailBudget::new(
+        SMALL_WINDOW_BYTES,
+        SMALL_WINDOW_BYTES + retreat + RETREAT_SLACK_BYTES,
+        SMALL_WINDOW_RECORDS,
+        TEST_PASS_LIMIT,
+        TEST_DURATION,
+    )
+    .expect("bounded tail");
+    let tail = scan_tail(scratch.path(), Dialect::Codex, budget)
+        .expect("the tape's first record is crossable");
+    assert_eq!(tail.start.next, Position::start());
+    assert_eq!(
+        tail.scan.records.len(),
+        2,
+        "the straddled first record and the newest"
+    );
+    scratch.remove();
+}
+
+#[test]
 fn tail_record_allowance_refuses_before_decoding_an_extra_record() {
     let scratch = Scratch::new("tail-record-ceiling");
     let tape = Tape::open(scratch.path()).expect("tape opens");

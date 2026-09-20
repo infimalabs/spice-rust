@@ -172,7 +172,7 @@ fn declared_length_must_match_even_when_count_and_order_match() {
 
 #[test]
 fn assembled_bytes_must_be_one_utf8_json_object() {
-    for ending in [b'\xff', b'!', b']', b'\n'] {
+    for ending in *b"\xff!]\n" {
         let mut bytes = record(MAX_FRAME_BYTES);
         if ending == b']' {
             bytes[0] = b'[';

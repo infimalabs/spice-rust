@@ -42,16 +42,19 @@ fn visible_cards(scan: &listen::Scan) -> usize {
 fn startup_work_caps_lane_reads_and_total_source_bytes() {
     let mut aggregate = StartupWork::default();
     for _ in 0..STARTUP_LANE_READ_LIMIT {
-        assert!(aggregate.admits_lane());
+        assert!(aggregate.admits_lane(WIDEST_DIALECT));
         aggregate.begin_lane();
         aggregate.add(listen::TailWork {
-            source_bytes: STARTUP_SOURCE_BYTES,
+            source_bytes: startup_source_bytes(WIDEST_DIALECT),
             records: 1,
             passes: 1,
             duration: Duration::from_millis(1),
         });
     }
-    assert!(!aggregate.admits_lane());
+    assert!(
+        !aggregate.admits_lane(listen::Dialect::Codex),
+        "the spent ceiling closes startup to a short-record dialect too",
+    );
     assert_eq!(aggregate.lanes, STARTUP_LANE_READ_LIMIT);
     assert_eq!(aggregate.source_bytes, STARTUP_SOURCE_BYTE_LIMIT);
     assert_eq!(aggregate.records, STARTUP_LANE_READ_LIMIT);
@@ -523,10 +526,10 @@ fn startup_tail_reads_one_fixed_window_before_byte_zero() {
         "one startup window carries more than the initial page of a dense lane",
     );
     assert!(visible_cards(&tail.scan) < DENSE_LANE_MESSAGES);
-    assert!(tail.work.source_bytes <= STARTUP_SOURCE_BYTES);
+    assert!(tail.work.source_bytes <= startup_source_bytes(listen::Dialect::Codex));
     assert!(tail.work.source_bytes > STARTUP_WINDOW_BYTES);
     assert_eq!(tail.work.records, tail.scan.records.len());
-    assert!(tail.work.passes <= TAIL_PASS_LIMIT);
+    assert!(tail.work.passes <= codex_startup_passes());
     let first_offset = tail
         .scan
         .records
@@ -577,10 +580,120 @@ fn startup_tail_affords_one_captured_record_at_its_limit() {
     );
     assert_eq!(tail.scan.records.len(), NEWEST_MESSAGES + 1);
     assert!(tail.work.source_bytes > STARTUP_WINDOW_BYTES + STARTUP_WINDOW_BYTES / 2);
-    assert!(tail.work.source_bytes <= STARTUP_SOURCE_BYTES);
-    assert!(tail.work.passes <= TAIL_PASS_LIMIT);
+    assert!(tail.work.source_bytes <= startup_source_bytes(listen::Dialect::Codex));
+    assert!(tail.work.passes <= codex_startup_passes());
 
     fs::remove_dir_all(root).expect("limit-record fixture cleanup");
+}
+
+/// Bounded reads one Codex startup scan may perform under its own allowance.
+fn codex_startup_passes() -> usize {
+    tail_passes(startup_source_bytes(listen::Dialect::Codex))
+}
+
+#[test]
+fn startup_tail_crosses_one_reassembled_record_at_the_admitted_logical_limit() {
+    // OMP capture tees a reassembled logical record, so the newest window can
+    // begin inside a record far longer than one physical RPC frame. The
+    // boundary allowance retreats over the whole of it and the window still
+    // decodes every newer message.
+    const NEWEST_MESSAGES: usize = 200;
+    let root = omp_tape("omp-limit-record");
+    let tape = tape::Tape::open(&root).expect("omp tape reopens");
+    tape.tee(omp_messages(30).as_bytes())
+        .expect("older messages are durable");
+    let head =
+        r#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":""#;
+    let foot = r#""}],"timestamp":1789525452596}}"#;
+    // Sized from what capture may tee, not from the allowance under test: a
+    // budget that shrinks back to the physical frame cannot cross this.
+    let admitted = vendor::omp::frame::MAX_REASSEMBLED_BYTES + 1;
+    let filler = admitted - 1 - head.len() - foot.len();
+    let mut record = String::with_capacity(admitted);
+    record.push_str(head);
+    record.extend(std::iter::repeat_n('x', filler));
+    record.push_str(foot);
+    record.push('\n');
+    assert_eq!(record.len(), admitted);
+    tape.tee(record.as_bytes())
+        .expect("a record at the logical limit is durable");
+    tape.tee(omp_messages(NEWEST_MESSAGES).as_bytes())
+        .expect("newest messages are durable");
+
+    let tail = tail_backlog(&root, listen::Dialect::Omp)
+        .expect("a reassembled record at its limit is affordable");
+    let straddled = tail.scan.records.first().expect("the window has records");
+    assert_eq!(
+        straddled.locus.length,
+        record.len() as u64,
+        "the window begins with the whole straddled record",
+    );
+    assert_eq!(tail.scan.records.len(), NEWEST_MESSAGES + 1);
+    assert!(tail.work.source_bytes <= startup_source_bytes(listen::Dialect::Omp));
+    assert!(tail.work.passes <= tail_passes(startup_source_bytes(listen::Dialect::Omp)));
+
+    fs::remove_dir_all(root).expect("omp limit-record fixture cleanup");
+}
+
+#[test]
+fn a_record_beyond_the_dialects_admitted_length_refuses_within_its_allowance() {
+    // Nothing admitted can land a Codex record this long, so the retreat runs
+    // out of source bytes rather than reading the tape without a bound. The
+    // refusal names the dimension it spent and reports the work it did.
+    let root = season_tape("oversize-record", 30, 0);
+    let tape = tape::Tape::open(&root).expect("season tape reopens");
+    // The retreat pays for every byte of the record below the window it was
+    // asked for, so the record has to outrun the whole allowance, not the
+    // admitted length alone.
+    let mut oversize = vec![
+        b'x';
+        startup_source_bytes(listen::Dialect::Codex) as usize
+            + 2 * STARTUP_WINDOW_BYTES as usize
+    ];
+    oversize.push(b'\n');
+    tape.tee(&oversize).expect("the long record is durable");
+
+    let error = tail_backlog(&root, listen::Dialect::Codex)
+        .expect_err("a record beyond the admitted length is refused");
+    let listen::ScanError::WorkLimit {
+        dimension,
+        limit,
+        work,
+        ..
+    } = &error
+    else {
+        panic!("the refusal names the allowance it spent: {error}");
+    };
+    assert_eq!(*dimension, "source bytes");
+    assert_eq!(*limit, startup_source_bytes(listen::Dialect::Codex));
+    assert!(work.source_bytes <= startup_source_bytes(listen::Dialect::Codex));
+    assert!(work.passes <= codex_startup_passes());
+
+    fs::remove_dir_all(root).expect("oversize fixture cleanup");
+}
+
+/// Write an empty tape for OMP records and return its root.
+fn omp_tape(tag: &str) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let root = std::env::temp_dir().join(format!(
+        "spice-backlog-{tag}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed),
+    ));
+    tape::Tape::open(&root).expect("omp tape opens");
+    root
+}
+
+/// `count` visible OMP assistant messages, each near 1.9 KiB.
+fn omp_messages(count: usize) -> String {
+    let filler = "x".repeat(1_800);
+    let mut messages = String::new();
+    for index in 0..count {
+        messages.push_str(&format!(
+            "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{index} {filler}\"}}],\"timestamp\":178952545{index}}}}}\n"
+        ));
+    }
+    messages
 }
 
 #[test]
@@ -598,9 +711,9 @@ fn tool_only_tail_stops_at_one_fixed_read_with_a_backward_cursor() {
         "the scanner does not cross the complete sparse tool tail",
     );
     assert!(tail.start.next > listen::Position::start());
-    assert!(tail.work.source_bytes <= STARTUP_SOURCE_BYTES);
+    assert!(tail.work.source_bytes <= startup_source_bytes(listen::Dialect::Codex));
     assert_eq!(tail.work.records, tail.scan.records.len());
-    assert!(tail.work.passes <= TAIL_PASS_LIMIT);
+    assert!(tail.work.passes <= codex_startup_passes());
 
     fs::remove_dir_all(root).expect("sparse fixture cleanup");
 }
@@ -638,8 +751,9 @@ fn historical_page_wades_through_a_sparse_tool_horizon_to_fill_the_page() {
         "the request read older windows"
     );
     assert_eq!(filled.end, newest_end);
-    assert!(filled.work.source_bytes > HISTORY_SOURCE_BYTES);
-    assert!(filled.work.source_bytes <= HISTORY_SOURCE_BYTES * HISTORY_READ_LIMIT as u64);
+    let window = history_source_bytes(listen::Dialect::Codex);
+    assert!(filled.work.source_bytes > window);
+    assert!(filled.work.source_bytes <= window * HISTORY_READ_LIMIT as u64);
     assert!(filled.work.records > SPARSE_HORIZON_RECORDS);
     assert!(filled.messages[0].text.starts_with("250 "));
     assert!(filled.messages[limit - 1].text.starts_with("299 "));

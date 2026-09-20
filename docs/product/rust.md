@@ -119,6 +119,22 @@ Authorities: [`vendor/src/omp/frame.rs`](../../vendor/src/omp/frame.rs),
 [`lane/src/capture.rs`](../../lane/src/capture.rs), and
 [`sill/src/spawn/capture.rs`](../../sill/src/spawn/capture.rs).
 
+Canvas reads those records back under per-dialect allowances. A bounded
+startup or history window pays for its own bytes plus one boundary
+allowance: the tape index, then the longest record its dialect can land, so
+a window that begins inside a record retreats over the whole of it. OMP is
+sized from the reassembled logical record and every other dialect from the
+physical capture limit, so one vendor's transport does not widen the budget
+another lane reads under. The startup ceiling across lanes is sized from the
+widest dialect and each lane is charged its own allowance. A record longer
+than its dialect admits refuses with the dimension it exhausted rather than
+reading on, and a window inside the tape's first record retreats to byte
+zero, which is a boundary rather than an exhausted allowance.
+
+Authorities:
+[`spice/src/resident/message_surface/backlog.rs`](../../spice/src/resident/message_surface/backlog.rs)
+and [`listen/src/stream/tail.rs`](../../listen/src/stream/tail.rs).
+
 ## Authored task documents
 
 The Rust `doc` command classifies without an external family context, so its

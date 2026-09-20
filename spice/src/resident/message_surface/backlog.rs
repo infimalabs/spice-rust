@@ -24,16 +24,15 @@ const STARTUP_WINDOW_BYTES: u64 = 1024 * 1024;
 /// until the page held its visible cards; a tool-heavy lane can run for
 /// megabytes without one, so a smaller window served pages of nothing.
 const HISTORY_WINDOW_BYTES: u64 = 8 * 1024 * 1024;
-/// Bytes one scan may spend beyond its window: the tape index it reads to
-/// find the newest members, then one longest captured record, when the window
-/// it was asked for begins inside that record.
-const TAIL_BOUNDARY_BYTES: u64 = TAIL_INDEX_BYTES + lane_surface::CAPTURE_LIMIT as u64;
 /// Tape index bytes one scan may read; a member row is tens of bytes.
 const TAIL_INDEX_BYTES: u64 = 64 * 1024;
-const STARTUP_SOURCE_BYTES: u64 = STARTUP_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
-const HISTORY_SOURCE_BYTES: u64 = HISTORY_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
+/// Dialect whose admitted record is the longest, and so the one every ceiling
+/// shared across lanes and windows is sized from.
+const WIDEST_DIALECT: listen::Dialect = listen::Dialect::Omp;
 const TAIL_RECORD_LIMIT: usize = 256 * 1024;
-const TAIL_PASS_LIMIT: usize = 256;
+/// Bounded reads one scan may spend outside its boundary retreat: the tape
+/// index, the extents it enumerates, and each extent the window itself reads.
+const TAIL_EXTENT_PASSES: usize = 256;
 const TAIL_DURATION: Duration = Duration::from_secs(5);
 /// Historical windows chained toward one requested page, sized from the
 /// shared [`HISTORY_REQUEST_BYTES`] span.
@@ -42,14 +41,54 @@ const TAIL_DURATION: Duration = Duration::from_secs(5);
 /// where this request stopped rather than rescanning.
 const HISTORY_READ_LIMIT: usize = (HISTORY_REQUEST_BYTES / HISTORY_WINDOW_BYTES) as usize;
 const STARTUP_LANE_READ_LIMIT: usize = 8;
-const STARTUP_SOURCE_BYTE_LIMIT: u64 = STARTUP_SOURCE_BYTES * STARTUP_LANE_READ_LIMIT as u64;
+const STARTUP_SOURCE_BYTE_LIMIT: u64 =
+    startup_source_bytes(WIDEST_DIALECT) * STARTUP_LANE_READ_LIMIT as u64;
 
-fn startup_budget() -> listen::TailBudget {
-    tail_budget(STARTUP_WINDOW_BYTES, STARTUP_SOURCE_BYTES)
+/// Longest record one dialect can land on a tape, with the delimiter the tape
+/// carries after it.
+///
+/// OMP capture tees a reassembled logical record: physical RPC frames stay
+/// bounded at [`vendor::omp::frame::MAX_FRAME_BYTES`] while the record those
+/// chunks carry reaches [`vendor::omp::frame::MAX_REASSEMBLED_BYTES`]. Every
+/// other dialect is teed as captured, so its record ends at the physical
+/// capture limit. Sizing the allowance per dialect is what keeps one vendor's
+/// transport from widening the budget every other lane reads under.
+const fn record_bytes(dialect: listen::Dialect) -> u64 {
+    let logical = match dialect {
+        listen::Dialect::Omp => vendor::omp::frame::MAX_REASSEMBLED_BYTES,
+        listen::Dialect::Claude | listen::Dialect::Codex => lane_surface::CAPTURE_LIMIT,
+    };
+    logical as u64 + 1
 }
 
-fn history_budget() -> listen::TailBudget {
-    tail_budget(HISTORY_WINDOW_BYTES, HISTORY_SOURCE_BYTES)
+/// Bytes one scan may spend beyond its window: the tape index it reads to
+/// find the newest members, then one longest record, when the window it was
+/// asked for begins inside that record.
+const fn tail_boundary_bytes(dialect: listen::Dialect) -> u64 {
+    TAIL_INDEX_BYTES + record_bytes(dialect)
+}
+
+const fn startup_source_bytes(dialect: listen::Dialect) -> u64 {
+    STARTUP_WINDOW_BYTES + tail_boundary_bytes(dialect)
+}
+
+const fn history_source_bytes(dialect: listen::Dialect) -> u64 {
+    HISTORY_WINDOW_BYTES + tail_boundary_bytes(dialect)
+}
+
+/// Bounded reads one scan may perform: one for every boundary chunk its
+/// source allowance can pay for, since a retreat over one longest record
+/// spends exactly that many, plus [`TAIL_EXTENT_PASSES`].
+const fn tail_passes(source_bytes: u64) -> usize {
+    (source_bytes / listen::BOUNDARY_CHUNK_BYTES + 1) as usize + TAIL_EXTENT_PASSES
+}
+
+fn startup_budget(dialect: listen::Dialect) -> listen::TailBudget {
+    tail_budget(STARTUP_WINDOW_BYTES, startup_source_bytes(dialect))
+}
+
+fn history_budget(dialect: listen::Dialect) -> listen::TailBudget {
+    tail_budget(HISTORY_WINDOW_BYTES, history_source_bytes(dialect))
 }
 
 fn tail_budget(window_bytes: u64, source_bytes: u64) -> listen::TailBudget {
@@ -57,7 +96,7 @@ fn tail_budget(window_bytes: u64, source_bytes: u64) -> listen::TailBudget {
         window_bytes,
         source_bytes,
         TAIL_RECORD_LIMIT,
-        TAIL_PASS_LIMIT,
+        tail_passes(source_bytes),
         TAIL_DURATION,
     )
     .expect("Canvas tail allowances are positive")
@@ -175,9 +214,16 @@ struct StartupWork {
 }
 
 impl StartupWork {
-    fn admits_lane(self) -> bool {
+    /// Whether one more lane reading under `dialect` fits the startup ceiling.
+    ///
+    /// A lane is admitted against its own allowance, so a dialect whose
+    /// records are short keeps its place in the ceiling the widest one sets.
+    fn admits_lane(self, dialect: listen::Dialect) -> bool {
         self.lanes < STARTUP_LANE_READ_LIMIT
-            && self.source_bytes.saturating_add(STARTUP_SOURCE_BYTES) <= STARTUP_SOURCE_BYTE_LIMIT
+            && self
+                .source_bytes
+                .saturating_add(startup_source_bytes(dialect))
+                <= STARTUP_SOURCE_BYTE_LIMIT
     }
 
     fn begin_lane(&mut self) {
@@ -230,7 +276,12 @@ fn restore_agent_messages_with(
 ) -> CommandResult<()> {
     reader.startup_work = StartupWork::default();
     for row in &residency.lanes {
-        if !reader.startup_work.admits_lane() {
+        // A row naming no installed vendor reads nothing below, but it is
+        // admitted against the widest allowance rather than a dialect nobody
+        // resolved.
+        let dialect = super::super::ingest_vendor(&row.vendor)
+            .map_or(WIDEST_DIALECT, |vendor| vendor.dialect());
+        if !reader.startup_work.admits_lane(dialect) {
             break;
         }
         reader.startup_work.begin_lane();
@@ -673,9 +724,10 @@ fn tape_continuation(
     scan: &TapeHistoryScan,
     before: Option<&wire::AgentMessage>,
 ) -> listen::Checkpoint {
-    debug_assert!(scan.work.source_bytes <= HISTORY_SOURCE_BYTES * HISTORY_READ_LIMIT as u64);
+    const WIDEST_SOURCE_BYTES: u64 = history_source_bytes(WIDEST_DIALECT);
+    debug_assert!(scan.work.source_bytes <= WIDEST_SOURCE_BYTES * HISTORY_READ_LIMIT as u64);
     debug_assert!(scan.work.records <= TAIL_RECORD_LIMIT * HISTORY_READ_LIMIT);
-    debug_assert!(scan.work.passes <= TAIL_PASS_LIMIT * HISTORY_READ_LIMIT);
+    debug_assert!(scan.work.passes <= tail_passes(WIDEST_SOURCE_BYTES) * HISTORY_READ_LIMIT);
     let end = scan.end.clone();
     if scan.messages.is_empty() {
         return scan.start.clone();
@@ -1095,7 +1147,7 @@ fn tail_backlog(
     tape: &Path,
     dialect: listen::Dialect,
 ) -> Result<listen::TailScan, listen::ScanError> {
-    listen::scan_tail(tape, dialect, startup_budget())
+    listen::scan_tail(tape, dialect, startup_budget(dialect))
 }
 
 fn visible_message(message: &wire::AgentMessage) -> bool {
