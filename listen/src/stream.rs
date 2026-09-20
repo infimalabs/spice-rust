@@ -15,7 +15,9 @@ use crate::{Decoded, Dialect, Event, LocusLengthError, RecordContext, Residue, d
 
 mod tail;
 
-pub use tail::{TailBudget, TailBudgetError, TailScan, TailWork, scan_before, scan_tail};
+pub use tail::{
+    BOUNDARY_CHUNK_BYTES, TailBudget, TailBudgetError, TailScan, TailWork, scan_before, scan_tail,
+};
 
 /// Serializable spelling of one durable tape span.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]

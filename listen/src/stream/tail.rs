@@ -9,8 +9,12 @@ use tape::{Extent, Locus, SourceId, Tape};
 use super::{Checkpoint, Position, Scan, ScanError, ScanState, scan_extent, validate_position};
 use crate::Dialect;
 
-/// Bytes inspected at once while locating the preceding complete-record boundary.
-const BOUNDARY_CHUNK_BYTES: u64 = 64 * 1024;
+/// Bytes inspected at once while locating the preceding complete-record
+/// boundary, and so the granularity of the pass allowance a retreat spends.
+///
+/// A caller sizing [`TailBudget`] passes cannot do it blind: retreating over
+/// one long record costs one pass per chunk of it.
+pub const BOUNDARY_CHUNK_BYTES: u64 = 64 * 1024;
 
 /// Validated hard work allowance for one tail or history-window read.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -535,11 +539,10 @@ fn preceding_boundary(
             end = start;
         }
     }
-    Err(tracker.exhausted_u64(
-        "source bytes",
-        tracker.budget.source_bytes.get(),
-        tracker.source_bytes,
-    ))
+    // Every extent back to the first byte carried no newline, so the record
+    // the candidate sits inside is the tape's first. Its own beginning is the
+    // boundary; the allowance that paid for the search already bounded it.
+    Ok(Position::start())
 }
 
 fn bounded_extents(tape: &Tape, tracker: &mut WorkTracker) -> Result<Vec<Extent>, ScanError> {
