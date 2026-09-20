@@ -86,6 +86,16 @@ admission = [
 # repository data cannot replace its executable or argument contract.
 test_engines = ["cargo-workspace"]
 
+# Upstream-generated Mermaid 12.0.0 ESM and its generated provenance index.
+# The handwritten renderer-000.mjs bridge and every license remain measured.
+# Exact upstream members and checksums: app/renderer/renderer-000.txt.
+generated_paths = [
+    "app/renderer/renderer-00[1-9].mjs",
+    "app/renderer/renderer-0[1-9][0-9].mjs",
+    "app/renderer/renderer-10[0-5].mjs",
+    "app/renderer/renderer-000.txt",
+]
+
 # Every environment name this workspace defines, spelled once.
 #
 # This is the workspace's own vocabulary: the names Spice writes and the names

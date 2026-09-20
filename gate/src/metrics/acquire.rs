@@ -22,7 +22,7 @@ use crate::core::ActorCapture;
 use crate::input::Contract;
 use crate::jurisdiction::{Entry, Jurisdiction, Shape};
 use crate::manifest::GateId;
-use crate::policy::PolicyContext;
+use crate::policy::{PathPattern, PolicyContext};
 use crate::state::{BoundDecision, LatchEntry, LatchObservation};
 use crate::tree::SelectedTree;
 
@@ -352,9 +352,20 @@ fn file_shape_metrics(
     };
     let policy = source.contract.rule_policy();
     let suffixes = policy.document().file_classes().file_shape();
+    let generated = source
+        .contract
+        .shape()
+        .generated_paths()
+        .iter()
+        .map(|pattern| {
+            PathPattern::tracked(pattern).map_err(|error| {
+                MetricAcquisitionError::Source(format!("policy.generated_paths: {error}"))
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut metrics = Vec::new();
     for path in source.measurable() {
-        if !selects(path, suffixes) {
+        if !selects(path, suffixes) || generated.iter().any(|pattern| pattern.matches(path)) {
             continue;
         }
         let document = policy.selects_repository_document(path).map_err(|error| {
