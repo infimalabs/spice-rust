@@ -50,10 +50,14 @@ pub const SESSION_ENVIRONMENT: &str = wire::SpiceVariable::Session.as_str();
 /// `hub` would run commands the lane cannot see or outlive, so the lane
 /// registers its own [`SHELL_TOOL`] instead and executes every command
 /// itself. One agent inhabits one worktree, so omp's `task` sub-agent tool
-/// is left off as well, exactly as Claude's `Task` is denied. The rest is
-/// omp's own roster for a session with no MCP server, so a tool omp adds
-/// later joins only by being named.
-pub const TOOLS: &str = "read,write,edit,glob,grep,todo,web_search";
+/// is left off as well, exactly as Claude's `Task` is denied. omp's `todo`
+/// tool is left off for a different reason: the occupant's plan is the task
+/// it holds, whose phases and acceptance the board already carries where
+/// every other lane and the operator can read them, and a private second
+/// copy is a plan no reviewer can check and one that drifts from the row it
+/// shadows. The rest is omp's own roster for a session with no MCP server,
+/// so a tool omp adds later joins only by being named.
+pub const TOOLS: &str = "read,write,edit,glob,grep,web_search";
 
 /// [`TOOLS`] plus omp's language-server tool, for a lane whose repository
 /// policy admits it.
@@ -65,7 +69,7 @@ pub const TOOLS: &str = "read,write,edit,glob,grep,todo,web_search";
 /// the external lspmux route through its child environment.
 /// What each server is and how it runs is the worktree's own business, read
 /// from the repository's `.omp/lsp.json`; this crate names no server.
-pub const LSP_TOOLS: &str = "read,write,edit,glob,grep,todo,web_search,lsp";
+pub const LSP_TOOLS: &str = "read,write,edit,glob,grep,web_search,lsp";
 
 /// Request identity of the `set_host_tools` command that registers the
 /// lane's shell ahead of the first turn.
