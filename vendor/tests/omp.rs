@@ -127,6 +127,18 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
     assert_eq!(
         lines,
         [
+            serde_json::json!({
+                "id": "spice-protocol",
+                "type": "negotiate_protocol",
+                "protocolVersion": listen::OMP_PROTOCOL_VERSION,
+            }),
+            serde_json::json!({"id": "spice-steering-mode", "type": "set_steering_mode", "mode": "all"}),
+            serde_json::json!({"id": "spice-follow-up-mode", "type": "set_follow_up_mode", "mode": "all"}),
+            serde_json::json!({
+                "id": "spice-interrupt-mode",
+                "type": "set_interrupt_mode",
+                "mode": "immediate",
+            }),
             serde_json::from_slice::<serde_json::Value>(
                 omp::host_tools_request()
                     .strip_suffix(b"\n")

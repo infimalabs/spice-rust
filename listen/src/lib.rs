@@ -24,6 +24,7 @@ pub use event::{
     Compaction, Event, EventKind, Failure, Prose, ProseRole, Reasoning, ReasoningContent,
     SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage,
 };
+pub use omp::PROTOCOL_VERSION as OMP_PROTOCOL_VERSION;
 pub use residue::{
     Decoded, Dialog, LocusLengthError, RecordContext, Residue, ResidueKind, TurnMoment,
 };
