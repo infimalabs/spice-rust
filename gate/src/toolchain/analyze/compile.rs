@@ -145,18 +145,37 @@ pub(in crate::toolchain) fn run_compile_analysis_with_wait(
         return Err(CompileFailure::after_wait(
             Analysis::terminal(
                 ArmOutcome::ParseFailure,
-                format!("{name} was signalled without a typed diagnostic"),
+                with_compiler_output(
+                    format!("{name} was signalled without a typed diagnostic"),
+                    &printed,
+                ),
             ),
             elapsed,
         ));
     };
     Err(CompileFailure::after_wait(
         Analysis::refused(
-            format!("{name} refused with {code} and emitted no typed diagnostic"),
+            with_compiler_output(
+                format!("{name} refused with {code} and emitted no typed diagnostic"),
+                &printed,
+            ),
             code,
         ),
         elapsed,
     ))
+}
+
+fn with_compiler_output(mut reason: String, printed: &str) -> String {
+    let printed = printed.trim();
+    if !printed.is_empty() {
+        reason.push_str("; compiler output: ");
+        // Captures are already bounded; report reasons must remain single-line.
+        reason.extend(printed.chars().map(|character| match character {
+            '\n' | '\r' => ' ',
+            other => other,
+        }));
+    }
+    reason
 }
 
 fn wait_for_compile(
