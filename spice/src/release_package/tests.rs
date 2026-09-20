@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::manifest::{
-    BuildPins, MacSymbolMetadata, ProofEnvironment, ProofReceipt, ProofStanding,
+    BuildPins, CANVAS_APP_FILES, MacSymbolMetadata, ProofEnvironment, ProofReceipt, ProofStanding,
     RELEASE_MANIFEST_VERSION, ReleaseManifestTarget, TargetPayload,
 };
 

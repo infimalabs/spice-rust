@@ -71,6 +71,23 @@ pub(super) fn admit_headers<'headers>(
     headers: &'headers HeaderMap,
     origin_required: bool,
 ) -> Result<&'headers str, ()> {
+    admit_request_headers(state, headers, origin_required, false)
+}
+
+pub(super) fn admit_asset_headers<'headers>(
+    state: &SurfaceState,
+    headers: &'headers HeaderMap,
+    renderer: bool,
+) -> Result<&'headers str, ()> {
+    admit_request_headers(state, headers, false, renderer)
+}
+
+fn admit_request_headers<'headers>(
+    state: &SurfaceState,
+    headers: &'headers HeaderMap,
+    origin_required: bool,
+    opaque_renderer: bool,
+) -> Result<&'headers str, ()> {
     let Some(host) = headers.get(HOST).and_then(|value| value.to_str().ok()) else {
         return Err(());
     };
@@ -82,7 +99,8 @@ pub(super) fn admit_headers<'headers>(
     if origin_required && origin != Some(same_origin.as_str()) {
         return Err(());
     }
-    if origin.is_some_and(|origin| origin != same_origin) {
+    if origin.is_some_and(|origin| origin != same_origin && !(opaque_renderer && origin == "null"))
+    {
         return Err(());
     }
     Ok(host)

@@ -808,7 +808,12 @@ async fn app(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> Response {
-    if admit_headers(&state, &headers, false).is_err() {
+    let renderer = uri
+        .path()
+        .rsplit('/')
+        .next()
+        .and_then(wire::manifest::renderer::File::parse_filename);
+    if socket::admit_asset_headers(&state, &headers, renderer.is_some()).is_err() {
         return StatusCode::FORBIDDEN.into_response();
     }
     let asset = match state.app.served(uri.path()) {
@@ -827,7 +832,12 @@ async fn app(
     let content_type = asset.content_type();
     let digest = asset.digest();
     let app_policy = if content_type == "text/html; charset=utf-8" {
-        match app_content_security_policy(asset.bytes()) {
+        let policy = if renderer.is_some() {
+            renderer_content_security_policy(asset.bytes())
+        } else {
+            app_content_security_policy(asset.bytes())
+        };
+        match policy {
             Ok(policy) => Some(policy),
             Err(message) => {
                 return (StatusCode::SERVICE_UNAVAILABLE, message).into_response();
@@ -859,6 +869,12 @@ async fn app(
         response
             .headers_mut()
             .insert("content-security-policy", policy);
+    }
+    if renderer.is_some() {
+        response.headers_mut().insert(
+            "access-control-allow-origin",
+            HeaderValue::from_static("null"),
+        );
     }
     response
 }
@@ -1064,6 +1080,31 @@ fn app_content_security_policy(html: &[u8]) -> Result<HeaderValue, &'static str>
         &module_hash,
     ]))
     .map_err(|_| "canvas app unavailable: its content security policy was not one HTTP value")
+}
+
+fn renderer_content_security_policy(html: &[u8]) -> Result<HeaderValue, &'static str> {
+    let html = std::str::from_utf8(html).map_err(|_| "renderer document is not UTF-8")?;
+    const IMPORT_MAP: &str = "<script type=\"importmap\">";
+    let hash = if let Some((_, rest)) = html.split_once(IMPORT_MAP) {
+        let (map, after) = rest
+            .split_once("</script>")
+            .ok_or("renderer import map is not closed")?;
+        if after.contains(IMPORT_MAP) {
+            return Err("renderer import map is repeated");
+        }
+        format!(
+            " 'sha256-{}'",
+            base64::engine::general_purpose::STANDARD.encode(Sha256::digest(map.as_bytes()))
+        )
+    } else {
+        String::new()
+    };
+    HeaderValue::from_str(&format!(
+        "default-src 'none'; script-src 'self'{hash}; style-src 'unsafe-inline'; \
+         img-src data:; font-src data:; connect-src 'none'; object-src 'none'; \
+         base-uri 'none'; form-action 'none'; frame-src 'none'; frame-ancestors 'self'"
+    ))
+    .map_err(|_| "renderer content security policy is not one HTTP value")
 }
 
 fn browser_content_security_policy(script_hashes: &[&str]) -> String {

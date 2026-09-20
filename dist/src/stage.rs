@@ -6,8 +6,8 @@ use std::path::{Component, Path, PathBuf};
 
 use atomic::Destination;
 use wire::manifest::{
-    BuildPins, CANVAS_APP_FILES, InventoryEntry, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact,
-    MacSymbolMetadata, ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
+    BuildPins, InventoryEntry, MAC_SYMBOL_ARTIFACT_VERSION, MacSymbolArtifact, MacSymbolMetadata,
+    ReleaseTarget, TARGET_PAYLOAD_VERSION, TargetPayload,
 };
 use wire::{Digest, Domain};
 
@@ -275,20 +275,15 @@ fn build_artifacts<B: Builder>(
     let symbols = builder.take_symbol_artifact();
     let mut files = embedded.files;
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    let mut expected = CANVAS_APP_FILES.to_vec();
-    expected.sort_unstable();
-    let observed = files
-        .iter()
-        .map(|file| file.path.as_str())
-        .collect::<Vec<_>>();
-    if observed != expected {
-        return Err(StageError::Build {
-            step: BuildStep::App,
-            source: BuildError::new(format!(
-                "Canvas generation inventory is {observed:?}, expected {expected:?}"
-            )),
-        });
-    }
+    wire::manifest::renderer::validate_bundle(
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.bytes.as_slice())),
+    )
+    .map_err(|error| StageError::Build {
+        step: BuildStep::App,
+        source: BuildError::new(error),
+    })?;
     let mut artifacts = files
         .into_iter()
         .map(|file| artifact(format!("app/{}", file.path), DATA_MODE, file.bytes))

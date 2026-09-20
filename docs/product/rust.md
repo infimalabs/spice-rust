@@ -198,13 +198,30 @@ Authorities: [`spice/src/extension.rs`](../../spice/src/extension.rs),
 
 ## Canvas and transport
 
-Rust/WASM is the sole production browser client. JavaScript is browser-test
-code, not a second runtime. `wire` owns the complete protocol vocabulary; the
-browser imports its closed DTOs and the resident serves one immutable app
-generation. One authenticated, epoch-bound stream socket carries bounded pages
+Rust/WASM owns the production Canvas client. Optional JavaScript renderer assets
+are not a second client. `wire` owns the complete protocol vocabulary; the
+browser imports its closed DTOs and the resident serves immutable app
+generations. One authenticated, epoch-bound stream socket carries bounded pages
 and retention with one correlation identity per request. Explicit reconnect
 pacing and a liveness probe turn a half-open connection into the ordinary
 reconnect path.
+
+Every generation retains the required eight shell files. Optional renderer
+sources under `app/renderer` use the closed `renderer-NNN` filename and media-type
+vocabulary in [`wire/src/manifest/renderer.rs`](../../wire/src/manifest/renderer.rs).
+The build includes those sources in its identity and declares their exact byte
+digests in the already-owned HTML shell. The declaration is bounded to 512 files
+and 64 MiB; an absent declaration means no renderer files. Build, distribution,
+package admission, and serving reject undeclared, missing, mismatched, or
+non-regular members.
+
+Renderer files use the existing generation-qualified app routes. Their documents
+have a separate restrictive CSP, with an exact hash for any owned import map;
+only renderer responses admit the opaque sandbox origin `null`. Host checks and
+the parent app's CSP and origin policy remain unchanged. Publication retains
+each prior generation's actual receipt-owned files rather than imposing the
+current generation's membership. Receipt fields, versions, and apply/rollback
+machinery are unchanged.
 
 Lane/team topology and attribution remain server-owned product invariants.
 Reading, motion, scroll, no-launch behavior, and composer-draft restoration bind
@@ -229,7 +246,7 @@ retention. Member-local `MessageHistory` pages merge through that same reducer;
 a response that does not name the lane's current cursor changes nothing. The
 resulting lineage stream feeds one persistent plane whose pure Rust lattice owns
 placement, freezing, liquid settlement, ripple, backfill, geometry replay, and
-compaction-epoch replay. JavaScript only drives browser tests.
+compaction-epoch replay. Mosaic layout and lineage reduction remain Rust-owned.
 
 Turn-start events remain lifecycle evidence, not Mosaic cards. The card reducer
 omits them for live delivery and retained history, so they consume no card slots

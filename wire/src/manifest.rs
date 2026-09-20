@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Digest, WireVersion};
 
+pub mod renderer;
+
 const OCI_SHA256_HEX_LEN: usize = 64;
 
 /// The sole current journal backup bundle schema.
@@ -53,7 +55,7 @@ pub const MAC_SYMBOL_ARTIFACT_VERSION: u16 = 2;
 const MACHO_UUID_LENGTH: usize = 36;
 const MACHO_UUID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 
-/// Complete browser-app file inventory carried by every current appliance target.
+/// Required shell files; generation-declared renderer files complete the inventory.
 pub const CANVAS_APP_FILES: [&str; 8] = [
     CANVAS_APP_HTML,
     CANVAS_APP_MODULE,

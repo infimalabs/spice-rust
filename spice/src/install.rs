@@ -951,43 +951,31 @@ fn planned_app_assets(
     installed: Option<&InstallPlan>,
     source: &app::Source,
 ) -> Result<Vec<PlannedAppAsset>, InstallError> {
-    let prior = installed
+    let mut planned = installed
         .into_iter()
         .flat_map(|plan| &plan.operations)
-        .filter_map(|operation| app::operation_generation(operation.asset, &operation.path))
-        .filter(|generation| generation != source.generation())
-        .collect::<BTreeSet<_>>();
-    let mut planned = Vec::new();
-    for generation in prior {
-        for (asset, _) in app::ASSETS {
-            let (_, path, _) = asset_contract(asset, Some(&generation))?;
-            let generated = installed
-                .and_then(|plan| {
-                    plan.operations
-                        .iter()
-                        .find(|operation| operation.path == path)
-                })
-                .expect("a retained Canvas generation is complete")
-                .generated
-                .clone();
-            planned.push(PlannedAppAsset {
-                asset,
-                generation: generation.clone(),
-                generated,
-            });
-        }
-    }
-    for (asset, _) in app::ASSETS
-        .into_iter()
-        .chain([(Asset::CanvasCurrent, "current")])
-    {
-        let bytes = source
-            .bytes(asset)
+        .filter_map(|operation| {
+            let generation = app::operation_generation(operation.asset, &operation.path)?;
+            (generation != *source.generation()).then(|| PlannedAppAsset {
+                asset: operation.asset,
+                generation,
+                generated: operation.generated.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+    planned.sort_by(|left, right| {
+        left.generation
+            .cmp(&right.generation)
+            .then(left.asset.cmp(&right.asset))
+    });
+    for asset in source.assets().chain([Asset::CanvasCurrent]) {
+        let generated = source
+            .image(asset)
             .expect("the complete app source carries every asset");
         planned.push(PlannedAppAsset {
             asset,
             generation: source.generation().clone(),
-            generated: GeneratedImage::new(DATA_MODE, &bytes),
+            generated,
         });
     }
     Ok(planned)
@@ -1234,6 +1222,7 @@ fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>,
         | Asset::CanvasMosaic
         | Asset::CanvasResponsive
         | Asset::CanvasStyle
+        | Asset::CanvasRenderer(_)
         | Asset::CanvasCurrent
         | Asset::Binary
         | Asset::SymbolsInfo

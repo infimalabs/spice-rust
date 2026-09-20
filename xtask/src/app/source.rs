@@ -79,6 +79,17 @@ fn source_paths(root: &Path) -> Result<Vec<String>, AppBuildError> {
     for directory in SOURCE_DIRECTORIES {
         collect_directory(root, &root.join(directory), &mut paths)?;
     }
+    let renderer = root.join(super::renderer::DIRECTORY);
+    match fs::symlink_metadata(&renderer) {
+        Ok(_) => collect_directory(root, &renderer, &mut paths)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(AppBuildError::Io {
+                path: renderer,
+                source,
+            });
+        }
+    }
     paths.sort();
     Ok(paths)
 }

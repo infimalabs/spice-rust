@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::release::ReleaseEnvironment;
 use wire::{Digest, Domain};
 
+mod renderer;
 mod source;
 
 const REMAPPED_CARGO_HOME: &str = "/cargo-home";
@@ -100,6 +101,7 @@ fn app_at<W: Write>(
     }
     let result = (|| {
         build(&temporary, output)?;
+        renderer::stage(root, &temporary)?;
         verify_sources()?;
         let identity = finalize_stage(&temporary, source_identity)?;
         publish_generation(&stage, &temporary, &identity)?;
@@ -218,8 +220,10 @@ fn prune_generations(generations: &Path, current: &Digest) -> Result<(), AppBuil
 }
 
 fn same_generation(left: &Path, right: &Path) -> Result<bool, AppBuildError> {
-    for asset in spice::canvas::APP.assets() {
-        if read_regular(&left.join(asset.file()))? != read_regular(&right.join(asset.file()))? {
+    validate_inventory(left)?;
+    validate_inventory(right)?;
+    for file in generation_files(left)? {
+        if read_regular(&left.join(file.as_ref()))? != read_regular(&right.join(file.as_ref()))? {
             return Ok(false);
         }
     }
@@ -477,10 +481,9 @@ fn validate_inventory(stage: &Path) -> Result<(), AppBuildError> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     observed.sort();
-    let mut expected = spice::canvas::APP
-        .assets()
-        .iter()
-        .map(|asset| asset.file().to_owned())
+    let mut expected = generation_files(stage)?
+        .into_iter()
+        .map(std::borrow::Cow::into_owned)
         .collect::<Vec<_>>();
     expected.sort();
     if observed != expected {
@@ -493,15 +496,22 @@ fn validate_inventory(stage: &Path) -> Result<(), AppBuildError> {
 
 fn generation_digest(stage: &Path) -> Result<Digest, AppBuildError> {
     let mut framed = Vec::new();
-    for asset in spice::canvas::APP.assets() {
-        let file = asset.file().as_bytes();
-        let bytes = read_regular(&stage.join(asset.file()))?;
+    for filename in generation_files(stage)? {
+        let file = filename.as_bytes();
+        let bytes = read_regular(&stage.join(filename.as_ref()))?;
         framed.extend_from_slice(&(file.len() as u64).to_be_bytes());
         framed.extend_from_slice(file);
         framed.extend_from_slice(&(bytes.len() as u64).to_be_bytes());
         framed.extend_from_slice(&bytes);
     }
     Ok(Digest::compute(Domain::DistArtifact, &framed))
+}
+
+fn generation_files(stage: &Path) -> Result<Vec<std::borrow::Cow<'static, str>>, AppBuildError> {
+    let html = read_regular(&stage.join(wire::manifest::CANVAS_APP_HTML))?;
+    let members = wire::manifest::renderer::from_html(&html)
+        .map_err(|error| AppBuildError::GeneratedStage(error.to_owned()))?;
+    Ok(wire::manifest::renderer::filenames(&members).collect())
 }
 
 fn remapped_rustflags(root: &Path, cargo_home: &OsStr) -> Result<String, AppBuildError> {

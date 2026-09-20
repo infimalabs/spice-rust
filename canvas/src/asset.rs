@@ -110,19 +110,19 @@ impl fmt::Debug for AppAsset {
     }
 }
 
-/// The closed browser app route inventory.
+/// The required browser shell route inventory.
 #[derive(Clone, Copy)]
 pub struct App {
     assets: &'static [AppAsset],
 }
 
-/// The exact files a lane build must produce.
+/// The base files every lane build must produce.
 pub const APP: App = App {
     assets: &APP_ASSETS,
 };
 
 impl App {
-    /// Every exact staged asset in its closed route order.
+    /// Required shell assets in their closed route order; use [`AppGeneration::files`] for a complete generation.
     #[must_use]
     pub const fn assets(self) -> &'static [AppAsset] {
         self.assets
@@ -134,7 +134,7 @@ impl App {
         self.assets.iter().copied().find(|asset| asset.path == path)
     }
 
-    /// Resolve one file in the closed generation inventory.
+    /// Resolve one required shell file, excluding generation-declared renderers.
     #[must_use]
     pub fn asset_file(self, file: &str) -> Option<AppAsset> {
         self.assets.iter().copied().find(|asset| asset.file == file)
@@ -163,6 +163,7 @@ pub struct AppGeneration {
     directory: PathBuf,
     identity: wire::Digest,
     assets: Arc<BTreeMap<&'static str, ServedAsset>>,
+    renderers: Arc<BTreeMap<wire::manifest::renderer::File, ServedAsset>>,
 }
 
 #[derive(Debug, Default)]
@@ -177,8 +178,8 @@ impl AppSource {
     ///
     /// The current pointer remains the only stage freshness check on the hot
     /// path. A new identity is admitted under the generation-cache lock: its
-    /// closed inventory is validated, then all eight files and their digests are
-    /// loaded exactly once. Requests for an admitted identity clone shared byte
+    /// closed inventory is validated, then all declared files and their digests
+    /// are loaded exactly once. Requests for an admitted identity clone shared byte
     /// handles and never reopen or rehash its files.
     ///
     /// # Errors
@@ -258,16 +259,20 @@ impl AppSource {
             .stage
             .join(APP_STAGE_GENERATIONS)
             .join(identity.as_str());
-        validate_generation(&directory)?;
+        let (members, html) = validate_generation(&directory)?;
         let assets = APP
             .assets()
             .iter()
             .map(|asset| {
                 let path = directory.join(asset.file());
-                let bytes = Arc::<[u8]>::from(
-                    std::fs::read(&path)
-                        .map_err(|source| AppSourceError::Unreadable { path, source })?,
-                );
+                let bytes = if asset.file() == wire::manifest::CANVAS_APP_HTML {
+                    Arc::clone(&html)
+                } else {
+                    Arc::<[u8]>::from(
+                        std::fs::read(&path)
+                            .map_err(|source| AppSourceError::Unreadable { path, source })?,
+                    )
+                };
                 let digest = wire::Digest::compute(wire::Domain::DistArtifact, &bytes);
                 Ok((
                     asset.file(),
@@ -279,10 +284,49 @@ impl AppSource {
                 ))
             })
             .collect::<Result<BTreeMap<_, _>, AppSourceError>>()?;
+        let mut renderers = BTreeMap::new();
+        let mut total = 0_u64;
+        for member in members {
+            let path = directory.join(member.file.to_string());
+            let metadata =
+                std::fs::symlink_metadata(&path).map_err(|source| AppSourceError::Unreadable {
+                    path: path.clone(),
+                    source,
+                })?;
+            total = total.checked_add(metadata.len()).ok_or_else(|| {
+                AppSourceError::Inventory("renderer assets exceed their byte bound".to_owned())
+            })?;
+            if !metadata.file_type().is_file() || total > wire::manifest::renderer::MAX_BYTES {
+                return Err(AppSourceError::Inventory(
+                    "renderer assets exceed their byte bound or are not regular files".to_owned(),
+                ));
+            }
+            let bytes = Arc::<[u8]>::from(
+                std::fs::read(&path)
+                    .map_err(|source| AppSourceError::Unreadable { path, source })?,
+            );
+            if bytes.len() as u64 != metadata.len()
+                || wire::Digest::compute(wire::Domain::InstallArtifact, &bytes) != member.digest
+            {
+                return Err(AppSourceError::Inventory(
+                    "renderer asset differs from its shell declaration".to_owned(),
+                ));
+            }
+            let digest = Arc::new(wire::Digest::compute(wire::Domain::DistArtifact, &bytes));
+            renderers.insert(
+                member.file,
+                ServedAsset {
+                    bytes,
+                    content_type: member.file.kind().content_type(),
+                    digest,
+                },
+            );
+        }
         let generation = AppGeneration {
             directory,
             identity: identity.clone(),
             assets: Arc::new(assets),
+            renderers: Arc::new(renderers),
         };
         cache.insert(identity, generation.clone(), current);
         Ok(generation)
@@ -309,10 +353,17 @@ impl AppSource {
         let Some((identity, file)) = generation_route(route) else {
             return Ok(None);
         };
-        let Some(asset) = APP.asset_file(file) else {
+        if let Some(asset) = APP.asset_file(file) {
+            return self.generation(identity, false)?.served(asset).map(Some);
+        }
+        let Some(file) = wire::manifest::renderer::File::parse_filename(file) else {
             return Ok(None);
         };
-        self.generation(identity, false)?.served(asset).map(Some)
+        Ok(self
+            .generation(identity, false)?
+            .renderers
+            .get(&file)
+            .cloned())
     }
 
     /// Identity of the HTML shell this lane build serves.
@@ -391,6 +442,27 @@ impl AppGeneration {
         &self.identity
     }
 
+    /// Borrow the renderer files owned by this admitted generation.
+    pub fn renderers(
+        &self,
+    ) -> impl Iterator<Item = (wire::manifest::renderer::File, &ServedAsset)> {
+        self.renderers.iter().map(|(file, asset)| (*file, asset))
+    }
+
+    /// Borrow every exact file in this generation, including lazy renderer assets.
+    pub fn files(
+        &self,
+    ) -> impl Iterator<Item = (std::borrow::Cow<'static, str>, &ServedAsset)> + Clone {
+        self.assets
+            .iter()
+            .map(|(file, asset)| (std::borrow::Cow::Borrowed(*file), asset))
+            .chain(
+                self.renderers
+                    .iter()
+                    .map(|(file, asset)| (std::borrow::Cow::Owned(file.to_string()), asset)),
+            )
+    }
+
     /// Route that keeps this asset on this immutable generation.
     #[must_use]
     pub fn route(&self, asset: AppAsset) -> String {
@@ -425,7 +497,9 @@ fn generation_route(route: &str) -> Option<(wire::Digest, &str)> {
     Some((identity.parse().ok()?, file))
 }
 
-fn validate_generation(directory: &Path) -> Result<(), AppSourceError> {
+fn validate_generation(
+    directory: &Path,
+) -> Result<(Vec<wire::manifest::renderer::Member>, Arc<[u8]>), AppSourceError> {
     let mut observed = std::fs::read_dir(directory)
         .map_err(|source| AppSourceError::Incomplete {
             directory: directory.to_path_buf(),
@@ -459,10 +533,24 @@ fn validate_generation(directory: &Path) -> Result<(), AppSourceError> {
         })
         .collect::<Result<Vec<_>, _>>()?;
     observed.sort();
-    let mut expected = APP
-        .assets()
+    let path = directory.join(wire::manifest::CANVAS_APP_HTML);
+    if !observed
         .iter()
-        .map(|asset| asset.file().to_owned())
+        .any(|file| file == wire::manifest::CANVAS_APP_HTML)
+    {
+        return Err(AppSourceError::Incomplete {
+            directory: directory.to_path_buf(),
+            missing: vec![wire::manifest::CANVAS_APP_HTML.to_owned()],
+            source: None,
+        });
+    }
+    let html = Arc::<[u8]>::from(
+        std::fs::read(&path).map_err(|source| AppSourceError::Unreadable { path, source })?,
+    );
+    let members = wire::manifest::renderer::from_html(&html)
+        .map_err(|error| AppSourceError::Inventory(error.to_owned()))?;
+    let mut expected = wire::manifest::renderer::filenames(&members)
+        .map(std::borrow::Cow::into_owned)
         .collect::<Vec<_>>();
     expected.sort();
     if observed != expected {
@@ -487,7 +575,7 @@ fn validate_generation(directory: &Path) -> Result<(), AppSourceError> {
             directory.display()
         )));
     }
-    Ok(())
+    Ok((members, html))
 }
 
 /// One shared lane-built asset resolved for one request.

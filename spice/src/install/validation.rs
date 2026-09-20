@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use super::*;
 
 pub(super) fn validate_plan(
@@ -79,7 +81,6 @@ fn validate_operation_inventory(
         ));
     }
     validate_optional_tail(plan, &plan.operations[expected.len()..])?;
-    validate_app_generations(plan)?;
     if let Some(activation) = &plan.hook_activation {
         activation.validate(content == GeneratedContentAuthority::HistoricalReceipt)?;
     }
@@ -125,55 +126,74 @@ fn validate_optional_tail(plan: &InstallPlan, tail: &[Operation]) -> Result<(), 
 }
 
 fn app_operation_inventory(plan: &InstallPlan) -> Result<Vec<Asset>, InstallError> {
-    let Some(_) = plan.app else {
+    let Some(current) = &plan.app else {
         return Ok(Vec::new());
     };
-    let files = plan
+    let mut groups = BTreeMap::<&str, BTreeSet<Asset>>::new();
+    for operation in &plan.operations {
+        if app::file(operation.asset).is_none() {
+            continue;
+        }
+        let generation =
+            app::generation_spelling(operation.asset, &operation.path).ok_or_else(|| {
+                InstallError::InvalidRecord(
+                    "Canvas asset has no canonical generation path".to_owned(),
+                )
+            })?;
+        if !groups.contains_key(generation) {
+            generation.parse::<Digest>().map_err(|_| {
+                InstallError::InvalidRecord(
+                    "Canvas asset has an invalid generation identity".to_owned(),
+                )
+            })?;
+        }
+        if !groups
+            .entry(generation)
+            .or_default()
+            .insert(operation.asset)
+        {
+            return Err(InstallError::InvalidRecord(
+                "Canvas generation repeats an asset".to_owned(),
+            ));
+        }
+    }
+    for assets in groups.values() {
+        if app::ASSETS.iter().any(|(asset, _)| !assets.contains(asset))
+            || assets.len() > app::ASSETS.len() + wire::manifest::renderer::MAX_FILES
+        {
+            return Err(InstallError::InvalidRecord(
+                "Canvas generation is incomplete or exceeds its bound".to_owned(),
+            ));
+        }
+    }
+    let current_assets = groups.remove(current.as_str()).ok_or_else(|| {
+        InstallError::InvalidRecord("install plan omits its current Canvas generation".to_owned())
+    })?;
+    let expected = groups
+        .into_iter()
+        .chain([(current.as_str(), current_assets)])
+        .flat_map(|(generation, assets)| assets.into_iter().map(move |asset| (generation, asset)))
+        .collect::<Vec<_>>();
+    let operations = plan
         .operations
         .iter()
-        .filter(|operation| app::file(operation.asset).is_some())
-        .count();
-    if files == 0 || files % app::ASSETS.len() != 0 {
+        .filter(|operation| app::file(operation.asset).is_some());
+    if operations
+        .zip(&expected)
+        .any(|(operation, (generation, asset))| {
+            operation.asset != *asset
+                || app::generation_spelling(operation.asset, &operation.path) != Some(*generation)
+        })
+    {
         return Err(InstallError::InvalidRecord(
-            "install plan has an incomplete Canvas generation".to_owned(),
+            "Canvas generations are not canonical and current-last".to_owned(),
         ));
     }
-    let mut expected = Vec::with_capacity(files + 1);
-    for _ in 0..files / app::ASSETS.len() {
-        expected.extend(app::ASSETS.into_iter().map(|(asset, _)| asset));
-    }
-    expected.push(Asset::CanvasCurrent);
-    Ok(expected)
-}
-
-fn validate_app_generations(plan: &InstallPlan) -> Result<(), InstallError> {
-    let Some(current) = &plan.app else {
-        return Ok(());
-    };
-    let generations = plan
-        .operations
-        .iter()
-        .filter_map(|operation| app::operation_generation(operation.asset, &operation.path))
-        .collect::<Vec<_>>();
-    let chunks = generations.chunks_exact(app::ASSETS.len());
-    let groups = chunks
-        .clone()
-        .map(|chunk| chunk[0].clone())
-        .collect::<Vec<_>>();
-    let prior = &groups[..groups.len().saturating_sub(1)];
-    let invalid = !chunks.remainder().is_empty()
-        || chunks
-            .clone()
-            .any(|chunk| chunk.iter().any(|item| item != &chunk[0]))
-        || groups.last() != Some(current)
-        || prior.windows(2).any(|pair| pair[0] >= pair[1])
-        || prior.contains(current);
-    if invalid {
-        return Err(InstallError::InvalidRecord(
-            "install plan Canvas generations are not complete and current-last".to_owned(),
-        ));
-    }
-    Ok(())
+    Ok(expected
+        .into_iter()
+        .map(|(_, asset)| asset)
+        .chain([Asset::CanvasCurrent])
+        .collect())
 }
 
 fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result<(), InstallError> {

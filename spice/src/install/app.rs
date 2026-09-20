@@ -1,9 +1,8 @@
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-use std::str::FromStr;
 
-use wire::manifest::CANVAS_APP_FILES;
 use wire::{Digest, Domain};
 
 use super::{Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, Repository};
@@ -40,6 +39,10 @@ impl Source {
         &self.generation
     }
 
+    pub(super) fn assets(&self) -> impl Iterator<Item = Asset> + '_ {
+        self.files.keys().copied()
+    }
+
     pub(super) fn bytes(&self, asset: Asset) -> Option<Vec<u8>> {
         if asset == Asset::CanvasCurrent {
             return Some(format!("{}\n", self.generation).into_bytes());
@@ -47,45 +50,61 @@ impl Source {
         self.files.get(&asset).cloned()
     }
 
+    pub(super) fn image(&self, asset: Asset) -> Option<GeneratedImage> {
+        if asset == Asset::CanvasCurrent {
+            return Some(GeneratedImage::new(
+                DATA_MODE,
+                format!("{}\n", self.generation).as_bytes(),
+            ));
+        }
+        self.files
+            .get(&asset)
+            .map(|bytes| GeneratedImage::new(DATA_MODE, bytes))
+    }
+
     pub(super) fn differs_from(&self, plan: &InstallPlan) -> bool {
         if plan.app.as_ref() != Some(&self.generation) {
             return true;
         }
-        ASSETS
-            .into_iter()
-            .map(|(asset, _)| asset)
-            .chain([Asset::CanvasCurrent])
-            .any(|asset| {
-                let path = operation_path(asset, Some(&self.generation))
-                    .expect("the source generation is present")
-                    .expect("the source inventory contains only Canvas operations");
-                let expected = self
-                    .bytes(asset)
-                    .map(|bytes| GeneratedImage::new(DATA_MODE, &bytes));
-                plan.operations
-                    .iter()
-                    .find(|operation| operation.path == path)
-                    .map(|operation| &operation.generated)
-                    != expected.as_ref()
-            })
+        self.assets().chain([Asset::CanvasCurrent]).any(|asset| {
+            let path = operation_path(asset, Some(&self.generation))
+                .expect("the source generation is present")
+                .expect("the source inventory contains only Canvas operations");
+            let expected = self.image(asset);
+            plan.operations
+                .iter()
+                .find(|operation| operation.path == path)
+                .map(|operation| &operation.generated)
+                != expected.as_ref()
+        })
     }
 }
 
-pub(super) fn file(asset: Asset) -> Option<&'static str> {
+pub(super) fn file(asset: Asset) -> Option<Cow<'static, str>> {
+    if let Asset::CanvasRenderer(file) = asset {
+        return Some(Cow::Owned(file.to_string()));
+    }
     ASSETS
         .iter()
-        .find_map(|(candidate, file)| (*candidate == asset).then_some(*file))
+        .find_map(|(candidate, file)| (*candidate == asset).then_some(Cow::Borrowed(*file)))
+}
+
+pub(super) fn asset_file(file: &str) -> Option<Asset> {
+    ASSETS
+        .iter()
+        .find_map(|(asset, candidate)| (*candidate == file).then_some(*asset))
+        .or_else(|| wire::manifest::renderer::File::parse_filename(file).map(Asset::CanvasRenderer))
+}
+
+pub(super) fn generation_spelling(asset: Asset, path: &str) -> Option<&str> {
+    let (generation, file) = path
+        .strip_prefix(".spice-install/app/generations/")?
+        .split_once('/')?;
+    (asset_file(file) == Some(asset)).then_some(generation)
 }
 
 pub(super) fn operation_generation(asset: Asset, path: &str) -> Option<Digest> {
-    let file = file(asset)?;
-    let suffix = format!("/{file}");
-    let generation = path
-        .strip_prefix(".spice-install/app/generations/")?
-        .strip_suffix(&suffix)?;
-    (!generation.contains('/'))
-        .then(|| Digest::from_str(generation).ok())
-        .flatten()
+    generation_spelling(asset, path)?.parse().ok()
 }
 
 pub(super) fn operation_path(
@@ -112,7 +131,7 @@ fn staged(root: &Path) -> Result<Source, InstallError> {
     let generation = source
         .current_generation()
         .map_err(|_| InstallError::BinaryContextChanged)?;
-    let files = ASSETS
+    let mut files = ASSETS
         .iter()
         .map(|(asset, file)| {
             let route = canvas::APP
@@ -123,7 +142,12 @@ fn staged(root: &Path) -> Result<Source, InstallError> {
                 .map(|served| (*asset, served.into_bytes()))
                 .map_err(|_| InstallError::BinaryContextChanged)
         })
-        .collect::<Result<_, _>>()?;
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    files.extend(
+        generation
+            .renderers()
+            .map(|(file, served)| (Asset::CanvasRenderer(file), served.bytes().to_vec())),
+    );
     Ok(Source {
         generation: generation.identity().clone(),
         files,
@@ -177,21 +201,28 @@ fn packaged_files(
     payload: &wire::manifest::TargetPayload,
 ) -> Result<BTreeMap<Asset, Vec<u8>>, InstallError> {
     let mut files = BTreeMap::new();
-    for (asset, file) in ASSETS {
-        debug_assert!(CANVAS_APP_FILES.contains(&file));
+    let mut renderer_bytes = 0_u64;
+    for (asset, file, entry) in payload.inventory.iter().filter_map(|entry| {
+        let file = entry.path.strip_prefix("app/")?;
+        Some((asset_file(file)?, file, entry))
+    }) {
         let path = root.join("app").join(file);
         let metadata = fs::symlink_metadata(&path)
             .map_err(|error| InstallError::io("inspect appliance Canvas asset", &path, error))?;
         if !metadata.file_type().is_file() {
             return Err(InstallError::PathShape(path));
         }
+        if matches!(asset, Asset::CanvasRenderer(_)) {
+            renderer_bytes = renderer_bytes
+                .checked_add(metadata.len())
+                .filter(|total| *total <= wire::manifest::renderer::MAX_BYTES)
+                .ok_or(InstallError::BinaryContextChanged)?;
+        }
+        if metadata.len() != entry.bytes {
+            return Err(InstallError::BinaryContextChanged);
+        }
         let bytes = fs::read(&path)
             .map_err(|error| InstallError::io("read appliance Canvas asset", &path, error))?;
-        let entry = payload
-            .inventory
-            .iter()
-            .find(|entry| entry.path == format!("app/{file}"))
-            .ok_or_else(|| InstallError::InvalidRecord(format!("appliance has no app/{file}")))?;
         if entry.mode != 0o644
             || entry.bytes != bytes.len() as u64
             || entry.digest != Digest::compute(Domain::DistArtifact, &bytes)
@@ -200,5 +231,12 @@ fn packaged_files(
         }
         files.insert(asset, bytes);
     }
+    wire::manifest::renderer::validate_bundle(files.iter().map(|(asset, bytes)| {
+        (
+            file(*asset).expect("only app files entered the source"),
+            bytes.as_slice(),
+        )
+    }))
+    .map_err(|error| InstallError::InvalidRecord(error.to_owned()))?;
     Ok(files)
 }
