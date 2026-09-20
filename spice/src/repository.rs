@@ -108,6 +108,7 @@ pub struct StatePaths {
     worktree_locks: PathBuf,
     steering_delivery: PathBuf,
     steering_delivery_lock: PathBuf,
+    command_advice: PathBuf,
     steering_media: PathBuf,
     data: PathBuf,
     journal: PathBuf,
@@ -185,6 +186,7 @@ impl StatePaths {
             steering_delivery: worktree_runtime.join("steering-delivery.json"),
             steering_delivery_lock: worktree_locks.join("steering-delivery"),
             steering_media: runtime.join("steering-media"),
+            command_advice: runtime.join("command-advice.json"),
             install_rollback_blobs: runtime.join("install-rollback"),
             artifact_data,
             runtime,
@@ -228,6 +230,12 @@ impl StatePaths {
     #[must_use]
     pub fn steering_media(&self) -> &Path {
         &self.steering_media
+    }
+
+    /// Repository-common receipts for one-shot shell advice by agent session.
+    #[must_use]
+    pub fn command_advice(&self) -> &Path {
+        &self.command_advice
     }
 
     /// Repository-common content-addressed install rollback bodies.
@@ -433,7 +441,7 @@ impl StatePaths {
     /// an operator repairing a bad `config.toml` needs the runtime to reach the
     /// refusal that names it rather than stop at a shape check.
     #[must_use]
-    pub fn owned_files(&self) -> [&Path; 9] {
+    pub fn owned_files(&self) -> [&Path; 10] {
         let [
             journal,
             gate_state,
@@ -453,6 +461,7 @@ impl StatePaths {
             steering_delivery,
             self.install_record(),
             self.local_configuration(),
+            self.command_advice(),
         ]
     }
 }
@@ -625,6 +634,25 @@ impl Repository {
             lock: paths.steering_delivery_lock().to_path_buf(),
             projections: paths.steering_media().to_path_buf(),
         })
+    }
+
+    /// Admit optional shell-advice receipts without making other runtime state
+    /// a prerequisite for running an authored command.
+    ///
+    /// # Errors
+    ///
+    /// Returns an unavailable or malformed receipt component.
+    pub fn admit_command_advice(&self) -> Result<(PathBuf, PathBuf), StateError> {
+        let paths = StatePaths::new(
+            self.common.join(STATE_DIRECTORY),
+            self.git.join(STATE_DIRECTORY),
+        );
+        let lock = paths.locks().join("command-advice");
+        admit(paths.runtime(), StateShape::Directory)?;
+        admit(paths.locks(), StateShape::Directory)?;
+        admit(paths.command_advice(), StateShape::RegularFile)?;
+        admit(&lock, StateShape::RegularFile)?;
+        Ok((paths.command_advice, lock))
     }
 
     /// Admit resident startup state while retaining a blocked inbox for repair.

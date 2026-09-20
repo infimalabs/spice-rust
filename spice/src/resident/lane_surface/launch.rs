@@ -14,6 +14,7 @@ pub(in crate::resident) struct OccupantLaunch {
     pub(in crate::resident) spec: Spec,
     pub(in crate::resident) observation: Observation,
     pub(in crate::resident) session: SessionProof,
+    pub(in crate::resident) session_id: Option<String>,
     pub(in crate::resident) git: String,
     /// Request bytes a command-driven vendor reads first, or nothing for a
     /// vendor driven entirely by its arguments.
@@ -123,7 +124,6 @@ pub(in crate::resident) fn occupant_launch(
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join(name.as_str()))
         .map_err(|error| store_fault("lane::capture-tape-unavailable", &error.to_string()))?;
     let (session_reply, session) = mpsc::sync_channel(4);
-    let horizon = session_proof_horizon(paths);
     let state = Arc::new(Mutex::new(DeclarationState {
         reply: session_reply,
         seen: None,
@@ -141,7 +141,7 @@ pub(in crate::resident) fn occupant_launch(
         rtk,
         epoch,
         stream,
-        expected,
+        expected: expected.clone(),
         state: Arc::clone(&state),
     });
     let observation = lane::capture::observation(
@@ -160,8 +160,9 @@ pub(in crate::resident) fn occupant_launch(
         session: SessionProof {
             session,
             state,
-            horizon,
+            horizon: session_proof_horizon(paths),
         },
+        session_id: expected,
         git,
         opening,
         inbox,
