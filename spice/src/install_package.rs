@@ -7,9 +7,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus};
 
 use spice::repository::Repository;
-use wire::manifest::{CANVAS_APP_FILES, ReleaseTarget};
+use wire::manifest::ReleaseTarget;
 
-const MAX_PACKAGE_ENTRIES: usize = 64;
+const MAX_PACKAGE_ENTRIES: usize = 64 + wire::manifest::renderer::MAX_FILES;
 const MAX_MEMBER_BYTES: u64 = 512 * 1024 * 1024;
 const MAX_PACKAGE_BYTES: u64 = 1024 * 1024 * 1024;
 const PACKAGE_DOCUMENT_PATH: &str = "release/package.json";
@@ -324,8 +324,12 @@ impl StagedPackage {
                 root,
             };
             staged.publish(acquired.member(PACKAGE_DOCUMENT_PATH)?)?;
-            for file in CANVAS_APP_FILES {
-                staged.publish(acquired.member(&format!("app/{file}"))?)?;
+            for member in acquired
+                .members
+                .iter()
+                .filter(|member| member.path().starts_with("app/"))
+            {
+                staged.publish(member)?;
             }
             staged.publish(acquired.member(&acquired.payload_path)?)?;
             staged.publish(acquired.member(&acquired.executable_path)?)?;

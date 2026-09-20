@@ -30,6 +30,7 @@ pub enum Asset {
     CanvasMosaic,
     CanvasResponsive,
     CanvasStyle,
+    CanvasRenderer(wire::manifest::renderer::File),
     CanvasCurrent,
     Binary,
     /// Retained dSYM `Info.plist` published only with a symbol-bearing executable.

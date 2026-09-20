@@ -506,16 +506,10 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
 fn read_lane_app_bundle(root: &Path) -> Result<AppBundle, BuildError> {
     let source = spice::canvas::AppSource::resolve(root).map_err(build_error)?;
     let generation = source.current_generation().map_err(build_error)?;
-    let files = spice::canvas::APP
-        .assets()
-        .iter()
-        .map(|asset| {
-            generation
-                .served(*asset)
-                .map(|served| AppFile::new(asset.file(), served.into_bytes()))
-                .map_err(build_error)
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    let files = generation
+        .files()
+        .map(|(file, served)| AppFile::new(file.into_owned(), served.bytes().to_vec()))
+        .collect();
     Ok(AppBundle::new(generation.identity().clone(), files))
 }
 

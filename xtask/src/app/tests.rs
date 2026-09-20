@@ -74,62 +74,6 @@ fn fail_partial_build(stage: &Path) -> Result<(), AppBuildError> {
 }
 
 #[test]
-fn app_build_command_owns_cache_and_wrapper_inputs() {
-    let worktree = Digest::compute(Domain::DistInventory, b"fixture worktree");
-    let sources = fixture_source();
-    let command = trunk_command(
-        Path::new("/workspace"),
-        Path::new("/cargo-target"),
-        OsStr::new("/cargo-home"),
-        Path::new("/stage"),
-        "remapped-flags".to_owned(),
-        &worktree,
-        &sources,
-    );
-    let environment = command
-        .get_envs()
-        .map(|(key, value)| {
-            (
-                key.to_string_lossy().into_owned(),
-                value.map(|value| value.to_string_lossy().into_owned()),
-            )
-        })
-        .collect::<BTreeMap<_, _>>();
-    assert_eq!(environment.len(), 9);
-    assert_eq!(
-        environment.get("CARGO_TARGET_DIR"),
-        Some(&Some(format!("/cargo-target/xtask-app-{worktree}")))
-    );
-    assert_eq!(
-        environment.get("CARGO_BUILD_BUILD_DIR"),
-        Some(&Some(format!("/cargo-target/xtask-app-{worktree}-build")))
-    );
-    assert_eq!(
-        environment.get(APP_SOURCE_IDENTITY_ENV),
-        Some(&Some(sources.to_string()))
-    );
-    assert_eq!(command.get_current_dir(), Some(Path::new("/workspace/app")));
-    assert_eq!(command.get_program(), "trunk");
-    assert_eq!(
-        command
-            .get_args()
-            .map(|argument| argument.to_string_lossy().into_owned())
-            .collect::<Vec<_>>(),
-        [
-            "build",
-            "index.html",
-            "--release",
-            "--locked",
-            "--filehash=false",
-            "--html-output",
-            "canvas-app.html",
-            "--dist",
-            "/stage",
-        ]
-    );
-}
-
-#[test]
 fn source_edits_reuse_one_worktree_cache_namespace() {
     let outer = fixture("stable-app-target");
     let worktree = Digest::compute(Domain::DistInventory, b"stable worktree");

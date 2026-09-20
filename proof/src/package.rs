@@ -8,10 +8,12 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use wire::manifest::{
-    CANVAS_APP_FILES, ProductVersion, ProofStanding, RELEASE_MANIFEST_VERSION,
-    RELEASE_PACKAGE_VERSION, ReleaseManifest, ReleasePackage, ReleasePackageTarget, ReleaseTarget,
+    ProductVersion, ProofStanding, RELEASE_MANIFEST_VERSION, RELEASE_PACKAGE_VERSION,
+    ReleaseManifest, ReleasePackage, ReleasePackageTarget, ReleaseTarget,
 };
 use wire::{Digest, Domain};
+
+mod app;
 
 const PACKAGE_NAME: &str = "spice";
 const DATA_MODE: u32 = 0o644;
@@ -568,11 +570,17 @@ pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, 
             .with_symbols(symbols),
         );
     }
-    let mut app = CANVAS_APP_FILES
-        .iter()
+    let shell = exact_member(members, "app/canvas-app.html", DATA_MODE)?;
+    let html = shell.read_bounded(PACKAGE_DOCUMENT_LIMIT)?;
+    let renderers =
+        wire::manifest::renderer::from_html(&html).map_err(|_| PackageError::Binding {
+            index: 0,
+            field: "Canvas renderer declaration",
+        })?;
+    let mut app = wire::manifest::renderer::filenames(&renderers)
         .map(|file| {
-            exact_member(members, &app_path(file), DATA_MODE)
-                .map(|member| PackageAppInput::new(*file, member.clone()))
+            exact_member(members, &format!("app/{file}"), DATA_MODE)
+                .map(|member| PackageAppInput::new(file.into_owned(), member.clone()))
         })
         .collect::<Result<Vec<_>, _>>()?;
     app.sort_by(|left, right| left.file.cmp(&right.file));
@@ -730,7 +738,7 @@ fn admit_target(
         (None, None) => true,
         (Some(_), None) | (None, Some(_)) => false,
     };
-    admit_app(app, payload, index)?;
+    app::admit_app(app, payload, index)?;
     let executable_inventory = payload
         .inventory
         .iter()
@@ -787,47 +795,6 @@ fn admit_target(
         payload: payload_identity,
         proof: proof_identity,
     })
-}
-
-fn admit_app(
-    app: &[PackageAppInput],
-    payload: &wire::manifest::TargetPayload,
-    index: usize,
-) -> Result<(), PackageError> {
-    let mut expected = CANVAS_APP_FILES.to_vec();
-    expected.sort_unstable();
-    if app
-        .iter()
-        .map(|asset| asset.file.as_str())
-        .collect::<Vec<_>>()
-        != expected
-    {
-        return Err(PackageError::Binding {
-            index,
-            field: "Canvas package inventory",
-        });
-    }
-    for asset in app {
-        let path = format!("app/{}", asset.file);
-        require_member(&asset.member, &path, DATA_MODE)?;
-        asset.member.revalidate()?;
-        let Some(entry) = payload.inventory.iter().find(|entry| entry.path == path) else {
-            return Err(PackageError::Binding {
-                index,
-                field: "Canvas payload inventory",
-            });
-        };
-        if entry.mode != DATA_MODE
-            || entry.bytes != asset.member.length
-            || entry.digest != asset.member.digest
-        {
-            return Err(PackageError::Binding {
-                index,
-                field: "Canvas asset",
-            });
-        }
-    }
-    Ok(())
 }
 
 fn admit_manifest_shape(manifest: &ReleaseManifest) -> Result<(), PackageError> {
@@ -938,10 +905,6 @@ fn proof_path(target: ReleaseTarget) -> String {
 
 fn symbol_path(target: ReleaseTarget) -> String {
     format!("targets/{target}/symbols/spice.dSYM.json")
-}
-
-fn app_path(file: &str) -> String {
-    format!("app/{file}")
 }
 
 /// Why an external release package was refused.
@@ -1113,7 +1076,12 @@ mod tests {
                     .map(|(file, bytes)| {
                         PackageAppInput::new(
                             file,
-                            member(&app_path(file), DATA_MODE, bytes, Domain::DistArtifact),
+                            member(
+                                &format!("app/{file}"),
+                                DATA_MODE,
+                                bytes,
+                                Domain::DistArtifact,
+                            ),
                         )
                     })
                     .collect(),
@@ -1183,7 +1151,7 @@ mod tests {
                 )
             } else {
                 (
-                    app_path(&fixture.app[0].0),
+                    format!("app/{}", fixture.app[0].0),
                     DATA_MODE,
                     fixture.app[0].1.clone(),
                 )
@@ -1368,7 +1336,7 @@ mod tests {
     fn fixture() -> Fixture {
         let source = digest(Domain::DistSourceCommit, b"source");
         let app_identity = digest(Domain::DistArtifact, b"app generation");
-        let mut app = CANVAS_APP_FILES
+        let mut app = wire::manifest::CANVAS_APP_FILES
             .iter()
             .map(|file| ((*file).to_owned(), file.as_bytes().to_vec()))
             .collect::<Vec<_>>();

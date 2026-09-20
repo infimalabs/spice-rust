@@ -108,6 +108,25 @@ fn verify_symbol_metadata(payload: &TargetPayload) -> Result<(), PayloadError> {
 }
 
 fn verify_inventory(payload: &TargetPayload) -> Result<(), PayloadError> {
+    let mut renderer_files = 0_usize;
+    let mut renderer_bytes = 0_u64;
+    for entry in &payload.inventory {
+        if entry
+            .path
+            .strip_prefix("app/")
+            .and_then(wire::manifest::renderer::File::parse_filename)
+            .is_some()
+        {
+            renderer_files += 1;
+            renderer_bytes = renderer_bytes
+                .checked_add(entry.bytes)
+                .filter(|total| *total <= wire::manifest::renderer::MAX_BYTES)
+                .ok_or_else(|| PayloadError::ExtraArtifact(entry.path.clone()))?;
+            if renderer_files > wire::manifest::renderer::MAX_FILES {
+                return Err(PayloadError::ExtraArtifact(entry.path.clone()));
+            }
+        }
+    }
     let artifacts = expected_artifacts(payload);
     let mut paths = BTreeSet::new();
     for entry in &payload.inventory {
@@ -172,6 +191,15 @@ fn expected_artifacts(payload: &TargetPayload) -> Vec<Artifact> {
             digest: None,
         })
         .collect::<Vec<_>>();
+    artifacts.extend(payload.inventory.iter().filter_map(|entry| {
+        let file = entry.path.strip_prefix("app/")?;
+        wire::manifest::renderer::File::parse_filename(file)?;
+        Some(Artifact {
+            path: entry.path.clone(),
+            mode: 0o644,
+            digest: None,
+        })
+    }));
     artifacts.push(Artifact {
         path: "bin/spice".to_owned(),
         mode: 0o755,

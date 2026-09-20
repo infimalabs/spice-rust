@@ -335,12 +335,9 @@ fn seed_lane_app(root: &Path, source: &canvas::AppSource) -> DemoResult<()> {
             format!("{}: {error}", target_generation.display()),
         )
     })?;
-    for asset in canvas::APP.assets() {
-        let served = generation
-            .served(*asset)
-            .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
-        let target = target_generation.join(asset.file());
-        fs::write(&target, served.into_bytes()).map_err(|error| {
+    for (file, served) in generation.files() {
+        let target = target_generation.join(file.as_ref());
+        fs::write(&target, served.bytes()).map_err(|error| {
             environment_fault(
                 "demo::app-stage-unwritable",
                 format!("{}: {error}", target.display()),

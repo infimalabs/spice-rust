@@ -7,8 +7,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use wire::manifest::{
-    CANVAS_APP_FILES, InventoryEntry, ProductVersion, RELEASE_MANIFEST_VERSION,
-    RELEASE_PACKAGE_VERSION, ReleaseManifest, ReleasePackage, ReleasePackageTarget, ReleaseTarget,
+    InventoryEntry, ProductVersion, RELEASE_MANIFEST_VERSION, RELEASE_PACKAGE_VERSION,
+    ReleaseManifest, ReleasePackage, ReleasePackageTarget, ReleaseTarget,
 };
 use wire::{Digest, Domain};
 
@@ -286,14 +286,19 @@ fn load(
             symbols,
         });
     }
-    let mut app_files = CANVAS_APP_FILES.to_vec();
-    app_files.sort_unstable();
+    let app_files = files
+        .keys()
+        .filter_map(|path| {
+            let file = path.strip_prefix("app/")?;
+            wire::manifest::renderer::is_app_file(file).then(|| file.to_owned())
+        })
+        .collect::<Vec<_>>();
     let app = app_files
         .iter()
         .map(|file| {
             let path = format!("app/{file}");
             Ok(LoadedApp {
-                file: (*file).to_owned(),
+                file: file.clone(),
                 member: take_member(&mut files, &path)?,
             })
         })
@@ -619,18 +624,19 @@ fn add_canvas(
     shapes: &mut BTreeMap<String, MemberShape>,
     total: &mut CaptureBudget,
 ) -> Result<(), PackageFailure> {
-    let mut files = CANVAS_APP_FILES.to_vec();
-    files.sort_unstable();
-    for file in files {
-        let path = format!("app/{file}");
+    for entry in inventory
+        .iter()
+        .filter(|entry| entry.path.starts_with("app/"))
+    {
+        let path = &entry.path;
         add_artifact(
             stage,
             pending,
             shapes,
             total,
-            inventory_entry(inventory, &path)?,
-            &path,
-            &format!("staged Canvas asset {file}"),
+            entry,
+            path,
+            &format!("staged Canvas asset {path}"),
         )?;
     }
     Ok(())
