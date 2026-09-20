@@ -379,9 +379,14 @@ and leaves the current receipt unchanged.
 
 **Invariant —** No receipt-owned plan change is made until the accepted receipt
 already describes its exact operation and prior image, and the operation's
-completion is durably published before the next operation begins. A plan
-mutation whose receipt was lost is an untracked modification of someone else's
-repository that no reversal can reliably identify.
+completion is durably published before the next mutation begins. Unchanged
+files are verified without republishing the receipt for each one; their
+observed progress is flushed before the next mutation and before leaving the
+file stage. A changed file's identity and completion counter share one
+checkpoint. Thus a crash can leave only the recorded frontier's mutation
+ahead of its receipt, and resume still verifies the exact planned images.
+Transaction admission and terminal publication validate the complete
+inventory; each intervening operation validates its own path binding.
 
 **Invariant —** The receipt records directly, or authenticates through
 digest-bound rollback evidence, the exact install-owned reversible prior image:

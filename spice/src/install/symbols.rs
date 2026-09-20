@@ -20,8 +20,8 @@ use wire::manifest::{
 use wire::{Digest, Domain};
 
 use super::{
-    AppPlanState, Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, Location, Operation,
-    Repository, destination_state, operation, reversal_context,
+    AppPlanState, Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, InstalledOperations,
+    Location, Operation, Repository, destination_state, operation, reversal_context,
 };
 
 /// Canonical retained dSYM bundle beside the installed executable.
@@ -271,7 +271,7 @@ impl Source {
 /// Append the two symbol operations after the executable operation.
 pub(super) fn append_operations(
     repository: &Repository,
-    installed: Option<&InstallPlan>,
+    installed: &InstalledOperations<'_>,
     source: &Source,
     archiving: bool,
     (directories, operations, observed_operations): AppPlanState<'_>,
