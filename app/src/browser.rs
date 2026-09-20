@@ -37,6 +37,7 @@ use crate::{
 
 mod clock;
 mod connection;
+mod mermaid;
 mod view;
 mod watchband;
 
@@ -532,7 +533,7 @@ fn canvas_app() -> Html {
         note_text.clone(),
         note_notice.clone(),
     );
-    render_canvas(CanvasRender {
+    let canvas = render_canvas(CanvasRender {
         connection: &connection,
         surface: &surface,
         axis: &axis,
@@ -554,7 +555,8 @@ fn canvas_app() -> Html {
         speech_status: &speech_status,
         submit_note,
         refresh,
-    })
+    });
+    html! { <mermaid::Provider>{canvas}</mermaid::Provider> }
 }
 
 #[hook]

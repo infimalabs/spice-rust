@@ -588,7 +588,7 @@ fn admit_bootstrap_identity(
     })
 }
 
-fn loaded_canvas_generation() -> Result<wire::Digest, String> {
+pub(super) fn loaded_canvas_generation() -> Result<wire::Digest, String> {
     web_sys::window()
         .and_then(|window| window.document())
         .and_then(|document| document.get_element_by_id("app"))
