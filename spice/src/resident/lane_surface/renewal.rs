@@ -288,33 +288,27 @@ fn requested_record(
     row: &wire::LaneResidency,
     seats: &Seats,
 ) -> CommandResult<wire::LaneRenewalRecord> {
-    let occupant = row.occupant.ok_or_else(|| {
-        unit_outcome(lane_refusal(
-            "lane::renewal-vacant",
-            Some(OCCUPIED.to_owned()),
-            Some(row.disposition.clone()),
-            "wake the lane before requesting agent renewal",
-        ))
-    })?;
-    if !seats
-        .occupant(row.lane)
-        .is_some_and(|seated| seated.occupant() == occupant)
-    {
+    let session = super::session::validate_session_head(row)?;
+    if let Some(occupant) = row.occupant {
+        if session.occupant != occupant {
+            return Err(store_fault(
+                "lane::renewal-session-moved",
+                "the durable session does not identify the current lane occupant",
+            ));
+        }
+        if !seats
+            .occupant(row.lane)
+            .is_some_and(|seated| seated.occupant() == occupant)
+        {
+            return Err(store_fault(
+                "lane::renewal-occupant-unowned",
+                "the durable renewal predecessor is not supervised by this resident",
+            ));
+        }
+    } else if seats.occupied(row.lane) {
         return Err(store_fault(
-            "lane::renewal-occupant-unowned",
-            "the durable renewal predecessor is not supervised by this resident",
-        ));
-    }
-    let session = row.session.as_ref().ok_or_else(|| {
-        store_fault(
-            "lane::renewal-session-missing",
-            "the durable renewal predecessor has no resumable session identity",
-        )
-    })?;
-    if session.occupant != occupant || session.lane != row.lane {
-        return Err(store_fault(
-            "lane::renewal-session-moved",
-            "the durable session does not identify the current lane occupant",
+            "lane::renewal-capacity-occupied",
+            "the durably vacant lane still has a supervised occupant",
         ));
     }
     let team_slot = head
@@ -329,13 +323,21 @@ fn requested_record(
                 "the current lane has no position inside its durable lineage",
             )
         })?;
+    let predecessor = identity(session.occupant, session);
     Ok(wire::LaneRenewalRecord {
         team: row.team,
         lane: row.lane,
         revision: head.topology_revision,
-        state: wire::LaneRenewalState::Requested {
-            predecessor: identity(occupant, session),
-            team_slot,
+        state: if row.occupant.is_some() {
+            wire::LaneRenewalState::Requested {
+                predecessor,
+                team_slot,
+            }
+        } else {
+            wire::LaneRenewalState::HandoffPending {
+                predecessor,
+                team_slot,
+            }
         },
     })
 }

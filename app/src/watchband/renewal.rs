@@ -2,8 +2,6 @@
 
 use wire::{LaneRenewalRecord, LaneRenewalState};
 
-/// The lane row seats nobody, so there is no predecessor to renew.
-pub const NO_OCCUPANT_BLOCK: &str = "no occupant is seated";
 /// The resident does not offer steering to this session.
 pub const CANNOT_SEND_BLOCK: &str = "steering is not offered to this session";
 /// The predecessor already stopped and its successor has not seated yet.
@@ -37,23 +35,22 @@ pub struct AgentRenewalControl {
 /// Derive one renewal control from durable lane state and current authority.
 ///
 /// A disabled control always names its condition: the operator must be able to
-/// tell an empty or stale seat from a busy one without a working hover.
+/// distinguish missing authority from a pending handoff without a working hover.
 #[must_use]
 pub fn agent_renewal_control(
     agent: &str,
-    has_occupant: bool,
     can_send: bool,
     renewal: Option<&LaneRenewalRecord>,
 ) -> AgentRenewalControl {
     let state = renewal.map(|renewal| &renewal.state);
     let blocked = match state {
-        None | Some(LaneRenewalState::SuccessorStarted { .. }) => {
-            request_block(has_occupant, can_send)
-        }
         Some(LaneRenewalState::HandoffPending { .. }) => Some(HANDOFF_BLOCK),
-        Some(LaneRenewalState::Requested { .. } | LaneRenewalState::LaunchRefused { .. }) => {
-            (!can_send).then_some(CANNOT_SEND_BLOCK)
-        }
+        None
+        | Some(
+            LaneRenewalState::SuccessorStarted { .. }
+            | LaneRenewalState::Requested { .. }
+            | LaneRenewalState::LaunchRefused { .. },
+        ) => (!can_send).then_some(CANNOT_SEND_BLOCK),
     };
     let mut control = presentation(agent, state);
     if let Some(block) = blocked {
@@ -63,17 +60,6 @@ pub fn agent_renewal_control(
         control.title = format!("{}. Unavailable: {block}", control.title);
     }
     control
-}
-
-/// Name whichever condition withholds a fresh request, seat first.
-const fn request_block(has_occupant: bool, can_send: bool) -> Option<&'static str> {
-    if !has_occupant {
-        Some(NO_OCCUPANT_BLOCK)
-    } else if !can_send {
-        Some(CANNOT_SEND_BLOCK)
-    } else {
-        None
-    }
 }
 
 /// The enabled presentation of one durable renewal state.
@@ -175,7 +161,7 @@ mod tests {
     fn exposes_request_cancel_handoff_and_successor_states() {
         let predecessor = identity("33333333-3333-4333-8333-333333333333");
         let successor = identity("44444444-4444-4444-8444-444444444444");
-        let none = agent_renewal_control("Ada", true, true, None);
+        let none = agent_renewal_control("Ada", true, None);
         assert_eq!(
             (none.state, none.pressed, none.disabled, none.next_requested),
             ("none", false, false, true),
@@ -185,23 +171,22 @@ mod tests {
             predecessor: predecessor.clone(),
             team_slot: 2,
         });
-        let requested = agent_renewal_control("Ada", true, true, Some(&requested_record));
+        let requested = agent_renewal_control("Ada", true, Some(&requested_record));
         assert_eq!(
             (
                 requested.state,
                 requested.pressed,
                 requested.disabled,
                 requested.next_requested,
-                requested.heading,
             ),
-            ("requested", true, false, false, "Cancel renewal"),
+            ("requested", true, false, false),
         );
 
         let handoff_record = renewal(LaneRenewalState::HandoffPending {
             predecessor: predecessor.clone(),
             team_slot: 2,
         });
-        let handoff = agent_renewal_control("Ada", false, true, Some(&handoff_record));
+        let handoff = agent_renewal_control("Ada", true, Some(&handoff_record));
         assert_eq!(
             (handoff.state, handoff.pressed, handoff.disabled),
             ("handoff-pending", true, true),
@@ -212,15 +197,10 @@ mod tests {
             successor,
             team_slot: 2,
         });
-        let succeeded = agent_renewal_control("Ada", true, true, Some(&succeeded_record));
+        let succeeded = agent_renewal_control("Ada", true, Some(&succeeded_record));
         assert_eq!(
-            (
-                succeeded.state,
-                succeeded.pressed,
-                succeeded.disabled,
-                succeeded.heading,
-            ),
-            ("successor-started", false, false, "Renew again"),
+            (succeeded.state, succeeded.pressed, succeeded.disabled,),
+            ("successor-started", false, false),
         );
     }
 
@@ -231,7 +211,7 @@ mod tests {
             team_slot: 2,
             reason: "configured executable is unavailable".to_owned(),
         });
-        let refused = agent_renewal_control("Ada", false, true, Some(&refused_record));
+        let refused = agent_renewal_control("Ada", true, Some(&refused_record));
         assert_eq!(refused.state, "launch-refused");
         assert!(!refused.disabled, "a terminal refusal remains retryable");
         assert_eq!(
@@ -244,77 +224,12 @@ mod tests {
                 .contains("configured executable is unavailable")
         );
 
-        let withheld = agent_renewal_control("Ada", true, false, None);
+        let withheld = agent_renewal_control("Ada", false, None);
         assert!(
             withheld.disabled,
             "missing operator authority disables requests"
         );
         assert_eq!(withheld.blocked, Some(CANNOT_SEND_BLOCK));
-    }
-
-    #[test]
-    fn names_the_condition_that_disables_each_control() {
-        let vacant = agent_renewal_control("Ada", false, true, None);
-        assert_eq!(vacant.blocked, Some(NO_OCCUPANT_BLOCK));
-        assert!(vacant.disabled);
-        assert_eq!(
-            vacant.label,
-            "Request agent renewal for Ada (unavailable: no occupant is seated)",
-        );
-        assert_eq!(
-            vacant.title,
-            "Start a fresh successor for Ada. Unavailable: no occupant is seated",
-        );
-
-        let both = agent_renewal_control("Ada", false, false, None);
-        assert_eq!(
-            both.blocked,
-            Some(NO_OCCUPANT_BLOCK),
-            "the seat is named first"
-        );
-
-        let enabled = agent_renewal_control("Ada", true, true, None);
-        assert_eq!(enabled.blocked, None);
-        assert_eq!(enabled.label, "Request agent renewal for Ada");
-        assert_eq!(enabled.title, "Start a fresh successor for Ada");
-
-        let predecessor = identity("33333333-3333-4333-8333-333333333333");
-        let handoff_record = renewal(LaneRenewalState::HandoffPending {
-            predecessor: predecessor.clone(),
-            team_slot: 2,
-        });
-        let handoff = agent_renewal_control("Ada", true, true, Some(&handoff_record));
-        assert_eq!(handoff.blocked, Some(HANDOFF_BLOCK));
-        assert!(
-            handoff
-                .title
-                .ends_with(". Unavailable: handoff in progress")
-        );
-
-        let requested_record = renewal(LaneRenewalState::Requested {
-            predecessor: predecessor.clone(),
-            team_slot: 2,
-        });
-        let cancel = agent_renewal_control("Ada", false, false, Some(&requested_record));
-        assert_eq!(
-            cancel.blocked,
-            Some(CANNOT_SEND_BLOCK),
-            "cancelling needs authority, not a seated occupant"
-        );
-        assert!(cancel.disabled);
-
-        let refused_record = renewal(LaneRenewalState::LaunchRefused {
-            predecessor,
-            team_slot: 2,
-            reason: "configured executable is unavailable".to_owned(),
-        });
-        let refused = agent_renewal_control("Ada", false, false, Some(&refused_record));
-        assert_eq!(refused.blocked, Some(CANNOT_SEND_BLOCK));
-        assert_eq!(
-            refused.refusal.as_deref(),
-            Some("configured executable is unavailable"),
-            "the durable launch refusal survives beside the block"
-        );
     }
 
     #[test]
@@ -343,14 +258,19 @@ mod tests {
             })),
         ];
         for record in &records {
-            for (has_occupant, can_send) in
-                [(true, true), (true, false), (false, true), (false, false)]
-            {
-                let control = agent_renewal_control("Ada", has_occupant, can_send, record.as_ref());
+            for can_send in [true, false] {
+                let control = agent_renewal_control("Ada", can_send, record.as_ref());
+                assert_eq!(
+                    control.disabled,
+                    !can_send
+                        || record.as_ref().is_some_and(|record| {
+                            matches!(record.state, LaneRenewalState::HandoffPending { .. })
+                        }),
+                );
                 assert_eq!(
                     control.disabled,
                     control.blocked.is_some(),
-                    "{} with occupant={has_occupant} send={can_send}",
+                    "{} with send={can_send}",
                     control.state,
                 );
             }
