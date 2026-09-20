@@ -660,6 +660,7 @@ struct ProvenOccupant {
     group: u32,
     session: wire::LaneSession,
     git: String,
+    fresh_session: bool,
 }
 
 fn prepare_seat_surface(

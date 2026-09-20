@@ -471,6 +471,14 @@ pub struct LaneStarted {
     pub epoch: CanonicalUuid,
     /// Process-group identity returned by the sole process door.
     pub group: u32,
+    /// Whether this launch created a fresh vendor session rather than resuming.
+    /// Absent in facts recorded before launch disposition was retained.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fresh_session: Option<bool>,
 }
 
 /// A vacant lane seat moved to a fresh linked worktree before exact-session seating.

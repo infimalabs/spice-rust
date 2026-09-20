@@ -61,6 +61,7 @@ fn automatic_wake_never_overlaps_an_authoritatively_occupied_lane() {
                 occupant: fixture.occupant,
                 epoch: fixture.epoch,
                 group: 42,
+                fresh_session: None,
             },
             FactCause::Existing(observed.position()),
         )

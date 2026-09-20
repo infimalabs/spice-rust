@@ -332,6 +332,14 @@ events still render their context divider. History cursors advance from the
 oldest same-lane source record in each page, independently of card eligibility,
 so a page containing only hidden turn events still leads to older prose.
 
+Fresh vendor sessions render a distinct "started fresh session" lifecycle floor
+through the same full-width divider and epoch layout as compaction. Initial
+creation and explicit renewal record `lane::started.fresh_session = true`;
+exact-session resumes record false and create no floor. The resident retains
+the selected disposition before OMP pins a new session identity. Older facts
+without this evidence create no inferred floor. Live delivery and fact replay
+share the existing sequence-keyed lifecycle reduction.
+
 The predecessor's implementation details differ where the Rust product has a
 stronger ownership boundary:
 

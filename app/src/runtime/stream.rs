@@ -272,6 +272,16 @@ impl CanvasRuntime {
 
     fn observe_lifecycle_boundary(&mut self, row: &wire::StreamFact) {
         let boundary = match row.kind() {
+            FactKind::LaneStarted => row
+                .read::<wire::body::LaneStarted>()
+                .filter(|body| body.fresh_session == Some(true))
+                .map(|body| {
+                    (
+                        body.lane,
+                        Some(body.occupant),
+                        "started fresh session".to_owned(),
+                    )
+                }),
             FactKind::LaneExited => row
                 .read::<wire::body::LaneExited>()
                 .filter(|body| body.code != 0)

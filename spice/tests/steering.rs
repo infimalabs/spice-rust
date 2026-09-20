@@ -691,6 +691,7 @@ fn seed_occupied_lane(
                 occupant,
                 epoch,
                 group: 123,
+                fresh_session: None,
             },
             FactCause::Pending(declared),
         )

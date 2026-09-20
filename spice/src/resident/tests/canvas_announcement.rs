@@ -167,6 +167,7 @@ fn seed_lane_in_team_at(
                     occupant,
                     epoch,
                     group: 123,
+                    fresh_session: None,
                 },
                 FactCause::Pending(seated),
             )

@@ -169,6 +169,7 @@ fn seed_creation_history(
                 occupant,
                 epoch,
                 group: 41,
+                fresh_session: None,
             },
             crate::FactCause::Root,
         )
@@ -264,6 +265,7 @@ fn seed_post_creation_evidence(journal: &mut Journal, lane: CanonicalUuid) {
                 occupant,
                 epoch,
                 group: 42,
+                fresh_session: None,
             },
             crate::FactCause::Root,
         )

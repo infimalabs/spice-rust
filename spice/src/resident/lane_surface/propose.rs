@@ -169,6 +169,7 @@ pub(super) fn propose_wake(
                 occupant,
                 epoch,
                 group,
+                fresh_session: Some(proven.fresh_session),
             },
             FactCause::Pending(declared),
         )
