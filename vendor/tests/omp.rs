@@ -217,6 +217,15 @@ fn the_occupants_plan_is_the_task_it_holds_rather_than_a_list_only_it_can_read()
             "a private plan is one no reviewer can check and one that drifts from the board"
         );
     }
+    // omp's stop reminder counts the items a resumed session still carries
+    // without asking whether the roster can close them, and wakes the turn
+    // to say so; every other todo nudge checks the tool first.
+    for lsp in [false, true] {
+        assert!(
+            omp::config_overlay(170_000, lsp).contains("todo:\n  reminders: false\n"),
+            "an occupant with no todo tool must not be told to complete todo items"
+        );
+    }
 }
 
 #[test]
@@ -429,7 +438,7 @@ fn the_compaction_threshold_rides_an_overlay_the_lane_must_have_written() {
     // its `--config` overlay; the layout is omp's own config.yml.
     assert_eq!(
         omp::config_overlay(170_000, false),
-        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: false\n"
+        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: false\ntodo:\n  reminders: false\n"
     );
 
     let mut unwritten = fixture(Resume::Fresh);
@@ -462,7 +471,7 @@ fn the_language_server_disposition_names_the_tool_and_keeps_its_servers_in_the_l
     // which is exactly the process the lane could neither see nor reap.
     assert_eq!(
         omp::config_overlay(170_000, true),
-        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: true\n  shared: false\n"
+        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: true\n  shared: false\ntodo:\n  reminders: false\n"
     );
 
     let mut implicit = fixture(Resume::Fresh);
