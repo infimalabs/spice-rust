@@ -106,6 +106,7 @@ impl Arranged {
             self.epoch,
             &mut self.seats,
             &runtime,
+            &steer::Config::default(),
             &command,
             &request,
         )

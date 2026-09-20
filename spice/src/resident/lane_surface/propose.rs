@@ -120,12 +120,21 @@ pub(super) fn propose_drain(
 }
 
 /// Propose the occupant and residency one woken lane records.
+///
+/// A start is also where a pending replacement is taken: the successor record
+/// lands in the same commit that seats the occupant, so no lane is ever
+/// durably renewed without one running.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one wake proposal carries the complete admitted command boundary"
+)]
 pub(super) fn propose_wake(
     command: &wire::AdmittedCommand,
     request: &LaneState,
     observed: &journal::JournalHead<wire::ResidencyHead>,
     epoch: CanonicalUuid,
     proven: &ProvenOccupant,
+    renewal: Option<&wire::LaneRenewalRecord>,
     answer: LaneChangeAnswer,
 ) -> CommandResult<JournalWrite> {
     let occupant = proven.occupant;
@@ -164,6 +173,12 @@ pub(super) fn propose_wake(
             FactCause::Pending(declared),
         )
         .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;
+    let started = match renewal {
+        Some(renewal) => {
+            super::renewal::append_successor(&mut write, &mut next, renewal, session, started)?
+        }
+        None => started,
+    };
     write.residency_head(started, move |_| next);
     command_result(&mut write, command, request.clone(), epoch, answer)?;
     Ok(write)

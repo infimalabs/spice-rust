@@ -1,9 +1,16 @@
 //! Durable agent-renewal intent and resident-owned handoff reconciliation.
+//!
+//! Renewal is intent, never a launch. Requesting it marks one member for
+//! replacement and, while a predecessor is still running, asks that occupant
+//! to finish. Nothing here starts a process: the mark waits in
+//! [`wire::LaneRenewalState::HandoffPending`] until something else starts the
+//! lane, and that start consumes it through [`pending_for`], [`prepare`], and
+//! [`append_successor`].
 
 use super::*;
 
-pub(super) const HANDOFF_CONTROL: &str = "lane-renewal-handoff";
-pub(super) const CONTEXT_CONTROL: &str = "lane-renewal-context";
+const HANDOFF_CONTROL: &str = "lane-renewal-handoff";
+const CONTEXT_CONTROL: &str = "lane-renewal-context";
 
 const HANDOFF_TEXT: &str = concat!(
     "Agent renewal requested. Complete or hand off the current phase cleanly, ",
@@ -151,14 +158,15 @@ fn resolve_cancel(
 ) -> CommandResult<Option<wire::LaneRenewalRecord>> {
     match current {
         Some(wire::LaneRenewalRecord {
-            state: wire::LaneRenewalState::Requested { .. },
+            state:
+                wire::LaneRenewalState::Requested { .. } | wire::LaneRenewalState::HandoffPending { .. },
             ..
         }) => Ok(None),
         Some(record) => Err(unit_outcome(lane_refusal(
             "lane::renewal-cancel-late",
-            Some("requested".to_owned()),
+            Some("requested or handoff-pending".to_owned()),
             Some(state_name(&record.state).to_owned()),
-            "renewal can be canceled only before the predecessor reaches handoff",
+            "a successor already started under this renewal",
         ))),
         None => Err(unit_outcome(lane_refusal(
             "lane::renewal-not-requested",
@@ -424,41 +432,24 @@ pub(super) fn advance_exit(
         .map_err(|error| store_fault("lane::renewal-fact-invalid", &error.to_string()))
 }
 
-pub(super) fn pending(
+/// The pending replacement one starting lane must consume, if it carries one.
+///
+/// A mark survives until a start takes it, so this is a pure read of durable
+/// state: whether a start happens at all is never decided here.
+pub(super) fn pending_for(
     head: &wire::ResidencyHead,
+    lane: CanonicalUuid,
 ) -> CommandResult<Option<wire::LaneRenewalRecord>> {
-    Ok(head
-        .renewals
-        .iter()
-        .find(|record| matches!(record.state, wire::LaneRenewalState::HandoffPending { .. }))
-        .cloned())
-}
-
-pub(in crate::resident) fn reconcile(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    seats: &mut Seats,
-    runtime: &Runtime<'_>,
-    config: &super::super::SurfaceConfig,
-) -> CommandResult<bool> {
-    let observed = current_residency(bus, epoch)?;
-    if let Some(requested) = observed
-        .body()
-        .renewals
-        .iter()
-        .find(|record| matches!(record.state, wire::LaneRenewalState::Requested { .. }))
-    {
-        ensure_handoff(bus, paths, epoch, &config.steering, requested.lane)?;
-    }
-    let Some(renewal) = pending(observed.body())? else {
-        return Ok(false);
+    let Some(renewal) = renewal_for(head, lane)? else {
+        return Ok(None);
     };
-    let row = observed
-        .body()
+    if !matches!(renewal.state, wire::LaneRenewalState::HandoffPending { .. }) {
+        return Ok(None);
+    }
+    let row = head
         .lanes
         .iter()
-        .find(|row| row.lane == renewal.lane)
+        .find(|row| row.lane == lane)
         .ok_or_else(|| {
             store_fault(
                 "lane::renewal-member-missing",
@@ -471,33 +462,61 @@ pub(in crate::resident) fn reconcile(
             "a handoff-pending renewal no longer belongs to its recorded team",
         ));
     }
-    if row.occupant.is_some() || seats.occupied(row.lane) {
-        return Err(store_fault(
-            "lane::renewal-capacity-occupied",
-            "a handoff-pending renewal still has an occupied lane",
-        ));
-    }
-    cancel_handoff(
-        bus,
-        paths,
-        epoch,
-        handoff_directive(&renewal),
-        renewal.lane,
-        &handoff_control(&renewal),
-    )?;
-    ensure_context(bus, paths, epoch, &config.steering, &renewal)?;
-    super::super::consent_surface::commit_lapse(bus, runtime.reads, renewal.lane)?;
-    let occupant = new_uuid();
-    match super::automatic::wake_renewal(bus, paths, epoch, seats, runtime, &renewal, occupant)? {
-        AutomaticWake::Started => Ok(true),
-        AutomaticWake::Unstarted(failure) => {
-            mark_launch_refused(bus, epoch, &renewal, &failure)?;
-            Ok(true)
-        }
-    }
+    Ok(Some(renewal.clone()))
 }
 
-pub(super) fn ensure_context(
+/// Deliver what the successor of one consumed mark is owed, before it exists.
+///
+/// The predecessor's rehydration context is published first so the successor's
+/// first inbox read already carries it, and every consent request the
+/// predecessor left pending lapses because the occupant that would have
+/// answered a ruling is gone.
+pub(super) fn prepare(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    steering: &steer::Config,
+    runtime: &Runtime<'_>,
+    renewal: &wire::LaneRenewalRecord,
+) -> CommandResult<()> {
+    ensure_context(bus, paths, epoch, steering, renewal)?;
+    super::super::consent_surface::commit_lapse(bus, runtime.reads, renewal.lane)
+}
+
+/// Deliver and retire the steering one durable renewal owns.
+///
+/// A requested renewal asks its running predecessor to finish. Once that
+/// occupant is gone the request is retired rather than left standing: a
+/// directive waiting on a vacant lane is itself a reason to start one, and a
+/// mark must never start anything.
+pub(in crate::resident) fn reconcile(
+    bus: &Bus,
+    paths: &RuntimePaths,
+    epoch: CanonicalUuid,
+    steering: &steer::Config,
+) -> CommandResult<()> {
+    let observed = current_residency(bus, epoch)?;
+    for renewal in &observed.body().renewals {
+        match renewal.state {
+            wire::LaneRenewalState::Requested { .. } => {
+                ensure_handoff(bus, paths, epoch, steering, renewal.lane)?;
+            }
+            wire::LaneRenewalState::HandoffPending { .. } => cancel_handoff(
+                bus,
+                paths,
+                epoch,
+                handoff_directive(renewal),
+                renewal.lane,
+                &handoff_control(renewal),
+            )?,
+            wire::LaneRenewalState::SuccessorStarted { .. }
+            | wire::LaneRenewalState::LaunchRefused { .. } => {}
+        }
+    }
+    Ok(())
+}
+
+fn ensure_context(
     bus: &Bus,
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
@@ -619,61 +638,15 @@ fn cancel_handoff(
     super::super::steering::publish_inbox(bus, paths, current.body(), lane)
 }
 
-pub(super) fn mark_launch_refused(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    renewal: &wire::LaneRenewalRecord,
-    failure: &Outcome<()>,
-) -> CommandResult<()> {
-    let wire::LaneRenewalState::HandoffPending {
-        predecessor,
-        team_slot,
-    } = &renewal.state
-    else {
-        return Ok(());
-    };
-    let observed = current_residency(bus, epoch)?;
-    if renewal_for(observed.body(), renewal.lane)? != Some(renewal) {
-        return Ok(());
-    }
-    let reason = match failure {
-        Outcome::Refusal(refusal) => format!("{}: {refusal:?}", refusal.reason()),
-        Outcome::Fault(fault) => format!("{}: {}", fault.reason, fault.detail),
-        Outcome::Reply(_) => unreachable!("a successful launch is not a refusal"),
-    };
-    let refused = wire::LaneRenewalRecord {
-        team: renewal.team,
-        lane: renewal.lane,
-        revision: observed.body().topology_revision,
-        state: wire::LaneRenewalState::LaunchRefused {
-            predecessor: predecessor.clone(),
-            team_slot: *team_slot,
-            reason,
-        },
-    };
-    let mut next = observed.body().clone();
-    replace_renewal(&mut next, renewal.lane, Some(refused.clone()));
-    let mut proposal = write(Actor::Spice, epoch, Producer::ResidentRecognition)?;
-    guard_residency(&mut proposal, &observed);
-    let fact = proposal
-        .fact(
-            wire::body::LaneRenewalChanged {
-                team: renewal.team,
-                lane: renewal.lane,
-                renewal: Some(refused),
-            },
-            FactCause::Existing(observed.position()),
-        )
-        .map_err(|error| store_fault("lane::renewal-fact-invalid", &error.to_string()))?;
-    proposal.residency_head(fact, move |_| next);
-    commit(bus, proposal).map(|_| ())
-}
-
-pub(super) fn successor_record(
+/// Record the successor one consumed mark seated, inside the start's own
+/// commit: a lane is renewed exactly when its replacement starts.
+pub(super) fn append_successor(
+    write: &mut JournalWrite,
+    next: &mut wire::ResidencyHead,
     renewal: &wire::LaneRenewalRecord,
     session: &wire::LaneSession,
-    revision: u64,
-) -> CommandResult<wire::LaneRenewalRecord> {
+    cause: PendingFact,
+) -> CommandResult<PendingFact> {
     let wire::LaneRenewalState::HandoffPending {
         predecessor,
         team_slot,
@@ -684,19 +657,30 @@ pub(super) fn successor_record(
             "a successor can start only from handoff-pending state",
         ));
     };
-    Ok(wire::LaneRenewalRecord {
+    let successor = wire::LaneRenewalRecord {
         team: renewal.team,
         lane: renewal.lane,
-        revision,
+        revision: next.topology_revision,
         state: wire::LaneRenewalState::SuccessorStarted {
             predecessor: predecessor.clone(),
             successor: identity(session.occupant, session),
             team_slot: *team_slot,
         },
-    })
+    };
+    replace_renewal(next, renewal.lane, Some(successor.clone()));
+    write
+        .fact(
+            wire::body::LaneRenewalChanged {
+                team: successor.team,
+                lane: successor.lane,
+                renewal: Some(successor),
+            },
+            FactCause::Pending(cause),
+        )
+        .map_err(|error| store_fault("lane::renewal-fact-invalid", &error.to_string()))
 }
 
-pub(super) fn replace_renewal(
+fn replace_renewal(
     head: &mut wire::ResidencyHead,
     lane: CanonicalUuid,
     renewal: Option<wire::LaneRenewalRecord>,

@@ -125,6 +125,131 @@ fn vacant_request_enters_handoff_without_starting_or_notifying_the_predecessor()
     bus.shutdown().expect("vacant renewal bus stops");
 }
 
+/// A marked replacement waits. Reconciliation starts nothing, and it retires
+/// the handoff the departed predecessor was asked for: a directive left
+/// standing on a vacant lane is itself a reason to wake one.
+#[test]
+fn a_pending_replacement_reconciles_without_starting_a_successor() {
+    let fixture = AdvisoryRtkFixture::new();
+    let bus = seeded(&fixture, Some(requested(&fixture, false)), true);
+    let discovery = publish_surface(&fixture);
+    let config = steer::Config::default();
+
+    reconcile(&bus, &fixture.paths, fixture.epoch, &config).expect("requested renewal reconciles");
+    assert_eq!(controls(&bus, fixture.lane), [HANDOFF_CONTROL]);
+
+    supervisor_failed(
+        &bus,
+        fixture.epoch,
+        fixture.lane,
+        fixture.occupant,
+        "detached supervisor ended",
+    )
+    .expect("terminal predecessor failure commits");
+    reconcile(&bus, &fixture.paths, fixture.epoch, &config).expect("pending renewal reconciles");
+
+    let current = current_residency(&bus, fixture.epoch).expect("pending renewal reads");
+    assert!(
+        matches!(
+            current.body().renewals[0].state,
+            wire::LaneRenewalState::HandoffPending { .. }
+        ),
+        "reconciliation moved the mark instead of leaving it for the next start",
+    );
+    assert_eq!(current.body().lanes[0].occupant, None);
+    assert!(
+        controls(&bus, fixture.lane).is_empty(),
+        "a directive standing on the vacant lane would wake it",
+    );
+    assert!(
+        !fixture.root.join("rtk-probes").exists(),
+        "reconciliation reached the vendor launch path",
+    );
+
+    let withdraw = request(&fixture, false);
+    let outcome = set(
+        &bus,
+        &fixture.paths,
+        fixture.epoch,
+        &Seats::new(),
+        &config,
+        &command(&fixture, 12, &withdraw),
+        &withdraw,
+    );
+    assert!(matches!(outcome, Outcome::Reply(_)), "{outcome:?}");
+    assert!(
+        current_residency(&bus, fixture.epoch)
+            .expect("withdrawn renewal reads")
+            .body()
+            .renewals
+            .is_empty(),
+        "a mark no start has consumed stays withdrawable",
+    );
+    super::super::super::steering::remove_lane_surface(
+        &fixture.paths,
+        fixture.root.to_str().expect("fixture root is UTF-8"),
+        fixture.lane,
+    );
+
+    drop(discovery);
+    bus.verify().expect("pending renewal authority verifies");
+    bus.shutdown().expect("pending renewal bus stops");
+}
+
+/// The start is what renews: it seats a fresh successor, records it, and
+/// hands it the predecessor's rehydration context.
+#[test]
+fn the_next_start_consumes_the_pending_replacement() {
+    let fixture = AdvisoryRtkFixture::new();
+    let bus = seeded(&fixture, Some(requested(&fixture, true)), false);
+    let discovery = publish_surface(&fixture);
+    let capabilities = canvas::axum::Capabilities::default();
+    let runtime = fixture.lane_runtime(&bus, &capabilities, &discovery);
+    let mut seats = Seats::new();
+    let request = LaneState {
+        lane: fixture.lane,
+        action: LaneAction::Wake,
+        worktree: None,
+    };
+
+    let outcome = super::super::state(
+        &bus,
+        &fixture.paths,
+        fixture.epoch,
+        &mut seats,
+        &runtime,
+        &steer::Config::default(),
+        &wake_command(&fixture, 11, &request),
+        &request,
+    );
+    assert!(matches!(outcome, Outcome::Reply(_)), "{outcome:?}");
+
+    let current = current_residency(&bus, fixture.epoch).expect("started successor reads");
+    assert!(
+        matches!(
+            &current.body().renewals[0].state,
+            wire::LaneRenewalState::SuccessorStarted { predecessor, successor, .. }
+                if predecessor.occupant == fixture.occupant
+                    && successor.occupant == current.body().lanes[0]
+                        .occupant
+                        .expect("the started lane is occupied")
+        ),
+        "{:?}",
+        current.body().renewals,
+    );
+    assert_eq!(controls(&bus, fixture.lane), [CONTEXT_CONTROL]);
+
+    seats.release_all();
+    super::super::super::steering::remove_lane_surface(
+        &fixture.paths,
+        fixture.root.to_str().expect("fixture root is UTF-8"),
+        fixture.lane,
+    );
+    drop(discovery);
+    bus.verify().expect("consumed renewal authority verifies");
+    bus.shutdown().expect("consumed renewal bus stops");
+}
+
 fn assert_invalid_requests(
     fixture: &AdvisoryRtkFixture,
     bus: &Bus,
@@ -286,6 +411,27 @@ fn command(
         epoch: fixture.epoch,
     })
     .expect("operator renewal command admits")
+}
+
+fn wake_command(
+    fixture: &AdvisoryRtkFixture,
+    id: u64,
+    request: &LaneState,
+) -> wire::AdmittedCommand {
+    Command {
+        v: wire::WireVersion::CURRENT,
+        id: fixture_uuid(id),
+        epoch: fixture.epoch,
+        kind: wire::CommandKind::LaneState,
+        expected: Vec::new(),
+        body: serde_json::to_value(request).expect("lane state request encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch: fixture.epoch,
+    })
+    .expect("operator wake command admits")
 }
 
 fn requested(fixture: &AdvisoryRtkFixture, handoff_pending: bool) -> wire::LaneRenewalRecord {

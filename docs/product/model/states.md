@@ -349,15 +349,22 @@ live control-plane state, not baked into startup.
 flowchart LR
   E["empty"] --> O["occupied"]
   O -->|"merge teams"| F["fused"]
-  O -->|"renewal"| OR["occupied<br/>(successor occupant)"]
+  O -->|"renewal"| OM["occupied<br/>(marked for replacement)"]
+  OM -->|"predecessor's turn ends"| Q
   O -->|"turn or process ends"| Q["vacant<br/>(retained predecessor session)"]
-  Q -->|"renewal without restarting predecessor"| OR
+  Q -->|"renewal"| QM["vacant<br/>(marked for replacement)"]
+  QM -->|"next start of this lane"| OR["occupied<br/>(successor occupant)"]
   F -->|"split team"| OS["occupied"]
   F -->|"move or reorder member"| FR["fused<br/>(new member order)"]
   O -.->|"Close team"| H["hidden<br/>(this browser only)"]
   F -.->|"Close team"| H
   H -.->|"Agents → Open team"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
 ```
+
+**Invariant —** Renewal marks a lane; it never starts an occupant. A live
+predecessor is additionally asked to hand off. The mark survives until the next
+start of that lane consumes it, launching a fresh successor, or until the
+operator withdraws it.
 
 **Invariant —** Fusing is a *team merge*, splitting a *team split*. There is no
 client-only grouping.
