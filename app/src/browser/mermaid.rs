@@ -6,9 +6,11 @@ use std::rc::Rc;
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
 
+mod controls;
 mod frame;
 mod service;
 
+use controls::{use_button, use_viewer};
 use service::{Service, Shared};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -171,6 +173,7 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
     let host = use_node_ref();
     let display = use_state(Display::default);
     let retry = use_state(|| 0_u32);
+    let show_source = use_state_eq(|| false);
     let counter = use_memo((), |()| Cell::new(0_u64));
     let revision = use_memo(
         (props.source.clone(), context.theme.clone(), *retry),
@@ -248,52 +251,39 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
     } else {
         "Diagram rendered".into()
     };
-    let retry_button = use_retry_button(retry);
+    let retry_action = use_callback(retry, |(), retry| {
+        retry.set((**retry).wrapping_add(1));
+    });
+    let retry_button = use_button(retry_action);
+    let toggle_source = use_callback(show_source.clone(), |(), shown| {
+        shown.set(!**shown);
+    });
+    let source_button = use_button(toggle_source);
+    let (preview_button, viewer) = use_viewer(previous.clone());
+    let source_action = if *show_source {
+        "Show diagram preview"
+    } else {
+        "Show diagram source"
+    };
     html! {
-        <div ref={host} class="mermaid-render" data-mermaid-revision={revision.as_ref().clone()} data-mermaid-state={state}>
-            <span class="message-image" title="Diagram preview">
+        <div ref={host} class="mermaid-render" data-mermaid-revision={revision.as_ref().clone()} data-mermaid-state={state} data-source-visible={show_source.to_string()}>
+            <button ref={preview_button} type="button" class="message-image message-image--openable" disabled={previous.is_none()} aria-label="View full-size diagram" title="View full-size diagram">
                 if let Some(image) = previous {
                     <img src={image} alt="Mermaid diagram" data-mosaic-image-state="loaded" />
                 }
                 <span class="message-image-status" role="status" data-mermaid-status={if error.is_some() && !props.final_answer { "pending" } else { state }}>{status}</span>
-            </span>
-            <details class="mermaid-source">
-                <summary>{"Diagram source"}</summary>
-                <div class="mermaid-source-body">
+            </button>
+            <button ref={source_button} type="button" class="mermaid-source-toggle" aria-label={source_action} title={source_action} aria-pressed={show_source.to_string()}>
+                {if *show_source { "×" } else { "</>" }}
+            </button>
+            <div class="mermaid-source-body" hidden={!*show_source}>
                 if let Some(error) = error { <p>{error}</p> }
                 <pre><code>{props.source.clone()}</code></pre>
                 <button ref={retry_button} type="button">{"Retry diagram"}</button>
-                </div>
-            </details>
+            </div>
+            {viewer}
         </div>
     }
-}
-
-#[hook]
-fn use_retry_button(retry: UseStateHandle<u32>) -> NodeRef {
-    let button = use_node_ref();
-    // The button lives in raw-Markdown-owned DOM, not beneath its virtual
-    // portal parent. Bind to its physical node and release on replacement.
-    use_effect_with((button.clone(), *retry), move |(button, _)| {
-        let registration = button.cast::<web_sys::HtmlElement>().and_then(|button| {
-            let callback = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
-                retry.set(retry.wrapping_add(1));
-            });
-            button
-                .add_event_listener_with_callback("click", callback.as_ref().unchecked_ref())
-                .ok()
-                .map(|()| (button, callback))
-        });
-        move || {
-            if let Some((button, callback)) = registration {
-                let _ = button.remove_event_listener_with_callback(
-                    "click",
-                    callback.as_ref().unchecked_ref(),
-                );
-            }
-        }
-    });
-    button
 }
 
 #[derive(Properties, PartialEq)]

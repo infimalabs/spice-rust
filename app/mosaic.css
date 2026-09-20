@@ -276,19 +276,20 @@
   max-height: 100%;
 }
 
-/* The raw slot reserves both preview and source summary before the portal mounts. */
+/* The raw slot reserves the preview before the portal mounts. Controls stay inside it. */
 .mermaid-slot {
   --message-image-size: var(--mosaic-image-size);
   display: block; min-width: 0; margin: .5em 0;
-  height: calc(var(--message-image-size) + 1.5rem);
+  height: var(--message-image-size);
 }
 .mermaid-render { position: relative; height: 100%; }
 .mermaid-render > .message-image,
 .mermaid-slot:empty::before {
   display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
   width: 100%; min-width: 0; height: var(--message-image-size);
-  aspect-ratio: auto; overflow: hidden; vertical-align: top;
+  aspect-ratio: auto; overflow: hidden; vertical-align: top; padding: 0; border: 0;
 }
+.mermaid-render > .message-image:disabled { opacity: 1; cursor: default; }
 .mermaid-slot:empty::before {
   content: "Rendering diagram"; box-sizing: border-box; place-items: center;
   border: 1px solid var(--line); border-radius: 5px;
@@ -309,16 +310,41 @@
 .message-image-status[data-mermaid-status="error"] {
   border-color: color-mix(in srgb, var(--danger) 38%, var(--line)); color: var(--danger);
 }
-.mermaid-source { margin: 0; min-width: 0; }
-.mermaid-source > summary { height: 1.5rem; line-height: 1.5rem; white-space: nowrap; }
+.mermaid-source-toggle {
+  position: absolute; top: 5px; right: 5px; z-index: 2;
+  min-width: 28px; height: 26px; padding: 2px 5px;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: var(--panel); color: var(--text);
+  font: 600 .72rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+.mermaid-source-toggle:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
 /* Source/error inspection replaces the preview; opening it never resizes the floor. */
 .mermaid-source-body {
-  position: absolute; inset: 0 0 1.5rem; z-index: 1;
+  position: absolute; inset: 0; z-index: 1;
   overflow: auto; overscroll-behavior: contain;
   border: 1px solid var(--line); border-radius: 5px;
-  background: var(--panel); padding: 8px;
+  background: var(--panel); padding: 32px 8px 8px;
 }
-.mermaid-render:has(.mermaid-source[open]) > .message-image { visibility: hidden; }
+.mermaid-render[data-source-visible="true"] > .message-image { visibility: hidden; }
+.mermaid-source-body[hidden] { display: none; }
+.mermaid-lightbox {
+  position: fixed; inset: 0; box-sizing: border-box;
+  width: calc(100vw - 32px); height: calc(100vh - 32px);
+  max-width: none; max-height: none; margin: auto; padding: 40px 12px 12px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); color: var(--text);
+}
+.mermaid-lightbox::backdrop { background: rgb(0 0 0 / .7); }
+.mermaid-lightbox > img {
+  display: block; width: 100%; height: 100%; max-width: none; max-height: none;
+  object-fit: contain; background: var(--panel);
+}
+.mermaid-lightbox > button {
+  position: absolute; top: 8px; right: 12px; cursor: pointer;
+}
 
 .mosaic-message-empty {
   padding: 28px 12px;
