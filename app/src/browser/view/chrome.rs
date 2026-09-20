@@ -151,7 +151,7 @@ fn render_canvas_menu(
         (None, true) => "Open Spice Canvas menu - fast mode on",
         (None, false) => "Open Spice Canvas menu",
     };
-    let trigger_label = format!("{trigger_label} - {connection_label}");
+    let trigger_label: AttrValue = format!("{trigger_label} - {connection_label}").into();
     let toggle = Callback::from(move |event: MouseEvent| {
         event.prevent_default();
         menu_open.set(!*menu_open);
