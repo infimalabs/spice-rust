@@ -213,7 +213,8 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 }
 
 /// The configuration overlay a lane writes before launch, stating the
-/// compaction threshold and the language-server disposition this seat runs.
+/// compaction threshold, the language-server disposition, and the todo
+/// reminder disposition this seat runs.
 ///
 /// omp reads `compaction.thresholdTokens` ahead of every percentage or
 /// reserve it would otherwise derive, clamped beneath the model's window.
@@ -225,6 +226,13 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 /// admitted lane declines omp's shared broker. The resident must also disable
 /// external lspmux routing in the child environment; that route is independent
 /// of this overlay. Which servers run stays the worktree's own business.
+///
+/// Todo reminders are off because this seat carries no todo tool. omp's stop
+/// reminder is the one todo path that never asks whether the tool is in the
+/// roster: it counts the items a resumed session still holds, tells the
+/// assistant to finish them or mark them complete, and wakes the turn to do
+/// it. The occupant's plan is the task it holds, and only the allocator
+/// closes that.
 #[must_use]
 pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool) -> String {
     let mut overlay = format!("compaction:\n  thresholdTokens: {auto_compact_threshold_tokens}\n");
@@ -233,6 +241,7 @@ pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool) -> String {
     } else {
         "lsp:\n  enabled: false\n"
     });
+    overlay.push_str("todo:\n  reminders: false\n");
     overlay
 }
 
