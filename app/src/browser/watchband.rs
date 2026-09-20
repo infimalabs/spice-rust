@@ -816,12 +816,7 @@ fn render_agent_composer(
         .iter()
         .any(|target| target.lane == lane_id);
     let broadcast_source_eligible = broadcast_target_eligible && !draft.body.trim().is_empty();
-    let renewal = watchband::agent_renewal_control(
-        &standing.label,
-        occupant.is_some(),
-        authority.send,
-        renewal,
-    );
+    let renewal = watchband::agent_renewal_control(&standing.label, authority.send, renewal);
     let renew = renewal_callback(
         topology_revision,
         team,

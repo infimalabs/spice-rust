@@ -370,6 +370,8 @@ flowchart LR
   C["team created"] --> E["empty"]
   E -->|"agent imported or started"| O["occupied"]
   O -->|"renewal"| OR["occupied<br/>(successor replaces occupant)"]
+  O -->|"turn or process ends"| Q["vacant<br/>(retained predecessor session)"]
+  Q -->|"renewal without restarting predecessor"| OR
   O -->|"team merged"| F["fused"]
   F -->|"team split"| OS["occupied"]
   O -.->|"Close team"| H["hidden<br/>(this browser only)"]
@@ -383,6 +385,10 @@ flowchart LR
    position survive. The team and its shared task policy also remain because
    renewal does not move the lane. Moving a lane to another team subjects it
    to that team's policy; policy never follows the lane across that move.
+- A vacant lane with a retained predecessor session can renew directly into
+   successor handoff. Renewal neither starts nor notifies the predecessor;
+   only the fresh successor is launched. A live predecessor follows the
+   ordinary steering-and-handoff path.
 - A lane names exactly one worktree seat. A team may hold one or many lanes;
    the singular team is the degenerate topology, not a different type.
 - Topology is server truth. The client never mounts a lane from local storage;

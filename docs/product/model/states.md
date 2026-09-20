@@ -350,6 +350,8 @@ flowchart LR
   E["empty"] --> O["occupied"]
   O -->|"merge teams"| F["fused"]
   O -->|"renewal"| OR["occupied<br/>(successor occupant)"]
+  O -->|"turn or process ends"| Q["vacant<br/>(retained predecessor session)"]
+  Q -->|"renewal without restarting predecessor"| OR
   F -->|"split team"| OS["occupied"]
   F -->|"move or reorder member"| FR["fused<br/>(new member order)"]
   O -.->|"Close team"| H["hidden<br/>(this browser only)"]

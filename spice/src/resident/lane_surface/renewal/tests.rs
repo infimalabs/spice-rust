@@ -45,7 +45,7 @@ impl DetachedProcess for RunningProcess {
 #[test]
 fn request_duplicate_and_cancel_keep_one_pre_handoff_transition() {
     let fixture = AdvisoryRtkFixture::new();
-    let bus = seeded(&fixture, None);
+    let bus = seeded(&fixture, None, true);
     let discovery = publish_surface(&fixture);
     let mut seats = Seats::new();
     seats
@@ -73,7 +73,7 @@ fn request_duplicate_and_cancel_keep_one_pre_handoff_transition() {
 #[test]
 fn predecessor_supervisor_failure_advances_requested_renewal_to_handoff() {
     let fixture = AdvisoryRtkFixture::new();
-    let bus = seeded(&fixture, Some(requested(&fixture, false)));
+    let bus = seeded(&fixture, Some(requested(&fixture, false)), true);
 
     supervisor_failed(
         &bus,
@@ -93,6 +93,36 @@ fn predecessor_supervisor_failure_advances_requested_renewal_to_handoff() {
 
     bus.verify().expect("failed predecessor authority verifies");
     bus.shutdown().expect("failed predecessor bus stops");
+}
+
+#[test]
+fn vacant_request_enters_handoff_without_starting_or_notifying_the_predecessor() {
+    let fixture = AdvisoryRtkFixture::new();
+    let bus = seeded(&fixture, None, false);
+    publish_surface(&fixture);
+    let seats = Seats::new();
+    let request = request(&fixture, true);
+    let outcome = set(
+        &bus,
+        &fixture.paths,
+        fixture.epoch,
+        &seats,
+        &steer::Config::default(),
+        &command(&fixture, 10, &request),
+        &request,
+    );
+    assert!(matches!(outcome, Outcome::Reply(_)), "{outcome:?}");
+    let current = current_residency(&bus, fixture.epoch).expect("renewal state reads");
+    assert!(matches!(
+        &current.body().renewals[0].state,
+        wire::LaneRenewalState::HandoffPending { predecessor, team_slot: 0 }
+            if predecessor.occupant == fixture.occupant && predecessor.session == SESSION
+    ));
+    assert_eq!(current.body().lanes[0].occupant, None);
+    assert!(!seats.occupied(fixture.lane));
+    assert!(controls(&bus, fixture.lane).is_empty());
+    bus.verify().expect("vacant renewal authority verifies");
+    bus.shutdown().expect("vacant renewal bus stops");
 }
 
 fn assert_invalid_requests(
@@ -282,7 +312,11 @@ fn requested(fixture: &AdvisoryRtkFixture, handoff_pending: bool) -> wire::LaneR
     }
 }
 
-fn seeded(fixture: &AdvisoryRtkFixture, renewal: Option<wire::LaneRenewalRecord>) -> Bus {
+fn seeded(
+    fixture: &AdvisoryRtkFixture,
+    renewal: Option<wire::LaneRenewalRecord>,
+    occupied: bool,
+) -> Bus {
     let bus = Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
         .expect("fixture bus starts");
     let mut proposal =
@@ -295,9 +329,6 @@ fn seeded(fixture: &AdvisoryRtkFixture, renewal: Option<wire::LaneRenewalRecord>
             FactCause::Root,
         )
         .expect("fixture resident seats");
-    let occupied = renewal
-        .as_ref()
-        .is_none_or(|record| matches!(record.state, wire::LaneRenewalState::Requested { .. }));
     let session = wire::LaneSession {
         lane: fixture.lane,
         occupant: fixture.occupant,

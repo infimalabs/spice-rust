@@ -395,7 +395,9 @@ pub(in crate::resident) fn resume_session(
 
 /// Admit only a session head bound to this exact lane, worktree, vendor,
 /// latest occupant, and selected stream.
-fn validate_session_head(row: &wire::LaneResidency) -> CommandResult<&wire::LaneSession> {
+pub(super) fn validate_session_head(
+    row: &wire::LaneResidency,
+) -> CommandResult<&wire::LaneSession> {
     let session = row.session.as_ref().ok_or_else(|| {
         session_head_refusal(
             "lane::session-authority-missing",

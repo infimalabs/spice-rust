@@ -131,9 +131,17 @@ sequenceDiagram
   participant L as lane
   participant P as predecessor
   participant N as successor
-  L->>P: renewal requested (ordinary steering)
-  P->>P: finishes its turn
-  P->>N: ClaimCarried fact, disposition remains active
+  L->>L: renewal requested
+  alt predecessor occupied
+    L->>P: ordinary handoff steering
+    P->>P: finishes its turn
+  else predecessor vacant with retained session
+    Note over L,P: no predecessor start or notification
+  end
+  L->>N: launch fresh successor
+  opt active claim retained
+    L->>N: ClaimCarried fact, disposition remains active
+  end
   N->>L: occupant swapped
   Note over L: lane history, drafts, and scroll survive
   Note over L,N: team unchanged, so its shared task policy remains
