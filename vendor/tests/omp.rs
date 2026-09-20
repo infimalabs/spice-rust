@@ -92,7 +92,7 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
         "--service-tier",
         "none",
         "--tools",
-        "read,write,edit,glob,grep,todo,web_search",
+        "read,write,edit,glob,grep,web_search",
         "--append-system-prompt",
         &system_prompt,
     ];
@@ -208,6 +208,16 @@ fn the_lanes_shell_is_registered_essential_in_place_of_omps_own_executors() {
         job["parameters"]["properties"]["timeout"]["maximum"],
         omp::SHELL_TIMEOUT_MAX
     );
+}
+
+#[test]
+fn the_occupants_plan_is_the_task_it_holds_rather_than_a_list_only_it_can_read() {
+    for roster in [omp::TOOLS, omp::LSP_TOOLS] {
+        assert!(
+            !roster.split(',').any(|tool| tool == "todo"),
+            "a private plan is one no reviewer can check and one that drifts from the board"
+        );
+    }
 }
 
 #[test]
