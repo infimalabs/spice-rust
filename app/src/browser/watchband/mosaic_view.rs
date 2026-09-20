@@ -10,9 +10,7 @@ pub(super) use history::HistorySender;
 use history::use_history_paging;
 
 mod image_resolution;
-use image_resolution::{
-    use_data_image_open_events, use_element_width, use_image_resolution_events,
-};
+use image_resolution::{use_element_width, use_image_resolution_events};
 
 #[derive(Clone)]
 pub(super) enum ActivityCard {
@@ -530,7 +528,6 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let measurements = use_state_eq(Vec::<ActivityMeasurement>::new);
     let narration_cursor = use_state_eq(|| None::<String>);
     use_image_resolution_events(host.clone(), properties.cards.clone());
-    use_data_image_open_events(host.clone());
     use_activity_measurements(
         host.clone(),
         measurement_width,

@@ -293,10 +293,11 @@ The 30-second response deadline runs **only when the event loop runs**: this is
 not CPU isolation or a hard main-thread timeout.
 Loaded modules render offline; reopening the iframe requires the local appliance.
 
-Diagram previews reserve full-width `cover` slots: 15.75rem media-only, 8.75rem
-mixed. An upper-right button swaps source/error into the slot; no source row.
-Rendering and inspection never resize it or invalidate Mosaic. Activation opens
-an inert SVG image in a fit-to-window modal, closed by Escape, Close, or backdrop.
+Diagrams reserve full-width `cover` slots: 15.75rem media-only, 8.75rem mixed.
+Source/error stays in-place. All images share an inert modal, closed by
+Escape/Close/backdrop without reflow. Copy writes PNG; Download keeps originals,
+including SVG. Exports need data/same-origin access; unavailable/refused actions
+are explained.
 
 Lane/team topology and attribution remain server-owned product invariants.
 Reading, motion, scroll, no-launch behavior, and composer-draft restoration bind

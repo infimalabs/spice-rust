@@ -510,7 +510,6 @@ fn image_preview_html(source: &str, authored_title: &str, alt: &str) -> String {
     } else {
         format!(" title=\"{}\"", escape_html_attribute(authored_title))
     };
-    let openable_data_image = data_image_is_openable(&source);
     let malformed_data_image = data_image_has_malformed_base64(&source);
     let (state, status) = if source.is_empty() || malformed_data_image {
         ("error", "Image unavailable")
@@ -529,17 +528,10 @@ fn image_preview_html(source: &str, authored_title: &str, alt: &str) -> String {
         "{image}<span class=\"message-image-status\" role=\"status\" \
          data-mosaic-image-status=\"{state}\">{status}</span>"
     );
-    if openable_data_image {
+    if !source.is_empty() && !malformed_data_image {
         format!(
-            "<a class=\"message-image message-image--openable\" href=\"{source}\" \
-             target=\"_blank\" rel=\"noopener\" title=\"{action}\" aria-label=\"{action}\" \
-             data-full-size-data-image=\"true\">{preview}</a>"
-        )
-    } else if !source.is_empty() && !is_data_image_source(&source) {
-        format!(
-            "<a class=\"message-image message-image--openable\" href=\"{source}\" \
-             target=\"_blank\" rel=\"noopener\" title=\"{action}\" \
-             aria-label=\"{action}\">{preview}</a>"
+            "<button type=\"button\" class=\"message-image message-image--openable\" \
+             data-image-preview=\"\" title=\"{action}\" aria-label=\"{action}\">{preview}</button>"
         )
     } else {
         format!("<span class=\"message-image\" title=\"Image preview\">{preview}</span>")
@@ -553,26 +545,6 @@ fn data_image_has_malformed_base64(source: &str) -> bool {
             && metadata.ends_with(";base64")
             && !canonical_base64_payload(payload)
     })
-}
-
-fn data_image_is_openable(source: &str) -> bool {
-    source.split_once(',').is_some_and(|(metadata, payload)| {
-        matches!(
-            metadata.to_ascii_lowercase().as_str(),
-            "data:image/png;base64"
-                | "data:image/jpeg;base64"
-                | "data:image/gif;base64"
-                | "data:image/webp;base64"
-        ) && canonical_base64_payload(payload)
-    })
-}
-
-fn is_data_image_source(source: &str) -> bool {
-    source
-        .split_once(',')
-        .map_or(source, |(metadata, _)| metadata)
-        .to_ascii_lowercase()
-        .starts_with("data:image/")
 }
 
 fn canonical_base64_payload(payload: &str) -> bool {
@@ -1354,16 +1326,15 @@ mod tests {
                 "every preview must remain present: {}",
                 rendered.html,
             );
-            assert_eq!(rendered.html.matches("target=\"_blank\"").count(), 3);
-            assert_eq!(rendered.html.matches("rel=\"noopener\"").count(), 3);
+            assert!(!rendered.html.contains("<a "));
         }
     }
 
     #[test]
-    fn unsupported_image_only_sources_share_the_bounded_stack_without_an_action() {
+    fn image_actions_preserve_the_stack_without_admitting_script_urls() {
         let rendered = render_received(
             "![remote](https://example.test/image.png)\n\n\
-             ![unsupported](data:image/svg+xml;base64,PHN2Zz4=)\n\n\
+             ![vector](data:image/svg+xml;base64,PHN2Zz4=)\n\n\
              ![refused](javascript:alert(1))",
         );
 
@@ -1375,19 +1346,19 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(rendered.html.matches("<a class=\"message-image").count(), 1);
+        assert_eq!(rendered.html.matches("<button ").count(), 2);
         assert_eq!(
             rendered
                 .html
                 .matches("<span class=\"message-image\"")
                 .count(),
-            2
+            1
         );
         assert!(!rendered.html.contains("javascript:"));
     }
 
     #[test]
-    fn linked_images_keep_one_full_size_action_without_nested_anchors() {
+    fn linked_images_keep_one_image_action_without_navigation() {
         let image_only = render_received(
             "[![one](https://images.example.test/one.png)](https://links.example.test/one)\n\n\
              [![two](https://images.example.test/two.png)](https://links.example.test/two)",
@@ -1401,16 +1372,17 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(image_only.html.matches("<a ").count(), 2);
+        assert_eq!(image_only.html.matches("<button ").count(), 2);
+        assert!(!image_only.html.contains("<a "));
         assert!(
             image_only
                 .html
-                .contains("href=\"https://images.example.test/one.png\"")
+                .contains("src=\"https://images.example.test/one.png\"")
         );
         assert!(
             image_only
                 .html
-                .contains("href=\"https://images.example.test/two.png\"")
+                .contains("src=\"https://images.example.test/two.png\"")
         );
         assert!(!image_only.html.contains("links.example.test"));
 
@@ -1418,11 +1390,12 @@ mod tests {
             "See [![preview](https://images.example.test/mixed.png)](https://links.example.test/mixed) now.",
         );
         assert!(!mixed.image_only);
-        assert_eq!(mixed.html.matches("<a ").count(), 1);
+        assert_eq!(mixed.html.matches("<button ").count(), 1);
+        assert!(!mixed.html.contains("<a "));
         assert!(
             mixed
                 .html
-                .contains("href=\"https://images.example.test/mixed.png\"")
+                .contains("src=\"https://images.example.test/mixed.png\"")
         );
         assert!(!mixed.html.contains("links.example.test"));
     }
@@ -1441,8 +1414,7 @@ mod tests {
                 .count(),
             1
         );
-        assert_eq!(rendered.html.matches("target=\"_blank\"").count(), 1);
-        assert_eq!(rendered.html.matches("rel=\"noopener\"").count(), 1);
+        assert!(!rendered.html.contains("<a "));
     }
 
     #[test]
@@ -1453,7 +1425,6 @@ mod tests {
         let cached = render_received(&format!("![cached]({OPENABLE_PNG})"));
         assert!(cached.html.contains("data-mosaic-image-state=\"pending\""));
         assert_eq!(cached.html.matches("data-mosaic-image-status=").count(), 1);
-        assert!(cached.html.contains(&format!("href=\"{OPENABLE_PNG}\"")));
 
         let malformed = render_received("![broken](data:image/png;base64,%%%)");
         assert!(malformed.html.contains("data-mosaic-image-state=\"error\""));
