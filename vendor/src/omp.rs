@@ -165,6 +165,8 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
             path: "vendor.omp.config_overlay",
         })?;
     let mut arguments = vec![
+        // RPC mode already disables titles: generating one would spend a model
+        // call on a session no operator scrolls.
         OsString::from("--mode"),
         OsString::from("rpc"),
         // The compaction threshold has no flag and no RPC command; it rides a
@@ -177,8 +179,6 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         // would otherwise hold the turn forever.
         OsString::from("--approval-mode"),
         OsString::from("yolo"),
-        // Title generation spends a model call on a session no operator scrolls.
-        OsString::from("--no-title"),
         OsString::from("--model"),
         OsString::from(launch.model.as_str()),
         OsString::from("--thinking"),
