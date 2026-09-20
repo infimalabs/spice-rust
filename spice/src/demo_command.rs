@@ -754,6 +754,7 @@ fn seed_lanes(journal: &mut journal::Journal, root: &Path) -> DemoResult<()> {
                     occupant: uuid(seed.occupant),
                     epoch,
                     group: 0,
+                    fresh_session: None,
                 },
                 FactCause::Pending(seated),
             )

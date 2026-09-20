@@ -103,6 +103,7 @@ fn declare_session(
                 occupant: seat.occupant,
                 epoch,
                 group,
+                fresh_session: None,
             },
             FactCause::Pending(declared),
         )

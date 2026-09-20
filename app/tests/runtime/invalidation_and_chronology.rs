@@ -354,6 +354,50 @@ fn only_abnormal_typed_lane_endings_project_durable_lifecycle_boundaries() {
     );
 }
 
+#[test]
+fn fresh_starts_create_floors_but_resumes_and_unclassified_starts_do_not() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut live = CanvasRuntime::new(&accepted);
+    let starts = [Some(true), Some(false), Some(true), None]
+        .into_iter()
+        .enumerate()
+        .map(|(index, fresh)| {
+            let mut body = serde_json::json!({
+                "kind": "lane::started", "lane": LANE, "occupant": REQUEST,
+                "epoch": EPOCH, "group": 42,
+            });
+            if let Some(fresh) = fresh {
+                body["fresh_session"] = serde_json::json!(fresh);
+            }
+            envelope(
+                41 + u64::try_from(index).expect("fixture index fits a sequence"),
+                "spice",
+                &format!("lane:{LANE}"),
+                &body,
+            )
+        })
+        .collect::<Vec<_>>();
+    for start in &starts {
+        live.apply_stream_frame(&admitted_stream(&session, &fact_frame(start.clone())));
+    }
+    assert_eq!(
+        live.lifecycle_boundaries()
+            .iter()
+            .map(|boundary| boundary.seq())
+            .collect::<Vec<_>>(),
+        vec![seq(41), seq(43)],
+        "initial creation and renewal separate history; resume and unknown history do not",
+    );
+
+    let page = admitted_stream(&session, &packed_frame("facts", &starts, None, 44));
+    let mut reloaded = CanvasRuntime::new(&accepted);
+    reloaded.apply_stream_frame(&page);
+    assert_eq!(reloaded.lifecycle_boundaries(), live.lifecycle_boundaries());
+    live.apply_stream_frame(&page);
+    assert_eq!(live.lifecycle_boundaries(), reloaded.lifecycle_boundaries());
+}
+
 /// The tile ladder is the predecessor's, and every rung has its own cause.
 ///
 /// The five rungs are read from three independent inputs — queued direction,

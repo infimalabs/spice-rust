@@ -738,6 +738,7 @@ mod tests {
             occupant,
             epoch: uuid(0),
             group: 123,
+            fresh_session: None,
         }
     }
 
@@ -940,6 +941,7 @@ mod tests {
             occupant: uuid(3),
             epoch: uuid(9),
             group: 123,
+            fresh_session: None,
         };
 
         assert_eq!(

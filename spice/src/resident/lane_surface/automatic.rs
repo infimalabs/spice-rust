@@ -53,6 +53,7 @@ pub(super) fn wake(
         Err(outcome) => return typed_outcome(outcome),
     };
     let occupant = new_uuid();
+    let fresh_session = matches!(resume, vendor::Resume::Fresh);
     let launch = match super::super::supervisor::launch(
         paths,
         OccupantLaunchRequest {
@@ -76,6 +77,7 @@ pub(super) fn wake(
         group: launch.group,
         session: launch.session,
         git: launch.git,
+        fresh_session,
     };
     match seats.seat_detached(request.lane, occupant, launch.process) {
         Ok(_) => {}
@@ -233,6 +235,7 @@ fn wake_automatic_with(
     if let Some(renewal) = admitted.renewal.as_ref() {
         super::renewal::prepare(bus, paths, epoch, steering, runtime, renewal)?;
     }
+    let fresh_session = matches!(admitted.resume, vendor::Resume::Fresh);
     let launch = match super::super::supervisor::launch(
         paths,
         OccupantLaunchRequest {
@@ -256,6 +259,7 @@ fn wake_automatic_with(
         group: launch.group,
         session: launch.session,
         git: launch.git,
+        fresh_session,
     };
     if let Err(error) = seats.seat_detached(request.lane, request.occupant, launch.process) {
         return Ok(AutomaticWake::Unstarted(super::super::environment_fault(
@@ -646,6 +650,7 @@ fn prepare_wake_commit(
                 occupant: proven.occupant,
                 epoch,
                 group: proven.group,
+                fresh_session: Some(proven.fresh_session),
             },
             FactCause::Pending(declared),
         )

@@ -725,6 +725,7 @@ fn task_snapshot_indexes_the_newest_claim_per_actor_and_each_occupants_context_a
                 occupant: first,
                 epoch: uuid(COMMAND_ONE),
                 group: 7,
+                fresh_session: None,
             },
             FactCause::Root,
         )

@@ -316,6 +316,7 @@ fn import_facts(
                 occupant: proven.occupant,
                 epoch,
                 group: proven.group,
+                fresh_session: Some(matches!(context.resume, vendor::Resume::Fresh)),
             },
             FactCause::Pending(declared),
         )

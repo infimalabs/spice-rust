@@ -98,6 +98,7 @@ impl Fixture {
                     occupant,
                     epoch,
                     group: 123,
+                    fresh_session: None,
                 },
                 FactCause::Pending(lane_seated),
             )
