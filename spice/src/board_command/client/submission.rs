@@ -3,6 +3,207 @@
 use super::*;
 use base64::Engine as _;
 
+pub(super) fn client_add(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let title = required(matches, "TITLE");
+    let project = matches.get_one::<String>("project").cloned();
+    let description = matches.get_one::<String>("description").cloned();
+    let acceptance = matches
+        .get_many::<String>("acceptance")
+        .into_iter()
+        .flatten()
+        .cloned()
+        .collect();
+    let requirements = match environment_requirements(
+        matches
+            .get_one::<String>("requires-journal-schema")
+            .map(String::as_str),
+        matches
+            .get_one::<String>("requires-trust-grant")
+            .map(String::as_str),
+    ) {
+        Ok(requirements) => requirements,
+        Err(outcome) => return outcome,
+    };
+    let origin = match parse_origin(matches) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
+    submit_task_add(
+        repository,
+        contract,
+        TaskAdd {
+            title,
+            project,
+            description,
+            acceptance,
+            requirements,
+            origin,
+            flow: None,
+            depends: Vec::new(),
+        },
+    )
+}
+
+pub(super) fn client_capture(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let board = match current_board(
+        repository,
+        BoardRead::Tasks {
+            tasks: Vec::new(),
+            dependencies: false,
+            claims: true,
+        },
+    ) {
+        Ok(board) => board,
+        Err(outcome) => return outcome,
+    };
+    if let Err(outcome) = require_no_plan_implementation(&board, "task capture") {
+        return outcome;
+    }
+    let stealing = matches.get_flag("steal");
+    let task = match matches.get_one::<String>("HANDLE") {
+        Some(written) => {
+            if matches.contains_id("title")
+                || matches.contains_id("project")
+                || matches.contains_id("origin")
+            {
+                return refusal(
+                    "task::capture-shape",
+                    Some(written.clone()),
+                    "name either an existing HANDLE or new-task title/project fields",
+                );
+            }
+            match written.parse::<TaskHandle>() {
+                Ok(task) => task,
+                Err(error) => {
+                    return refusal(
+                        "task::handle-invalid",
+                        Some(written.clone()),
+                        &error.to_string(),
+                    );
+                }
+            }
+        }
+        None => match capture_new_task(repository, matches, stealing) {
+            Ok(task) => task,
+            Err(outcome) => return outcome,
+        },
+    };
+    let read = BoardRead::Tasks {
+        tasks: vec![
+            task.born()
+                .expect("a parsed handle carries a canonical task stamp"),
+        ],
+        dependencies: false,
+        claims: true,
+    };
+    mutate_from_board(repository, contract, read, |board| {
+        require_no_plan_implementation(&board, "task capture")?;
+        let heads = task_heads(&board, &task)?;
+        let (lane, occupant) = actor_seat(&board)?;
+        let rule = if stealing { "steal" } else { "capture" }
+            .parse::<Name>()
+            .expect("possession rules are wire names");
+        Ok((
+            CommandKind::ClaimWin,
+            vec![
+                statement_witness(heads),
+                workflow_witness(heads),
+                claim_witness(heads),
+                Witness::Eligibility { rule: rule.clone() },
+                residency_witness(&board, lane, occupant),
+            ],
+            serde_json::to_value(ClaimWin {
+                rule,
+                recovery: None,
+            })
+            .expect("typed intent encodes"),
+        ))
+    })
+}
+
+fn capture_new_task(
+    repository: &Repository,
+    matches: &ArgMatches,
+    stealing: bool,
+) -> Result<TaskHandle, Outcome<CommandAnswer>> {
+    if stealing {
+        return Err(refusal(
+            "task::steal-handle-missing",
+            None,
+            "name the HANDLE of the claim to steal; a new task has no holder",
+        ));
+    }
+    let Some(project) = matches.get_one::<String>("project").cloned() else {
+        return Err(refusal(
+            "task::capture-project-missing",
+            None,
+            "supply --project when task capture mints a new task",
+        ));
+    };
+    let candidate = spice::task_git::capture(repository).map_err(task_git_outcome)?;
+    let title = matches
+        .get_one::<String>("title")
+        .cloned()
+        .unwrap_or(candidate.subject);
+    let origin = parse_origin(matches)?;
+    let add_contract =
+        crate::cli::contract(&["task", "add"]).expect("task add contract is registered");
+    match submit_task_add(
+        repository,
+        add_contract,
+        TaskAdd {
+            title,
+            project: Some(project),
+            description: None,
+            acceptance: Vec::new(),
+            requirements: wire::EnvironmentRequirements::default(),
+            origin,
+            flow: None,
+            depends: Vec::new(),
+        },
+    ) {
+        Outcome::Reply(Reply {
+            body: CommandAnswer::Task(answer),
+            ..
+        }) => Ok(answer.task),
+        Outcome::Reply(_) => Err(protocol_fault(
+            "task::capture-add-answer",
+            "task add returned another answer shape",
+        )),
+        Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
+        Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
+    }
+}
+
+pub(super) fn client_oops(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    let text = required(matches, "TEXT");
+    let origin = match parse_origin(matches) {
+        Ok(origin) => origin,
+        Err(outcome) => return outcome,
+    };
+    submit_oops_add(
+        repository,
+        contract,
+        TaskOopsAdd {
+            title: text.clone(),
+            description: text,
+            origin,
+        },
+    )
+}
+
 type ClientMapping = (CommandKind, Vec<Witness>, serde_json::Value);
 
 pub(super) fn submit_oops_add(

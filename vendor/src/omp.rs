@@ -6,6 +6,8 @@
 //! the request bytes the supervisor writes once stdin exists, and steering
 //! is interjected the same way for as long as the child lives.
 
+pub mod frame;
+
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;

@@ -396,3 +396,10 @@ fn partials_are_restated_by_the_frames_that_end_them_and_decode_to_nothing() {
         "a torn record is kept"
     );
 }
+
+#[test]
+fn an_unreassembled_transport_envelope_is_residue_not_silent_content() {
+    let record = br#"{"type":"rpc_chunk","chunkId":"one","index":0,"count":5,"byteLength":1048577,"data":"eA=="}"#;
+    assert!(matches!(decoded(record), Decoded::Residue(_)));
+    assert!(!restated(Dialect::Omp, record));
+}

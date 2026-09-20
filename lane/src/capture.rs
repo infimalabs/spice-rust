@@ -1,9 +1,10 @@
 //! Durable selected-record capture beneath one supervised lane occupant.
 
+use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use journal::crossing::CanonicalUuid;
@@ -14,6 +15,9 @@ use sill::{
 };
 use tape::Tape;
 use vendor::{Record, RecordStream};
+
+#[cfg(test)]
+mod tests;
 
 /// Allow two durable tee syncs and scheduler contention without treating the
 /// process-exit drain window as a per-record I/O budget. Thirty seconds is a
@@ -120,6 +124,8 @@ pub fn observation(
         RecordStream::Stdout => OutputStream::Stdout,
         RecordStream::Stderr => OutputStream::Stderr,
     };
+    let transport = (record.dialect() == listen::Dialect::Omp)
+        .then(|| Mutex::new(vendor::omp::frame::FrameDecoder::default()));
     Observation::new(
         stream,
         frame_limit,
@@ -132,6 +138,7 @@ pub fn observation(
             tape,
             reporter,
             stage: AtomicU8::new(DeliveryStage::Decode as u8),
+            transport,
         }),
     )
 }
@@ -150,13 +157,75 @@ struct LaneObserver {
     tape: Tape,
     reporter: Arc<dyn CaptureReporter>,
     stage: AtomicU8,
+    transport: Option<Mutex<vendor::omp::frame::FrameDecoder>>,
 }
 
 impl RecordObserver for LaneObserver {
     fn observe(&self, observed: ObservedRecord<'_>) -> Result<(), ObserveError> {
+        self.receive(observed.bytes(), observed.boundary())
+    }
+
+    fn finish(&self) -> Result<(), ObserveError> {
+        if let Some(transport) = &self.transport {
+            transport
+                .lock()
+                .map_err(|_| ObserveError::new("OMP transport lock poisoned"))?
+                .finish()
+                .map_err(|error| ObserveError::new(error.to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn stage(&self) -> &'static str {
+        match self.stage.load(Ordering::Relaxed) {
+            stage if stage == DeliveryStage::Tee as u8 => "tee sync",
+            stage if stage == DeliveryStage::Decode as u8 => "decode",
+            _ => self.reporter.stage(),
+        }
+    }
+
+    fn failed(&self, failure: &ObservationFailure) {
+        self.reporter.failed(CaptureFailure {
+            lane: self.lane,
+            occupant: self.occupant,
+            failure: failure.clone(),
+        });
+    }
+
+    fn exited(&self) {
+        self.reporter.exited(CaptureExit {
+            lane: self.lane,
+            occupant: self.occupant,
+        });
+    }
+}
+
+impl LaneObserver {
+    fn receive(&self, bytes: &[u8], boundary: RecordBoundary) -> Result<(), ObserveError> {
         self.stage
             .store(DeliveryStage::Decode as u8, Ordering::Relaxed);
-        let bytes = observed.bytes();
+        let bytes = if let Some(transport) = &self.transport {
+            let Some(bytes) = transport
+                .lock()
+                .map_err(|_| ObserveError::new("OMP transport lock poisoned"))?
+                .push(bytes)
+                .map_err(|error| ObserveError::new(error.to_string()))?
+            else {
+                return Ok(());
+            };
+            bytes
+        } else {
+            Cow::Borrowed(bytes)
+        };
+        let boundary = if matches!(bytes, Cow::Owned(_)) {
+            RecordBoundary::Complete
+        } else {
+            boundary
+        };
+        self.capture(&bytes, boundary)
+    }
+
+    fn capture(&self, bytes: &[u8], boundary: RecordBoundary) -> Result<(), ObserveError> {
         if self.record.restated(self.record.stream(), bytes) {
             // What this partial carries arrives again, whole, in the frame
             // that ends it; keeping every partial grows the tape by the
@@ -169,7 +238,7 @@ impl RecordObserver for LaneObserver {
             .tape
             .tee(bytes)
             .map_err(|error| ObserveError::new(format!("tape refused record: {error}")))?;
-        if observed.boundary() == RecordBoundary::Truncated {
+        if boundary == RecordBoundary::Truncated {
             // A truncated head carries no newline of its own; delimiting it on
             // the tape keeps every later record newline-addressable.
             self.tape
@@ -194,34 +263,11 @@ impl RecordObserver for LaneObserver {
                 lane: self.lane,
                 occupant: self.occupant,
                 stream: self.record.stream(),
-                boundary: observed.boundary(),
+                boundary,
                 locus,
                 declaration,
                 decoded,
             })
             .map_err(|error| ObserveError::new(format!("record reporter refused: {error}")))
-    }
-
-    fn stage(&self) -> &'static str {
-        match self.stage.load(Ordering::Relaxed) {
-            stage if stage == DeliveryStage::Tee as u8 => "tee sync",
-            stage if stage == DeliveryStage::Decode as u8 => "decode",
-            _ => self.reporter.stage(),
-        }
-    }
-
-    fn failed(&self, failure: &ObservationFailure) {
-        self.reporter.failed(CaptureFailure {
-            lane: self.lane,
-            occupant: self.occupant,
-            failure: failure.clone(),
-        });
-    }
-
-    fn exited(&self) {
-        self.reporter.exited(CaptureExit {
-            lane: self.lane,
-            occupant: self.occupant,
-        });
     }
 }
