@@ -248,73 +248,49 @@ Authorities: [`spice/src/extension.rs`](../../spice/src/extension.rs),
 
 ## Canvas and transport
 
-Rust/WASM owns the production Canvas client. Optional JavaScript renderer assets
-are not a second client. `wire` owns the complete protocol vocabulary; the
-browser imports its closed DTOs and the resident serves immutable app
-generations. One authenticated, epoch-bound stream socket carries bounded pages
-and retention with one correlation identity per request. Explicit reconnect
-pacing and a liveness probe turn a half-open connection into the ordinary
-reconnect path.
+Rust/WASM owns Canvas; optional JavaScript renderer assets are not a second
+client. `wire` owns its DTOs. An authenticated, epoch-bound socket carries
+bounded pages and retention with per-request correlation. Reconnect pacing and
+a liveness probe recover half-open connections. App generations are immutable.
 
-Every generation retains the required eight shell files. Optional renderer
-sources under `app/renderer` use the closed `renderer-NNN` filename and media-type
-vocabulary in [`wire/src/manifest/renderer.rs`](../../wire/src/manifest/renderer.rs).
-The build includes those sources in its identity and declares their exact byte
-digests in the already-owned HTML shell. The declaration is bounded to 512 files
-and 64 MiB; an absent declaration means no renderer files. Build, distribution,
-package admission, and serving reject undeclared, missing, mismatched, or
-non-regular members.
+Generations contain eight shell files and optional `app/renderer` members using
+the closed vocabulary in [`wire/src/manifest/renderer.rs`](../../wire/src/manifest/renderer.rs).
+Their HTML inventory carries exact byte digests and participates in build
+identity, bounded to 512 files/64 MiB; absence means no renderer files.
+Admission rejects undeclared, missing, mismatched, or non-regular members.
+Generation-qualified renderer routes alone admit origin `null`; child documents
+have restrictive CSP and hashed owned import maps. Parent CSP and Host/origin
+checks stay unchanged. Publication retains each prior generation's actual
+receipt-owned members, not the current generation's membership.
 
-Renderer files use the existing generation-qualified app routes. Their documents
-have a separate restrictive CSP, with an exact hash for any owned import map;
-only renderer responses admit the opaque sandbox origin `null`. Host checks and
-the parent app's CSP and origin policy remain unchanged. Publication retains
-each prior generation's actual receipt-owned files rather than imposing the
-current generation's membership. Receipt fields, versions, and apply/rollback
-machinery are unchanged.
+Mermaid is the full 12.0.0 ESM release, not Tiny: 105 unchanged upstream modules
+plus the owned `renderer-000.html` import map and `renderer-000.mjs` bridge.
+[`renderer-000.txt`](../../app/renderer/renderer-000.txt) records tarball integrity,
+original members, renamed-file checksums, licenses, and source revisions.
+Reproduction extracts verified members to their recorded filenames and aliases
+each original `dist/` path and basename in the import map. Builds use checked-in
+bytes only; there are no runtime CDN/package requests. Math uses native MathML
+and system fonts.
 
-The renderer payload is the full Mermaid 12.0.0 minified ESM distribution, not
-Tiny. `renderer-000.html` hosts the opaque renderer and its exact import map;
-`renderer-000.mjs` is the bridge. The 105 upstream modules are copied unchanged
-to `renderer-001.mjs` through `renderer-105.mjs`. The import map preserves their
-original relative specifiers without rewriting vendor code. No source maps,
-development modules, runtime package fetches, or CDN dependencies are shipped.
-Native MathML and system fonts need no additional font or stylesheet payload.
-Loading the ordinary Canvas shell does not load or initialize Mermaid.
+[`app/src/browser/mermaid.rs`](../../app/src/browser/mermaid.rs) owns one lazy,
+measurable, offscreen `allow-scripts` sandbox pinned to the **loaded page's**
+generation. It observes Canvas's existing effective theme. Protocol v1 admits
+only the expected window, origin, generation, channel, request ID, revision, and
+theme. The child uses strict security, locks host configuration, never invokes
+click bindings, normalizes SVG namespaces, and clears temporary render nodes.
+The parent admits at most 8 MiB of UTF-8 SVG and decodes it as a base64 data image;
+SVG nodes and styles never enter the parent DOM.
 
-[`app/renderer/renderer-000.txt`](../../app/renderer/renderer-000.txt) records the
-upstream tarball URLs, versions, SHA-512 integrity values, original member names,
-and SHA-256 checksums of the renamed files. It also identifies the 55
-package/version license inventories, their repository/source revisions, and
-the 56 verbatim license files. The bundled DOMPurify is included, not resolved
-again at build time. ELK is distributed under EPL-2.0; its source repository and
-revision are recorded with its license. To reproduce the vendored bytes, verify
-each recorded tarball's integrity, extract each named member to its recorded
-filename, and check its SHA-256. The fastdom `README.md#License` member denotes
-the complete section beginning with `## License`. Recreate import-map aliases
-from each module's original path below `dist/` and its basename to the recorded
-filename. Normal `spice dev xtask -- app` builds entirely from these checked-in
-inputs; no dependency resolution occurs.
-
-The child protocol is version 1. `ready` carries the generation; `render`,
-`rendered`, and `error` carry generation, request ID, channel, revision, and
-theme. IDs are 1–64 lowercase ASCII letters, digits, or hyphens; revisions are
-nonnegative safe integers; themes are `light` or `dark`. The child accepts only
-its exact parent window and origin, admits at most 50,000 UTF-16 source units,
-and returns at most 8 MiB of UTF-8 SVG or 500 characters of error. It renders
-serially with strict Mermaid security and host-controlled security/theme
-configuration. XML namespace normalization occurs only inside the opaque
-renderer. Consumers must validate the correlated reply from that frame's
-`null` origin and use the SVG as image bytes, never parent DOM markup. This
-protocol does not claim a hard CPU timeout.
-
-The production packaging smoke measured 5,674,647 raw bytes across 164 renderer
-files, or 1,689,949 bytes summed after per-file gzip compression. A cold plain
-flowchart loaded 31 renderer files totaling 740,706 gzip bytes (723.3 KiB),
-including the child document and bridge. The earlier full-Mermaid observation
-was 737,130 bytes (719.9 KiB): the packaged path adds 3,576 bytes (3.5 KiB).
-These are compressed-body sums, not measured network transfer or release
-archive size. Math loading is additional and was measured separately.
+Source is capped at 50,000 UTF-16 units; errors at 500 characters. Rendering is
+serial, identical requests are shared, and pending revisions coalesce over
+80 ms. The queue holds 16 jobs/1 MiB of source, with 64 pending subscribers.
+The LRU holds 32 source/theme/generation entries and 16 MiB of source plus
+encoded images. Superseded/detached cards receive no late repaint. Card-owned
+slots keep the shared Markdown sanitizer and ordinary code behavior intact.
+Failures retain source, the last valid same-theme preview, and explicit retry.
+Teardown removes listeners/frame, cancels decodes, and clears queue/cache state.
+The 30-second response deadline runs **only when the event loop runs**: this is
+not CPU isolation or a hard main-thread timeout.
 
 Lane/team topology and attribution remain server-owned product invariants.
 Reading, motion, scroll, no-launch behavior, and composer-draft restoration bind

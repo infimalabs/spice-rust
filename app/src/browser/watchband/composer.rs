@@ -250,7 +250,7 @@ fn render_agent_message_card(
             if is_boundary {
                 {render_agent_boundary(message, &footer_label)}
             } else {
-                <div class="message-body markdown-body">{rendered_html}</div>
+                {rendered_html}
                 {render_agent_message_media(unlinked_media, media_description.as_deref())}
                 {render_agent_message_footer(
                     message,
@@ -334,7 +334,13 @@ fn agent_message_presentation<'a>(
         footer_label,
         is_boundary,
         shown_text,
-        rendered_html: Html::from_html_unchecked(AttrValue::from(rendered_markdown.html)),
+        rendered_html: html! {
+            <super::super::mermaid::MarkdownBody
+                html={AttrValue::from(rendered_markdown.html)}
+                sources={Rc::new(rendered_markdown.diagrams.into_iter().map(AttrValue::from).collect::<Vec<_>>())}
+                final_answer={message.final_answer}
+            />
+        },
         unlinked_media,
         media_description,
         image_only,

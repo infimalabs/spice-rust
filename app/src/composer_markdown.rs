@@ -11,11 +11,13 @@ use wire::Media;
 
 use crate::watchband;
 
+mod diagrams;
 mod taste_quotes;
 
 pub(crate) struct RenderedMarkdown {
     pub(crate) html: String,
     pub(crate) image_only: bool,
+    pub(crate) diagrams: Vec<String>,
 }
 
 /// Render received text through the one sanitized Markdown path used by cards.
@@ -102,6 +104,7 @@ fn render_received_with_classifications(
         .map(sanitize_markdown_event)
         .collect::<Vec<_>>();
     let events = coalesce_text_events(events);
+    let (events, diagrams) = diagrams::extract(events);
     let image_only = markdown_is_image_only(&events);
     let mut code_block = false;
     let mut block_quote_depth = 0usize;
@@ -130,7 +133,11 @@ fn render_received_with_classifications(
         });
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events);
-    RenderedMarkdown { html, image_only }
+    RenderedMarkdown {
+        html,
+        image_only,
+        diagrams,
+    }
 }
 
 fn coalesce_text_events(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>> {
@@ -1298,6 +1305,10 @@ mod tests {
         let rendered = render_received("`APP-a1` and APP-a1.\n\n```text\nCONTROL-1kKbC3j4\n```");
 
         assert!(!rendered.html.contains("message-task-chip"));
+        assert!(
+            rendered.diagrams.is_empty(),
+            "ordinary code must not request diagram rendering"
+        );
         assert!(rendered.html.contains("<code>APP-a1</code> and APP-a1."));
         assert!(rendered.html.contains("CONTROL-1kKbC3j4"));
     }

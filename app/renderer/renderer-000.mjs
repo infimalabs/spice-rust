@@ -19,6 +19,8 @@ const secure = [
 ];
 let busy = false;
 let serial = 0;
+const renderHost = document.createElement('div');
+document.body.appendChild(renderHost);
 
 function isRequest(data) {
   return data && data.type === 'render' && data.protocol === protocol
@@ -55,7 +57,7 @@ addEventListener('message', async event => {
       arrowMarkerAbsolute: false,
       secure,
     });
-    const rendered = await mermaid.render(`spice-diagram-${++serial}`, source);
+    const rendered = await mermaid.render(`spice-diagram-${++serial}`, source, renderHost);
     // Mermaid serializes HTML namespaces. The opaque browser context repairs
     // them before XML serialization so foreignObject and native MathML survive.
     const inert = new DOMParser().parseFromString(rendered.svg, 'text/html');
@@ -69,6 +71,7 @@ addEventListener('message', async event => {
   } catch (error) {
     reply({ type: 'error', error: String(error).slice(0, 500) });
   } finally {
+    renderHost.replaceChildren();
     busy = false;
   }
 });
