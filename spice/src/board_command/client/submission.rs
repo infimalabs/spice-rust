@@ -501,7 +501,7 @@ where
         &BoardTask,
     ) -> Result<ClientMapping, Outcome<CommandAnswer>>,
 {
-    let (task, read) = match mutation_read(matches) {
+    let (task, read) = match mutation_read(contract, matches) {
         Ok(read) => read,
         Err(outcome) => return outcome,
     };
@@ -559,7 +559,8 @@ pub(crate) fn current_board(
 
 /// Read only the mutation's named identities and required graph context.
 /// New followups still need the complete retained birth-stamp inventory.
-pub(super) fn mutation_read(
+pub(in crate::board_command) fn mutation_read(
+    contract: &Contract,
     matches: &ArgMatches,
 ) -> Result<(Option<TaskHandle>, BoardRead), Outcome<CommandAnswer>> {
     let task = matches
@@ -589,7 +590,8 @@ pub(super) fn mutation_read(
                 .expect("a parsed handle carries a canonical task stamp")
         })
         .collect();
-    let mut dependencies = false;
+    // Plan progress witnesses inspect prerequisite heads, including settled ones.
+    let mut dependencies = matches!(contract.path, ["task", "done" | "review"]);
     for argument in ["AFTER", "followup"] {
         for written in matches
             .try_get_many::<String>(argument)

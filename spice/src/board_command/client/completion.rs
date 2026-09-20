@@ -6,7 +6,7 @@ pub(super) fn client_done(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let (requested_task, read) = match submission::mutation_read(matches) {
+    let (requested_task, read) = match mutation_read(contract, matches) {
         Ok(read) => read,
         Err(outcome) => return outcome,
     };

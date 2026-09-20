@@ -95,6 +95,7 @@ pub(super) use recovery::{RecoveryBoardState, recovery_board_state, recovery_pre
 mod completion;
 use completion::{client_done, client_review};
 mod submission;
+pub(super) use submission::mutation_read;
 use submission::{
     artifact_operation_failure, mutate_from_board, mutate_task, mutate_task_from_board,
     repository_state_failure,
@@ -262,7 +263,7 @@ fn client_reclaim(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let (task, read) = match submission::mutation_read(matches) {
+    let (task, read) = match mutation_read(contract, matches) {
         Ok(read) => read,
         Err(outcome) => return outcome,
     };
