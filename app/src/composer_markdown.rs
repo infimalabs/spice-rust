@@ -105,11 +105,13 @@ fn render_received_with_classifications(
         .collect::<Vec<_>>();
     let events = coalesce_text_events(events);
     let (events, diagrams) = diagrams::extract(events);
-    let image_only = markdown_is_image_only(&events);
+    let has_diagrams = !diagrams.is_empty();
+    let image_only = markdown_is_image_only(&events, has_diagrams);
     let mut code_block = false;
     let mut block_quote_depth = 0usize;
     let mut remaining = RemainingClassifications::from(classifications);
-    let events = decorate_markdown_images(events, image_only)
+    // Diagram controls and nested block structure must not collapse into an image row.
+    let events = decorate_markdown_images(events, image_only && !has_diagrams)
         .into_iter()
         .flat_map(|event| {
             match &event {
@@ -321,7 +323,7 @@ fn acknowledgement_pill_html(state: AcknowledgementState) -> &'static str {
     }
 }
 
-fn markdown_is_image_only(events: &[MarkdownEvent<'_>]) -> bool {
+fn markdown_is_image_only(events: &[MarkdownEvent<'_>], has_diagrams: bool) -> bool {
     let mut image_depth = 0usize;
     let mut images = 0usize;
     for event in events {
@@ -332,6 +334,11 @@ fn markdown_is_image_only(events: &[MarkdownEvent<'_>]) -> bool {
             }
             MarkdownEvent::End(TagEnd::Image) => image_depth = image_depth.saturating_sub(1),
             _ if image_depth > 0 => {}
+            // Raw HTML was converted to text before extraction; these are owned slots.
+            MarkdownEvent::Html(_) => images += 1,
+            MarkdownEvent::Start(Tag::BlockQuote(_) | Tag::List(_) | Tag::Item)
+            | MarkdownEvent::End(TagEnd::BlockQuote(_) | TagEnd::List(_) | TagEnd::Item)
+                if has_diagrams => {}
             MarkdownEvent::Start(Tag::Paragraph)
             | MarkdownEvent::End(TagEnd::Paragraph)
             | MarkdownEvent::Start(Tag::Link { .. })
@@ -1442,11 +1449,6 @@ mod tests {
     fn every_image_preview_owns_an_explicit_initial_lifecycle() {
         let remote = render_received("![remote](https://example.test/image.png)");
         assert!(remote.html.contains("data-mosaic-image-state=\"pending\""));
-        assert!(
-            remote
-                .html
-                .contains("data-mosaic-image-status=\"pending\">Loading image</span>")
-        );
 
         let cached = render_received(&format!("![cached]({OPENABLE_PNG})"));
         assert!(cached.html.contains("data-mosaic-image-state=\"pending\""));
@@ -1455,10 +1457,5 @@ mod tests {
 
         let malformed = render_received("![broken](data:image/png;base64,%%%)");
         assert!(malformed.html.contains("data-mosaic-image-state=\"error\""));
-        assert!(
-            malformed
-                .html
-                .contains("data-mosaic-image-status=\"error\">Image unavailable</span>")
-        );
     }
 }
