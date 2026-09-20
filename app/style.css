@@ -268,7 +268,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 .agent-console-heading h1,
-.seat-panel-heading h2,
 .conversation-heading h2 { margin: 0; }
 
 .agent-console-heading h1 { margin-top: 3px; font-size: 1.65rem; }
@@ -555,34 +554,39 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 .seat-panel {
+  container-type: inline-size;
   min-width: 0;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 7px;
   background: var(--control-surface-soft);
 }
-.seat-panel-heading h2 { font-size: .8rem; }
 .seat-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: fit-content(8rem) minmax(0, 1fr);
   gap: 6px 10px;
-  margin-top: 8px;
 }
 .seat-form label {
   display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
+  grid-column: span 2;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: 6px;
   min-width: 0;
   color: var(--muted);
   font-size: .68rem;
   font-weight: 650;
 }
-.seat-form label > span { white-space: nowrap; }
+.seat-form label > span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-align: right;
+  text-overflow: ellipsis;
+}
 .seat-form input { width: 100%; min-width: 0; height: 28px; padding: 4px 6px; background: var(--control); }
 .seat-form button {
   grid-column: 1 / -1;
-  justify-self: start;
+  justify-self: end;
   min-height: 29px;
   font-size: .7rem;
   background: var(--accent);
@@ -590,6 +594,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   color: #fff;
 }
 .seat-form .form-refusal { grid-column: 1 / -1; min-width: 0; margin: 0; }
+
+@container (min-width: 32rem) {
+  .seat-form {
+    grid-template-columns: repeat(2, fit-content(8rem) minmax(0, 1fr));
+  }
+}
 
 /* Why a submission was refused. Rendered only while one is outstanding, so
    the form never reserves space for a sentence it is not showing. */

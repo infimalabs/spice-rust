@@ -253,6 +253,12 @@ client. `wire` owns its DTOs. An authenticated, epoch-bound socket carries
 bounded pages and retention with per-request correlation. Reconnect pacing and
 a liveness probe recover half-open connections. App generations are immutable.
 
+The Info seating form has one upper-right submit action. Label/control pairs
+share intrinsic grid tracks, with right-aligned labels capped at `8rem` and
+single-line ellipsis; the full label remains accessible and available on hover.
+Two pairs fit per row at a panel content width of `32rem` or more; narrower
+panels use one pair per row without changing submission or draft state.
+
 Generations contain eight shell files and optional `app/renderer` members using
 the closed vocabulary in [`wire/src/manifest/renderer.rs`](../../wire/src/manifest/renderer.rs).
 Their HTML inventory carries exact byte digests and participates in build
