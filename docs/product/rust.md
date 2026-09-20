@@ -99,6 +99,26 @@ Authorities: [`spice/src/session_command.rs`](../../spice/src/session_command.rs
 [`wire/src/intent/task.rs`](../../wire/src/intent/task.rs), and
 [`spice/src/repository_tests.rs`](../../spice/src/repository_tests.rs).
 
+OMP capture separates physical RPC frames from durable logical records.
+The vendor decoder reassembles ordered `rpc_chunk` envelopes before lane
+capture applies restatement filtering, appends to tape, or admits a session
+declaration. Physical frames remain bounded to 1 MiB; one assembly admits at
+most 256 chunks of 256 KiB and 64 MiB of original logical JSON. Capture adds
+one newline without reserializing the JSON, so live decoding and replay share
+the same bytes and locus. Unchunked records retain their original bytes.
+
+Invalid metadata, sequence identity/order, canonical base64, payload lengths,
+UTF-8, or logical JSON refuse capture. An incomplete sequence at EOF also
+refuses: SILL delivers stream finalization in order through the same bounded
+observer worker and failure path as records, including newline-terminated
+streams. Chunk envelopes presented directly to the logical decoder are
+accounted residue, not silent content. Reassembly support itself does not
+negotiate a protocol version.
+
+Authorities: [`vendor/src/omp/frame.rs`](../../vendor/src/omp/frame.rs),
+[`lane/src/capture.rs`](../../lane/src/capture.rs), and
+[`sill/src/spawn/capture.rs`](../../sill/src/spawn/capture.rs).
+
 ## Authored task documents
 
 The Rust `doc` command classifies without an external family context, so its

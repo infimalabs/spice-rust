@@ -85,9 +85,12 @@ pub(super) struct FailureContext {
 }
 
 #[derive(Debug)]
-struct Frame {
-    bytes: Vec<u8>,
-    boundary: RecordBoundary,
+enum Frame {
+    Record {
+        bytes: Vec<u8>,
+        boundary: RecordBoundary,
+    },
+    End,
 }
 
 pub(super) struct CaptureWorker {
@@ -397,16 +400,21 @@ impl SelectedFramer {
     }
 
     fn finish(&mut self) {
-        if !self.record.is_empty() {
-            let _accepted = self.send(RecordBoundary::Terminal);
+        if !self.record.is_empty() && !self.send(RecordBoundary::Terminal) {
+            return;
         }
+        let _accepted = self.submit(Frame::End);
     }
 
     fn send(&mut self, boundary: RecordBoundary) -> bool {
-        let mut frame = Frame {
+        let frame = Frame::Record {
             bytes: std::mem::take(&mut self.record),
             boundary,
         };
+        self.submit(frame)
+    }
+
+    fn submit(&self, mut frame: Frame) -> bool {
         let started = Instant::now();
         loop {
             match self.sender.try_send(frame) {
@@ -472,8 +480,11 @@ fn start_observer_worker(receiver: mpsc::Receiver<Frame>, worker: ObserverWorker
     let callback_observer = Arc::clone(&observer);
     std::thread::spawn(move || {
         for frame in callbacks {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                callback_observer.observe(ObservedRecord::new(&frame.bytes, frame.boundary))
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match frame {
+                Frame::Record { bytes, boundary } => {
+                    callback_observer.observe(ObservedRecord::new(&bytes, boundary))
+                }
+                Frame::End => callback_observer.finish(),
             }));
             let result = match result {
                 Ok(Ok(())) => ObserverResult::Accepted,

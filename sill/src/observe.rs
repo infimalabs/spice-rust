@@ -187,6 +187,17 @@ pub trait RecordObserver: Send + Sync + 'static {
     /// Returning an error terminates the observed process group.
     fn observe(&self, record: ObservedRecord<'_>) -> Result<(), ObserveError>;
 
+    /// Finish the selected stream after all records, including a terminal tail.
+    /// Runs on the same bounded worker as [`Self::observe`], even for empty
+    /// streams and streams ending at a newline.
+    ///
+    /// # Errors
+    ///
+    /// A refusal terminates observation through the same path as a record error.
+    fn finish(&self) -> Result<(), ObserveError> {
+        Ok(())
+    }
+
     /// Name the active sink stage without waiting on the sink's own locks.
     /// Called only to diagnose exhausted delivery bounds.
     fn stage(&self) -> &'static str {

@@ -51,7 +51,6 @@ const SILENT: &[&str] = &[
     "host_uri_request",
     "host_uri_cancel",
     "config_update",
-    "rpc_chunk",
     // Session file entries.
     "title",
     "model_change",

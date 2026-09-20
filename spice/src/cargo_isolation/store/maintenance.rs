@@ -3,6 +3,96 @@ use std::time::SystemTime;
 
 use super::*;
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct Inspection {
+    store: String,
+    generations: usize,
+    packages: usize,
+    homes: usize,
+    logical_bytes: u64,
+    physical_bytes: u64,
+    issues: Vec<String>,
+}
+
+impl Inspection {
+    #[must_use]
+    pub fn store(&self) -> &str {
+        &self.store
+    }
+
+    #[must_use]
+    pub const fn generations(&self) -> usize {
+        self.generations
+    }
+
+    #[must_use]
+    pub const fn packages(&self) -> usize {
+        self.packages
+    }
+
+    #[must_use]
+    pub const fn homes(&self) -> usize {
+        self.homes
+    }
+
+    #[must_use]
+    pub const fn logical_bytes(&self) -> u64 {
+        self.logical_bytes
+    }
+
+    #[must_use]
+    pub const fn physical_bytes(&self) -> u64 {
+        self.physical_bytes
+    }
+
+    #[must_use]
+    pub fn issues(&self) -> &[String] {
+        &self.issues
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CleanupReport {
+    removed_temporaries: usize,
+    removed_pins: usize,
+    removed_generations: usize,
+    removed_packages: usize,
+    retained_uncertain: Vec<String>,
+    after: Inspection,
+}
+
+impl CleanupReport {
+    #[must_use]
+    pub const fn removed_temporaries(&self) -> usize {
+        self.removed_temporaries
+    }
+
+    #[must_use]
+    pub const fn removed_pins(&self) -> usize {
+        self.removed_pins
+    }
+
+    #[must_use]
+    pub const fn removed_generations(&self) -> usize {
+        self.removed_generations
+    }
+
+    #[must_use]
+    pub const fn removed_packages(&self) -> usize {
+        self.removed_packages
+    }
+
+    #[must_use]
+    pub fn retained_uncertain(&self) -> &[String] {
+        &self.retained_uncertain
+    }
+
+    #[must_use]
+    pub const fn after(&self) -> &Inspection {
+        &self.after
+    }
+}
+
 pub(super) fn inspect(host: &Host) -> Result<Inspection, IsolationError> {
     let layout = Layout::open(host)?;
     inspect_layout(&layout)
