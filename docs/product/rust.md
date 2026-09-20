@@ -165,8 +165,10 @@ Board reads name their scope explicitly: `all`, `tasks`, or `trust`. A task
 scope selects durable birth stamps and may include transitive dependencies and
 the authenticated principal's active claims at the same snapshot barrier.
 Completed tasks remain addressable, including completed prerequisites, terminal
-completion replay, and historical taste proposals. Trust reports transfer no
-task rows. Allocation, board presentation, document barriers, and fresh
+completion replay, and historical taste proposals. Completion and review request
+the dependency closure before constructing progress witnesses, including when
+completion resolves its task from the principal's active claim. Trust reports
+transfer no task rows. Allocation, board presentation, document barriers, and fresh
 birth-stamp allocation retain explicit full-board reads; they do not substitute
 a pending-only view for retained authority. Scoped reads omit global allocator
 history rather than presenting partial history as complete.

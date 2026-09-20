@@ -94,3 +94,53 @@ fn scoped_reads_preserve_completed_dependencies_and_claim_conflicts_without_unre
     );
     clean(&root, bus);
 }
+
+#[test]
+fn implicit_completion_reads_completed_prerequisites_before_advancing_a_plan() {
+    let (root, bus, epoch, seats) = fixture("scoped-plan-completion", 1);
+    let seat = &seats[0];
+    let actor = Actor::Lane(seat.lane);
+    let completed = todo_task(&bus, epoch, "completed", "Completed prerequisite");
+    claim_and_complete_task(&bus, epoch, seat, &actor, &completed);
+    let plan = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "plan",
+        "Reconcile completed work",
+        "task.read",
+        Some("plan,todo,review"),
+        &["The completed work is reconciled"],
+    );
+    connect_child(&bus, epoch, &plan, &completed);
+    claim_task(&bus, epoch, seat, &actor, &plan);
+    let _unrelated = todo_task(&bus, epoch, "unrelated", "Unrelated work");
+    let matches = crate::cli::command()
+        .try_get_matches_from(["spice", "task", "done"])
+        .expect("implicit completion parses");
+    let contract = crate::cli::selected_contract(&matches).expect("completion contract");
+    let (_, read) = mutation_read(contract, crate::cli::selected_matches(&matches))
+        .expect("completion selects its read");
+    let held = scoped(&bus, epoch, actor.clone(), read);
+    let heads = at(&held, &plan);
+    let expected = progress_witnesses(&held, heads, seat.lane, seat.occupant, false)
+        .expect("completed prerequisites remain visible to plan witnesses");
+    assert_eq!(handles(&held), [plan.clone(), completed].into());
+    assert_committed(issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::TaskDone,
+        expected,
+        &TaskDone {
+            task: plan.clone(),
+            validation: "Completed work reconciled".to_owned(),
+            operation: Some(TaskDone::operation_for_claim(
+                heads.claim.as_ref().expect("claim").body.claimed,
+            )),
+        },
+    ));
+    let advanced = board(&bus, epoch, actor);
+    assert_eq!(at(&advanced, &plan).workflow.body.phase.as_str(), "todo");
+    clean(&root, bus);
+}
