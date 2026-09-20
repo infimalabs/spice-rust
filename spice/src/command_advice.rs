@@ -1,103 +1,23 @@
 //! Read-only suggestions about authored shell input, never execution policy.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::fs;
-use std::io::{self, Write};
 use std::path::Path;
 
-#[derive(
-    Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, serde::Serialize, serde::Deserialize,
-)]
-#[serde(rename_all = "snake_case")]
-enum Hint {
-    RedundantCd,
-    TrailingTail,
-}
-
-impl Hint {
-    fn text(self) -> &'static str {
-        match self {
-            Self::RedundantCd => {
-                "Already in this working directory; omit the leading `cd` and run the command directly."
-            }
-            Self::TrailingTail => {
-                "A final `tail` is probably unnecessary; rely on the tool's native output wrapping."
-            }
-        }
-    }
-}
-
-type Receipts = BTreeMap<String, BTreeMap<String, BTreeSet<Hint>>>;
-
-/// Claim each matching hint once per vendor session across processes and linked
-/// worktrees. Receipts precede delivery: a crash can lose optional advice, never
-/// repeat it. Missing identity or unavailable storage silently suppresses advice.
-/// Neither advice nor receipt failures may change command execution.
-pub fn for_session(
-    command: &str,
-    cwd: Option<&Path>,
-    repository_start: &Path,
-    vendor: &str,
-    session: Option<&str>,
-) -> impl Iterator<Item = &'static str> {
-    let mut hints = [
-        cwd.and_then(|cwd| redundant_cd(command, cwd))
-            .map(|()| Hint::RedundantCd),
-        trailing_tail(command).then_some(Hint::TrailingTail),
-    ];
-    let claimed = session
-        .filter(|session| !session.is_empty())
-        .filter(|_| hints.iter().any(Option::is_some))
-        .and_then(|session| claim(repository_start, vendor, session, &mut hints));
-    if claimed.is_none() {
-        hints.fill(None);
-    }
-    hints.into_iter().flatten().map(Hint::text)
-}
-
-fn claim(
-    repository_start: &Path,
-    vendor: &str,
-    session: &str,
-    hints: &mut [Option<Hint>; 2],
-) -> Option<()> {
-    let repository = crate::repository::Repository::discover(repository_start).ok()?;
-    let (state_path, lock_path) = repository.admit_command_advice().ok()?;
-    fs::create_dir_all(lock_path.parent()?).ok()?;
-    let name = sill::LockName::new("command-advice").expect("fixed advice lock name is valid");
-    let sill::Acquisition::Acquired(_possession) =
-        sill::LockFile::new(name, lock_path).try_acquire().ok()?
-    else {
-        return None;
-    };
-    let mut receipts: Receipts = match fs::read(&state_path) {
-        Ok(bytes) => serde_json::from_slice(&bytes).ok()?,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => BTreeMap::new(),
-        Err(_) => return None,
-    };
-    let seen = receipts
-        .entry(vendor.to_owned())
-        .or_default()
-        .entry(session.to_owned())
-        .or_default();
-    for hint in hints.iter_mut() {
-        if hint.is_some_and(|hint| !seen.insert(hint)) {
-            *hint = None;
-        }
-    }
-    if hints.iter().any(Option::is_some) {
-        let bytes = serde_json::to_vec(&receipts).ok()?;
-        atomic::Destination::new(&state_path)
-            .ok()?
-            .publish(|staged| staged.write_all(&bytes))
-            .ok()?;
-    }
-    Some(())
+/// Suggestions for each authored command, never a replacement command. Unknown
+/// cwd suppresses only the directory hint, not advice about a final pipeline stage.
+pub fn for_shell(command: &str, cwd: Option<&Path>) -> impl Iterator<Item = &'static str> {
+    [
+        cwd.and_then(|cwd| redundant_cd(command, cwd)),
+        trailing_tail(command).then_some(
+            "A final `tail` is probably unnecessary; rely on the tool's native output wrapping.",
+        ),
+    ]
+    .into_iter()
+    .flatten()
 }
 
 /// Only literal directory operands are comparable. Do not resolve symlinks:
 /// their logical spelling can change subsequent relative-path interpretation.
-fn redundant_cd(command: &str, cwd: &Path) -> Option<()> {
+fn redundant_cd(command: &str, cwd: &Path) -> Option<&'static str> {
     if !cwd.is_absolute() {
         return None;
     }
@@ -113,7 +33,9 @@ fn redundant_cd(command: &str, cwd: &Path) -> Option<()> {
         [cd, option, path] if cd == "cd" && option == "--" => path,
         _ => return None,
     };
-    (Path::new(path).is_absolute() && Path::new(path) == cwd).then_some(())
+    (Path::new(path).is_absolute() && Path::new(path) == cwd).then_some(
+        "Already in this working directory; omit the leading `cd` and run the command directly.",
+    )
 }
 
 /// Find one literal simple-command prefix without interpreting any shell input.

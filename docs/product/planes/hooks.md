@@ -191,16 +191,13 @@ working-directory gate. Standalone `tail`, an intermediate pipeline stage, and
 quoted or escaped pipe characters do not trigger it. Both hints can appear
 together; neither rewrites the pipeline or claims an equivalent transformation.
 
-Each hint is one-shot per vendor session in the repository, independently:
-seeing `cd` advice does not consume `tail` advice. Hook payload `session_id`
-and OMP's pinned launch session identify the agent. The common-root
-`command-advice.json` records which hints have been shown; a kernel lock and
-atomic publication suppress duplicates across concurrent calls, process
-restarts, and linked worktrees. Nonmatches consume nothing. Missing identity,
-unavailable state, or lock contention silently omits optional advice rather
-than delaying or refusing the command. Recording precedes delivery, so a crash
-can lose a hint but cannot cause a repeat. No ACK, escalation, or reminder is
-attached to either hint.
+Each hint appears once on every matching command invocation. Neither session
+identity nor compaction suppresses later matching commands; no delivery receipts
+or repository state are needed. Nonmatches remain silent. These are
+command-attached suggestions, not narration prods: OMP's progress prod uses a
+separate injected system notice and can interrupt a pending tool call, while
+shell advice accompanies that call's initial response. No ACK, escalation, or
+periodic reminder is attached to either hint.
 
 Spice's OMP shell and job results show at most 16 KiB of log text, preserving
 UTF-8 character boundaries. When bytes are omitted, the native wrapper includes

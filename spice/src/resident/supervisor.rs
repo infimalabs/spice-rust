@@ -560,7 +560,7 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     let proof = launch.session;
     let started_millis = now_millis()?;
     let jobs = terminal::Jobs::for_lane(&paths, request.lane);
-    let terminal = terminal::Terminal::from_launch(&launch.spec, jobs, launch.session_id);
+    let terminal = terminal::Terminal::from_launch(&launch.spec, jobs);
     let mut running = sill::spawn_observed(launch.spec, launch.observation)?;
     let group = running.id();
     let runtime = running.spec().deadlines.runtime();
