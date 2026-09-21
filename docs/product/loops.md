@@ -320,8 +320,9 @@ flowchart TD
    form one machine.
 - Every agent turn or process exit, including code zero, ends that occupant and
    vacates the lane. `working` and `waiting` may describe activity inside one
-   supervisor's `running` turn; neither persists after its exit. A backgrounded
-   descendant's later exit is not a wake signal.
+   supervisor's `running` turn; neither persists after its exit. A detached job
+   continues, and an ending left unheard through its delivery grace requests a
+   lane wake so startup catch-up can deliver the completion.
 - Wake launches **exactly one** occupant per decision. Capacity check, candidate
    selection, claim win, and startup are a single serialized decision; a later
    inventory refresh must observe the occupied lane before capacity can expand

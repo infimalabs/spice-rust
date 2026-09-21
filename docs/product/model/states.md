@@ -333,9 +333,10 @@ cause neither.
 
 **Invariant —** Every agent turn or process exit, including exit code zero, ends
 that occupant and vacates the lane. A successful exit never becomes a persistent
-`idle` state, and a backgrounded descendant's later exit is not a wake signal.
-Working and waiting describe activity only inside one supervisor's `running`
-turn.
+`idle` state. A detached job continues; an ending left unheard through its
+delivery grace requests a lane wake, and the successor receives the completion
+during startup catch-up. Working and waiting describe activity only inside one
+supervisor's `running` turn.
 
 **Invariant —** Ambient thread ids are refused at launch. A lane binds to the
 thread the launch answer names, never to one inherited from the environment.

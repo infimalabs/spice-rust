@@ -261,9 +261,9 @@ flowchart TD
   D --> N["neither delivery path occurs"]
   N --> W["delivery waits;<br/>durable lifecycle stays live"]
   C --> BG["the agent backgrounds the work<br/>and ends its turn"]
-  BG --> S(["the resident vacates the lane"])
-  S --> X["the backgrounded command's exit<br/>is not a wake signal"]
-  X --> RL["only a later lifecycle decision may launch an occupant<br/>for steering, active-claim recovery, capacity, or operator direction"]
+  BG --> S(["the resident vacates the lane;<br/>the detached keeper continues"])
+  S --> X["the command ends unheard<br/>through the delivery grace"]
+  X --> RL["the keeper requests a lane wake;<br/>startup catch-up delivers the completion"]
 ```
 
 **Invariant —** Admitted-path cadence is delivery cadence, not command cadence
@@ -278,16 +278,14 @@ record; every top-level shell command independently streams changed bytes from
 the current rendered inbox, so it may repeat live content seen by another
 command while suppressing identical bytes during its own child lifetime.
 
-**Invariant —** Every turn exit vacates the lane, including exit code zero, and
-a backgrounded command's later exit is **not** a wake signal. Long work runs in
-the foreground so its own completion returns control; an already-backgrounded
-wait is brought forward with a blocking wait rather than ended on.
+**Invariant —** Every turn exit vacates the lane, including exit code zero. A
+backgrounded command survives under its detached keeper. If a non-stopped
+ending remains unheard through the delivery grace, the keeper requests a lane
+wake; a successor receives the completion during startup catch-up.
 
-**Invariant —** This reaches the agent as a **capability, not a prohibition**:
-continuing to cross admitted tool or shell boundaries is what keeps the operator
-able to reach it. The framing matters here more than anywhere else, because the
-rule costs the agent something immediate and buys something it cannot observe
-from inside.
+**Invariant —** This is lifecycle behavior, not an instruction to keep a turn
+open. An agent uses `job wait` when the result blocks current work; ending the
+turn neither cancels the job nor loses its completion.
 
 #### Acknowledgment evidence
 
