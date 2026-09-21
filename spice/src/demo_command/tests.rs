@@ -680,7 +680,7 @@ fn assert_lanes(lanes: &LaneAnswer) {
         assert_eq!(lane.vendor.as_str(), crate::resident::SIMULATED_VENDOR);
         assert_eq!(lane.disposition, crate::resident::SIMULATED_DISPOSITION);
         assert_eq!(lane.occupant, Some(uuid(seed.occupant)));
-        assert_eq!(lane.liveness, wire::intent::LaneLiveness::Running);
+        assert_eq!(lane.liveness, wire::intent::LaneLiveness::Working);
         assert_eq!(lane.worktree, lanes.lanes[0].worktree);
     }
 }

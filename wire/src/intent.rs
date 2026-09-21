@@ -810,10 +810,11 @@ pub struct LaneJob {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum LaneLiveness {
-    /// The occupant was seated or emitted selected-record activity recently.
+    /// The occupant emitted selected-record activity inside the quiet horizon,
+    /// so what it is up to right now is known in detail.
+    Working,
+    /// The occupant is supervised in the seat; nothing more is claimed.
     Running,
-    /// The supervised occupant has been quiet for the complete stale horizon.
-    RunningStale,
     /// No occupant is supervised in this durable seat.
     Vacant,
 }
@@ -823,8 +824,8 @@ impl LaneLiveness {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::Working => "working",
             Self::Running => "running",
-            Self::RunningStale => "running-stale",
             Self::Vacant => "vacant",
         }
     }

@@ -415,7 +415,7 @@ fn lane_response_with_renewals(
                     "vacant".to_owned()
                 },
                 liveness: if occupant.is_some() {
-                    wire::intent::LaneLiveness::Running
+                    wire::intent::LaneLiveness::Working
                 } else {
                     wire::intent::LaneLiveness::Vacant
                 },

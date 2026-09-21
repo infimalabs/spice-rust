@@ -280,8 +280,8 @@ flowchart TD
   Q{"pending steering?"}
   Q -- yes --> QUEUED["queued"]
   Q -- no --> L{"resident liveness projection"}
+  L -- working --> WORKING["working"]
   L -- running --> RUNNING["running"]
-  L -- running-stale --> STALE["running-stale"]
   L -- "vacant, session declared" --> BOUND["bound"]
   L -- "vacant, never bound" --> UNBOUND["unbound"]
 ```
@@ -314,10 +314,10 @@ flowchart TD
 **Invariants**
 
 - Supervisor phase is exactly `starting`, `running`, `exited`, or `failed`; UI
-   lane presentation is exactly `queued`, `running`, `running-stale`, `bound`,
-   or `unbound`; resident lifecycle is exactly `seated`, `quiescing`, `draining`,
-   `terminating`, `killing`, `verifying`, or `dark`. These vocabularies do not
-   form one machine.
+   lane presentation is exactly `queued`, `working`, `running`, `waiting`,
+   `bound`, or `unbound`; resident lifecycle is exactly `seated`, `quiescing`,
+   `draining`, `terminating`, `killing`, `verifying`, or `dark`. These
+   vocabularies do not form one machine.
 - Every agent turn or process exit, including code zero, ends that occupant and
    vacates the lane. `working` and `waiting` may describe activity inside one
    supervisor's `running` turn; neither persists after its exit. A backgrounded

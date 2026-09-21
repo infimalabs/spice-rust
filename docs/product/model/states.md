@@ -310,8 +310,8 @@ flowchart TD
   Q{"pending steering?"}
   Q -- yes --> QUEUED["queued"]
   Q -- no --> L{"resident liveness projection"}
+  L -- working --> WORKING["working"]
   L -- running --> RUNNING["running"]
-  L -- running-stale --> STALE["running-stale"]
   L -- "vacant, session declared" --> BOUND["bound"]
   L -- "vacant, never bound" --> UNBOUND["unbound"]
 ```

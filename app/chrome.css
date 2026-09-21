@@ -410,9 +410,10 @@ body:has(.shell--mosaic),
   border-radius: 50%;
   background: var(--accent-slot);
   box-sizing: content-box;
+  filter: saturate(.58);
 }
-.canvas-member-presence.running-stale { filter: saturate(.58); }
-.canvas-member-presence.waiting { background: var(--muted); filter: saturate(.58); }
+.canvas-member-presence.working { filter: none; }
+.canvas-member-presence.waiting { background: var(--muted); }
 .canvas-member-presence.bound,
 .canvas-member-presence.unbound { background: var(--muted); }
 .canvas-member-copy { display: grid; min-width: 0; gap: 4px; }

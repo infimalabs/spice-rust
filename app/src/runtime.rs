@@ -151,18 +151,19 @@ pub struct LaneMember {
 /// Ported from the predecessor 0.31.0 UI, `spice/serve/static/app.lanes.js`:
 /// `targetChoiceStatus` derives it, `targetChoiceStatusLabel` names it, and the
 /// `targetChoiceStatusValues` list is the rank. That list carries nine states
-/// where this wire now distinguishes five: the resident projects recent and
-/// quiet supervised occupants as `running` and `running-stale`, while richer
-/// vendor phases remain absent. The ladder keeps the predecessor's order and
-/// names only states the resident actually reports.
+/// where this wire now distinguishes five: the resident projects recently
+/// heard and quiet supervised occupants as `working` and `running`, while
+/// richer vendor phases remain absent. The ladder keeps the predecessor's
+/// order and names only states the resident actually reports.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum LaneStatus {
     /// Direction is queued for this lane; the operator is being waited on.
     Queued,
-    /// An occupant is live in the seat.
+    /// An occupant was heard from inside the quiet horizon, so what it is up
+    /// to right now is known in detail.
+    Working,
+    /// An occupant holds the seat under supervision; nothing more is claimed.
     Running,
-    /// An occupant remains supervised but has been quiet for the stale horizon.
-    RunningStale,
     /// Nobody is in the seat, but a command it started still runs or ended
     /// unheard, and its next occupant is owed the ending.
     Waiting,
@@ -178,8 +179,8 @@ impl LaneStatus {
     pub const fn key(self) -> &'static str {
         match self {
             Self::Queued => "queued",
+            Self::Working => "working",
             Self::Running => "running",
-            Self::RunningStale => "running-stale",
             Self::Waiting => "waiting",
             Self::Bound => "bound",
             Self::Unbound => "unbound",
@@ -191,8 +192,8 @@ impl LaneStatus {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Queued => "steering queued",
+            Self::Working => "agent working",
             Self::Running => "agent running",
-            Self::RunningStale => "agent running-stale",
             Self::Waiting => "agent waiting",
             Self::Bound => "agent bound",
             Self::Unbound => "agent unbound",
@@ -213,8 +214,8 @@ impl LaneMember {
             LaneStatus::Queued
         } else {
             match self.liveness {
+                LaneLiveness::Working => LaneStatus::Working,
                 LaneLiveness::Running => LaneStatus::Running,
-                LaneLiveness::RunningStale => LaneStatus::RunningStale,
                 LaneLiveness::Vacant if !self.jobs.is_empty() => LaneStatus::Waiting,
                 LaneLiveness::Vacant if self.bound => LaneStatus::Bound,
                 LaneLiveness::Vacant => LaneStatus::Unbound,
@@ -857,12 +858,12 @@ impl Stale {
     /// Re-read a quiet occupant when a live message may have resumed activity.
     ///
     /// The resident still decides liveness; replayed messages cannot make a
-    /// process running locally. Already-running rows need no redundant read.
+    /// process working locally. Rows already heard from need no redundant read.
     pub fn invalidate_quiet_lane(&mut self, view: Option<&LaneView>, lane: CanonicalUuid) {
         self.lanes |= view.is_some_and(|view| {
             view.lanes.iter().any(|team| {
                 team.member(lane)
-                    .is_some_and(|member| member.liveness == LaneLiveness::RunningStale)
+                    .is_some_and(|member| member.liveness == LaneLiveness::Running)
             })
         });
     }
