@@ -38,6 +38,8 @@ pub enum CommandKind {
     GlobalSettingsRead,
     /// Replace the durable global fast-mode setting.
     GlobalSettingsSet,
+    /// Read the vendor choices this resident generation can seat.
+    VendorCatalog,
     /// Add one task as direct intent.
     TaskAdd,
     /// Add one task through the fixed server-owned `.oops` route.
@@ -548,6 +550,7 @@ impl CommandKind {
         Self::DocLedger,
         Self::GlobalSettingsRead,
         Self::GlobalSettingsSet,
+        Self::VendorCatalog,
         Self::TaskAdd,
         Self::TaskOopsAdd,
         Self::TasteProposalAdd,
@@ -651,6 +654,7 @@ impl CommandKind {
             | Self::LaneRecall
             | Self::GlobalSettingsRead
             | Self::GlobalSettingsSet
+            | Self::VendorCatalog
             | Self::TasteRecord
             | Self::CanaryRecognize
             | Self::VendorRecognize
@@ -721,6 +725,7 @@ impl CommandKind {
             Self::LaneRecall => "lane::recall",
             Self::GlobalSettingsRead => "settings::read",
             Self::GlobalSettingsSet => "settings::set",
+            Self::VendorCatalog => "vendor::catalog",
             Self::TasteRecord => "taste::record",
             Self::CanaryRecognize => "canary::recognize",
             Self::VendorRecognize => "vendor::recognize",
@@ -743,7 +748,7 @@ impl CommandKind {
     pub const fn law(self) -> Law {
         match self {
             Self::BoardRead | Self::BoardGraph | Self::DocLedger => Law::READ,
-            Self::GlobalSettingsRead => Law::OPERATOR_READ,
+            Self::GlobalSettingsRead | Self::VendorCatalog => Law::OPERATOR_READ,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::BoardHandout => Law::OPERATOR_READ,
             Self::TaskAdd | Self::TaskOopsAdd | Self::TasteProposalAdd => Law::ADD,
@@ -887,6 +892,7 @@ impl CommandKind {
                 | Self::BoardHandout
                 | Self::DocLedger
                 | Self::GlobalSettingsRead
+                | Self::VendorCatalog
                 | Self::SteerInbox
                 | Self::ConsentRead
                 | Self::ConsentPolicy

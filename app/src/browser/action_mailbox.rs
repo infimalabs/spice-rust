@@ -157,6 +157,7 @@ pub(crate) enum CurrentRead {
     Lanes,
     Inbox,
     Settings,
+    Vendors,
 }
 
 impl PendingKind {
@@ -166,6 +167,7 @@ impl PendingKind {
             Self::Lanes { .. } => Some(CurrentRead::Lanes),
             Self::Inbox { .. } => Some(CurrentRead::Inbox),
             Self::Settings => Some(CurrentRead::Settings),
+            Self::Vendors => Some(CurrentRead::Vendors),
             Self::LaneSeat
             | Self::LaneArrange
             | Self::LaneRenewal { .. }

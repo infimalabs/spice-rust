@@ -177,7 +177,7 @@ fn apply_command_response(
     bytes: &[u8],
 ) -> Result<CommandApplication, String> {
     Ok(match kind {
-        kind @ (PendingKind::Board | PendingKind::Settings) => {
+        kind @ (PendingKind::Board | PendingKind::Settings | PendingKind::Vendors) => {
             apply_scalar_response(session, runtime, kind, bytes)?
         }
         // A read of the lane table and an arrangement of it answer with the
@@ -255,6 +255,7 @@ fn apply_scalar_response(
     match kind {
         PendingKind::Board => runtime.apply_board(&admit_response(session, bytes)?),
         PendingKind::Settings => runtime.apply_settings(&admit_response(session, bytes)?),
+        PendingKind::Vendors => runtime.apply_vendor_catalog(&admit_response(session, bytes)?),
         _ => unreachable!("scalar response partition is closed"),
     }
     Ok(CommandApplication::ordinary(false))

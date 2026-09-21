@@ -30,6 +30,7 @@ const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::DocLedger, r#"{ "task": "SPICE-1kKRRsDP" }"#),
     (CommandKind::GlobalSettingsRead, r#"{}"#),
     (CommandKind::GlobalSettingsSet, r#"{ "fast_mode": true }"#),
+    (CommandKind::VendorCatalog, r#"{}"#),
     (
         CommandKind::TaskAdd,
         r#"{
@@ -747,6 +748,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::DocLedger,
     BodyShape::GlobalSettingsRead,
     BodyShape::GlobalSettingsSet,
+    BodyShape::VendorCatalog,
     BodyShape::TaskAdd,
     BodyShape::TaskOopsAdd,
     BodyShape::TasteProposalAdd,
@@ -802,6 +804,7 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::ConsentQueue,
     AnswerShape::ConsentPolicy,
     AnswerShape::GlobalSettings,
+    AnswerShape::VendorCatalog,
     AnswerShape::Trust,
     AnswerShape::Lane,
     AnswerShape::LaneChange,

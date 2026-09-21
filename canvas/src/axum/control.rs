@@ -25,6 +25,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         CommandKind::BoardRead
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
+        | CommandKind::VendorCatalog
         | CommandKind::BoardGraph
         | CommandKind::BoardHandout
         | CommandKind::DocLedger

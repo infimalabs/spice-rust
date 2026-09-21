@@ -140,6 +140,44 @@ pub struct GlobalSettingsAnswer {
     pub fast_mode: bool,
 }
 
+/// Read the vendor choices this resident generation can seat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VendorCatalog {}
+
+/// One vendor a seat can select, with the launch values it defaults to.
+///
+/// The resident derives every row from the extension registry it dispatches
+/// with and the vendor configuration it launches under, so a Canvas that
+/// offers these choices cannot offer a vendor the resident would refuse.
+/// Model spellings stay open: no vendor publishes a catalogue of them and
+/// each resolves its own, so the configured default is named here while any
+/// other spelling remains valid.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VendorChoice {
+    /// Registry name a seat carries.
+    pub name: Name,
+    /// Operator-facing label for the same vendor.
+    pub label: String,
+    /// Model spelling launched when a seat names none.
+    pub default_model: String,
+    /// Effort spelling launched when a seat names none.
+    pub default_effort: String,
+}
+
+/// The vendor choices one resident generation can seat.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VendorCatalogAnswer {
+    /// Seatable vendors in registry order.
+    pub vendors: Vec<VendorChoice>,
+    /// Every reasoning effort a seat may name, weakest first. One closed
+    /// vocabulary governs every vendor, which is the same set the resident
+    /// admits a seat's effort against.
+    pub efforts: Vec<String>,
+}
+
 /// Name one executable digest and nothing else.
 ///
 /// Pending, granting, and revoking trust each name the exact digest; the
@@ -227,6 +265,9 @@ pub enum TeamLife {
 }
 
 impl TeamLife {
+    /// Every lifetime a team or seat may name, in declaration order.
+    pub const ALL: &'static [Self] = &[Self::Steer, Self::Drive, Self::Drain];
+
     /// Stable wire spelling retained by the Canvas control.
     #[must_use]
     pub const fn as_str(self) -> &'static str {

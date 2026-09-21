@@ -79,6 +79,7 @@ pub(crate) enum PendingKind {
         covered: std::collections::BTreeMap<wire::CanonicalUuid, String>,
     },
     Settings,
+    Vendors,
     LaneSeat,
     LaneArrange,
     LaneRenewal {

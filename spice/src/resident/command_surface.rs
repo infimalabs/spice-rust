@@ -14,7 +14,7 @@ use super::{
     CommandDispatch, CommandEffects, RuntimePaths, SurfaceConfig, consent_surface,
     current_residency, dispatch_proof_recognize, dispatch_release_publish, dispatch_up_change,
     lane_recovery, lane_surface, lifecycle, policy_surface, read_materializations::CurrentReads,
-    settings_surface, steering,
+    settings_surface, steering, vendor_surface,
 };
 
 pub(super) struct Surface<'a> {
@@ -284,6 +284,9 @@ impl<'a> Surface<'a> {
         match (command.kind(), command.body()) {
             (CommandKind::GlobalSettingsRead, Intent::GlobalSettingsRead(_)) => {
                 Some(settings_surface::read(self.bus))
+            }
+            (CommandKind::VendorCatalog, Intent::VendorCatalog(_)) => {
+                Some(vendor_surface::catalog(self.bus, self.repository))
             }
             (CommandKind::GlobalSettingsSet, Intent::GlobalSettingsSet(settings)) => Some(
                 settings_surface::set(self.bus, self.epoch, command, settings),

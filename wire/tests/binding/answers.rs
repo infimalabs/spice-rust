@@ -251,6 +251,18 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     ),
     (AnswerShape::GlobalSettings, r#"{ "fast_mode": true }"#),
     (
+        AnswerShape::VendorCatalog,
+        r#"{
+  "vendors": [{
+    "name": "codex",
+    "label": "codex",
+    "default_model": "gpt-5.6-sol",
+    "default_effort": "high"
+  }],
+  "efforts": ["low", "medium", "high", "xhigh", "max"]
+}"#,
+    ),
+    (
         AnswerShape::Trust,
         r#"{
   "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
