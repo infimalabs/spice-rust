@@ -404,6 +404,8 @@ The team menu's **Import agent** action opens one panel for creating a new agent
 or importing an existing one. The complete Seat agent form sits above the import
 choices; Info contains only agent and team information. An empty fleet exposes
 the same panel from its toolbar, so the first agent can still be seated.
+A successful import keeps the panel open so the operator can import additional
+agents without reopening it.
 All six fields remain visible, with aligned, bounded labels beside their controls:
 three paired rows when space permits, one field per row on narrow tiles.
 The Seat agent button stays at the form's upper right. Long values scroll inside

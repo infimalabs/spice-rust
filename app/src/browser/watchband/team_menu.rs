@@ -274,7 +274,6 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
             } else {
                 {for candidates.into_iter().map(|(candidate_team, position, member)| {
                     let sender = context.sender.clone();
-                    let controls = context.controls.clone();
                     let lane = member.lane;
                     let pending = waiting
                         .iter()
@@ -299,7 +298,7 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                             ).to_string()}
                             disabled={!context.can_configure}
                             onclick={Callback::from(move |_| {
-                                if !admit_action(
+                                let _admitted = admit_action(
                                     &sender,
                                     ClientAction::ConfigureTeam {
                                         topology_revision,
@@ -307,12 +306,7 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                                         member: Some(lane),
                                         life: None,
                                     },
-                                ) {
-                                    return;
-                                }
-                                controls.dispatch(TeamControlAction::ToggleImport {
-                                    team: identity,
-                                });
+                                );
                             })}
                         >
                             <span class={classes!("canvas-member-presence", status.key())}></span>
