@@ -406,6 +406,11 @@ choices; Info contains only agent and team information. An empty fleet exposes
 the same panel from its toolbar, so the first agent can still be seated.
 A successful import keeps the panel open so the operator can import additional
 agents without reopening it.
+
+An expanded member's action drawer offers **Create new team** when that member
+belongs to a multi-agent team. It moves only that member into a fresh team,
+preserves every sibling in the source team, and inherits the source team's
+allocation policy. The action is disabled for a sole agent.
 All six fields remain visible, with aligned, bounded labels beside their controls:
 three paired rows when space permits, one field per row on narrow tiles.
 The Seat agent button stays at the form's upper right. Long values scroll inside

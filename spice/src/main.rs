@@ -11,6 +11,7 @@ use std::{
 
 use listen::{RetroSelector, StreamOutcome, SurfaceError, Watch};
 use spice::cli;
+#[cfg(not(target_arch = "wasm32"))]
 use spice::placeholder::PlaceholderReason;
 use wire::{Fault, FaultClass, Outcome, Refusal};
 
@@ -147,35 +148,28 @@ fn state_failure(error: &spice::repository::StateError) -> StateFailure {
     }
 }
 
-fn main() {
+#[cfg(not(target_arch = "wasm32"))]
+fn bootstrap_invocation() -> (cli::MountRegistry, clap::ArgMatches, bool) {
     let _ = PROCESS_STARTED.set(Instant::now());
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some(code) = resident::supervisor::entry(std::env::args_os()) {
         terminate_code(code);
     }
-    #[cfg(not(target_arch = "wasm32"))]
     if let Some(code) = gate_command::pre_commit_worker_entry(std::env::args_os()) {
         terminate_code(code);
     }
-    #[cfg(not(target_arch = "wasm32"))]
     let bootstrap_form = if cli::bootstrap_json_selected(std::env::args_os()) {
         Form::Json
     } else {
         Form::Text
     };
-    #[cfg(not(target_arch = "wasm32"))]
     let mut arguments = std::env::args_os().collect::<Vec<_>>();
-    #[cfg(not(target_arch = "wasm32"))]
     let test_canvas_stage = match extract_test_canvas_stage(&mut arguments) {
         Ok(selected) => selected,
         Err(fault) => deliver(&Outcome::<()>::Fault(fault), bootstrap_form),
     };
-    #[cfg(not(target_arch = "wasm32"))]
     let bootstrap_configuration_owner =
         cli::bootstrap_configuration_owner_selected(arguments.iter().cloned());
-    #[cfg(not(target_arch = "wasm32"))]
     let bootstrap_lock = cli::bootstrap_lock_selected(arguments.iter().cloned());
-    #[cfg(not(target_arch = "wasm32"))]
     let (mounts, matches) = match cli::command().try_get_matches_from(arguments.clone()) {
         Ok(builtin_matches) => match load_mounted_registry(bootstrap_form) {
             Ok(mounts) => {
@@ -204,6 +198,12 @@ fn main() {
             (mounts, matches)
         }
     };
+    (mounts, matches, test_canvas_stage)
+}
+
+fn main() {
+    #[cfg(not(target_arch = "wasm32"))]
+    let (mounts, matches, test_canvas_stage) = bootstrap_invocation();
     #[cfg(target_arch = "wasm32")]
     let matches = cli::command().get_matches();
     #[cfg(not(target_arch = "wasm32"))]
@@ -244,7 +244,10 @@ fn main() {
         invocation.dispatch_controls(contract);
     }
     #[cfg(target_arch = "wasm32")]
-    deliver_target_refusal(contract.path, form);
+    {
+        deliver_target_refusal(contract.path, form);
+        return;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if contract.path == ["up"] {
         resident_up(leaf, form, test_canvas_stage, configuration);
@@ -264,8 +267,7 @@ fn main() {
         ["down"] => resident::down(contract),
         _ => not_landed(contract),
     };
-    #[cfg(target_arch = "wasm32")]
-    let outcome = not_landed(contract);
+    #[cfg(not(target_arch = "wasm32"))]
     deliver(&outcome, form);
 }
 
@@ -585,10 +587,12 @@ fn target_unsupported(path: &[&str]) -> Option<Fault> {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn not_landed<B>(contract: &cli::Contract) -> Outcome<B> {
     not_landed_from(contract.path, cli::landing(contract.path))
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn not_landed_from<B>(path: &[&str], landing: cli::Landing) -> Outcome<B> {
     match landing {
         cli::Landing::Landed => Outcome::Fault(Fault {

@@ -107,7 +107,7 @@
   overflow-wrap: anywhere;
   white-space: normal;
 }
-.agent-renew-request:disabled { opacity: .46; }
+.agent-action-drawer button:disabled { cursor: not-allowed; opacity: .46; }
 .agent-action-drawer button > .agent-renew-blocked { color: var(--danger); }
 
 .composer-vendor-icon {

@@ -410,6 +410,55 @@ fn standings(lanes: &[wire::LaneResidency]) -> Vec<wire::body::TeamStanding> {
     standings
 }
 
+/// The multi-agent source from which one newly named singleton team splits.
+fn split_source_team(
+    head: &wire::ResidencyHead,
+    team: &wire::intent::TeamArrangement,
+) -> Option<CanonicalUuid> {
+    let [lane] = team.lanes.as_slice() else {
+        return None;
+    };
+    let source = head.lanes.iter().find(|row| row.lane == *lane)?.team;
+    head.lanes
+        .iter()
+        .filter(|row| row.team == source)
+        .nth(1)
+        .map(|_| source)
+}
+
+fn inherited_split_subscriptions(
+    head: &wire::ResidencyHead,
+    request: &TeamArrange,
+) -> Result<Vec<wire::TeamSubscription>, Outcome<CommandAnswer>> {
+    let mut inherited = Vec::new();
+    for team in &request.teams {
+        if head.lanes.iter().any(|row| row.team == team.team) {
+            continue;
+        }
+        let Some(source) = split_source_team(head, team) else {
+            return Err(typed_store_fault(
+                "team::arrangement-split-lost",
+                "an admitted fresh team no longer resolves to its source team",
+            ));
+        };
+        let Some(subscription) = head
+            .subscriptions
+            .iter()
+            .find(|subscription| subscription.team == source)
+        else {
+            return Err(typed_store_fault(
+                "team::subscription-missing",
+                "a split source team has no task-allocation lifetime",
+            ));
+        };
+        inherited.push(wire::TeamSubscription {
+            team: team.team,
+            policy: subscription.policy,
+        });
+    }
+    Ok(inherited)
+}
+
 /// Refuse an arrangement that is not a faithful restatement of the lane table.
 ///
 /// Every rule here is stated over the arrangement as a whole. A partial
@@ -432,12 +481,14 @@ fn admit_arrangement(
     let mut seen_teams = Vec::<CanonicalUuid>::new();
     let mut seen_lanes = Vec::<CanonicalUuid>::new();
     for team in &request.teams {
-        if !current.iter().any(|standing| standing.team == team.team) {
+        if !current.iter().any(|standing| standing.team == team.team)
+            && split_source_team(head, team).is_none()
+        {
             return Err(lane_refusal(
                 "team::arrangement-unknown-team",
-                Some("one current Canvas team".to_owned()),
+                Some("one current team or a fresh singleton split".to_owned()),
                 Some(team.team.to_string()),
-                "join teams by naming the surviving team; a new team is created by seating",
+                "a fresh team must hold one lane from a current multi-agent team",
             ));
         }
         if seen_teams.contains(&team.team) {
@@ -518,6 +569,10 @@ pub(in crate::resident) fn arrange(
         return outcome;
     }
     let from = standings(&observed.body().lanes);
+    let inherited_subscriptions = match inherited_split_subscriptions(observed.body(), request) {
+        Ok(subscriptions) => subscriptions,
+        Err(outcome) => return outcome,
+    };
     let mut next = observed.body().clone();
     next.topology_revision = topology_revision;
     let mut arranged = Vec::with_capacity(next.lanes.len());
@@ -544,6 +599,9 @@ pub(in crate::resident) fn arrange(
             .iter()
             .any(|team| team.team == subscription.team)
     });
+    next.subscriptions.extend(inherited_subscriptions);
+    next.subscriptions
+        .sort_by_key(|subscription| subscription.team);
     let teams = standings(&next.lanes);
     let lane_answer = match answer(&next, None, seats, paths) {
         Ok(answer) => answer,

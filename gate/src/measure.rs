@@ -73,6 +73,7 @@ pub(crate) fn bounded_process_group() -> ProcessGroup {
 }
 
 /// Runtime deadline owned by a bounded child or its enclosing supervisor.
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn bounded_runtime_deadline(runtime: Duration) -> Duration {
     if INHERIT_PROCESS_GROUP.load(Ordering::Acquire) {
         Duration::MAX
@@ -190,6 +191,7 @@ impl Bounds {
     /// worker's complete descendant group, so a second wall-clock decision in
     /// a long-running child can only misclassify machine delay as source
     /// evidence. Ordinary callers retain this value unchanged.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn without_runtime_deadline_under_outer_supervisor(&self) -> Self {
         let runtime = bounded_runtime_deadline(self.deadlines.runtime());
         if runtime == self.deadlines.runtime() {

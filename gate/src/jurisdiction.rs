@@ -280,6 +280,7 @@ pub(crate) struct WalkBudget {
 }
 
 impl WalkBudget {
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) const fn new(
         entry_limit: usize,
         path_bytes_limit: usize,
@@ -401,6 +402,7 @@ impl Jurisdiction {
         Self::walk_with_budget(root, ignore, None)
     }
 
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn walk_bounded(
         root: &Path,
         ignore: &Ignore,

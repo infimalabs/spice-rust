@@ -21,7 +21,9 @@ use sill::{
 use wire::manifest::{BuildPins, ReleaseTarget};
 use wire::{Digest, Domain};
 
+#[cfg(unix)]
 mod symbols;
+#[cfg(unix)]
 use symbols::SymbolBundle;
 
 const OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
@@ -32,7 +34,9 @@ const GRACE: Duration = Duration::from_secs(5);
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 const PINNED_TRUNK: &str = "trunk 0.21.14";
 const PINNED_MUTANTS: &str = "cargo-mutants 27.1.0";
+#[cfg(unix)]
 const MACHO_UUID_LENGTH: usize = 36;
+#[cfg(unix)]
 const MACHO_UUID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 
 /// One complete bounded command observation from a target build.
@@ -69,6 +73,7 @@ pub struct MacSymbols {
     uuid: String,
 }
 
+#[cfg(unix)]
 struct DerivedMacSymbols {
     public: MacSymbols,
     capture: SymbolBundle,
@@ -297,6 +302,7 @@ fn stage_with<E: Executor>(
         target_dir: &target_dir,
         programs,
         executor,
+        #[cfg(unix)]
         source: &source,
         symbols: None,
         symbol_artifact: None,
@@ -428,6 +434,7 @@ struct CommandBuilder<'a, E> {
     target_dir: &'a Path,
     programs: &'a Programs,
     executor: &'a E,
+    #[cfg(unix)]
     source: &'a SourceGuard,
     symbols: Option<MacSymbols>,
     symbol_artifact: Option<Vec<u8>>,
@@ -481,12 +488,14 @@ impl<E: Executor> Builder for CommandBuilder<'_, E> {
             native_cargo_arguments(target, self.target_dir),
         ))?;
         let executable = cargo_executable(&native.stdout)?;
+        #[cfg(unix)]
         let symbols = if target == ReleaseTarget::Aarch64AppleDarwin {
             Some(self.derive_macos_symbols(&executable)?)
         } else {
             None
         };
         let native = read_regular(&executable).map_err(build_error)?;
+        #[cfg(unix)]
         if let Some(symbols) = symbols {
             self.symbol_artifact = Some(symbols.capture.encode(
                 &symbols.public.uuid,
@@ -562,6 +571,7 @@ impl<E: Executor> CommandBuilder<'_, E> {
         successful(record).map_err(build_error)
     }
 
+    #[cfg(unix)]
     fn derive_macos_symbols(&self, executable: &Path) -> Result<DerivedMacSymbols, BuildError> {
         let tools = self
             .programs
@@ -650,12 +660,14 @@ fn cargo_executable(output: &[u8]) -> Result<PathBuf, BuildError> {
     }
 }
 
+#[cfg(unix)]
 fn dsym_path(executable: &Path) -> PathBuf {
     let mut path = executable.as_os_str().to_owned();
     path.push(".dSYM");
     PathBuf::from(path)
 }
 
+#[cfg(unix)]
 fn parse_macho_uuid(output: &[u8], label: &'static str) -> Result<String, BuildError> {
     let line = one_line(output, label).map_err(build_error)?;
     let Some(body) = line.strip_prefix("UUID: ") else {
@@ -824,9 +836,11 @@ struct Programs {
     mutants: PathBuf,
     git: PathBuf,
     xtask: PathBuf,
+    #[cfg(unix)]
     macos: Option<MacPrograms>,
 }
 
+#[cfg(unix)]
 #[derive(Clone)]
 struct MacPrograms {
     dsymutil: PathBuf,
@@ -853,6 +867,9 @@ impl Programs {
         let rustc = environment
             .rustc(root)?
             .ok_or(TargetBuildError::MissingProgram("rustc"))?;
+        #[cfg(not(unix))]
+        let _ = target;
+        #[cfg(unix)]
         let macos = if target == ReleaseTarget::Aarch64AppleDarwin {
             Some(MacPrograms {
                 dsymutil: find_program(path, "dsymutil")?,
@@ -873,6 +890,7 @@ impl Programs {
                 path: PathBuf::from("current xtask executable"),
                 source,
             })?,
+            #[cfg(unix)]
             macos,
         })
     }

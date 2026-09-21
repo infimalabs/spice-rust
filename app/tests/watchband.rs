@@ -4,8 +4,8 @@ use app::watchband::{
     TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, elapsed_label,
     elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, latest_lane_prose, leaf,
     one_line, remaining_label, remaining_label_deadline_millis, reported_tasks,
-    response_speech_text, short, split_team, standing_title, standings, task_mentions, teams,
-    ticker_chunks, ticker_line, topology, truncate,
+    response_speech_text, short, split_member, split_team, standing_title, standings,
+    task_mentions, teams, ticker_chunks, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -1026,6 +1026,35 @@ fn a_split_keeps_the_source_identity_and_makes_every_member_individual() {
         split_team(&topology(&lanes), uuid(TEAM_THREE)),
         None,
         "a retired team cannot be split from a stale menu",
+    );
+}
+
+#[test]
+fn one_member_can_leave_a_team_without_moving_its_siblings() {
+    let lanes = [
+        seated(TEAM_ONE, &[(LANE_A, "main-a"), (LANE_B, "main-b")]),
+        seated(TEAM_TWO, &[(LANE_C, "main-c")]),
+    ];
+    let topology = topology(&lanes);
+
+    assert_eq!(
+        split_member(&topology, uuid(TEAM_ONE), uuid(LANE_B), uuid(TEAM_THREE),),
+        Some(vec![
+            (uuid(TEAM_ONE), vec![uuid(LANE_A)]),
+            (uuid(TEAM_THREE), vec![uuid(LANE_B)]),
+            (uuid(TEAM_TWO), vec![uuid(LANE_C)]),
+        ]),
+        "only the selected member moves and its fresh team follows the source",
+    );
+    assert_eq!(
+        split_member(&topology, uuid(TEAM_TWO), uuid(LANE_C), uuid(TEAM_THREE),),
+        None,
+        "a sole member has no team to leave",
+    );
+    assert_eq!(
+        split_member(&topology, uuid(TEAM_ONE), uuid(LANE_C), uuid(TEAM_THREE),),
+        None,
+        "the selected member must belong to the source team",
     );
 }
 

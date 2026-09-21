@@ -23,6 +23,7 @@ dialect = { path = "../dialect" }
 dist = { path = "../dist" }
 flate2 = "1.1.8"
 gate = { path = "../gate" }
+jiff = "0.2.35"
 journal = { path = "../journal" }
 lane = { path = "../lane" }
 listen = { path = "../listen" }
@@ -44,7 +45,6 @@ wire = { path = "../wire" }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 gix = { version = "0.86.0", default-features = false, features = ["revision", "sha1"] }
 gix-config = "0.59.0"
-jiff = "0.2.35"
 libc = "0.2.189"
 notify = "8.2.0"
 rusqlite = { version = "0.40.1", default-features = false, features = ["bundled"] }
