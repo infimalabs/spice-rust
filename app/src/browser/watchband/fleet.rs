@@ -187,6 +187,7 @@ pub(super) fn render_populated_fleet(
                                     &team_standings,
                                     render.epoch,
                                     render.topology_revision,
+                                    &render.topology,
                                     render.authority,
                                     render.can_arrange_lanes,
                                     render.sender,

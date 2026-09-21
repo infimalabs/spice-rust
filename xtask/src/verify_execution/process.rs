@@ -243,6 +243,7 @@ fn selected_process_environment(
         .iter()
         .cloned()
         .collect::<BTreeMap<_, _>>();
+    #[cfg(not(target_arch = "wasm32"))]
     for variable in spice::cargo_isolation::DEVELOPER_CHILD_EXCLUDED_VARIABLES {
         environment.remove(OsStr::new(variable));
     }

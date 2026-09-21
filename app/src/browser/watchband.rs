@@ -150,6 +150,7 @@ fn render_compose(
     standings: &[Standing],
     epoch: CanonicalUuid,
     topology_revision: u64,
+    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     authority: SubmissionAuthority,
     can_arrange: bool,
     sender: &SenderHandle,
@@ -213,6 +214,7 @@ fn render_compose(
                             standing.pending,
                             authority,
                             can_arrange,
+                            topology,
                             sender,
                             drafts,
                             submissions,
@@ -692,6 +694,55 @@ struct PrimaryComposerDragging {
     drop: Callback<DragEvent>,
 }
 
+struct AgentSplitControl {
+    disabled: bool,
+    activate: Callback<MouseEvent>,
+}
+
+fn agent_split_control(
+    source_team: CanonicalUuid,
+    lane: CanonicalUuid,
+    can_arrange: bool,
+    topology_revision: u64,
+    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    sender: &SenderHandle,
+) -> AgentSplitControl {
+    let enabled = can_arrange
+        && topology.iter().any(|(team, members)| {
+            *team == source_team && members.len() > 1 && members.contains(&lane)
+        });
+    let topology = enabled.then(|| topology.to_vec());
+    let sender = sender.clone();
+    let activate = Callback::from(move |event: MouseEvent| {
+        let Some(topology) = &topology else {
+            return;
+        };
+        let Ok(new_team) = random_uuid() else {
+            return;
+        };
+        let Some(teams) = watchband::split_member(topology, source_team, lane, new_team) else {
+            return;
+        };
+        let teams = teams
+            .into_iter()
+            .map(|(team, lanes)| TeamArrangement { team, lanes })
+            .collect();
+        if admit_action(
+            &sender,
+            ClientAction::ArrangeTeams {
+                topology_revision,
+                teams,
+            },
+        ) {
+            close_agent_action_menu(&event);
+        }
+    });
+    AgentSplitControl {
+        disabled: !enabled,
+        activate,
+    }
+}
+
 fn lane_drag_transfer(event: &DragEvent) -> Option<web_sys::DataTransfer> {
     let transfer = event.data_transfer()?;
     transfer
@@ -785,6 +836,7 @@ fn render_agent_composer(
     pending: usize,
     authority: SubmissionAuthority,
     can_arrange: bool,
+    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
@@ -794,6 +846,14 @@ fn render_agent_composer(
     prose: String,
 ) -> Html {
     let lane_id = member.lane;
+    let split = agent_split_control(
+        team,
+        lane_id,
+        can_arrange,
+        topology_revision,
+        topology,
+        sender,
+    );
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let occupant = member.occupant;
@@ -865,6 +925,7 @@ fn render_agent_composer(
                     onkeydown.clone(),
                     renewal,
                     renew,
+                    split,
                     stream,
                     prose,
                     dragging,
@@ -901,6 +962,7 @@ fn render_composer_body(
     onkeydown: Callback<KeyboardEvent>,
     renewal: watchband::AgentRenewalControl,
     renew: Callback<MouseEvent>,
+    split: AgentSplitControl,
     stream: ComposerStreamLink,
     prose: String,
     dragging: PrimaryComposerDragging,
@@ -938,6 +1000,7 @@ fn render_composer_body(
                 status,
                 renewal,
                 renew,
+                split,
                 stream,
                 prose,
                 render_image_indicators(lane_key, &draft.attachments, None, drafts),
@@ -975,6 +1038,7 @@ fn render_composer_heading(
     status: crate::runtime::LaneStatus,
     renewal: watchband::AgentRenewalControl,
     renew: Callback<MouseEvent>,
+    split: AgentSplitControl,
     stream: ComposerStreamLink,
     prose: String,
     indicators: Html,
@@ -985,6 +1049,10 @@ fn render_composer_heading(
         close_agent_action_menu(&event);
         renew.emit(event);
     });
+    let AgentSplitControl {
+        disabled: split_disabled,
+        activate: split,
+    } = split;
     let ComposerStreamLink {
         target,
         label,
@@ -1041,6 +1109,18 @@ fn render_composer_heading(
                         if let Some(blocked) = renewal.blocked {
                             <span class="agent-renew-blocked">{blocked}</span>
                         }
+                    </button>
+                    <button
+                        class="agent-team-split"
+                        type="button"
+                        disabled={split_disabled}
+                        aria-label={format!("Create new team for {}", standing.label)}
+                        title={format!("Move only {} to a new team", standing.label)}
+                        data-team-split-lane={lane.to_string()}
+                        onclick={split}
+                    >
+                        <strong>{"Create new team"}</strong>
+                        <span>{format!("Move only {} to a new team", standing.label)}</span>
                     </button>
                 </div>
             </details>

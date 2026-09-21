@@ -612,6 +612,7 @@ impl ServedAsset {
     }
 
     /// Move a shared handle to the immutable response bytes into the server.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn into_shared_bytes(self) -> Arc<[u8]> {
         self.bytes
     }

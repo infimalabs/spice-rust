@@ -343,13 +343,13 @@ pub struct TeamArrangement {
 
 /// Rearrange every Canvas team: their order, and which lanes each holds.
 ///
-/// The operator drags one team lane to reorder the teams, or drops one team
-/// lane onto another to join them. Both gestures are the same durable
-/// commitment -- a complete restatement of the topology -- so the authority
-/// never has to reconcile a reorder against a concurrent join. Stating the
-/// whole arrangement rather than one delta is what makes the two gestures a
-/// single law: a request that names a lane twice, drops one, or invents one is
-/// refused as a whole rather than half-applied.
+/// The operator drags one team lane to reorder or join teams, splits a whole
+/// team, or moves one member into a fresh team. Every gesture is the same
+/// durable commitment -- a complete restatement of the topology -- so authority
+/// never reconciles concurrent partial moves. A fresh team must hold exactly one
+/// lane whose current team has multiple members. Stating the whole arrangement
+/// makes every other malformed request atomic: naming a lane twice, dropping
+/// one, or inventing a lane is refused rather than half-applied.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TeamArrange {

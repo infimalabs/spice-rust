@@ -575,6 +575,48 @@ fn emptying_a_team_retires_the_task_subscription_it_left_behind() {
 }
 
 #[test]
+fn splitting_one_member_creates_a_team_with_the_source_policy() {
+    let fixture = Arranged::seat("team-arrangement-member-split", &[0, 0, 1]);
+    let [source, other] = fixture.teams;
+    let lanes = fixture.lanes.clone();
+    let new_team = test_uuid(99);
+
+    let answer = fixture.commit(
+        14,
+        vec![
+            standing(source, &[lanes[0]]),
+            standing(new_team, &[lanes[1]]),
+            standing(other, &[lanes[2]]),
+        ],
+    );
+
+    assert_eq!(
+        answer
+            .lanes
+            .iter()
+            .map(|row| (row.lane, row.team))
+            .collect::<Vec<_>>(),
+        vec![(lanes[0], source), (lanes[1], new_team), (lanes[2], other),],
+        "only the selected member enters the fresh team",
+    );
+    assert_eq!(
+        answer
+            .subscriptions
+            .iter()
+            .find(|subscription| subscription.team == new_team)
+            .map(|subscription| subscription.policy),
+        Some(wire::intent::TeamLife::Drive),
+        "the fresh team inherits the source team's allocation policy",
+    );
+    assert!(
+        fixture.durable_subscriptions().contains(&new_team),
+        "the inherited policy is durable rather than reply-only",
+    );
+
+    fixture.retire();
+}
+
+#[test]
 fn removing_a_lane_requires_a_vacant_claim_free_seat() {
     let mut fixture = Arranged::seat("lane-removal", &[0, 1]);
     let removed = fixture.lanes[0];

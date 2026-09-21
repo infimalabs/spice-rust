@@ -140,10 +140,7 @@ pub use input::{
 pub use jurisdiction::{
     Admission, Entry, Ignore, IgnoreError, Jurisdiction, Rule, Shape, WalkError,
 };
-// Projection is consumed only by native hygiene acquisition, but the shared
-// jurisdiction module is deliberately type-checked on the browser target too.
-#[cfg(target_arch = "wasm32")]
-const _: fn(&Jurisdiction, &[String]) -> Jurisdiction = Jurisdiction::select_paths;
+// Action capture and specification depend on native repository acquisition.
 #[cfg(not(target_arch = "wasm32"))]
 pub use action_input::{
     ACTION_INPUT_MANIFEST_VERSION, ActionInputClosure, ActionInputError, ActionInputExpansion,
