@@ -259,17 +259,16 @@ fn top_level_version_flags_are_repository_free_and_byte_identical() {
     let before = directory_state(scratch.path());
     let short = invoke_at(&["-V"], scratch.path());
     let long = invoke_at(&["--version"], scratch.path());
-    let product = dist::current_product_version().expect("compiled product version");
-    let profile = if cfg!(debug_assertions) {
-        "development"
-    } else {
-        "release"
-    };
-    let expected = format!("spice {product} ({profile})\n").into_bytes();
 
     for spoken in [&short, &long] {
         assert_eq!(spoken.code, Some(0));
-        assert_eq!(spoken.out, expected);
+        let output = std::str::from_utf8(&spoken.out).expect("version is UTF-8");
+        let version = output.split_whitespace().nth(1).expect("product version");
+        let version = wire::manifest::ProductVersion::parse(version).expect("canonical semver");
+        assert!(
+            version.as_str().contains('+'),
+            "version identifies the build"
+        );
         assert!(spoken.err.is_empty());
     }
     assert_eq!(short.out, long.out);
@@ -325,9 +324,12 @@ fn version_reports_the_running_artifacts_and_finalized_schema_in_both_forms() {
             &fs::read(env!("CARGO_BIN_EXE_spice")).expect("read launched spice binary"),
         )
     );
-    assert_eq!(
-        text_body.product,
-        dist::current_product_version().expect("compiled product version")
+    assert!(
+        text_body
+            .product
+            .as_str()
+            .contains(text_body.binary.as_str()),
+        "the public version identifies the same executable as the artifact report"
     );
     assert_eq!(text_body.wire, wire::WireVersion::CURRENT);
     assert_eq!(text_body.journal, journal::SCHEMA_VERSION);

@@ -40,3 +40,5 @@ mod steering_read;
 pub mod task_git;
 #[cfg(test)]
 mod test_repository;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod version;

@@ -3,7 +3,6 @@ use std::path::{Path, PathBuf};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::{
-    fs,
     io::{self, Write},
     process::ExitStatus,
     sync::{OnceLock, mpsc},
@@ -194,7 +193,7 @@ fn main() {
             }
             Err(error) => deliver_mount_refusal(error, bootstrap_form),
         },
-        Err(error) if error.kind() == clap::error::ErrorKind::DisplayVersion => error.exit(),
+        Err(error) if error.kind() == clap::error::ErrorKind::DisplayVersion => version_flag(),
         Err(_) => {
             let mounts = mounted_registry(
                 bootstrap_form,
@@ -683,6 +682,20 @@ fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+fn version_flag() -> ! {
+    let binary = match spice::version::binary_digest() {
+        Ok(binary) => binary,
+        Err(fault) => deliver_fault(fault, Form::Text),
+    };
+    let version = spice::version::product_version(&binary);
+    let error = cli::command()
+        .version(version.to_string())
+        .try_get_matches_from(["spice", "--version"])
+        .expect_err("the version action exits before command dispatch");
+    error.exit()
+}
+
 /// Builds the daemonless identity report from the executable and repository
 /// this process is actually running against.
 #[cfg(not(target_arch = "wasm32"))]
@@ -697,25 +710,9 @@ fn version_outcome() -> Outcome<wire::Version> {
             });
         }
     };
-    let executable = match std::env::current_exe() {
-        Ok(path) => path,
-        Err(error) => {
-            return Outcome::Fault(Fault {
-                class: FaultClass::Environment,
-                reason: "version::binary-unresolved".to_owned(),
-                detail: error.to_string(),
-            });
-        }
-    };
-    let binary = match fs::read(&executable) {
-        Ok(bytes) => wire::Digest::compute(wire::Domain::DistArtifact, &bytes),
-        Err(error) => {
-            return Outcome::Fault(Fault {
-                class: FaultClass::Environment,
-                reason: "version::binary-unreadable".to_owned(),
-                detail: format!("{}: {error}", executable.display()),
-            });
-        }
+    let binary = match spice::version::binary_digest() {
+        Ok(binary) => binary,
+        Err(fault) => return Outcome::Fault(fault),
     };
     let repository = match spice::repository::Repository::discover(&start) {
         Ok(repository) => repository,
@@ -761,8 +758,7 @@ fn version_outcome() -> Outcome<wire::Version> {
 #[cfg(not(target_arch = "wasm32"))]
 fn version_identity(binary: wire::Digest, journal: u32, app: wire::Digest) -> wire::Version {
     wire::Version {
-        product: dist::current_product_version()
-            .expect("the compiled product version is repository-validated"),
+        product: spice::version::product_version(&binary),
         binary,
         wire: wire::WireVersion::CURRENT,
         journal,
