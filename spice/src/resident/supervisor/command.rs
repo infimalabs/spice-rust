@@ -15,7 +15,8 @@
 //! arriving while a command runs, interrupts the call, which answers with
 //! what the command said so far while the command keeps running as a job,
 //! and the job's ending is delivered as steering of its own when it comes;
-//! an ending nobody was there to hear waits for the lane's next occupant.
+//! an ending nobody hears through the delivery grace wakes the lane, whose
+//! next occupant receives it during startup catch-up.
 //! The resident reaches the driver through one datagram kick per inbox
 //! publication or consent answer; a lane with no command-driven occupant has
 //! nobody listening, and the kick is lost by design.

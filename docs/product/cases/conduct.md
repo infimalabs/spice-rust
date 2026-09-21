@@ -63,8 +63,8 @@
 | A compound command reaches the boundary | the whole command string is handed over once, before anything runs | [The complete top-level command string reaches the wrapper exactly once](../invariants/identity.md#steering-the-complete-top-level-command-string-reaches-the-wrapper-exactly-once) |
 | An agent works without a shell command but continues non-shell tool calls | each vendor post-tool hook remains a delivery opportunity | [Steering reaches the next admitted agent boundary](../invariants/identity.md#steering-reaches-the-next-admitted-agent-boundary) |
 | An agent crosses neither a vendor post-tool hook nor an active or next top-level shell-command delivery span | delivery waits while the durable directive remains live | [Steering reaches the next admitted agent boundary](../invariants/identity.md#steering-reaches-the-next-admitted-agent-boundary) |
-| An agent backgrounds long work and ends its turn | the turn exit vacates the lane; that command's later exit does not launch another occupant | [Ending a turn vacates the lane](../invariants/lifecycle.md#lifecycle-ending-a-turn-vacates-the-lane) |
-| An agent must wait on already-backgrounded work | it brings the wait into the foreground rather than ending on it | [Long work runs in the foreground](../invariants/lifecycle.md#lifecycle-long-work-runs-in-the-foreground) |
+| An agent backgrounds long work and ends its turn | the turn exit vacates the lane while the detached keeper continues; an ending left unheard through the delivery grace requests a lane wake, and the successor receives the completion during startup catch-up | [Ending a turn vacates the lane](../invariants/lifecycle.md#lifecycle-ending-a-turn-vacates-the-lane) |
+| An agent has already-backgrounded work | it uses `job wait` when the result blocks current work; ending the turn neither cancels the job nor loses its eventual completion | [Background jobs survive turn exit](../invariants/lifecycle.md#lifecycle-background-jobs-survive-turn-exit) |
 
 ### Maxim bags
 
