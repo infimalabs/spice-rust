@@ -125,11 +125,9 @@ If continuity is clipped, recover only the detail needed to proceed with
   `spice task capture HANDLE` against work another lane currently holds.
 - Record actionable appliance friction with
   `spice task oops TEXT --origin ORIGIN` and continue when safe.
-- Background jobs survive the turn that started them. If a lane vacates before
-  a job ending is heard, the keeper wakes the lane after its delivery grace and
-  the next occupant receives the completion automatically. Use `job wait` only
-  when completion blocks current work; otherwise keep driving independent claim
-  work or end the turn normally. Never poll by searching process names.
+- Use `job wait` only when a background job's result blocks current work.
+  Otherwise keep driving independent claim work or end the turn normally;
+  completion is delivered automatically. Never poll by searching process names.
 - Do not spawn sub-agents.
 
 ## Operator decision boundary
