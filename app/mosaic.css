@@ -6,11 +6,13 @@
   background: color-mix(in srgb, var(--accent) 3%, var(--panel));
 }
 
+/* One size for every composer input: typed text and its placeholder alike. */
 .mosaic-composer textarea {
   width: 100%;
   min-height: 92px;
   padding: 10px 11px;
   resize: vertical;
+  font-size: 13px;
   line-height: 1.42;
 }
 
