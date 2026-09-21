@@ -238,6 +238,10 @@ pub(super) fn lane_audit(note: &str) -> Option<String> {
 
 /// Split the audit at its next withheld field: text before it, the field's
 /// key, and the text after its value.
+///
+/// An unmeasurable value withholds the rest of the note rather than releasing
+/// it: this projection exists to keep a match from reaching its author, so a
+/// note it cannot read must end there.
 fn next_withheld_field(audit: &str) -> Option<(&str, &str, &str)> {
     let mut earliest: Option<(usize, &str)> = None;
     for key in WITHHELD_QUOTED.iter().chain(WITHHELD_PLAIN.iter()) {
@@ -250,7 +254,7 @@ fn next_withheld_field(audit: &str) -> Option<(&str, &str, &str)> {
     let (at, key) = earliest?;
     let value = &audit[at + key.len()..];
     let end = if WITHHELD_QUOTED.contains(&key) {
-        quoted_width(value)?
+        quoted_width(value).unwrap_or(value.len())
     } else {
         value
             .find(|character: char| !character.is_ascii_digit())
