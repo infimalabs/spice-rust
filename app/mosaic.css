@@ -282,14 +282,16 @@
 /* The raw slot reserves the preview before the portal mounts. Controls stay inside it. */
 .mermaid-slot {
   --message-image-size: var(--mosaic-image-size);
-  display: block; min-width: 0; margin: .5em 0;
-  height: var(--message-image-size);
+  display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  min-width: 0; margin: .5em 0;
+  width: min(100%, var(--message-image-size));
+  aspect-ratio: 1 / 1;
 }
-.mermaid-render { position: relative; height: 100%; }
+.mermaid-render { position: relative; height: 100%; min-height: 0; }
 .mermaid-render > .message-image,
 .mermaid-slot:empty::before {
   display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
-  width: 100%; min-width: 0; height: var(--message-image-size);
+  width: 100%; min-width: 0; height: 100%;
   aspect-ratio: auto; overflow: hidden; vertical-align: top; padding: 0; border: 0;
 }
 .mermaid-render > .message-image:disabled { opacity: 1; cursor: default; }
@@ -299,9 +301,10 @@
   background: var(--control-surface-soft); color: var(--muted);
   font: 600 .68rem/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+/* A diagram is read, not cropped: it letterboxes inside the square floor. */
 .mermaid-render > .message-image img {
   min-width: 0; min-height: 0; max-width: 100%; max-height: 100%;
-  aspect-ratio: auto;
+  aspect-ratio: auto; object-fit: contain;
 }
 .mermaid-render .message-image-status {
   min-width: 0; min-height: 0; overflow: auto; overflow-wrap: anywhere;
