@@ -442,7 +442,7 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         LaneStatus::Bound,
         "a seat with a declared session is bound rather than unbound once its occupant leaves"
     );
-    assert_eq!(occupied.status(0), LaneStatus::Running);
+    assert_eq!(occupied.status(0), LaneStatus::Working);
     assert_eq!(occupied.status(2), LaneStatus::Queued);
     assert_eq!(
         never_seated.status(1),
@@ -463,22 +463,22 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
     assert_eq!(owed.status(1), LaneStatus::Queued);
 
     assert_eq!(LaneStatus::Queued.label(), "steering queued");
+    assert_eq!(LaneStatus::Working.label(), "agent working");
     assert_eq!(LaneStatus::Running.label(), "agent running");
-    assert_eq!(LaneStatus::RunningStale.label(), "agent running-stale");
     assert_eq!(LaneStatus::Waiting.label(), "agent waiting");
     assert_eq!(LaneStatus::Bound.label(), "agent bound");
     assert_eq!(LaneStatus::Unbound.label(), "agent unbound");
     assert_eq!(LaneStatus::Queued.key(), "queued");
+    assert_eq!(LaneStatus::Working.key(), "working");
     assert_eq!(LaneStatus::Running.key(), "running");
-    assert_eq!(LaneStatus::RunningStale.key(), "running-stale");
     assert_eq!(LaneStatus::Waiting.key(), "waiting");
     assert_eq!(LaneStatus::Bound.key(), "bound");
     assert_eq!(LaneStatus::Unbound.key(), "unbound");
 
     let mut strip = vec![
         LaneStatus::Unbound,
-        LaneStatus::RunningStale,
         LaneStatus::Running,
+        LaneStatus::Working,
         LaneStatus::Bound,
         LaneStatus::Waiting,
         LaneStatus::Queued,
@@ -488,8 +488,8 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
         strip,
         vec![
             LaneStatus::Queued,
+            LaneStatus::Working,
             LaneStatus::Running,
-            LaneStatus::RunningStale,
             LaneStatus::Waiting,
             LaneStatus::Bound,
             LaneStatus::Unbound,

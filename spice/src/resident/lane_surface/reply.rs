@@ -56,11 +56,11 @@ fn answer_at(
         .map(|row| {
             let observed = activity(row.lane);
             let liveness = liveness(row, observed, now)?;
-            if liveness == wire::intent::LaneLiveness::Running
+            if liveness == wire::intent::LaneLiveness::Working
                 && let Some(observed) = observed
             {
                 // Round past the boundary so a sub-millisecond remainder
-                // cannot return another still-running snapshot.
+                // cannot return another still-working snapshot.
                 let remaining = QUIET_HORIZON - now.duration_since(observed.at());
                 let millis = u32::try_from(remaining.as_millis() + 1)
                     .expect("the quiet horizon fits in browser milliseconds");
@@ -189,7 +189,7 @@ fn liveness(
                 "a simulated lane carries real vendor session authority",
             ));
         }
-        return Ok(wire::intent::LaneLiveness::Running);
+        return Ok(wire::intent::LaneLiveness::Working);
     }
     let observed = activity.ok_or_else(|| {
         store_fault(
@@ -210,9 +210,9 @@ fn liveness(
         )
     })?;
     Ok(if quiet < QUIET_HORIZON {
-        wire::intent::LaneLiveness::Running
+        wire::intent::LaneLiveness::Working
     } else {
-        wire::intent::LaneLiveness::RunningStale
+        wire::intent::LaneLiveness::Running
     })
 }
 
@@ -675,12 +675,9 @@ mod tests {
 
         assert_eq!(
             recent.lanes[0].liveness,
-            wire::intent::LaneLiveness::Running
+            wire::intent::LaneLiveness::Working
         );
-        assert_eq!(
-            quiet.lanes[0].liveness,
-            wire::intent::LaneLiveness::RunningStale
-        );
+        assert_eq!(quiet.lanes[0].liveness, wire::intent::LaneLiveness::Running);
         assert_eq!(recent.lanes[0].name.as_deref(), Some("Ava"));
         assert_eq!(recent.lanes[0].life, "drive");
         assert_eq!(recent.lanes[0].disposition, "occupied");
@@ -790,7 +787,7 @@ mod tests {
 
         assert_eq!(
             answer.lanes[0].liveness,
-            wire::intent::LaneLiveness::Running
+            wire::intent::LaneLiveness::Working
         );
         assert!(!answer.lanes[0].bound);
         assert_eq!(

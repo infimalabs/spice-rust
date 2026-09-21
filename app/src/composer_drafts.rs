@@ -321,7 +321,7 @@ mod tests {
             occupant: occupant.map(uuid),
             session: Some("session-fixture".to_owned()),
             disposition: "seated".to_owned(),
-            liveness: wire::intent::LaneLiveness::Running,
+            liveness: wire::intent::LaneLiveness::Working,
             bound: true,
             jobs: Vec::new(),
         }

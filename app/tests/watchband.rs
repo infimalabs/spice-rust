@@ -69,7 +69,7 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         occupant: Some(uuid(OCCUPANT)),
         session: Some("session-fixture".to_owned()),
         disposition: "seated".to_owned(),
-        liveness: wire::intent::LaneLiveness::Running,
+        liveness: wire::intent::LaneLiveness::Working,
         // A seat that has run: `bound` records that a resumable session was once
         // declared for it, which is true of every lane this fixture builds
         // because each one is occupied. No standing reads the field, so the
@@ -229,7 +229,7 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
     assert_eq!(rows[0].session.as_deref(), Some("session-fixture"));
     assert_eq!(rows[0].life, "docker");
     assert_eq!(rows[0].disposition, "seated");
-    assert_eq!(rows[0].liveness, wire::intent::LaneLiveness::Running);
+    assert_eq!(rows[0].liveness, wire::intent::LaneLiveness::Working);
     assert_eq!(rows[0].pending, 2);
     assert_eq!(rows[0].handle.as_deref(), Some("FIDELIT-1kKRSfyV"));
     assert_eq!(rows[0].task_title.as_deref(), Some("Rebuild the watchband"));
