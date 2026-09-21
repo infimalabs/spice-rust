@@ -6,12 +6,12 @@
 //! on every target and delegates to [`perform`] only where these exist.
 
 use std::ffi::{OsStr, OsString};
-use std::fs;
-use std::io::Write;
-use std::net::TcpStream;
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use spice::install::{self, InstallError, InstallPreview};
 use spice::repository::Repository;
@@ -21,6 +21,10 @@ use wire::Digest;
 const WORKSPACE: &str = "target/spice-develop";
 /// Executable parked before a refresh so a failure can restore it.
 const ROLLBACK: &str = "spice.rollback";
+/// Maximum resident bootstrap response accepted while reconciling a restart.
+const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
+/// One local resident identity probe must not hold an install indefinitely.
+const BOOTSTRAP_PROBE_BOUND: Duration = Duration::from_secs(2);
 use super::{RefreshError, RefreshReport, RefreshRequest};
 
 /// Build the current tree, republish the appliance, and restart its resident.
@@ -73,22 +77,23 @@ pub(super) fn perform(
     )?;
 
     let bound = (endpoint.0.as_deref(), endpoint.1);
-    let endpoint = match restart(&repository, &installed, bound, request, output) {
-        Ok(endpoint) => endpoint,
-        Err(error) => {
-            let Some((journal, before_schema)) = &schema else {
-                return Err(error);
-            };
-            return Err(recover_start_failure(
-                &repository,
-                &unwind,
-                journal,
-                *before_schema,
-                output,
-                error,
-            ));
-        }
-    };
+    let endpoint =
+        match restart_admitting_reappearance(&repository, &installed, bound, request, output) {
+            Ok(endpoint) => endpoint,
+            Err(error) => {
+                let Some((journal, before_schema)) = &schema else {
+                    return Err(error);
+                };
+                return Err(recover_start_failure(
+                    &repository,
+                    &unwind,
+                    journal,
+                    *before_schema,
+                    output,
+                    error,
+                ));
+            }
+        };
     Ok(RefreshReport {
         built,
         installed,
@@ -528,7 +533,9 @@ fn restore_resident(repository: &Repository, rollback: &Rollback<'_>, output: &m
         ..RefreshRequest::default()
     };
     let bound = (Some(host.as_str()), Some(port));
-    if let Err(error) = restart(repository, rollback.installed, bound, &request, output) {
+    if let Err(error) =
+        restart_admitting_reappearance(repository, rollback.installed, bound, &request, output)
+    {
         let _ = writeln!(output, "previous resident did not come back: {error}");
     }
 }
@@ -540,11 +547,15 @@ fn workspace(repository: &Repository) -> Result<PathBuf, RefreshError> {
     Ok(workspace)
 }
 
+/// Discovery the currently published resident names, when one is running.
+fn read_discovery(repository: &Repository) -> Option<spice::canvas::Discovery> {
+    let bytes = fs::read(repository.admit_state().ok()?.canvas()).ok()?;
+    wire::decode(&bytes).ok()
+}
+
 /// Endpoint the published discovery names, when a resident published one.
 fn read_endpoint(repository: &Repository) -> Option<String> {
-    let bytes = fs::read(repository.admit_state().ok()?.canvas()).ok()?;
-    let discovery = wire::decode::<spice::canvas::Discovery>(&bytes).ok()?;
-    Some(discovery.endpoint)
+    read_discovery(repository).map(|discovery| discovery.endpoint)
 }
 
 /// Host and port the restarted resident should bind, each honoured on its own.
@@ -643,6 +654,107 @@ fn refusal_text(diagnostics: &[u8]) -> String {
     } else {
         text
     }
+}
+
+/// Admit a resident that won the restart race when it already runs this install.
+///
+/// The harness or another operator can observe the deliberate dark interval
+/// between `down` and the completed install and start a resident itself. A
+/// launcher refusal is then correct, but rollback is not: if that resident runs
+/// the executable just installed, the requested final state already exists. If
+/// it runs the predecessor, stop it once and let the installed successor take
+/// the lock.
+fn restart_admitting_reappearance(
+    repository: &Repository,
+    installed: &Path,
+    endpoint: (Option<&str>, Option<u16>),
+    request: &RefreshRequest,
+    output: &mut impl Write,
+) -> Result<Option<String>, RefreshError> {
+    let mut replaced_predecessor = false;
+    loop {
+        match restart(repository, installed, endpoint, request, output) {
+            Ok(endpoint) => return Ok(endpoint),
+            Err(error) => {
+                let RefreshError::ResidentStartRefused(refusal) = &error else {
+                    return Err(error);
+                };
+                if !refusal.contains("resident::already-up") {
+                    return Err(error);
+                }
+                let Some((discovery, version)) = running_resident_version(repository) else {
+                    return Err(error);
+                };
+                let installed_binary = executable_digest(installed)?;
+                if version.binary == installed_binary {
+                    writeln!(
+                        output,
+                        "resident already ready at {} from the installed executable",
+                        discovery.endpoint
+                    )?;
+                    return Ok(Some(discovery.endpoint));
+                }
+                if replaced_predecessor {
+                    return Err(error);
+                }
+                writeln!(
+                    output,
+                    "previous resident reappeared during install; stopping it and retrying"
+                )?;
+                stop(repository, installed, output)?;
+                replaced_predecessor = true;
+            }
+        }
+    }
+}
+
+/// Exact executable identity used by the resident's bootstrap version.
+fn executable_digest(executable: &Path) -> Result<Digest, std::io::Error> {
+    let file = File::open(executable)?;
+    let limit = file.metadata()?.len();
+    Digest::compute_reader(wire::Domain::DistArtifact, file, limit).map(|(_, digest)| digest)
+}
+
+/// Authenticated identity of the resident that currently owns the runtime lock.
+///
+/// Local Canvas needs no bearer token. A remotely authenticated surface keeps
+/// that operator secret out of discovery, so an installer that cannot prove
+/// identity here retains the launcher's refusal rather than guessing.
+fn running_resident_version(
+    repository: &Repository,
+) -> Option<(spice::canvas::Discovery, wire::Version)> {
+    let discovery = read_discovery(repository)?;
+    let authority = discovery.endpoint.strip_prefix("http://")?;
+    let address = authority.parse::<SocketAddr>().ok()?;
+    let mut stream = TcpStream::connect_timeout(&address, BOOTSTRAP_PROBE_BOUND).ok()?;
+    stream.set_read_timeout(Some(BOOTSTRAP_PROBE_BOUND)).ok()?;
+    stream.set_write_timeout(Some(BOOTSTRAP_PROBE_BOUND)).ok()?;
+    write!(
+        stream,
+        "GET /bootstrap HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n\r\n"
+    )
+    .and_then(|()| stream.flush())
+    .ok()?;
+    let mut response = Vec::new();
+    stream
+        .take(MAX_BOOTSTRAP_BYTES)
+        .read_to_end(&mut response)
+        .ok()?;
+    if !response.starts_with(b"HTTP/1.1 200 OK\r\n") {
+        return None;
+    }
+    let split = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")?
+        + 4;
+    let bootstrap = wire::decode::<wire::CanvasBootstrap>(&response[split..]).ok()?;
+    if bootstrap.endpoint != discovery.endpoint
+        || bootstrap.capability != discovery.capability
+        || bootstrap.epoch != discovery.epoch
+    {
+        return None;
+    }
+    Some((discovery, bootstrap.version))
 }
 
 /// Start the refreshed resident and answer the endpoint it published.

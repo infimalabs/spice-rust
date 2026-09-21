@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
-use std::io;
+use std::io::{self, Read as _, Write as _};
+use std::net::{Shutdown, TcpListener};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
@@ -196,11 +197,10 @@ impl Fixture {
         path
     }
 
-    /// Publish a discovery naming `endpoint`, the way a resident would.
-    fn publish(&self, endpoint: &str) {
+    fn publish(&self, endpoint: &str) -> spice::canvas::Discovery {
         let identity = "00000000-0000-4000-8000-000000000000"
             .parse::<wire::CanonicalUuid>()
-            .expect("the fixture identity is canonical");
+            .expect("fixture identity is canonical");
         let discovery = spice::canvas::Discovery {
             endpoint: endpoint.to_owned(),
             capability: identity,
@@ -216,6 +216,7 @@ impl Fixture {
         discovery
             .publish(state.canvas())
             .expect("scratch discovery publishes");
+        discovery
     }
 }
 
@@ -255,6 +256,55 @@ fn unbound_port() -> u16 {
         .port();
     drop(listener);
     port
+}
+
+/// Serve one exact resident bootstrap from `listener`.
+fn serve_bootstrap(
+    listener: TcpListener,
+    discovery: spice::canvas::Discovery,
+    binary: Digest,
+) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let bootstrap = wire::CanvasBootstrap {
+            endpoint: discovery.endpoint,
+            capability: discovery.capability,
+            epoch: discovery.epoch,
+            version: wire::Version {
+                product: wire::manifest::ProductVersion::parse("0.2.0-dev.0")
+                    .expect("fixture product version"),
+                binary,
+                wire: wire::WireVersion::CURRENT,
+                journal: spice::journal_schema::CURRENT,
+                canvas: wire::CanvasVersion::CURRENT,
+                app: Digest::compute(wire::Domain::DistInventory, b"fixture app"),
+            },
+            speech: wire::SpeechPlayback::Disabled {},
+        };
+        let body = wire::encode(&bootstrap).expect("fixture bootstrap encodes");
+        let (mut stream, _) = listener.accept().expect("bootstrap connection arrives");
+        let mut request = Vec::new();
+        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+            let mut chunk = [0_u8; 256];
+            let read = stream.read(&mut chunk).expect("bootstrap request reads");
+            assert_ne!(read, 0, "bootstrap request terminates its headers");
+            request.extend_from_slice(&chunk[..read]);
+            assert!(request.len() <= 4 * 1024, "bootstrap request stays bounded");
+        }
+        assert!(
+            request.starts_with(b"GET /bootstrap HTTP/1.1\r\n"),
+            "unexpected bootstrap request: {}",
+            String::from_utf8_lossy(&request)
+        );
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        )
+        .and_then(|()| stream.write_all(&body))
+        .and_then(|()| stream.flush())
+        .and_then(|()| stream.shutdown(Shutdown::Write))
+        .expect("bootstrap response writes");
+    })
 }
 
 #[test]
@@ -328,6 +378,114 @@ fn restart_surfaces_the_daemon_launchers_exact_refusal() {
         matches!(restarted, Err(RefreshError::ResidentStartRefused(ref refusal))
             if refusal.contains("resident::already-up; pid=42")),
         "refresh replaced the launcher's exact refusal: {restarted:?}"
+    );
+}
+
+/// A concurrent launcher can finish the install's job before its own `up`.
+///
+/// Treating the resulting `already-up` as a start failure enters rollback even
+/// though the installed executable is serving. The bootstrap binary identity
+/// makes that state exact rather than accepting an arbitrary lock holder.
+#[test]
+fn a_concurrent_installed_resident_completes_the_restart() {
+    let fixture = Fixture::new("restart-current-race");
+    let repository = fixture.repository();
+    let installed = fixture.binary(
+        "spice-up-refuses",
+        b"#!/bin/sh\necho 'spice: resident::already-up; pid=42' >&2\nexit 2\n",
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bootstrap listener binds");
+    let address = listener.local_addr().expect("bootstrap address reads");
+    let endpoint = format!("http://{address}");
+    let discovery = fixture.publish(&endpoint);
+    let binary = executable_digest(&installed).expect("installed executable hashes");
+    let server = serve_bootstrap(listener, discovery, binary);
+    let request = RefreshRequest {
+        restart: true,
+        ..RefreshRequest::default()
+    };
+    let mut output = Vec::new();
+
+    let restarted = restart_admitting_reappearance(
+        &repository,
+        &installed,
+        (Some("127.0.0.1"), Some(address.port())),
+        &request,
+        &mut output,
+    );
+    server.join().expect("bootstrap server joins");
+
+    assert_eq!(
+        restarted.expect("the installed resident is already ready"),
+        Some(endpoint)
+    );
+    let output = String::from_utf8_lossy(&output);
+    assert!(
+        output.contains("resident already ready")
+            && !output.contains("previous resident reappeared"),
+        "the installed resident was not admitted directly: {output}"
+    );
+}
+
+/// A predecessor that wins the dark interval is stopped before one bounded retry.
+#[test]
+fn a_concurrent_predecessor_is_replaced_by_the_installed_resident() {
+    let fixture = Fixture::new("restart-predecessor-race");
+    let repository = fixture.repository();
+    let state = repository.admit_state().expect("fixture state is admitted");
+    let marker = fixture.0.join("restart-attempted");
+    let endpoint = "http://127.0.0.1:43822";
+    let epoch = "00000000-0000-4000-8000-000000000004"
+        .parse()
+        .expect("fixture epoch is canonical");
+    let readiness = wire::Outcome::Reply(wire::Reply {
+        position: wire::ReplyPosition::Direct {},
+        body: wire::CanvasOpen {
+            endpoint: endpoint.to_owned(),
+            epoch,
+        },
+    });
+    let readiness = String::from_utf8(wire::encode(&readiness).expect("readiness encodes"))
+        .expect("readiness is UTF-8");
+    let script = format!(
+        "#!/bin/sh\nif [ \"$1\" = down ]; then rm -f '{}'; exit 0; fi\nif [ -f '{}' ]; then printf '%s\\n' '{}'; exit 0; fi\n: > '{}'\necho 'spice: resident::already-up; pid=42' >&2\nexit 2\n",
+        state.canvas().display(),
+        marker.display(),
+        readiness,
+        marker.display(),
+    );
+    let installed = fixture.binary("spice-racing-up", script.as_bytes());
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bootstrap listener binds");
+    let address = listener.local_addr().expect("bootstrap address reads");
+    let published = format!("http://{address}");
+    let discovery = fixture.publish(&published);
+    let predecessor = Digest::compute(wire::Domain::DistArtifact, b"predecessor executable");
+    let server = serve_bootstrap(listener, discovery, predecessor);
+    let request = RefreshRequest {
+        restart: true,
+        ..RefreshRequest::default()
+    };
+    let mut output = Vec::new();
+
+    let restarted = restart_admitting_reappearance(
+        &repository,
+        &installed,
+        (Some("127.0.0.1"), Some(43822)),
+        &request,
+        &mut output,
+    );
+    server.join().expect("bootstrap server joins");
+
+    assert_eq!(
+        restarted.expect("the predecessor is replaced"),
+        Some(endpoint.to_owned())
+    );
+    let output = String::from_utf8_lossy(&output);
+    assert!(
+        output.contains("previous resident reappeared during install")
+            && output.contains("stopping resident")
+            && output.contains("resident ready at"),
+        "the predecessor was not stopped and retried: {output}"
     );
 }
 
