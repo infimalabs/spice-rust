@@ -4,6 +4,19 @@ use super::*;
 
 pub(super) const TASTE_REVIEW_TAG: &str = "taste-review:required";
 
+/// Opening words of every durable taste-review audit note.
+pub(super) const AUDIT_PREFIX: &str = "taste-review audit ";
+
+/// What a lane reads where the operator reads a matched token or a taste's
+/// own message.
+const WITHHELD: &str = "withheld";
+
+/// Audit fields that name the match itself rather than where it sits.
+const WITHHELD_QUOTED: [&str; 2] = ["trigger=", "message="];
+
+/// Audit fields that locate the match precisely enough to swap one word.
+const WITHHELD_PLAIN: [&str; 1] = ["column="];
+
 #[derive(Clone, Debug)]
 pub(super) struct TasteReview {
     required: bool,
@@ -161,7 +174,7 @@ pub(super) fn task_taste_review(
     Ok(Some(TasteReview {
         required,
         audit: format!(
-            "taste-review audit policy={} outcome={outcome} matches=[{}]",
+            "{AUDIT_PREFIX}policy={} outcome={outcome} matches=[{}]",
             taste::bag_identity(bag),
             evidence.into_iter().collect::<Vec<_>>().join("; "),
         ),
@@ -183,4 +196,83 @@ pub(super) fn append_taste_review_audit(
             cause,
         )
         .map_err(|error| store_fault("task::taste-audit-build", &error.to_string()))
+}
+
+/// How many times the current policy has read one task's statement.
+///
+/// Every recheck appends its own audit, so the task's own notes count them
+/// without a second policy run.
+pub(super) fn taste_rechecks(facts: &bus::TaskFacts, task: &wire::TaskStamp) -> usize {
+    facts
+        .iter()
+        .filter_map(|envelope| envelope.fact.read::<body::TaskNoted>())
+        .filter(|noted| &noted.task == task && noted.note.starts_with(AUDIT_PREFIX))
+        .count()
+}
+
+/// Project one durable audit into what a lane may read of it.
+///
+/// `spice task show` and the plan-completion refusal already withhold the
+/// matched token and the taste's own message, because an author who is told
+/// the word swaps the word instead of rewriting the statement. The durable
+/// note keeps both for the operator who owns the policy; a lane reads the
+/// same note with the match itself, and the column that pinpoints it,
+/// withheld. The field and line remain: they name the passage to rewrite.
+///
+/// Returns `None` for a note that is not a taste-review audit.
+pub(super) fn lane_audit(note: &str) -> Option<String> {
+    if !note.starts_with(AUDIT_PREFIX) {
+        return None;
+    }
+    let mut lane = String::with_capacity(note.len());
+    let mut rest = note;
+    while let Some((before, key, after)) = next_withheld_field(rest) {
+        lane.push_str(before);
+        lane.push_str(key);
+        lane.push_str(WITHHELD);
+        rest = after;
+    }
+    lane.push_str(rest);
+    Some(lane)
+}
+
+/// Split the audit at its next withheld field: text before it, the field's
+/// key, and the text after its value.
+fn next_withheld_field(audit: &str) -> Option<(&str, &str, &str)> {
+    let mut earliest: Option<(usize, &str)> = None;
+    for key in WITHHELD_QUOTED.iter().chain(WITHHELD_PLAIN.iter()) {
+        if let Some(at) = audit.find(key)
+            && earliest.is_none_or(|(found, _)| at < found)
+        {
+            earliest = Some((at, key));
+        }
+    }
+    let (at, key) = earliest?;
+    let value = &audit[at + key.len()..];
+    let end = if WITHHELD_QUOTED.contains(&key) {
+        quoted_width(value)?
+    } else {
+        value
+            .find(|character: char| !character.is_ascii_digit())
+            .unwrap_or(value.len())
+    };
+    Some((&audit[..at], key, &value[end..]))
+}
+
+/// Width of one `{:?}` rendered value, counting the escapes that rendering
+/// wrote into it.
+fn quoted_width(value: &str) -> Option<usize> {
+    let bytes = value.as_bytes();
+    if bytes.first() != Some(&b'"') {
+        return None;
+    }
+    let mut index = 1;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'\\' => index += 2,
+            b'"' => return Some(index + 1),
+            _ => index += 1,
+        }
+    }
+    None
 }

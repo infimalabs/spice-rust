@@ -762,6 +762,7 @@ fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
     let status = task_status(&answer).expect("validated board yields status");
     for expected in [
         "claim -",
+        "taste-review -",
         "actor operator",
         concat!(
             "filter ( project:agent.operator.task or origin_thread.is:operator or ",

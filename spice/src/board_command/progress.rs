@@ -380,11 +380,23 @@ fn admit_plan_transition(
         board::TransitionKind::Complete { phase } if phase.as_str() == "plan"
     );
     if has_taste_review(&entry.statement().tags) {
+        // Every recheck writes its own audit, and the first one was written
+        // when the task was filed. A lane that rewords and refuses again can
+        // only tell progress from stasis if the refusal says how many reads
+        // the statement has already survived.
+        let rechecks = taste_rechecks(&snapshot.facts, entry.born()).saturating_sub(1);
+        let standing = match rechecks {
+            0 => "the filed statement has not been revised".to_owned(),
+            1 => "one revision has been rechecked and the statement still matches".to_owned(),
+            count => {
+                format!("{count} revisions have been rechecked and the statement still matches")
+            }
+        };
         return Err(refusal(
             "task::taste-review-required",
             Some(entry.handle().to_string()),
             &format!(
-                "update the task statement with spice task modify {} so the complete current taste policy can recheck it",
+                "{standing}; change what the statement says, then spice task modify {} lets the complete current taste policy recheck it",
                 entry.handle(),
             ),
         ));

@@ -38,6 +38,9 @@
 | A connected pending child carries acceptance | the plan phase advances | [A plan phase closes only when acceptance exists](../invariants/identity.md#work-a-plan-phase-closes-only-when-acceptance-exists) |
 | A plan-only flow is completed with no child connected | refused | [A plan-only flow must leave a connected child carrying acceptance](../invariants/identity.md#work-a-plan-only-flow-must-leave-a-connected-child-carrying-acceptance) |
 | An operator reads the board | the prepended step appears as a phase, not as a hidden attribute | [The prepended phase is visible as a phase](../invariants/identity.md#work-the-prepended-phase-is-visible-as-a-phase) |
+| A task statement matches the current taste policy | a plan phase holds it, and status, the assignment's next action, and the plan refusal all name the hold | [A taste hold is visible before a task is read](../invariants/identity.md#work-a-taste-hold-is-visible-before-a-task-is-read) |
+| A held statement is reworded and still matches | the refusal names how many revisions were rechecked, so it reads differently from the first | [A taste hold is visible before a task is read](../invariants/identity.md#work-a-taste-hold-is-visible-before-a-task-is-read) |
+| The statement's author reads the hold, on any surface | the matched token, its column, and the taste's message are withheld; the operator who owns the policy reads the complete audit | [The matched taste is withheld from the statement's author](../invariants/identity.md#work-the-matched-taste-is-withheld-from-the-statement-s-author) |
 
 ### Steering escalation and the shell boundary
 

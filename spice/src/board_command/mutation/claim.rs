@@ -207,7 +207,14 @@ pub(in crate::board_command) fn commit_claim(
     committed(bus, write, CommandAnswer::Claim(Box::new(answer)))
 }
 
+/// The exact command a lane runs next on the task it just won.
+///
+/// A task held for taste review is held on its statement, so the admitted
+/// next action is the rewording rather than another read.
 fn claim_activation_next_action(selected: &Entry) -> Box<str> {
+    if has_taste_review(&selected.statement().tags) {
+        return format!("spice task modify {} --title \"...\"", selected.handle()).into_boxed_str();
+    }
     format!("spice task show {}", selected.handle()).into_boxed_str()
 }
 
