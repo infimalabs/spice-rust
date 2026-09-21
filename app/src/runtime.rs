@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use wire::intent::{
     BoardAnswer, BoardTask, DirectiveAnswer, GlobalSettingsAnswer, InboxAnswer, LaneAnswer,
-    LaneLiveness,
+    LaneLiveness, VendorCatalogAnswer,
 };
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
@@ -484,6 +484,7 @@ pub struct CanvasRuntime {
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
     settings: ScopedValue<GlobalSettingsAnswer>,
+    vendors: ScopedValue<VendorCatalogAnswer>,
     settings_position: Option<Seq>,
     message_cards: message_cards::MessageCards,
     operator_messages: Vec<OperatorMessage>,
@@ -513,6 +514,7 @@ impl CanvasRuntime {
             lane_position: None,
             inbox: ScopedValue::new(accepted),
             settings: ScopedValue::new(accepted),
+            vendors: ScopedValue::new(accepted),
             settings_position: None,
             message_cards: message_cards::MessageCards::default(),
             operator_messages: Vec::new(),
@@ -555,6 +557,7 @@ impl CanvasRuntime {
             && self.lanes().is_some()
             && self.inbox().is_some()
             && self.settings().is_some()
+            && self.vendor_catalog().is_some()
     }
 
     #[must_use]
@@ -633,6 +636,12 @@ impl CanvasRuntime {
     #[must_use]
     pub fn settings(&self) -> Option<&GlobalSettingsAnswer> {
         self.settings.get(&self.principal)
+    }
+
+    /// Vendors this resident generation can seat, absent until the read lands.
+    #[must_use]
+    pub fn vendor_catalog(&self) -> Option<&VendorCatalogAnswer> {
+        self.vendors.get(&self.principal)
     }
 
     /// Newest retained activity produced by any member of `team`.
@@ -741,6 +750,13 @@ impl CanvasRuntime {
                 runtime.settings_position = position;
                 runtime.settings.replace(admitted.scope(), *answer);
             }
+        });
+    }
+
+    /// Apply the resident's vendor catalogue read.
+    pub fn apply_vendor_catalog(&mut self, admitted: &Admitted<Response<VendorCatalogAnswer>>) {
+        self.apply_response(admitted, |runtime, answer| {
+            runtime.vendors.replace(admitted.scope(), answer.clone());
         });
     }
 

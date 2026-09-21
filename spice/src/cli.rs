@@ -160,6 +160,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::DocLedger
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
+        | CommandKind::VendorCatalog
         | CommandKind::TaskAdd
         | CommandKind::TaskOopsAdd
         | CommandKind::TasteProposalAdd

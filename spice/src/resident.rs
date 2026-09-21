@@ -184,6 +184,7 @@ mod steering;
 pub(crate) mod supervisor;
 mod taste_surface;
 mod timers;
+mod vendor_surface;
 
 pub(crate) fn admit_steering_index(journal: &mut journal::Journal) -> CommandResult<()> {
     steering::admit_index(journal)

@@ -16,7 +16,7 @@ use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction, LaneArrange, LaneRead,
     LaneRenewal, LaneState, SteerInbox, SteerSend, TaskAnswer, TeamArrangement, TeamConfigure,
-    TeamLife,
+    TeamLife, VendorCatalog,
 };
 use wire::{CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness};
 use yew::prelude::*;
@@ -917,12 +917,13 @@ fn use_agent_controls(
     let seat = view::SeatDraft {
         name: use_state(String::new),
         worktree: use_state(String::new),
-        vendor: use_state(|| "codex".to_owned()),
-        life: use_state(|| "steer".to_owned()),
+        vendor: use_state(String::new),
+        life: use_state(|| wire::intent::TeamLife::Steer.as_str().to_owned()),
         model: use_state(String::new),
         effort: use_state(String::new),
         notice: use_state(Notice::none),
     };
+    use_seat_vendor(&surface, seat.vendor.clone());
     view::AgentControls {
         submit_seat: seat_submit(sender, surface, seat.clone()),
         seat,
@@ -931,6 +932,35 @@ fn use_agent_controls(
         suppress_automatic_speech: speech.suppress_automatic,
         speech_message: speech.message,
     }
+}
+
+/// Hold the seat draft's vendor on a name the resident actually offers.
+///
+/// The catalogue arrives with hydration and can change with the resident
+/// generation, so the draft adopts the first offered vendor whenever the one
+/// it holds is not in the current catalogue. Without it the form would open
+/// on a vendor spelling nothing admits.
+#[hook]
+fn use_seat_vendor(surface: &UseStateHandle<SurfaceData>, vendor: UseStateHandle<String>) {
+    let offered: Vec<String> = surface
+        .read()
+        .as_ref()
+        .and_then(CanvasRuntime::vendor_catalog)
+        .map(|catalog| {
+            catalog
+                .vendors
+                .iter()
+                .map(|choice| choice.name.to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    use_effect_with(offered, move |offered| {
+        if let Some(first) = offered.first()
+            && !offered.contains(&*vendor)
+        {
+            vendor.set(first.clone());
+        }
+    });
 }
 
 fn seat_submit(
@@ -1233,6 +1263,13 @@ fn state_from_input(state: UseStateHandle<String>) -> Callback<InputEvent> {
     Callback::from(move |event: InputEvent| {
         let input: web_sys::HtmlInputElement = event.target_unchecked_into();
         state.set(input.value());
+    })
+}
+
+fn state_from_select(state: UseStateHandle<String>) -> Callback<Event> {
+    Callback::from(move |event: Event| {
+        let select: web_sys::HtmlSelectElement = event.target_unchecked_into();
+        state.set(select.value());
     })
 }
 

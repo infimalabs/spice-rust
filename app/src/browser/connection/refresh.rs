@@ -35,7 +35,8 @@ pub(super) async fn send_refresh(
     send_board(principal, writer, actions).await?;
     send_lanes(principal, writer, actions, submissions).await?;
     send_inbox(principal, writer, actions, submissions).await?;
-    send_settings(principal, writer, actions).await
+    send_settings(principal, writer, actions).await?;
+    send_vendors(principal, writer, actions).await
 }
 
 /// Refresh only the current reads invalidated by one streamed fact batch.
@@ -123,6 +124,22 @@ async fn send_settings(
         PendingKind::Settings,
         CommandKind::GlobalSettingsRead,
         GlobalSettingsRead {},
+    )
+    .await
+}
+
+async fn send_vendors(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+) -> Result<(), String> {
+    send_if_offered(
+        principal,
+        writer,
+        actions,
+        PendingKind::Vendors,
+        CommandKind::VendorCatalog,
+        VendorCatalog {},
     )
     .await
 }

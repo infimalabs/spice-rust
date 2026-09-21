@@ -182,10 +182,30 @@ pub(super) struct SeatDraft {
 pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &AgentControls) -> Html {
     let can_seat = runtime.is_some_and(|runtime| runtime.offers(CommandKind::LaneSeat));
     let draft = &controls.seat;
+    let catalog = runtime.and_then(CanvasRuntime::vendor_catalog);
+    let selected = catalog.and_then(|catalog| {
+        catalog
+            .vendors
+            .iter()
+            .find(|vendor| vendor.name.as_str() == draft.vendor.trim())
+    });
     let ready = can_seat
         && !draft.worktree.trim().is_empty()
-        && !draft.vendor.trim().is_empty()
+        && selected.is_some()
         && !draft.life.trim().is_empty();
+    // A model spelling belongs to the vendor that resolves it, so choosing
+    // another vendor drops one the operator selected for the previous.
+    let choose_vendor = {
+        let vendor = draft.vendor.clone();
+        let model = draft.model.clone();
+        Callback::from(move |event: Event| {
+            let select: web_sys::HtmlSelectElement = event.target_unchecked_into();
+            vendor.set(select.value());
+            model.set(String::new());
+        })
+    };
+    let default_model = selected.map_or("", |vendor| vendor.default_model.as_str());
+    let default_effort = selected.map_or("", |vendor| vendor.default_effort.as_str());
     html! {
         <aside class="seat-panel">
             <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
@@ -204,34 +224,55 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                 </label>
                 <label>
                     <span title="Vendor">{"Vendor"}</span>
-                    <input type="text" value={(*draft.vendor).clone()}
-                        oninput={state_from_input(draft.vendor.clone())} />
+                    <select value={(*draft.vendor).clone()} onchange={choose_vendor}>
+                        {for catalog.into_iter().flat_map(|catalog| catalog.vendors.iter()).map(|vendor| {
+                            let name = vendor.name.to_string();
+                            html! {
+                                <option
+                                    value={name.clone()}
+                                    selected={name == *draft.vendor}
+                                >{vendor.label.clone()}</option>
+                            }
+                        })}
+                    </select>
                 </label>
                 <label>
                     <span title="Life">{"Life"}</span>
-                    <input type="text" list="lane-lives"
-                        value={(*draft.life).clone()}
-                        oninput={state_from_input(draft.life.clone())} />
+                    <select value={(*draft.life).clone()}
+                        onchange={state_from_select(draft.life.clone())}>
+                        {for wire::intent::TeamLife::ALL.iter().map(|life| html! {
+                            <option
+                                value={life.as_str()}
+                                selected={life.as_str() == *draft.life}
+                            >{life.as_str()}</option>
+                        })}
+                    </select>
                 </label>
-                <datalist id="lane-lives">
-                    <option value="steer" /><option value="drive" /><option value="drain" />
-                </datalist>
                 <label>
                     <span title="Model">{"Model"}</span>
-                    <input type="text" placeholder="vendor default"
+                    <input type="text" list="lane-models"
+                        placeholder={format!("vendor default ({default_model})")}
                         value={(*draft.model).clone()}
                         oninput={state_from_input(draft.model.clone())} />
                 </label>
+                <datalist id="lane-models">
+                    <option value={default_model.to_owned()} />
+                </datalist>
                 <label>
                     <span title="Effort">{"Effort"}</span>
-                    <input type="text" list="lane-efforts" placeholder="vendor default"
-                        value={(*draft.effort).clone()}
-                        oninput={state_from_input(draft.effort.clone())} />
+                    <select value={(*draft.effort).clone()}
+                        onchange={state_from_select(draft.effort.clone())}>
+                        <option value="" selected={draft.effort.is_empty()}>
+                            {format!("vendor default ({default_effort})")}
+                        </option>
+                        {for catalog.into_iter().flat_map(|catalog| catalog.efforts.iter()).map(|effort| html! {
+                            <option
+                                value={effort.clone()}
+                                selected={*effort == **draft.effort}
+                            >{effort.clone()}</option>
+                        })}
+                    </select>
                 </label>
-                <datalist id="lane-efforts">
-                    <option value="low" /><option value="medium" /><option value="high" />
-                    <option value="xhigh" /><option value="max" />
-                </datalist>
                 {render_notice(&draft.notice)}
             </form>
         </aside>
