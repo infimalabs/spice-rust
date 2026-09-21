@@ -74,36 +74,49 @@ pub(super) struct FleetRender<'a> {
     pub(super) controls: &'a view::AgentControls,
 }
 
-pub(super) fn render_empty_fleet(
-    runtime: &CanvasRuntime,
-    epoch: CanonicalUuid,
-    fleet: &NodeRef,
-    team_controls: &UseReducerHandle<TeamControls>,
-    controls: &view::AgentControls,
-) -> Html {
+pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_>) -> Html {
     let empty_team = crate::runtime::LaneRow {
-        lane: epoch,
+        lane: render.epoch,
         subscription: wire::intent::TeamLife::Steer,
         members: Vec::new(),
     };
-    let mode = team_controls.empty_mode();
+    let mode = render.team_controls.empty_mode();
+    let control = render
+        .team_controls
+        .current(empty_team.lane, empty_team.subscription);
+    let actions = team_menu::Context {
+        controls: render.team_controls,
+        sender: render.sender,
+        runtime: render.runtime,
+        agents: render.controls,
+        topology: &render.topology,
+        topology_revision: render.topology_revision,
+        can_configure: false,
+        can_arrange: false,
+    };
+    let dismiss = team_menu_dismissal(render.team_controls);
+    let escape = team_menu_escape(render.team_controls);
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
-            tabindex="0" aria-label="Agent teams">
+            tabindex="0" aria-label="Agent teams" onclick={dismiss} onkeydown={escape}>
             <section class="team-surface" data-team-weight="1">
                 {render_empty_toolbar(
                     mode,
-                    team_controls,
-                    &[],
+                    render.team_controls,
+                    render.epoch,
+                    control.import_open,
                 )}
+                if control.import_open {
+                    {team_menu::render_import(&empty_team, &actions)}
+                }
                 <div class="team-pane" data-team-mode={mode.key()}>
                     {match mode {
                         TeamMode::Chat => {
-                            empty("No agents are assigned. Open Info to add one.")
+                            empty("No teams are assigned. Open Import agent to create an agent.")
                         }
-                        TeamMode::Work => render_tasks(runtime, &empty_team, &[]),
+                        TeamMode::Work => render_tasks(render.runtime, &empty_team, &[]),
                         TeamMode::Info => {
-                            render_details(runtime, &empty_team, &[], mode, controls)
+                            render_details(&empty_team, &[], mode)
                         }
                     }}
                 </div>
@@ -198,11 +211,9 @@ pub(super) fn render_populated_fleet(
                                             &team_standings,
                                         ),
                         TeamMode::Info => render_details(
-                                            render.runtime,
                                             team,
                                             &team_standings,
                                             mode,
-                                            render.controls,
                                         ),
                                         TeamMode::Chat => Html::default(),
                                     }}
@@ -355,28 +366,28 @@ fn team_drop(
 fn render_empty_toolbar(
     mode: TeamMode,
     team_controls: &UseReducerHandle<TeamControls>,
-    standings: &[Standing],
+    team: CanonicalUuid,
+    import_open: bool,
 ) -> Html {
     html! {
         <header class="team-toolbar">
             <span
                 class="team-lights"
                 role="group"
-                aria-label={format!("{} admitted agents", standings.len())}
+                aria-label="0 admitted agents"
             ></span>
-            {render_mode_rail(mode, None, standings, team_controls)}
+            {render_mode_rail(mode, None, &[], team_controls)}
             <button
                 class="team-menu"
                 type="button"
-                aria-label="Info about team and agents"
-                title="Info about team and agents"
+                aria-label="Import agent"
+                aria-haspopup="dialog"
+                aria-expanded={import_open.to_string()}
+                title="Import or create an agent"
                 onclick={{
                     let choose = team_controls.clone();
                     Callback::from(move |_| {
-                        choose.dispatch(TeamControlAction::SetMode {
-                            team: None,
-                            mode: TeamMode::Info,
-                        });
+                        choose.dispatch(TeamControlAction::ToggleImport { team });
                     })
                 }}
             ><span class="team-menu-icon" aria-hidden="true"></span></button>
@@ -407,6 +418,8 @@ fn render_team_toolbar(
     let actions = team_menu::Context {
         controls: render.team_controls,
         sender: render.sender,
+        runtime: render.runtime,
+        agents: render.controls,
         topology: &render.topology,
         topology_revision: render.topology_revision,
         can_configure: render.can_configure,

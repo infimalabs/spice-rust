@@ -97,9 +97,6 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
         .iter()
         .filter(|team| team.teamed())
         .collect::<Vec<_>>();
-    if teams.is_empty() {
-        return render_empty_fleet(runtime, lanes.epoch, team_fleet, team_controls, controls);
-    }
     let render = FleetRender {
         runtime,
         epoch: lanes.epoch,
@@ -115,6 +112,9 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
         team_controls,
         controls,
     };
+    if teams.is_empty() {
+        return render_empty_fleet(team_fleet, &render);
+    }
     render_populated_fleet(&teams, &standings, team_fleet, &render)
 }
 
@@ -160,7 +160,7 @@ fn render_compose(
     controls: &view::AgentControls,
 ) -> Html {
     if team.members.is_empty() {
-        return empty("No agents are assigned. Open Info to add one.");
+        return empty("No agents are assigned. Open Import agent to add one.");
     }
     let authoritative_life = team.subscription;
     let control = team_controls.current(team.lane, authoritative_life);
@@ -379,21 +379,9 @@ struct HistoryPaging<'a> {
     revision: u64,
 }
 
-fn render_details(
-    runtime: &CanvasRuntime,
-    team: &crate::runtime::LaneRow,
-    standings: &[Standing],
-    mode: TeamMode,
-    controls: &view::AgentControls,
-) -> Html {
+fn render_details(team: &crate::runtime::LaneRow, standings: &[Standing], mode: TeamMode) -> Html {
     html! {
-        <div class={classes!(
-            "team-detail-pane",
-            (mode == TeamMode::Info).then_some("with-seat")
-        )}>
-            if mode == TeamMode::Info {
-                {view::render_seat_panel(Some(runtime), controls)}
-            }
+        <div class="team-detail-pane">
             <div class="team-detail-grid">
                 {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
                     render_agent_details(member, standing, mode)

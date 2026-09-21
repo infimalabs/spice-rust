@@ -520,6 +520,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .seat-panel {
   container-type: inline-size;
+  grid-column: 1 / -1;
   min-width: 0;
   padding: 8px;
   border: 1px solid var(--line);
@@ -857,5 +858,6 @@ tbody tr:last-child td { border-bottom: 0; }
   gap: 8px;
 }
 .team-import-menu > header button { min-height: 30px; }
+.team-import-heading { grid-column: 1 / -1; margin: 8px 0 0; font-size: .8rem; }
 .team-import-empty { grid-column: 1 / -1; color: var(--muted); text-align: center; }
 .canvas-team-open { min-height: 30px; white-space: nowrap; }
