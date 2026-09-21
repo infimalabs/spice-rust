@@ -154,7 +154,7 @@ body:has(.shell--mosaic),
   box-shadow: var(--shadow);
 }
 .canvas-navigation {
-  grid-area: 1 / 1 / 2 / 3;
+  grid-area: 1 / 1;
   position: relative;
   z-index: 1;
   display: flex;
