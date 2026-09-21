@@ -1,11 +1,11 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop,
-    TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, elapsed_label,
-    elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, latest_lane_prose, leaf,
-    one_line, remaining_label, remaining_label_deadline_millis, reported_tasks,
-    response_speech_text, short, split_member, split_team, standing_title, standings,
-    task_mentions, teams, ticker_chunks, ticker_line, topology, truncate,
+    TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams,
+    elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept,
+    latest_lane_prose, leaf, one_line, remaining_label, remaining_label_deadline_millis,
+    reported_tasks, response_speech_text, short, split_member, split_team, standing_title,
+    standings, task_mentions, teams, ticker_chunks, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -1056,6 +1056,23 @@ fn one_member_can_leave_a_team_without_moving_its_siblings() {
         None,
         "the selected member must belong to the source team",
     );
+}
+
+#[test]
+fn leaving_all_teams_is_unavailable_only_when_the_member_is_already_solo() {
+    let grouped = vec![
+        (uuid(LANE_A), vec![uuid(LANE_A), uuid(LANE_B)]),
+        (uuid(TEAM_TWO), vec![uuid(LANE_C)]),
+    ];
+
+    assert!(can_leave_all_teams(&grouped, uuid(LANE_A), uuid(LANE_A),));
+    assert!(can_leave_all_teams(&grouped, uuid(TEAM_TWO), uuid(LANE_C),));
+    assert!(!can_leave_all_teams(
+        &[(uuid(LANE_C), vec![uuid(LANE_C)])],
+        uuid(LANE_C),
+        uuid(LANE_C),
+    ));
+    assert!(!can_leave_all_teams(&grouped, uuid(TEAM_TWO), uuid(LANE_B),));
 }
 
 #[test]

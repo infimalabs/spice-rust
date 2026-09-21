@@ -411,6 +411,11 @@ An expanded member's action drawer offers **Create new team** when that member
 belongs to a multi-agent team. It moves only that member into a fresh team,
 preserves every sibling in the source team, and inherits the source team's
 allocation policy. The action is disabled for a sole agent.
+
+**Leave all teams** moves only the selected member to its own lane identity,
+preserving its seat and every other member. It is disabled only when that lane
+already stands outside a team.
+
 All six fields remain visible, with aligned, bounded labels beside their controls:
 three paired rows when space permits, one field per row on narrow tiles.
 The Seat agent button stays at the form's upper right. Long values scroll inside
