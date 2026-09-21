@@ -303,10 +303,35 @@ fn identity_presentation(identity: Option<&CanvasIdentity>) -> IdentityPresentat
     }
     let details = rows.join("\n");
     IdentityPresentation {
-        label: format!("Spice {}", identity.version.product),
+        label: format!(
+            "Spice {}",
+            abbreviated_product(&identity.version.product.to_string())
+        ),
         accessible: details.replace('\n', "; "),
         details: Some(details),
     }
+}
+
+/// Characters kept from one build-metadata component, ellipsis included.
+const BUILD_COMPONENT_BUDGET: usize = 9;
+
+/// The product version with its build metadata cut to a change indicator.
+///
+/// The build component carries the whole appliance digest, which is wider
+/// than the menu and reads as noise at full length; eight characters are
+/// enough to see that the appliance changed. The release identity is never
+/// cut, and the exact spelling stays in the hover details, the accessible
+/// name, and the `data-product-version` attribute.
+fn abbreviated_product(product: &str) -> String {
+    let Some((release, build)) = product.split_once('+') else {
+        return product.to_owned();
+    };
+    let build = build
+        .split('.')
+        .map(|component| crate::watchband::truncate(component, BUILD_COMPONENT_BUDGET))
+        .collect::<Vec<_>>()
+        .join(".");
+    format!("{release}+{build}")
 }
 
 fn render_theme_selector() -> Html {
