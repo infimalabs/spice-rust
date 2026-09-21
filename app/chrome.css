@@ -272,9 +272,6 @@ body:has(.shell--mosaic),
   color: var(--muted);
   font: .66rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.canvas-menu-footer:has(.canvas-menu-version--update) {
-  grid-template-columns: minmax(min-content, 1fr) minmax(0, auto);
-}
 .canvas-theme-selector {
   display: inline-flex;
   flex: 0 0 auto;
