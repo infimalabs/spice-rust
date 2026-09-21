@@ -428,3 +428,17 @@ fn a_hold_speaks_on_status_while_its_match_stays_withheld_from_the_lane() {
 
     clean(&root, bus);
 }
+
+#[test]
+fn an_unmeasurable_audit_value_withholds_the_rest_of_the_note() {
+    let malformed = format!(
+        "{AUDIT_PREFIX}policy=abc outcome=required matches=[field=\"title\" trigger=\"open"
+    );
+    let read = lane_audit(&malformed).expect("an audit projects for a lane");
+    assert!(read.ends_with("trigger=withheld"), "{read}");
+    assert!(!read.contains("open"), "{read}");
+    assert!(
+        lane_audit("an authored note").is_none(),
+        "a note that is not an audit was rewritten",
+    );
+}
