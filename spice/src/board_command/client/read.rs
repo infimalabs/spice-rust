@@ -817,6 +817,19 @@ pub(in crate::board_command) fn task_status(
                     .is_some_and(|claim| claim.actor == board.principal)
         })
         .map_or_else(|| "-".to_owned(), |entry| actor_claim_lease(board, entry));
+    // A taste hold is a statement rewording, not ordinary phase work, and the
+    // lane meets status before it reads any one task.
+    let holds = rows
+        .iter()
+        .copied()
+        .filter(|entry| has_taste_review(&entry.statement().tags))
+        .map(|entry| entry.handle().to_string())
+        .collect::<Vec<_>>();
+    let taste_review = if holds.is_empty() {
+        "-".to_owned()
+    } else {
+        holds.join(" ")
+    };
     let review = rows
         .iter()
         .copied()
@@ -836,7 +849,8 @@ pub(in crate::board_command) fn task_status(
         })
         .count();
     Ok(format!(
-        "claim {claim}\nactor {}\nfilter {}\npublic task project depth {}..{} dotted segments\n\
+        "claim {claim}\ntaste-review {taste_review}\nactor {}\nfilter {}\n\
+         public task project depth {}..{} dotted segments\n\
          active {active}\nready {ready}\n\
          review {review}\nblocked {blocked}\nwaiting {waiting}\n\
          environment journal-schema required={required_schemas} observed={} \

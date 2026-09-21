@@ -1095,6 +1095,7 @@ pub(super) fn read_ledger(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    let lane_reader = matches!(principal, Actor::Lane(_));
     let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -1143,7 +1144,13 @@ pub(super) fn read_ledger(
         .iter()
         .filter_map(|envelope| envelope.fact.read::<body::TaskNoted>())
         .filter(|noted| noted.task == statement.born)
-        .map(|noted| note_annotation(&noted.note))
+        .map(|noted| {
+            let read = lane_reader
+                .then(|| lane_audit(&noted.note))
+                .flatten()
+                .unwrap_or(noted.note);
+            note_annotation(&read)
+        })
         .collect();
     snapshot_reply(
         snapshot.cursor,

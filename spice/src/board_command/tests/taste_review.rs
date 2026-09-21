@@ -79,15 +79,16 @@ fn modify_with_repository(
     bus: &Bus,
     repository: &Repository,
     epoch: CanonicalUuid,
+    actor: Actor,
     task: &TaskHandle,
     title: &str,
 ) -> Outcome<CommandAnswer> {
-    let visible = board(bus, epoch, Actor::Operator);
+    let visible = board(bus, epoch, actor.clone());
     issue_repository(
         bus,
         repository,
         epoch,
-        Actor::Operator,
+        actor,
         CommandKind::TaskEdit,
         vec![statement_witness(at(&visible, task))],
         &TaskEdit {
@@ -100,6 +101,25 @@ fn modify_with_repository(
             project: None,
         },
     )
+}
+
+fn ledger_text(bus: &Bus, epoch: CanonicalUuid, actor: Actor, task: &TaskHandle) -> String {
+    let outcome = issue(
+        bus,
+        epoch,
+        actor,
+        CommandKind::DocLedger,
+        Vec::new(),
+        &DocLedger { task: task.clone() },
+    );
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Text(TextAnswer { text }),
+        ..
+    }) = outcome
+    else {
+        panic!("ledger read did not reply with text: {outcome:?}");
+    };
+    text
 }
 
 #[test]
@@ -196,6 +216,7 @@ fn modification_rechecks_the_complete_current_policy_before_clearing() {
         &bus,
         &repository,
         epoch,
+        Actor::Operator,
         &task,
         "Current lifecycle change",
     ));
@@ -209,6 +230,7 @@ fn modification_rechecks_the_complete_current_policy_before_clearing() {
         &bus,
         &repository,
         epoch,
+        Actor::Operator,
         &task,
         "Current lifecycle change",
     ));
@@ -260,6 +282,56 @@ fn blank_acceptance_is_refused_and_whitespace_is_absent_for_default_flow() {
     clean(&root, bus);
 }
 
+fn claim_held(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    task: &TaskHandle,
+) -> wire::intent::ClaimAnswer {
+    let lane = Actor::Lane(seat.lane);
+    let available = board(bus, epoch, lane.clone());
+    let won = assert_committed(issue(
+        bus,
+        epoch,
+        lane,
+        CommandKind::ClaimWin,
+        claim_expected(&available, task, seat),
+        &ClaimWin {
+            rule: "next".parse().expect("allocator rule"),
+            recovery: None,
+        },
+    ));
+    let CommandAnswer::Claim(won) = won else {
+        panic!("claim win returned another answer shape");
+    };
+    *won
+}
+
+fn plan_done(
+    bus: &Bus,
+    repository: &Repository,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    task: &TaskHandle,
+) -> Outcome<CommandAnswer> {
+    let lane = Actor::Lane(seat.lane);
+    let held = board(bus, epoch, lane.clone());
+    issue_repository(
+        bus,
+        repository,
+        epoch,
+        lane,
+        CommandKind::TaskDone,
+        progress_witnesses(&held, at(&held, task), seat.lane, seat.occupant, false)
+            .expect("held taste review has progress witnesses"),
+        &TaskDone {
+            task: task.clone(),
+            validation: "acceptance is already substantive".to_owned(),
+            operation: Some(completion_operation()),
+        },
+    )
+}
+
 #[test]
 fn plan_completion_refuses_while_taste_review_marker_remains() {
     let (root, bus, epoch, seats) = fixture("taste-review-plan-gate", 1);
@@ -273,48 +345,86 @@ fn plan_completion_refuses_while_taste_review_marker_remains() {
         &["focused tests pass"],
     );
     assert_committed(outcome);
-    let lane = Actor::Lane(seats[0].lane);
-    let available = board(&bus, epoch, lane.clone());
-    assert_committed(issue(
-        &bus,
-        epoch,
-        lane.clone(),
-        CommandKind::ClaimWin,
-        claim_expected(&available, &task, &seats[0]),
-        &ClaimWin {
-            rule: "next".parse().expect("allocator rule"),
-            recovery: None,
-        },
-    ));
-    let held = board(&bus, epoch, lane.clone());
-    let outcome = issue_repository(
-        &bus,
-        &repository,
-        epoch,
-        lane,
-        CommandKind::TaskDone,
-        progress_witnesses(
-            &held,
-            at(&held, &task),
-            seats[0].lane,
-            seats[0].occupant,
-            false,
-        )
-        .expect("held taste review has progress witnesses"),
-        &TaskDone {
-            task: task.clone(),
-            validation: "acceptance is already substantive".to_owned(),
-            operation: Some(completion_operation()),
-        },
+    let won = claim_held(&bus, epoch, &seats[0], &task);
+    assert_eq!(
+        won.next.as_deref(),
+        Some(format!("spice task modify {task} --title \"...\"").as_str()),
+        "assignment named a read instead of the rewording the hold needs",
     );
+
+    let outcome = plan_done(&bus, &repository, epoch, &seats[0], &task);
     let Outcome::Refusal(refusal) = outcome else {
         panic!("taste review plan completion did not refuse: {outcome:?}");
     };
     assert_eq!(refusal.reason(), "task::taste-review-required");
     let diagnostic = format!("{refusal:?}");
     assert!(diagnostic.contains("complete current taste policy"));
+    assert!(diagnostic.contains("the filed statement has not been revised"));
     assert!(!diagnostic.contains("delay"));
     assert!(!diagnostic.contains("Rewrite the task wording"));
+
+    // A reworded statement that still matches must read differently from the
+    // first refusal, or a lane cannot tell a recheck from a repetition.
+    assert_committed(modify_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        Actor::Lane(seats[0].lane),
+        &task,
+        "Delay the lifecycle change once more",
+    ));
+    let outcome = plan_done(&bus, &repository, epoch, &seats[0], &task);
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("reworded taste review plan completion did not refuse: {outcome:?}");
+    };
+    let diagnostic = format!("{refusal:?}");
+    assert!(
+        diagnostic.contains("one revision has been rechecked"),
+        "the second refusal repeated the first: {diagnostic}",
+    );
+    assert!(!diagnostic.contains("delay"));
+
+    clean(&root, bus);
+}
+
+#[test]
+fn a_hold_speaks_on_status_while_its_match_stays_withheld_from_the_lane() {
+    let (root, bus, epoch, seats) = fixture("taste-review-hold-visibility", 1);
+    let repository = configured_repository(&root, &["delay"]);
+    let (task, outcome) = add_with_repository(
+        &bus,
+        &repository,
+        epoch,
+        "TASTE-hold0001",
+        "Delay the lifecycle change",
+        &["focused tests pass"],
+    );
+    assert_committed(outcome);
+    let lane = Actor::Lane(seats[0].lane);
+    claim_held(&bus, epoch, &seats[0], &task);
+
+    let held = board(&bus, epoch, lane.clone());
+    let status = task_status(&held).expect("validated board yields status");
+    assert!(
+        status
+            .lines()
+            .any(|line| line == format!("taste-review {task}")),
+        "status did not name the held task: {status}",
+    );
+
+    let read = ledger_text(&bus, epoch, lane, &task);
+    assert!(read.contains(AUDIT_PREFIX));
+    assert!(read.contains("field=\"title\""));
+    assert!(read.contains("trigger=withheld"));
+    assert!(read.contains("message=withheld"));
+    assert!(read.contains("column=withheld"));
+    assert!(!read.contains("\"delay\""));
+    assert!(!read.contains("Rewrite the task wording"));
+
+    let owned = ledger_text(&bus, epoch, Actor::Operator, &task);
+    assert!(owned.contains("trigger=\"delay\""));
+    assert!(owned.contains("Rewrite the task wording"));
+    assert!(!owned.contains("column=withheld"));
 
     clean(&root, bus);
 }
