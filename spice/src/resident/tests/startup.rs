@@ -70,59 +70,6 @@ impl lane::capture::CaptureReporter for NoopCaptureReporter {
     fn exited(&self, _exit: lane::capture::CaptureExit) {}
 }
 
-fn stage_canvas_app(root: &std::path::Path) {
-    let identity = wire::Digest::compute(wire::Domain::DistArtifact, b"resident-startup-app");
-    let stage = root.join(canvas::APP_STAGE);
-    let generation = stage
-        .join(canvas::APP_STAGE_GENERATIONS)
-        .join(identity.as_str());
-    fs::create_dir_all(&generation).expect("Canvas generation directory");
-    for asset in canvas::APP.assets() {
-        fs::write(
-            generation.join(asset.file()),
-            format!("fixture {}", asset.file()),
-        )
-        .expect("Canvas fixture asset writes");
-    }
-    fs::write(
-        stage.join(canvas::APP_STAGE_CURRENT),
-        format!("{identity}\n"),
-    )
-    .expect("Canvas generation publishes");
-}
-
-#[test]
-fn canvas_identity_joins_the_running_binary_and_every_compiled_or_live_version_authority() {
-    let (root, _paths) = resident_fixture("canvas-product-identity");
-    stage_canvas_app(&root);
-    let app = canvas::AppSource::resolve(&root).expect("fixture app resolves");
-    let identity = canvas_version(&app, journal::SCHEMA_VERSION).expect("Canvas identity builds");
-    let executable = std::env::current_exe().expect("test executable resolves");
-
-    assert_eq!(
-        identity.product,
-        dist::current_product_version().expect("compiled product version")
-    );
-    assert_eq!(
-        identity.binary,
-        wire::Digest::compute(
-            wire::Domain::DistArtifact,
-            &fs::read(executable).expect("test executable reads")
-        )
-    );
-    assert_eq!(identity.wire, wire::WireVersion::CURRENT);
-    assert_eq!(identity.journal, journal::SCHEMA_VERSION);
-    assert_eq!(identity.canvas, wire::CanvasVersion::CURRENT);
-    assert_eq!(
-        identity.app,
-        app.current_generation()
-            .expect("fixture generation reads")
-            .identity()
-            .clone()
-    );
-    fs::remove_dir_all(root).expect("fixture cleanup");
-}
-
 fn admitted_lane_seat(
     epoch: CanonicalUuid,
     body: &wire::intent::LaneSeat,

@@ -474,6 +474,16 @@ exact manifest against the current clean commit and tree. The
 publication preview requires the manifest source to name the already-versioned
 release commit, then binds that manifest, package, notes, targets, and operations
 with the identical source and release commit.
+Runtime version surfaces (`spice --version`, `spice version`, and the Canvas
+menu footer) qualify the tracked version with `+bin.<digest>`, appending
+`.bin.<digest>` when build metadata already exists. The digest is the complete
+domain-separated identity of the running executable, shared with the report's
+native-binary field. It needs no Git checkout, generated build input, timestamp,
+or random value: identical executable bytes retain the same version. Ordinary
+CLI commands do not hash the executable; explicit version reads and resident
+identity construction stream it without retaining the whole file. Release
+selection and sealing still use the tracked base version from `dist/VERSION`.
+
 
 Target builds use a persistent release target directory. Package materialization
 rechecks staged executable bytes against the payload inventory and must reproduce

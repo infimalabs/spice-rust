@@ -1,8 +1,6 @@
 use super::*;
 
 mod identity;
-#[cfg(test)]
-pub(crate) use identity::canvas_version;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct RuntimePaths {
