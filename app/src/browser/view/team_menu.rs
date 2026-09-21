@@ -215,16 +215,24 @@ fn render_version_footer(
     });
     let version = if let Some(update) = update {
         let product = product_version.as_deref().unwrap_or("loading");
-        let update_product = product_version
-            .as_deref()
-            .map_or_else(String::new, |product| format!(" {product}"));
-        let update_details = format!(
-            "Current product: {product}\nLoaded app generation: {}\nAvailable Canvas protocol: {}\nServed app generation: {}\nAction: Reload to update",
-            update.loaded_generation, update.version, update.generation,
-        );
+        let mut update_rows = vec![format!("Current product: {product}")];
+        if let Some(identity) = identity {
+            update_rows.extend([
+                format!("Native binary: {}", identity.version.binary),
+                format!("Wire schema: {}", identity.version.wire),
+                format!("Journal schema: {}", identity.version.journal),
+            ]);
+        }
+        update_rows.extend([
+            format!("Loaded app generation: {}", update.loaded_generation),
+            format!("Available Canvas protocol: {}", update.version),
+            format!("Served app generation: {}", update.generation),
+        ]);
+        let update_identity = update_rows.join("\n");
+        let update_details = format!("{update_identity}\nAction: Reload to update");
         let update_accessible = format!(
-            "Reload Spice{update_product} to update; loaded app generation {}; available Canvas protocol {}; served app generation {}",
-            update.loaded_generation, update.version, update.generation,
+            "Reload Spice to update; {}",
+            update_identity.replace('\n', "; ")
         );
         html! {
             <button
