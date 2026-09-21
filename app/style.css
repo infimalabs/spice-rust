@@ -802,8 +802,7 @@ tbody tr:last-child td { border-bottom: 0; }
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--panel) 94%, var(--control));
 }
-.team-action,
-.team-import-choice {
+.team-action {
   container-type: inline-size;
   display: flex;
   min-width: 0;
@@ -821,10 +820,33 @@ tbody tr:last-child td { border-bottom: 0; }
   text-align: center;
 }
 .team-action:hover,
-.team-action:focus-visible,
-.team-import-choice:hover,
-.team-import-choice:focus-visible { border-color: var(--accent); }
+.team-action:focus-visible { border-color: var(--accent); }
 .team-action:disabled { cursor: not-allowed; opacity: .52; }
+/* Import candidates carry the global menu's agent-row grammar while the whole
+   row remains the import action rather than pretending to be draggable. */
+.team-import-choice {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  min-height: 62px;
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--accent-slot) 58%, var(--line));
+  border-radius: 8px;
+  background: var(--page);
+  color: var(--ink);
+  text-align: left;
+}
+.team-import-choice:hover,
+.team-import-choice:focus-visible { border-color: var(--accent-slot, var(--accent)); }
+.team-import-choice:disabled { cursor: not-allowed; opacity: .52; }
+.team-import-action {
+  color: var(--accent-slot, var(--accent));
+  font: 650 .67rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 .team-action-menu:not(.team-import-menu, .team-arrangement-menu) {
   grid-template-columns: repeat(auto-fit, minmax(min(136px, 100%), 1fr));
   grid-auto-rows: auto;
