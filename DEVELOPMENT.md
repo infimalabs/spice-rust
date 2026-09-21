@@ -59,7 +59,7 @@ test binaries; add the intended target selector when narrowing to `--lib`,
 | Parent-launched ignored fixtures | Process death, resource-limit, supervisor, and benchmark children. | Run the named parent; never blanket-run `--ignored`. |
 | Canvas-only WASM typecheck | Rust changes whose dependency reach includes `app`; unrelated native workspace packages and the xtask bootstrap are outside this check. | `spice dev cargo -- canvas-wasm-typecheck`. |
 | Canvas pure checks | Rust client reducers, message rendering, layout, and state transitions. | `spice dev cargo -- test --locked -p app --lib`, or the relevant app test target. |
-| Canvas browser interaction | Actual app build, resident, and browser behavior. No permanent process-backed browser suite is registered. | Build with `spice dev xtask -- app`, then exercise the changed surface through a disposable `spice demo` or isolated resident. Record observations and remove the experiment. |
+| Canvas browser interaction | Actual app build, resident, and browser behavior. No permanent process-backed browser suite is registered. | Build with `spice dev xtask -- app`, then exercise the changed surface through a disposable `spice demo` or isolated resident, under the host color scheme (below). Record observations and remove the experiment. |
 | Change-local proof and landing | Trusted receipts for the exact staged action set plus final pre-commit admission. | Inspect with `spice gate prove`; run a named miss with `spice gate prove ACTION` or all current misses with `spice gate prove --missing`, then commit normally. |
 
 Metadata selection is conservative target-root reachability, not line coverage.
@@ -104,6 +104,34 @@ Canvas compilation remains part of staged gate selection when the source reach
 requires it. Actual browser interaction evidence is disposable feedback, not a
 reusable browser-shard receipt. No separate slow-test classification command or
 JavaScript test package remains.
+
+## Browser evidence uses the host color scheme
+
+A browser opened to look at Canvas answers what the operator sees, so it
+inherits the host OS light/dark setting by default. A theme matrix may override
+the scheme deliberately; a screenshot that silently disagrees with the operator's
+desktop is a wrong answer, not a stylistic difference. This never touches an
+explicit Canvas theme preference: a stored `spice:canvas-theme` still wins over
+the host scheme, exactly as it does for the operator.
+
+Headless engines do not inherit the setting on their own. Measured here with
+Playwright 1.62 on macOS in Dark: the default scheme reports light in Chromium,
+Firefox, and WebKit; `colorScheme: null` inherits only in WebKit; Chromium's
+`--force-dark-mode` leaves `prefers-color-scheme` light. Detect the host scheme
+and pass it explicitly.
+
+```sh
+# macOS: the key is absent in Light.
+[ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" = Dark ] && scheme=dark || scheme=light
+# GNOME:
+case "$(gsettings get org.gnome.desktop.interface color-scheme)" in *prefer-dark*) scheme=dark;; *) scheme=light;; esac
+```
+
+| Launcher | Pass the detected scheme with |
+| --- | --- |
+| Playwright (any engine) | `browser.newPage({ colorScheme: scheme })`, or `newContext` for a whole run. |
+| System Firefox `--headless` | A profile `user.js` carrying `user_pref("ui.systemUsesDarkTheme", 1);` for dark. |
+| System Chrome/Chromium `--headless` | CDP `Emulation.setEmulatedMedia` with `prefers-color-scheme`; command-line dark flags do not move the media query. |
 
 ## Disk budget and safe cleanup
 

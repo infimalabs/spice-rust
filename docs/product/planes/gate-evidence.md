@@ -109,7 +109,9 @@ environment, tool, and result as one execution.
 Canvas compilation remains a native gate action. The process-backed browser
 suite and its build/shard proof actions are removed; there is no browser action
 registry or legacy marker admission path. Disposable browser experiments can
-validate the actual UI, but cannot publish trusted commit receipts.
+validate the actual UI, but cannot publish trusted commit receipts. Such an
+experiment runs under the host OS light/dark scheme unless it states the
+override it is testing, so what the agent looks at is what the operator sees.
 
 ## Storage and lifecycle
 
