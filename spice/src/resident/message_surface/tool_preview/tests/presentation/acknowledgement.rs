@@ -71,6 +71,25 @@ fn current_header_forms_hide_framing_and_capitalize_response_prose() {
 }
 
 #[test]
+fn presented_response_prose_normalizes_only_a_terminal_colon() {
+    let directives = directives(&[("1kQnrzNZ", "Keep the current path.")]);
+    for (body, presented) in [
+        ("implementing:", "Implementing."),
+        ("implementing:\n", "Implementing.\n"),
+        ("implementing.", "Implementing."),
+        ("implementing", "Implementing"),
+    ] {
+        let text = format!("ACK 1kQnrzNZ: {body}");
+        assert_eq!(
+            present_steering_acknowledgements_with_directives(&text, &directives, event())
+                .expect("acknowledgment presents"),
+            format!("> [ACK PENDING] Keep the current path.\n\n{presented}"),
+            "wrong terminal punctuation for {body:?}",
+        );
+    }
+}
+
+#[test]
 fn message_badges_require_authenticated_positive_directive_evidence() {
     let directives = directives(&[("1kQnrzNZ", "Keep the current path.")]);
     assert_eq!(
@@ -517,7 +536,7 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
     let key = "1kQnrzNZ"
         .parse::<steer::Key>()
         .expect("fixture key parses");
-    let text = "ACK 1kQnrzNZ: Applied.";
+    let text = "ACK 1kQnrzNZ: Applied:";
     let mut directives = directives(&[("1kQnrzNZ", "Keep the current path.")]);
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &directives, event())
@@ -544,7 +563,7 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
     let mut state = MessageState::default();
     let record = capture_record_for(
         listen::Dialect::Claude,
-        br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK 1kQnrzNZ: Applied."}]}}"#,
+        br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK 1kQnrzNZ: Applied:"}]}}"#,
         0,
     );
     publish_agent_messages(&publisher, &record, &mut state, Some(&directives))

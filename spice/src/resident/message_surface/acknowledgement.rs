@@ -166,12 +166,20 @@ fn append_presented_source(rendered: &mut String, source: &str, capitalize: bool
         rendered.push_str(source);
         return;
     }
-    let mut characters = source.chars();
-    let Some(first) = characters.next() else {
-        return;
-    };
-    rendered.extend(first.to_uppercase());
-    rendered.push_str(characters.as_str());
+    let terminal = source.trim_end_matches(char::is_whitespace).len();
+    let (body, trailing) = source.split_at(terminal);
+    let (body, normalize_colon) = body
+        .strip_suffix(':')
+        .map_or((body, false), |body| (body, true));
+    let mut characters = body.chars();
+    if let Some(first) = characters.next() {
+        rendered.extend(first.to_uppercase());
+        rendered.push_str(characters.as_str());
+    }
+    if normalize_colon {
+        rendered.push('.');
+    }
+    rendered.push_str(trailing);
 }
 
 fn start_quote_block(rendered: &mut String) {
