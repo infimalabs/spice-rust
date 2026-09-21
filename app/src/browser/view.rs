@@ -34,6 +34,20 @@ fn render_notice(notice: &Notice) -> Html {
     }
 }
 
+/// One shared live-state marker for global and team action menus.
+pub(super) fn render_member_presence(status: crate::runtime::LaneStatus) -> Html {
+    let label = status.label();
+    html! {
+        <span
+            class={classes!("canvas-member-presence", status.key())}
+            role="img"
+            data-lane-status={status.key()}
+            aria-label={label}
+            title={label}
+        ></span>
+    }
+}
+
 pub(super) struct CanvasRender<'a> {
     pub connection: &'a UseStateHandle<Connection>,
     pub surface: &'a UseStateHandle<SurfaceData>,
