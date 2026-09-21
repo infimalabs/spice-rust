@@ -400,10 +400,14 @@ The member row describes the cross-mode surface, not one field bundle. Compose,
 Metrics, and Info expose lane/worktree identity and their own applicable agent,
 liveness or age, pending, and held-work fields; no pane repeats the whole set.
 
-Info puts the add-agent form before the agent and team information. All six
-fields stay visible in three paired rows, with each label beside its control.
-Long values scroll inside their single-line inputs rather than widening the
-team tile or wrapping the form; admission validation remains inline.
+The team menu's **Import agent** action opens one panel for creating a new agent
+or importing an existing one. The complete Seat agent form sits above the import
+choices; Info contains only agent and team information. An empty fleet exposes
+the same panel from its toolbar, so the first agent can still be seated.
+All six fields remain visible, with aligned, bounded labels beside their controls:
+three paired rows when space permits, one field per row on narrow tiles.
+The Seat agent button stays at the form's upper right. Long values scroll inside
+single-line inputs rather than widening the tile; admission validation stays inline.
 
 **Why it's the right unit:** the server-owned team topology is exactly what the
 operator arranged. The team tiles as one surface while each member lane remains

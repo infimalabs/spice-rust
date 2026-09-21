@@ -1417,7 +1417,6 @@ html[data-command-modifier-held="true"]
   overflow: auto;
   padding: 8px;
 }
-.team-detail-pane.with-seat { gap: 8px; }
 .team-detail-grid {
   display: grid;
   grid-template-columns: repeat(var(--team-weight, 4), minmax(0, 1fr));

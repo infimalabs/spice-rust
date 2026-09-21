@@ -6,6 +6,8 @@ use super::*;
 pub(super) struct Context<'a> {
     pub(super) controls: &'a UseReducerHandle<TeamControls>,
     pub(super) sender: &'a SenderHandle,
+    pub(super) runtime: &'a CanvasRuntime,
+    pub(super) agents: &'a view::AgentControls,
     pub(super) topology: &'a [(CanonicalUuid, Vec<CanonicalUuid>)],
     pub(super) topology_revision: u64,
     pub(super) can_configure: bool,
@@ -73,13 +75,13 @@ pub(super) fn render(
                 type="button"
                 class="team-action"
                 role="menuitem"
-                disabled={!context.can_configure}
+                disabled={!context.can_configure && !context.runtime.offers(CommandKind::LaneSeat)}
                 onclick={Callback::from(move |_| {
                     import.dispatch(TeamControlAction::ToggleImport { team: identity });
                 })}
             >
                 <span class="team-action-label">{"Import agent"}</span>
-                <span class="team-action-detail">{"choose agent"}</span>
+                <span class="team-action-detail">{"import or create"}</span>
             </button>
             {topology_actions}
         </div>
@@ -222,7 +224,7 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
     }
 }
 
-fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_>) -> Html {
+pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_>) -> Html {
     let identity = team.lane;
     let current = team
         .members
@@ -241,11 +243,11 @@ fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_>) -> Html 
     html! {
         <div
             class="team-action-menu team-import-menu"
-            role="menu"
-            aria-label={format!("Import agent into team {}", watchband::short(identity))}
+            role="dialog"
+            aria-label="Add agent"
         >
             <header>
-                <strong>{"Import agent"}</strong>
+                <strong>{"Add agent"}</strong>
                 <button
                     type="button"
                     onclick={Callback::from(move |_| {
@@ -253,6 +255,8 @@ fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_>) -> Html 
                     })}
                 >{"Cancel"}</button>
             </header>
+            {view::render_seat_panel(Some(context.runtime), context.agents)}
+            <h3 class="team-import-heading">{"Import existing agent"}</h3>
             if candidates.is_empty() {
                 <p class="team-import-empty">{"No available agents"}</p>
             } else {
@@ -263,7 +267,7 @@ fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_>) -> Html 
                         <button
                             type="button"
                             class="team-import-choice"
-                            role="menuitem"
+                            disabled={!context.can_configure}
                             onclick={Callback::from(move |_| {
                                 if !admit_action(
                                     &sender,
