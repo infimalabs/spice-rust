@@ -231,12 +231,24 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
         .iter()
         .map(|member| member.lane)
         .collect::<BTreeSet<_>>();
+    let waiting = context
+        .runtime
+        .inbox()
+        .map(|inbox| inbox.lanes.as_slice())
+        .unwrap_or(&[]);
     let candidates = context
-        .topology
-        .iter()
-        .flat_map(|(_, members)| members)
-        .copied()
-        .filter(|member| !current.contains(member))
+        .runtime
+        .lanes()
+        .into_iter()
+        .flat_map(|lanes| &lanes.lanes)
+        .flat_map(|candidate_team| {
+            candidate_team
+                .members
+                .iter()
+                .enumerate()
+                .map(move |(position, member)| (candidate_team, position, member))
+        })
+        .filter(|(_, _, member)| !current.contains(&member.lane))
         .collect::<Vec<_>>();
     let close = context.controls.clone();
     let topology_revision = context.topology_revision;
@@ -260,13 +272,31 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
             if candidates.is_empty() {
                 <p class="team-import-empty">{"No available agents"}</p>
             } else {
-                {for candidates.into_iter().map(|member| {
+                {for candidates.into_iter().map(|(candidate_team, position, member)| {
                     let sender = context.sender.clone();
                     let controls = context.controls.clone();
+                    let lane = member.lane;
+                    let pending = waiting
+                        .iter()
+                        .find(|row| row.lane == lane)
+                        .map_or(0, |row| row.pending.len());
+                    let status = member.status(pending);
+                    let label = member
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| watchband::leaf(&member.worktree).to_owned());
+                    let worktree = watchband::leaf(&member.worktree).to_owned();
+                    let accessible = format!("Import {label} on {worktree}");
                     html! {
                         <button
                             type="button"
                             class="team-import-choice"
+                            aria-label={accessible}
+                            data-team-member={lane.to_string()}
+                            data-accent={watchband::accent(
+                                candidate_team.members.len(),
+                                position,
+                            ).to_string()}
                             disabled={!context.can_configure}
                             onclick={Callback::from(move |_| {
                                 if !admit_action(
@@ -274,7 +304,7 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                                     ClientAction::ConfigureTeam {
                                         topology_revision,
                                         team: identity,
-                                        member: Some(member),
+                                        member: Some(lane),
                                         life: None,
                                     },
                                 ) {
@@ -285,8 +315,12 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                                 });
                             })}
                         >
-                            <span>{format!("Agent {}", watchband::short(member))}</span>
-                            <span>{"Import"}</span>
+                            <span class={classes!("canvas-member-presence", status.key())}></span>
+                            <span class="canvas-member-copy">
+                                <strong>{format!("{label} on {worktree}")}</strong>
+                                <small>{format!("{} · {}", member.vendor, status.label())}</small>
+                            </span>
+                            <span class="team-import-action" aria-hidden="true">{"Import"}</span>
                         </button>
                     }
                 })}
