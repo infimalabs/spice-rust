@@ -196,12 +196,16 @@ fn render_compose(
             <form class="team-composer" onsubmit={submit.clone()}>
                 <div class="team-agents">
                     {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
-                        let header = primary_composer_header(
-                            &cards,
-                            team,
+                        let actions = agent_team_actions(
+                            team.lane,
                             member.lane,
-                            standing,
+                            can_arrange,
+                            can_configure,
+                            topology_revision,
+                            topology,
+                            sender,
                         );
+                        let header = primary_composer_header(&cards, team, member.lane, standing);
                         render_agent_composer(
                             team.lane,
                             member,
@@ -214,7 +218,7 @@ fn render_compose(
                             standing.pending,
                             authority,
                             can_arrange,
-                            topology,
+                            actions,
                             sender,
                             drafts,
                             submissions,
@@ -694,9 +698,14 @@ struct PrimaryComposerDragging {
     drop: Callback<DragEvent>,
 }
 
-struct AgentSplitControl {
+struct AgentTeamControl {
     disabled: bool,
     activate: Callback<MouseEvent>,
+}
+
+struct AgentTeamActions {
+    split: AgentTeamControl,
+    leave: AgentTeamControl,
 }
 
 fn agent_split_control(
@@ -706,7 +715,7 @@ fn agent_split_control(
     topology_revision: u64,
     topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     sender: &SenderHandle,
-) -> AgentSplitControl {
+) -> AgentTeamControl {
     let enabled = can_arrange
         && topology.iter().any(|(team, members)| {
             *team == source_team && members.len() > 1 && members.contains(&lane)
@@ -737,9 +746,69 @@ fn agent_split_control(
             close_agent_action_menu(&event);
         }
     });
-    AgentSplitControl {
+    AgentTeamControl {
         disabled: !enabled,
         activate,
+    }
+}
+
+fn agent_leave_control(
+    source_team: CanonicalUuid,
+    lane: CanonicalUuid,
+    can_configure: bool,
+    topology_revision: u64,
+    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    sender: &SenderHandle,
+) -> AgentTeamControl {
+    let enabled = can_configure && watchband::can_leave_all_teams(topology, source_team, lane);
+    let sender = sender.clone();
+    let activate = Callback::from(move |event: MouseEvent| {
+        if enabled
+            && admit_action(
+                &sender,
+                ClientAction::ConfigureTeam {
+                    topology_revision,
+                    team: lane,
+                    member: Some(lane),
+                    life: None,
+                },
+            )
+        {
+            close_agent_action_menu(&event);
+        }
+    });
+    AgentTeamControl {
+        disabled: !enabled,
+        activate,
+    }
+}
+
+fn agent_team_actions(
+    source_team: CanonicalUuid,
+    lane: CanonicalUuid,
+    can_arrange: bool,
+    can_configure: bool,
+    topology_revision: u64,
+    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    sender: &SenderHandle,
+) -> AgentTeamActions {
+    AgentTeamActions {
+        split: agent_split_control(
+            source_team,
+            lane,
+            can_arrange,
+            topology_revision,
+            topology,
+            sender,
+        ),
+        leave: agent_leave_control(
+            source_team,
+            lane,
+            can_configure,
+            topology_revision,
+            topology,
+            sender,
+        ),
     }
 }
 
@@ -836,7 +905,7 @@ fn render_agent_composer(
     pending: usize,
     authority: SubmissionAuthority,
     can_arrange: bool,
-    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    actions: AgentTeamActions,
     sender: &SenderHandle,
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
@@ -846,14 +915,7 @@ fn render_agent_composer(
     prose: String,
 ) -> Html {
     let lane_id = member.lane;
-    let split = agent_split_control(
-        team,
-        lane_id,
-        can_arrange,
-        topology_revision,
-        topology,
-        sender,
-    );
+    let AgentTeamActions { split, leave } = actions;
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let occupant = member.occupant;
@@ -926,6 +988,7 @@ fn render_agent_composer(
                     renewal,
                     renew,
                     split,
+                    leave,
                     stream,
                     prose,
                     dragging,
@@ -962,7 +1025,8 @@ fn render_composer_body(
     onkeydown: Callback<KeyboardEvent>,
     renewal: watchband::AgentRenewalControl,
     renew: Callback<MouseEvent>,
-    split: AgentSplitControl,
+    split: AgentTeamControl,
+    leave: AgentTeamControl,
     stream: ComposerStreamLink,
     prose: String,
     dragging: PrimaryComposerDragging,
@@ -1001,6 +1065,7 @@ fn render_composer_body(
                 renewal,
                 renew,
                 split,
+                leave,
                 stream,
                 prose,
                 render_image_indicators(lane_key, &draft.attachments, None, drafts),
@@ -1038,7 +1103,8 @@ fn render_composer_heading(
     status: crate::runtime::LaneStatus,
     renewal: watchband::AgentRenewalControl,
     renew: Callback<MouseEvent>,
-    split: AgentSplitControl,
+    split: AgentTeamControl,
+    leave: AgentTeamControl,
     stream: ComposerStreamLink,
     prose: String,
     indicators: Html,
@@ -1049,10 +1115,14 @@ fn render_composer_heading(
         close_agent_action_menu(&event);
         renew.emit(event);
     });
-    let AgentSplitControl {
+    let AgentTeamControl {
         disabled: split_disabled,
         activate: split,
     } = split;
+    let AgentTeamControl {
+        disabled: leave_disabled,
+        activate: leave,
+    } = leave;
     let ComposerStreamLink {
         target,
         label,
@@ -1121,6 +1191,18 @@ fn render_composer_heading(
                     >
                         <strong>{"Create new team"}</strong>
                         <span>{format!("Move only {} to a new team", standing.label)}</span>
+                    </button>
+                    <button
+                        class="agent-team-leave"
+                        type="button"
+                        disabled={leave_disabled}
+                        aria-label={format!("Leave all teams for {}", standing.label)}
+                        title={format!("Remove {} from all teams", standing.label)}
+                        data-team-leave-lane={lane.to_string()}
+                        onclick={leave}
+                    >
+                        <strong>{"Leave all teams"}</strong>
+                        <span>{format!("Remove {} from all teams", standing.label)}</span>
                     </button>
                 </div>
             </details>

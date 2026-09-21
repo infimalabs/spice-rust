@@ -426,6 +426,18 @@ pub fn split_member(
     Some(arranged)
 }
 
+/// Whether one member can leave every team while keeping its lane seat.
+#[must_use]
+pub fn can_leave_all_teams(
+    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    source: CanonicalUuid,
+    member: CanonicalUuid,
+) -> bool {
+    teams.iter().any(|(team, members)| {
+        *team == source && members.contains(&member) && (source != member || members.len() > 1)
+    })
+}
+
 /// Join the lane table, the inbox and the board into one row per lane.
 ///
 /// Lane order is the resident's; this never sorts. No clock reaches this
