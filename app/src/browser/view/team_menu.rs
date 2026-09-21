@@ -480,7 +480,7 @@ fn render_member(
             data-accent={accent.to_string()}
             {ondragstart}
         >
-            <span class={classes!("canvas-member-presence", status.key())}></span>
+            {render_member_presence(status)}
             <span class="canvas-member-copy">
                 <strong>{format!("{label} on {worktree}")}</strong>
                 <small>{format!(

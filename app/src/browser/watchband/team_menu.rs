@@ -309,7 +309,7 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                                 );
                             })}
                         >
-                            <span class={classes!("canvas-member-presence", status.key())}></span>
+                            {view::render_member_presence(status)}
                             <span class="canvas-member-copy">
                                 <strong>{format!("{label} on {worktree}")}</strong>
                                 <small>{format!("{} · {}", member.vendor, status.label())}</small>
