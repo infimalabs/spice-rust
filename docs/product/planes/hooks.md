@@ -184,12 +184,14 @@ the command, permission decision, child output, or exit status. Independently
 configured Codex RTK rewriting retains its existing behavior; Claude's pre-tool
 advice does not invoke RTK.
 
-A final `tail` pipeline stage receives a gentle hint that it is probably
-unnecessary: rely on the tool's native output wrapping instead of arbitrarily
-pre-truncating unknown output. This advice has no native-capability, flag, or
-working-directory gate. Standalone `tail`, an intermediate pipeline stage, and
-quoted or escaped pipe characters do not trigger it. Both hints can appear
-together; neither rewrites the pipeline or claims an equivalent transformation.
+A final `head` or `tail` pipeline stage receives a gentle hint that it is
+probably unnecessary: rely on the tool's native output wrapping instead of
+arbitrarily pre-truncating unknown output. The hint names whichever of the two
+ends the pipeline. This advice has no native-capability, flag, or
+working-directory gate. A standalone `head` or `tail`, an intermediate pipeline
+stage, and quoted or escaped pipe characters do not trigger it. Both hints can
+appear together; neither rewrites the pipeline or claims an equivalent
+transformation.
 
 Each hint appears once on every matching command invocation. Neither session
 identity nor compaction suppresses later matching commands; no delivery receipts

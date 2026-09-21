@@ -7,9 +7,7 @@ use std::path::Path;
 pub fn for_shell(command: &str, cwd: Option<&Path>) -> impl Iterator<Item = &'static str> {
     [
         cwd.and_then(|cwd| redundant_cd(command, cwd)),
-        trailing_tail(command).then_some(
-            "A final `tail` is probably unnecessary; rely on the tool's native output wrapping.",
-        ),
+        trailing_truncation(command),
     ]
     .into_iter()
     .flatten()
@@ -73,21 +71,24 @@ fn literal_prefix(command: &str) -> Option<&str> {
     None
 }
 
-fn trailing_tail(command: &str) -> bool {
+/// A final `head` or `tail` cuts output to a length guessed before the output
+/// existed; the reading tool already bounds what it shows.
+fn trailing_truncation(command: &str) -> Option<&'static str> {
     let mut stages = pipeline_stages(command);
     stages.next();
-    let Some(last) = stages.last() else {
-        return false;
-    };
+    let last = stages.last()?;
     // `|&` also pipes stderr. Flags do not gate this advisory.
     let last = last.strip_prefix('&').unwrap_or(last).trim_start();
-    shell_words::split(last).is_ok_and(|words| {
-        words.first().is_some_and(|word| {
-            Path::new(word)
-                .file_name()
-                .is_some_and(|name| name == "tail")
-        })
-    })
+    let words = shell_words::split(last).ok()?;
+    match Path::new(words.first()?).file_name()?.to_str()? {
+        "head" => Some(
+            "A final `head` is probably unnecessary; rely on the tool's native output wrapping.",
+        ),
+        "tail" => Some(
+            "A final `tail` is probably unnecessary; rely on the tool's native output wrapping.",
+        ),
+        _ => None,
+    }
 }
 
 /// Borrow shell pipeline stages, keeping quoted/escaped pipes and `||` intact.
