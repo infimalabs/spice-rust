@@ -676,7 +676,7 @@ configuration_registry! {
     }
     fixed "vendor.claude.effort" {
         kind: String,
-        builtin: Some(Builtin::String("xhigh")),
+        builtin: Some(Builtin::String("high")),
         layers: TRACKED_WORKTREE,
         class: WorktreeLocal,
         flag: None,
@@ -759,7 +759,7 @@ configuration_registry! {
     }
     fixed "vendor.omp.effort" {
         kind: String,
-        builtin: Some(Builtin::String("xhigh")),
+        builtin: Some(Builtin::String("high")),
         layers: TRACKED_WORKTREE,
         class: WorktreeLocal,
         flag: None,

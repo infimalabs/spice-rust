@@ -136,8 +136,8 @@ fn admitted_string<'de, D: Deserializer<'de>>(
 enum ClaudeEffort {
     Low,
     Medium,
-    High,
     #[default]
+    High,
     Xhigh,
     Max,
 }
@@ -170,7 +170,7 @@ impl Default for ClaudeConfig {
         Self {
             binary: Binary::new("claude"),
             model: LaunchValue::new(DEFAULT_CLAUDE_MODEL),
-            effort: ClaudeEffort::Xhigh,
+            effort: ClaudeEffort::High,
             auto_compact_window_tokens: DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS,
         }
     }
@@ -307,7 +307,7 @@ impl Default for OmpConfig {
         Self {
             binary: Binary::new("omp"),
             model: LaunchValue::new(DEFAULT_OMP_MODEL),
-            effort: ClaudeEffort::Xhigh,
+            effort: ClaudeEffort::High,
             fast_mode: false,
             lsp: false,
             auto_compact_window_tokens: None,
