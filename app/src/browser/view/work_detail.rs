@@ -25,15 +25,6 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
         return Html::default();
     };
     let close_click = render.close.reform(|_: MouseEvent| ());
-    let close_key = {
-        let close = render.close.clone();
-        Callback::from(move |event: KeyboardEvent| {
-            if event.key() == "Escape" {
-                event.prevent_default();
-                close.emit(());
-            }
-        })
-    };
     html! {
         <div class="work-detail-layer">
             <button
@@ -48,7 +39,6 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                 aria-modal="true"
                 aria-labelledby="work-detail-title"
                 data-task-stamp={selected.to_string()}
-                onkeydown={close_key}
             >
                 <header class="work-detail-header">
                     <div>

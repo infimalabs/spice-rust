@@ -31,6 +31,7 @@ pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<Surface
     );
     let close = close_callback(selected.clone());
     use_focus(&selected, close_ref.clone());
+    use_escape_close(selected.is_some(), close.clone());
     let submit_note = note_submit_callback(
         sender,
         surface,
@@ -84,6 +85,37 @@ pub(super) fn select_callback(
 
 pub(super) fn close_callback(selected: UseStateHandle<Option<TaskStamp>>) -> Callback<()> {
     Callback::from(move |()| selected.set(None))
+}
+
+#[hook]
+fn use_escape_close(open: bool, close: Callback<()>) {
+    use_effect_with(open, move |open| {
+        let registration = (*open)
+            .then(|| {
+                let document = web_sys::window()?.document()?;
+                let callback = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
+                    move |event: web_sys::KeyboardEvent| {
+                        if event.key() == "Escape" {
+                            event.prevent_default();
+                            close.emit(());
+                        }
+                    },
+                );
+                document
+                    .add_event_listener_with_callback("keydown", callback.as_ref().unchecked_ref())
+                    .ok()?;
+                Some((document, callback))
+            })
+            .flatten();
+        move || {
+            if let Some((document, callback)) = registration {
+                let _ = document.remove_event_listener_with_callback(
+                    "keydown",
+                    callback.as_ref().unchecked_ref(),
+                );
+            }
+        }
+    });
 }
 
 #[hook]
