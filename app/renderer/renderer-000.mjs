@@ -76,7 +76,7 @@ function readGeometry(root, nodeIds) {
     element: null,
     prefix: `${root.id}-flowchart-${id}-`,
   }]));
-  for (const element of root.querySelectorAll('[data-id], .node[id]')) {
+  for (const element of root.querySelectorAll('.node')) {
     const authored = element.getAttribute('data-id');
     for (const [id, entry] of expected) {
       const generated = element.id.startsWith(entry.prefix)
