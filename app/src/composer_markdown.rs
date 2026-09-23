@@ -128,7 +128,7 @@ fn render_received_with_classifications(
             } else {
                 let events = inline_classification_marker(
                     event,
-                    (block_quote_depth > 0).then_some(&mut remaining),
+                    (block_quote_depth == 1).then_some(&mut remaining),
                 );
                 events.into_iter().flat_map(inline_task_chips).collect()
             }
@@ -184,7 +184,12 @@ impl From<Classifications> for RemainingClassifications {
 }
 
 /// Replace one quoted classification marker with its inline pill when a badge
-/// still authorizes it; `remaining` is `None` outside block quotes.
+/// still authorizes it; `remaining` is `None` outside the presented quote.
+///
+/// The resident quotes each directive it answers exactly one level deep, so
+/// that depth is the whole vocabulary: a marker nested deeper belongs to a card
+/// the operator quoted back, whose badge was earned elsewhere, and it stays
+/// literal rather than spending this message's count.
 fn inline_classification_marker<'a>(
     event: MarkdownEvent<'a>,
     remaining: Option<&mut RemainingClassifications>,
@@ -1107,13 +1112,13 @@ mod tests {
     }
 
     #[test]
-    fn a_quoted_acknowledgement_marker_takes_the_badge_at_its_own_depth() {
+    fn a_marker_quoted_back_from_another_card_never_takes_this_badge() {
         let rendered = render_received_with_badges(
             "> > > [ACK] Tell me what the task is even about\n\
              > > \n\
              > > GIT-dSfJfCXfp is the task-git admission-depth task.\n\
              >\n\
-             > Delete it\n\n\
+             > [ACK] Delete it\n\n\
              Deleting GIT-dSfJfCXfp as directed.",
             wire::AgentMessageBadges {
                 acknowledgements: 1,
@@ -1125,17 +1130,19 @@ mod tests {
             1,
         );
         assert!(
-            rendered.html.contains(
-                "<blockquote>\n<blockquote>\n<blockquote>\n<p><span class=\"message-ack-pill\""
-            ),
-            "the pill heads the innermost quote: {}",
+            rendered
+                .html
+                .contains("<span class=\"message-ack-label\">ACK</span></span> Delete it</p>"),
+            "the badge lands on the operator's own words: {}",
             rendered.html
         );
-        assert!(rendered.html.contains(
-            "<span class=\"message-ack-label\">ACK</span></span> Tell me what the task is even about</p>"
-        ));
-        assert!(!rendered.html.contains("[ACK]"));
-        assert!(rendered.html.contains("<p>Delete it</p>"));
+        assert!(
+            rendered
+                .html
+                .contains("[ACK] Tell me what the task is even about"),
+            "the deeper marker stays literal: {}",
+            rendered.html
+        );
     }
 
     #[test]
