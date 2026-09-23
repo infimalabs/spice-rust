@@ -153,6 +153,7 @@ struct Display {
     revision: AttrValue,
     theme: Option<Theme>,
     image: Option<AttrValue>,
+    geometry: Option<Rc<crate::mermaid_geometry::Geometry>>,
     error: Option<AttrValue>,
     pending: bool,
 }
@@ -164,6 +165,8 @@ pub(super) struct MermaidImageProps {
     pub(super) node_ids: Rc<Vec<String>>,
     #[prop_or_default]
     pub(super) on_geometry: Callback<Option<Rc<crate::mermaid_geometry::Geometry>>>,
+    #[prop_or_default]
+    pub(super) render_geometry: Option<Callback<Rc<crate::mermaid_geometry::Geometry>, Html>>,
     #[prop_or(true)]
     pub(super) final_answer: bool,
 }
@@ -199,6 +202,7 @@ fn use_render(subscription: RenderSubscription) {
                 revision: revision.as_ref().clone(),
                 theme: current_theme,
                 image: previous.clone(),
+                geometry: None,
                 error: None,
                 pending: true,
             };
@@ -211,6 +215,7 @@ fn use_render(subscription: RenderSubscription) {
                 match outcome {
                     Ok(render) => {
                         next.image = Some(render.image);
+                        next.geometry = Some(render.geometry.clone());
                         on_result.emit(Some(render.geometry));
                     }
                     Err(error) => next.error = Some(error),
@@ -312,6 +317,11 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
     } else {
         "Show diagram source"
     };
+    let geometry_overlay = (!*show_source)
+        .then(|| display.geometry.clone())
+        .flatten()
+        .zip(props.render_geometry.as_ref())
+        .map_or_else(Html::default, |(geometry, render)| render.emit(geometry));
     html! {
         <div ref={host} class="mermaid-render" data-mermaid-revision={revision.as_ref().clone()} data-mermaid-state={state} data-source-visible={show_source.to_string()}>
             <button type="button" class="message-image message-image--openable" data-image-preview="" data-image-name="diagram.svg" disabled={previous.is_none()} aria-label="View full-size diagram" title="View full-size diagram">
@@ -320,6 +330,7 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
                 }
                 <span class="message-image-status" role="status" data-mermaid-status={if error.is_some() && !props.final_answer { "pending" } else { state }}>{status}</span>
             </button>
+            {geometry_overlay}
             <button ref={source_button} type="button" class="mermaid-source-toggle" aria-label={source_action} title={source_action} aria-pressed={show_source.to_string()}>
                 {if *show_source { "×" } else { "</>" }}
             </button>

@@ -1,6 +1,7 @@
 //! Bounded dependency-map presentation for the selected Work task set.
 
 use std::fmt::Write;
+use std::rc::Rc;
 
 use super::super::mermaid::MermaidImage;
 use super::*;
@@ -10,10 +11,16 @@ use crate::work::{
 };
 use wire::TaskStamp;
 
+mod overlay;
+
 const DEFAULT_DEPTH: u8 = 1;
 const DEFAULT_NODES: usize = 48;
 const NODE_STEP: usize = 32;
 const MAX_PINNED_ROOTS: usize = WorkRelationshipOptions::MAX_ROOTS - 1;
+const ZOOM_MIN: u16 = 100;
+const ZOOM_MAX: u16 = 200;
+const ZOOM_STEP: u16 = 25;
+const PAN_STEP: i16 = 48;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) enum WorkDetailMode {
@@ -32,6 +39,9 @@ pub(in crate::browser) struct WorkMapState {
     depth: u8,
     max_nodes: usize,
     origins: bool,
+    zoom: u16,
+    pan_x: i16,
+    pan_y: i16,
 }
 
 impl Default for WorkMapState {
@@ -43,6 +53,9 @@ impl Default for WorkMapState {
             depth: DEFAULT_DEPTH,
             max_nodes: DEFAULT_NODES,
             origins: true,
+            zoom: ZOOM_MIN,
+            pan_x: 0,
+            pan_y: 0,
         }
     }
 }
@@ -96,6 +109,9 @@ impl WorkMapState {
         self.depth = DEFAULT_DEPTH;
         self.max_nodes = DEFAULT_NODES;
         self.origins = true;
+        self.zoom = ZOOM_MIN;
+        self.pan_x = 0;
+        self.pan_y = 0;
     }
 
     fn expand(&mut self) {
@@ -107,6 +123,19 @@ impl WorkMapState {
             .max_nodes
             .saturating_add(NODE_STEP)
             .min(WorkRelationshipOptions::MAX_NODES);
+    }
+
+    fn zoom(&mut self, increase: bool) {
+        self.zoom = if increase {
+            self.zoom.saturating_add(ZOOM_STEP).min(ZOOM_MAX)
+        } else {
+            self.zoom.saturating_sub(ZOOM_STEP).max(ZOOM_MIN)
+        };
+    }
+
+    fn pan(&mut self, x: i16, y: i16) {
+        self.pan_x = self.pan_x.saturating_add(x);
+        self.pan_y = self.pan_y.saturating_add(y);
     }
 }
 
@@ -160,6 +189,18 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
         }
     };
     let source = AttrValue::from(mermaid_source(render.work, &graph));
+    let targets = overlay::node_targets(render.work, &graph, render.selected);
+    let node_ids = Rc::new(targets.iter().map(|target| target.id.clone()).collect());
+    let viewport = overlay::ViewportTransform {
+        zoom: render.state.zoom,
+        pan_x: render.state.pan_x,
+        pan_y: render.state.pan_y,
+    };
+    let render_geometry = Some(overlay::renderer(
+        targets,
+        render.select_task.clone(),
+        viewport,
+    ));
     let related = graph
         .nodes()
         .iter()
@@ -181,7 +222,19 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
                     </div>
                     <span>{format!("{} nodes · {} edges", graph.nodes().len(), graph.edges().len())}</span>
                 </div>
-                <MermaidImage {source} final_answer={true} />
+                <div
+                    class="work-map-viewport"
+                    data-work-map-zoom={render.state.zoom.to_string()}
+                    data-work-map-pan-x={render.state.pan_x.to_string()}
+                    data-work-map-pan-y={render.state.pan_y.to_string()}
+                >
+                    <MermaidImage
+                        {source}
+                        {node_ids}
+                        {render_geometry}
+                        final_answer={true}
+                    />
+                </div>
             </section>
             {render_task_list(render.work, &graph, render.selected, &render.select_task)}
             {render_frontiers(render.work, &graph, render.state)}
@@ -227,6 +280,7 @@ fn render_controls(
                 <span>{format!("Depth {}", state.depth)}</span>
                 <button type="button" aria-label="Increase map depth" disabled={state.depth >= WorkRelationshipOptions::MAX_DEPTH} onclick={more_depth}>{"+"}</button>
             </div>
+            {render_viewport_controls(state)}
             <button type="button" aria-pressed={state.origins.to_string()} onclick={origins}>
                 {if state.origins { "Origins shown" } else { "Origins hidden" }}
             </button>
@@ -270,11 +324,60 @@ fn depth_callback(state: UseStateHandle<WorkMapState>, increase: bool) -> Callba
     })
 }
 
+#[derive(Clone, Copy)]
+enum ViewportAction {
+    Zoom(bool),
+    Pan(i16, i16),
+}
+
+fn render_viewport_controls(state: &UseStateHandle<WorkMapState>) -> Html {
+    html! {
+        <>
+            <div class="work-map-control-group work-map-zoom" aria-label="Map zoom">
+                <button
+                    type="button"
+                    aria-label="Zoom map out"
+                    disabled={state.zoom <= ZOOM_MIN}
+                    onclick={viewport_callback(state.clone(), ViewportAction::Zoom(false))}
+                >{"−"}</button>
+                <span>{format!("{}%", state.zoom)}</span>
+                <button
+                    type="button"
+                    aria-label="Zoom map in"
+                    disabled={state.zoom >= ZOOM_MAX}
+                    onclick={viewport_callback(state.clone(), ViewportAction::Zoom(true))}
+                >{"+"}</button>
+            </div>
+            <div class="work-map-control-group work-map-pan" aria-label="Map pan">
+                <button type="button" aria-label="Pan map left" onclick={viewport_callback(state.clone(), ViewportAction::Pan(-PAN_STEP, 0))}>{"←"}</button>
+                <button type="button" aria-label="Pan map up" onclick={viewport_callback(state.clone(), ViewportAction::Pan(0, -PAN_STEP))}>{"↑"}</button>
+                <button type="button" aria-label="Pan map down" onclick={viewport_callback(state.clone(), ViewportAction::Pan(0, PAN_STEP))}>{"↓"}</button>
+                <button type="button" aria-label="Pan map right" onclick={viewport_callback(state.clone(), ViewportAction::Pan(PAN_STEP, 0))}>{"→"}</button>
+            </div>
+        </>
+    }
+}
+
+fn viewport_callback(
+    state: UseStateHandle<WorkMapState>,
+    action: ViewportAction,
+) -> Callback<MouseEvent> {
+    Callback::from(move |_| {
+        update(&state, |next| match action {
+            ViewportAction::Zoom(increase) => next.zoom(increase),
+            ViewportAction::Pan(x, y) => next.pan(x, y),
+        });
+    })
+}
+
 fn is_default_view(state: &WorkMapState) -> bool {
     state.direction == WorkRelationshipDirection::Both
         && state.depth == DEFAULT_DEPTH
         && state.max_nodes == DEFAULT_NODES
         && state.origins
+        && state.zoom == ZOOM_MIN
+        && state.pan_x == 0
+        && state.pan_y == 0
 }
 
 fn render_task_list(
