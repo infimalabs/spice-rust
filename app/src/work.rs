@@ -299,10 +299,16 @@ impl<'a> WorkProjection<'a> {
             .enumerate()
             .map(|(index, task)| (&task.statement.body.born, index))
             .collect::<BTreeMap<_, _>>();
+        let environment_blocked = board
+            .tasks
+            .iter()
+            .map(|task| !board.environment_satisfies(task))
+            .collect::<Vec<_>>();
         let availability = board
             .tasks
             .iter()
-            .map(|task| classify(board, task, &by_born))
+            .enumerate()
+            .map(|(index, task)| classify(board, task, &by_born, environment_blocked[index]))
             .collect::<Vec<_>>();
 
         let mut dependent_indexes = vec![Vec::new(); board.tasks.len()];
@@ -393,7 +399,7 @@ impl<'a> WorkProjection<'a> {
                     row,
                     availability: availability[index],
                     project: project_by_task[index],
-                    environment_blocked: !board.environment_satisfies(row),
+                    environment_blocked: environment_blocked[index],
                     dependencies,
                     dependents,
                 }
@@ -451,6 +457,7 @@ fn classify(
     board: &BoardView,
     task: &BoardTask,
     by_born: &BTreeMap<&TaskStamp, usize>,
+    environment_blocked: bool,
 ) -> WorkAvailability {
     let workflow = &task.workflow.body;
     if workflow.status != "pending" || workflow.completion.is_some() {
@@ -471,7 +478,7 @@ fn classify(
             .get(dependency)
             .is_none_or(|&index| board.tasks[index].workflow.body.completion.is_none())
     });
-    if !board.environment_satisfies(task) || dependency_blocked {
+    if environment_blocked || dependency_blocked {
         WorkAvailability::Blocked
     } else {
         WorkAvailability::Ready
