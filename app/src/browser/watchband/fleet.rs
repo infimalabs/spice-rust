@@ -88,6 +88,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_>) -> H
         controls: render.team_controls,
         sender: render.sender,
         runtime: render.runtime,
+        submissions: &render.submissions.status,
         agents: render.controls,
         topology: &render.topology,
         topology_revision: render.topology_revision,
@@ -420,6 +421,7 @@ fn render_team_toolbar(
         controls: render.team_controls,
         sender: render.sender,
         runtime: render.runtime,
+        submissions: &render.submissions.status,
         agents: render.controls,
         topology: &render.topology,
         topology_revision: render.topology_revision,
@@ -439,7 +441,7 @@ fn render_team_toolbar(
         let label = format!("{}: {}", standing.label, status.label());
         Some(html! {
             <span
-                class={classes!("team-light", status.key())}
+                class={classes!("agent-presence-indicator", "team-light", status.key())}
                 role="img"
                 data-lane-light-target-id={member.lane.to_string()}
                 data-lane-status={status.key()}

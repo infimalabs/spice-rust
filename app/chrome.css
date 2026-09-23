@@ -402,34 +402,16 @@ body:has(.shell--mosaic),
   background: var(--page);
   cursor: grab;
 }
-.canvas-team-member[aria-disabled="true"] { cursor: default; opacity: .66; }
+.canvas-team-member[aria-disabled="true"] { cursor: default; }
+.canvas-team-member[aria-disabled="true"] > :not(.canvas-member-presence) { opacity: .66; }
 .canvas-member-presence {
   width: 18px;
   height: 18px;
-  border: 5px solid color-mix(in srgb, var(--accent-slot) 25%, var(--panel));
+  border: 5px solid color-mix(in srgb, var(--agent-presence-color) 25%, var(--panel));
   border-radius: 50%;
-  background: var(--accent-slot);
+  background: var(--agent-presence-color);
   box-sizing: content-box;
-  filter: saturate(.58);
-}
-.canvas-member-presence.queued {
-  border-color: color-mix(in srgb, var(--warning) 25%, var(--panel));
-  background: var(--warning);
-  filter: none;
-}
-.canvas-member-presence.working {
-  animation: canvas-member-presence-working 1.8s ease-in-out infinite;
-  filter: none;
-}
-.canvas-member-presence.waiting { background: var(--muted); }
-.canvas-member-presence.bound,
-.canvas-member-presence.unbound { background: var(--muted); }
-@keyframes canvas-member-presence-working {
-  0%, 100% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent-slot) 24%, transparent); }
-  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent-slot) 18%, transparent); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .canvas-member-presence.working { animation: none; }
+  opacity: var(--agent-presence-opacity);
 }
 .canvas-member-copy { display: grid; min-width: 0; gap: 4px; }
 .canvas-member-copy strong {

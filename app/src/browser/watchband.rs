@@ -79,12 +79,7 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
         .unwrap_or(&[]);
     let mut standings = watchband::standings(&lanes.lanes, waiting, tasks);
     for standing in &mut standings {
-        let backend = waiting
-            .iter()
-            .find(|row| row.lane == standing.lane)
-            .map(|row| row.pending.as_slice())
-            .unwrap_or(&[]);
-        standing.pending = submissions.status.pending(standing.lane, backend);
+        standing.pending = view::member_pending(waiting, &submissions.status, standing.lane);
     }
     let authority =
         SubmissionAuthority::derive(connection.is_online(), |kind| runtime.offers(kind));

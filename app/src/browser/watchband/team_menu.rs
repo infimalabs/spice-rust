@@ -7,6 +7,7 @@ pub(super) struct Context<'a> {
     pub(super) controls: &'a UseReducerHandle<TeamControls>,
     pub(super) sender: &'a SenderHandle,
     pub(super) runtime: &'a CanvasRuntime,
+    pub(super) submissions: &'a SubmissionStatus,
     pub(super) agents: &'a view::AgentControls,
     pub(super) topology: &'a [(CanonicalUuid, Vec<CanonicalUuid>)],
     pub(super) topology_revision: u64,
@@ -275,10 +276,8 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                 {for candidates.into_iter().map(|(candidate_team, position, member)| {
                     let sender = context.sender.clone();
                     let lane = member.lane;
-                    let pending = waiting
-                        .iter()
-                        .find(|row| row.lane == lane)
-                        .map_or(0, |row| row.pending.len());
+                    let pending =
+                        view::member_pending(waiting, context.submissions, member.lane);
                     let status = member.status(pending);
                     let label = member
                         .name
