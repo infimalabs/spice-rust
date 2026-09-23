@@ -15,7 +15,13 @@ const OPERATIONAL_BUCKETS: [WorkAvailability; 4] = [
     WorkAvailability::Deferred,
 ];
 
-pub(super) fn render(work: &WorkProjection<'_>, scope: &WorkScope, stale: bool) -> Html {
+pub(super) fn render(
+    work: &WorkProjection<'_>,
+    scope: &WorkScope,
+    stale: bool,
+    selected: Option<&wire::TaskStamp>,
+    select: Callback<wire::TaskStamp>,
+) -> Html {
     let projects = work
         .projects()
         .iter()
@@ -36,7 +42,7 @@ pub(super) fn render(work: &WorkProjection<'_>, scope: &WorkScope, stale: bool) 
             } else {
                 <div class="work-swimlanes">
                     {for projects.into_iter().map(|(index, project)| {
-                        render_project(work, project, index)
+                        render_project(work, project, index, selected, &select)
                     })}
                 </div>
             }
@@ -49,7 +55,7 @@ pub(super) fn render(work: &WorkProjection<'_>, scope: &WorkScope, stale: bool) 
                     <div class="empty">{"No completed or deleted tasks in this scope."}</div>
                 } else {
                     <div class="work-history-list">
-                        {for history.into_iter().map(|task| render_card(task))}
+                        {for history.into_iter().map(|task| render_card(task, selected, &select))}
                     </div>
                 }
             </details>
@@ -57,7 +63,13 @@ pub(super) fn render(work: &WorkProjection<'_>, scope: &WorkScope, stale: bool) 
     }
 }
 
-fn render_project(work: &WorkProjection<'_>, project: &WorkProject<'_>, index: usize) -> Html {
+fn render_project(
+    work: &WorkProjection<'_>,
+    project: &WorkProject<'_>,
+    index: usize,
+    selected: Option<&wire::TaskStamp>,
+    select: &Callback<wire::TaskStamp>,
+) -> Html {
     let heading = format!("work-project-{index}");
     html! {
         <section
@@ -74,7 +86,7 @@ fn render_project(work: &WorkProjection<'_>, project: &WorkProject<'_>, index: u
             </header>
             <div class="work-buckets">
                 {for OPERATIONAL_BUCKETS.into_iter().map(|availability| {
-                    render_bucket(work, project, availability)
+                    render_bucket(work, project, availability, selected, select)
                 })}
             </div>
         </section>
@@ -85,6 +97,8 @@ fn render_bucket(
     work: &WorkProjection<'_>,
     project: &WorkProject<'_>,
     availability: WorkAvailability,
+    selected: Option<&wire::TaskStamp>,
+    select: &Callback<wire::TaskStamp>,
 ) -> Html {
     let tasks = project
         .tasks()
@@ -103,14 +117,18 @@ fn render_bucket(
                 <p class="work-bucket-empty">{format!("No {} tasks.", label.to_lowercase())}</p>
             } else {
                 <div class="work-card-list">
-                    {for tasks.into_iter().map(render_card)}
+                    {for tasks.into_iter().map(|task| render_card(task, selected, select))}
                 </div>
             }
         </section>
     }
 }
 
-fn render_card(task: &WorkTask<'_>) -> Html {
+fn render_card(
+    task: &WorkTask<'_>,
+    selected: Option<&wire::TaskStamp>,
+    select: &Callback<wire::TaskStamp>,
+) -> Html {
     let row = task.row();
     let statement = &row.statement.body;
     let workflow = &row.workflow.body;
@@ -124,13 +142,29 @@ fn render_card(task: &WorkTask<'_>) -> Html {
     let dependencies = task.dependencies().len();
     let dependents = task.dependents().len();
     let completion = workflow.completion.as_ref().map(ToString::to_string);
+    let born = statement.born.clone();
+    let is_selected = selected == Some(&born);
+    let open = {
+        let select = select.clone();
+        let born = born.clone();
+        Callback::from(move |_| select.emit(born.clone()))
+    };
     html! {
         <article
-            key={statement.handle.to_string()}
-            class="work-card"
+            key={born.to_string()}
+            class={classes!("work-card", is_selected.then_some("work-card--selected"))}
             data-work-availability={availability_key(availability)}
+            data-selected={is_selected.to_string()}
             aria-label={format!("{}: {}, {label}", statement.handle, row.presentation_title())}
         >
+            <button
+                type="button"
+                class="work-card-open"
+                data-task-stamp={born.to_string()}
+                aria-label={format!("Open {} details", statement.handle)}
+                aria-current={is_selected.then_some("true")}
+                onclick={open}
+            ></button>
             <header class="work-card-heading">
                 <span class="work-card-handle">{statement.handle.to_string()}</span>
                 <span class="work-card-priority" title="Declared priority">{format!("P:{priority}")}</span>

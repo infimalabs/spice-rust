@@ -182,7 +182,7 @@ impl PendingKind {
             | Self::TeamArrange
             | Self::Steer
             | Self::SteerSubmission { .. }
-            | Self::Note => None,
+            | Self::Note { .. } => None,
         }
     }
 }
@@ -391,6 +391,7 @@ impl ClientAction {
             Self::DrainSubmissions
             | Self::Refresh
             | Self::FastMode(_)
+            | Self::TaskDetail { .. }
             | Self::MessageHistory { .. }
             | Self::ArrangeLane { .. }
             | Self::RenewLane { .. }
@@ -399,7 +400,10 @@ impl ClientAction {
     }
 
     pub(super) const fn is_mutation(&self) -> bool {
-        !matches!(self, Self::Refresh | Self::MessageHistory { .. })
+        !matches!(
+            self,
+            Self::Refresh | Self::TaskDetail { .. } | Self::MessageHistory { .. }
+        )
     }
 
     pub(super) const fn is_topology_mutation(&self) -> bool {

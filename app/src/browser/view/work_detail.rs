@@ -1,0 +1,407 @@
+//! Contextual detail drawer for one durable Work task identity.
+
+use super::*;
+use crate::work::{WorkProjection, WorkScope, WorkTask};
+use wire::TaskStamp;
+
+pub(super) struct WorkDetailRender<'a, 'work> {
+    pub work: &'a WorkProjection<'work>,
+    pub scope: &'a WorkScope,
+    pub selected: Option<&'a TaskStamp>,
+    pub detail: Option<&'a TaskDetailState>,
+    pub stale: bool,
+    pub can_note: bool,
+    pub close_ref: &'a NodeRef,
+    pub note_text: &'a UseStateHandle<String>,
+    pub note_notice: &'a UseStateHandle<Notice>,
+    pub note_submission: &'a UseStateHandle<NoteSubmission>,
+    pub submit_note: Callback<SubmitEvent>,
+    pub select_task: Callback<TaskStamp>,
+    pub close: Callback<()>,
+}
+
+pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
+    let Some(selected) = render.selected else {
+        return Html::default();
+    };
+    let close_click = render.close.reform(|_: MouseEvent| ());
+    let close_key = {
+        let close = render.close.clone();
+        Callback::from(move |event: KeyboardEvent| {
+            if event.key() == "Escape" {
+                event.prevent_default();
+                close.emit(());
+            }
+        })
+    };
+    html! {
+        <div class="work-detail-layer">
+            <button
+                type="button"
+                class="work-detail-backdrop"
+                aria-label="Close task detail"
+                onclick={close_click.clone()}
+            ></button>
+            <aside
+                class="work-detail"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="work-detail-title"
+                data-task-stamp={selected.to_string()}
+                onkeydown={close_key}
+            >
+                <header class="work-detail-header">
+                    <div>
+                        <p class="work-detail-kicker">{"Task detail"}</p>
+                        <h2 id="work-detail-title">{detail_title(render.detail, selected)}</h2>
+                    </div>
+                    <button
+                        ref={render.close_ref.clone()}
+                        type="button"
+                        class="work-detail-close"
+                        aria-label="Close task detail and return to Work"
+                        onclick={close_click}
+                    >{"Close"}</button>
+                </header>
+                if render.stale {
+                    <p class="work-detail-state" role="status">
+                        {"Showing admitted detail while reconnecting. Updates and observations will resume when Canvas reconnects."}
+                    </p>
+                }
+                {render_detail_body(&render, selected)}
+            </aside>
+        </div>
+    }
+}
+
+fn detail_title(detail: Option<&TaskDetailState>, selected: &TaskStamp) -> String {
+    match detail {
+        Some(TaskDetailState::Available(answer)) => answer.task.presentation_title.clone(),
+        _ => format!("Task {selected}"),
+    }
+}
+
+fn render_detail_body(render: &WorkDetailRender<'_, '_>, selected: &TaskStamp) -> Html {
+    match render.detail {
+        None | Some(TaskDetailState::Loading) => html! {
+            <div class="work-detail-loading" role="status">
+                <span class="work-detail-spinner" aria-hidden="true"></span>
+                <p>{"Loading task evidence and observations…"}</p>
+            </div>
+        },
+        Some(TaskDetailState::Unavailable { reason, detail }) => {
+            let retry = {
+                let select = render.select_task.clone();
+                let task = selected.clone();
+                Callback::from(move |_| select.emit(task.clone()))
+            };
+            html! {
+                <div class="work-detail-problem" role="alert">
+                    <h3>{"Task detail unavailable"}</h3>
+                    <p><code>{reason}</code></p>
+                    if let Some(detail) = detail {
+                        <p>{detail}</p>
+                    }
+                    <button type="button" onclick={retry}>{"Retry detail"}</button>
+                </div>
+            }
+        }
+        Some(TaskDetailState::Available(answer)) => render_available(render, answer),
+    }
+}
+
+fn render_available(
+    render: &WorkDetailRender<'_, '_>,
+    answer: &wire::intent::TaskDetailAnswer,
+) -> Html {
+    let row = &answer.task;
+    let statement = &row.statement.body;
+    let workflow = &row.workflow.body;
+    let projected = render
+        .work
+        .tasks()
+        .iter()
+        .find(|task| task.row().statement.body.born == statement.born);
+    let copy_identity = {
+        let identity = statement.handle.to_string();
+        Callback::from(move |_| chrome::copy_text(&identity))
+    };
+    let scope_notice = projected.and_then(|task| {
+        let project = &render.work.projects()[task.project()];
+        let stem = render.work.stems()[project.stem()].identity();
+        render
+            .scope
+            .stem()
+            .filter(|active| *active != stem)
+            .map(|active| {
+                format!(
+                    "This task is now in {} under {}; your active {} scope remains unchanged.",
+                    statement.project, stem, active
+                )
+            })
+    });
+    html! {
+        <div class="work-detail-content">
+            <div class="work-detail-identity">
+                <code>{statement.handle.to_string()}</code>
+                <button type="button" onclick={copy_identity}>{"Copy identity"}</button>
+            </div>
+            if let Some(notice) = scope_notice {
+                <p class="work-detail-scope" role="status">{notice}</p>
+            }
+            <section class="work-detail-section">
+                <h3>{"Contract"}</h3>
+                if let Some(description) = &statement.description {
+                    <p class="work-detail-description">{description}</p>
+                } else {
+                    <p class="muted">{"No description was recorded."}</p>
+                }
+                if statement.acceptance.is_empty() {
+                    <p class="muted">{"No acceptance criteria were recorded."}</p>
+                } else {
+                    <h4>{"Acceptance"}</h4>
+                    <ul>{for statement.acceptance.iter().map(|criterion| html! {
+                        <li>{criterion}</li>
+                    })}</ul>
+                }
+            </section>
+            <section class="work-detail-section">
+                <h3>{"State"}</h3>
+                <dl class="work-detail-facts">
+                    {fact("Project", statement.project.clone())}
+                    {fact("Status", workflow.status.clone())}
+                    {fact("Current phase", workflow.phase.to_string())}
+                    {fact("Flow", workflow.flow.iter().map(ToString::to_string).collect::<Vec<_>>().join(" → "))}
+                    {fact("Review", workflow.review.clone())}
+                    {fact("Assignment", workflow.assignment.as_ref().map_or_else(|| "Unassigned".to_owned(), ToString::to_string))}
+                    {fact("Priority", priority(&statement.tags))}
+                    {fact("Tags", if statement.tags.is_empty() { "None".to_owned() } else { statement.tags.join(", ") })}
+                    {fact("Deferral", workflow.deferral.as_ref().map_or_else(|| "None".to_owned(), ToString::to_string))}
+                    {fact("Completion", workflow.completion.as_ref().map_or_else(|| "Open".to_owned(), ToString::to_string))}
+                </dl>
+                {render_possession(row)}
+                {render_blockers(projected)}
+            </section>
+            <section class="work-detail-section">
+                <h3>{"Relationships"}</h3>
+                {render_relationships(render.work, projected, statement, &render.select_task)}
+            </section>
+            <section class="work-detail-section">
+                <h3>{"Provenance"}</h3>
+                <dl class="work-detail-facts">
+                    {fact("Origin", statement.provenance.to_string())}
+                    {fact("Origin thread", row.origin_thread.clone())}
+                    {fact("Creator team", row.creator_team.map_or_else(|| "None".to_owned(), |team| team.to_string()))}
+                    {fact("Queue fact", statement.queue_origin.to_string())}
+                    {fact("Statement revision", statement.revision.to_string())}
+                    {fact("Workflow fact", row.workflow.position.to_string())}
+                </dl>
+                {render_claim_context(row)}
+                {render_git_context(row)}
+            </section>
+            <section class="work-detail-section work-detail-activity">
+                <div class="work-detail-section-heading">
+                    <h3>{"Activity"}</h3>
+                    <span>{format!("{} observations", answer.notes.len())}</span>
+                </div>
+                if answer.notes.is_empty() {
+                    <p class="muted">{"No observations have been recorded."}</p>
+                } else {
+                    <ol class="work-note-list">
+                        {for answer.notes.iter().map(|note| html! {
+                            <li class="work-note-card" key={note.position.to_string()} data-note-position={note.position.to_string()}>
+                                <header>
+                                    <strong>{note.author.to_string()}</strong>
+                                    <time>{note.at.to_string()}</time>
+                                </header>
+                                <p>{note.text.clone()}</p>
+                            </li>
+                        })}
+                    </ol>
+                }
+                {render_composer(render, statement.handle.as_str())}
+            </section>
+            <button type="button" class="work-detail-back" onclick={render.close.reform(|_: MouseEvent| ())}>
+                {"Back to Work"}
+            </button>
+        </div>
+    }
+}
+
+fn fact(label: &'static str, value: String) -> Html {
+    html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
+}
+
+fn priority(tags: &[String]) -> String {
+    tags.iter()
+        .find_map(|tag| tag.strip_prefix("priority:"))
+        .unwrap_or("None")
+        .to_owned()
+}
+
+fn render_possession(row: &wire::intent::BoardTask) -> Html {
+    let claim = row.claim.as_ref();
+    let lease = row.lease.as_ref();
+    html! {
+        <div class="work-detail-subsection">
+            <h4>{"Claim and lease"}</h4>
+            <dl class="work-detail-facts">
+                {fact("Claim", claim.map_or_else(|| "Unclaimed".to_owned(), |claim| {
+                    format!("{} · {:?}", claim.body.actor, claim.body.disposition)
+                }))}
+                {fact("Claim fact", claim.map_or_else(|| "None".to_owned(), |claim| claim.position.to_string()))}
+                {fact("Lease start", lease.map_or_else(|| "None".to_owned(), |lease| lease.body.start.to_string()))}
+                {fact("Lease expiry", lease.map_or_else(|| "None".to_owned(), |lease| lease.body.expiry.to_string()))}
+            </dl>
+        </div>
+    }
+}
+
+fn render_blockers(task: Option<&WorkTask<'_>>) -> Html {
+    let Some(task) = task else {
+        return html! { <p class="muted">{"Blocker projection is unavailable in the current board snapshot."}</p> };
+    };
+    let dependencies = task.blocked_dependencies().count();
+    let environment = task.environment_blocked();
+    let summary = match (dependencies, environment) {
+        (0, false) => "No active blockers.".to_owned(),
+        (0, true) => "Environmental requirements are not satisfied.".to_owned(),
+        (count, false) => format!("{count} incomplete dependencies."),
+        (count, true) => {
+            format!("{count} incomplete dependencies and unsatisfied environmental requirements.")
+        }
+    };
+    html! { <p class={classes!("work-detail-blockers", (dependencies > 0 || environment).then_some("active"))}>{summary}</p> }
+}
+
+fn render_relationships(
+    work: &WorkProjection<'_>,
+    task: Option<&WorkTask<'_>>,
+    statement: &wire::intent::BoardStatement,
+    select: &Callback<TaskStamp>,
+) -> Html {
+    let dependencies = statement
+        .dependencies
+        .iter()
+        .map(|born| render_task_link(work, born, "Dependency", select));
+    let dependents = task
+        .into_iter()
+        .flat_map(|task| task.dependents().iter())
+        .map(|dependent| {
+            let row = work.tasks()[dependent.task()].row();
+            render_task_link(work, &row.statement.body.born, "Dependent", select)
+        });
+    if statement.dependencies.is_empty() && task.is_none_or(|task| task.dependents().is_empty()) {
+        return html! { <p class="muted">{"No dependencies or dependents."}</p> };
+    }
+    html! { <div class="work-detail-links">{for dependencies.chain(dependents)}</div> }
+}
+
+fn render_task_link(
+    work: &WorkProjection<'_>,
+    born: &TaskStamp,
+    relationship: &'static str,
+    select: &Callback<TaskStamp>,
+) -> Html {
+    let row = work
+        .tasks()
+        .iter()
+        .find(|task| task.row().statement.body.born == *born)
+        .map(WorkTask::row);
+    let target = born.clone();
+    let activate = {
+        let select = select.clone();
+        Callback::from(move |_| select.emit(target.clone()))
+    };
+    html! {
+        <button type="button" class="work-detail-link" onclick={activate}>
+            <span>{relationship}</span>
+            <strong>{row.map_or_else(|| born.to_string(), |row| row.statement.body.handle.to_string())}</strong>
+            if let Some(row) = row {
+                <small>{row.presentation_title.clone()}</small>
+            }
+        </button>
+    }
+}
+
+fn render_claim_context(row: &wire::intent::BoardTask) -> Html {
+    let Some(context) = &row.claim_context else {
+        return Html::default();
+    };
+    let recovery = match &context.recovery {
+        wire::intent::TaskTranscriptRecovery::Transcript { session } => {
+            format!("Transcript session {session}")
+        }
+        wire::intent::TaskTranscriptRecovery::Unavailable { reason } => {
+            format!("Transcript unavailable: {reason}")
+        }
+    };
+    html! {
+        <div class="work-detail-subsection">
+            <h4>{"Claim provenance"}</h4>
+            <dl class="work-detail-facts">
+                {fact("Claimed fact", context.claimed.to_string())}
+                {fact("Lane", context.lane.to_string())}
+                {fact("Occupant", context.occupant.to_string())}
+                {fact("Resident epoch", context.epoch.to_string())}
+                {fact("Recovery", recovery)}
+            </dl>
+        </div>
+    }
+}
+
+fn render_git_context(row: &wire::intent::BoardTask) -> Html {
+    let Some(context) = &row.git_context else {
+        return Html::default();
+    };
+    html! {
+        <div class="work-detail-subsection">
+            <h4>{"Repository boundary"}</h4>
+            <dl class="work-detail-facts">
+                {fact("Lifecycle", context.kind.as_str().to_owned())}
+                {fact("Fact", context.fact.to_string())}
+                {fact("Head", context.boundary.head.clone())}
+                {fact("Integrated", context.boundary.integrated.clone())}
+                {fact("Upstream", context.boundary.upstream.clone().unwrap_or_else(|| "None".to_owned()))}
+                {fact("Local commits", context.boundary.local_commits.to_string())}
+            </dl>
+        </div>
+    }
+}
+
+fn render_composer(render: &WorkDetailRender<'_, '_>, handle: &str) -> Html {
+    if !render.can_note {
+        return html! {
+            <p class="work-note-capability">{"This capability can read observations but cannot append them."}</p>
+        };
+    }
+    let busy = render.note_submission.busy();
+    let status = match &**render.note_submission {
+        NoteSubmission::Idle => Html::default(),
+        NoteSubmission::Pending { task, .. } => html! {
+            <p class="work-note-pending" role="status">{format!("Saving observation for {task}…")}</p>
+        },
+        NoteSubmission::Reconciling { task, .. } => html! {
+            <p class="work-note-pending" role="status">{format!("Saved for {task}; waiting for durable activity…")}</p>
+        },
+        NoteSubmission::Failed(issue) => html! {
+            <p class="form-refusal" role="alert">{issue}</p>
+        },
+    };
+    html! {
+        <form class="form work-note-composer" onsubmit={render.submit_note.clone()}>
+            <label for="work-detail-note">{format!("Observation for {handle}")}</label>
+            <textarea
+                id="work-detail-note"
+                value={(**render.note_text).clone()}
+                disabled={busy}
+                oninput={state_from_textarea(render.note_text.clone())}
+            ></textarea>
+            <button type="submit" disabled={busy || render.note_text.trim().is_empty()}>
+                {if busy { "Saving…" } else { "Add observation" }}
+            </button>
+            {super::render_notice(render.note_notice)}
+            {status}
+        </form>
+    }
+}

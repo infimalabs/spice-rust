@@ -1,6 +1,6 @@
 use wire::body::DirectiveAttachment;
 use wire::intent::{TeamArrangement, TeamLife};
-use wire::{CanonicalUuid, TaskHandle};
+use wire::{CanonicalUuid, TaskHandle, TaskStamp};
 
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum ClientAction {
@@ -8,6 +8,9 @@ pub(crate) enum ClientAction {
     DrainSubmissions,
     Refresh,
     FastMode(bool),
+    TaskDetail {
+        task: TaskStamp,
+    },
     /// Fetch the next retained page behind one member's oldest visible card.
     MessageHistory {
         lane: CanonicalUuid,
@@ -53,6 +56,7 @@ pub(crate) enum ClientAction {
         id: CanonicalUuid,
         task: TaskHandle,
         note: String,
+        after: Option<wire::Seq>,
     },
     /// Direction the operator aimed at one seated lane from its tile.
     ///

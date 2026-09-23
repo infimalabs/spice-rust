@@ -680,6 +680,11 @@ async fn dispatch_action(
         ClientAction::Refresh => send_refresh(principal, writer, actions, submissions)
             .await
             .map(|_| None),
+        ClientAction::TaskDetail { task } => {
+            refresh::send_task_detail(principal, writer, actions, task)
+                .await
+                .map(|_| None)
+        }
         ClientAction::FastMode(fast_mode) => send_fast_mode(principal, writer, actions, *fast_mode)
             .await
             .map(Some),
@@ -710,9 +715,12 @@ async fn dispatch_authored_action(
     action: &ClientAction,
 ) -> Result<CanonicalUuid, String> {
     match action {
-        ClientAction::Note { id, task, note } => {
-            send_task_note(principal, writer, actions, *id, task, note).await
-        }
+        ClientAction::Note {
+            id,
+            task,
+            note,
+            after,
+        } => send_task_note(principal, writer, actions, *id, task, note, *after).await,
         ClientAction::Steer {
             id,
             fanout,
@@ -887,18 +895,23 @@ async fn send_task_note(
     id: CanonicalUuid,
     task: &TaskHandle,
     note: &str,
+    after: Option<wire::Seq>,
 ) -> Result<CanonicalUuid, String> {
     let born = task
         .born()
         .map_err(|error| format!("task handle {task} has no canonical birth stamp: {error}"))?;
     let body = BorrowedTaskNote { task, note };
-    let expected = vec![Witness::Existence { task: born }];
+    let expected = vec![Witness::Existence { task: born.clone() }];
     send_typed_as(
         principal,
         writer,
         actions,
         id,
-        PendingKind::Note,
+        PendingKind::Note {
+            task: born,
+            text: note.to_owned(),
+            after,
+        },
         CommandKind::TaskNote,
         expected,
         body,
