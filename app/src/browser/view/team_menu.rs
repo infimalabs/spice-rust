@@ -13,6 +13,7 @@ pub(super) struct Context<'a> {
     pub(super) update: Option<&'a CanvasUpdate>,
     pub(super) sender: &'a SenderHandle,
     pub(super) team_controls: &'a UseReducerHandle<TeamControls>,
+    pub(super) submissions: &'a SubmissionStatus,
 }
 
 pub(super) fn render(
@@ -102,6 +103,7 @@ fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
     let new_team = super::super::random_uuid().expect("browser crypto mints a new team identity");
     let solo_render = SoloDropRender {
         waiting,
+        submissions: context.submissions,
         sender: context.sender,
         can_configure,
         topology_revision: lanes.topology_revision,
@@ -119,6 +121,7 @@ fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
                         render_team(
                             team,
                             waiting,
+                            context.submissions,
                             context.sender,
                             can_configure,
                             lanes.topology_revision,
@@ -383,6 +386,7 @@ fn render_theme_selector() -> Html {
 fn render_team(
     team: &crate::runtime::LaneRow,
     waiting: &[wire::intent::LaneInbox],
+    submissions: &SubmissionStatus,
     sender: &SenderHandle,
     can_configure: bool,
     topology_revision: u64,
@@ -436,7 +440,10 @@ fn render_team(
                     render_member(
                         member,
                         watchband::accent(team.members.len(), position),
-                        waiting,
+                        PresenceProjection {
+                            waiting,
+                            submissions,
+                        },
                         team.lane,
                         can_configure,
                         team_controls,
@@ -448,19 +455,21 @@ fn render_team(
     }
 }
 
+struct PresenceProjection<'a> {
+    waiting: &'a [wire::intent::LaneInbox],
+    submissions: &'a SubmissionStatus,
+}
+
 fn render_member(
     member: &crate::runtime::LaneMember,
     accent: usize,
-    waiting: &[wire::intent::LaneInbox],
+    presence: PresenceProjection<'_>,
     source: CanonicalUuid,
     can_configure: bool,
     team_controls: &UseReducerHandle<TeamControls>,
     show_reopen: bool,
 ) -> Html {
-    let pending = waiting
-        .iter()
-        .find(|row| row.lane == member.lane)
-        .map_or(0, |row| row.pending.len());
+    let pending = super::member_pending(presence.waiting, presence.submissions, member.lane);
     let status = member.status(pending);
     let label = member
         .name
@@ -522,6 +531,7 @@ fn render_new_team_drop(
 
 struct SoloDropRender<'a> {
     waiting: &'a [wire::intent::LaneInbox],
+    submissions: &'a SubmissionStatus,
     sender: &'a SenderHandle,
     can_configure: bool,
     topology_revision: u64,
@@ -554,7 +564,10 @@ fn render_solo_members_drop(
                         render_member(
                             member,
                             watchband::accent(1, 0),
-                            render.waiting,
+                            PresenceProjection {
+                                waiting: render.waiting,
+                                submissions: render.submissions,
+                            },
                             member.lane,
                             render.can_configure,
                             render.team_controls,

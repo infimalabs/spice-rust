@@ -186,6 +186,7 @@ fn render_canvas_menu(
                             update,
                             sender: render.sender,
                             team_controls: render.team_controls,
+                            submissions: render.submissions,
                         },
                     )}
                 </div>

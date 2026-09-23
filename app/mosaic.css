@@ -452,13 +452,12 @@
   width: 9px;
   height: 9px;
   border-radius: 50%;
-  background: var(--accent);
+  background: var(--agent-presence-color);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 14%, transparent);
+  opacity: var(--agent-presence-opacity);
 }
-.team-light.queued { background: var(--warning); }
-.team-light.waiting { background: var(--muted); opacity: .7; }
 .team-light.bound,
-.team-light.unbound { background: var(--muted); opacity: .35; box-shadow: none; }
+.team-light.unbound { box-shadow: none; }
 
 .team-mode-rail {
   display: grid;

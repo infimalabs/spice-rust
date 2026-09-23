@@ -34,12 +34,26 @@ fn render_notice(notice: &Notice) -> Html {
     }
 }
 
+/// Pending direction count shared by compact and expanded presence indicators.
+pub(super) fn member_pending(
+    waiting: &[wire::intent::LaneInbox],
+    submissions: &SubmissionStatus,
+    lane: CanonicalUuid,
+) -> usize {
+    let backend = waiting
+        .iter()
+        .find(|row| row.lane == lane)
+        .map(|row| row.pending.as_slice())
+        .unwrap_or(&[]);
+    submissions.pending(lane, backend)
+}
+
 /// One shared live-state marker for global and team action menus.
 pub(super) fn render_member_presence(status: crate::runtime::LaneStatus) -> Html {
     let label = status.label();
     html! {
         <span
-            class={classes!("canvas-member-presence", status.key())}
+            class={classes!("agent-presence-indicator", "canvas-member-presence", status.key())}
             role="img"
             data-lane-status={status.key()}
             aria-label={label}
