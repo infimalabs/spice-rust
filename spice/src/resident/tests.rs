@@ -22,6 +22,8 @@ mod canvas_announcement;
 mod closed_transcript;
 #[path = "tests/lane_consent.rs"]
 mod lane_consent;
+#[path = "tests/lane_retune.rs"]
+mod lane_retune;
 #[path = "tests/media.rs"]
 mod media;
 #[path = "tests/message_backlog.rs"]

@@ -251,6 +251,8 @@ vocabulary! {
     LaneSeated = "lane::seated" by ResidentRecognition;
     /// A seated member moved before another member, possibly across teams.
     LaneArranged = "lane::arranged" by ResidentRecognition;
+    /// A seated lane's model spelling changed for its next launch.
+    LaneRetuned = "lane::retuned" by ResidentRecognition;
     /// One Canvas team adopted a shared task-allocation lifetime.
     TeamConfigured = "team::configured" by ResidentRecognition;
     /// The operator rearranged which lanes each Canvas team holds, and in

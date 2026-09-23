@@ -737,6 +737,14 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "lane::wake"
     ),
     operator!(
+        ["lane", "model"],
+        "lane model ID [MODEL]",
+        Command,
+        [LaneRetuned],
+        Reply,
+        "lane::model"
+    ),
+    operator!(
         ["lane", "remove"],
         "lane remove ID",
         Command,

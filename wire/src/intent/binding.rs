@@ -9,12 +9,12 @@ use super::{
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
     ConsentRead, DeliveryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger,
     GlobalSettingsAnswer, GlobalSettingsRead, GlobalSettingsSet, InboxAnswer, LaneAnswer,
-    LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer, LaneSeat,
-    LaneState, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish, StateAnswer,
-    SteerDispose, SteerInbox, SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign, TaskDefer,
-    TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef,
-    TaskReview, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure,
-    TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
+    LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
+    LaneRetune, LaneSeat, LaneState, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish,
+    StateAnswer, SteerDispose, SteerInbox, SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign,
+    TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase,
+    TaskRef, TaskReview, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
+    TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -98,6 +98,8 @@ pub enum BodyShape {
     LaneState,
     /// [`LaneRenewal`]
     LaneRenewal,
+    /// [`LaneRetune`]
+    LaneRetune,
     /// [`TeamConfigure`]
     TeamConfigure,
     /// [`TeamArrange`]
@@ -375,6 +377,7 @@ impl CommandKind {
             | Self::LaneArrange
             | Self::LaneState
             | Self::LaneRenewal
+            | Self::LaneRetune
             | Self::TeamConfigure
             | Self::TeamArrange
             | Self::LaneRecall
@@ -445,6 +448,7 @@ impl CommandKind {
             Self::LaneArrange => Binding::of(B::LaneArrange, A::Lane),
             Self::LaneState => Binding::of(B::LaneState, A::LaneChange),
             Self::LaneRenewal => Binding::of(B::LaneRenewal, A::LaneRenewal),
+            Self::LaneRetune => Binding::of(B::LaneRetune, A::Lane),
             Self::TeamConfigure => Binding::of(B::TeamConfigure, A::Lane),
             Self::TeamArrange => Binding::of(B::TeamArrange, A::Lane),
             Self::LaneRecall => Binding::of(B::LaneRecall, A::Recall),
@@ -554,6 +558,8 @@ pub enum Intent {
     LaneState(LaneState),
     /// [`BodyShape::LaneRenewal`]
     LaneRenewal(LaneRenewal),
+    /// [`BodyShape::LaneRetune`]
+    LaneRetune(LaneRetune),
     /// [`BodyShape::TeamConfigure`]
     TeamConfigure(TeamConfigure),
     /// [`BodyShape::TeamArrange`]
@@ -611,6 +617,7 @@ impl Intent {
             | Self::LaneArrange(_)
             | Self::LaneState(_)
             | Self::LaneRenewal(_)
+            | Self::LaneRetune(_)
             | Self::TeamConfigure(_)
             | Self::TeamArrange(_)
             | Self::LaneRecall(_)
@@ -668,6 +675,7 @@ impl Intent {
             Self::LaneArrange(_) => BodyShape::LaneArrange,
             Self::LaneState(_) => BodyShape::LaneState,
             Self::LaneRenewal(_) => BodyShape::LaneRenewal,
+            Self::LaneRetune(_) => BodyShape::LaneRetune,
             Self::TeamConfigure(_) => BodyShape::TeamConfigure,
             Self::TeamArrange(_) => BodyShape::TeamArrange,
             Self::LaneRecall(_) => BodyShape::LaneRecall,
@@ -829,6 +837,7 @@ impl BodyShape {
             Self::LaneArrange => Intent::LaneArrange(crate::decode(bytes)?),
             Self::LaneState => Intent::LaneState(crate::decode(bytes)?),
             Self::LaneRenewal => Intent::LaneRenewal(crate::decode(bytes)?),
+            Self::LaneRetune => Intent::LaneRetune(crate::decode(bytes)?),
             Self::TeamConfigure => Intent::TeamConfigure(crate::decode(bytes)?),
             Self::TeamArrange => Intent::TeamArrange(crate::decode(bytes)?),
             Self::LaneRecall => Intent::LaneRecall(crate::decode(bytes)?),

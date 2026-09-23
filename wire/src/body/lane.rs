@@ -46,6 +46,29 @@ pub struct LaneSeated {
     pub effort: Option<String>,
 }
 
+/// A seated lane's model spelling changed for its next launch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LaneRetuned {
+    /// Seated member whose next launch changes.
+    pub lane: CanonicalUuid,
+    /// Model spelling the seat carried before this transaction, absent when
+    /// it followed the vendor's configured model.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub from: Option<String>,
+    /// Model spelling the seat carries after it, absent when the seat now
+    /// follows the vendor's configured model.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub model: Option<String>,
+}
+
 /// One Canvas team adopted a task-allocation lifetime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TeamConfigured {

@@ -194,6 +194,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TrustRevoke
         | CommandKind::LaneRead
         | CommandKind::LaneRenewal
+        | CommandKind::LaneRetune
         | CommandKind::LaneArrange
         | CommandKind::TeamConfigure
         | CommandKind::TeamArrange
@@ -336,6 +337,7 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["lane", "add"]
             | ["lane", "drain"]
             | ["lane", "wake"]
+            | ["lane", "model"]
             | ["lane", "remove"]
             | ["lane", "import"]
             | ["lane", "purge"]
