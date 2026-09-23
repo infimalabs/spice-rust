@@ -30,6 +30,7 @@ use crate::speech_queue::{
     Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
     SpeechRequest, SuppressAutomatic,
 };
+use crate::work::{WorkProjection, WorkScope};
 use crate::{
     Axis, CanvasDestination, CanvasRuntime, Principal, Session, SteerPane, StreamDirective,
     TeamDestination, stale_reads,
@@ -463,6 +464,8 @@ fn canvas_app() -> Html {
     let axis = use_state(|| Axis::Topology);
     let mosaic = use_state(|| true);
     let canvas_menu_open = use_state(|| false);
+    let work_scope = use_state(WorkScope::default);
+    let work_scope_notice = use_state(|| None::<String>);
     let identity = use_state(|| None::<CanvasIdentity>);
     let canvas_update = use_state(|| None::<CanvasUpdate>);
     let team_controls = use_reducer(TeamControls::restore);
@@ -527,6 +530,16 @@ fn canvas_app() -> Html {
             lanes.lanes.iter().filter(|team| team.teamed()).count()
         });
     watchband::use_team_fleet_right_edge(team_fleet.clone(), team_count);
+    let surface_view = surface.read();
+    let work = project_work(surface_view.as_ref());
+    let work_scope_available = work
+        .as_ref()
+        .map(|projection| projection.contains_scope(&work_scope));
+    use_work_scope_reconciliation(
+        work_scope_available,
+        work_scope.clone(),
+        work_scope_notice.clone(),
+    );
 
     let refresh = refresh_callback(sender.clone(), axis.clone());
     let submit_note = note_submit_callback(
@@ -535,30 +548,63 @@ fn canvas_app() -> Html {
         note_text.clone(),
         note_notice.clone(),
     );
-    let canvas = render_canvas(CanvasRender {
-        connection: &connection,
-        surface: &surface,
-        axis: &axis,
-        mosaic: &mosaic,
-        canvas_menu_open: &canvas_menu_open,
-        identity: &identity,
-        canvas_update: &canvas_update,
-        team_controls: &team_controls,
-        composer_drafts: &composer_drafts,
-        submissions: &submissions,
-        team_fleet: &team_fleet,
-        unsafe_intent,
-        sender: &sender,
-        agents: &agents,
-        note_task: &note_task,
-        note_text: &note_text,
-        note_notice: &note_notice,
-        action_issue: &action_issue,
-        speech_status: &speech_status,
-        submit_note,
-        refresh,
-    });
+    let canvas = render_canvas(
+        CanvasRender {
+            connection: &connection,
+            surface: &surface,
+            axis: &axis,
+            mosaic: &mosaic,
+            canvas_menu_open: &canvas_menu_open,
+            work_scope: &work_scope,
+            work_scope_notice: &work_scope_notice,
+            identity: &identity,
+            canvas_update: &canvas_update,
+            team_controls: &team_controls,
+            composer_drafts: &composer_drafts,
+            submissions: &submissions,
+            team_fleet: &team_fleet,
+            unsafe_intent,
+            sender: &sender,
+            agents: &agents,
+            note_task: &note_task,
+            note_text: &note_text,
+            note_notice: &note_notice,
+            action_issue: &action_issue,
+            speech_status: &speech_status,
+            submit_note,
+            refresh,
+        },
+        work.as_ref(),
+    );
     html! { <image_viewer::Provider><mermaid::Provider>{canvas}</mermaid::Provider></image_viewer::Provider> }
+}
+fn project_work(runtime: Option<&CanvasRuntime>) -> Option<WorkProjection<'_>> {
+    runtime
+        .and_then(CanvasRuntime::board)
+        .map(WorkProjection::from_board)
+}
+
+#[hook]
+fn use_work_scope_reconciliation(
+    available: Option<bool>,
+    scope: UseStateHandle<WorkScope>,
+    notice: UseStateHandle<Option<String>>,
+) {
+    use_effect_with(
+        ((*scope).clone(), available),
+        move |(requested, available)| {
+            if matches!(requested, WorkScope::Stem(_)) && *available == Some(false) {
+                let missing = requested
+                    .stem()
+                    .expect("a selected scope has a stem")
+                    .to_string();
+                scope.set(WorkScope::AllOpen);
+                notice.set(Some(format!(
+                    "{missing} is no longer available; showing All open work."
+                )));
+            }
+        },
+    );
 }
 
 #[hook]

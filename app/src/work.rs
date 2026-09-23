@@ -6,6 +6,7 @@
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
+use std::fmt::{self, Display, Formatter};
 
 use wire::TaskStamp;
 use wire::head::ClaimDisposition;
@@ -41,6 +42,15 @@ pub enum WorkVisibility {
     Public,
     Hidden,
 }
+/// Durable-in-render selection for the global Work surface.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum WorkScope {
+    /// Every open task across every visibility-qualified stem.
+    #[default]
+    AllOpen,
+    /// Open tasks under one exact public or hidden stem.
+    Stem(WorkStemIdentity),
+}
 
 impl WorkStemIdentity {
     #[must_use]
@@ -56,6 +66,24 @@ impl WorkStemIdentity {
     #[must_use]
     pub const fn hidden(&self) -> bool {
         matches!(self.visibility, WorkVisibility::Hidden)
+    }
+}
+impl Display for WorkStemIdentity {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        if self.hidden() {
+            formatter.write_str(".")?;
+        }
+        write!(formatter, "{}.*", self.stem)
+    }
+}
+
+impl WorkScope {
+    #[must_use]
+    pub const fn stem(&self) -> Option<&WorkStemIdentity> {
+        match self {
+            Self::AllOpen => None,
+            Self::Stem(identity) => Some(identity),
+        }
     }
 }
 
@@ -108,10 +136,14 @@ impl WorkCounts {
     pub const fn unavailable(self) -> usize {
         self.blocked + self.deferred
     }
+    #[must_use]
+    pub const fn open(self) -> usize {
+        self.in_flight + self.ready + self.blocked + self.deferred
+    }
 
     #[must_use]
     pub const fn has_open(self) -> bool {
-        self.in_flight + self.ready + self.blocked + self.deferred > 0
+        self.open() > 0
     }
 }
 
@@ -270,6 +302,7 @@ impl WorkStem {
 /// Complete client-side Work model for one admitted board snapshot.
 #[derive(Debug)]
 pub struct WorkProjection<'a> {
+    counts: WorkCounts,
     tasks: Vec<WorkTask<'a>>,
     projects: Vec<WorkProject<'a>>,
     stems: Vec<WorkStem>,
@@ -289,6 +322,30 @@ impl<'a> WorkProjection<'a> {
     #[must_use]
     pub fn stems(&self) -> &[WorkStem] {
         &self.stems
+    }
+    #[must_use]
+    pub const fn counts(&self) -> WorkCounts {
+        self.counts
+    }
+
+    #[must_use]
+    pub fn stem(&self, identity: &WorkStemIdentity) -> Option<&WorkStem> {
+        self.stems.iter().find(|stem| stem.identity == *identity)
+    }
+
+    #[must_use]
+    pub fn contains_scope(&self, scope: &WorkScope) -> bool {
+        scope
+            .stem()
+            .is_none_or(|identity| self.stem(identity).is_some())
+    }
+
+    #[must_use]
+    pub fn scope_counts(&self, scope: &WorkScope) -> WorkCounts {
+        scope
+            .stem()
+            .and_then(|identity| self.stem(identity))
+            .map_or(self.counts, WorkStem::counts)
     }
 
     #[must_use]
@@ -311,21 +368,12 @@ impl<'a> WorkProjection<'a> {
             .map(|(index, task)| classify(board, task, &by_born, environment_blocked[index]))
             .collect::<Vec<_>>();
 
-        let mut dependent_indexes = vec![Vec::new(); board.tasks.len()];
-        for (dependent, task) in board.tasks.iter().enumerate() {
-            for dependency in &task.statement.body.dependencies {
-                if let Some(&index) = by_born.get(dependency) {
-                    dependent_indexes[index].push(dependent);
-                }
-            }
-        }
-        for indexes in &mut dependent_indexes {
-            indexes
-                .sort_by(|left, right| compare_tasks(&board.tasks, &availability, *left, *right));
-        }
+        let dependent_indexes = dependent_indexes(board, &by_born, &availability);
 
+        let mut counts = WorkCounts::default();
         let mut stem_builders = BTreeMap::<StemKey<'a>, StemBuilder<'a>>::new();
         for (index, task) in board.tasks.iter().enumerate() {
+            counts.record(availability[index]);
             let key = stem_key(task);
             let stem = stem_builders.entry(key).or_default();
             stem.counts.record(availability[index]);
@@ -407,6 +455,7 @@ impl<'a> WorkProjection<'a> {
             .collect();
 
         Self {
+            counts,
             tasks,
             projects,
             stems,
@@ -430,6 +479,25 @@ struct StemBuilder<'a> {
 struct ProjectBuilder {
     counts: WorkCounts,
     tasks: Vec<usize>,
+}
+
+fn dependent_indexes(
+    board: &BoardView,
+    by_born: &BTreeMap<&TaskStamp, usize>,
+    availability: &[WorkAvailability],
+) -> Vec<Vec<usize>> {
+    let mut dependents = vec![Vec::new(); board.tasks.len()];
+    for (dependent, task) in board.tasks.iter().enumerate() {
+        for dependency in &task.statement.body.dependencies {
+            if let Some(&index) = by_born.get(dependency) {
+                dependents[index].push(dependent);
+            }
+        }
+    }
+    for indexes in &mut dependents {
+        indexes.sort_by(|left, right| compare_tasks(&board.tasks, availability, *left, *right));
+    }
+    dependents
 }
 
 fn stem_key(task: &BoardTask) -> StemKey<'_> {
@@ -725,6 +793,27 @@ mod tests {
             }
             .has_open()
         );
+        let public_scope = WorkScope::Stem(projection.stems[0].identity.clone());
+        let hidden_scope = WorkScope::Stem(projection.stems[1].identity.clone());
+        assert_eq!(
+            public_scope.stem().map(ToString::to_string).as_deref(),
+            Some("alpha.*")
+        );
+        assert_eq!(
+            hidden_scope.stem().map(ToString::to_string).as_deref(),
+            Some(".alpha.*")
+        );
+        assert!(projection.contains_scope(&public_scope));
+        assert!(projection.contains_scope(&hidden_scope));
+        assert_eq!(projection.scope_counts(&public_scope).open(), 2);
+        assert_eq!(projection.scope_counts(&hidden_scope).open(), 1);
+
+        let absent = WorkScope::Stem(WorkStemIdentity {
+            visibility: WorkVisibility::Public,
+            stem: "gone".to_owned(),
+        });
+        assert!(!projection.contains_scope(&absent));
+        assert_eq!(projection.scope_counts(&absent), projection.counts());
     }
 
     #[test]

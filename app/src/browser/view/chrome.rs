@@ -32,6 +32,9 @@ pub(super) struct CommandBarRender<'a> {
     pub(super) axis: &'a UseStateHandle<Axis>,
     pub(super) mosaic: &'a UseStateHandle<bool>,
     pub(super) menu_open: &'a UseStateHandle<bool>,
+    pub(super) work_scope: &'a UseStateHandle<WorkScope>,
+    pub(super) work_scope_notice: &'a UseStateHandle<Option<String>>,
+    pub(super) work: Option<&'a WorkProjection<'a>>,
     pub(super) identity: &'a UseStateHandle<Option<CanvasIdentity>>,
     pub(super) canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,
     pub(super) active_axis: Axis,
@@ -45,7 +48,7 @@ pub(super) struct CommandBarRender<'a> {
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    let task_pills = task_pills(runtime);
+    let task_pills = task_pills(render.work);
     let connection_label: AttrValue = render.connection.label().into();
     html! {
         <header class="commandbar commandbar--mosaic">
@@ -58,21 +61,35 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                         let axis = render.axis.clone();
                         let mosaic = render.mosaic.clone();
                         let menu_open = render.menu_open.clone();
+                        let work_scope = render.work_scope.clone();
+                        let work_scope_notice = render.work_scope_notice.clone();
+                        let identity = pill.identity.clone();
+                        let selected = !**render.mosaic
+                            && render.active_axis == Axis::Flow
+                            && render.work_scope.stem() == Some(&pill.identity);
+                        let key = identity.to_string();
                         html! {
                             <button
+                                key={key}
                                 class={classes!(
                                     "task-pill",
                                     pill.hidden.then_some("system"),
                                     (pill.active > 0).then_some("active"),
                                     (pill.ready == 0 && pill.active == 0).then_some("dormant"),
+                                    selected.then_some("selected"),
                                 )}
                                 type="button"
                                 title={pill.title()}
+                                aria-pressed={selected.to_string()}
+                                aria-current={selected.then_some("page")}
                                 data-task-stem={pill.stem.clone()}
+                                data-task-visibility={if pill.hidden { "hidden" } else { "public" }}
                                 data-ready={pill.ready.to_string()}
                                 data-active={pill.active.to_string()}
                                 data-unavailable={pill.unavailable.to_string()}
                                 onclick={Callback::from(move |_| {
+                                    work_scope.set(WorkScope::Stem(identity.clone()));
+                                    work_scope_notice.set(None);
                                     axis.set(Axis::Flow);
                                     mosaic.set(false);
                                     menu_open.set(false);
@@ -101,6 +118,8 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                 let axis = render.axis.clone();
                 let mosaic = render.mosaic.clone();
                 let menu_open = render.menu_open.clone();
+                let work_scope = render.work_scope.clone();
+                let work_scope_notice = render.work_scope_notice.clone();
                 let destination_axis = destination.axis();
                 render_pill(
                     destination.label(),
@@ -111,6 +130,10 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                     navigation_badge(destination, runtime, render.submissions),
                     false,
                     Callback::from(move |_| {
+                        if destination == CanvasDestination::Work {
+                            work_scope.set(WorkScope::AllOpen);
+                            work_scope_notice.set(None);
+                        }
                         if let Some(candidate) = destination_axis {
                             axis.set(candidate);
                             mosaic.set(false);
@@ -196,13 +219,9 @@ fn render_canvas_menu(
     }
 }
 
-fn task_pills(runtime: Option<&CanvasRuntime>) -> Vec<TaskPill> {
-    let Some(board) = runtime.and_then(CanvasRuntime::board) else {
-        return Vec::new();
-    };
-    let work = WorkProjection::from_board(board);
-    work.stems()
-        .iter()
+fn task_pills(work: Option<&WorkProjection<'_>>) -> Vec<TaskPill> {
+    work.into_iter()
+        .flat_map(WorkProjection::stems)
         .filter(|stem| stem.counts().has_open())
         .map(TaskPill::from_stem)
         .collect()
