@@ -939,6 +939,11 @@ impl Stale {
     pub(crate) fn retain_task_details(&mut self, mut retain: impl FnMut(&wire::TaskStamp) -> bool) {
         self.task_details.retain(|task| retain(task));
     }
+    /// Mark one selected task detail for a demand-driven re-read.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn invalidate_task_detail_read(&mut self, task: wire::TaskStamp) {
+        self.task_details.insert(task);
+    }
 
     /// Affected open task details, in durable identity order.
     pub fn task_details(&self) -> impl Iterator<Item = &wire::TaskStamp> {

@@ -18,7 +18,10 @@ use wire::intent::{
     LaneRenewal, LaneState, SteerInbox, SteerSend, TaskAnswer, TeamArrangement, TeamConfigure,
     TeamLife, VendorCatalog,
 };
-use wire::{CanonicalUuid, CommandKind, Response, StreamRequest, TaskHandle, WireVersion, Witness};
+use wire::{
+    CanonicalUuid, CommandKind, Response, Seq, StreamRequest, TaskHandle, TaskStamp, WireVersion,
+    Witness,
+};
 use yew::prelude::*;
 
 use crate::client_action::ClientAction;
@@ -33,13 +36,14 @@ use crate::speech_queue::{
 use crate::work::{WorkProjection, WorkScope};
 use crate::{
     Axis, CanvasDestination, CanvasRuntime, Principal, Session, SteerPane, StreamDirective,
-    TeamDestination, stale_reads,
+    TaskDetailState, TeamDestination, stale_reads,
 };
 
 mod clock;
 mod connection;
 mod image_viewer;
 mod mermaid;
+mod task_detail;
 mod view;
 mod watchband;
 
@@ -106,6 +110,44 @@ impl SubmissionHandle {
         self.status.set(status);
     }
 }
+#[derive(Clone, Default, PartialEq, Eq)]
+enum NoteSubmission {
+    #[default]
+    Idle,
+    Pending {
+        task: TaskStamp,
+        text: String,
+        after: Option<Seq>,
+    },
+    Reconciling {
+        task: TaskStamp,
+        text: String,
+        after: Option<Seq>,
+    },
+    Failed(String),
+}
+
+impl NoteSubmission {
+    const fn busy(&self) -> bool {
+        matches!(self, Self::Pending { .. } | Self::Reconciling { .. })
+    }
+}
+#[derive(Clone)]
+struct NoteSubmissionHandle {
+    state: Rc<RefCell<NoteSubmission>>,
+    status: UseStateHandle<NoteSubmission>,
+}
+
+impl NoteSubmissionHandle {
+    fn replace(&self, status: NoteSubmission) {
+        *self.state.borrow_mut() = status.clone();
+        self.status.set(status);
+    }
+
+    fn current(&self) -> NoteSubmission {
+        self.state.borrow().clone()
+    }
+}
 
 #[derive(Clone)]
 struct SurfaceHandles {
@@ -117,6 +159,9 @@ struct SurfaceHandles {
     team_controls: UseReducerHandle<TeamControls>,
     composer_drafts: UseReducerHandle<ComposerDrafts>,
     submissions: SubmissionHandle,
+    note_text: UseStateHandle<String>,
+    note_notice: UseStateHandle<Notice>,
+    note_submission: NoteSubmissionHandle,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -476,14 +521,12 @@ fn canvas_app() -> Html {
         queue: use_mut_ref(SubmissionQueue::default),
         status: submission_status.clone(),
     };
-    let note_task = use_state(String::new);
-    let note_text = use_state(String::new);
-    let note_notice = use_state(Notice::none);
     let action_issue = use_state(|| None::<String>);
     let sender = SenderHandle {
         queue: use_mut_ref(|| None::<ActionQueue>),
         issue: action_issue.clone(),
     };
+    let work_detail = task_detail::use_controls(sender.clone(), surface.clone());
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
     let speech_message = use_state(|| None::<String>);
@@ -514,6 +557,9 @@ fn canvas_app() -> Html {
             team_controls: team_controls.clone(),
             composer_drafts: composer_drafts.clone(),
             submissions: submissions.clone(),
+            note_text: work_detail.note_text.clone(),
+            note_notice: work_detail.notice.clone(),
+            note_submission: work_detail.submission.clone(),
         },
     );
     use_team_speech_abandonment(&surface, speech_runtime.clone());
@@ -541,13 +587,7 @@ fn canvas_app() -> Html {
         work_scope_notice.clone(),
     );
 
-    let refresh = refresh_callback(sender.clone(), axis.clone());
-    let submit_note = note_submit_callback(
-        sender.clone(),
-        note_task.clone(),
-        note_text.clone(),
-        note_notice.clone(),
-    );
+    let refresh = refresh_callback(sender.clone(), axis.clone(), work_detail.selected.clone());
     let canvas = render_canvas(
         CanvasRender {
             connection: &connection,
@@ -566,12 +606,16 @@ fn canvas_app() -> Html {
             unsafe_intent,
             sender: &sender,
             agents: &agents,
-            note_task: &note_task,
-            note_text: &note_text,
-            note_notice: &note_notice,
+            selected_task: &work_detail.selected,
+            detail_close: &work_detail.close_ref,
+            note_text: &work_detail.note_text,
+            note_notice: &work_detail.notice,
+            note_submission: &work_detail.submission.status,
             action_issue: &action_issue,
             speech_status: &speech_status,
-            submit_note,
+            submit_note: work_detail.submit_note.clone(),
+            select_task: work_detail.select.clone(),
+            close_task: work_detail.close.clone(),
             refresh,
         },
         work.as_ref(),
@@ -811,39 +855,16 @@ fn use_team_speech_abandonment(
     });
 }
 
-fn note_submit_callback(
+fn refresh_callback(
     sender: SenderHandle,
-    note_task: UseStateHandle<String>,
-    note_text: UseStateHandle<String>,
-    note_notice: UseStateHandle<Notice>,
-) -> Callback<SubmitEvent> {
-    Callback::from(move |event: SubmitEvent| {
-        event.prevent_default();
-        match compose::note(&note_task, &note_text) {
-            Ok(note) => {
-                let Some(id) = action_identity(&sender) else {
-                    return;
-                };
-                if admit_action(
-                    &sender,
-                    ClientAction::Note {
-                        id,
-                        task: note.task,
-                        note: note.text,
-                    },
-                ) {
-                    note_notice.set(Notice::none());
-                    note_text.set(String::new());
-                }
-            }
-            Err(refusal) => note_notice.set(refusal.into()),
-        }
-    })
-}
-
-fn refresh_callback(sender: SenderHandle, _axis: UseStateHandle<Axis>) -> Callback<MouseEvent> {
+    _axis: UseStateHandle<Axis>,
+    selected: UseStateHandle<Option<TaskStamp>>,
+) -> Callback<MouseEvent> {
     Callback::from(move |_| {
         let _admitted = admit_action(&sender, ClientAction::Refresh);
+        if let Some(task) = (*selected).clone() {
+            let _admitted = admit_action(&sender, ClientAction::TaskDetail { task });
+        }
     })
 }
 

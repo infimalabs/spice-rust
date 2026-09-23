@@ -105,7 +105,11 @@ pub(crate) enum PendingKind {
     SteerSubmission {
         lane: wire::CanonicalUuid,
     },
-    Note,
+    Note {
+        task: wire::TaskStamp,
+        text: String,
+        after: Option<wire::Seq>,
+    },
 }
 #[cfg(target_arch = "wasm32")]
 mod speech;

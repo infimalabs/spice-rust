@@ -113,6 +113,7 @@ pub(super) fn handle_incoming(
     }
     Ok(FrameApplication {
         refresh: application.refresh,
+        stale: application.stale,
         lane_refresh,
         ..FrameApplication::default()
     })
@@ -121,13 +122,25 @@ pub(super) fn handle_incoming(
 struct CommandApplication {
     refresh: bool,
     lane_authority: bool,
+    stale: crate::Stale,
 }
 
 impl CommandApplication {
-    const fn ordinary(refresh: bool) -> Self {
+    fn ordinary(refresh: bool) -> Self {
         Self {
             refresh,
             lane_authority: false,
+            stale: crate::Stale::default(),
+        }
+    }
+
+    fn task_detail(task: wire::TaskStamp) -> Self {
+        let mut stale = crate::Stale::default();
+        stale.invalidate_task_detail_read(task);
+        Self {
+            refresh: false,
+            lane_authority: false,
+            stale,
         }
     }
 }
@@ -185,7 +198,7 @@ fn apply_command_response(
             let admitted: crate::Admitted<Response<wire::intent::TaskDetailAnswer>> =
                 admit_response(session, bytes)?;
             runtime.apply_task_detail(&task, &admitted);
-            CommandApplication::ordinary(false)
+            reconcile_note_detail(handles, runtime, &task)
         }
         // A read of the lane table and an arrangement of it answer with the
         // same authoritative table, so successful replies apply identically.
@@ -198,6 +211,7 @@ fn apply_command_response(
             CommandApplication {
                 refresh,
                 lane_authority: applied,
+                stale: crate::Stale::default(),
             }
         }
         PendingKind::LaneArrange | PendingKind::TeamArrange => {
@@ -206,6 +220,7 @@ fn apply_command_response(
             CommandApplication {
                 refresh,
                 lane_authority: applied,
+                stale: crate::Stale::default(),
             }
         }
         PendingKind::LaneRenewal {
@@ -236,6 +251,7 @@ fn apply_command_response(
             CommandApplication {
                 refresh,
                 lane_authority: applied,
+                stale: crate::Stale::default(),
             }
         }
         PendingKind::Steer => {
@@ -246,11 +262,106 @@ fn apply_command_response(
         PendingKind::SteerSubmission { lane } => CommandApplication::ordinary(
             apply_submission_response(session, handles, runtime, id, lane, bytes)?,
         ),
-        PendingKind::Note => {
-            let _admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
-            CommandApplication::ordinary(false)
+        PendingKind::Note { task, text, after } => {
+            apply_note_response(session, handles, runtime, task, text, after, bytes)?
         }
     })
+}
+fn apply_note_response(
+    session: &Session,
+    handles: &SurfaceHandles,
+    runtime: &mut CanvasRuntime,
+    task: wire::TaskStamp,
+    text: String,
+    after: Option<wire::Seq>,
+    bytes: &[u8],
+) -> Result<CommandApplication, String> {
+    let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
+    match &admitted.get().outcome {
+        wire::Outcome::Reply(reply) => {
+            let answered = reply
+                .body
+                .task
+                .born()
+                .map_err(|error| format!("note answer named a non-canonical task: {error}"))?;
+            if answered != task {
+                handles.note_submission.replace(NoteSubmission::Failed(
+                    "The resident accepted an observation for a different task; the draft was retained."
+                        .to_owned(),
+                ));
+                return Err("note answer task identity did not match its command".to_owned());
+            }
+            handles.note_text.set(String::new());
+            handles.note_notice.set(Notice::none());
+            handles
+                .note_submission
+                .replace(NoteSubmission::Reconciling {
+                    task: task.clone(),
+                    text,
+                    after,
+                });
+            runtime.begin_task_detail(task.clone());
+            Ok(CommandApplication::task_detail(task))
+        }
+        outcome => {
+            let issue = outcome_issue("Observation was not saved", outcome)
+                .unwrap_or_else(|| "Observation was not saved.".to_owned());
+            handles
+                .note_submission
+                .replace(NoteSubmission::Failed(issue));
+            Ok(CommandApplication::ordinary(false))
+        }
+    }
+}
+
+fn reconcile_note_detail(
+    handles: &SurfaceHandles,
+    runtime: &mut CanvasRuntime,
+    task: &wire::TaskStamp,
+) -> CommandApplication {
+    let NoteSubmission::Reconciling {
+        task: pending_task,
+        text,
+        after,
+    } = handles.note_submission.current()
+    else {
+        return CommandApplication::ordinary(false);
+    };
+    if pending_task != *task {
+        return CommandApplication::ordinary(false);
+    }
+    match runtime.task_detail(task) {
+        Some(TaskDetailState::Available(detail)) => {
+            let actor = runtime.principal().actor();
+            let visible = detail.notes.iter().any(|note| {
+                note.author == *actor
+                    && note.text == text
+                    && after.is_none_or(|position| note.position > position)
+            });
+            if visible {
+                handles.note_submission.replace(NoteSubmission::Idle);
+                CommandApplication::ordinary(false)
+            } else {
+                runtime.begin_task_detail(task.clone());
+                CommandApplication::task_detail(task.clone())
+            }
+        }
+        Some(TaskDetailState::Unavailable { reason, detail }) => {
+            let issue = detail.as_ref().map_or_else(
+                || format!("Observation was saved, but its detail could not be refreshed: {reason}"),
+                |detail| {
+                    format!(
+                        "Observation was saved, but its detail could not be refreshed: {reason}. {detail}"
+                    )
+                },
+            );
+            handles
+                .note_submission
+                .replace(NoteSubmission::Failed(issue));
+            CommandApplication::ordinary(false)
+        }
+        Some(TaskDetailState::Loading) | None => CommandApplication::task_detail(task.clone()),
+    }
 }
 
 fn apply_scalar_response(
