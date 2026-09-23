@@ -20,8 +20,8 @@ const MAX_OFFERED_VOICES: usize = 8;
 
 /// What the browser did with one system-speech request.
 pub enum SystemStart {
-    /// The utterance is with the browser, speaking as this reported voice.
-    Speaking(String),
+    /// The utterance is with the browser.
+    Speaking,
     /// The browser has published no voices yet, so no voice can be selected
     /// and no utterance was started. The installed `voiceschanged` observer
     /// calls the caller's resume once the browser publishes its list.
@@ -173,13 +173,12 @@ impl Controller {
         utterance.set_onerror(Some(failed.as_ref().unchecked_ref()));
         synthesis.set_onvoiceschanged(None);
         synthesis.speak(&utterance);
-        let speaking = voice.name();
         self.synthesis = Some(synthesis);
         self.utterance = Some(utterance);
         self.on_end = Some(ended);
         self.on_error = Some(failed);
         self.on_voices = None;
-        Ok(SystemStart::Speaking(speaking))
+        Ok(SystemStart::Speaking)
     }
 
     /// Install externally rendered bytes and ask the browser to play them.

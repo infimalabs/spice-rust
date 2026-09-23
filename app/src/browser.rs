@@ -189,12 +189,6 @@ enum Connection {
 enum SpeechStatus {
     #[default]
     Idle,
-    Loading,
-    /// Playback is with the browser. System synthesis names the voice the
-    /// browser reports for the utterance; rendered external audio has none.
-    Playing {
-        voice: Option<String>,
-    },
     Failed(String),
 }
 
@@ -242,7 +236,7 @@ impl SpeechRuntime {
     fn start(&self, entry: SpeechEntry) {
         let generation = self.controller.borrow_mut().begin();
         self.message.set(entry.message_key().map(str::to_owned));
-        self.status.set(SpeechStatus::Loading);
+        self.status.set(SpeechStatus::Idle);
         match &*self.speech {
             wire::SpeechPlayback::Disabled {} => self.finish(entry.id(), None),
             wire::SpeechPlayback::System {
@@ -300,10 +294,7 @@ impl SpeechRuntime {
             },
         );
         match result {
-            Ok(SystemStart::Speaking(voice)) => {
-                self.status
-                    .set(SpeechStatus::Playing { voice: Some(voice) });
-            }
+            Ok(SystemStart::Speaking) => {}
             // The browser has published no voices yet. This entry stays the
             // loading queue head until `voiceschanged` resumes it, so the
             // first utterance of a page load speaks instead of refusing a
@@ -394,7 +385,6 @@ impl SpeechRuntime {
                     return;
                 }
             };
-            runtime.status.set(SpeechStatus::Playing { voice: None });
             if let Err(error) = crate::speech::await_play(playing).await
                 && runtime.is_current(id, generation)
             {
