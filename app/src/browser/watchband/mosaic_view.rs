@@ -686,16 +686,21 @@ fn use_narration(
     let messages = cards
         .iter()
         .filter_map(|card| match card {
-            ActivityCard::Agent { message, .. } => Some(NarrationMessage {
+            ActivityCard::Agent { message, .. } => Some(message),
+            ActivityCard::Lifecycle { .. } => None,
+        })
+        .filter_map(|message| {
+            let narration = crate::narration::narration_utterance(message.activity, &message.text);
+            let automatic_speech = message
+                .automatic_speech
+                .as_ref()
+                .and_then(|speech| crate::narration::prepared_utterance(&speech.text));
+            (narration.is_some() || automatic_speech.is_some()).then(|| NarrationMessage {
                 lane: message.lane.to_string(),
                 key: agent_message_source_id(message),
-                text: message.text.clone(),
-                automatic_speech: message
-                    .automatic_speech
-                    .as_ref()
-                    .map(|speech| speech.text.clone()),
-            }),
-            ActivityCard::Lifecycle { .. } => None,
+                narration,
+                automatic_speech,
+            })
         })
         .collect::<Vec<_>>();
     use_effect_with((speech, messages), move |(speech, messages)| {

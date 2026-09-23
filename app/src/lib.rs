@@ -49,6 +49,7 @@ mod composer_markdown;
 mod composer_submissions;
 pub mod mosaic;
 pub mod mosaic_plane;
+pub mod narration;
 pub mod pane;
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) mod pip_layout;

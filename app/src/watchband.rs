@@ -813,21 +813,6 @@ pub fn latest_lane_prose<'a>(
         .find_map(|message| first_nonquoted_prose(&message.text).map(|prose| (message, prose)))
 }
 
-/// Agent-authored response offered to manual message playback.
-#[must_use]
-pub fn response_speech_text(text: &str, prepared: Option<&str>) -> Option<String> {
-    if let Some(prepared) = prepared.map(str::trim).filter(|text| !text.is_empty()) {
-        return Some(prepared.to_owned());
-    }
-    let response = text
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('>'))
-        .collect::<Vec<_>>()
-        .join("\n");
-    let response = response.trim();
-    (!response.is_empty()).then(|| response.to_owned())
-}
-
 /// Display the producer's preview or the explicit absent-preview label.
 ///
 /// This is the boundary between a producer and every surface that voices an

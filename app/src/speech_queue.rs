@@ -245,15 +245,19 @@ impl SpeechQueue {
     }
 }
 
-/// One agent message offered to automatic narration in visible order.
+/// One rendered card offered to automatic narration in visible order.
+///
+/// Both utterances are prepared by [`crate::narration`] before they reach the
+/// cursor: a card with no visible words of its own carries neither, and never
+/// enters a batch. The cursor arbitrates identity and recency, not content.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NarrationMessage {
     /// Stable agent lane that produced the message.
     pub lane: String,
     /// Stable message identity within that lane.
     pub key: String,
-    /// Prose to enqueue if the cursor admits it as live.
-    pub text: String,
+    /// Narrate-mode utterance: the card's edge segments.
+    pub narration: Option<String>,
     /// Resident-classified utterance eligible for Speak mode.
     pub automatic_speech: Option<String>,
 }
@@ -265,8 +269,8 @@ pub struct NarrationLine {
     pub lane: String,
     /// Stable rendered message identity.
     pub key: String,
-    /// Prose to enqueue through the global arbiter.
-    pub text: String,
+    /// Narrate-mode utterance to enqueue through the global arbiter.
+    pub narration: Option<String>,
     /// Resident-classified utterance eligible for Speak mode.
     pub automatic_speech: Option<String>,
 }
@@ -314,7 +318,7 @@ impl NarrationCursors {
             .map(|message| NarrationLine {
                 lane: message.lane.clone(),
                 key: message.key.clone(),
-                text: message.text.clone(),
+                narration: message.narration.clone(),
                 automatic_speech: message.automatic_speech.clone(),
             })
             .collect()
