@@ -15,8 +15,9 @@
 
 use super::*;
 use crate::browser::clock::Age;
-use crate::task_pill::{TaskPill, TaskPillAvailability, TaskPillIndex};
+use crate::task_pill::TaskPill;
 use crate::watchband;
+use crate::work::WorkProjection;
 
 /// Characters the ticker line is allowed.
 ///
@@ -199,49 +200,12 @@ fn task_pills(runtime: Option<&CanvasRuntime>) -> Vec<TaskPill> {
     let Some(board) = runtime.and_then(CanvasRuntime::board) else {
         return Vec::new();
     };
-    let mut pills = TaskPillIndex::default();
-    for task in &board.tasks {
-        let workflow = &task.workflow.body;
-        if workflow.status != "pending" || workflow.completion.is_some() {
-            continue;
-        }
-        let hidden = task.visibility.is_hidden();
-        let stem = task
-            .visibility
-            .hidden_stem()
-            .map(str::to_owned)
-            .unwrap_or_else(|| {
-                task.statement
-                    .body
-                    .project
-                    .trim_start_matches('.')
-                    .split('.')
-                    .next()
-                    .unwrap_or("task")
-                    .to_owned()
-            });
-        let availability = if task
-            .claim
-            .as_ref()
-            .is_some_and(|claim| claim.body.disposition == wire::head::ClaimDisposition::Active)
-        {
-            TaskPillAvailability::Active
-        } else if workflow.deferral.is_some()
-            || !board.environment_satisfies(task)
-            || task.statement.body.dependencies.iter().any(|dependency| {
-                board.tasks.iter().any(|candidate| {
-                    candidate.statement.body.born == *dependency
-                        && candidate.workflow.body.completion.is_none()
-                })
-            })
-        {
-            TaskPillAvailability::Unavailable
-        } else {
-            TaskPillAvailability::Ready
-        };
-        pills.record(hidden, stem, availability);
-    }
-    pills.into_pills()
+    let work = WorkProjection::from_board(board);
+    work.stems()
+        .iter()
+        .filter(|stem| stem.counts().has_open())
+        .map(TaskPill::from_stem)
+        .collect()
 }
 
 fn render_pill(
