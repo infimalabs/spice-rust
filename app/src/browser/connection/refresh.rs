@@ -57,6 +57,9 @@ pub(super) async fn send_stale(
     if stale.inbox() {
         send_inbox(principal, writer, actions, submissions).await?;
     }
+    for task in stale.task_details() {
+        let _ = send_task_detail(principal, writer, actions, task).await?;
+    }
     Ok(())
 }
 
@@ -74,6 +77,28 @@ async fn send_board(
         BoardRead::All { family: None },
     )
     .await
+}
+pub(super) async fn send_task_detail(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    task: &wire::TaskStamp,
+) -> Result<Option<CanonicalUuid>, String> {
+    if !SteerPane::over(principal).offers(CommandKind::TaskDetail) || actions.has_task_detail(task)
+    {
+        return Ok(None);
+    }
+    send_typed(
+        principal,
+        writer,
+        actions,
+        PendingKind::TaskDetail { task: task.clone() },
+        CommandKind::TaskDetail,
+        vec![],
+        wire::intent::TaskDetail { task: task.clone() },
+    )
+    .await
+    .map(Some)
 }
 
 pub(super) async fn send_lanes(

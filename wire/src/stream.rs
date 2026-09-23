@@ -36,7 +36,7 @@ pub const MESSAGE_FLOOR: usize = 25;
 
 use crate::{
     Actor, AnyFact, Body, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name,
-    Origin, Packed, Refusal, RefusalDiagnostic, Seq, TrustHead, WireVersion,
+    Origin, Packed, Refusal, RefusalDiagnostic, Seq, TaskStamp, TrustHead, WireVersion,
 };
 
 /// Stable source position of one decoded event in a lane transcript tape.
@@ -857,6 +857,14 @@ impl StreamFact {
     #[must_use]
     pub const fn body(&self) -> &serde_json::Map<String, serde_json::Value> {
         &self.0.fact.body
+    }
+    /// Durable task affected by this task- or claim-family fact.
+    #[must_use]
+    pub fn task(&self) -> Option<TaskStamp> {
+        let Some(("task" | "claim", _)) = self.kind().as_str().split_once("::") else {
+            return None;
+        };
+        self.body().get("task")?.as_str()?.parse().ok()
     }
 
     /// Decode this row through the DTO registered for `F`, when its kind agrees.

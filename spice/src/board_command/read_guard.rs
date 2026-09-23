@@ -5,6 +5,8 @@ pub(super) use guard::guard_allocation;
 use guard::{refuse_active_claim_conflict, witnesses_hold};
 mod capture;
 pub(super) use capture::guard_capture;
+mod task_detail;
+pub(super) use task_detail::read_task_detail;
 
 pub(super) fn phase(name: &str) -> wire::Phase {
     name.parse()

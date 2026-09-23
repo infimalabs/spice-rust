@@ -12,9 +12,10 @@ use super::{
     LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
     LaneRetune, LaneSeat, LaneState, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish,
     StateAnswer, SteerDispose, SteerInbox, SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign,
-    TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase,
-    TaskRef, TaskReview, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
-    TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
+    TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote,
+    TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TaskWake, TasteAnswer, TasteProposalAdd,
+    TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange,
+    VendorCatalog, VendorCatalogAnswer,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -22,6 +23,8 @@ use super::{
 pub enum BodyShape {
     /// [`BoardRead`]
     BoardRead,
+    /// [`TaskDetail`]
+    TaskDetail,
     /// [`BoardGraph`]
     BoardGraph,
     /// [`BoardHandout`]
@@ -121,6 +124,8 @@ pub enum BodyShape {
 pub enum AnswerShape {
     /// [`BoardAnswer`]
     Board,
+    /// [`TaskDetailAnswer`]
+    TaskDetail,
     /// [`TextAnswer`]
     Text,
     /// [`TaskAnswer`]
@@ -169,6 +174,8 @@ pub enum AnswerShape {
 pub enum CommandAnswer {
     /// [`AnswerShape::Board`]
     Board(Box<BoardAnswer>),
+    /// [`AnswerShape::TaskDetail`]
+    TaskDetail(Box<TaskDetailAnswer>),
     /// [`AnswerShape::Text`]
     Text(TextAnswer),
     /// [`AnswerShape::Task`]
@@ -217,6 +224,7 @@ impl CommandAnswer {
     pub const fn shape(&self) -> AnswerShape {
         match self {
             Self::Board(_) => AnswerShape::Board,
+            Self::TaskDetail(_) => AnswerShape::TaskDetail,
             Self::Text(_) => AnswerShape::Text,
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
@@ -252,6 +260,7 @@ impl AnswerShape {
     pub fn decode(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
         match self {
             Self::Board
+            | Self::TaskDetail
             | Self::Text
             | Self::Task
             | Self::Claim
@@ -278,6 +287,7 @@ impl AnswerShape {
     fn decode_primary(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
         Ok(match self {
             Self::Board => CommandAnswer::Board(Box::new(crate::decode(bytes)?)),
+            Self::TaskDetail => CommandAnswer::TaskDetail(Box::new(crate::decode(bytes)?)),
             Self::Text => CommandAnswer::Text(crate::decode(bytes)?),
             Self::Task => CommandAnswer::Task(crate::decode(bytes)?),
             Self::Claim => CommandAnswer::Claim(Box::new(crate::decode(bytes)?)),
@@ -337,6 +347,7 @@ impl CommandKind {
     pub const fn binding(self) -> Binding {
         match self {
             Self::BoardRead
+            | Self::TaskDetail
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
@@ -400,6 +411,7 @@ impl CommandKind {
 
         match self {
             Self::BoardRead => Binding::of(B::BoardRead, A::Board),
+            Self::TaskDetail => Binding::of(B::TaskDetail, A::TaskDetail),
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
@@ -482,6 +494,8 @@ impl CommandKind {
 pub enum Intent {
     /// [`BodyShape::BoardRead`]
     BoardRead(BoardRead),
+    /// [`BodyShape::TaskDetail`]
+    TaskDetail(TaskDetail),
     /// [`BodyShape::BoardGraph`]
     BoardGraph(BoardGraph),
     /// [`BodyShape::BoardHandout`]
@@ -582,6 +596,7 @@ impl Intent {
     pub const fn shape(&self) -> BodyShape {
         match self {
             Self::BoardRead(_)
+            | Self::TaskDetail(_)
             | Self::BoardGraph(_)
             | Self::BoardHandout(_)
             | Self::DocLedger(_)
@@ -634,6 +649,7 @@ impl Intent {
     const fn board_shape(&self) -> BodyShape {
         match self {
             Self::BoardRead(_) => BodyShape::BoardRead,
+            Self::TaskDetail(_) => BodyShape::TaskDetail,
             Self::BoardGraph(_) => BodyShape::BoardGraph,
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
@@ -711,6 +727,7 @@ impl BodyShape {
         matches!(
             self,
             Self::BoardRead
+                | Self::TaskDetail
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
@@ -739,6 +756,7 @@ impl BodyShape {
         if matches!(
             self,
             Self::BoardRead
+                | Self::TaskDetail
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
@@ -759,6 +777,7 @@ impl BodyShape {
     fn decode_board_query_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::BoardRead => Intent::BoardRead(crate::decode(bytes)?),
+            Self::TaskDetail => Intent::TaskDetail(crate::decode(bytes)?),
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),

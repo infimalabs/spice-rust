@@ -28,6 +28,8 @@ use crate::witness::{Witness, WitnessKind};
 pub enum CommandKind {
     /// Read the validated current board heads.
     BoardRead,
+    /// Read one task's current evidence and durable note history.
+    TaskDetail,
     /// Render one deterministic board graph.
     BoardGraph,
     /// Compose one deterministic board handout.
@@ -547,6 +549,7 @@ impl CommandKind {
     /// Every command in the closed registry, in declaration order.
     pub const ALL: &'static [Self] = &[
         Self::BoardRead,
+        Self::TaskDetail,
         Self::BoardGraph,
         Self::BoardHandout,
         Self::DocLedger,
@@ -612,6 +615,7 @@ impl CommandKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BoardRead
+            | Self::TaskDetail
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
@@ -672,6 +676,7 @@ impl CommandKind {
     const fn board_spelling(self) -> &'static str {
         match self {
             Self::BoardRead => "board::read",
+            Self::TaskDetail => "task::detail",
             Self::BoardGraph => "board::graph",
             Self::BoardHandout => "board::handout",
             Self::DocLedger => "doc::ledger",
@@ -752,7 +757,7 @@ impl CommandKind {
     #[must_use]
     pub const fn law(self) -> Law {
         match self {
-            Self::BoardRead | Self::BoardGraph | Self::DocLedger => Law::READ,
+            Self::BoardRead | Self::TaskDetail | Self::BoardGraph | Self::DocLedger => Law::READ,
             Self::GlobalSettingsRead | Self::VendorCatalog => Law::OPERATOR_READ,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::BoardHandout => Law::OPERATOR_READ,
@@ -894,6 +899,7 @@ impl CommandKind {
         matches!(
             self,
             Self::BoardRead
+                | Self::TaskDetail
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger

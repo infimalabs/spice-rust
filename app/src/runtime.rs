@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use wire::intent::{
     BoardAnswer, BoardTask, DirectiveAnswer, GlobalSettingsAnswer, InboxAnswer, LaneAnswer,
-    LaneLiveness, VendorCatalogAnswer,
+    LaneLiveness, TaskDetailAnswer, VendorCatalogAnswer,
 };
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
@@ -473,6 +473,21 @@ struct ActivitySource {
     lane: CanonicalUuid,
     locus: MessageLocus,
 }
+/// Capability-scoped state for one on-demand task detail.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskDetailState {
+    /// A request is queued or in flight.
+    Loading,
+    /// Current task evidence and its ordered durable notes.
+    Available(Box<TaskDetailAnswer>),
+    /// The resident refused or could not serve the selected task.
+    Unavailable {
+        /// Stable resident reason.
+        reason: String,
+        /// Human diagnostic detail, when the resident supplied it.
+        detail: Option<String>,
+    },
+}
 
 /// All state rendered by one capability-scoped canvas.
 ///
@@ -484,6 +499,7 @@ pub struct CanvasRuntime {
     principal: Principal,
     board: ScopedValue<BoardView>,
     lanes: ScopedValue<LaneView>,
+    task_details: BTreeMap<wire::TaskStamp, TaskDetailState>,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
     settings: ScopedValue<GlobalSettingsAnswer>,
@@ -514,6 +530,7 @@ impl CanvasRuntime {
             principal: Principal::admitted(accepted),
             board: ScopedValue::new(accepted),
             lanes: ScopedValue::new(accepted),
+            task_details: BTreeMap::new(),
             lane_position: None,
             inbox: ScopedValue::new(accepted),
             settings: ScopedValue::new(accepted),
@@ -624,6 +641,25 @@ impl CanvasRuntime {
     pub fn board(&self) -> Option<&BoardView> {
         self.board.get(&self.principal)
     }
+    /// On-demand detail state retained only for this admitted capability scope.
+    #[must_use]
+    pub fn task_detail(&self, task: &wire::TaskStamp) -> Option<&TaskDetailState> {
+        self.task_details.get(task)
+    }
+
+    /// Mark one selected detail as requested.
+    pub fn begin_task_detail(&mut self, task: wire::TaskStamp) {
+        self.task_details.insert(task, TaskDetailState::Loading);
+    }
+
+    /// Drop one affected detail back to loading and report whether it was open.
+    pub fn invalidate_task_detail(&mut self, task: &wire::TaskStamp) -> bool {
+        let Some(detail) = self.task_details.get_mut(task) else {
+            return false;
+        };
+        *detail = TaskDetailState::Loading;
+        true
+    }
 
     #[must_use]
     pub fn lanes(&self) -> Option<&LaneView> {
@@ -697,6 +733,41 @@ impl CanvasRuntime {
                 .board
                 .replace(admitted.scope(), BoardView::from(answer));
         });
+    }
+    /// Apply one correlated detail response without crossing capability scope.
+    pub fn apply_task_detail(
+        &mut self,
+        task: &wire::TaskStamp,
+        admitted: &Admitted<Response<TaskDetailAnswer>>,
+    ) {
+        if admitted.scope() != self.accepted.scope() {
+            return;
+        }
+        let state = match &admitted.get().outcome {
+            Outcome::Reply(reply) if reply.body.task.statement.body.born == *task => {
+                TaskDetailState::Available(Box::new(reply.body.clone()))
+            }
+            Outcome::Reply(_) => TaskDetailState::Unavailable {
+                reason: "task::detail-identity-mismatch".to_owned(),
+                detail: Some("the detail answer named a different durable task".to_owned()),
+            },
+            Outcome::Refusal(refusal) => {
+                let diagnostic = refusal.diagnostic();
+                TaskDetailState::Unavailable {
+                    reason: diagnostic
+                        .map_or("task::detail-refused", wire::RefusalDiagnostic::reason)
+                        .to_owned(),
+                    detail: diagnostic
+                        .and_then(wire::RefusalDiagnostic::detail)
+                        .map(str::to_owned),
+                }
+            }
+            Outcome::Fault(fault) => TaskDetailState::Unavailable {
+                reason: fault.reason.clone(),
+                detail: Some(fault.detail.clone()),
+            },
+        };
+        self.task_details.insert(task.clone(), state);
     }
 
     /// Apply a lane table only when its authority position does not move backwards.
@@ -813,11 +884,12 @@ impl CanvasRuntime {
 /// This lives beside [`CanvasRuntime::apply_board`], [`CanvasRuntime::apply_lanes`],
 /// [`CanvasRuntime::apply_inbox`] — one field per read it names — rather than
 /// in the socket loop that acts on it, so it can be tested off `wasm32`.
-#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct Stale {
     board: bool,
     lanes: bool,
     inbox: bool,
+    task_details: BTreeSet<wire::TaskStamp>,
 }
 
 impl Stale {
@@ -856,6 +928,22 @@ impl Stale {
             _ => {}
         }
     }
+    fn widen_fact(&mut self, fact: &wire::StreamFact) {
+        self.widen(fact.kind());
+        if let Some(task) = fact.task() {
+            self.task_details.insert(task);
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn retain_task_details(&mut self, mut retain: impl FnMut(&wire::TaskStamp) -> bool) {
+        self.task_details.retain(|task| retain(task));
+    }
+
+    /// Affected open task details, in durable identity order.
+    pub fn task_details(&self) -> impl Iterator<Item = &wire::TaskStamp> {
+        self.task_details.iter()
+    }
 
     /// Re-read a quiet occupant when a live message may have resumed activity.
     ///
@@ -872,26 +960,26 @@ impl Stale {
 
     /// Whether the board read went stale.
     #[must_use]
-    pub const fn board(self) -> bool {
+    pub const fn board(&self) -> bool {
         self.board
     }
 
     /// Whether the lane read went stale.
     #[must_use]
-    pub const fn lanes(self) -> bool {
+    pub const fn lanes(&self) -> bool {
         self.lanes
     }
 
     /// Whether the steering inbox read went stale.
     #[must_use]
-    pub const fn inbox(self) -> bool {
+    pub const fn inbox(&self) -> bool {
         self.inbox
     }
 
     /// Whether anything needs re-reading at all.
     #[must_use]
-    pub const fn any(self) -> bool {
-        self.board || self.lanes || self.inbox
+    pub fn any(&self) -> bool {
+        self.board || self.lanes || self.inbox || !self.task_details.is_empty()
     }
 }
 
@@ -912,10 +1000,10 @@ impl Stale {
 pub fn stale_reads(admitted: &Admitted<StreamFrame>) -> Stale {
     let mut stale = Stale::default();
     match admitted.get() {
-        StreamFrame::Fact { fact, .. } => stale.widen(fact.kind()),
+        StreamFrame::Fact { fact, .. } => stale.widen_fact(fact),
         StreamFrame::Facts { packed, .. } if packed.overflow.is_none() => {
             for row in &packed.rows {
-                stale.widen(row.kind());
+                stale.widen_fact(row);
             }
         }
         _ => {}

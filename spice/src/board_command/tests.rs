@@ -1033,3 +1033,7 @@ mod task_creation_flow;
 // bounded scenario seam, kept beside the correction seam for the same
 // structural reason.
 mod delete;
+
+// One selected task's append-only notes are a bounded read contract, separate
+// from the board summary and its allocation scenarios.
+mod detail;

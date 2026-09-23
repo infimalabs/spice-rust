@@ -35,7 +35,8 @@ mod board;
 pub use board::{
     BoardActorRoute, BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead,
     BoardStatement, BoardTask, DocLedger, Positioned, ProjectVisibility, TaskClaimContext,
-    TaskGitContext, TaskGitContextKind, TaskTranscriptRecovery, TextAnswer,
+    TaskDetail, TaskDetailAnswer, TaskDetailNote, TaskGitContext, TaskGitContextKind,
+    TaskTranscriptRecovery, TextAnswer,
 };
 mod simple_answers;
 pub use simple_answers::{RecognitionAnswer, TasteAnswer};
