@@ -878,7 +878,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
 }
 
 #[test]
-fn source_aware_retirement_requires_the_original_tape_generation() {
+fn acknowledged_context_survives_transcript_source_replacement() {
     let expected_source = "00000000-0000-4000-8000-000000000002"
         .parse()
         .expect("fixture source");
@@ -906,13 +906,14 @@ fn source_aware_retirement_requires_the_original_tape_generation() {
         },
     )]));
     let text = "ACK 1kQwPZtK: Applied.";
+    let expected = "> [ACK] Keep the original response context.\n\nApplied.";
 
     let mut original = event();
     original.source = Some(expected_source);
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &directives, original)
             .expect("original source presents"),
-        "> [ACK] Keep the original response context.\n\nApplied.",
+        expected,
     );
 
     let mut replacement = event();
@@ -923,12 +924,75 @@ fn source_aware_retirement_requires_the_original_tape_generation() {
     );
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &directives, replacement)
-            .expect("replacement source remains historical"),
-        text,
+            .expect("replacement source presents"),
+        expected,
+    );
+    assert_eq!(
+        message_badges(text, Some(&directives), replacement).acknowledgements,
+        1,
+    );
+    assert!(
+        automatic_speech::classify(
+            &listen::Prose {
+                role: listen::ProseRole::Assistant,
+                text: text.to_owned(),
+                phase: None,
+                media: Vec::new(),
+                locus: replacement.locus,
+            },
+            Some(&directives),
+            replacement,
+        )
+        .is_none(),
+        "a later source may present context but cannot re-earn acknowledgement speech",
     );
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &directives, event())
-            .expect("unknown source remains historical"),
-        text,
+            .expect("source-less history presents"),
+        expected,
     );
+}
+
+#[test]
+fn repeated_lane_seal_acknowledgements_render_without_fabricating_a_directive() {
+    let seal = steer::Key::for_identity(lane());
+    let text = format!("ACK {seal}: Continue.");
+    let expected = "> [ACK]\n\nContinue.";
+    let directives = PresentationDirectives::default();
+
+    let first = event();
+    let mut later = event();
+    later.source = Some(
+        "00000000-0000-4000-8000-000000000003"
+            .parse()
+            .expect("later transcript source"),
+    );
+    later.locus = listen::Locus::new(1, 8, 1);
+
+    for acknowledged in [first, later] {
+        assert_eq!(
+            present_steering_acknowledgements_with_directives(&text, &directives, acknowledged,)
+                .expect("lane seal acknowledgement presents"),
+            expected,
+        );
+        assert_eq!(
+            message_badges(&text, Some(&directives), acknowledged).acknowledgements,
+            1,
+        );
+        assert!(
+            automatic_speech::classify(
+                &listen::Prose {
+                    role: listen::ProseRole::Assistant,
+                    text: text.clone(),
+                    phase: None,
+                    media: Vec::new(),
+                    locus: acknowledged.locus,
+                },
+                Some(&directives),
+                acknowledged,
+            )
+            .is_none(),
+            "the lane seal is presentation identity, not retirement evidence",
+        );
+    }
 }
