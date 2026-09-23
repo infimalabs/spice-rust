@@ -107,6 +107,11 @@ impl ActionQueue {
             .values()
             .any(|entry| entry.kind.current_read() == Some(read))
     }
+    pub(super) fn has_task_detail(&self, task: &wire::TaskStamp) -> bool {
+        self.mailbox.borrow().pending.values().any(|entry| {
+            matches!(&entry.kind, PendingKind::TaskDetail { task: pending } if pending == task)
+        })
+    }
 
     pub(super) fn admit_topology(&self, id: CanonicalUuid, range: SeqRange) -> Result<(), String> {
         self.mailbox.borrow_mut().admit_topology(id, range)
@@ -168,7 +173,8 @@ impl PendingKind {
             Self::Inbox { .. } => Some(CurrentRead::Inbox),
             Self::Settings => Some(CurrentRead::Settings),
             Self::Vendors => Some(CurrentRead::Vendors),
-            Self::LaneSeat
+            Self::TaskDetail { .. }
+            | Self::LaneSeat
             | Self::LaneArrange
             | Self::LaneRenewal { .. }
             | Self::WakeSubmission { .. }
@@ -1009,5 +1015,29 @@ mod tests {
             .unwrap();
         queue.cancel_pending(pending);
         assert!(!queue.pending_contains(pending));
+    }
+
+    #[test]
+    fn task_detail_pending_reads_coalesce_by_durable_identity() {
+        let (queue, _wakes) = ActionQueue::new();
+        let requested: wire::TaskStamp = "1kKRRsDP".parse().expect("fixture task stamp");
+        let other: wire::TaskStamp = "1kKRRsDQ".parse().expect("fixture task stamp");
+        let pending = id(41);
+        queue
+            .reserve_pending(
+                pending,
+                PendingKind::TaskDetail {
+                    task: requested.clone(),
+                },
+                1,
+            )
+            .expect("detail read reserves");
+
+        assert!(queue.has_task_detail(&requested));
+        assert!(!queue.has_task_detail(&other));
+        assert!(matches!(
+            queue.settle_pending(pending),
+            Some(PendingKind::TaskDetail { task }) if task == requested
+        ));
     }
 }

@@ -37,6 +37,7 @@ fn handle_stream_frame(
         if changed && let wire::StreamFrame::Message { message, .. } = admitted.get() {
             stale.invalidate_quiet_lane(runtime.lanes(), message.lane);
         }
+        stale.retain_task_details(|task| changed && runtime.invalidate_task_detail(task));
         (application.into_directives(), changed)
     };
     if changed && publish {
@@ -179,6 +180,12 @@ fn apply_command_response(
     Ok(match kind {
         kind @ (PendingKind::Board | PendingKind::Settings | PendingKind::Vendors) => {
             apply_scalar_response(session, runtime, kind, bytes)?
+        }
+        PendingKind::TaskDetail { task } => {
+            let admitted: crate::Admitted<Response<wire::intent::TaskDetailAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_task_detail(&task, &admitted);
+            CommandApplication::ordinary(false)
         }
         // A read of the lane table and an arrangement of it answer with the
         // same authoritative table, so successful replies apply identically.

@@ -9,6 +9,8 @@ use wire::{
     ViewSubject, WireVersion,
 };
 
+#[path = "runtime/detail.rs"]
+mod detail;
 #[path = "runtime/invalidation_and_chronology.rs"]
 mod invalidation_and_chronology;
 #[path = "runtime/lane_authority.rs"]

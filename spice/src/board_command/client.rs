@@ -935,6 +935,9 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::BoardRead(read) => {
             read_board(bus, read, command.actor().clone(), projects, allocation)
         }
+        wire::intent::Intent::TaskDetail(detail) => {
+            read_task_detail(bus, detail, command.actor().clone(), projects, allocation)
+        }
         wire::intent::Intent::BoardGraph(graph) => {
             read_graph(bus, graph, command.actor().clone(), projects, allocation)
         }

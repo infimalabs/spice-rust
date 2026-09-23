@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 
 use wire::intent::{
     AnswerShape, BoardStatement, BoardTask, BodyShape, CommandAnswer, Intent, Positioned,
-    ProjectVisibility, TaskGuidance,
+    ProjectVisibility, TaskDetailAnswer, TaskDetailNote, TaskGuidance,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LaneResidency,
@@ -25,6 +25,7 @@ use wire::{
 /// binding must decode it.
 const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::BoardRead, r#"{ "scope": "all" }"#),
+    (CommandKind::TaskDetail, r#"{ "task": "1kKRRsDP" }"#),
     (CommandKind::BoardGraph, r#"{ "view": "dependencies" }"#),
     (CommandKind::BoardHandout, r#"{ "output": "-" }"#),
     (CommandKind::DocLedger, r#"{ "task": "SPICE-1kKRRsDP" }"#),
@@ -438,6 +439,29 @@ fn spelled_board_task() -> serde_json::Value {
     tasks.remove(0)
 }
 
+#[test]
+fn task_detail_answer_round_trips_attributed_note_identity() {
+    let task: BoardTask =
+        serde_json::from_value(spelled_board_task()).expect("board task fixture decodes");
+    let expected = TaskDetailAnswer {
+        task,
+        notes: vec![TaskDetailNote {
+            position: seq(7),
+            at: instant("2026-08-01T06:47:19.000Z"),
+            author: Actor::Operator,
+            text: "One durable observation.".to_owned(),
+        }],
+    };
+    let bytes = wire::encode(&expected).expect("task detail answer encodes");
+    let CommandAnswer::TaskDetail(actual) = AnswerShape::TaskDetail
+        .decode(&bytes)
+        .expect("task detail answer decodes through its registered shape")
+    else {
+        panic!("task detail shape decoded another answer")
+    };
+    assert_eq!(*actual, expected);
+}
+
 /// Every path at which two encoded rows disagree, named so a failure is legible.
 ///
 /// `assert_eq!` on two `serde_json::Value`s prints both rows whole and leaves
@@ -751,6 +775,7 @@ fn a_kind_binds_one_body_and_one_answer() {
 /// Shapes a body may take, listed so an unreachable one is caught.
 const ALL_BODIES: &[BodyShape] = &[
     BodyShape::BoardRead,
+    BodyShape::TaskDetail,
     BodyShape::BoardGraph,
     BodyShape::BoardHandout,
     BodyShape::DocLedger,
@@ -802,6 +827,7 @@ const ALL_BODIES: &[BodyShape] = &[
 /// Shapes an answer may take, listed for the same reason.
 const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Board,
+    AnswerShape::TaskDetail,
     AnswerShape::Text,
     AnswerShape::Task,
     AnswerShape::Claim,

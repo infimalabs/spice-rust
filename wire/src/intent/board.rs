@@ -68,6 +68,37 @@ pub struct DocLedger {
     /// Task whose current statement becomes canonical Markdown.
     pub task: TaskHandle,
 }
+/// Read one task's current evidence and durable note history.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDetail {
+    /// Sole durable task identity.
+    pub task: crate::TaskStamp,
+}
+
+/// One attributed durable note in journal order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDetailNote {
+    /// Fact position; this is the note's durable identity and ordering key.
+    pub position: crate::Seq,
+    /// Commit time recorded by the journal.
+    pub at: crate::Instant,
+    /// Principal that appended the note.
+    pub author: Actor,
+    /// Authored note text.
+    pub text: String,
+}
+
+/// Current evidence and complete durable notes for one selected task.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDetailAnswer {
+    /// Current task heads projected at the reply's snapshot barrier.
+    pub task: BoardTask,
+    /// Notes ordered by ascending durable journal position.
+    pub notes: Vec<TaskDetailNote>,
+}
 
 /// One authoritative head body together with the fact that established it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
