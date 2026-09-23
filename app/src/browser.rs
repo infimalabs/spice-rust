@@ -1096,7 +1096,7 @@ fn narration_callback(
             let text = match batch.mode {
                 TeamSpeech::Quiet => None,
                 TeamSpeech::Speak => line.automatic_speech,
-                TeamSpeech::Narrate => Some(line.text),
+                TeamSpeech::Narrate => line.narration,
             };
             if let Some(text) = text {
                 speak.emit(SpeechRequest::narration(batch.team.clone(), line.key, text));

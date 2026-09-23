@@ -148,14 +148,12 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
     let lane = props.lane.to_string();
     let message_key = agent_message_source_id(&props.message);
     let speech_queue = props.speech_queue.clone();
-    let response = watchband::response_speech_text(
-        &props.message.text,
-        props
-            .message
-            .automatic_speech
-            .as_ref()
-            .map(|speech| speech.text.as_str()),
-    );
+    let response = props
+        .message
+        .automatic_speech
+        .as_ref()
+        .and_then(|speech| crate::narration::prepared_utterance(&speech.text))
+        .or_else(|| crate::narration::card_utterance(props.message.activity, &props.message.text));
     let speak = Callback::from(move |_: String| {
         if let Some(text) = response.clone() {
             speech_queue.emit(SpeechRequest::message(

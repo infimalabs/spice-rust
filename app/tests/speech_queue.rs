@@ -167,13 +167,13 @@ fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes(
             app::speech_queue::NarrationLine {
                 lane: "agent-b".to_owned(),
                 key: "b2".to_owned(),
-                text: "live b".to_owned(),
+                narration: Some("live b".to_owned()),
                 automatic_speech: None,
             },
             app::speech_queue::NarrationLine {
                 lane: "agent-a".to_owned(),
                 key: "a2".to_owned(),
-                text: "live a".to_owned(),
+                narration: Some("live a".to_owned()),
                 automatic_speech: Some("selected a".to_owned()),
             },
         ]
@@ -210,7 +210,7 @@ fn a_two_message_narration_batch_admits_only_its_newest_message() {
     assert_eq!(
         lines
             .iter()
-            .map(|line| line.text.as_str())
+            .map(|line| line.narration.as_deref().expect("a narrated line speaks"))
             .collect::<Vec<_>>(),
         ["newest unseen"]
     );
@@ -219,7 +219,7 @@ fn a_two_message_narration_batch_admits_only_its_newest_message() {
     let busy_head = started(busy_queue.enqueue(narration("team-b", "active head")));
     for line in lines.clone() {
         assert_eq!(
-            busy_queue.enqueue(narration(&line.lane, &line.text)),
+            busy_queue.enqueue(narration(&line.lane, line.narration.as_deref().unwrap())),
             Enqueue::Queued
         );
     }
@@ -232,12 +232,12 @@ fn a_two_message_narration_batch_admits_only_its_newest_message() {
     let mut queue = SpeechQueue::default();
     let first = lines
         .into_iter()
-        .find_map(
-            |line| match queue.enqueue(narration(&line.lane, &line.text)) {
+        .find_map(|line| {
+            match queue.enqueue(narration(&line.lane, line.narration.as_deref().unwrap())) {
                 Enqueue::Start(entry) => Some(entry),
                 Enqueue::Queued => None,
-            },
-        )
+            }
+        })
         .expect("an idle queue commits the first narration line");
     assert_eq!(first.text(), "newest unseen");
 }
@@ -274,7 +274,7 @@ fn message(lane: &str, key: &str, text: &str) -> NarrationMessage {
     NarrationMessage {
         lane: lane.to_owned(),
         key: key.to_owned(),
-        text: text.to_owned(),
+        narration: Some(text.to_owned()),
         automatic_speech: None,
     }
 }

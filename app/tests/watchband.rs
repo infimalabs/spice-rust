@@ -4,8 +4,8 @@ use app::watchband::{
     TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams,
     elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept,
     latest_lane_prose, leaf, one_line, remaining_label, remaining_label_deadline_millis,
-    reported_tasks, response_speech_text, short, split_member, split_team, standing_title,
-    standings, task_mentions, teams, ticker_chunks, ticker_line, topology, truncate,
+    reported_tasks, short, split_member, split_team, standing_title, standings, task_mentions,
+    teams, ticker_chunks, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -743,23 +743,6 @@ fn ineligible_own_activity_yields_older_own_prose_never_a_peer_message() {
         latest_lane_prose(uuid(LANE_A), only_ineligible.iter()),
         None
     );
-}
-
-#[test]
-fn speech_uses_prepared_or_unquoted_response_text() {
-    assert_eq!(
-        response_speech_text(
-            "> borrowed context\n> > borrowed nested context\n\nagent response",
-            None,
-        )
-        .as_deref(),
-        Some("agent response"),
-    );
-    assert_eq!(
-        response_speech_text("> raw quote\n\nraw response", Some("prepared response")).as_deref(),
-        Some("prepared response"),
-    );
-    assert_eq!(response_speech_text("> only borrowed", None), None);
 }
 
 #[test]
