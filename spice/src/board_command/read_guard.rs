@@ -43,7 +43,9 @@ pub(super) fn validated_snapshot_from(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
-    validated_snapshot_from_with_occupant(observed, principal, projects, allocation, None, None)
+    validated_snapshot_from_with_occupant(
+        observed, principal, projects, allocation, None, None, true,
+    )
 }
 
 pub(super) fn validated_snapshot_for_automatic(
@@ -60,6 +62,7 @@ pub(super) fn validated_snapshot_for_automatic(
         allocation,
         Some(occupant),
         None,
+        true,
     )
 }
 
@@ -70,6 +73,7 @@ fn validated_snapshot_from_with_occupant(
     allocation: &board::NextConfig,
     prospective_occupant: Option<wire::CanonicalUuid>,
     selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
+    retain_facts: bool,
 ) -> Result<ValidatedSnapshot, Outcome<CommandAnswer>> {
     let cursor = observed.cursor().ok_or_else(|| {
         store_fault(
@@ -95,7 +99,9 @@ fn validated_snapshot_from_with_occupant(
     };
     Ok(ValidatedSnapshot {
         cursor,
-        facts: observed.facts().clone(),
+        facts: retain_facts
+            .then(|| observed.facts().clone())
+            .unwrap_or_default(),
         answer: BoardAnswer {
             schema: journal::SCHEMA_VERSION,
             cursor,
@@ -911,6 +917,7 @@ pub(super) fn read_board(
         allocation,
         None,
         selected.as_ref(),
+        true,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,

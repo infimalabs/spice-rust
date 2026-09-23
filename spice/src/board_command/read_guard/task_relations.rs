@@ -63,7 +63,20 @@ pub(in crate::board_command) fn read_task_relations(
         Ok(validated) => validated,
         Err(outcome) => return outcome,
     };
-    let snapshot = match validated_snapshot(bus, principal, projects, allocation) {
+    let observed = match bus.task_snapshot() {
+        Ok(observed) => observed,
+        Err(error) => return store_fault("board::heads-unreadable", &error.to_string()),
+    };
+    let selected = relationship_tasks(&observed, &roots, &relations, request.depth);
+    let snapshot = match validated_snapshot_from_with_occupant(
+        &observed,
+        principal,
+        projects,
+        allocation,
+        None,
+        Some(&selected),
+        false,
+    ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -80,12 +93,13 @@ pub(in crate::board_command) fn read_task_relations(
             "read the board and request current durable task identities visible to this principal",
         );
     }
-    let review_records = match review_records(snapshot.facts.iter(), &tasks) {
+    let review_records = match review_records(observed.facts().iter(), &tasks) {
         Ok(records) => records,
         Err(detail) => return store_fault("task::relations-review-invalid", &detail),
     };
-    let lifecycle = lifecycle_records(snapshot.facts.iter(), &tasks);
+    let lifecycle = lifecycle_records(observed.facts().iter(), &tasks);
     let reverse_dependencies = reverse_dependencies(&tasks);
+    let reverse_origins = reverse_origins(&tasks);
     let mut nodes = BTreeMap::<TaskRelationNodeRef, TaskRelationNode>::new();
     let mut queue = VecDeque::<(TaskStamp, u8)>::new();
     for root in &roots {
@@ -105,6 +119,7 @@ pub(in crate::board_command) fn read_task_relations(
             &relations,
             &tasks,
             &reverse_dependencies,
+            &reverse_origins,
             &review_records,
             &lifecycle,
         );
@@ -145,6 +160,94 @@ pub(in crate::board_command) fn read_task_relations(
         snapshot.cursor,
         CommandAnswer::TaskRelations(Box::new(answer)),
     )
+}
+fn relationship_tasks(
+    observed: &bus::TaskSnapshot,
+    roots: &[TaskStamp],
+    relations: &BTreeSet<TaskRelationKind>,
+    depth: u8,
+) -> BTreeSet<TaskStamp> {
+    let tasks = observed
+        .tasks()
+        .iter()
+        .map(|heads| (heads.statement().body().born.clone(), heads))
+        .collect::<BTreeMap<_, _>>();
+    let mut reverse_dependencies = BTreeMap::<TaskStamp, BTreeSet<TaskStamp>>::new();
+    let mut reverse_origins = BTreeMap::<TaskStamp, BTreeSet<TaskStamp>>::new();
+    for (task, heads) in &tasks {
+        let statement = heads.statement().body();
+        for dependency in &statement.dependencies {
+            if tasks.contains_key(dependency) {
+                reverse_dependencies
+                    .entry(dependency.clone())
+                    .or_default()
+                    .insert(task.clone());
+            }
+        }
+        if let Some(parent) = statement
+            .provenance
+            .as_str()
+            .strip_prefix("task:")
+            .and_then(|value| value.parse::<TaskStamp>().ok())
+            .filter(|parent| tasks.contains_key(parent))
+        {
+            reverse_origins
+                .entry(parent)
+                .or_default()
+                .insert(task.clone());
+        }
+    }
+    let mut selected = roots.iter().cloned().collect::<BTreeSet<_>>();
+    let mut queue = roots
+        .iter()
+        .cloned()
+        .map(|task| (task, 0_u8))
+        .collect::<VecDeque<_>>();
+    let mut expanded = BTreeSet::new();
+    while let Some((task, current_depth)) = queue.pop_front() {
+        if !expanded.insert(task.clone()) {
+            continue;
+        }
+        let Some(heads) = tasks.get(&task) else {
+            continue;
+        };
+        let statement = heads.statement().body();
+        let mut neighbors = BTreeSet::new();
+        if relations.contains(&TaskRelationKind::Dependency) {
+            neighbors.extend(
+                statement
+                    .dependencies
+                    .iter()
+                    .filter(|dependency| tasks.contains_key(*dependency))
+                    .cloned(),
+            );
+            neighbors.extend(
+                reverse_dependencies
+                    .get(&task)
+                    .into_iter()
+                    .flatten()
+                    .cloned(),
+            );
+        }
+        if relations.contains(&TaskRelationKind::Origin) {
+            neighbors.extend(
+                statement
+                    .provenance
+                    .as_str()
+                    .strip_prefix("task:")
+                    .and_then(|value| value.parse::<TaskStamp>().ok())
+                    .filter(|parent| tasks.contains_key(parent)),
+            );
+            neighbors.extend(reverse_origins.get(&task).into_iter().flatten().cloned());
+        }
+        for neighbor in neighbors {
+            selected.insert(neighbor.clone());
+            if current_depth < depth {
+                queue.push_back((neighbor, current_depth.saturating_add(1)));
+            }
+        }
+    }
+    selected
 }
 
 fn validate(
@@ -206,7 +309,8 @@ fn candidates(
     task: &TaskStamp,
     relations: &BTreeSet<TaskRelationKind>,
     tasks: &BTreeMap<TaskStamp, &BoardTask>,
-    reverse: &BTreeMap<TaskStamp, BTreeSet<TaskStamp>>,
+    reverse_dependencies: &BTreeMap<TaskStamp, BTreeSet<TaskStamp>>,
+    reverse_origins: &BTreeMap<TaskStamp, BTreeSet<TaskStamp>>,
     reviews: &BTreeMap<TaskStamp, Vec<ReviewRecord>>,
     lifecycle: &BTreeMap<TaskStamp, Vec<TaskRelationNode>>,
 ) -> Vec<Candidate> {
@@ -227,6 +331,19 @@ fn candidates(
                 |parent| task_node(tasks[&parent]),
             );
         candidates.push(candidate(TaskRelationKind::Origin, source.clone(), target));
+        if let Some(children) = reverse_origins.get(task) {
+            for child in children {
+                let target = task_node(tasks[child]);
+                candidates.push(Candidate {
+                    edge: TaskRelationEdge {
+                        relation: TaskRelationKind::Origin,
+                        from: target.identity(),
+                        to: source.clone(),
+                    },
+                    target,
+                });
+            }
+        }
     }
     if relations.contains(&TaskRelationKind::Dependency) {
         for dependency in &row.statement.body.dependencies {
@@ -238,7 +355,7 @@ fn candidates(
                 ));
             }
         }
-        if let Some(dependents) = reverse.get(task) {
+        if let Some(dependents) = reverse_dependencies.get(task) {
             for dependent in dependents {
                 let target = task_node(tasks[dependent]);
                 candidates.push(Candidate {
@@ -306,6 +423,25 @@ fn candidate(
         },
         target,
     }
+}
+
+fn reverse_origins(
+    tasks: &BTreeMap<TaskStamp, &BoardTask>,
+) -> BTreeMap<TaskStamp, BTreeSet<TaskStamp>> {
+    let mut reverse = BTreeMap::<TaskStamp, BTreeSet<TaskStamp>>::new();
+    for (task, row) in tasks {
+        let parent = row
+            .statement
+            .body
+            .provenance
+            .as_str()
+            .strip_prefix("task:")
+            .and_then(|value| value.parse::<TaskStamp>().ok());
+        if let Some(parent) = parent.filter(|parent| tasks.contains_key(parent)) {
+            reverse.entry(parent).or_default().insert(task.clone());
+        }
+    }
+    reverse
 }
 
 fn reverse_dependencies(

@@ -10,7 +10,9 @@ use std::rc::Rc;
 
 use wire::intent::{
     BoardAnswer, BoardTask, DirectiveAnswer, GlobalSettingsAnswer, InboxAnswer, LaneAnswer,
-    LaneLiveness, TaskDetailAnswer, VendorCatalogAnswer,
+    LaneLiveness, TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT,
+    TaskDetailAnswer, TaskRelationKind, TaskRelationNodeRef, TaskRelations, TaskRelationsAnswer,
+    VendorCatalogAnswer,
 };
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
@@ -473,6 +475,70 @@ struct ActivitySource {
     lane: CanonicalUuid,
     locus: MessageLocus,
 }
+/// Exact identity of one bounded on-demand relationship read.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct TaskRelationsKey {
+    roots: Vec<wire::TaskStamp>,
+    relation: TaskRelationKind,
+    depth: u8,
+    node_limit: u16,
+}
+
+impl TaskRelationsKey {
+    #[must_use]
+    pub fn new(
+        mut roots: Vec<wire::TaskStamp>,
+        relation: TaskRelationKind,
+        depth: u8,
+        node_limit: u16,
+    ) -> Option<Self> {
+        roots.sort();
+        roots.dedup();
+        (!roots.is_empty()
+            && roots.len() <= TASK_RELATION_ROOT_LIMIT
+            && depth <= TASK_RELATION_DEPTH_LIMIT
+            && usize::from(node_limit) >= roots.len()
+            && node_limit <= TASK_RELATION_NODE_LIMIT)
+            .then_some(Self {
+                roots,
+                relation,
+                depth,
+                node_limit,
+            })
+    }
+
+    #[must_use]
+    pub fn request(&self) -> TaskRelations {
+        TaskRelations {
+            roots: self.roots.clone(),
+            relations: vec![self.relation],
+            depth: self.depth,
+            node_limit: self.node_limit,
+        }
+    }
+
+    #[must_use]
+    pub fn roots(&self) -> &[wire::TaskStamp] {
+        &self.roots
+    }
+
+    #[must_use]
+    pub const fn relation(&self) -> TaskRelationKind {
+        self.relation
+    }
+}
+
+/// Capability-scoped state for one request-identity-keyed relationship read.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TaskRelationsState {
+    Loading,
+    Available(Box<TaskRelationsAnswer>),
+    Unavailable {
+        reason: String,
+        detail: Option<String>,
+    },
+}
+
 /// Capability-scoped state for one on-demand task detail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskDetailState {
@@ -500,6 +566,8 @@ pub struct CanvasRuntime {
     board: ScopedValue<BoardView>,
     lanes: ScopedValue<LaneView>,
     task_details: BTreeMap<wire::TaskStamp, TaskDetailState>,
+    task_relations: BTreeMap<TaskRelationsKey, TaskRelationsState>,
+    task_relations_revision: u64,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
     settings: ScopedValue<GlobalSettingsAnswer>,
@@ -531,6 +599,8 @@ impl CanvasRuntime {
             board: ScopedValue::new(accepted),
             lanes: ScopedValue::new(accepted),
             task_details: BTreeMap::new(),
+            task_relations: BTreeMap::new(),
+            task_relations_revision: 0,
             lane_position: None,
             inbox: ScopedValue::new(accepted),
             settings: ScopedValue::new(accepted),
@@ -660,6 +730,34 @@ impl CanvasRuntime {
         *detail = TaskDetailState::Loading;
         true
     }
+    /// One exact bounded relationship read retained for this capability scope.
+    #[must_use]
+    pub fn task_relations(&self, key: &TaskRelationsKey) -> Option<&TaskRelationsState> {
+        self.task_relations.get(key)
+    }
+
+    /// Mark one request identity as queued or in flight.
+    pub fn begin_task_relations(&mut self, key: TaskRelationsKey) {
+        self.task_relations.insert(key, TaskRelationsState::Loading);
+    }
+
+    /// Evict cached families moved by a stream update.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn invalidate_task_relations(&mut self, relations: &BTreeSet<TaskRelationKind>) {
+        let before = self.task_relations.len();
+        self.task_relations
+            .retain(|key, _| !relations.contains(&key.relation));
+        if self.task_relations.len() != before {
+            self.task_relations_revision = self.task_relations_revision.saturating_add(1);
+        }
+    }
+
+    /// Generation that re-arms the active demand hook after cache eviction.
+    #[cfg(target_arch = "wasm32")]
+    #[must_use]
+    pub(crate) const fn task_relations_revision(&self) -> u64 {
+        self.task_relations_revision
+    }
 
     #[must_use]
     pub fn lanes(&self) -> Option<&LaneView> {
@@ -769,6 +867,44 @@ impl CanvasRuntime {
         };
         self.task_details.insert(task.clone(), state);
     }
+    /// Apply one correlated relationship answer without crossing request identity.
+    pub fn apply_task_relations(
+        &mut self,
+        key: &TaskRelationsKey,
+        admitted: &Admitted<Response<TaskRelationsAnswer>>,
+    ) {
+        if admitted.scope() != self.accepted.scope() {
+            return;
+        }
+        let state = match &admitted.get().outcome {
+            Outcome::Reply(reply) if task_relations_match(key, &reply.body) => {
+                TaskRelationsState::Available(Box::new(reply.body.clone()))
+            }
+            Outcome::Reply(_) => TaskRelationsState::Unavailable {
+                reason: "task::relations-identity-mismatch".to_owned(),
+                detail: Some(
+                    "the relationship answer did not match its roots, typed family, or node identities"
+                        .to_owned(),
+                ),
+            },
+            Outcome::Refusal(refusal) => {
+                let diagnostic = refusal.diagnostic();
+                TaskRelationsState::Unavailable {
+                    reason: diagnostic
+                        .map_or("task::relations-refused", wire::RefusalDiagnostic::reason)
+                        .to_owned(),
+                    detail: diagnostic
+                        .and_then(wire::RefusalDiagnostic::detail)
+                        .map(str::to_owned),
+                }
+            }
+            Outcome::Fault(fault) => TaskRelationsState::Unavailable {
+                reason: fault.reason.clone(),
+                detail: Some(fault.detail.clone()),
+            },
+        };
+        self.task_relations.insert(key.clone(), state);
+    }
 
     /// Apply a lane table only when its authority position does not move backwards.
     pub fn apply_lanes(&mut self, admitted: &Admitted<Response<LaneAnswer>>) -> bool {
@@ -871,6 +1007,35 @@ impl CanvasRuntime {
     }
 }
 
+fn task_relations_match(key: &TaskRelationsKey, answer: &TaskRelationsAnswer) -> bool {
+    if answer.roots != key.roots {
+        return false;
+    }
+    let identities = answer
+        .nodes
+        .iter()
+        .map(wire::intent::TaskRelationNode::identity)
+        .collect::<BTreeSet<_>>();
+    if identities.len() != answer.nodes.len()
+        || !key
+            .roots
+            .iter()
+            .all(|task| identities.contains(&TaskRelationNodeRef::Task { task: task.clone() }))
+    {
+        return false;
+    }
+    answer.edges.iter().all(|edge| {
+        edge.relation == key.relation
+            && identities.contains(&edge.from)
+            && identities.contains(&edge.to)
+    }) && answer.truncation.as_ref().is_none_or(|truncation| {
+        truncation
+            .frontier
+            .iter()
+            .all(|frontier| frontier.edge.relation == key.relation)
+    })
+}
+
 /// Which cached reads a batch of admitted facts has invalidated.
 ///
 /// The stream carries facts, not snapshots: it advances the journal cursor and
@@ -890,6 +1055,7 @@ pub struct Stale {
     lanes: bool,
     inbox: bool,
     task_details: BTreeSet<wire::TaskStamp>,
+    task_relation_kinds: BTreeSet<TaskRelationKind>,
 }
 
 impl Stale {
@@ -919,11 +1085,19 @@ impl Stale {
             }
             Some(("task", _)) => {
                 self.board = true;
+                self.task_relation_kinds.extend([
+                    TaskRelationKind::Origin,
+                    TaskRelationKind::Dependency,
+                    TaskRelationKind::Review,
+                    TaskRelationKind::Lifecycle,
+                    TaskRelationKind::Claim,
+                ]);
             }
             // A claim binds a task to a lane, so both sides of that join move.
             Some(("claim", _)) => {
                 self.board = true;
                 self.lanes = true;
+                self.task_relation_kinds.insert(TaskRelationKind::Claim);
             }
             _ => {}
         }
@@ -943,6 +1117,14 @@ impl Stale {
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn invalidate_task_detail_read(&mut self, task: wire::TaskStamp) {
         self.task_details.insert(task);
+    }
+    /// Evict changed typed families; the active demand hook alone re-requests.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn resolve_task_relations(&mut self, runtime: &mut CanvasRuntime, changed: bool) {
+        if changed {
+            runtime.invalidate_task_relations(&self.task_relation_kinds);
+        }
+        self.task_relation_kinds.clear();
     }
 
     /// Affected open task details, in durable identity order.
@@ -984,7 +1166,11 @@ impl Stale {
     /// Whether anything needs re-reading at all.
     #[must_use]
     pub fn any(&self) -> bool {
-        self.board || self.lanes || self.inbox || !self.task_details.is_empty()
+        self.board
+            || self.lanes
+            || self.inbox
+            || !self.task_details.is_empty()
+            || !self.task_relation_kinds.is_empty()
     }
 }
 

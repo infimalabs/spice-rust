@@ -167,6 +167,45 @@ fn connected_lane_reads_stable_origin_dependency_lifecycle_and_live_claim_nodes(
 }
 
 #[test]
+fn origin_depth_two_includes_parent_and_siblings_without_reversing_semantics() {
+    let (root, bus, epoch, _) = fixture("task-relations-origin-siblings", 0);
+    let parent = todo_task(&bus, epoch, "REL-originpar1", "Origin parent");
+    let selected = related_task(&bus, epoch, &parent, "REL-originone1");
+    let sibling = related_task(&bus, epoch, &parent, "REL-origintwo1");
+    let selected = selected.born().expect("fixture selected stamp");
+    let parent = parent.born().expect("fixture parent stamp");
+    let sibling = sibling.born().expect("fixture sibling stamp");
+
+    let (_, projected) = answer(read_relations(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &TaskRelations {
+            roots: vec![selected.clone()],
+            relations: vec![TaskRelationKind::Origin],
+            depth: 2,
+            node_limit: 16,
+        },
+    ));
+
+    for child in [&selected, &sibling] {
+        assert!(projected.edges.iter().any(|edge| {
+            edge.relation == TaskRelationKind::Origin
+                && edge.from
+                    == (TaskRelationNodeRef::Task {
+                        task: child.clone(),
+                    })
+                && edge.to
+                    == (TaskRelationNodeRef::Task {
+                        task: parent.clone(),
+                    })
+        }));
+    }
+
+    clean(&root, bus);
+}
+
+#[test]
 fn depth_and_node_bounds_name_the_exact_stable_frontier() {
     let (root, bus, epoch, _) = fixture("task-relations-frontier", 0);
     let parent = todo_task(&bus, epoch, "REL-frontpar1", "Frontier parent");

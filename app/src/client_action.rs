@@ -11,6 +11,9 @@ pub(crate) enum ClientAction {
     TaskDetail {
         task: TaskStamp,
     },
+    TaskRelations {
+        key: crate::TaskRelationsKey,
+    },
     /// Fetch the next retained page behind one member's oldest visible card.
     MessageHistory {
         lane: CanonicalUuid,

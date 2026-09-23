@@ -112,6 +112,11 @@ impl ActionQueue {
             matches!(&entry.kind, PendingKind::TaskDetail { task: pending } if pending == task)
         })
     }
+    pub(super) fn has_task_relations(&self, key: &crate::TaskRelationsKey) -> bool {
+        self.mailbox.borrow().pending.values().any(|entry| {
+            matches!(&entry.kind, PendingKind::TaskRelations { key: pending } if pending == key)
+        })
+    }
 
     pub(super) fn admit_topology(&self, id: CanonicalUuid, range: SeqRange) -> Result<(), String> {
         self.mailbox.borrow_mut().admit_topology(id, range)
@@ -174,6 +179,7 @@ impl PendingKind {
             Self::Settings => Some(CurrentRead::Settings),
             Self::Vendors => Some(CurrentRead::Vendors),
             Self::TaskDetail { .. }
+            | Self::TaskRelations { .. }
             | Self::LaneSeat
             | Self::LaneArrange
             | Self::LaneRenewal { .. }
@@ -392,6 +398,7 @@ impl ClientAction {
             | Self::Refresh
             | Self::FastMode(_)
             | Self::TaskDetail { .. }
+            | Self::TaskRelations { .. }
             | Self::MessageHistory { .. }
             | Self::ArrangeLane { .. }
             | Self::RenewLane { .. }
@@ -402,7 +409,10 @@ impl ClientAction {
     pub(super) const fn is_mutation(&self) -> bool {
         !matches!(
             self,
-            Self::Refresh | Self::TaskDetail { .. } | Self::MessageHistory { .. }
+            Self::Refresh
+                | Self::TaskDetail { .. }
+                | Self::TaskRelations { .. }
+                | Self::MessageHistory { .. }
         )
     }
 
@@ -1042,6 +1052,38 @@ mod tests {
         assert!(matches!(
             queue.settle_pending(pending),
             Some(PendingKind::TaskDetail { task }) if task == requested
+        ));
+    }
+    #[test]
+    fn task_relation_pending_reads_coalesce_only_by_exact_request_identity() {
+        let (queue, _wakes) = ActionQueue::new();
+        let task: wire::TaskStamp = "1kKRRsDP".parse().expect("fixture task stamp");
+        let dependency = crate::TaskRelationsKey::new(
+            vec![task.clone()],
+            wire::intent::TaskRelationKind::Dependency,
+            2,
+            48,
+        )
+        .expect("bounded fixture request");
+        let lineage =
+            crate::TaskRelationsKey::new(vec![task], wire::intent::TaskRelationKind::Origin, 2, 48)
+                .expect("bounded fixture request");
+        let pending = id(42);
+        queue
+            .reserve_pending(
+                pending,
+                PendingKind::TaskRelations {
+                    key: dependency.clone(),
+                },
+                1,
+            )
+            .expect("relationship read reserves");
+
+        assert!(queue.has_task_relations(&dependency));
+        assert!(!queue.has_task_relations(&lineage));
+        assert!(matches!(
+            queue.settle_pending(pending),
+            Some(PendingKind::TaskRelations { key }) if key == dependency
         ));
     }
 }
