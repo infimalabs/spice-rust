@@ -1,6 +1,7 @@
 //! Canvas surface rendering for the operator browser app.
 
 use super::*;
+use crate::work::{WorkAvailability, WorkProjection, WorkScope};
 
 pub(super) mod chrome;
 mod team_menu;
@@ -68,6 +69,8 @@ pub(super) struct CanvasRender<'a> {
     pub axis: &'a UseStateHandle<Axis>,
     pub mosaic: &'a UseStateHandle<bool>,
     pub canvas_menu_open: &'a UseStateHandle<bool>,
+    pub work_scope: &'a UseStateHandle<WorkScope>,
+    pub work_scope_notice: &'a UseStateHandle<Option<String>>,
     pub identity: &'a UseStateHandle<Option<CanvasIdentity>>,
     pub canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,
     pub team_controls: &'a UseReducerHandle<TeamControls>,
@@ -86,7 +89,7 @@ pub(super) struct CanvasRender<'a> {
     pub refresh: Callback<MouseEvent>,
 }
 
-pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
+pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
     let active_axis = **render.axis;
     let surface = render.surface.read();
     let cursor = surface
@@ -112,6 +115,9 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
                 menu_open: render.canvas_menu_open,
                 identity: render.identity,
                 canvas_update: render.canvas_update,
+                work_scope: render.work_scope,
+                work_scope_notice: render.work_scope_notice,
+                work,
                 active_axis,
                 surface: render.surface,
                 cursor: &cursor,
@@ -119,6 +125,9 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
                 submissions: &render.submissions.status,
                 team_controls: render.team_controls,
             })}
+            if let Some(notice) = &**render.work_scope_notice {
+                <p class="visually-hidden" role="status" aria-live="polite">{notice}</p>
+            }
             if let Some(issue) = &**render.action_issue {
                 <p class="form-refusal" role="alert">{issue}</p>
             }
@@ -130,12 +139,16 @@ pub(super) fn render_canvas(render: CanvasRender<'_>) -> Html {
                     {format!("Speaking as {voice}")}
                 </p>
             }
-            {render_workspace(&render, active_axis)}
+            {render_workspace(&render, active_axis, work)}
         </div>
     }
 }
 
-pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
+pub(super) fn render_workspace(
+    render: &CanvasRender<'_>,
+    active_axis: Axis,
+    work: Option<&WorkProjection<'_>>,
+) -> Html {
     let mosaic_active = **render.mosaic;
     html! {
         <>
@@ -164,7 +177,7 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
                     </div>
                 </header>
                 <main class="content">
-                    {render_analytics(render, active_axis)}
+                    {render_analytics(render, active_axis, work)}
                 </main>
                 </div>
             }
@@ -172,13 +185,17 @@ pub(super) fn render_workspace(render: &CanvasRender<'_>, active_axis: Axis) -> 
     }
 }
 
-fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
+fn render_analytics(
+    render: &CanvasRender<'_>,
+    active_axis: Axis,
+    work: Option<&WorkProjection<'_>>,
+) -> Html {
     html! {
         <>
             <div class="page-heading">
                 <div>
-                    <h1>{axis_label(active_axis)}</h1>
-                    <p>{active_axis.question()}</p>
+                    <h1>{analytics_heading(active_axis, work, render.work_scope)}</h1>
+                    <p>{analytics_summary(active_axis, work, render.work_scope)}</p>
                 </div>
             </div>
             <div class="pane-strip" aria-label="Panes on this axis">
@@ -186,13 +203,40 @@ fn render_analytics(render: &CanvasRender<'_>, active_axis: Axis) -> Html {
                     <span class="pane-chip">{pane.label()}</span>
                 })}
             </div>
-            {render_axis(active_axis, render)}
+            {render_axis(active_axis, render, work)}
         </>
     }
 }
 
 pub(super) const fn axis_label(axis: Axis) -> &'static str {
     CanvasDestination::for_axis(axis).label()
+}
+fn analytics_heading(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &WorkScope) -> String {
+    if axis != Axis::Flow {
+        return axis_label(axis).to_owned();
+    }
+    scope
+        .stem()
+        .and_then(|identity| work.and_then(|projection| projection.stem(identity)))
+        .map_or_else(
+            || "All open work".to_owned(),
+            |stem| format!("{} work", stem.identity()),
+        )
+}
+
+fn analytics_summary(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &WorkScope) -> String {
+    let Some(work) = work.filter(|_| axis == Axis::Flow) else {
+        return axis.question().to_owned();
+    };
+    let counts = work.scope_counts(scope);
+    format!(
+        "{} open: {} ready, {} active, {} blocked, {} deferred",
+        counts.open(),
+        counts.ready(),
+        counts.in_flight(),
+        counts.blocked(),
+        counts.deferred(),
+    )
 }
 
 /// The seat form's fields as the operator has written them so far.
@@ -307,10 +351,16 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
     }
 }
 
-pub(super) fn render_axis(axis: Axis, render: &CanvasRender<'_>) -> Html {
+pub(super) fn render_axis(
+    axis: Axis,
+    render: &CanvasRender<'_>,
+    work: Option<&WorkProjection<'_>>,
+) -> Html {
     match axis {
         Axis::Flow => render_flow(
             render.surface,
+            work,
+            render.work_scope,
             render.note_task,
             render.note_text,
             render.note_notice,
@@ -322,55 +372,73 @@ pub(super) fn render_axis(axis: Axis, render: &CanvasRender<'_>) -> Html {
 
 pub(super) fn render_flow(
     surface: &SurfaceData,
+    work: Option<&WorkProjection<'_>>,
+    work_scope: &WorkScope,
     note_task: &UseStateHandle<String>,
     note_text: &UseStateHandle<String>,
     note_notice: &UseStateHandle<Notice>,
     submit_note: Callback<SubmitEvent>,
 ) -> Html {
-    let surface = surface.read();
-    let Some(board) = surface.as_ref().and_then(CanvasRuntime::board) else {
+    let Some(work) = work else {
         return empty("No board snapshot is available.");
     };
+    let surface = surface.read();
     let can_note = surface
         .as_ref()
         .is_some_and(|runtime| runtime.offers(CommandKind::TaskNote));
     let selected = (**note_task).clone();
     let note = (**note_text).clone();
+    let scoped_stem = work_scope
+        .stem()
+        .filter(|identity| work.stem(identity).is_some());
+    let counts = work.scope_counts(work_scope);
+    let scope_key = scoped_stem.map_or_else(|| "all".to_owned(), ToString::to_string);
     html! {
-        <div class="split">
+        <div class="split" data-work-scope={scope_key}>
             <section class="section">
                 <div class="section-heading">
-                    <h2>{"Current work"}</h2>
-                    <span class="section-count">{format!("{} tasks", board.tasks.len())}</span>
+                    <h2>{"Open tasks"}</h2>
+                    <span class="section-count">{format!("{} tasks", counts.open())}</span>
                 </div>
                 <div class="table-wrap"><table>
                     <thead><tr>
                         <th>{"Task"}</th><th>{"Phase"}</th><th>{"Owner"}</th><th>{"Project"}</th>
                     </tr></thead>
-                    <tbody>{for board.tasks.iter().map(|task| {
-                        let statement = &task.statement.body;
-                        let workflow = &task.workflow.body;
-                        let title = task.presentation_title().to_owned();
-                        html! {
-                            <tr>
-                                <td class="title-cell">
-                                    <div class="mono muted">{statement.handle.to_string()}</div>
-                                    <div>{title}</div>
-                                </td>
-                                <td><span class={phase_class(&workflow.status)}>
-                                    {workflow.phase.to_string()}
-                                </span></td>
-                                <td class="mono">{
-                                    workflow
-                                        .assignment
-                                        .as_ref()
-                                        .map(ToString::to_string)
-                                        .unwrap_or_else(|| "-".to_owned())
-                                }</td>
-                                <td>{statement.project.clone()}</td>
-                            </tr>
-                        }
-                    })}</tbody>
+                    <tbody>{for work.projects().iter()
+                        .filter(|project| project.counts().has_open())
+                        .filter(|project| scoped_stem.is_none_or(|identity| {
+                            work.stems()[project.stem()].identity() == identity
+                        }))
+                        .flat_map(|project| project.tasks().iter().copied())
+                        .filter_map(|index| {
+                            let projected = &work.tasks()[index];
+                            (projected.availability() != WorkAvailability::Terminal)
+                                .then_some(projected.row())
+                        })
+                        .map(|task| {
+                            let statement = &task.statement.body;
+                            let workflow = &task.workflow.body;
+                            let title = task.presentation_title().to_owned();
+                            html! {
+                                <tr key={statement.handle.to_string()}>
+                                    <td class="title-cell">
+                                        <div class="mono muted">{statement.handle.to_string()}</div>
+                                        <div>{title}</div>
+                                    </td>
+                                    <td><span class={phase_class(&workflow.status)}>
+                                        {workflow.phase.to_string()}
+                                    </span></td>
+                                    <td class="mono">{
+                                        workflow
+                                            .assignment
+                                            .as_ref()
+                                            .map(ToString::to_string)
+                                            .unwrap_or_else(|| "-".to_owned())
+                                    }</td>
+                                    <td>{statement.project.clone()}</td>
+                                </tr>
+                            }
+                        })}</tbody>
                 </table></div>
             </section>
             if can_note {
@@ -386,9 +454,10 @@ pub(super) fn render_flow(
                         oninput={state_from_input(note_task.clone())}
                     />
                     <datalist id="note-tasks">
-                        {for board.tasks.iter().map(|task| {
-                            let statement = &task.statement.body;
-                            let title = task.presentation_title().to_owned();
+                        {for work.tasks().iter().map(|task| {
+                            let row = task.row();
+                            let statement = &row.statement.body;
+                            let title = row.presentation_title().to_owned();
                             html! {
                                 <option value={statement.handle.to_string()}>
                                     {title}

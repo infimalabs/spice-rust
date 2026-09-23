@@ -1,8 +1,9 @@
 //! Task-pill presentation derived from the shared Work projection.
 
-use crate::work::WorkStem;
+use crate::work::{WorkStem, WorkStemIdentity};
 
 pub(crate) struct TaskPill {
+    pub(crate) identity: WorkStemIdentity,
     pub(crate) stem: String,
     pub(crate) hidden: bool,
     pub(crate) ready: usize,
@@ -15,6 +16,7 @@ impl TaskPill {
     pub(crate) fn from_stem(stem: &WorkStem) -> Self {
         let counts = stem.counts();
         Self {
+            identity: stem.identity().clone(),
             stem: stem.identity().stem().to_owned(),
             hidden: stem.identity().hidden(),
             ready: counts.ready(),
