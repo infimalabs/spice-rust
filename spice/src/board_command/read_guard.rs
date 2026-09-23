@@ -7,6 +7,8 @@ mod capture;
 pub(super) use capture::guard_capture;
 mod task_detail;
 pub(super) use task_detail::read_task_detail;
+mod task_relations;
+pub(super) use task_relations::read_task_relations;
 
 pub(super) fn phase(name: &str) -> wire::Phase {
     name.parse()

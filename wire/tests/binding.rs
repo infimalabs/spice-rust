@@ -13,7 +13,9 @@ use std::collections::BTreeSet;
 
 use wire::intent::{
     AnswerShape, BoardStatement, BoardTask, BodyShape, CommandAnswer, Intent, Positioned,
-    ProjectVisibility, TaskDetailAnswer, TaskDetailNote, TaskGuidance,
+    ProjectVisibility, TaskDetailAnswer, TaskDetailNote, TaskGuidance, TaskRelationEdge,
+    TaskRelationFrontier, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
+    TaskRelationTruncation, TaskRelationsAnswer,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LaneResidency,
@@ -26,6 +28,15 @@ use wire::{
 const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::BoardRead, r#"{ "scope": "all" }"#),
     (CommandKind::TaskDetail, r#"{ "task": "1kKRRsDP" }"#),
+    (
+        CommandKind::TaskRelations,
+        r#"{
+  "roots": ["1kKRRsDP"],
+  "relations": ["dependency", "review"],
+  "depth": 2,
+  "node_limit": 32
+}"#,
+    ),
     (CommandKind::BoardGraph, r#"{ "view": "dependencies" }"#),
     (CommandKind::BoardHandout, r#"{ "output": "-" }"#),
     (CommandKind::DocLedger, r#"{ "task": "SPICE-1kKRRsDP" }"#),
@@ -462,6 +473,43 @@ fn task_detail_answer_round_trips_attributed_note_identity() {
     assert_eq!(*actual, expected);
 }
 
+#[test]
+fn task_relations_answer_round_trips_discriminated_nodes_and_frontier() {
+    let task: wire::TaskStamp = "1kKRRsDP".parse().expect("fixture task stamp");
+    let dependency: wire::TaskStamp = "1kKRRsDQ".parse().expect("fixture dependency stamp");
+    let edge = TaskRelationEdge {
+        relation: TaskRelationKind::Dependency,
+        from: TaskRelationNodeRef::Task { task: task.clone() },
+        to: TaskRelationNodeRef::Task {
+            task: dependency.clone(),
+        },
+    };
+    let expected = TaskRelationsAnswer {
+        snapshot: seq(7),
+        roots: vec![task.clone()],
+        nodes: vec![TaskRelationNode::Task {
+            task,
+            handle: "SPICE-1kKRRsDP".parse().expect("fixture task handle"),
+            title: "Inspect bounded relationships".to_owned(),
+            phase: "todo".parse().expect("fixture phase"),
+            status: "pending".to_owned(),
+        }],
+        edges: Vec::new(),
+        truncation: Some(TaskRelationTruncation {
+            frontier: vec![TaskRelationFrontier { depth: 1, edge }],
+            omitted: 2,
+        }),
+    };
+    let bytes = wire::encode(&expected).expect("task relations answer encodes");
+    let CommandAnswer::TaskRelations(actual) = AnswerShape::TaskRelations
+        .decode(&bytes)
+        .expect("task relations answer decodes through its registered shape")
+    else {
+        panic!("task relations shape decoded another answer")
+    };
+    assert_eq!(*actual, expected);
+}
+
 /// Every path at which two encoded rows disagree, named so a failure is legible.
 ///
 /// `assert_eq!` on two `serde_json::Value`s prints both rows whole and leaves
@@ -776,6 +824,7 @@ fn a_kind_binds_one_body_and_one_answer() {
 const ALL_BODIES: &[BodyShape] = &[
     BodyShape::BoardRead,
     BodyShape::TaskDetail,
+    BodyShape::TaskRelations,
     BodyShape::BoardGraph,
     BodyShape::BoardHandout,
     BodyShape::DocLedger,
@@ -828,6 +877,7 @@ const ALL_BODIES: &[BodyShape] = &[
 const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Board,
     AnswerShape::TaskDetail,
+    AnswerShape::TaskRelations,
     AnswerShape::Text,
     AnswerShape::Task,
     AnswerShape::Claim,

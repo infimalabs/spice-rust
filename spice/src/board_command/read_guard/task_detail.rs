@@ -38,7 +38,7 @@ pub(in crate::board_command) fn read_task_detail(
             let noted = envelope.fact.read::<body::TaskNoted>()?;
             (noted.task == detail.task).then(|| wire::intent::TaskDetailNote {
                 position: envelope.seq,
-                at: envelope.at.clone(),
+                at: envelope.at,
                 author: envelope.actor.clone(),
                 text: noted.note,
             })
