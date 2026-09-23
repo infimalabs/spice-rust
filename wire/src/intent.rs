@@ -34,9 +34,12 @@ use crate::witness::{Answer, Disposition, Name, TaskHandle, TaskStamp};
 mod board;
 pub use board::{
     BoardActorRoute, BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead,
-    BoardStatement, BoardTask, DocLedger, Positioned, ProjectVisibility, TaskClaimContext,
-    TaskDetail, TaskDetailAnswer, TaskDetailNote, TaskGitContext, TaskGitContextKind,
-    TaskTranscriptRecovery, TextAnswer,
+    BoardStatement, BoardTask, DocLedger, Positioned, ProjectVisibility, TASK_RELATION_DEPTH_LIMIT,
+    TASK_RELATION_EDGE_LIMIT, TASK_RELATION_FRONTIER_LIMIT, TASK_RELATION_NODE_LIMIT,
+    TASK_RELATION_ROOT_LIMIT, TaskClaimContext, TaskDetail, TaskDetailAnswer, TaskDetailNote,
+    TaskGitContext, TaskGitContextKind, TaskLifecycleKind, TaskRelationEdge, TaskRelationFrontier,
+    TaskRelationKind, TaskRelationNode, TaskRelationNodeRef, TaskRelationTruncation, TaskRelations,
+    TaskRelationsAnswer, TaskTranscriptRecovery, TextAnswer,
 };
 mod simple_answers;
 pub use simple_answers::{RecognitionAnswer, TasteAnswer};

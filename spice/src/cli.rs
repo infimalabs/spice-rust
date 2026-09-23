@@ -156,6 +156,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::UpChange => CONTENDED_ANSWER,
         CommandKind::BoardRead
         | CommandKind::TaskDetail
+        | CommandKind::TaskRelations
         | CommandKind::BoardGraph
         | CommandKind::BoardHandout
         | CommandKind::DocLedger

@@ -13,9 +13,9 @@ use super::{
     LaneRetune, LaneSeat, LaneState, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish,
     StateAnswer, SteerDispose, SteerInbox, SteerRepair, SteerSend, TaskAdd, TaskAnswer, TaskAssign,
     TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote,
-    TaskOopsAdd, TaskPhase, TaskRef, TaskReview, TaskWake, TasteAnswer, TasteProposalAdd,
-    TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange,
-    VendorCatalog, VendorCatalogAnswer,
+    TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskWake,
+    TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer,
+    TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -25,6 +25,8 @@ pub enum BodyShape {
     BoardRead,
     /// [`TaskDetail`]
     TaskDetail,
+    /// [`TaskRelations`]
+    TaskRelations,
     /// [`BoardGraph`]
     BoardGraph,
     /// [`BoardHandout`]
@@ -126,6 +128,8 @@ pub enum AnswerShape {
     Board,
     /// [`TaskDetailAnswer`]
     TaskDetail,
+    /// [`TaskRelationsAnswer`]
+    TaskRelations,
     /// [`TextAnswer`]
     Text,
     /// [`TaskAnswer`]
@@ -176,6 +180,8 @@ pub enum CommandAnswer {
     Board(Box<BoardAnswer>),
     /// [`AnswerShape::TaskDetail`]
     TaskDetail(Box<TaskDetailAnswer>),
+    /// [`AnswerShape::TaskRelations`]
+    TaskRelations(Box<TaskRelationsAnswer>),
     /// [`AnswerShape::Text`]
     Text(TextAnswer),
     /// [`AnswerShape::Task`]
@@ -225,6 +231,7 @@ impl CommandAnswer {
         match self {
             Self::Board(_) => AnswerShape::Board,
             Self::TaskDetail(_) => AnswerShape::TaskDetail,
+            Self::TaskRelations(_) => AnswerShape::TaskRelations,
             Self::Text(_) => AnswerShape::Text,
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
@@ -261,6 +268,7 @@ impl AnswerShape {
         match self {
             Self::Board
             | Self::TaskDetail
+            | Self::TaskRelations
             | Self::Text
             | Self::Task
             | Self::Claim
@@ -288,6 +296,7 @@ impl AnswerShape {
         Ok(match self {
             Self::Board => CommandAnswer::Board(Box::new(crate::decode(bytes)?)),
             Self::TaskDetail => CommandAnswer::TaskDetail(Box::new(crate::decode(bytes)?)),
+            Self::TaskRelations => CommandAnswer::TaskRelations(Box::new(crate::decode(bytes)?)),
             Self::Text => CommandAnswer::Text(crate::decode(bytes)?),
             Self::Task => CommandAnswer::Task(crate::decode(bytes)?),
             Self::Claim => CommandAnswer::Claim(Box::new(crate::decode(bytes)?)),
@@ -348,6 +357,7 @@ impl CommandKind {
         match self {
             Self::BoardRead
             | Self::TaskDetail
+            | Self::TaskRelations
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
@@ -412,6 +422,7 @@ impl CommandKind {
         match self {
             Self::BoardRead => Binding::of(B::BoardRead, A::Board),
             Self::TaskDetail => Binding::of(B::TaskDetail, A::TaskDetail),
+            Self::TaskRelations => Binding::of(B::TaskRelations, A::TaskRelations),
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
@@ -496,6 +507,8 @@ pub enum Intent {
     BoardRead(BoardRead),
     /// [`BodyShape::TaskDetail`]
     TaskDetail(TaskDetail),
+    /// [`BodyShape::TaskRelations`]
+    TaskRelations(TaskRelations),
     /// [`BodyShape::BoardGraph`]
     BoardGraph(BoardGraph),
     /// [`BodyShape::BoardHandout`]
@@ -597,6 +610,7 @@ impl Intent {
         match self {
             Self::BoardRead(_)
             | Self::TaskDetail(_)
+            | Self::TaskRelations(_)
             | Self::BoardGraph(_)
             | Self::BoardHandout(_)
             | Self::DocLedger(_)
@@ -650,6 +664,7 @@ impl Intent {
         match self {
             Self::BoardRead(_) => BodyShape::BoardRead,
             Self::TaskDetail(_) => BodyShape::TaskDetail,
+            Self::TaskRelations(_) => BodyShape::TaskRelations,
             Self::BoardGraph(_) => BodyShape::BoardGraph,
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
@@ -728,6 +743,7 @@ impl BodyShape {
             self,
             Self::BoardRead
                 | Self::TaskDetail
+                | Self::TaskRelations
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
@@ -757,6 +773,7 @@ impl BodyShape {
             self,
             Self::BoardRead
                 | Self::TaskDetail
+                | Self::TaskRelations
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
@@ -778,6 +795,7 @@ impl BodyShape {
         Ok(match self {
             Self::BoardRead => Intent::BoardRead(crate::decode(bytes)?),
             Self::TaskDetail => Intent::TaskDetail(crate::decode(bytes)?),
+            Self::TaskRelations => Intent::TaskRelations(crate::decode(bytes)?),
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),

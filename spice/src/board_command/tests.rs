@@ -1037,3 +1037,4 @@ mod delete;
 // One selected task's append-only notes are a bounded read contract, separate
 // from the board summary and its allocation scenarios.
 mod detail;
+mod relations;

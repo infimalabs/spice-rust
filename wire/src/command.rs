@@ -30,6 +30,8 @@ pub enum CommandKind {
     BoardRead,
     /// Read one task's current evidence and durable note history.
     TaskDetail,
+    /// Read a bounded typed relationship graph centered on selected tasks.
+    TaskRelations,
     /// Render one deterministic board graph.
     BoardGraph,
     /// Compose one deterministic board handout.
@@ -550,6 +552,7 @@ impl CommandKind {
     pub const ALL: &'static [Self] = &[
         Self::BoardRead,
         Self::TaskDetail,
+        Self::TaskRelations,
         Self::BoardGraph,
         Self::BoardHandout,
         Self::DocLedger,
@@ -616,6 +619,7 @@ impl CommandKind {
         match self {
             Self::BoardRead
             | Self::TaskDetail
+            | Self::TaskRelations
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
@@ -677,6 +681,7 @@ impl CommandKind {
         match self {
             Self::BoardRead => "board::read",
             Self::TaskDetail => "task::detail",
+            Self::TaskRelations => "task::relations",
             Self::BoardGraph => "board::graph",
             Self::BoardHandout => "board::handout",
             Self::DocLedger => "doc::ledger",
@@ -757,7 +762,11 @@ impl CommandKind {
     #[must_use]
     pub const fn law(self) -> Law {
         match self {
-            Self::BoardRead | Self::TaskDetail | Self::BoardGraph | Self::DocLedger => Law::READ,
+            Self::BoardRead
+            | Self::TaskDetail
+            | Self::TaskRelations
+            | Self::BoardGraph
+            | Self::DocLedger => Law::READ,
             Self::GlobalSettingsRead | Self::VendorCatalog => Law::OPERATOR_READ,
             Self::GlobalSettingsSet => Law::SETTINGS,
             Self::BoardHandout => Law::OPERATOR_READ,
@@ -900,6 +909,7 @@ impl CommandKind {
             self,
             Self::BoardRead
                 | Self::TaskDetail
+                | Self::TaskRelations
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger

@@ -105,6 +105,14 @@ fn every_command_names_the_witnesses_it_requires() {
 }
 
 #[test]
+fn task_relations_requires_an_authenticated_connected_capability() {
+    let law = CommandKind::TaskRelations.law();
+    assert_eq!(law.authority, Authority::Connected);
+    assert!(law.required.is_empty());
+    assert!(law.optional.is_empty());
+}
+
+#[test]
 fn recovery_requires_the_exact_recoverable_directive_predicate() {
     let law = CommandKind::SteerRecover.law();
     // The predicate admits either failed standing while still making an
