@@ -19,7 +19,13 @@ const CACHE_BYTES: usize = 16 * 1024 * 1024;
 const COALESCE_MILLIS: u32 = 80;
 const RESPONSE_MILLIS: u32 = 30_000;
 
-pub(super) type Outcome = Result<AttrValue, AttrValue>;
+#[derive(Clone)]
+pub(super) struct Render {
+    pub(super) image: AttrValue,
+    pub(super) geometry: Rc<crate::mermaid_geometry::Geometry>,
+}
+
+pub(super) type Outcome = Result<Render, AttrValue>;
 pub(super) type Shared = Rc<RefCell<Service>>;
 
 #[derive(Clone, PartialEq)]
@@ -27,6 +33,7 @@ pub(super) struct Key {
     pub(super) source: AttrValue,
     pub(super) theme: Theme,
     pub(super) generation: AttrValue,
+    pub(super) node_ids: Rc<Vec<String>>,
 }
 
 pub(super) struct Subscriber {
@@ -63,7 +70,7 @@ pub(super) struct Service {
     pub(super) frame: Option<Frame>,
     pub(super) active: Option<Job>,
     queue: VecDeque<Job>,
-    cache: VecDeque<(Key, AttrValue)>,
+    cache: VecDeque<(Key, Render)>,
     cache_bytes: usize,
     serial: u32,
     dispatch: Option<Timeout>,
@@ -81,6 +88,18 @@ impl Drop for Lease {
             service.borrow_mut().cancel(self.id);
         }
     }
+}
+
+fn cached_bytes(key: &Key, render: &Render) -> usize {
+    key.source.len()
+        + key.node_ids.iter().map(String::len).sum::<usize>()
+        + render.image.len()
+        + render
+            .geometry
+            .nodes
+            .iter()
+            .map(|node| std::mem::size_of_val(node) + node.id.len())
+            .sum::<usize>()
 }
 
 impl Service {
@@ -104,6 +123,7 @@ impl Service {
         shared: &Shared,
         source: AttrValue,
         theme: Theme,
+        node_ids: Rc<Vec<String>>,
         host: web_sys::Element,
         revision: AttrValue,
         callback: Callback<Outcome>,
@@ -111,6 +131,7 @@ impl Service {
         if source.encode_utf16().take(SOURCE_UNITS + 1).count() > SOURCE_UNITS {
             return Err("Diagram exceeds the 50,000 UTF-16 unit source limit".into());
         }
+        crate::mermaid_geometry::validate_ids(&node_ids).map_err(AttrValue::from)?;
         let mut service = shared.borrow_mut();
         let id = service
             .serial
@@ -121,6 +142,7 @@ impl Service {
             source,
             theme,
             generation: service.generation.clone(),
+            node_ids,
         };
         let subscriber = Subscriber {
             id,
@@ -135,10 +157,10 @@ impl Service {
         };
         if let Some(index) = service.cache.iter().position(|(cached, _)| *cached == key) {
             let entry = service.cache.remove(index).expect("located cache entry");
-            let image = entry.1.clone();
+            let render = entry.1.clone();
             service.cache.push_back(entry);
             drop(service);
-            subscriber.deliver(Ok(image));
+            subscriber.deliver(Ok(render));
             return Ok(lease());
         }
         service.prune();
@@ -281,9 +303,9 @@ impl Service {
         service.deadline = None;
         let job = service.active.take().expect("matched active render");
         if Self::has_subscribers(&job)
-            && let Ok(image) = &outcome
+            && let Ok(render) = &outcome
         {
-            service.cache(job.key, image.clone());
+            service.cache(job.key, render.clone());
         }
         drop(service);
         for subscriber in job.subscribers {
@@ -292,16 +314,16 @@ impl Service {
         Self::schedule(shared);
     }
 
-    fn cache(&mut self, key: Key, image: AttrValue) {
-        let bytes = key.source.len() + image.len();
+    fn cache(&mut self, key: Key, render: Render) {
+        let bytes = cached_bytes(&key, &render);
         while self.cache.len() >= CACHE_ENTRIES || self.cache_bytes + bytes > CACHE_BYTES {
-            let Some((old_key, old_image)) = self.cache.pop_front() else {
+            let Some((old_key, old_render)) = self.cache.pop_front() else {
                 return;
             };
-            self.cache_bytes -= old_key.source.len() + old_image.len();
+            self.cache_bytes -= cached_bytes(&old_key, &old_render);
         }
         self.cache_bytes += bytes;
-        self.cache.push_back((key, image));
+        self.cache.push_back((key, render));
     }
 
     pub(super) fn close(shared: &Shared, reason: &'static str) {
