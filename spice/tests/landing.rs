@@ -179,6 +179,7 @@ const CASES: &[Case] = &[
     case("lane add", &["lane", "add"]),
     case("lane drain", &["lane", "drain", UUID]),
     case("lane wake", &["lane", "wake", UUID]),
+    case("lane model", &["lane", "model", UUID, "claude-opus-5-5"]),
     case("lane remove", &["lane", "remove", UUID]),
     case("lane import", &["lane", "import", UUID, "."]),
     case("lane purge", &["lane", "purge"]),

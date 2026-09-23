@@ -80,6 +80,7 @@ fn answer_at(
                     .and_then(|session| session.launch.as_ref())
                     .map(|launch| launch.model.clone())
                     .or_else(|| row.model.clone()),
+                seat_model: row.model.clone(),
                 effort: row
                     .session
                     .as_ref()

@@ -401,6 +401,7 @@ fn lane_response_with_renewals(
                 life: "steer".to_owned(),
                 vendor: "claude".parse().expect("fixture vendor"),
                 model: bound.then(|| "sonnet".to_owned()),
+                seat_model: None,
                 effort: bound.then(|| "high".to_owned()),
                 git: bound.then(|| "current".to_owned()),
                 rtk: None,

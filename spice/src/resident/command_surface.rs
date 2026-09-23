@@ -204,6 +204,9 @@ impl<'a> Surface<'a> {
                 command,
                 renewal,
             )),
+            (CommandKind::LaneRetune, Intent::LaneRetune(retune)) => Some(lane_surface::retune(
+                self.bus, self.paths, self.epoch, seats, command, retune,
+            )),
             (CommandKind::TeamArrange, Intent::TeamArrange(arrange)) => {
                 Some(lane_surface::arrange_teams(
                     self.bus, self.paths, self.epoch, seats, command, arrange,

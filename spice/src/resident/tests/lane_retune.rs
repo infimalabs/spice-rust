@@ -1,0 +1,246 @@
+//! Retuning a seat: what changes, what is left alone, and what launches next.
+//!
+//! The seat's model is the only input either wake path hands the launcher
+//! (`lane_surface::automatic` reads `row.model` and nothing else), so a case
+//! that proves the durable row carries the new spelling has proven what the
+//! next launch runs without starting a vendor. What no case may find is a
+//! changed occupant: a running process was given its model as argv at spawn,
+//! and a retune that reached back into it would be a lie about a process the
+//! resident cannot rewrite.
+
+use super::*;
+
+/// One seated, supervised lane and the fixture that keeps it running.
+struct Seated {
+    root: PathBuf,
+    paths: RuntimePaths,
+    bus: Bus,
+    epoch: CanonicalUuid,
+    seats: Seats,
+    lane: CanonicalUuid,
+    occupant: CanonicalUuid,
+}
+
+impl Seated {
+    fn new(name: &str) -> Self {
+        let (root, paths) = resident_fixture(name);
+        let repository = Repository::discover(&root).expect("fixture repository resolves");
+        let surface =
+            crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+        let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+        let bus = Bus::start(journal).expect("fixture bus starts");
+        let epoch = test_uuid(1);
+        commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+        let lane = test_uuid(2);
+        let occupant = test_uuid(3);
+        let mut seats = Seats::new();
+        seats
+            .seat(
+                lane,
+                occupant,
+                process_spec("sleep 5", Duration::from_secs(30)),
+            )
+            .expect("supervised occupant starts");
+        seed_lane_in_team(&bus, epoch, lane, lane, occupant, &root);
+        Self {
+            root,
+            paths,
+            bus,
+            epoch,
+            seats,
+            lane,
+            occupant,
+        }
+    }
+
+    fn retune(&self, id: u8, lane: CanonicalUuid, model: Option<&str>) -> Outcome<CommandAnswer> {
+        self.retune_at(id, lane, model, self.head().topology_revision)
+    }
+
+    fn retune_at(
+        &self,
+        id: u8,
+        lane: CanonicalUuid,
+        model: Option<&str>,
+        topology_revision: u64,
+    ) -> Outcome<CommandAnswer> {
+        let request = wire::intent::LaneRetune {
+            topology_revision,
+            lane,
+            model: model.map(str::to_owned),
+        };
+        let command = Command {
+            v: wire::WireVersion::CURRENT,
+            id: test_uuid(id),
+            epoch: self.epoch,
+            kind: CommandKind::LaneRetune,
+            expected: Vec::new(),
+            body: serde_json::to_value(&request).expect("lane retune encodes"),
+        }
+        .admit(&wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor: Actor::Operator,
+            epoch: self.epoch,
+        })
+        .expect("operator retune admits");
+        super::super::lane_surface::retune(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &self.seats,
+            &command,
+            &request,
+        )
+    }
+
+    fn head(&self) -> wire::ResidencyHead {
+        current_residency(&self.bus, self.epoch)
+            .expect("seated residency reads")
+            .into_body()
+    }
+
+    /// The seat spelling the next launch would read.
+    fn seated_model(&self) -> Option<String> {
+        self.head()
+            .lanes
+            .iter()
+            .find(|row| row.lane == self.lane)
+            .expect("the seeded lane stays seated")
+            .model
+            .clone()
+    }
+
+    fn retuned_facts(&self) -> Vec<serde_json::Value> {
+        self.bus
+            .fact_snapshot()
+            .expect("retuned journal reads")
+            .facts()
+            .iter()
+            .filter(|fact| fact.fact.kind() == wire::FactKind::LaneRetuned)
+            .map(|fact| serde_json::Value::Object(fact.fact.body().clone()))
+            .collect()
+    }
+
+    fn release(mut self) {
+        self.seats
+            .vacate(self.lane)
+            .expect("retuned occupant remains supervised")
+            .wait()
+            .expect("fixture occupant exits");
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn committed_rows(outcome: Outcome<CommandAnswer>) -> Vec<wire::intent::LaneAnswerRow> {
+    let Outcome::Reply(reply) = outcome else {
+        panic!("a retune replies: {outcome:?}");
+    };
+    assert!(matches!(reply.position, ReplyPosition::Committed(_)));
+    let CommandAnswer::Lane(answer) = reply.body else {
+        panic!("a retune returns the authoritative lane table");
+    };
+    answer.lanes
+}
+
+fn refused(outcome: Outcome<CommandAnswer>) -> String {
+    match outcome {
+        Outcome::Refusal(refusal) => refusal
+            .diagnostic()
+            .expect("a lane refusal carries a diagnostic")
+            .reason()
+            .to_owned(),
+        other => panic!("expected a refusal: {other:?}"),
+    }
+}
+
+#[test]
+fn retuning_a_seat_changes_the_next_launch_and_not_the_running_occupant() {
+    let fixture = Seated::new("lane-retune-pin");
+
+    let rows = committed_rows(fixture.retune(4, fixture.lane, Some("claude-opus-5-5")));
+
+    let row = rows
+        .iter()
+        .find(|row| row.lane == fixture.lane)
+        .expect("the retuned lane is in the answer");
+    assert_eq!(row.seat_model.as_deref(), Some("claude-opus-5-5"));
+    assert_eq!(
+        row.occupant,
+        Some(fixture.occupant),
+        "a retune states a seat, so the occupant it reports is the one still running",
+    );
+    assert_eq!(row.disposition, "occupied");
+    assert_eq!(
+        fixture.seated_model().as_deref(),
+        Some("claude-opus-5-5"),
+        "the durable row is the launcher's only model input",
+    );
+    assert!(
+        fixture.seats.occupied(fixture.lane),
+        "retuning never touches the supervised process",
+    );
+    assert_eq!(
+        fixture.retuned_facts(),
+        vec![serde_json::json!({
+            "lane": fixture.lane.to_string(),
+            "model": "claude-opus-5-5",
+        })],
+    );
+
+    fixture.release();
+}
+
+#[test]
+fn clearing_a_seat_returns_it_to_the_configured_vendor_model() {
+    let fixture = Seated::new("lane-retune-clear");
+    committed_rows(fixture.retune(4, fixture.lane, Some("claude-opus-5-5")));
+
+    let rows = committed_rows(fixture.retune(5, fixture.lane, None));
+
+    let row = rows
+        .iter()
+        .find(|row| row.lane == fixture.lane)
+        .expect("the cleared lane is in the answer");
+    assert_eq!(
+        row.seat_model, None,
+        "a cleared seat names no model, so the vendor configuration governs its next launch",
+    );
+    assert_eq!(fixture.seated_model(), None);
+    assert_eq!(
+        fixture.retuned_facts().last(),
+        Some(&serde_json::json!({
+            "lane": fixture.lane.to_string(),
+            "from": "claude-opus-5-5",
+        })),
+        "the clearing fact carries the spelling it replaced and no successor",
+    );
+
+    fixture.release();
+}
+
+#[test]
+fn a_retune_refuses_an_unseated_lane_a_blank_spelling_and_a_stale_topology() {
+    let fixture = Seated::new("lane-retune-refusals");
+
+    assert_eq!(
+        refused(fixture.retune(4, test_uuid(40), Some("claude-opus-5-5"))),
+        "lane::missing",
+    );
+    assert_eq!(
+        refused(fixture.retune(5, fixture.lane, Some("  "))),
+        "lane::model-invalid",
+    );
+    let stale = fixture.head().topology_revision.saturating_sub(1);
+    assert_eq!(
+        refused(fixture.retune_at(6, fixture.lane, Some("claude-opus-5-5"), stale)),
+        "lane::topology-moved",
+    );
+    assert_eq!(
+        fixture.seated_model(),
+        None,
+        "no refused retune reaches the seat",
+    );
+    assert!(fixture.retuned_facts().is_empty());
+
+    fixture.release();
+}

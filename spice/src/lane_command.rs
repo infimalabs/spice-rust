@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use spice::repository::Repository;
-use wire::intent::{CommandAnswer, LaneAction, LaneAnswer, LaneRecall, LaneSeat, LaneState};
+use wire::intent::{
+    CommandAnswer, LaneAction, LaneAnswer, LaneRecall, LaneRetune, LaneSeat, LaneState,
+};
 use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal, Reply};
 
 use crate::cli::Contract;
@@ -45,6 +47,7 @@ pub(crate) fn run(
         ),
         ["lane", "drain"] => state(canvas, matches, contract, LaneAction::Drain),
         ["lane", "wake"] => state(canvas, matches, contract, LaneAction::Wake),
+        ["lane", "model"] => model(canvas, matches, contract),
         ["lane", "remove"] => state(canvas, matches, contract, LaneAction::Remove),
         ["lane", "import"] => import(&repository, canvas, &current, matches, contract),
         ["recall"] => recall(canvas, matches, contract),
@@ -259,6 +262,41 @@ fn state(
         worktree: None,
     };
     command_client::execute(canvas, contract, SelectedCommand::LaneState { body: &body })
+}
+
+/// State the model spelling one seated lane's next launch runs.
+///
+/// Naming no spelling clears the seat, which is how a lane returns to the
+/// vendor's configured model: the request states the seat outright rather than
+/// describing a change to it, so absence is an instruction and not an omission.
+fn model(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+    let Some(id) = matches.get_one::<String>("ID") else {
+        return protocol_fault(
+            "lane::id-missing",
+            "generated parser omitted required lane ID",
+        );
+    };
+    let lane = match id.parse::<CanonicalUuid>() {
+        Ok(lane) => lane,
+        Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
+    };
+    let topology_revision = match observe_topology(canvas) {
+        Ok(revision) => revision,
+        Err(outcome) => return outcome,
+    };
+    let body = LaneRetune {
+        topology_revision,
+        lane,
+        model: matches
+            .get_one::<String>("MODEL")
+            .map(|model| model.trim().to_owned())
+            .filter(|model| !model.is_empty()),
+    };
+    command_client::execute(
+        canvas,
+        contract,
+        SelectedCommand::LaneRetune { body: &body },
+    )
 }
 
 fn import(

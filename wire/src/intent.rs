@@ -418,6 +418,29 @@ pub struct LaneRenewal {
     pub requested: bool,
 }
 
+/// State the model spelling one seated lane launches with.
+///
+/// The request restates the seat's model outright rather than describing a
+/// change to it: a spelling pins the seat, and its absence returns the seat to
+/// the vendor's configured model. A launch already in flight keeps the model
+/// it started with, so this governs the lane's next occupant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneRetune {
+    /// Topology revision observed before this retune was requested.
+    pub topology_revision: u64,
+    /// Seated member whose next launch changes.
+    pub lane: CanonicalUuid,
+    /// Model spelling this seat names, absent to follow the vendor's
+    /// configured model.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub model: Option<String>,
+}
+
 /// Select one lane's continuity account, or the operator-wide account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -859,6 +882,18 @@ pub struct LaneAnswerRow {
         deserialize_with = "crate::optional::present"
     )]
     pub model: Option<String>,
+    /// Model spelling this seat pins for the launches it governs, absent when
+    /// the seat follows the vendor's configured model.
+    ///
+    /// `model` reports the process that is running; this reports the seat that
+    /// will start the next one. A retune states the seat alone, so the two
+    /// disagree until the lane relaunches.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub seat_model: Option<String>,
     /// Reasoning effort supplied to the declared session's vendor launch.
     #[serde(
         default,

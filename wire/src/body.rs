@@ -291,10 +291,10 @@ mod lane;
 pub use lane::{
     LaneArranged, LaneCancelled, LaneCompacted, LaneDegraded, LaneDrained, LaneExited, LaneHeld,
     LaneImported, LaneKilled, LaneLaunchIdentity, LaneRemoved, LaneRenewalChanged, LaneRenewed,
-    LaneResumed, LaneSeated, LaneSessionDeclared, LaneSignalled, LaneSourceBoundary, LaneStarted,
-    LaneTimedOut, RtkHealth, RtkHealthState, RtkHookState, TasteCleared, TasteConfirmed,
-    TasteDecision, TasteJudgeAttempt, TasteJudgeReply, TasteJudged, TasteReminded, TeamArranged,
-    TeamConfigured, TeamStanding,
+    LaneResumed, LaneRetuned, LaneSeated, LaneSessionDeclared, LaneSignalled, LaneSourceBoundary,
+    LaneStarted, LaneTimedOut, RtkHealth, RtkHealthState, RtkHookState, TasteCleared,
+    TasteConfirmed, TasteDecision, TasteJudgeAttempt, TasteJudgeReply, TasteJudged, TasteReminded,
+    TeamArranged, TeamConfigured, TeamStanding,
 };
 
 /// A seated occupant exceeded a call-count or active-silence narration bound.

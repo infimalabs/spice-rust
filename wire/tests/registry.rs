@@ -73,6 +73,7 @@ fn every_command_names_the_witnesses_it_requires() {
             CommandKind::LaneSeat
                 | CommandKind::LaneState
                 | CommandKind::LaneRenewal
+                | CommandKind::LaneRetune
                 | CommandKind::LaneArrange
                 | CommandKind::TeamConfigure
                 | CommandKind::TeamArrange
@@ -123,6 +124,7 @@ fn lane_lifecycle_is_admitted_for_the_operator_alone() {
         CommandKind::LaneSeat,
         CommandKind::LaneState,
         CommandKind::LaneArrange,
+        CommandKind::LaneRetune,
         CommandKind::TeamConfigure,
     ] {
         assert_eq!(
