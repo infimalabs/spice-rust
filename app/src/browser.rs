@@ -517,6 +517,7 @@ fn canvas_app() -> Html {
         issue: action_issue.clone(),
     };
     let work_detail = task_detail::use_controls(sender.clone(), surface.clone());
+    let work_map = use_state(view::WorkMapState::default);
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
     let speech_message = use_state(|| None::<String>);
@@ -558,13 +559,7 @@ fn canvas_app() -> Html {
     use_mosaic_root_scroll(*mosaic);
     use_canvas_menu_dismissal(canvas_menu_open.clone());
     watchband::use_command_modifier_preview();
-    let team_count = surface
-        .read()
-        .as_ref()
-        .and_then(CanvasRuntime::lanes)
-        .map_or(0, |lanes| {
-            lanes.lanes.iter().filter(|team| team.teamed()).count()
-        });
+    let team_count = teamed_lane_count(&surface);
     watchband::use_team_fleet_right_edge(team_fleet.clone(), team_count);
     let surface_view = surface.read();
     let work = project_work(surface_view.as_ref());
@@ -597,6 +592,7 @@ fn canvas_app() -> Html {
             sender: &sender,
             agents: &agents,
             selected_task: &work_detail.selected,
+            work_map: &work_map,
             detail_close: &work_detail.close_ref,
             note_text: &work_detail.note_text,
             note_notice: &work_detail.notice,
@@ -616,6 +612,16 @@ fn project_work(runtime: Option<&CanvasRuntime>) -> Option<WorkProjection<'_>> {
     runtime
         .and_then(CanvasRuntime::board)
         .map(WorkProjection::from_board)
+}
+
+fn teamed_lane_count(surface: &SurfaceData) -> usize {
+    surface
+        .read()
+        .as_ref()
+        .and_then(CanvasRuntime::lanes)
+        .map_or(0, |lanes| {
+            lanes.lanes.iter().filter(|team| team.teamed()).count()
+        })
 }
 
 #[hook]

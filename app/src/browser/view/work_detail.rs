@@ -8,6 +8,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub work: &'a WorkProjection<'work>,
     pub scope: &'a WorkScope,
     pub selected: Option<&'a TaskStamp>,
+    pub map: &'a UseStateHandle<work_map::WorkMapState>,
     pub detail: Option<&'a TaskDetailState>,
     pub stale: bool,
     pub can_note: bool,
@@ -24,6 +25,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
     let Some(selected) = render.selected else {
         return Html::default();
     };
+    let map_open = render.map.mode() == work_map::WorkDetailMode::Map;
     let close_click = render.close.reform(|_: MouseEvent| ());
     html! {
         <div class="work-detail-layer">
@@ -34,7 +36,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                 onclick={close_click.clone()}
             ></button>
             <aside
-                class="work-detail"
+                class={classes!("work-detail", map_open.then_some("work-detail--map"))}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="work-detail-title"
@@ -42,7 +44,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
             >
                 <header class="work-detail-header">
                     <div>
-                        <p class="work-detail-kicker">{"Task detail"}</p>
+                        <p class="work-detail-kicker">{if map_open { "Task map" } else { "Task detail" }}</p>
                         <h2 id="work-detail-title">{detail_title(render.detail, selected)}</h2>
                     </div>
                     <button
@@ -58,7 +60,17 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                         {"Showing admitted detail while reconnecting. Updates and observations will resume when Canvas reconnects."}
                     </p>
                 }
-                {render_detail_body(&render, selected)}
+                {work_map::render_tabs(render.map, selected)}
+                if map_open {
+                    {work_map::render(work_map::WorkMapRender {
+                        work: render.work,
+                        selected,
+                        state: render.map,
+                        select_task: render.select_task.clone(),
+                    })}
+                } else {
+                    {render_detail_body(&render, selected)}
+                }
             </aside>
         </div>
     }

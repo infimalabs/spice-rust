@@ -20,7 +20,9 @@ pub(super) fn render(
     scope: &WorkScope,
     stale: bool,
     selected: Option<&wire::TaskStamp>,
+    map: &UseStateHandle<WorkMapState>,
     select: Callback<wire::TaskStamp>,
+    toggle_map_root: Callback<wire::TaskStamp>,
 ) -> Html {
     let projects = work
         .projects()
@@ -42,7 +44,7 @@ pub(super) fn render(
             } else {
                 <div class="work-swimlanes">
                     {for projects.into_iter().map(|(index, project)| {
-                        render_project(work, project, index, selected, &select)
+                        render_project(work, project, index, selected, map, &select, &toggle_map_root)
                     })}
                 </div>
             }
@@ -55,7 +57,7 @@ pub(super) fn render(
                     <div class="empty">{"No completed or deleted tasks in this scope."}</div>
                 } else {
                     <div class="work-history-list">
-                        {for history.into_iter().map(|task| render_card(task, selected, &select))}
+                        {for history.into_iter().map(|task| render_card(task, selected, map, &select, &toggle_map_root))}
                     </div>
                 }
             </details>
@@ -68,7 +70,9 @@ fn render_project(
     project: &WorkProject<'_>,
     index: usize,
     selected: Option<&wire::TaskStamp>,
+    map: &UseStateHandle<WorkMapState>,
     select: &Callback<wire::TaskStamp>,
+    toggle_map_root: &Callback<wire::TaskStamp>,
 ) -> Html {
     let heading = format!("work-project-{index}");
     html! {
@@ -86,7 +90,7 @@ fn render_project(
             </header>
             <div class="work-buckets">
                 {for OPERATIONAL_BUCKETS.into_iter().map(|availability| {
-                    render_bucket(work, project, availability, selected, select)
+                    render_bucket(work, project, availability, selected, map, select, toggle_map_root)
                 })}
             </div>
         </section>
@@ -98,7 +102,9 @@ fn render_bucket(
     project: &WorkProject<'_>,
     availability: WorkAvailability,
     selected: Option<&wire::TaskStamp>,
+    map: &UseStateHandle<WorkMapState>,
     select: &Callback<wire::TaskStamp>,
+    toggle_map_root: &Callback<wire::TaskStamp>,
 ) -> Html {
     let tasks = project
         .tasks()
@@ -117,7 +123,7 @@ fn render_bucket(
                 <p class="work-bucket-empty">{format!("No {} tasks.", label.to_lowercase())}</p>
             } else {
                 <div class="work-card-list">
-                    {for tasks.into_iter().map(|task| render_card(task, selected, select))}
+                    {for tasks.into_iter().map(|task| render_card(task, selected, map, select, toggle_map_root))}
                 </div>
             }
         </section>
@@ -127,7 +133,9 @@ fn render_bucket(
 fn render_card(
     task: &WorkTask<'_>,
     selected: Option<&wire::TaskStamp>,
+    map: &UseStateHandle<WorkMapState>,
     select: &Callback<wire::TaskStamp>,
+    toggle_map_root: &Callback<wire::TaskStamp>,
 ) -> Html {
     let row = task.row();
     let statement = &row.statement.body;
@@ -144,6 +152,13 @@ fn render_card(
     let completion = workflow.completion.as_ref().map(ToString::to_string);
     let born = statement.born.clone();
     let is_selected = selected == Some(&born);
+    let is_pinned = map.pinned(&born);
+    let pin_disabled = !is_pinned && map.pin_limit_reached();
+    let toggle_pin = {
+        let toggle_map_root = toggle_map_root.clone();
+        let born = born.clone();
+        Callback::from(move |_| toggle_map_root.emit(born.clone()))
+    };
     let open = {
         let select = select.clone();
         let born = born.clone();
@@ -152,7 +167,11 @@ fn render_card(
     html! {
         <article
             key={born.to_string()}
-            class={classes!("work-card", is_selected.then_some("work-card--selected"))}
+            class={classes!(
+                "work-card",
+                is_selected.then_some("work-card--selected"),
+                is_pinned.then_some("work-card--mapped"),
+            )}
             data-work-availability={availability_key(availability)}
             data-selected={is_selected.to_string()}
             aria-label={format!("{}: {}, {label}", statement.handle, row.presentation_title())}
@@ -197,6 +216,18 @@ fn render_card(
                     </div>
                 }
             </dl>
+            <button
+                type="button"
+                class="work-card-map-toggle"
+                aria-label={format!(
+                    "{} {} in relationship map",
+                    if is_pinned { "Remove" } else { "Pin" },
+                    statement.handle,
+                )}
+                aria-pressed={is_pinned.to_string()}
+                disabled={pin_disabled}
+                onclick={toggle_pin}
+            >{if is_pinned { "Mapped" } else { "+ Map" }}</button>
         </article>
     }
 }
