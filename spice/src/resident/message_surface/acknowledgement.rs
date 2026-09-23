@@ -253,49 +253,57 @@ fn acknowledged_context_text(
     mark_acknowledged_context(marker, &directive.text)
 }
 
-/// Prefix one ordinary acknowledged directive with its acknowledgement marker.
+/// Mark one ordinary acknowledged directive where the operator's own words start.
 ///
-/// The marker shares the first line when that line reads as paragraph text so
-/// the Canvas pill sits inline with the directive. A first line that opens
-/// another block (a nested operator quote, list, heading, table, fence, rule,
-/// or indented code) keeps its structure beneath a marker paragraph of its own.
+/// A directive commonly carries quotation it is answering -- an agent card, an
+/// earlier exchange -- and the direction itself is the prose left outside those
+/// quotes. The marker therefore anchors the last run of unquoted lines:
+/// scanning back from the end, quoted and blank lines are passed over, and the
+/// run holding the first line found reaches back to the quote above it or to
+/// the start of the directive. A directive that quotes nothing anchors at its
+/// first line, which is the head the marker has always taken.
 ///
-/// One nested quote needs no paragraph: an operator who quotes an acknowledged
-/// agent card and replies beneath it hands back text whose nested quote already
-/// heads with the ACK marker. Canvas badges the first authenticated marker it
-/// meets inside a quote, so the retired marker stays out of the way and the
-/// pill lands on the quoted one, where the operator reads the text. Pending
-/// credit never rides that marker, because the quoted card earned its badge
-/// under a key the journal already retired, not the one still held.
+/// The marker shares that line when it reads as paragraph text, so the Canvas
+/// pill sits inline with the words the operator wrote. A line that opens
+/// another block (list, heading, table, fence, rule, or indented code) keeps
+/// its structure beneath a marker paragraph of its own, and a marker paragraph
+/// always stands clear of the quote above it so no line lazily continues it.
 fn mark_acknowledged_context<'a>(marker: &str, text: &'a str) -> Cow<'a, str> {
     if text.is_empty() {
         return Cow::Owned(marker.to_owned());
     }
-    let first = text.split('\n').next().unwrap_or_default();
+    let Some(anchor) = own_words_offset(text) else {
+        return Cow::Owned(format!("{marker}\n\n{text}"));
+    };
+    let (quoted, own) = text.split_at(anchor);
+    let first = own.split('\n').next().unwrap_or_default();
     if opens_paragraph_text(first) {
-        Cow::Owned(format!("{marker} {text}"))
-    } else if marker == wire::stream::ACK_MARKER && quote_heads_with(first, marker) {
-        Cow::Borrowed(text)
+        Cow::Owned(format!("{quoted}{marker} {own}"))
+    } else if quoted.is_empty() || quoted.ends_with("\n\n") {
+        Cow::Owned(format!("{quoted}{marker}\n\n{own}"))
     } else {
-        Cow::Owned(format!("{marker}\n\n{text}"))
+        Cow::Owned(format!("{quoted}\n{marker}\n\n{own}"))
     }
 }
 
-/// Whether a line that opens a nested quote carries `marker` as its first word.
+/// Where the directive's last unquoted run begins.
 ///
-/// Each quote level is one `>` and the single space the composer places after
-/// it, so the marker is read where the innermost quote's paragraph begins.
-fn quote_heads_with(line: &str, marker: &str) -> bool {
-    let mut quoted = line.trim_start();
-    if !quoted.starts_with('>') {
-        return false;
+/// `None` answers a directive that is quotation and blank lines all the way
+/// down: nothing of the operator's own is left for the marker to sit beside,
+/// so the caller gives it a paragraph above the whole quotation instead.
+fn own_words_offset(text: &str) -> Option<usize> {
+    let mut offset = 0;
+    let mut run = None;
+    let mut last = None;
+    for line in text.split('\n') {
+        if line.trim_start().starts_with('>') {
+            run = None;
+        } else if !line.trim().is_empty() {
+            last = Some(*run.get_or_insert(offset));
+        }
+        offset += line.len() + 1;
     }
-    while let Some(deeper) = quoted.strip_prefix('>') {
-        quoted = deeper.strip_prefix(' ').unwrap_or(deeper);
-    }
-    quoted
-        .strip_prefix(marker)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+    last
 }
 
 fn opens_paragraph_text(line: &str) -> bool {

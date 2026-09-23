@@ -319,7 +319,7 @@ fn inline_packets_render_each_context_and_body_in_source_order() {
 }
 
 #[test]
-fn operator_reply_quotes_remain_nested_inside_acknowledgement_context() {
+fn the_marker_lands_on_the_operator_words_below_a_quote() {
     let mut directives = directives(&[(
         "1kQwPZtK",
         "> The original assertion remains visible.\n\napproved",
@@ -332,7 +332,7 @@ fn operator_reply_quotes_remain_nested_inside_acknowledgement_context() {
             event(),
         )
         .expect("nested acknowledgment presents"),
-        "> [ACK PENDING]\n>\n> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
+        "> > The original assertion remains visible.\n>\n> [ACK PENDING] approved\n\nApplied.",
     );
     retire(&mut directives, "1kQwPZtK");
     assert_eq!(
@@ -342,12 +342,73 @@ fn operator_reply_quotes_remain_nested_inside_acknowledgement_context() {
             event(),
         )
         .expect("retired nested acknowledgment presents"),
-        "> [ACK]\n>\n> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
+        "> > The original assertion remains visible.\n>\n> [ACK] approved\n\nApplied.",
     );
 }
 
 #[test]
-fn a_quoted_acknowledged_card_lends_its_marker_to_the_retired_badge() {
+fn trailing_quotation_is_passed_over_and_a_block_hunk_keeps_its_own_paragraph() {
+    let directives = directives(&[(
+        "1kQwPZtK",
+        concat!(
+            "> quoted context\n",
+            "\n",
+            "1. First step\n",
+            "2. Second step\n",
+            "\n",
+            "> trailing quotation\n",
+        ),
+    )]);
+
+    assert_eq!(
+        present_steering_acknowledgements_with_directives(
+            "ACK 1kQwPZtK: Applied.",
+            &directives,
+            event(),
+        )
+        .expect("acknowledgment presents"),
+        concat!(
+            "> > quoted context\n",
+            ">\n",
+            "> [ACK PENDING]\n",
+            ">\n",
+            "> 1. First step\n",
+            "> 2. Second step\n",
+            ">\n",
+            "> > trailing quotation\n",
+            ">\n\n",
+            "Applied.",
+        ),
+    );
+}
+
+#[test]
+fn a_directive_that_is_only_quotation_keeps_its_marker_above() {
+    let mut quoted = directives(&[(
+        "1kQwPZtK",
+        "> [ACK] Tell me what the task is even about\n> \n> GIT-dSfJfCXfp is the admission-depth task.\n",
+    )]);
+    retire(&mut quoted, "1kQwPZtK");
+    assert_eq!(
+        present_steering_acknowledgements_with_directives(
+            "ACK 1kQwPZtK: deleting GIT-dSfJfCXfp as directed.",
+            &quoted,
+            event(),
+        )
+        .expect("retired acknowledgment presents"),
+        concat!(
+            "> [ACK]\n>\n",
+            "> > [ACK] Tell me what the task is even about\n",
+            "> > \n",
+            "> > GIT-dSfJfCXfp is the admission-depth task.\n",
+            ">\n\n",
+            "Deleting GIT-dSfJfCXfp as directed.",
+        ),
+    );
+}
+
+#[test]
+fn a_quoted_card_never_moves_the_marker_off_the_directive() {
     let text = "ACK 1kQwPZtK: deleting GIT-dSfJfCXfp as directed.";
     let quoted_card = concat!(
         "> > [ACK] Tell me what the task is even about because I don't recognize it\n",
@@ -357,28 +418,33 @@ fn a_quoted_acknowledged_card_lends_its_marker_to_the_retired_badge() {
         "Delete it",
     );
     let mut quoted = directives(&[("1kQwPZtK", quoted_card)]);
-    let nested = concat!(
-        "> > > [ACK] Tell me what the task is even about because I don't recognize it\n",
-        "> > \n",
-        "> > GIT-dSfJfCXfp is the task-git admission-depth task; summary follows after the ack.\n",
-        ">\n",
-        "> Delete it\n",
-        "\n",
-        "Deleting GIT-dSfJfCXfp as directed.",
-    );
+    let presented = |marker: &str| {
+        format!(
+            concat!(
+                "> > > [ACK] Tell me what the task is even about because I don't recognize it\n",
+                "> > \n",
+                "> > GIT-dSfJfCXfp is the task-git admission-depth task; summary follows after the ack.\n",
+                ">\n",
+                "> {} Delete it\n",
+                "\n",
+                "Deleting GIT-dSfJfCXfp as directed.",
+            ),
+            marker,
+        )
+    };
 
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &quoted, event())
             .expect("pending acknowledgment presents"),
-        format!("> [ACK PENDING]\n>\n{nested}"),
-        "pending credit keeps its own paragraph above the quoted marker",
+        presented(wire::stream::ACK_PENDING_MARKER),
+        "pending credit marks the operator's own words, not the card they quoted",
     );
     retire(&mut quoted, "1kQwPZtK");
     assert_eq!(
         present_steering_acknowledgements_with_directives(text, &quoted, event())
             .expect("retired acknowledgment presents"),
-        nested,
-        "the quoted marker is the one Canvas badges",
+        presented(wire::stream::ACK_MARKER),
+        "the retired marker stays on the directive the operator wrote",
     );
     assert_eq!(
         message_badges(text, Some(&quoted), event()),
@@ -386,18 +452,6 @@ fn a_quoted_acknowledged_card_lends_its_marker_to_the_retired_badge() {
             acknowledgements: 1,
             ..wire::AgentMessageBadges::default()
         },
-    );
-
-    let mut still_pending = directives(&[(
-        "1kQwPZtK",
-        "> [ACK PENDING] Keep the current path.\n\nDelete it",
-    )]);
-    retire(&mut still_pending, "1kQwPZtK");
-    assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &still_pending, event())
-            .expect("retired acknowledgment presents"),
-        "> [ACK]\n>\n> > [ACK PENDING] Keep the current path.\n>\n> Delete it\n\nDeleting GIT-dSfJfCXfp as directed.",
-        "a card quoted while pending carries no marker Canvas would credit",
     );
 }
 
