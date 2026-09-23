@@ -4,6 +4,14 @@
 //! precedence, stable stem identity, full-project grouping, relationship
 //! summaries, counts, and ranking so chrome and Work views cannot drift.
 
+mod relationship;
+pub use relationship::{
+    WorkRelationshipDirection, WorkRelationshipEdge, WorkRelationshipError,
+    WorkRelationshipExpansion, WorkRelationshipFrontier, WorkRelationshipGraph,
+    WorkRelationshipKind, WorkRelationshipNode, WorkRelationshipOptions,
+    WorkRelationshipOriginNode, WorkRelationshipTaskNode,
+};
+
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::{self, Display, Formatter};
