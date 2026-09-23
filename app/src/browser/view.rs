@@ -140,11 +140,6 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
             if let SpeechStatus::Failed(issue) = &**render.speech_status {
                 <p class="form-refusal" role="alert">{issue}</p>
             }
-            if let SpeechStatus::Playing { voice: Some(voice) } = &**render.speech_status {
-                <p class="speech-voice" data-speech-voice={voice.clone()}>
-                    {format!("Speaking as {voice}")}
-                </p>
-            }
             {render_workspace(&render, active_axis, work)}
         </div>
     }
