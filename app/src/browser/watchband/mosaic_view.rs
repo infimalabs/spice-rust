@@ -5,6 +5,7 @@ use super::*;
 use yew::functional::UseReducerDispatcher;
 
 const MIN_MEASURABLE_WIDTH_PX: i32 = 24;
+mod composer_collapse;
 mod history;
 pub(super) use history::HistorySender;
 use history::use_history_paging;
@@ -556,6 +557,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(geometry_width));
     let max_row = committed_plane.map(crate::mosaic_plane::PersistentLanePlane::max_row);
     use_plane_scroll(host.clone(), (*committed).clone());
+    composer_collapse::use_composer_collapse(host.clone());
     MosaicPlaneView {
         properties,
         measurement_width,
