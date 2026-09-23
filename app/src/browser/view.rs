@@ -7,6 +7,9 @@ pub(super) mod chrome;
 mod team_menu;
 mod work_board;
 mod work_detail;
+mod work_map;
+
+pub(super) use work_map::WorkMapState;
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
@@ -83,6 +86,7 @@ pub(super) struct CanvasRender<'a> {
     pub sender: &'a SenderHandle,
     pub agents: &'a AgentControls,
     pub selected_task: &'a UseStateHandle<Option<wire::TaskStamp>>,
+    pub work_map: &'a UseStateHandle<WorkMapState>,
     pub detail_close: &'a NodeRef,
     pub note_text: &'a UseStateHandle<String>,
     pub note_notice: &'a UseStateHandle<Notice>,
@@ -385,6 +389,7 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
     let stale = matches!(&**render.connection, Connection::Offline(_));
     let selected = (**render.selected_task).as_ref();
     let detail = selected.and_then(|task| runtime.and_then(|runtime| runtime.task_detail(task)));
+    let toggle_map_root = work_map::toggle_root_callback(render.work_map.clone());
     html! {
         <div class="work-layout" data-work-scope={scope_key}>
             <section tabindex="-1" class="section work-board-section">
@@ -397,13 +402,16 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
                     render.work_scope,
                     stale,
                     selected,
+                    render.work_map,
                     render.select_task.clone(),
+                    toggle_map_root,
                 )}
             </section>
             {work_detail::render(work_detail::WorkDetailRender {
                 work,
                 scope: render.work_scope,
                 selected,
+                map: render.work_map,
                 detail,
                 stale,
                 can_note,
