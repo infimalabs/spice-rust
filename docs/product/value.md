@@ -544,25 +544,26 @@ operator's request immediate without pretending it has already settled.
 
 ```mermaid
 flowchart TD
-  R["mode rail: compose, tasks, metrics, info"] --> P["selected pane replaces content"]
-  P -- "tasks, metrics, info" --> X["exclusive mode content<br/>no message plane mounted"]
-  P -- "compose" --> C["bounded team-compose<br/>outer vertical scroll"]
+  R["mode rail: Info | Work | Chat"] --> P["selected pane replaces content"]
+  P -- "Info or Work" --> X["exclusive mode content<br/>no message plane mounted"]
+  P -- "Chat" --> C["one shared vertical budget"]
   C --> H["composer columns<br/>horizontal overflow"]
-  C --> S["nested mosaic plane<br/>its own vertical scroll"]
+  C --> S["downward scroll<br/>hide composer, then move cards"]
+  S --> U["upward scroll<br/>reveal composer, then move cards"]
 ```
 
-Four views per live team appear on one rail, with the selected mode retained per
+Three views per live team appear on one rail, with the selected mode retained per
 team. Selecting a mode directly replaces pane content; there is no slide
-transition. Tasks, Metrics, and Info replace Compose completely and do not mount
-the message plane. Compose places its form, ticker, and activity inside one
-bounded outer vertical scroller; its member columns own horizontal overflow,
-and the mosaic plane owns a nested vertical scroller. Moving the outer Compose
-scroll may move the whole message plane, while scrolling the nested plane moves
-only its cards.
+transition. Info and Work replace Chat completely and do not mount the message
+plane. Chat's member columns own horizontal overflow. The composer and mosaic
+share one vertical gesture: downward wheel or touch motion translates and clips
+the complete composer by the same number of pixels before the card viewport
+scrolls; upward motion reverses that handoff. The team toolbar and ticker remain
+fixed above both.
 
-**Value:** a team console is narrow by construction. Exclusive modes spend the
-available surface on one job, while Compose keeps wide member columns contained
-and gives the dense message lattice a local reading viewport once it is in view.
+**Value:** the operator can turn the whole console into a reading surface
+without a toggle, threshold, or animation. The composer remains mounted, so
+drafts and controls return exactly as they were when the gesture reverses.
 
 ### The reading contract
 

@@ -557,6 +557,7 @@
 .team-pane > .empty { flex: 1 1 auto; }
 
 .team-compose {
+  --team-composer-collapse: 0px;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
@@ -575,6 +576,17 @@
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   padding: 8px 8px var(--team-composer-edge-gap);
+}
+/* Scroll intent spends the team's vertical budget on the composer first.
+   Transform clips the form against .team-compose while the matching negative
+   margin gives every consumed pixel directly to the activity viewport. */
+.team-composer {
+  margin-bottom: calc(-1 * var(--team-composer-collapse));
+  transform: translateY(calc(-1 * var(--team-composer-collapse)));
+  will-change: transform;
+}
+.team-compose[data-composer-fully-collapsed="true"] .team-composer {
+  pointer-events: none;
 }
 
 /* Agent columns keep a usable editing width and make their own east/west
