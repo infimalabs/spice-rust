@@ -899,3 +899,262 @@ tbody tr:last-child td { border-bottom: 0; }
 .team-import-heading { grid-column: 1 / -1; margin: 8px 0 0; font-size: .8rem; }
 .team-import-empty { grid-column: 1 / -1; color: var(--muted); text-align: center; }
 .canvas-team-open { min-height: 30px; white-space: nowrap; }
+.work-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(16rem, 19rem);
+  gap: 24px;
+  align-items: start;
+}
+
+.work-board-section,
+.work-board,
+.work-swimlanes,
+.work-swimlane,
+.work-buckets,
+.work-bucket,
+.work-card-list { min-width: 0; }
+
+.work-board-section { padding-top: 0; }
+.work-note { position: sticky; top: 76px; padding-top: 0; }
+
+.work-board-state {
+  margin: 0 0 14px;
+  padding: 9px 11px;
+  border: 1px solid var(--warning);
+  border-radius: 7px;
+  background: var(--warning-soft);
+  color: var(--warning);
+  font-size: .78rem;
+}
+
+.work-swimlanes { display: grid; gap: 20px; }
+
+.work-swimlane {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.work-swimlane-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(110deg, var(--panel), var(--accent-soft));
+}
+
+.work-swimlane-heading h2 {
+  margin: 2px 0 0;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.work-project-suffix {
+  margin: 0;
+  color: var(--accent);
+  font-size: .66rem;
+  font-weight: 760;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.work-buckets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.work-bucket {
+  min-height: 9rem;
+  padding: 10px;
+  border-right: 1px solid var(--line-soft);
+  background: color-mix(in srgb, var(--page) 70%, var(--panel));
+}
+
+.work-bucket:last-child { border-right: 0; }
+
+.work-bucket-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 28px;
+  margin-bottom: 9px;
+  color: var(--muted);
+}
+
+.work-bucket-heading h3 {
+  margin: 0;
+  font-size: .72rem;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+
+.work-bucket-heading span,
+.work-history-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--control);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  color: var(--muted);
+  font-size: .66rem;
+  font-weight: 700;
+  text-align: center;
+}
+
+.work-bucket[data-work-bucket="in-flight"] .work-bucket-heading { color: var(--accent); }
+.work-bucket[data-work-bucket="blocked"] .work-bucket-heading { color: var(--danger); }
+.work-bucket[data-work-bucket="deferred"] .work-bucket-heading { color: var(--warning); }
+
+.work-card-list { display: grid; gap: 9px; }
+
+.work-bucket-empty {
+  margin: 22px 5px;
+  color: var(--muted);
+  font-size: .72rem;
+  text-align: center;
+}
+
+.work-card {
+  display: grid;
+  gap: 9px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  background: var(--control);
+  box-shadow: var(--shadow);
+  overflow-wrap: anywhere;
+}
+
+.work-card[data-work-availability="ready"] { border-left-color: var(--focus); }
+.work-card[data-work-availability="blocked"] { border-left-color: var(--danger); }
+.work-card[data-work-availability="deferred"] { border-left-color: var(--warning); }
+.work-card[data-work-availability="terminal"] { border-left-color: var(--muted); }
+
+.work-card-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.work-card-handle {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font: 650 .67rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-card-priority {
+  flex: none;
+  color: var(--accent);
+  font: 750 .67rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.work-card h4 {
+  margin: 0;
+  font-size: .84rem;
+  line-height: 1.32;
+}
+
+.work-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.work-card-badges .tag {
+  min-height: 19px;
+  padding-inline: 5px;
+  font-size: .63rem;
+}
+
+.work-card-facts {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  color: var(--muted);
+  font-size: .68rem;
+}
+
+.work-card-facts > div {
+  display: grid;
+  grid-template-columns: 4.7em minmax(0, 1fr);
+  gap: 7px;
+}
+
+.work-card-facts dt { font-weight: 700; }
+.work-card-facts dd { min-width: 0; margin: 0; }
+.work-card-alert dd { color: var(--danger); }
+.work-card-wake dd { color: var(--warning); }
+.work-card-lease-time { color: var(--accent); }
+
+.work-history {
+  margin-top: 20px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.work-history > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 8px 13px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: .8rem;
+  font-weight: 700;
+  list-style-position: inside;
+}
+
+.work-history > summary:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.work-history[open] > summary { border-bottom: 1px solid var(--line); }
+
+.work-history-list {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+}
+
+/* Cards never animate or expose a drag cursor: board updates replace their
+   stable keyed position without implying an operator mutation. */
+
+@media (max-width: 1180px) {
+  .work-layout { grid-template-columns: 1fr; }
+  .work-note { position: static; }
+}
+
+@media (max-width: 920px) {
+  .work-buckets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .work-bucket:nth-child(2) { border-right: 0; }
+  .work-bucket:nth-child(-n + 2) { border-bottom: 1px solid var(--line-soft); }
+  .work-history-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .work-buckets,
+  .work-history-list { grid-template-columns: 1fr; }
+  .work-bucket,
+  .work-bucket:nth-child(2) {
+    border-right: 0;
+    border-bottom: 1px solid var(--line-soft);
+  }
+  .work-bucket:last-child { border-bottom: 0; }
+  .work-swimlane-heading { align-items: flex-start; padding-inline: 12px; }
+}

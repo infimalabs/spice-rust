@@ -1298,7 +1298,7 @@ fn short(value: &str) -> String {
 }
 
 fn phase_class(status: &str) -> Classes {
-    if status == "completed" {
+    if matches!(status, "completed" | "deleted") {
         classes!("tag")
     } else {
         classes!("tag", "active")
