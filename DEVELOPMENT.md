@@ -105,33 +105,35 @@ requires it. Actual browser interaction evidence is disposable feedback, not a
 reusable browser-shard receipt. No separate slow-test classification command or
 JavaScript test package remains.
 
-## Browser evidence uses the host color scheme
+## Browser evidence defaults to the operator's dark theme
 
-A browser opened to look at Canvas answers what the operator sees, so it
-inherits the host OS light/dark setting by default. A theme matrix may override
-the scheme deliberately; a screenshot that silently disagrees with the operator's
-desktop is a wrong answer, not a stylistic difference. This never touches an
-explicit Canvas theme preference: a stored `spice:canvas-theme` still wins over
-the host scheme, exactly as it does for the operator.
+Use the repository-owned `launchCanvasBrowser` helper for disposable Canvas
+browser checks. It creates a headless Playwright browser, context, and page with
+`prefers-color-scheme: dark`; callers do not repeat theme setup:
 
-Headless engines do not inherit the setting on their own. Measured here with
-Playwright 1.62 on macOS in Dark: the default scheme reports light in Chromium,
-Firefox, and WebKit; `colorScheme: null` inherits only in WebKit; Chromium's
-`--force-dark-mode` leaves `prefers-color-scheme` light. Detect the host scheme
-and pass it explicitly.
+```js
+import { chromium } from "playwright";
+import launchCanvasBrowser from "./app/browser/canvas.mjs";
 
-```sh
-# macOS: the key is absent in Light.
-[ "$(defaults read -g AppleInterfaceStyle 2>/dev/null)" = Dark ] && scheme=dark || scheme=light
-# GNOME:
-case "$(gsettings get org.gnome.desktop.interface color-scheme)" in *prefer-dark*) scheme=dark;; *) scheme=light;; esac
+const canvas = await launchCanvasBrowser(chromium);
+try {
+  await canvas.page.goto(canvasUrl);
+  // Inspect or capture the actual Canvas surface.
+} finally {
+  await canvas.close();
+}
 ```
 
-| Launcher | Pass the detected scheme with |
-| --- | --- |
-| Playwright (any engine) | `browser.newPage({ colorScheme: scheme })`, or `newContext` for a whole run. |
-| System Firefox `--headless` | A profile `user.js` carrying `user_pref("ui.systemUsesDarkTheme", 1);` for dark. |
-| System Chrome/Chromium `--headless` | CDP `Emulation.setEmulatedMedia` with `prefers-color-scheme`; command-line dark flags do not move the media query. |
+An intentional theme-matrix check overrides
+`contextOptions.colorScheme`; ordinary screenshots and visual checks retain the
+dark default. This browser default never changes an explicit Canvas preference:
+a stored `spice:canvas-theme` still wins.
+
+```js
+const lightCanvas = await launchCanvasBrowser(chromium, {
+  contextOptions: { colorScheme: "light" },
+});
+```
 
 ## Disk budget and safe cleanup
 
