@@ -121,6 +121,32 @@ pub enum PhaseRefusal {
     Completed,
 }
 
+/// The one deliverable a declared phase authorizes.
+///
+/// A flow is an open vocabulary, so a phase this repository does not spell
+/// answers `None` rather than guessing at what it wants. The three declared
+/// stations differ in what they may touch, which is the whole reason a lane
+/// must read its phase before it acts: plan moves board state, todo moves
+/// repository files, and review returns a verdict on work already integrated.
+#[must_use]
+pub fn deliverable(phase: &Phase) -> Option<&'static str> {
+    match phase.as_str() {
+        "plan" => Some(
+            "board state is the deliverable: make the execution contract explicit or \
+             decompose it into accepted children; do not edit or commit repository files",
+        ),
+        "todo" => Some(
+            "repository work is the deliverable: implement the acceptance this task \
+             carries, prove it, and commit while holding this claim",
+        ),
+        "review" => Some(
+            "a verdict is the deliverable: inspect the integrated diff, check its \
+             evidence, and record a clean or finding review",
+        ),
+        _ => None,
+    }
+}
+
 fn bind_claim(entry: &Entry, active: &Active<'_>) -> Result<(), PhaseRefusal> {
     if active.handle() == entry.handle() {
         Ok(())

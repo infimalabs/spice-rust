@@ -165,6 +165,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
                 warnings: Box::default(),
                 creation_context: None,
                 next: None,
+                phase: None,
             },
         )
         .expect("the claim receipt builds");
@@ -246,6 +247,7 @@ fn free(journal: &mut Journal, command: u8) {
                 warnings: Box::default(),
                 creation_context: None,
                 next: None,
+                phase: None,
             },
         )
         .expect("the release receipt builds");
@@ -302,6 +304,7 @@ fn renew(journal: &mut Journal, command: u8, until: u8) {
                 warnings: Box::default(),
                 creation_context: None,
                 next: None,
+                phase: None,
             },
         )
         .expect("the renewal receipt builds");
@@ -1168,6 +1171,7 @@ fn a_task_command_that_appends_no_fact_is_refused_instead_of_receipted() {
                 warnings: Box::default(),
                 creation_context: None,
                 next: None,
+                phase: None,
             },
         )
         .expect("the receipt itself is well formed");

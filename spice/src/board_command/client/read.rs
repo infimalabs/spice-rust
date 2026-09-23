@@ -870,20 +870,24 @@ pub(in crate::board_command) fn task_status(
     ))
 }
 
-/// Name the actor's own claim with the lease posture that governs it.
+/// Name the actor's own claim with the phase it holds and the lease posture.
 ///
-/// A lease the resident rolls while this occupant stays seated needs no
-/// reclaim, so the posture is the actionable part of the line, not the expiry.
+/// The phase is what decides the lane's next action, and a lane that resumed,
+/// compacted, or lost its assignment answer reads status before it reads any
+/// one task. A lease the resident rolls while this occupant stays seated needs
+/// no reclaim, so the posture is the actionable part of the rest of the line,
+/// not the expiry.
 fn actor_claim_lease(board: &BoardAnswer, entry: &Entry) -> String {
     let handle = entry.handle();
+    let phase = entry.workflow().phase.as_str();
     let Some(lease) = entry.lease() else {
-        return handle.to_string();
+        return format!("{handle} phase:{phase}");
     };
     let rolling = entry
         .claim()
         .is_some_and(|claim| resident_rolls_lease(board, claim, lease));
     let posture = if rolling { "rolling until" } else { "until" };
-    format!("{handle} {posture} {}", lease.expiry)
+    format!("{handle} phase:{phase} {posture} {}", lease.expiry)
 }
 
 /// Whether the resident renews this lease on its own rolling horizon.
