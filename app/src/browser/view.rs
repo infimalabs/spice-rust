@@ -1,10 +1,11 @@
 //! Canvas surface rendering for the operator browser app.
 
 use super::*;
-use crate::work::{WorkAvailability, WorkProjection, WorkScope};
+use crate::work::{WorkProjection, WorkScope};
 
 pub(super) mod chrome;
 mod team_menu;
+mod work_board;
 
 #[derive(Clone)]
 pub(super) struct AgentControls {
@@ -357,129 +358,98 @@ pub(super) fn render_axis(
     work: Option<&WorkProjection<'_>>,
 ) -> Html {
     match axis {
-        Axis::Flow => render_flow(
-            render.surface,
-            work,
-            render.work_scope,
-            render.note_task,
-            render.note_text,
-            render.note_notice,
-            render.submit_note.clone(),
-        ),
+        Axis::Flow => render_flow(render, work),
         Axis::Topology => render_topology(render.surface),
     }
 }
 
-pub(super) fn render_flow(
-    surface: &SurfaceData,
-    work: Option<&WorkProjection<'_>>,
-    work_scope: &WorkScope,
+pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
+    let Some(work) = work else {
+        return match &**render.connection {
+            Connection::Starting | Connection::Connecting => {
+                empty("Loading the current board snapshot.")
+            }
+            Connection::Offline(_) => empty("Board snapshot unavailable while reconnecting."),
+            Connection::Online { .. } => empty("No board snapshot is available."),
+        };
+    };
+    let surface = render.surface.read();
+    let can_note = surface
+        .as_ref()
+        .is_some_and(|runtime| runtime.offers(CommandKind::TaskNote));
+    let scoped_stem = render
+        .work_scope
+        .stem()
+        .filter(|identity| work.stem(identity).is_some());
+    let counts = work.scope_counts(render.work_scope);
+    let scope_key = scoped_stem.map_or_else(|| "all".to_owned(), ToString::to_string);
+    let stale = matches!(&**render.connection, Connection::Offline(_));
+    html! {
+        <div class="work-layout" data-work-scope={scope_key}>
+            <section class="section work-board-section">
+                <div class="section-heading">
+                    <h2>{"Open tasks"}</h2>
+                    <span class="section-count">{format!("{} tasks", counts.open())}</span>
+                </div>
+                {work_board::render(work, render.work_scope, stale)}
+            </section>
+            if can_note {
+                {render_note_form(
+                    work,
+                    render.note_task,
+                    render.note_text,
+                    render.note_notice,
+                    render.submit_note.clone(),
+                )}
+            }
+        </div>
+    }
+}
+
+fn render_note_form(
+    work: &WorkProjection<'_>,
     note_task: &UseStateHandle<String>,
     note_text: &UseStateHandle<String>,
     note_notice: &UseStateHandle<Notice>,
     submit_note: Callback<SubmitEvent>,
 ) -> Html {
-    let Some(work) = work else {
-        return empty("No board snapshot is available.");
-    };
-    let surface = surface.read();
-    let can_note = surface
-        .as_ref()
-        .is_some_and(|runtime| runtime.offers(CommandKind::TaskNote));
     let selected = (**note_task).clone();
     let note = (**note_text).clone();
-    let scoped_stem = work_scope
-        .stem()
-        .filter(|identity| work.stem(identity).is_some());
-    let counts = work.scope_counts(work_scope);
-    let scope_key = scoped_stem.map_or_else(|| "all".to_owned(), ToString::to_string);
     html! {
-        <div class="split" data-work-scope={scope_key}>
-            <section class="section">
-                <div class="section-heading">
-                    <h2>{"Open tasks"}</h2>
-                    <span class="section-count">{format!("{} tasks", counts.open())}</span>
-                </div>
-                <div class="table-wrap"><table>
-                    <thead><tr>
-                        <th>{"Task"}</th><th>{"Phase"}</th><th>{"Owner"}</th><th>{"Project"}</th>
-                    </tr></thead>
-                    <tbody>{for work.projects().iter()
-                        .filter(|project| project.counts().has_open())
-                        .filter(|project| scoped_stem.is_none_or(|identity| {
-                            work.stems()[project.stem()].identity() == identity
-                        }))
-                        .flat_map(|project| project.tasks().iter().copied())
-                        .filter_map(|index| {
-                            let projected = &work.tasks()[index];
-                            (projected.availability() != WorkAvailability::Terminal)
-                                .then_some(projected.row())
-                        })
-                        .map(|task| {
-                            let statement = &task.statement.body;
-                            let workflow = &task.workflow.body;
-                            let title = task.presentation_title().to_owned();
-                            html! {
-                                <tr key={statement.handle.to_string()}>
-                                    <td class="title-cell">
-                                        <div class="mono muted">{statement.handle.to_string()}</div>
-                                        <div>{title}</div>
-                                    </td>
-                                    <td><span class={phase_class(&workflow.status)}>
-                                        {workflow.phase.to_string()}
-                                    </span></td>
-                                    <td class="mono">{
-                                        workflow
-                                            .assignment
-                                            .as_ref()
-                                            .map(ToString::to_string)
-                                            .unwrap_or_else(|| "-".to_owned())
-                                    }</td>
-                                    <td>{statement.project.clone()}</td>
-                                </tr>
-                            }
-                        })}</tbody>
-                </table></div>
-            </section>
-            if can_note {
-                <section class="section">
-                    <div class="section-heading"><h2>{"Append observation"}</h2></div>
-                    <form class="form" onsubmit={submit_note}>
-                    <label for="note-task">{"Task"}</label>
-                    <input
-                        id="note-task"
-                        list="note-tasks"
-                        value={selected}
-                        placeholder="SPICE-1kKRRsDP"
-                        oninput={state_from_input(note_task.clone())}
-                    />
-                    <datalist id="note-tasks">
-                        {for work.tasks().iter().map(|task| {
-                            let row = task.row();
-                            let statement = &row.statement.body;
-                            let title = row.presentation_title().to_owned();
-                            html! {
-                                <option value={statement.handle.to_string()}>
-                                    {title}
-                                </option>
-                            }
-                        })}
-                    </datalist>
-                    <label for="note-body">{"Observation"}</label>
-                    <textarea
-                        id="note-body"
-                        value={note}
-                        oninput={state_from_textarea(note_text.clone())}
-                    ></textarea>
-                    <button
-                        type="submit"
-                        disabled={note_task.is_empty() || note_text.trim().is_empty()}
-                    >{"Add note"}</button>
-                    {render_notice(note_notice)}
-                    </form>
-                </section>
-            }
-        </div>
+        <section class="section work-note">
+            <div class="section-heading"><h2>{"Append observation"}</h2></div>
+            <form class="form" onsubmit={submit_note}>
+                <label for="note-task">{"Task"}</label>
+                <input
+                    id="note-task"
+                    list="note-tasks"
+                    value={selected}
+                    placeholder="SPICE-1kKRRsDP"
+                    oninput={state_from_input(note_task.clone())}
+                />
+                <datalist id="note-tasks">
+                    {for work.tasks().iter().map(|task| {
+                        let row = task.row();
+                        let statement = &row.statement.body;
+                        let title = row.presentation_title().to_owned();
+                        html! {
+                            <option value={statement.handle.to_string()}>{title}</option>
+                        }
+                    })}
+                </datalist>
+                <label for="note-body">{"Observation"}</label>
+                <textarea
+                    id="note-body"
+                    value={note}
+                    oninput={state_from_textarea(note_text.clone())}
+                ></textarea>
+                <button
+                    type="submit"
+                    disabled={note_task.is_empty() || note_text.trim().is_empty()}
+                >{"Add note"}</button>
+                {render_notice(note_notice)}
+            </form>
+        </section>
     }
 }
 
