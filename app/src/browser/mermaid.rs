@@ -160,38 +160,41 @@ struct Display {
 #[derive(Properties, PartialEq)]
 pub(super) struct MermaidImageProps {
     pub(super) source: AttrValue,
+    #[prop_or_default]
+    pub(super) node_ids: Rc<Vec<String>>,
+    #[prop_or_default]
+    pub(super) on_geometry: Callback<Option<Rc<crate::mermaid_geometry::Geometry>>>,
     #[prop_or(true)]
     pub(super) final_answer: bool,
 }
 
-/// Owned consumer: dropping/changing this component cancels its subscription.
-/// The original source remains text, including after parse/load/resource errors.
-#[function_component(MermaidImage)]
-pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
-    let context = use_context::<Context>().expect("Canvas diagram provider");
-    let host = use_node_ref();
-    let display = use_state(Display::default);
-    let retry = use_state(|| 0_u32);
-    let show_source = use_state_eq(|| false);
-    let counter = use_memo((), |()| Cell::new(0_u64));
-    let revision = use_memo(
-        (props.source.clone(), context.theme.clone(), *retry),
-        move |_| {
-            let next = counter.get().wrapping_add(1);
-            counter.set(next);
-            AttrValue::from(next.to_string())
-        },
-    );
-    let current_theme = context.theme.as_ref().ok().copied();
-    let previous = (display.theme == current_theme)
-        .then(|| display.image.clone())
-        .flatten();
-    use_effect_with((revision.clone(), context.clone()), {
-        let host = host.clone();
-        let source = props.source.clone();
-        let display = display.clone();
-        let previous = previous.clone();
-        move |(revision, context)| {
+struct RenderSubscription {
+    context: Context,
+    host: NodeRef,
+    source: AttrValue,
+    node_ids: Rc<Vec<String>>,
+    on_geometry: Callback<Option<Rc<crate::mermaid_geometry::Geometry>>>,
+    revision: Rc<AttrValue>,
+    current_theme: Option<Theme>,
+    previous: Option<AttrValue>,
+    display: UseStateHandle<Display>,
+}
+
+#[hook]
+fn use_render(subscription: RenderSubscription) {
+    let RenderSubscription {
+        context,
+        host,
+        source,
+        node_ids,
+        on_geometry,
+        revision,
+        current_theme,
+        previous,
+        display,
+    } = subscription;
+    use_effect_with((revision, context, on_geometry), {
+        move |(revision, context, on_geometry)| {
             let pending = Display {
                 revision: revision.as_ref().clone(),
                 theme: current_theme,
@@ -200,11 +203,16 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
                 pending: true,
             };
             display.set(pending.clone());
+            on_geometry.emit(None);
+            let on_result = on_geometry.clone();
             let callback = Callback::from(move |outcome: service::Outcome| {
                 let mut next = pending.clone();
                 next.pending = false;
                 match outcome {
-                    Ok(image) => next.image = Some(image),
+                    Ok(render) => {
+                        next.image = Some(render.image);
+                        on_result.emit(Some(render.geometry));
+                    }
                     Err(error) => next.error = Some(error),
                 }
                 display.set(next);
@@ -219,6 +227,7 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
                     service,
                     source,
                     theme,
+                    node_ids,
                     host,
                     revision.as_ref().clone(),
                     callback.clone(),
@@ -229,6 +238,46 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
             }
             move || drop(request)
         }
+    });
+}
+
+/// Owned consumer: dropping/changing this component cancels its subscription.
+/// The original source remains text, including after parse/load/resource errors.
+#[function_component(MermaidImage)]
+pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
+    let context = use_context::<Context>().expect("Canvas diagram provider");
+    let host = use_node_ref();
+    let display = use_state(Display::default);
+    let retry = use_state(|| 0_u32);
+    let show_source = use_state_eq(|| false);
+    let counter = use_memo((), |()| Cell::new(0_u64));
+    let revision = use_memo(
+        (
+            props.source.clone(),
+            context.theme.clone(),
+            props.node_ids.clone(),
+            *retry,
+        ),
+        move |_| {
+            let next = counter.get().wrapping_add(1);
+            counter.set(next);
+            AttrValue::from(next.to_string())
+        },
+    );
+    let current_theme = context.theme.as_ref().ok().copied();
+    let previous = (display.theme == current_theme)
+        .then(|| display.image.clone())
+        .flatten();
+    use_render(RenderSubscription {
+        context: context.clone(),
+        host: host.clone(),
+        source: props.source.clone(),
+        node_ids: props.node_ids.clone(),
+        on_geometry: props.on_geometry.clone(),
+        revision: revision.clone(),
+        current_theme,
+        previous: previous.clone(),
+        display: display.clone(),
     });
     let pending = display.revision != *revision || display.pending;
     let error = (!pending).then(|| display.error.clone()).flatten();

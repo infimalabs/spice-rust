@@ -4,17 +4,17 @@
 use std::rc::Rc;
 
 use base64::Engine as _;
-use js_sys::{Object, Reflect};
+use js_sys::{Array, Object, Reflect};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 use yew::AttrValue;
 
-use super::service::{Job, Service, Shared};
+use super::service::{Job, Render, Service, Shared};
 
 const OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const ERROR_UNITS: u32 = 500;
 const IMAGE_PREFIX: &str = "data:image/svg+xml;base64,";
-const PROTOCOL: f64 = 1.0;
+const PROTOCOL: f64 = 2.0;
 
 pub(super) struct Frame {
     parent: web_sys::Window,
@@ -99,6 +99,11 @@ impl Frame {
         ] {
             Reflect::set(&message, &JsValue::from_str(name), &value)?;
         }
+        let node_ids = Array::new();
+        for id in job.key.node_ids.iter() {
+            node_ids.push(&JsValue::from_str(id));
+        }
+        Reflect::set(&message, &JsValue::from_str("nodeIds"), &node_ids.into())?;
         // An opaque recipient requires '*'. Admission in both directions pins
         // the WindowProxy, generation and complete request envelope instead.
         self.child.post_message(&message, "*")
@@ -123,7 +128,7 @@ impl Drop for Frame {
 
 pub(super) struct DecodedImage {
     image: web_sys::HtmlImageElement,
-    url: AttrValue,
+    render: Render,
 }
 
 impl Drop for DecodedImage {
@@ -173,6 +178,7 @@ fn receive(shared: &Shared, event: web_sys::MessageEvent) {
         return;
     }
     let id = job.id;
+    let node_ids = job.key.node_ids.clone();
     let interested = Service::has_subscribers(job);
     drop(service);
     if !interested {
@@ -183,8 +189,10 @@ fn receive(shared: &Shared, event: web_sys::MessageEvent) {
             .unwrap_or_else(|| "Invalid diagram renderer error response".to_owned());
         Service::finish(shared, id, Err(error.into()));
     } else if matches(&data, "type", "rendered") {
-        match image_url(property(&data, "svg")) {
-            Ok(url) => decode(shared, id, url),
+        let result = response_geometry(&data, &node_ids)
+            .and_then(|geometry| image_url(property(&data, "svg")).map(|url| (url, geometry)));
+        match result {
+            Ok((url, geometry)) => decode(shared, id, url, geometry),
             Err(error) => Service::finish(shared, id, Err(error.into())),
         }
     }
@@ -195,6 +203,53 @@ fn bounded_string(value: JsValue, units: u32) -> Option<String> {
     (value.length() <= units)
         .then(|| value.as_string())
         .flatten()
+}
+
+fn response_geometry(
+    data: &JsValue,
+    expected: &[String],
+) -> Result<crate::mermaid_geometry::Geometry, &'static str> {
+    let geometry = property(data, "geometry");
+    let view_box = number_tuple(property(&geometry, "viewBox"))?;
+    let values = property(&geometry, "nodes");
+    if !Array::is_array(&values) {
+        return Err("Invalid diagram node geometry");
+    }
+    let values = Array::from(&values);
+    if values.length() as usize != expected.len()
+        || values.length() as usize > crate::mermaid_geometry::NODE_LIMIT
+    {
+        return Err("Incomplete diagram node geometry");
+    }
+    let mut nodes = Vec::with_capacity(values.length() as usize);
+    for value in values.iter() {
+        let id = bounded_string(
+            property(&value, "id"),
+            crate::mermaid_geometry::NODE_ID_BYTES as u32,
+        )
+        .ok_or("Invalid diagram node geometry ID")?;
+        let rect = number_tuple(property(&value, "rect"))?;
+        nodes.push((id, rect));
+    }
+    crate::mermaid_geometry::admit(expected, view_box, nodes)
+}
+
+fn number_tuple(value: JsValue) -> Result<[f64; 4], &'static str> {
+    if !Array::is_array(&value) {
+        return Err("Invalid diagram geometry tuple");
+    }
+    let values = Array::from(&value);
+    if values.length() != 4 {
+        return Err("Invalid diagram geometry tuple");
+    }
+    let mut tuple = [0.0; 4];
+    for (index, output) in tuple.iter_mut().enumerate() {
+        *output = values
+            .get(index as u32)
+            .as_f64()
+            .ok_or("Invalid diagram geometry number")?;
+    }
+    Ok(tuple)
 }
 
 fn image_url(value: JsValue) -> Result<AttrValue, &'static str> {
@@ -209,19 +264,23 @@ fn image_url(value: JsValue) -> Result<AttrValue, &'static str> {
     Ok(url.into())
 }
 
-fn decode(shared: &Shared, id: u32, url: AttrValue) {
+fn decode(shared: &Shared, id: u32, url: AttrValue, geometry: crate::mermaid_geometry::Geometry) {
     let Ok(image) = web_sys::HtmlImageElement::new() else {
         Service::finish(shared, id, Err("Could not create an SVG image".into()));
         return;
     };
     image.set_src(&url);
     let decoded = image.decode();
+    let render = Render {
+        image: url,
+        geometry: Rc::new(geometry),
+    };
     shared
         .borrow_mut()
         .active
         .as_mut()
         .expect("admitted render")
-        .decoding = Some(DecodedImage { image, url });
+        .decoding = Some(DecodedImage { image, render });
     let weak = Rc::downgrade(shared);
     spawn_local(async move {
         let result = JsFuture::from(decoded).await;
@@ -236,7 +295,7 @@ fn decode(shared: &Shared, id: u32, url: AttrValue) {
             return;
         };
         let outcome = if result.is_ok() && decoded.image.natural_width() > 0 {
-            Ok(decoded.url.clone())
+            Ok(decoded.render.clone())
         } else {
             Err("Browser could not decode the diagram SVG; source is still available".into())
         };
