@@ -790,17 +790,26 @@ impl EventDirectives<'_> {
     }
 
     /// Display may repeat an acknowledged context without repeating retirement.
-    /// Keep the lane and transcript-source boundary that authenticates it.
-    fn acknowledged_in_source(&self, key: &steer::Key) -> bool {
+    ///
+    /// The lane owns that conversation continuity across transcript replacement.
+    /// The original retirement locus remains the authority for retirement and
+    /// automatic speech; later sources only reuse its already-authenticated
+    /// context for presentation.
+    fn acknowledged_for_lane(&self, key: &steer::Key) -> bool {
         self.directives.0.get(key).is_some_and(|directive| {
             directive.lane == self.event.lane
                 && directive.disposition == wire::Disposition::Acked
-                && directive.retirement.is_some_and(|retirement| {
-                    retirement
-                        .source
-                        .is_none_or(|expected| self.event.source == Some(expected))
-                })
+                && !directive.review
+                && directive.retirement.is_some()
         })
+    }
+
+    /// The stable seal authenticating steering delivery to this lane.
+    ///
+    /// It is a presentation target rather than a directive: acknowledging it
+    /// never mutates steering standing or gains automatic-speech authority.
+    fn is_lane_seal(&self, key: &steer::Key) -> bool {
+        key == &steer::Key::for_identity(self.event.lane)
     }
 
     fn presents(
@@ -810,7 +819,8 @@ impl EventDirectives<'_> {
         locus: steer::ack::scan::Locus,
     ) -> bool {
         self.recognizes(key, disposition, locus)
-            || (disposition == wire::Disposition::Acked && self.acknowledged_in_source(key))
+            || (disposition == wire::Disposition::Acked
+                && (self.acknowledged_for_lane(key) || self.is_lane_seal(key)))
     }
 
     fn recognizes_authored(

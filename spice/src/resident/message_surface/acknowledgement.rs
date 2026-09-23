@@ -2,9 +2,10 @@
 //!
 //! An assistant header such as `ACK KEY: applied` presents as the directive it
 //! answers, quoted above the response prose. The quote carries the plain ACK
-//! marker once the journal retired the key in this source, including repeated
-//! responses; while the key is still pending the quote says so. Presentation
-//! never grants a repeated response retirement or automatic-speech authority.
+//! marker once the journal retired the key for this lane, including responses
+//! from later transcript sources; while the key is still pending the quote says
+//! so. Presentation never grants a repeated response retirement or
+//! automatic-speech authority.
 
 use std::borrow::Cow;
 
@@ -24,7 +25,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
         let separator = acknowledgement.separator;
         let packet = classify_packet(&standing, acknowledgement.recognitions);
         // Other historical dispositions add context only alongside a recognized
-        // response; an acknowledged key can present again in its own source.
+        // response; an acknowledged key can present again anywhere on its lane.
         if packet.recognized.is_empty() {
             continue;
         }
@@ -33,19 +34,25 @@ pub(super) fn present_steering_acknowledgements_with_directives(
             .ok_or_else(|| "acknowledgment header crossed a non-character boundary".to_owned())?;
         append_presented_source(&mut rendered, source, capitalize_body);
         capitalize_body = false;
-        if !packet.contexts.is_empty() {
+        if packet.bare_acknowledgement || !packet.contexts.is_empty() {
             start_quote_block(&mut rendered);
-            for (index, (key, state)) in packet.contexts.iter().enumerate() {
+            let mut separated = false;
+            if packet.bare_acknowledgement {
+                append_acknowledgement_quote(&mut rendered, wire::stream::ACK_MARKER);
+                separated = true;
+            }
+            for (key, state) in &packet.contexts {
                 let directive = directives.0.get(key).ok_or_else(|| {
                     format!("canonical acknowledgment recognition lost directive {key}")
                 })?;
-                if index > 0 {
+                if separated {
                     rendered.push_str("\n\n");
                 }
                 append_acknowledgement_quote(
                     &mut rendered,
                     &acknowledged_context_text(directive, *state),
                 );
+                separated = true;
             }
             rendered.push_str("\n\n");
         }
@@ -88,7 +95,7 @@ struct DisplayStanding<'a>(&'a EventDirectives<'a>);
 
 impl steer::Standing for DisplayStanding<'_> {
     fn disposition(&self, key: &steer::Key) -> Option<wire::Disposition> {
-        if self.0.acknowledged_in_source(key) {
+        if self.0.acknowledged_for_lane(key) || self.0.is_lane_seal(key) {
             Some(wire::Disposition::Live)
         } else {
             steer::Standing::disposition(self.0, key)
@@ -99,7 +106,7 @@ impl steer::Standing for DisplayStanding<'_> {
 /// How one authored directive presents inside an acknowledgement quote.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ContextState {
-    /// Positively acknowledged and retired by the journal in this source.
+    /// Positively acknowledged and retired by the journal for this lane.
     Acknowledged,
     /// Positively acknowledged in prose while the journal still holds the key.
     Pending,
@@ -113,6 +120,7 @@ pub(super) enum ContextState {
 struct ClassifiedPacket {
     recognized: Vec<(steer::Key, wire::Disposition)>,
     contexts: Vec<(steer::Key, ContextState)>,
+    bare_acknowledgement: bool,
     missed: Vec<String>,
 }
 
@@ -123,6 +131,7 @@ fn classify_packet(
     let mut packet = ClassifiedPacket {
         recognized: Vec::new(),
         contexts: Vec::new(),
+        bare_acknowledgement: false,
         missed: Vec::new(),
     };
     for recognition in recognitions {
@@ -130,6 +139,8 @@ fn classify_packet(
             steer::ack::scan::Outcome::Retired { key, disposition }
                 if standing.presents(&key, disposition, recognition.locus) =>
             {
+                let lane_seal =
+                    disposition == wire::Disposition::Acked && standing.is_lane_seal(&key);
                 if !packet
                     .recognized
                     .iter()
@@ -143,6 +154,7 @@ fn classify_packet(
                     let state = standing.context_state(&key, disposition);
                     packet.contexts.push((key, state));
                 }
+                packet.bare_acknowledgement |= lane_seal;
             }
             steer::ack::scan::Outcome::Retired { key, .. } => {
                 packet.missed.push(key.to_string());
