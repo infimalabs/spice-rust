@@ -314,6 +314,7 @@ fn automatic_answer(
             .into_boxed_slice(),
         creation_context: None,
         next: None,
+        phase: None,
     }
 }
 
@@ -353,6 +354,7 @@ pub(crate) fn release_automatic(
         warnings: Box::default(),
         creation_context: None,
         next: None,
+        phase: None,
     };
     match committed(bus, write, CommandAnswer::Claim(Box::new(answer))) {
         Outcome::Reply(_) => Ok(()),

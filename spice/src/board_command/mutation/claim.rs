@@ -196,6 +196,7 @@ pub(in crate::board_command) fn commit_claim(
             .into_boxed_slice(),
         creation_context: Some(task_creation_context_output(&selected.statement().creation)),
         next,
+        phase: Some(claim_phase(selected.workflow())),
     };
     if let Err(error) = write.command_result(
         request(command, win.clone()),
@@ -216,6 +217,19 @@ fn claim_activation_next_action(selected: &Entry) -> Box<str> {
         return format!("spice task modify {} --title \"...\"", selected.handle()).into_boxed_str();
     }
     format!("spice task show {}", selected.handle()).into_boxed_str()
+}
+
+/// The phase a lane just won, said where the lane reads the assignment.
+///
+/// The handle and the next command say nothing about what kind of work this
+/// is, and the phase decides whether the deliverable is board state or
+/// repository files. A lane that has to read the task again to learn that has
+/// already started the wrong work.
+fn claim_phase(workflow: &wire::WorkflowHead) -> wire::intent::ClaimPhase {
+    wire::intent::ClaimPhase {
+        name: workflow.phase.clone(),
+        deliverable: board::phase::deliverable(&workflow.phase).map(Box::from),
+    }
 }
 
 /// Which possession law one claim win asks the board to apply.

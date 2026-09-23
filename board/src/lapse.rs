@@ -374,6 +374,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
                 warnings: Box::default(),
                 creation_context: None,
                 next: None,
+                phase: None,
             },
         )
         .map_err(LapseError::Build)?;
@@ -594,6 +595,7 @@ mod tests {
                     warnings: Box::default(),
                     creation_context: None,
                     next: None,
+                    phase: None,
                 },
             )
             .expect("the claim receipt builds");

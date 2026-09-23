@@ -96,6 +96,7 @@ pub(super) fn claim_free(
         warnings: Box::default(),
         creation_context: None,
         next,
+        phase: None,
     };
     if let Err(error) = write.command_result(
         request(command, task.clone()),
@@ -158,6 +159,7 @@ pub(super) fn claim_reclaim_with_clock(
         warnings: Box::default(),
         creation_context: None,
         next: None,
+        phase: None,
     };
     if let Err(error) = write.command_result(
         request(command, renew.clone()),

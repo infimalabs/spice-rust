@@ -486,10 +486,35 @@ pub struct ClaimAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub next: Option<Box<str>>,
+    /// Phase the claim landed in, with the one deliverable it authorizes.
+    ///
+    /// A lane reads this where it wins the work, because the phase decides
+    /// whether the next action touches board state or repository files.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub phase: Option<ClaimPhase>,
 }
 
 fn claim_warnings_empty(warnings: &[ClaimWarning]) -> bool {
     warnings.is_empty()
+}
+
+/// The phase one claim answer was assigned in, and what it authorizes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimPhase {
+    /// Phase as the workflow spells it.
+    pub name: Phase,
+    /// The one deliverable this phase authorizes, when it names one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub deliverable: Option<Box<str>>,
 }
 
 /// One active claim whose acceptance names the same implementation surface.

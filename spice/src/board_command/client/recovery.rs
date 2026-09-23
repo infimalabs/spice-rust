@@ -333,6 +333,7 @@ fn reconcile_client_recovery(
                             warnings: Box::default(),
                             creation_context: None,
                             next: None,
+                            phase: None,
                         })),
                     })
                 })

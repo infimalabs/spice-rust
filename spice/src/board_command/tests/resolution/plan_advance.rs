@@ -143,6 +143,53 @@ fn plan_advance_warns_that_next_may_select_a_competing_eligible_task() {
     clean(&root, bus);
 }
 
+#[test]
+fn an_assignment_names_the_phase_it_landed_in() {
+    let (root, bus, epoch, seats) = fixture("assignment-phase", 2);
+    let plan = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kRKw9Ql",
+        "Organize implementation work",
+        &["implementation is decomposed"],
+        Some("plan,todo"),
+    );
+    let ordinary = add_raw_task(
+        &bus,
+        epoch,
+        "PLAN-1kRKw9Qm",
+        "Implement the organized change",
+        &["repository behavior is verified"],
+        None,
+    );
+    for (seat, task, phase) in [(0, &plan, "plan"), (1, &ordinary, "todo")] {
+        let lane = Actor::Lane(seats[seat].lane);
+        let available = board(&bus, epoch, lane.clone());
+        let CommandAnswer::Claim(claimed) = assert_committed(issue(
+            &bus,
+            epoch,
+            lane,
+            CommandKind::ClaimWin,
+            claim_expected(&available, task, &seats[seat]),
+            &ClaimWin {
+                rule: "next".parse().expect("allocator rule"),
+                recovery: None,
+            },
+        )) else {
+            panic!("task next did not return a claim answer")
+        };
+        assert_eq!(&claimed.task, task);
+        let assigned = claimed.phase.expect("an assignment names its phase");
+        assert_eq!(assigned.name.as_str(), phase);
+        assert_eq!(
+            assigned.deliverable.as_deref(),
+            board::phase::deliverable(&assigned.name),
+            "a declared phase hands the lane the deliverable it authorizes",
+        );
+    }
+    clean(&root, bus);
+}
+
 fn prepare_plan_advance_competitor(
     bus: &Bus,
     epoch: CanonicalUuid,
