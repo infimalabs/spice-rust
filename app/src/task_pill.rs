@@ -32,8 +32,8 @@ impl TaskPill {
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn title(&self) -> String {
         format!(
-            "{} ready, {} active or in flight, {} blocked or deferred across {}.*",
-            self.ready, self.active, self.unavailable, self.stem
+            "{}: {} ready, {} active or in flight, {} blocked or deferred",
+            self.identity, self.ready, self.active, self.unavailable
         )
     }
 }

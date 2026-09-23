@@ -68,6 +68,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                             && render.active_axis == Axis::Flow
                             && render.work_scope.stem() == Some(&pill.identity);
                         let key = identity.to_string();
+                        let title = pill.title();
                         html! {
                             <button
                                 key={key}
@@ -79,7 +80,8 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                                     selected.then_some("selected"),
                                 )}
                                 type="button"
-                                title={pill.title()}
+                                title={title.clone()}
+                                aria-label={title}
                                 aria-pressed={selected.to_string()}
                                 aria-current={selected.then_some("page")}
                                 data-task-stem={pill.stem.clone()}
