@@ -1,12 +1,7 @@
-//! Task-pill aggregation shared with the browser chrome.
-//!
-//! Visibility decides pill order, never pill content: a hidden stem is one
-//! the allocator does not offer by default, and its counts read exactly like
-//! a public stem's so the operator can triage it from the same glance.
+//! Task-pill presentation derived from the shared Work projection.
 
-use std::collections::BTreeMap;
+use crate::work::WorkStem;
 
-#[derive(Default)]
 pub(crate) struct TaskPill {
     pub(crate) stem: String,
     pub(crate) hidden: bool,
@@ -16,6 +11,18 @@ pub(crate) struct TaskPill {
 }
 
 impl TaskPill {
+    #[must_use]
+    pub(crate) fn from_stem(stem: &WorkStem) -> Self {
+        let counts = stem.counts();
+        Self {
+            stem: stem.identity().stem().to_owned(),
+            hidden: stem.identity().hidden(),
+            ready: counts.ready(),
+            active: counts.in_flight(),
+            unavailable: counts.unavailable(),
+        }
+    }
+
     pub(crate) fn count(&self) -> String {
         format!("{}·{}·{}", self.ready, self.active, self.unavailable)
     }
@@ -26,87 +33,5 @@ impl TaskPill {
             "{} ready, {} active or in flight, {} blocked or deferred across {}.*",
             self.ready, self.active, self.unavailable, self.stem
         )
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(crate) enum TaskPillAvailability {
-    Ready,
-    Active,
-    Unavailable,
-}
-
-#[derive(Default)]
-pub(crate) struct TaskPillIndex(BTreeMap<(bool, String), TaskPill>);
-
-impl TaskPillIndex {
-    pub(crate) fn record(
-        &mut self,
-        hidden: bool,
-        stem: String,
-        availability: TaskPillAvailability,
-    ) {
-        let pill = self
-            .0
-            .entry((hidden, stem.clone()))
-            .or_insert_with(|| TaskPill {
-                stem,
-                hidden,
-                ..TaskPill::default()
-            });
-        match availability {
-            TaskPillAvailability::Ready => pill.ready += 1,
-            TaskPillAvailability::Active => pill.active += 1,
-            TaskPillAvailability::Unavailable => pill.unavailable += 1,
-        }
-    }
-
-    pub(crate) fn into_pills(self) -> Vec<TaskPill> {
-        self.0.into_values().collect()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sorts_by_visibility_then_stem_and_aggregates_same_stem_per_class() {
-        let mut pills = TaskPillIndex::default();
-        for (hidden, stem, availability) in [
-            (true, "alpha", TaskPillAvailability::Active),
-            (false, "zeta", TaskPillAvailability::Ready),
-            (true, "oops", TaskPillAvailability::Ready),
-            (false, "oops", TaskPillAvailability::Active),
-            (true, "alpha", TaskPillAvailability::Unavailable),
-            (false, "zeta", TaskPillAvailability::Unavailable),
-        ] {
-            pills.record(hidden, stem.to_owned(), availability);
-        }
-        let pills = pills.into_pills();
-
-        assert_eq!(
-            pills
-                .iter()
-                .map(|pill| (pill.hidden, pill.stem.as_str()))
-                .collect::<Vec<_>>(),
-            [
-                (false, "oops"),
-                (false, "zeta"),
-                (true, "alpha"),
-                (true, "oops"),
-            ]
-        );
-        assert_eq!(
-            pills
-                .iter()
-                .map(|pill| (pill.ready, pill.active, pill.unavailable))
-                .collect::<Vec<_>>(),
-            [(0, 1, 0), (1, 0, 1), (0, 1, 1), (1, 0, 0)]
-        );
-        assert_eq!(pills[0].count(), "0·1·0");
-        assert_eq!(pills[1].count(), "1·0·1");
-        assert_eq!(pills[2].count(), "0·1·1");
-        assert_eq!(pills[3].count(), "1·0·0");
     }
 }

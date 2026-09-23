@@ -59,10 +59,12 @@ pub mod socket;
 pub mod speech_owner;
 pub mod speech_queue;
 pub mod state;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 mod task_pill;
 pub mod view;
 pub mod watchband;
+#[cfg(any(target_arch = "wasm32", test))]
+pub mod work;
 
 #[cfg(target_arch = "wasm32")]
 mod browser;

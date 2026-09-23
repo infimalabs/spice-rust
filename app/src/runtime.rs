@@ -49,6 +49,8 @@ pub struct BoardView {
     pub cursor: Seq,
     /// Current task evidence bundles.
     pub tasks: Vec<BoardTask>,
+    /// Complete environment observed at the same board snapshot barrier.
+    pub(crate) environment: wire::Environment,
     /// Current resident state.
     pub resident: wire::ResidentState,
 }
@@ -56,10 +58,12 @@ pub struct BoardView {
 impl From<&BoardAnswer> for BoardView {
     fn from(answer: &BoardAnswer) -> Self {
         let tasks = answer.tasks.clone();
+        let environment = answer.environment();
         Self {
             schema: answer.schema,
             cursor: answer.cursor,
             tasks,
+            environment,
             resident: answer.residency.body.state,
         }
     }
@@ -74,12 +78,10 @@ impl BoardView {
     /// Whether the snapshot's environment satisfies one task's typed requirements.
     #[must_use]
     pub fn environment_satisfies(&self, task: &BoardTask) -> bool {
-        let environment =
-            wire::Environment::journal_schema(self.schema).unwrap_or(wire::Environment::EMPTY);
         task.statement
             .body
             .requirements
-            .are_satisfied_by(&environment)
+            .are_satisfied_by(&self.environment)
     }
 }
 
