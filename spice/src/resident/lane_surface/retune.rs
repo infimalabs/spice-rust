@@ -23,11 +23,7 @@ pub(in crate::resident) fn retune(
     command: &wire::AdmittedCommand,
     request: &LaneRetune,
 ) -> Outcome<CommandAnswer> {
-    if request
-        .model
-        .as_ref()
-        .is_some_and(|model| model.is_empty() || model.trim() != model || model.contains('\0'))
-    {
+    if model_malformed(request.model.as_ref()) {
         return lane_refusal(
             "lane::model-invalid",
             Some("one nonblank model spelling without surrounding whitespace".to_owned()),
