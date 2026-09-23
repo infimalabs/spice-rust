@@ -20,6 +20,7 @@ pub(in crate::board_command) fn read_task_detail(
         allocation,
         None,
         Some(&selected),
+        true,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,

@@ -5,15 +5,14 @@ use std::rc::Rc;
 use wasm_bindgen::{JsCast, closure::Closure};
 use yew::prelude::*;
 
-use crate::work::{WorkProjection, WorkRelationshipGraph, WorkRelationshipNode};
 use wire::TaskStamp;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct MapNodeTarget {
     pub(super) id: String,
-    task: TaskStamp,
-    label: String,
-    current: bool,
+    pub(super) task: TaskStamp,
+    pub(super) label: String,
+    pub(super) current: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -203,29 +202,6 @@ fn apply_overlay_layout(host: &NodeRef, viewport: ViewportTransform) {
     layer
         .set_attribute("data-map-overlay-ready", "true")
         .expect("the fixed Work map readiness attribute is valid");
-}
-
-pub(super) fn node_targets(
-    work: &WorkProjection<'_>,
-    graph: &WorkRelationshipGraph,
-    selected: &TaskStamp,
-) -> Rc<Vec<MapNodeTarget>> {
-    Rc::new(
-        graph
-            .nodes()
-            .iter()
-            .enumerate()
-            .filter_map(|(index, node)| match node {
-                WorkRelationshipNode::Task(task) => Some(MapNodeTarget {
-                    id: format!("n{index}"),
-                    task: task.born().clone(),
-                    label: super::node_label(work, node),
-                    current: task.born() == selected,
-                }),
-                WorkRelationshipNode::Origin(_) => None,
-            })
-            .collect(),
-    )
 }
 
 pub(super) fn renderer(

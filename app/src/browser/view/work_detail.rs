@@ -1,6 +1,7 @@
 //! Contextual detail drawer for one durable Work task identity.
 
 use super::*;
+use crate::TaskRelationsState;
 use crate::work::{WorkProjection, WorkScope, WorkTask};
 use wire::TaskStamp;
 
@@ -10,6 +11,8 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub selected: Option<&'a TaskStamp>,
     pub map: &'a UseStateHandle<work_map::WorkMapState>,
     pub detail: Option<&'a TaskDetailState>,
+    pub relations: Option<&'a TaskRelationsState>,
+    pub can_read_relations: bool,
     pub stale: bool,
     pub can_note: bool,
     pub close_ref: &'a NodeRef,
@@ -63,10 +66,11 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                 {work_map::render_tabs(render.map, selected)}
                 if map_open {
                     {work_map::render(work_map::WorkMapRender {
-                        work: render.work,
                         selected,
                         state: render.map,
                         select_task: render.select_task.clone(),
+                        relations: render.relations,
+                        can_read_relations: render.can_read_relations,
                     })}
                 } else {
                     {render_detail_body(&render, selected)}

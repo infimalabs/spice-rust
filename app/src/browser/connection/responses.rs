@@ -38,6 +38,7 @@ fn handle_stream_frame(
             stale.invalidate_quiet_lane(runtime.lanes(), message.lane);
         }
         stale.retain_task_details(|task| changed && runtime.invalidate_task_detail(task));
+        stale.resolve_task_relations(runtime, changed);
         (application.into_directives(), changed)
     };
     if changed && publish {
@@ -199,6 +200,12 @@ fn apply_command_response(
                 admit_response(session, bytes)?;
             runtime.apply_task_detail(&task, &admitted);
             reconcile_note_detail(handles, runtime, &task)
+        }
+        PendingKind::TaskRelations { key } => {
+            let admitted: crate::Admitted<Response<wire::intent::TaskRelationsAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_task_relations(&key, &admitted);
+            CommandApplication::ordinary(false)
         }
         // A read of the lane table and an arrangement of it answer with the
         // same authoritative table, so successful replies apply identically.

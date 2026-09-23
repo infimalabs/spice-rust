@@ -389,6 +389,12 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
     let stale = matches!(&**render.connection, Connection::Offline(_));
     let selected = (**render.selected_task).as_ref();
     let detail = selected.and_then(|task| runtime.and_then(|runtime| runtime.task_detail(task)));
+    let relation_key = selected.and_then(|selected| render.work_map.request_key(selected));
+    let relations = relation_key
+        .as_ref()
+        .and_then(|key| runtime.and_then(|runtime| runtime.task_relations(key)));
+    let can_read_relations =
+        runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskRelations));
     let toggle_map_root = work_map::toggle_root_callback(render.work_map.clone());
     html! {
         <div class="work-layout" data-work-scope={scope_key}>
@@ -413,6 +419,8 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
                 selected,
                 map: render.work_map,
                 detail,
+                relations,
+                can_read_relations,
                 stale,
                 can_note,
                 close_ref: render.detail_close,

@@ -44,6 +44,7 @@ mod connection;
 mod image_viewer;
 mod mermaid;
 mod task_detail;
+mod task_relations;
 mod view;
 mod watchband;
 
@@ -530,11 +531,10 @@ fn canvas_app() -> Html {
         status: speech_status.clone(),
         message: speech_message.clone(),
     };
-    let current_speech_runtime = use_mut_ref(|| speech_runtime.clone());
-    *current_speech_runtime.borrow_mut() = speech_runtime.clone();
+    let speech_ref = use_mut_ref(|| speech_runtime.clone());
+    *speech_ref.borrow_mut() = speech_runtime.clone();
     let narration_cursors = use_mut_ref(load_narration_cursors);
-    let agent_speech =
-        use_agent_speech_controls(current_speech_runtime, narration_cursors, speech_message);
+    let agent_speech = use_agent_speech_controls(speech_ref, narration_cursors, speech_message);
     let agents = use_agent_controls(sender.clone(), surface.clone(), agent_speech);
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
     use_surface_connection(
@@ -553,6 +553,7 @@ fn canvas_app() -> Html {
             note_submission: work_detail.submission.clone(),
         },
     );
+    task_relations::use_request(&sender, &surface, &work_detail.selected, &work_map);
     use_team_speech_abandonment(&surface, speech_runtime.clone());
     use_speech_reset(speech.clone(), speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime.clone());
@@ -572,7 +573,12 @@ fn canvas_app() -> Html {
         work_scope_notice.clone(),
     );
 
-    let refresh = refresh_callback(sender.clone(), axis.clone(), work_detail.selected.clone());
+    let refresh = refresh_callback(
+        sender.clone(),
+        axis.clone(),
+        work_detail.selected.clone(),
+        work_map.clone(),
+    );
     let canvas = render_canvas(
         CanvasRender {
             connection: &connection,
@@ -855,11 +861,18 @@ fn refresh_callback(
     sender: SenderHandle,
     _axis: UseStateHandle<Axis>,
     selected: UseStateHandle<Option<TaskStamp>>,
+    map: UseStateHandle<view::WorkMapState>,
 ) -> Callback<MouseEvent> {
     Callback::from(move |_| {
         let _admitted = admit_action(&sender, ClientAction::Refresh);
         if let Some(task) = (*selected).clone() {
             let _admitted = admit_action(&sender, ClientAction::TaskDetail { task });
+        }
+        if let Some(key) = (*selected)
+            .as_ref()
+            .and_then(|selected| map.request_key(selected))
+        {
+            let _admitted = admit_action(&sender, ClientAction::TaskRelations { key });
         }
     })
 }

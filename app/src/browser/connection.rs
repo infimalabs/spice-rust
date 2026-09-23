@@ -685,6 +685,11 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
+        ClientAction::TaskRelations { key } => {
+            refresh::send_task_relations(principal, writer, actions, key)
+                .await
+                .map(|_| None)
+        }
         ClientAction::FastMode(fast_mode) => send_fast_mode(principal, writer, actions, *fast_mode)
             .await
             .map(Some),
