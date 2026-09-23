@@ -577,9 +577,9 @@
   gap: 8px;
   padding: 8px 8px var(--team-composer-edge-gap);
 }
-/* Scroll intent spends the team's vertical budget on the composer first.
-   Transform clips the form against .team-compose while the matching negative
-   margin gives every consumed pixel directly to the activity viewport. */
+/* Scroll input passively projects onto composer exposure while the browser
+   retains the complete gesture for the activity viewport. Transform clips the
+   form while the matching negative margin gives the revealed space to cards. */
 .team-composer {
   margin-bottom: calc(-1 * var(--team-composer-collapse));
   transform: translateY(calc(-1 * var(--team-composer-collapse)));

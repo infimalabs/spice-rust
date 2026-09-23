@@ -548,18 +548,19 @@ flowchart TD
   P -- "Info or Work" --> X["exclusive mode content<br/>no message plane mounted"]
   P -- "Chat" --> C["one shared vertical budget"]
   C --> H["composer columns<br/>horizontal overflow"]
-  C --> S["downward scroll<br/>hide composer, then move cards"]
-  S --> U["upward scroll<br/>reveal composer, then move cards"]
+  C --> S["downward scroll<br/>moves cards and hides composer"]
+  S --> U["upward scroll<br/>moves cards and reveals composer"]
 ```
 
 Three views per live team appear on one rail, with the selected mode retained per
 team. Selecting a mode directly replaces pane content; there is no slide
 transition. Info and Work replace Chat completely and do not mount the message
-plane. Chat's member columns own horizontal overflow. The composer and mosaic
-share one vertical gesture: downward wheel or touch motion translates and clips
-the complete composer by the same number of pixels before the card viewport
-scrolls; upward motion reverses that handoff. The team toolbar and ticker remain
-fixed above both.
+plane. Chat's member columns own horizontal overflow. The browser retains native
+ownership of every vertical wheel, touch, and keyboard gesture. The composer
+passively follows the same direction, clipping or revealing by the input delta
+without cancelling the event or writing the message plane's scroll position.
+Home and End set the corresponding composer exposure while reaching the native
+stream edge in one command. The team toolbar and ticker remain fixed above both.
 
 **Value:** the operator can turn the whole console into a reading surface
 without a toggle, threshold, or animation. The composer remains mounted, so

@@ -1,4 +1,4 @@
-//! Scroll-intent handoff between one team's composer and activity plane.
+//! Passive scroll-input projection onto one team's composer exposure.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -16,7 +16,6 @@ struct CollapseState {
     offset: f64,
     maximum: f64,
     touch_y: Option<i32>,
-    touch_handoff: bool,
 }
 
 type SharedCollapse = Rc<RefCell<CollapseState>>;
@@ -77,12 +76,11 @@ impl Registration {
         let wheel_surface = surface.clone();
         let wheel_state = Rc::clone(&state);
         let wheel = Closure::<dyn FnMut(WheelEvent)>::new(move |event| {
-            let delta = wheel_delta(&wheel_scroller, &event);
-            if !can_consume(&wheel_state, delta) {
-                return;
-            }
-            event.prevent_default();
-            apply_input_delta(&wheel_scroller, &wheel_surface, &wheel_state, delta);
+            apply_input_delta(
+                &wheel_surface,
+                &wheel_state,
+                wheel_delta(&wheel_scroller, &event),
+            );
         });
         scroller
             .add_event_listener_with_callback("wheel", wheel.as_ref().unchecked_ref())
@@ -92,14 +90,10 @@ impl Registration {
         let key_surface = surface.clone();
         let key_state = Rc::clone(&state);
         let key = Closure::<dyn FnMut(KeyboardEvent)>::new(move |event| {
-            let Some(delta) = keyboard_delta(&key_scroller, &event) else {
+            let Some(requested) = keyboard_offset(&key_scroller, &key_state, &event) else {
                 return;
             };
-            if !can_consume(&key_state, delta) {
-                return;
-            }
-            event.prevent_default();
-            apply_input_delta(&key_scroller, &key_surface, &key_state, delta);
+            set_collapse(&key_surface, &key_state, requested);
         });
         scroller
             .add_event_listener_with_callback("keydown", key.as_ref().unchecked_ref())
@@ -107,39 +101,26 @@ impl Registration {
 
         let start_state = Rc::clone(&state);
         let touch_start = Closure::<dyn FnMut(TouchEvent)>::new(move |event| {
-            let mut state = start_state.borrow_mut();
-            state.touch_y = first_touch_y(&event);
-            state.touch_handoff = false;
+            start_state.borrow_mut().touch_y = first_touch_y(&event);
         });
         scroller
             .add_event_listener_with_callback("touchstart", touch_start.as_ref().unchecked_ref())
             .expect("the owned activity plane accepts its touch-start listener");
 
-        let move_scroller = scroller.clone();
         let move_surface = surface;
         let move_state = Rc::clone(&state);
         let touch_move = Closure::<dyn FnMut(TouchEvent)>::new(move |event| {
             let Some(y) = first_touch_y(&event) else {
                 return;
             };
-            let (delta, can_consume, keeps_handoff) = {
+            let delta = {
                 let mut state = move_state.borrow_mut();
                 let Some(previous) = state.touch_y.replace(y) else {
                     return;
                 };
-                let delta = f64::from(previous - y);
-                let can_consume = state_can_consume(&state, delta);
-                let keeps_handoff = state.touch_handoff && delta.abs() > COLLAPSE_EPSILON_PX;
-                if can_consume {
-                    state.touch_handoff = true;
-                }
-                (delta, can_consume, keeps_handoff)
+                f64::from(previous - y)
             };
-            if !can_consume && !keeps_handoff {
-                return;
-            }
-            event.prevent_default();
-            apply_input_delta(&move_scroller, &move_surface, &move_state, delta);
+            apply_input_delta(&move_surface, &move_state, delta);
         });
         scroller
             .add_event_listener_with_callback("touchmove", touch_move.as_ref().unchecked_ref())
@@ -147,9 +128,7 @@ impl Registration {
 
         let end_state = state;
         let touch_end = Closure::<dyn FnMut(TouchEvent)>::new(move |_| {
-            let mut state = end_state.borrow_mut();
-            state.touch_y = None;
-            state.touch_handoff = false;
+            end_state.borrow_mut().touch_y = None;
         });
         let touch_end_callback = touch_end.as_ref().unchecked_ref();
         scroller
@@ -211,47 +190,34 @@ fn wheel_delta(scroller: &Element, event: &WheelEvent) -> f64 {
     }
 }
 
-fn keyboard_delta(scroller: &Element, event: &KeyboardEvent) -> Option<f64> {
+fn keyboard_offset(
+    scroller: &Element,
+    state: &SharedCollapse,
+    event: &KeyboardEvent,
+) -> Option<f64> {
+    let state = state.borrow();
     match event.key().as_str() {
-        "ArrowDown" => Some(WHEEL_LINE_PX),
-        "ArrowUp" => Some(-WHEEL_LINE_PX),
-        "PageDown" => Some(f64::from(scroller.client_height())),
-        "PageUp" => Some(-f64::from(scroller.client_height())),
-        " " if event.shift_key() => Some(-f64::from(scroller.client_height())),
-        " " => Some(f64::from(scroller.client_height())),
+        "Home" => Some(0.0),
+        "End" => Some(state.maximum),
+        "ArrowDown" => Some(state.offset + WHEEL_LINE_PX),
+        "ArrowUp" => Some(state.offset - WHEEL_LINE_PX),
+        "PageDown" => Some(state.offset + f64::from(scroller.client_height())),
+        "PageUp" => Some(state.offset - f64::from(scroller.client_height())),
+        " " if event.shift_key() => Some(state.offset - f64::from(scroller.client_height())),
+        " " => Some(state.offset + f64::from(scroller.client_height())),
         _ => None,
     }
 }
 
-fn can_consume(state: &SharedCollapse, delta: f64) -> bool {
-    state_can_consume(&state.borrow(), delta)
-}
-
-fn state_can_consume(state: &CollapseState, delta: f64) -> bool {
-    (delta > COLLAPSE_EPSILON_PX && state.offset < state.maximum - COLLAPSE_EPSILON_PX)
-        || (delta < -COLLAPSE_EPSILON_PX && state.offset > COLLAPSE_EPSILON_PX)
-}
-
-fn apply_input_delta(
-    scroller: &Element,
-    surface: &HtmlElement,
-    state: &SharedCollapse,
-    delta: f64,
-) {
+fn apply_input_delta(surface: &HtmlElement, state: &SharedCollapse, delta: f64) {
     if !delta.is_finite() || delta.abs() <= COLLAPSE_EPSILON_PX {
         return;
     }
-    let requested = state.borrow().offset + delta;
-    let applied = set_collapse(surface, state, requested);
-    let remaining = delta - applied;
-    if remaining.abs() <= COLLAPSE_EPSILON_PX {
-        return;
-    }
-    let maximum = (scroller.scroll_height() - scroller.client_height()).max(0);
-    let next = (f64::from(scroller.scroll_top()) + remaining)
-        .clamp(0.0, f64::from(maximum))
-        .round() as i32;
-    scroller.set_scroll_top(next);
+    let requested = {
+        let state = state.borrow();
+        crate::mosaic::composer_collapse_offset(state.offset, state.maximum, delta)
+    };
+    set_collapse(surface, state, requested);
 }
 
 fn sync_metrics(surface: &HtmlElement, composer: &HtmlElement, state: &SharedCollapse) {
@@ -267,10 +233,10 @@ fn sync_metrics(surface: &HtmlElement, composer: &HtmlElement, state: &SharedCol
             state.offset.min(maximum)
         }
     };
-    let _ = set_collapse(surface, state, requested);
+    set_collapse(surface, state, requested);
 }
 
-fn set_collapse(surface: &HtmlElement, state: &SharedCollapse, requested: f64) -> f64 {
+fn set_collapse(surface: &HtmlElement, state: &SharedCollapse, requested: f64) {
     let (previous, next, maximum) = {
         let mut state = state.borrow_mut();
         let previous = state.offset;
@@ -279,7 +245,7 @@ fn set_collapse(surface: &HtmlElement, state: &SharedCollapse, requested: f64) -
         (previous, next, state.maximum)
     };
     if (next - previous).abs() <= f64::EPSILON && surface.has_attribute("data-composer-collapse") {
-        return 0.0;
+        return;
     }
     surface
         .style()
@@ -298,5 +264,4 @@ fn set_collapse(surface: &HtmlElement, state: &SharedCollapse, requested: f64) -
             },
         )
         .expect("the composer collapse state attribute is valid");
-    next - previous
 }

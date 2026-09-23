@@ -691,6 +691,16 @@ pub fn css_row_start(card: &Card, max_row: i32) -> i32 {
     max_row - (card.base + card.rows) + 1
 }
 
+/// Project one user scroll input onto composer exposure.
+///
+/// The caller owns only the composer offset. Native scrolling retains the full
+/// input; there is deliberately no remainder or scroll-position output.
+#[cfg(any(target_arch = "wasm32", test))]
+#[must_use]
+pub(crate) fn composer_collapse_offset(current: f64, maximum: f64, delta: f64) -> f64 {
+    (current + delta).clamp(0.0, maximum.max(0.0))
+}
+
 /// Whether the pane is far enough from its leading edge to preserve its viewport.
 #[must_use]
 pub fn pane_is_scrolled(scroll_top: f64, threshold: Option<f64>) -> bool {
@@ -733,4 +743,16 @@ pub fn scroll_compensation(
     (scrolled && !replaying)
         .then_some(f64::from((max_row - previous_max_row) * module))
         .filter(|delta| delta.is_finite())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::composer_collapse_offset;
+
+    #[test]
+    fn composer_collapse_clamps_strong_scroll_input_at_both_exposure_edges() {
+        assert_eq!(composer_collapse_offset(20.0, 140.0, 900.0), 140.0);
+        assert_eq!(composer_collapse_offset(120.0, 140.0, -900.0), 0.0);
+        assert_eq!(composer_collapse_offset(60.0, 140.0, 25.0), 85.0);
+    }
 }
