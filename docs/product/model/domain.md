@@ -107,14 +107,18 @@ task's name is derived.
 **Invariant —** Re-homing a task to a different project changes its rendered
 handle **for free**, because the key was never stored.
 
-**Invariant —** Current stamps are sortable as plain strings into current birth
-order. Retained eight-character and current nine-character stamps coexist as
-deterministic identities; journal sequence and queue origin order them across
-codec generations.
+**Invariant —** Current stamps are sortable as plain strings into
+represented-instant order. In the absence of a collision that is also current
+birth order. Retained eight-character and current nine-character stamps coexist
+as deterministic identities; journal sequence and durable queue origin remain
+actual creation chronology across codec generations and collision rewinds.
 
-**Invariant —** A current minting collision advances the represented instant
-rather than appending entropy, preserving strict current-generation string
-order. The implementation profile fixes the concrete increment and codec.
+**Invariant —** A current task minting collision probes earlier microseconds
+rather than inventing a future birth or appending entropy, and refuses before
+crossing Unix zero. A batch returns those rewound candidates in ascending stamp
+order so assignment preserves authored order; independent colliding mints use
+journal sequence and durable queue origin for chronology. The implementation
+profile fixes the concrete decrement and codec.
 
 **INC** — the alphabet, the width, the separator.
 

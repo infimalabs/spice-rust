@@ -56,20 +56,27 @@ Rust mints every current task's `born` identity as exactly nine ASCII
 characters encoding nonnegative Unix microseconds in fixed-width base 52 with
 the exact ordered alphabet
 `0123456789BCDFGHJKLMNPQRSTVWXYZbcdfghjklmnpqrstvwxyz`. Ordinary string order
-equals birth order within that current generation, and the omitted vowels keep
-a minted stamp out of prose-shaped words. The 52⁹ space spans about 88.09 years
-from the Unix epoch; its most-significant digit advances about every 1.69 years,
-the 2026 era begins with `d`, and the first instant outside the space is near
-2058-02-02. An out-of-range instant refuses instead of wrapping. A collision
-advances exactly one microsecond until the stamp is free; it never appends
-randomness or entropy.
+equals represented-instant order within that current generation, and the
+omitted vowels keep a minted stamp out of prose-shaped words. The 52⁹ space
+spans about 88.09 years from the Unix epoch; its most-significant digit advances
+about every 1.69 years, the 2026 era begins with `d`, and the first instant
+outside the space is near 2058-02-02. An out-of-range instant refuses instead of
+wrapping.
+
+Task allocation resolves a collision by probing exactly one microsecond earlier
+until the stamp is free. It never claims a future instant or appends randomness
+or entropy, and a rewind that would cross Unix zero refuses. A requested batch
+gathers free candidates while rewinding, then returns them in ascending stamp
+order so assignment preserves the batch's authored order. An independent later
+mint may therefore sort before the task it collided with; journal sequence and
+durable queue origin, not stamp order, remain creation chronology authority.
 
 Retained eight-character base-52 Unix-millisecond stamps remain readable in
 facts, heads, handles, CLI operands, origins, indexes, and Canvas presentation.
 They are never minted by current creation. Mixed-width equality, hashing, and
 ordered collections remain deterministic, but ordinary string order across
-the two codec generations is not chronology; journal sequence and durable queue
-origin remain that authority.
+codec generations or collision-adjusted current stamps is not creation
+chronology.
 
 Steering uses the same nine-character microsecond codec for current keys and
 identity-derived inbox seals. Parsing also admits retained eight-character
