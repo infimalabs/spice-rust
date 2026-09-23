@@ -579,11 +579,7 @@ fn admit_seat(
             "select one closed lane life",
         ));
     }
-    if request
-        .model
-        .as_ref()
-        .is_some_and(|model| model.is_empty() || model.trim() != model || model.contains('\0'))
-    {
+    if model_malformed(request.model.as_ref()) {
         return Err(lane_refusal(
             "lane::model-invalid",
             Some("one nonblank model spelling without surrounding whitespace".to_owned()),
@@ -656,6 +652,15 @@ fn closed_efforts() -> String {
         .map(|effort| effort.as_str())
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Whether a model spelling could not be handed to a vendor as argv.
+///
+/// A seat carries this spelling to every launch it ever makes, so it is judged
+/// once where it enters the seat -- when the lane is added and when the seat is
+/// retuned -- rather than at the spawn that would otherwise inherit it.
+pub(super) fn model_malformed(model: Option<&String>) -> bool {
+    model.is_some_and(|model| model.is_empty() || model.trim() != model || model.contains('\0'))
 }
 
 struct ProvenOccupant {
