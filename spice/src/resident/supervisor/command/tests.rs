@@ -360,7 +360,7 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
     driver.deliver_inbox();
     let pointer = format!(
         "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{}\n</seal>\n",
-        steer::inbox::NUDGE,
+        steer::inbox::NUDGE_SILENT,
     );
     let frames = sink.answered(2);
     assert_eq!(frames, [steer(1, NEWS), steer(2, &pointer)]);
@@ -388,7 +388,7 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
     let told = format!(
         "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{}\n\
          directive=d2 key=1kJK6M0V stage=new expires=never\ngo\n</seal>\n",
-        steer::inbox::NUDGE,
+        steer::inbox::NUDGE_SILENT,
     );
     let frames = sink.answered(4);
     assert!(frames.contains(&steer(3, &told)), "{frames:?}");
@@ -398,6 +398,56 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
     );
     release(&fifo);
     settled(&scratch);
+}
+
+/// The lane that reported a stalled ACK scanner had written its ACK headers
+/// only in reasoning: eighteen tool-only records followed the telling. The
+/// resend must say it saw no visible reply, and only visible prose changes
+/// that.
+#[test]
+fn a_resend_says_whether_any_visible_reply_followed_the_telling() {
+    let scratch = Scratch::new("replied");
+    let sink = Sink::default();
+    let driver = Driver::new(sink.clone(), scratch.inbox(), None);
+    fs::write(scratch.inbox(), NEWS).expect("inbox renders");
+    driver.deliver_inbox();
+
+    driver.observe(&decoded(
+        br#"{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"thinking","thinking":"ACK 1kJK6N3R: planned but never written"},{"type":"toolCall","id":"c1","name":"read","arguments":{"path":"x"}}]}}"#,
+    ));
+    let reminder = NEWS.replace("stage=new", "stage=reminded");
+    fs::write(scratch.inbox(), &reminder).expect("inbox renders");
+    driver.deliver_inbox();
+
+    driver.observe(&decoded(
+        br#"{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"text","text":"Reading the next file."}]}}"#,
+    ));
+    let again = reminder.replace("expires=never", "expires=later");
+    fs::write(scratch.inbox(), &again).expect("inbox renders");
+    driver.deliver_inbox();
+
+    let pointer = |header: &str, nudge: &str| format!("<seal>\n{header}\n{nudge}\n</seal>\n");
+    assert_eq!(
+        sink.answered(3),
+        [
+            steer(1, NEWS),
+            steer(
+                2,
+                &pointer(
+                    "directive=d1 key=1kJK6N3R stage=reminded expires=never",
+                    steer::inbox::NUDGE_SILENT,
+                ),
+            ),
+            steer(
+                3,
+                &pointer(
+                    "directive=d1 key=1kJK6N3R stage=reminded expires=later",
+                    steer::inbox::NUDGE_REPLIED,
+                ),
+            ),
+        ],
+        "reasoning is not a reply; visible prose is",
+    );
 }
 
 #[test]

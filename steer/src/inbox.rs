@@ -65,28 +65,58 @@ pub fn keys(rendered: &str) -> impl Iterator<Item = &str> {
         })
 }
 
-/// What a directive costs the second time, once its telling is already in the
-/// occupant's context.
+/// What an occupant still holds of one directive, and what it has said since.
 ///
-/// The header still carries the key and the stage, so the pointer names the
-/// direction and what answering it looks like without spending the text again.
-pub const NUDGE: &str = "[NUDGE] told in full above and still unanswered; ACK or NACK this key";
+/// A resend that only says "still unanswered" cannot tell an occupant that
+/// never wrote a visible reply apart from one whose replies named the wrong
+/// key or buried the marker, so it misreads its own silence as a stalled
+/// scanner. The supervisor observes the occupant's records, so it states
+/// which of the two it saw.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Told {
+    /// Told, and no visible reply has been observed since.
+    Silent,
+    /// Told, and visible replies followed without answering this key.
+    Replied,
+}
+
+impl Told {
+    /// The pointer that replaces a telling the occupant still holds.
+    #[must_use]
+    pub const fn pointer(self) -> &'static str {
+        match self {
+            Self::Silent => NUDGE_SILENT,
+            Self::Replied => NUDGE_REPLIED,
+        }
+    }
+}
+
+/// Pointer for a held directive after which no visible reply was observed.
+///
+/// Reasoning never reaches the transcript as a reply, which is the usual way
+/// an occupant believes it answered when it did not.
+pub const NUDGE_SILENT: &str =
+    "[NUDGE] unanswered, no visible reply yet (thinking is not one); ACK or NACK this key";
+
+/// Pointer for a held directive after which visible replies did not answer it.
+pub const NUDGE_REPLIED: &str =
+    "[NUDGE] unanswered; no visible line since led with ACK or NACK this key";
 
 /// Condenses every directive the occupant was already told into a pointer.
 ///
 /// A resend exists to say a directive is still unanswered, not to say the
 /// direction again: the words are already verbatim in the occupant's context,
 /// so repeating them charges the occupant a second time for text it holds.
-/// `told` answers whether this occupant still holds the telling — a context
-/// that dropped it, by compaction or by never having heard it, is told in
-/// full. The header line is never condensed, because the key, the stage, and
-/// any control field are what the resend is for, and a telling shorter than
-/// the pointer is simply said again.
+/// `told` answers what this occupant still holds of each key: `None` for a
+/// context that dropped the telling, by compaction or by never having heard
+/// it, which is told in full. The header line is never condensed, because the
+/// key, the stage, and any control field are what the resend is for, and a
+/// telling shorter than the pointer is simply said again.
 #[must_use]
-pub fn nudge(rendered: &str, told: impl Fn(&str) -> bool) -> String {
+pub fn nudge(rendered: &str, told: impl Fn(&str) -> Option<Told>) -> String {
     let mut condensed = String::with_capacity(rendered.len());
     let mut body = String::new();
-    let mut held = false;
+    let mut held = None;
     let mut lines = rendered.split_inclusive('\n').peekable();
     while let Some(line) = lines.next() {
         if lines.peek().is_none() {
@@ -121,14 +151,14 @@ fn header_key(line: &str) -> Option<&str> {
 
 /// Spend the body, or the pointer when the occupant holds the body already
 /// and the pointer is the cheaper of the two.
-fn push_body(condensed: &mut String, body: &str, held: bool) {
+fn push_body(condensed: &mut String, body: &str, held: Option<Told>) {
     // What the pointer itself costs, its own line ending included.
-    let pointer = NUDGE.len() + "\n".len();
-    if held && body.len() > pointer {
-        condensed.push_str(NUDGE);
-        condensed.push('\n');
-    } else {
-        condensed.push_str(body);
+    match held.map(Told::pointer) {
+        Some(pointer) if body.len() > pointer.len() + "\n".len() => {
+            condensed.push_str(pointer);
+            condensed.push('\n');
+        }
+        _ => condensed.push_str(body),
     }
 }
 
@@ -215,7 +245,7 @@ impl std::error::Error for Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{NUDGE, keys, nudge};
+    use super::{NUDGE_REPLIED, NUDGE_SILENT, Told, keys, nudge};
 
     #[test]
     fn a_rendering_names_its_keys_in_order_and_nothing_else() {
@@ -245,41 +275,69 @@ mod tests {
     fn a_resend_costs_a_pointer_and_still_names_what_to_answer() {
         let first = delivered("published");
         let again = delivered("reminded");
-        let resent = nudge(&again, |key| key == "dSvXD9bv3");
 
         // What a pointer is allowed to cost against the telling it replaces.
         const SHARE: usize = 10;
 
-        assert!(
-            resent.len() * SHARE < first.len(),
-            "a resend of {} bytes against a telling of {} bytes is not a pointer",
-            resent.len(),
-            first.len(),
+        for (since, pointer) in [(Told::Silent, NUDGE_SILENT), (Told::Replied, NUDGE_REPLIED)] {
+            let resent = nudge(&again, |key| (key == "dSvXD9bv3").then_some(since));
+            assert!(
+                resent.len() * SHARE < first.len(),
+                "a resend of {} bytes against a telling of {} bytes is not a pointer",
+                resent.len(),
+                first.len(),
+            );
+            assert_eq!(keys(&resent).collect::<Vec<_>>(), ["dSvXD9bv3"]);
+            assert!(
+                resent.contains("stage=reminded") && resent.contains("key=dSvXD9bv3"),
+                "the pointer must still name the directive and why it arrived: {resent}",
+            );
+            assert!(
+                resent.contains(pointer),
+                "the pointer must say what it saw: {resent}"
+            );
+            assert!(
+                !resent.contains("measure the cost"),
+                "the telling is already in the occupant's context: {resent}",
+            );
+            assert!(
+                resent.starts_with("<Qk8zdj5rQ>\n") && resent.ends_with("</Qk8zdj5rQ>\n"),
+                "the seal authenticates the pointer exactly as it authenticates a telling: {resent}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_silent_occupant_is_told_its_reasoning_was_not_a_reply() {
+        let again = delivered("reminded");
+        let silent = nudge(&again, |_| Some(Told::Silent));
+        let replied = nudge(&again, |_| Some(Told::Replied));
+
+        assert_ne!(
+            silent, replied,
+            "the two observations must read differently"
         );
-        assert_eq!(keys(&resent).collect::<Vec<_>>(), ["dSvXD9bv3"]);
         assert!(
-            resent.contains("stage=reminded") && resent.contains("key=dSvXD9bv3"),
-            "the pointer must still name the directive and why it arrived: {resent}",
-        );
-        assert!(resent.contains(NUDGE), "the pointer must say what it wants");
-        assert!(
-            !resent.contains("measure the cost"),
-            "the telling is already in the occupant's context: {resent}",
+            silent.contains("no visible reply") && silent.contains("thinking"),
+            "an occupant that only thought its answer must learn that: {silent}",
         );
         assert!(
-            resent.starts_with("<Qk8zdj5rQ>\n") && resent.ends_with("</Qk8zdj5rQ>\n"),
-            "the seal authenticates the pointer exactly as it authenticates a telling: {resent}",
+            !replied.contains("no visible reply"),
+            "an occupant that replied must not be told it was silent: {replied}",
         );
     }
 
     #[test]
     fn a_telling_this_context_never_heard_is_spent_in_full() {
-        let held = "hold the line while the suite runs, and say so when it finishes running";
+        let held = "hold the line while the suite runs, and say so when it finishes running \
+                    along with what it reported";
         let rendering = format!(
             "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{held}\n{}",
             &delivered("published")["<Qk8zdj5rQ>\n".len()..],
         );
-        let resent = nudge(&rendering, |key| key == "1kJK6N3R");
+        let resent = nudge(&rendering, |key| {
+            (key == "1kJK6N3R").then_some(Told::Replied)
+        });
 
         assert!(
             !resent.contains(held),
