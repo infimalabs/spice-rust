@@ -494,6 +494,25 @@ struct ResponseIdentity {
     id: CanonicalUuid,
 }
 
+#[hook]
+fn use_composer_drag(surface: &SurfaceData) -> watchband::PrimaryComposerDragState {
+    let context = {
+        let surface = surface.read();
+        surface
+            .as_ref()
+            .and_then(|runtime| {
+                runtime.lanes().map(|lanes| {
+                    (
+                        runtime.offers(CommandKind::TeamArrange),
+                        Some(lanes.topology_revision),
+                    )
+                })
+            })
+            .unwrap_or((false, None))
+    };
+    watchband::use_primary_composer_drag_state(context.0, context.1)
+}
+
 #[function_component(CanvasApp)]
 fn canvas_app() -> Html {
     let connection = use_state(|| Connection::Starting);
@@ -518,6 +537,7 @@ fn canvas_app() -> Html {
         queue: use_mut_ref(|| None::<ActionQueue>),
         issue: action_issue.clone(),
     };
+    let composer_drag = use_composer_drag(&surface);
     let work_detail = task_detail::use_controls(sender.clone(), surface.clone());
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
     let work_map = use_state(view::WorkMapState::default);
@@ -561,8 +581,7 @@ fn canvas_app() -> Html {
     use_mosaic_root_scroll(*mosaic);
     use_canvas_menu_dismissal(canvas_menu_open.clone());
     watchband::use_command_modifier_preview();
-    let team_count = teamed_lane_count(&surface);
-    watchband::use_team_fleet_right_edge(team_fleet.clone(), team_count);
+    watchband::use_team_fleet_right_edge(team_fleet.clone(), teamed_lane_count(&surface));
     let surface_view = surface.read();
     let work = project_work(surface_view.as_ref());
     use_work_scope_reconciliation(work.as_ref(), work_scope.clone(), work_scope_notice.clone());
@@ -588,6 +607,7 @@ fn canvas_app() -> Html {
             team_controls: &team_controls,
             composer_drafts: &composer_drafts,
             submissions: &submissions,
+            composer_drag: &composer_drag,
             team_fleet: &team_fleet,
             unsafe_intent,
             sender: &sender,

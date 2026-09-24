@@ -26,6 +26,7 @@ use composer::{
     primary_composer_dragging, primary_textarea_id, render_image_indicators, render_quote_shards,
     update_body,
 };
+pub(super) use composer::{PrimaryComposerDragState, use_primary_composer_drag_state};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
 use controls::{TeamLife, render_team_controls};
 use fleet::{FleetRender, TeamMode, carries_team, render_empty_fleet, render_populated_fleet};
@@ -59,6 +60,7 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
         submissions,
         team_fleet,
         team_controls,
+        composer_drag,
         agents: controls,
         ..
     } = render;
@@ -104,6 +106,7 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
         submissions,
         team_controls,
         controls,
+        composer_drag,
     };
     if teams.is_empty() {
         return render_empty_fleet(team_fleet, &render);
@@ -147,6 +150,7 @@ fn render_compose(
     authority: SubmissionAuthority,
     can_arrange: bool,
     sender: &SenderHandle,
+    composer_drag: &PrimaryComposerDragState,
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
     team_controls: &UseReducerHandle<TeamControls>,
@@ -156,8 +160,7 @@ fn render_compose(
     if team.members.is_empty() {
         return empty("No agents are assigned. Open Import agent to add one.");
     }
-    let authoritative_life = team.subscription;
-    let control = team_controls.current(team.lane, authoritative_life);
+    let control = team_controls.current(team.lane, team.subscription);
     let submit = submit_team_callback(
         &team.members,
         epoch,
@@ -214,6 +217,7 @@ fn render_compose(
                             can_arrange,
                             actions,
                             sender,
+                            composer_drag,
                             drafts,
                             submissions,
                             &broadcast_targets,
@@ -225,7 +229,7 @@ fn render_compose(
                 </div>
                 {render_team_controls(
                     team.lane,
-                    authoritative_life,
+                    team.subscription,
                     topology_revision,
                     &control,
                     team_controls,
@@ -691,6 +695,7 @@ struct PrimaryComposerDragging {
     movement: Callback<PointerEvent>,
     finish: Callback<PointerEvent>,
     cancel: Callback<PointerEvent>,
+    lost_capture: Callback<PointerEvent>,
 }
 
 struct AgentTeamControl {
@@ -824,6 +829,7 @@ fn render_agent_composer(
     can_arrange: bool,
     actions: AgentTeamActions,
     sender: &SenderHandle,
+    composer_drag: &PrimaryComposerDragState,
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
     broadcast_targets: &[BroadcastTarget],
@@ -835,8 +841,7 @@ fn render_agent_composer(
     let AgentTeamActions { split, leave } = actions;
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
-    let occupant = member.occupant;
-    let target = authority.target(occupant, member.bound, epoch);
+    let target = authority.target(member.occupant, member.bound, epoch);
     let wake = target == Some(SubmissionTarget::Wake);
     let command_submit_eligible = target.is_some() && !draft.body.trim().is_empty();
     let broadcast_target_eligible = broadcast_targets
@@ -868,15 +873,21 @@ fn render_agent_composer(
         sender.clone(),
         drafts.clone(),
     );
-    let dragging =
-        primary_composer_dragging(lane_id, can_arrange, topology_revision, topology, sender);
+    let dragging = primary_composer_dragging(
+        lane_id,
+        can_arrange,
+        topology_revision,
+        topology,
+        sender,
+        composer_drag,
+    );
     let status = member.status(standing.pending);
     html! {
         <section
             key={lane_key.clone()}
             class={classes!(
                 "team-agent",
-                occupant.is_none().then_some("team-agent--vacant"),
+                member.occupant.is_none().then_some("team-agent--vacant"),
             )}
             data-agent-lane={lane_id.to_string()}
             data-wake-and-send={wake.to_string()}
@@ -959,6 +970,7 @@ fn render_composer_body(
         movement: drag_movement,
         finish: drag_finish,
         cancel: drag_cancel,
+        lost_capture: drag_lost_capture,
     } = dragging;
     html! {
         <div
@@ -991,6 +1003,7 @@ fn render_composer_body(
                 render_image_indicators(lane_key, &draft.attachments, None, drafts),
                 drag_enabled,
                 drag_start,
+                drag_lost_capture,
             )}
             <textarea
                 id={primary_textarea_id(lane_key)}
@@ -1030,6 +1043,7 @@ fn render_composer_heading(
     indicators: Html,
     drag_enabled: bool,
     drag_start: Callback<PointerEvent>,
+    drag_lost_capture: Callback<PointerEvent>,
 ) -> Html {
     let renew = Callback::from(move |event: MouseEvent| {
         close_agent_action_menu(&event);
@@ -1065,6 +1079,7 @@ fn render_composer_heading(
                 title={prose.clone()}
                 data-composer-drag-handle={drag_enabled.to_string()}
                 onpointerdown={drag_start}
+                onlostpointercapture={drag_lost_capture}
             >{prose}</strong>
             {indicators}
             <details class="agent-action-menu">

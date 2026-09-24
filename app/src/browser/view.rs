@@ -82,6 +82,7 @@ pub(super) struct CanvasRender<'a> {
     pub team_controls: &'a UseReducerHandle<TeamControls>,
     pub composer_drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub submissions: &'a SubmissionHandle,
+    pub composer_drag: &'a super::watchband::PrimaryComposerDragState,
     pub team_fleet: &'a NodeRef,
     pub unsafe_intent: bool,
     pub sender: &'a SenderHandle,
