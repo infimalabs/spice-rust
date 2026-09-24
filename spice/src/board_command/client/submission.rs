@@ -106,7 +106,7 @@ pub(super) fn client_capture(
     };
     mutate_from_board(repository, contract, read, |board| {
         require_no_plan_implementation(&board, "task capture")?;
-        let heads = task_heads(&board, &task)?;
+        let heads = named_task_heads(&board, &task)?;
         let (lane, occupant) = actor_seat(&board)?;
         let rule = if stealing { "steal" } else { "capture" }
             .parse::<Name>()
@@ -507,7 +507,7 @@ where
     };
     let task = task.expect("generated mutation syntax requires a task handle");
     mutate_from_board(repository, contract, read, |board| {
-        let heads = task_heads(&board, &task)?;
+        let heads = named_task_heads(&board, &task)?;
         map(&board, heads.statement.body.handle.clone(), heads)
     })
 }

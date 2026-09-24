@@ -157,6 +157,21 @@ fn rehoming_rerenders_the_handle_without_migrating_identity() {
     assert!(!stored.contains_key("uuid"));
 }
 
+/// A caller naming a task by its pre-move handle is told the current one; the
+/// current handle itself earns no notice.
+#[test]
+fn a_renamed_handle_tells_the_caller_its_current_name() {
+    let born = wire::TaskStamp::for_micros(1_788_810_000_000_000).expect("fixture stamp");
+    let named = TaskHandle::for_project("canvas.work", &born);
+    let current = TaskHandle::for_project("canvas.chrome", &born);
+    let notice = rename_notice(&named, &current).expect("a renamed handle earns a notice");
+    assert!(
+        notice.contains(&format!("{named} is now {current}")),
+        "{notice}"
+    );
+    assert_eq!(rename_notice(&current, &current), None);
+}
+
 /// A filed statement is correctable, and the correction is durable and
 /// attributable.
 ///

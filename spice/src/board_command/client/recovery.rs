@@ -118,7 +118,7 @@ pub(in crate::board_command) fn recovery_preflight(
             ),
         ));
     }
-    let heads = task_heads(board, task)?;
+    let heads = named_task_heads(board, task)?;
     let entry = entries
         .iter()
         .find(|entry| entry.born() == &heads.statement.body.born)

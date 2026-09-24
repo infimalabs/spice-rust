@@ -125,7 +125,7 @@ pub(super) fn plan_followup_edges(
                 &error.to_string(),
             )
         })?;
-        let heads = task_heads(board, &handle)?;
+        let heads = named_task_heads(board, &handle)?;
         let handle = heads.statement.body.handle.clone();
         if linked.contains(&handle) {
             continue;

@@ -260,10 +260,15 @@ fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<Sele
         )
     })?;
     match snapshot.statuses.get(&born) {
-        Some((current, _)) => Ok(SelectedTask {
-            handle: current.clone(),
-            born,
-        }),
+        Some((current, _)) => {
+            if let Some(notice) = crate::board_command::rename_notice(&task, current) {
+                eprintln!("{notice}");
+            }
+            Ok(SelectedTask {
+                handle: current.clone(),
+                born,
+            })
+        }
         None => Err(Failure::refusal(
             "artifact::task-unknown",
             "one existing task",
