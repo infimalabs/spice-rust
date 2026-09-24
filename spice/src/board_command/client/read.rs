@@ -97,7 +97,7 @@ pub(super) fn client_show(
             position,
             body: CommandAnswer::Board(board),
         }) => {
-            let task = match task_heads(&board, &task) {
+            let task = match named_task_heads(&board, &task) {
                 Ok(task) => task,
                 Err(outcome) => return outcome,
             };

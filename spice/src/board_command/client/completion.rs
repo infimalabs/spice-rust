@@ -31,7 +31,7 @@ pub(super) fn client_done(
     let implicit = requested_task.is_none();
     let (task, heads) = match requested_task {
         Some(task) => {
-            let heads = match task_heads(&board, &task) {
+            let heads = match named_task_heads(&board, &task) {
                 Ok(heads) => heads,
                 Err(outcome) => return outcome,
             };

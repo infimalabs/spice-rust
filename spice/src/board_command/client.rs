@@ -270,7 +270,7 @@ fn client_reclaim(
     mutate_from_board(repository, contract, read, |board| {
         let (task, heads) = match task {
             Some(task) => {
-                let heads = task_heads(&board, &task)?;
+                let heads = named_task_heads(&board, &task)?;
                 (heads.statement.body.handle.clone(), heads)
             }
             None => reclaim_active(&board)?,
@@ -480,7 +480,7 @@ fn client_depends(
         let mut after = Vec::with_capacity(written.len());
         let mut new_edges = Vec::new();
         for dependency in &written {
-            let dependency_heads = task_heads(board, dependency)?;
+            let dependency_heads = named_task_heads(board, dependency)?;
             after.push(dependency_heads.statement.body.handle.clone());
             expected.push(statement_witness(dependency_heads));
             expected.push(workflow_witness(dependency_heads));
@@ -676,6 +676,25 @@ pub(super) fn task_heads<'a>(
                 "read board and name one current task handle",
             )
         })
+}
+
+/// Resolve a task the caller named on the command line, telling them on stderr
+/// when that handle predates a project move so they adopt the current name.
+/// Stdout stays the command's document; resident-side resolution stays silent.
+pub(super) fn named_task_heads<'a>(
+    board: &'a BoardAnswer,
+    task: &TaskHandle,
+) -> Result<&'a BoardTask, Outcome<CommandAnswer>> {
+    let heads = task_heads(board, task)?;
+    if let Some(notice) = rename_notice(task, &heads.statement.body.handle) {
+        eprintln!("{notice}");
+    }
+    Ok(heads)
+}
+
+/// The notice owed to a caller who named a task by a handle it no longer carries.
+pub(crate) fn rename_notice(named: &TaskHandle, current: &TaskHandle) -> Option<String> {
+    (named != current).then(|| format!("spice: {named} is now {current}; use the current handle"))
 }
 
 /// The validated entry a named task resolves to by born stamp alone.
