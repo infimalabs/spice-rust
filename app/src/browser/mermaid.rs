@@ -347,7 +347,41 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
 pub(super) struct MarkdownBodyProps {
     pub(super) html: AttrValue,
     pub(super) sources: Rc<Vec<AttrValue>>,
+    pub(super) acknowledgements: Rc<Vec<crate::composer_markdown::AcknowledgementState>>,
     pub(super) final_answer: bool,
+}
+
+#[derive(Properties, PartialEq)]
+struct AcknowledgementPillProps {
+    state: crate::composer_markdown::AcknowledgementState,
+}
+
+#[function_component(AcknowledgementPill)]
+fn acknowledgement_pill(props: &AcknowledgementPillProps) -> Html {
+    let (classification, acknowledgement, label, text) = match props.state {
+        crate::composer_markdown::AcknowledgementState::Acknowledged => {
+            ("ack", "acked", "Acknowledgement classification", "ACK")
+        }
+        crate::composer_markdown::AcknowledgementState::Pending => (
+            "ack-pending",
+            "pending",
+            "Acknowledgement awaiting retirement",
+            "ACK",
+        ),
+        crate::composer_markdown::AcknowledgementState::Declined => {
+            ("nack", "declined", "Declined classification", "NACK")
+        }
+    };
+    html! {
+        <span
+            class="message-ack-pill"
+            data-message-classification={classification}
+            data-acknowledgement={acknowledgement}
+            aria-label={label}
+        >
+            <span class="message-ack-label">{text}</span>
+        </span>
+    }
 }
 
 struct Slot {
@@ -356,69 +390,110 @@ struct Slot {
     key: yew::virtual_dom::Key,
 }
 
+fn collect_slots(
+    host: &web_sys::Element,
+    selector: &str,
+    attribute: &str,
+    count: usize,
+    previous: &[Slot],
+    counter: &Cell<u64>,
+) -> Vec<Slot> {
+    let Ok(nodes) = host.query_selector_all(selector) else {
+        return Vec::new();
+    };
+    let mut slots = Vec::with_capacity(nodes.length() as usize);
+    for position in 0..nodes.length() {
+        let Some(target) = nodes
+            .item(position)
+            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+        else {
+            continue;
+        };
+        let Some(index) = target
+            .get_attribute(attribute)
+            .and_then(|index| index.parse::<usize>().ok())
+            .filter(|index| *index < count)
+        else {
+            continue;
+        };
+        // A changed host needs a new portal event root; unchanged targets keep
+        // their component-local state and DOM identity.
+        let key = previous
+            .iter()
+            .find(|slot| slot.target == target)
+            .map(|slot| slot.key.clone())
+            .unwrap_or_else(|| {
+                counter.set(counter.get().wrapping_add(1));
+                counter.get().into()
+            });
+        slots.push(Slot { index, target, key });
+    }
+    slots
+}
+
 /// Only producer-authored slots inside this card are portal targets. Raw user
 /// HTML still passes through the shared Markdown sanitizer before this point.
 #[function_component(MarkdownBody)]
 pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let host = use_node_ref();
-    let slots = use_state(Vec::<Slot>::new);
+    let diagram_slots = use_state(Vec::<Slot>::new);
+    let acknowledgement_slots = use_state(Vec::<Slot>::new);
     let counter = use_memo((), |()| Cell::new(0_u64));
-    use_effect_with((props.html.clone(), props.sources.clone()), {
-        let host = host.clone();
-        let slots = slots.clone();
-        let counter = counter.clone();
-        move |(_, sources)| {
-            let mut targets = Vec::new();
-            if !sources.is_empty()
-                && let Some(host) = host.cast::<web_sys::Element>()
-                && let Ok(nodes) = host.query_selector_all("[data-mermaid-slot]")
-            {
-                for index in 0..nodes.length() {
-                    let Some(element) = nodes
-                        .item(index)
-                        .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
-                    else {
-                        continue;
-                    };
-                    let Some(index) = element
-                        .get_attribute("data-mermaid-slot")
-                        .and_then(|index| index.parse::<usize>().ok())
-                    else {
-                        continue;
-                    };
-                    if index < sources.len() {
-                        // A changed host needs a new portal event root;
-                        // unchanged hosts retain streaming preview state.
-                        let key = slots
-                            .iter()
-                            .find(|slot| slot.target == element)
-                            .map(|slot| slot.key.clone())
-                            .unwrap_or_else(|| {
-                                counter.set(counter.get().wrapping_add(1));
-                                counter.get().into()
-                            });
-                        targets.push(Slot {
-                            index,
-                            target: element,
-                            key,
-                        });
-                    }
-                }
+    use_effect_with(
+        (
+            props.html.clone(),
+            props.sources.len(),
+            props.acknowledgements.len(),
+        ),
+        {
+            let host = host.clone();
+            let diagram_slots = diagram_slots.clone();
+            let acknowledgement_slots = acknowledgement_slots.clone();
+            let counter = counter.clone();
+            move |(_, source_count, acknowledgement_count)| {
+                let Some(host) = host.cast::<web_sys::Element>() else {
+                    return;
+                };
+                diagram_slots.set(collect_slots(
+                    &host,
+                    "[data-mermaid-slot]",
+                    "data-mermaid-slot",
+                    *source_count,
+                    &diagram_slots,
+                    &counter,
+                ));
+                acknowledgement_slots.set(collect_slots(
+                    &host,
+                    "[data-acknowledgement-slot]",
+                    "data-acknowledgement-slot",
+                    *acknowledgement_count,
+                    &acknowledgement_slots,
+                    &counter,
+                ));
             }
-            slots.set(targets);
-        }
-    });
-    // Keep the portal list under a stable VDOM parent. Mixing keyed portals
+        },
+    );
+    // Keep each portal list under a stable VDOM parent. Mixing keyed portals
     // directly with VRaw replaces the raw nodes when the first portal mounts.
     html! {
         <div ref={host} class="message-body markdown-body">
             {Html::from_html_unchecked(props.html.clone())}
             if !props.sources.is_empty() {
             <span hidden=true>
-            {for slots.iter().filter_map(|slot| {
+            {for diagram_slots.iter().filter_map(|slot| {
                 let source = props.sources.get(slot.index)?.clone();
                 Some(yew::create_portal(html! {
                     <MermaidImage key={slot.key.clone()} {source} final_answer={props.final_answer} />
+                }, slot.target.clone()))
+            })}
+            </span>
+            }
+            if !props.acknowledgements.is_empty() {
+            <span hidden=true>
+            {for acknowledgement_slots.iter().filter_map(|slot| {
+                let state = *props.acknowledgements.get(slot.index)?;
+                Some(yew::create_portal(html! {
+                    <AcknowledgementPill key={slot.key.clone()} {state} />
                 }, slot.target.clone()))
             })}
             </span>

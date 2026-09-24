@@ -336,6 +336,7 @@ fn agent_message_presentation<'a>(
             <super::super::mermaid::MarkdownBody
                 html={AttrValue::from(rendered_markdown.html)}
                 sources={Rc::new(rendered_markdown.diagrams.into_iter().map(AttrValue::from).collect::<Vec<_>>())}
+                acknowledgements={Rc::new(rendered_markdown.acknowledgements)}
                 final_answer={message.final_answer}
             />
         },
