@@ -95,7 +95,6 @@ pub(crate) enum PendingKind {
         request: runtime::WorkHistoryRequest,
     },
     LaneSeat,
-    LaneArrange,
     LaneRenewal {
         team: wire::CanonicalUuid,
         lane: wire::CanonicalUuid,

@@ -1,8 +1,8 @@
 //! Predecessor-style lane composer rendered inside the Lanes surface.
 
+use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
-use wasm_bindgen::{JsCast, JsValue};
-use web_sys::{DragEvent, HtmlInputElement};
+use web_sys::{DragEvent, HtmlInputElement, PointerEvent};
 
 use super::clock::{Age, Countdown};
 use super::*;
@@ -23,7 +23,8 @@ mod vendor_icon;
 pub(super) use command_preview::use_command_modifier_preview;
 use composer::{
     AgentMessageCard, agent_message_source_id, drop_on_lane, keyboard_submit, paste_images,
-    primary_textarea_id, render_image_indicators, render_quote_shards, update_body,
+    primary_composer_dragging, primary_textarea_id, render_image_indicators, render_quote_shards,
+    update_body,
 };
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
 use controls::{TeamLife, render_team_controls};
@@ -34,7 +35,6 @@ use vendor_icon::render_composer_vendor_icon;
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
 const MAX_ATTACHMENT_BYTES: f64 = wire::media::MAX_MEDIA_BYTES as f64;
-const LANE_DRAG_MIME: &str = "application/x-spice-lane";
 
 #[derive(Clone, Copy)]
 pub(super) struct BroadcastTarget {
@@ -84,7 +84,6 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
     let authority =
         SubmissionAuthority::derive(connection.is_online(), |kind| runtime.offers(kind));
     let can_configure = runtime.offers(CommandKind::TeamConfigure);
-    let can_arrange_lanes = runtime.offers(CommandKind::LaneArrange);
     let can_arrange_teams = runtime.offers(CommandKind::TeamArrange);
     let topology = watchband::topology(&lanes.lanes);
     let teams = lanes
@@ -97,7 +96,6 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
         epoch: lanes.epoch,
         topology_revision: lanes.topology_revision,
         authority,
-        can_arrange_lanes,
         can_arrange_teams,
         can_configure,
         topology,
@@ -207,6 +205,7 @@ fn render_compose(
                             standing,
                             epoch,
                             topology_revision,
+                            topology,
                             runtime
                                 .lanes()
                                 .and_then(|lanes| lanes.renewal(team.lane, member.lane)),
@@ -688,9 +687,10 @@ fn copy_dragover() -> Callback<DragEvent> {
 
 struct PrimaryComposerDragging {
     enabled: bool,
-    start: Callback<DragEvent>,
-    over: Callback<DragEvent>,
-    drop: Callback<DragEvent>,
+    start: Callback<PointerEvent>,
+    movement: Callback<PointerEvent>,
+    finish: Callback<PointerEvent>,
+    cancel: Callback<PointerEvent>,
 }
 
 struct AgentTeamControl {
@@ -807,85 +807,6 @@ fn agent_team_actions(
     }
 }
 
-fn lane_drag_transfer(event: &DragEvent) -> Option<web_sys::DataTransfer> {
-    let transfer = event.data_transfer()?;
-    transfer
-        .types()
-        .includes(&JsValue::from_str(LANE_DRAG_MIME), 0)
-        .then_some(transfer)
-}
-
-fn composer_drag_origin_is_interactive(event: &DragEvent) -> bool {
-    event
-        .target()
-        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .and_then(|target| target.closest("textarea, input, button, summary, a").ok())
-        .flatten()
-        .is_some()
-}
-
-fn primary_composer_dragging(
-    lane: CanonicalUuid,
-    enabled: bool,
-    topology_revision: u64,
-    sender: &SenderHandle,
-) -> PrimaryComposerDragging {
-    let start = Callback::from(move |event: DragEvent| {
-        if composer_drag_origin_is_interactive(&event) {
-            event.prevent_default();
-            event.stop_propagation();
-            return;
-        }
-        event.stop_propagation();
-        if let Some(transfer) = event.data_transfer() {
-            let _ = transfer.set_data(LANE_DRAG_MIME, &lane.to_string());
-            transfer.set_effect_allowed("move");
-        }
-    });
-    let over = Callback::from(move |event: DragEvent| {
-        let Some(transfer) = lane_drag_transfer(&event) else {
-            return;
-        };
-        event.prevent_default();
-        event.stop_propagation();
-        transfer.set_drop_effect("move");
-    });
-    let sender = sender.clone();
-    let drop = Callback::from(move |event: DragEvent| {
-        let Some(transfer) = lane_drag_transfer(&event) else {
-            return;
-        };
-        event.prevent_default();
-        event.stop_propagation();
-        let source = transfer
-            .get_data(LANE_DRAG_MIME)
-            .ok()
-            .and_then(|source| source.parse::<CanonicalUuid>().ok());
-        let Some(source) = source else {
-            return;
-        };
-        if enabled
-            && source != lane
-            && !admit_action(
-                &sender,
-                ClientAction::ArrangeLane {
-                    topology_revision,
-                    lane: source,
-                    before: lane,
-                },
-            )
-        {
-            transfer.set_drop_effect("none");
-        }
-    });
-    PrimaryComposerDragging {
-        enabled,
-        start,
-        over,
-        drop,
-    }
-}
-
 #[allow(
     clippy::too_many_arguments,
     reason = "one member composer needs its standing and shared team interaction handles"
@@ -896,6 +817,7 @@ fn render_agent_composer(
     standing: &Standing,
     epoch: CanonicalUuid,
     topology_revision: u64,
+    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     renewal: Option<&wire::LaneRenewalRecord>,
     pending: usize,
     authority: SubmissionAuthority,
@@ -946,7 +868,8 @@ fn render_agent_composer(
         sender.clone(),
         drafts.clone(),
     );
-    let dragging = primary_composer_dragging(lane_id, can_arrange, topology_revision, sender);
+    let dragging =
+        primary_composer_dragging(lane_id, can_arrange, topology_revision, topology, sender);
     let status = member.status(standing.pending);
     html! {
         <section
@@ -1028,13 +951,14 @@ fn render_composer_body(
 ) -> Html {
     let oninput = update_body(lane_key.to_owned(), drafts.clone());
     let onpaste = paste_images(lane_key.to_owned(), None, drafts.clone());
-    // Firefox gives draggable ancestors ownership of textarea pointer gestures.
-    // Keep only prose draggable; the composer remains the lane and draft target.
+    // Pointer capture stays on prose, leaving textarea editing and attachment
+    // drag/drop untouched while the lifted composer can cross sibling slots.
     let PrimaryComposerDragging {
         enabled: drag_enabled,
         start: drag_start,
-        over: drag_over,
-        drop: drag_drop,
+        movement: drag_movement,
+        finish: drag_finish,
+        cancel: drag_cancel,
     } = dragging;
     html! {
         <div
@@ -1050,8 +974,9 @@ fn render_composer_body(
                     || !draft.quotes.is_empty()
                     || !draft.attachments.is_empty()
             ).to_string()}
-            ondragover={drag_over}
-            ondrop={drag_drop}
+            onpointermove={drag_movement}
+            onpointerup={drag_finish}
+            onpointercancel={drag_cancel}
         >
             {render_composer_heading(
                 lane,
@@ -1104,7 +1029,7 @@ fn render_composer_heading(
     prose: String,
     indicators: Html,
     drag_enabled: bool,
-    drag_start: Callback<DragEvent>,
+    drag_start: Callback<PointerEvent>,
 ) -> Html {
     let renew = Callback::from(move |event: MouseEvent| {
         close_agent_action_menu(&event);
@@ -1139,8 +1064,7 @@ fn render_composer_heading(
                 class="composer-shard-prose"
                 title={prose.clone()}
                 data-composer-drag-handle={drag_enabled.to_string()}
-                draggable={drag_enabled.to_string()}
-                ondragstart={drag_start}
+                onpointerdown={drag_start}
             >{prose}</strong>
             {indicators}
             <details class="agent-action-menu">

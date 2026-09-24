@@ -303,6 +303,41 @@ pub fn topology(lanes: &[LaneRow]) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
         })
         .collect()
 }
+/// Swap exactly the two composers named by one drag preview.
+///
+/// The complete topology is returned because team arrangement is an atomic
+/// restatement. Team identities, team order, and every unhovered member stay
+/// fixed; only the two member slots exchange identities. The message plane
+/// never consumes this ordering, so a composer swap cannot reorder cards.
+#[must_use]
+pub fn swap_members(
+    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    source: CanonicalUuid,
+    target: CanonicalUuid,
+) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
+    if source == target {
+        return None;
+    }
+    let mut source_slot = None;
+    let mut target_slot = None;
+    for (team_at, (_, members)) in topology.iter().enumerate() {
+        for (member_at, member) in members.iter().enumerate() {
+            if *member == source {
+                source_slot = Some((team_at, member_at));
+            } else if *member == target {
+                target_slot = Some((team_at, member_at));
+            }
+        }
+    }
+    let (source_team, source_at) = source_slot?;
+    let (target_team, target_at) = target_slot?;
+    if source_team != target_team {
+        return None;
+    }
+    let mut swapped = topology.to_vec();
+    swapped[source_team].1.swap(source_at, target_at);
+    Some(swapped)
+}
 
 /// The teams in one topology, in the order the canvas drew them.
 ///
@@ -961,8 +996,34 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         MAX_TEAM_VISUAL_WEIGHT, agent_message_attribution, agent_message_label, quote_label,
-        team_visual_weight, ticker_accessible_label, ticker_chunks, tool_media_description,
+        swap_members, team_visual_weight, ticker_accessible_label, ticker_chunks,
+        tool_media_description,
     };
+
+    fn id(suffix: u8) -> wire::CanonicalUuid {
+        format!("00000000-0000-4000-8000-{suffix:012}")
+            .parse()
+            .expect("fixture identity is canonical")
+    }
+
+    #[test]
+    fn composer_swap_changes_only_the_two_hovered_slots() {
+        let topology = vec![
+            (id(10), vec![id(1), id(2), id(3)]),
+            (id(20), vec![id(4), id(5)]),
+        ];
+
+        assert_eq!(
+            swap_members(&topology, id(1), id(3)),
+            Some(vec![
+                (id(10), vec![id(3), id(2), id(1)]),
+                (id(20), vec![id(4), id(5)]),
+            ]),
+        );
+        assert_eq!(swap_members(&topology, id(2), id(5)), None);
+        assert_eq!(swap_members(&topology, id(2), id(2)), None);
+        assert_eq!(swap_members(&topology, id(2), id(9)), None);
+    }
 
     #[test]
     fn absent_preview_has_one_documented_label() {

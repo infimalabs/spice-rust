@@ -228,7 +228,7 @@ fn apply_command_response(
                 stale: crate::Stale::default(),
             }
         }
-        PendingKind::LaneArrange | PendingKind::TeamArrange => {
+        PendingKind::TeamArrange => {
             let (refresh, applied) =
                 apply_lane_response(session, handles, runtime, &[], true, bytes)?;
             CommandApplication {
