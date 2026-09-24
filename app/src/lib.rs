@@ -6,19 +6,17 @@
 //! from browser code, and a server field the app needs but wire lacks is a
 //! compile-time contract gap rather than an internal import.
 //!
-//! The inbound path is four floors. [`socket`] admits bytes against one
-//! current opening, [`state`] holds what was admitted, [`pane`] presents it, and
-//! [`view`] says which of the four axes a pane answers on. The join between
-//! the first two is a type: admission yields [`Admitted`], and state accepts
-//! nothing else, so "the browser believes only what crossed the door" is
-//! checked at compile time. The join to the third is the same one: a
-//! [`Principal`] comes from an admitted acceptance and from nowhere else, so a
-//! pane's authority class is the resident's answer rather than the app's
-//! assertion. The fourth join is a closed vocabulary: a [`Pane`] names its
-//! [`Axis`] through an exhaustive match, so a pane with no axis does not
-//! compile rather than rendering unclassified.
+//! The inbound path is three floors. [`socket`] admits bytes against one
+//! current opening, [`state`] holds what was admitted, and [`pane`] presents
+//! it. The join between the first two is a type: admission yields
+//! [`Admitted`], and state accepts nothing else, so "the browser believes only
+//! what crossed the door" is checked at compile time. The join to the third is
+//! the same one: a [`Principal`] comes from an admitted acceptance and from
+//! nowhere else, so a pane's authority class is the resident's answer rather
+//! than the app's assertion. [`view`] names the closed [`Axis`] vocabulary the
+//! Canvas destinations stand on.
 //!
-//! Those four all face inward, holding or presenting what the resident said.
+//! Those three all face inward, holding or presenting what the resident said.
 //! [`compose`] is the one floor facing the other way, turning text an operator
 //! typed into the fields a request carries. It is therefore the only floor
 //! that refuses, and its refusals are sentences rather than log lines: the
@@ -130,4 +128,4 @@ pub use runtime::{
 };
 pub use socket::{Admitted, Session};
 pub use state::{Answer, Applied, BrowserState, CAUSAL_HEADERS, CausalLink, ChainEnd, ChainWalk};
-pub use view::{Axis, CanvasDestination, Pane, TeamDestination};
+pub use view::{Axis, CanvasDestination, TeamDestination};
