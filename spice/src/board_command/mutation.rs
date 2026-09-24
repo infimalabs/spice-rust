@@ -239,9 +239,17 @@ where
     B: serde::Serialize,
     F: FnOnce(&mut JournalWrite),
 {
+    let origin_context = if added_claim.is_some() {
+        match task_steering_origin_output(bus, &post.statement().provenance) {
+            Ok(context) => context,
+            Err(outcome) => return outcome,
+        }
+    } else {
+        None
+    };
     let claim_answer = added_claim
         .as_ref()
-        .map(|claim| Box::new(claim.answer(command, snapshot, &post)));
+        .map(|claim| Box::new(claim.answer(command, snapshot, &post, origin_context)));
     let next = claim_answer
         .as_ref()
         .and_then(|claim| claim.next.clone())

@@ -489,6 +489,13 @@ pub struct ClaimAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub creation_context: Option<Box<str>>,
+    /// Originating steering directive rendered for fresh task hydration.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub origin_context: Option<Box<str>>,
     /// Exact CLI command admitted as the next action, when one is available.
     #[serde(
         default,

@@ -199,12 +199,14 @@ impl AddedClaim {
         command: &wire::AdmittedCommand,
         snapshot: &ValidatedSnapshot,
         selected: &Entry,
+        origin_context: Option<Box<str>>,
     ) -> wire::intent::ClaimAnswer {
         claim_answer(
             command,
             selected,
             &snapshot.entries,
             Some(claim_activation_next_action(selected)),
+            origin_context,
         )
     }
 
@@ -236,6 +238,7 @@ fn claim_answer(
     selected: &Entry,
     entries: &[Entry],
     next: Option<Box<str>>,
+    origin_context: Option<Box<str>>,
 ) -> wire::intent::ClaimAnswer {
     wire::intent::ClaimAnswer {
         task: selected.handle().clone(),
@@ -251,6 +254,7 @@ fn claim_answer(
             .collect::<Vec<_>>()
             .into_boxed_slice(),
         creation_context: Some(task_creation_context_output(&selected.statement().creation)),
+        origin_context,
         next,
         phase: Some(claim_phase(selected.workflow())),
     }
@@ -310,7 +314,11 @@ pub(in crate::board_command) fn commit_claim(
     ) {
         return outcome;
     }
-    let answer = claim_answer(command, &selected, &snapshot.entries, next);
+    let origin_context = match task_steering_origin_output(bus, &selected.statement().provenance) {
+        Ok(context) => context,
+        Err(outcome) => return outcome,
+    };
+    let answer = claim_answer(command, &selected, &snapshot.entries, next, origin_context);
     if let Err(error) = write.command_result(
         request(command, win.clone()),
         command.epoch(),
