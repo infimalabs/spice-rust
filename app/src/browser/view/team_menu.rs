@@ -354,9 +354,13 @@ fn render_theme_selector() -> Html {
         .unwrap_or_else(|| "system".to_owned());
     html! {
         <div class="canvas-theme-selector" role="group" aria-label="Canvas theme">
-            {for [("light", "Light"), ("system", "System"), ("dark", "Dark")]
+            {for [
+                ("light", "Light", "L"),
+                ("system", "System", "S"),
+                ("dark", "Dark", "D"),
+            ]
                 .into_iter()
-                .map(|(mode, label)| {
+                .map(|(mode, label, mark)| {
                     let accessible = format!("Use {label} theme");
                     let choose = Callback::from(move |_| {
                         let Some(window) = web_sys::window() else { return; };
@@ -376,7 +380,7 @@ fn render_theme_selector() -> Html {
                             aria-pressed={(selected == mode).to_string()}
                             data-canvas-theme={mode}
                             onclick={choose}
-                        ><span class="canvas-theme-position" aria-hidden="true"></span></button>
+                        ><span class="canvas-theme-position" aria-hidden="true">{mark}</span></button>
                     }
                 })}
         </div>
@@ -412,6 +416,7 @@ fn render_team(
         <article
             class="canvas-team"
             data-team={team.lane.to_string()}
+            data-drop-enabled={can_configure.to_string()}
             {ondragover}
             {ondrop}
         >
@@ -522,7 +527,12 @@ fn render_new_team_drop(
     let ondragover = allow_drop(can_configure);
     let ondrop = drop_into_new_team(sender.clone(), target, can_configure, topology_revision);
     html! {
-        <section class="canvas-menu-section canvas-team-drop" {ondragover} {ondrop}>
+        <section
+            class="canvas-menu-section canvas-team-drop"
+            data-drop-enabled={can_configure.to_string()}
+            {ondragover}
+            {ondrop}
+        >
             <header><h2>{"New Team"}</h2><span>{"drop agent to create"}</span></header>
             <div class="canvas-drop-target" data-team-drop="new">{"Drop agent here"}</div>
         </section>
@@ -551,7 +561,12 @@ fn render_solo_members_drop(
         render.topology_revision,
     );
     html! {
-        <section class="canvas-menu-section canvas-unassigned" {ondragover} {ondrop}>
+        <section
+            class="canvas-menu-section canvas-unassigned"
+            data-drop-enabled={render.can_configure.to_string()}
+            {ondragover}
+            {ondrop}
+        >
             <header>
                 <h2>{"Unassigned Agents"}</h2>
                 <span>{"drop to unassign"}</span>
