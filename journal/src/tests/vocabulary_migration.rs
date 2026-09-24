@@ -210,6 +210,7 @@ fn insert_board_receipt(connection: &Connection) {
             None,
             None,
         )],
+        history: None,
         residency: wire::intent::Positioned {
             position: Seq::new(2).expect("residency position"),
             body: residency_head(),

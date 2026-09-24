@@ -10,9 +10,10 @@ use spice::repository::Repository;
 use wire::body::GitBoundary;
 use wire::intent::{
     BoardAnswer, BoardGraph, BoardHandout, BoardProjectPolicy, BoardRead, BoardTask, ClaimRenew,
-    ClaimWin, CommandAnswer, DocApply, DocLedger, Positioned, ReviewFollowup, TaskAdd, TaskDefer,
-    TaskDelete, TaskDepends, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskRef, TaskReview,
-    TaskWake, TasteProposalAdd, TextAnswer,
+    ClaimWin, CommandAnswer, DocApply, DocLedger, Positioned, ReviewFollowup,
+    TASK_HISTORY_PAGE_LIMIT_MAX, TaskAdd, TaskDefer, TaskDelete, TaskDepends, TaskDone, TaskEdit,
+    TaskHistoryCursor, TaskHistoryPage, TaskNote, TaskOopsAdd, TaskRef, TaskReview, TaskWake,
+    TasteProposalAdd, TextAnswer,
 };
 use wire::{
     Actor, ClaimDisposition, ClaimHead, Command, CommandKind, Digest, Domain, Fault, FaultClass,

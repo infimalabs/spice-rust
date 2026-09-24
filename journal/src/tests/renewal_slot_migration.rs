@@ -274,6 +274,7 @@ fn insert_receipts(
         allocation_band: 0,
         recent_cell: None,
         tasks: Vec::new(),
+        history: None,
         trust: Vec::new(),
         residency: wire::intent::Positioned {
             position: seq(6),
