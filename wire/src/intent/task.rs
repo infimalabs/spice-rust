@@ -239,6 +239,9 @@ pub struct TaskWake {
         deserialize_with = "crate::optional::present"
     )]
     pub into: Option<String>,
+    /// Wake or promote and atomically claim the resulting ready task.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub claim: bool,
 }
 
 /// Name one task and nothing else.

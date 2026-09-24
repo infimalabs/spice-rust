@@ -8,9 +8,9 @@ mod taste_proposal;
 #[cfg(test)]
 pub(super) use claim::Possession;
 pub(super) use claim::claim_win;
-use claim::{AddedClaim, prepare_added_claim};
 #[cfg(test)]
 pub(super) use claim::{ClaimPlan, claim_git_boundary, claim_grant, claim_plan, commit_claim};
+use claim::{PreparedClaim, prepare_capture_claim};
 pub(super) use edit::task_edit;
 pub(super) use taste_proposal::taste_proposal_add;
 
@@ -34,6 +34,47 @@ struct PreparedTask {
     at: Instant,
     statement: TaskHead,
     workflow: WorkflowHead,
+}
+
+struct AtomicClaim {
+    prepared: PreparedClaim,
+    answer: Box<wire::intent::ClaimAnswer>,
+}
+
+fn prepare_mutation_claim(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    repository: Option<&Repository>,
+    snapshot: &ValidatedSnapshot,
+    selected: &Entry,
+    requested: bool,
+) -> Result<Option<AtomicClaim>, Outcome<CommandAnswer>> {
+    if !requested {
+        return Ok(None);
+    }
+    let prepared = prepare_capture_claim(bus, command, repository, snapshot, selected)?;
+    let origin_context = task_steering_origin_output(bus, &selected.statement().provenance)?;
+    let answer = Box::new(prepared.answer(command, snapshot, selected, origin_context));
+    Ok(Some(AtomicClaim { prepared, answer }))
+}
+
+fn prepare_mutation_write(
+    command: &wire::AdmittedCommand,
+    entry: &Entry,
+    snapshot: &ValidatedSnapshot,
+    atomic_claim: Option<&AtomicClaim>,
+) -> Result<JournalWrite, Outcome<CommandAnswer>> {
+    let at = match atomic_claim {
+        Some(claim) => claim.prepared.at(),
+        None => current_instant()?,
+    };
+    let origin = task_origin(entry.born())?;
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
+    guard(&mut write, command.expected().to_vec());
+    if let Some(claim) = atomic_claim {
+        claim.prepared.guard(&mut write, snapshot, command);
+    }
+    Ok(write)
 }
 
 pub(super) fn task_add(
@@ -194,7 +235,7 @@ fn create_task<B: serde::Serialize>(
     }
     let post = prepared_entry(&mut prepared, &tags, projects);
     let added_claim = if add.claim {
-        match prepare_added_claim(bus, command, repository, &snapshot, &post) {
+        match prepare_capture_claim(bus, command, repository, &snapshot, &post) {
             Ok(claim) => Some(claim),
             Err(outcome) => return outcome,
         }
@@ -233,7 +274,7 @@ fn commit_prepared_task<B, F>(
     taste_review: Option<&TasteReview>,
     dependency_witnesses: Vec<Witness>,
     extra_guard: F,
-    added_claim: Option<AddedClaim>,
+    added_claim: Option<PreparedClaim>,
 ) -> Outcome<CommandAnswer>
 where
     B: serde::Serialize,
@@ -254,7 +295,7 @@ where
         .as_ref()
         .and_then(|claim| claim.next.clone())
         .or_else(|| next_action(snapshot, &post));
-    let at = added_claim.as_ref().map_or(prepared.at, AddedClaim::at);
+    let at = added_claim.as_ref().map_or(prepared.at, PreparedClaim::at);
     let mut write = JournalWrite::new(
         command.actor().clone(),
         prepared.origin.clone(),
@@ -597,6 +638,8 @@ pub(super) fn task_defer(
         &defer.task,
         Some(defer.wait),
         defer.clone(),
+        None,
+        false,
         projects,
         allocation,
     )
@@ -606,11 +649,14 @@ pub(super) fn task_wake(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     wake: &TaskWake,
+    repository: Option<&Repository>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
     if let Some(project) = wake.into.as_deref() {
-        return promote_oops(bus, command, wake, project, projects, allocation);
+        return promote_oops(
+            bus, command, wake, project, repository, projects, allocation,
+        );
     }
     change_deferral(
         bus,
@@ -618,6 +664,8 @@ pub(super) fn task_wake(
         &wake.task,
         None,
         wake.clone(),
+        repository,
+        wake.claim,
         projects,
         allocation,
     )
@@ -660,6 +708,7 @@ fn promote_oops(
     command: &wire::AdmittedCommand,
     wake: &TaskWake,
     requested: &str,
+    repository: Option<&Repository>,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -707,17 +756,20 @@ fn promote_oops(
             );
         }
     };
-    let next = next_action(&snapshot, &post);
-    let at = match current_instant() {
-        Ok(at) => at,
+    let atomic_claim =
+        match prepare_mutation_claim(bus, command, repository, &snapshot, &post, wake.claim) {
+            Ok(claim) => claim,
+            Err(outcome) => return outcome,
+        };
+    let claim_answer = atomic_claim.as_ref().map(|claim| claim.answer.clone());
+    let next = claim_answer
+        .as_ref()
+        .and_then(|claim| claim.next.clone())
+        .or_else(|| next_action(&snapshot, &post));
+    let mut write = match prepare_mutation_write(command, entry, &snapshot, atomic_claim.as_ref()) {
+        Ok(write) => write,
         Err(outcome) => return outcome,
     };
-    let origin = match task_origin(entry.born()) {
-        Ok(origin) => origin,
-        Err(outcome) => return outcome,
-    };
-    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
-    guard(&mut write, command.expected().to_vec());
     let woken = match write.fact(
         body::TaskWoken {
             task: entry.born().clone(),
@@ -747,13 +799,18 @@ fn promote_oops(
         revision: position,
         ..statement
     });
+    if let Some(claim) = atomic_claim
+        && let Err(outcome) = claim.prepared.append(&mut write, command, &post)
+    {
+        return outcome;
+    }
     let answer = wire::intent::TaskAnswer {
         task: post.handle().clone(),
         status: "promoted".to_owned(),
         guidance: None,
         completion: None,
         learning: None,
-        claim: None,
+        claim: claim_answer,
         next,
     };
     if let Err(error) = write.command_result(
@@ -766,12 +823,42 @@ fn promote_oops(
     committed(bus, write, CommandAnswer::Task(answer))
 }
 
+fn append_deferral_fact(
+    write: &mut JournalWrite,
+    entry: &Entry,
+    deferral: Option<Instant>,
+) -> Result<PendingFact, Outcome<CommandAnswer>> {
+    let fact = if let Some(until) = deferral {
+        write.fact(
+            body::TaskDeferred {
+                task: entry.born().clone(),
+                until,
+            },
+            FactCause::Root,
+        )
+    } else {
+        write.fact(
+            body::TaskWoken {
+                task: entry.born().clone(),
+            },
+            FactCause::Root,
+        )
+    };
+    fact.map_err(|error| store_fault("task::deferral-build", &error.to_string()))
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "deferral mutation keeps optional atomic claim authority explicit"
+)]
 fn change_deferral<B: serde::Serialize + Clone>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     task: &TaskHandle,
     deferral: Option<Instant>,
     intent: B,
+    repository: Option<&Repository>,
+    claim_requested: bool,
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
@@ -807,47 +894,17 @@ fn change_deferral<B: serde::Serialize + Clone>(
             "defer or wake only pending work",
         );
     }
-    let at = match current_instant() {
-        Ok(at) => at,
-        Err(outcome) => return outcome,
-    };
-    let origin = match task_origin(entry.born()) {
-        Ok(origin) => origin,
-        Err(outcome) => return outcome,
-    };
-    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
-    guard(&mut write, command.expected().to_vec());
-    let fact = if let Some(until) = deferral {
-        write.fact(
-            body::TaskDeferred {
-                task: entry.born().clone(),
-                until,
-            },
-            FactCause::Root,
-        )
-    } else {
-        write.fact(
-            body::TaskWoken {
-                task: entry.born().clone(),
-            },
-            FactCause::Root,
-        )
-    };
-    let fact = match fact {
-        Ok(fact) => fact,
-        Err(error) => return store_fault("task::deferral-build", &error.to_string()),
-    };
     let mut workflow = entry.workflow().clone();
     workflow.deferral = deferral;
-    let next = if deferral.is_none() {
-        let post = match Entry::new(
+    let post = if deferral.is_none() {
+        match Entry::new(
             entry.statement().clone(),
             workflow.clone(),
             entry.claim().cloned(),
             entry.lease().cloned(),
             projects,
         ) {
-            Ok(post) => post,
+            Ok(post) => Some(post),
             Err(error) => {
                 return refusal(
                     "task::deferral-refused",
@@ -855,12 +912,41 @@ fn change_deferral<B: serde::Serialize + Clone>(
                     "wake a task into a valid pending state",
                 );
             }
-        };
-        next_action(&snapshot, &post)
+        }
     } else {
         None
     };
+    let selected = post.as_ref().unwrap_or(entry);
+    let atomic_claim = match prepare_mutation_claim(
+        bus,
+        command,
+        repository,
+        &snapshot,
+        selected,
+        claim_requested,
+    ) {
+        Ok(claim) => claim,
+        Err(outcome) => return outcome,
+    };
+    let claim_answer = atomic_claim.as_ref().map(|claim| claim.answer.clone());
+    let next = claim_answer
+        .as_ref()
+        .and_then(|claim| claim.next.clone())
+        .or_else(|| post.as_ref().and_then(|post| next_action(&snapshot, post)));
+    let mut write = match prepare_mutation_write(command, entry, &snapshot, atomic_claim.as_ref()) {
+        Ok(write) => write,
+        Err(outcome) => return outcome,
+    };
+    let fact = match append_deferral_fact(&mut write, entry, deferral) {
+        Ok(fact) => fact,
+        Err(outcome) => return outcome,
+    };
     write.workflow_head(entry.born().clone(), fact, move |_| workflow);
+    if let Some(claim) = atomic_claim
+        && let Err(outcome) = claim.prepared.append(&mut write, command, selected)
+    {
+        return outcome;
+    }
     let status = if deferral.is_some() {
         "deferred"
     } else {
@@ -872,7 +958,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         guidance: None,
         completion: None,
         learning: None,
-        claim: None,
+        claim: claim_answer,
         next,
     };
     if let Err(error) =

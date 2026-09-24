@@ -604,6 +604,7 @@ pub(super) fn exercise_deferral_staleness(bus: &Bus, epoch: CanonicalUuid, alpha
         &TaskWake {
             task: alpha.clone(),
             into: None,
+            claim: false,
         },
     );
     assert!(matches!(
@@ -624,6 +625,7 @@ pub(super) fn exercise_deferral_staleness(bus: &Bus, epoch: CanonicalUuid, alpha
         &TaskWake {
             task: alpha.clone(),
             into: None,
+            claim: false,
         },
     ));
 }
