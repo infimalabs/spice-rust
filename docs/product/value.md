@@ -376,10 +376,27 @@ among every destination, so adding another global destination preserves equal
 access rather than shrinking one privileged control.
 
 Panel variants and DOM mode identifiers use Info, Work, and Chat directly.
-Selection is in-memory: switching global views or reconnecting preserves each
-team's selection, while a page reload starts in Chat as before. Stored team
-speech preferences and narration cursors keep their existing formats and
-restore unchanged; no panel-name data migration or storage reset is needed.
+The selected global destination is the `page` URL query: switching destinations
+pushes browser history, and Back, Forward, reload, and a copied URL restore the
+same destination. A legacy URL without `page` continues to open Chat. Team
+selection, stored speech preferences, and narration cursors retain their
+existing formats and restore unchanged; no panel-name data migration or storage
+reset is needed.
+
+### The global Work page
+
+The global Work page keeps the complete open-work set visible as one board:
+scope controls and totals establish context, each project's swimlane contains
+the same in-flight, ready, blocked, and deferred status buckets, and History
+follows the open board. Status is named in text and reinforced consistently by
+the bucket header, count, empty well, and card edge; color never carries status
+alone. Empty buckets remain visible evidence rather than disappearing.
+
+Cards preserve their identity, flow, project, ownership, and map controls while
+the detail drawer and relationship map expose progressively deeper evidence.
+Those surfaces share the board's typography, borders, spacing, and interaction
+states. The board moves from four columns to two and then one as width narrows;
+narrow empty buckets stay compact so absent work does not dominate the page.
 
 ### The team console
 

@@ -32,6 +32,7 @@ fn write_raw_generation(stage: &Path, label: &str, source_identity: &Digest, val
         .expect("write chrome stylesheet");
     fs::write(stage.join("composer.css"), format!("composer {label}"))
         .expect("write composer stylesheet");
+    fs::write(stage.join("work.css"), format!("work {label}")).expect("write Work stylesheet");
     fs::write(stage.join("responsive.css"), format!("responsive {label}"))
         .expect("write responsive stylesheet");
     let second_wasm = if valid {
@@ -43,7 +44,7 @@ fn write_raw_generation(stage: &Path, label: &str, source_identity: &Digest, val
         stage.join("canvas-app.html"),
         format!(
             "<link href=\"/style.css\"><link href=\"/mosaic.css\"><link href=\"/chrome.css\">\
-             <link href=\"/composer.css\"><link href=\"/responsive.css\">\
+             <link href=\"/composer.css\"><link href=\"/work.css\"><link href=\"/responsive.css\">\
              <script src=\"/app.js\"></script>\
              <link href=\"/app.js\"><link href=\"/app_bg.wasm\">{second_wasm}\
              <main id=\"app\" data-canvas-generation=\"{APP_GENERATION_PLACEHOLDER}\">{label}</main>"
@@ -244,7 +245,8 @@ fn finalization_produces_the_closed_worktree_stage_inventory() {
             "composer.css",
             "mosaic.css",
             "responsive.css",
-            "style.css"
+            "style.css",
+            "work.css"
         ]
         .map(std::ffi::OsString::from)
     );

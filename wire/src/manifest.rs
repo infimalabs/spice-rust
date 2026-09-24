@@ -56,13 +56,14 @@ const MACHO_UUID_LENGTH: usize = 36;
 const MACHO_UUID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 
 /// Required shell files; generation-declared renderer files complete the inventory.
-pub const CANVAS_APP_FILES: [&str; 8] = [
+pub const CANVAS_APP_FILES: [&str; 9] = [
     CANVAS_APP_HTML,
     CANVAS_APP_MODULE,
     CANVAS_STYLE,
     CANVAS_MOSAIC_STYLE,
     CANVAS_CHROME_STYLE,
     CANVAS_COMPOSER_STYLE,
+    CANVAS_WORK_STYLE,
     CANVAS_RESPONSIVE_STYLE,
     CANVAS_WASM,
 ];
@@ -78,6 +79,8 @@ pub const CANVAS_MOSAIC_STYLE: &str = "mosaic.css";
 pub const CANVAS_CHROME_STYLE: &str = "chrome.css";
 /// Composer stylesheet.
 pub const CANVAS_COMPOSER_STYLE: &str = "composer.css";
+/// Global Work page stylesheet.
+pub const CANVAS_WORK_STYLE: &str = "work.css";
 /// Responsive-layout stylesheet.
 pub const CANVAS_RESPONSIVE_STYLE: &str = "responsive.css";
 /// Browser application WebAssembly module.

@@ -30,6 +30,7 @@ pub enum Asset {
     CanvasMosaic,
     CanvasResponsive,
     CanvasStyle,
+    CanvasWork,
     CanvasRenderer(wire::manifest::renderer::File),
     CanvasCurrent,
     Binary,
