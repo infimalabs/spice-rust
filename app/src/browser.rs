@@ -43,6 +43,7 @@ mod clock;
 mod connection;
 mod image_viewer;
 mod mermaid;
+mod navigation;
 mod task_detail;
 mod task_relations;
 mod view;
@@ -497,9 +498,8 @@ struct ResponseIdentity {
 fn canvas_app() -> Html {
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
-    let axis = use_state(|| Axis::Topology);
-    let mosaic = use_state(|| true);
     let canvas_menu_open = use_state(|| false);
+    let (axis, mosaic) = navigation::use_global_destination(canvas_menu_open.clone());
     let work_scope = use_state(WorkScope::default);
     let work_scope_notice = use_state(|| None::<String>);
     let identity = use_state(|| None::<CanvasIdentity>);
