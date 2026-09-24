@@ -508,7 +508,7 @@ where
     let task = task.expect("generated mutation syntax requires a task handle");
     mutate_from_board(repository, contract, read, |board| {
         let heads = task_heads(&board, &task)?;
-        map(&board, task, heads)
+        map(&board, heads.statement.body.handle.clone(), heads)
     })
 }
 

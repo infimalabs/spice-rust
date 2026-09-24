@@ -126,7 +126,7 @@ pub(in crate::board_command) fn recovery_preflight(
     if !board::eligible_entry(&entries, entry, &board.principal, &board.environment()) {
         return Err(refusal(
             "git::recovery-task-ineligible",
-            Some(task.to_string()),
+            Some(heads.statement.body.handle.to_string()),
             "recover only an unclaimed, ready, pending task",
         ));
     }
@@ -188,11 +188,7 @@ pub(in crate::board_command) fn recovery_board_state(
     transaction: &str,
     sealed: &spice::task_git::RecoveryClaim,
 ) -> RecoveryBoardState {
-    let Some(heads) = board
-        .tasks
-        .iter()
-        .find(|heads| heads.statement.body.handle == *task)
-    else {
+    let Ok(heads) = task_heads(board, task) else {
         return RecoveryBoardState::Ambiguous(format!("task {task} is no longer visible"));
     };
     if board.principal != sealed.actor

@@ -1084,12 +1084,7 @@ pub(super) fn read_ledger(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(task) = snapshot
-        .answer
-        .tasks
-        .iter()
-        .find(|task| task.statement.body.handle == ledger.task)
-    else {
+    let Ok(task) = task_heads(&snapshot.answer, &ledger.task) else {
         return refusal(
             "doc::task-unknown",
             Some(ledger.task.to_string()),

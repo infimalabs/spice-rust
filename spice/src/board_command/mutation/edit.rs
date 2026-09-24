@@ -18,11 +18,7 @@ pub(in crate::board_command) fn task_edit(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &edit.task)
-    else {
+    let Some(entry) = task_entry(&snapshot.entries, &edit.task) else {
         return refusal(
             "task::unknown",
             Some(edit.task.to_string()),
@@ -35,7 +31,7 @@ pub(in crate::board_command) fn task_edit(
     if entry.workflow().completion.is_some() {
         return refusal(
             "task::settled",
-            Some(edit.task.to_string()),
+            Some(entry.handle().to_string()),
             "correct a statement only while the task is pending",
         );
     }

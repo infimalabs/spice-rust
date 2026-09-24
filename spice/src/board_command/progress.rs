@@ -14,11 +14,7 @@ pub(super) fn claim_free(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &task.task)
-    else {
+    let Some(entry) = task_entry(&snapshot.entries, &task.task) else {
         return refusal(
             "task::unknown",
             Some(task.task.to_string()),
@@ -28,7 +24,7 @@ pub(super) fn claim_free(
     let Some(claim) = entry.claim() else {
         return refusal(
             "claim::head-missing",
-            Some(task.task.to_string()),
+            Some(entry.handle().to_string()),
             "free only a task carrying an active claim",
         );
     };
@@ -90,7 +86,7 @@ pub(super) fn claim_free(
         write.workflow_head(entry.born().clone(), freed, move |_| workflow);
     }
     let answer = wire::intent::ClaimAnswer {
-        task: task.task.clone(),
+        task: entry.handle().clone(),
         holder: command.actor().clone(),
         expiry: None,
         warnings: Box::default(),
@@ -153,7 +149,7 @@ pub(super) fn claim_reclaim_with_clock(
         return outcome;
     }
     let answer = wire::intent::ClaimAnswer {
-        task: renew.task.clone(),
+        task: entry.handle().clone(),
         holder: command.actor().clone(),
         expiry: Some(Box::new(until)),
         warnings: Box::default(),
@@ -195,7 +191,7 @@ pub(super) fn task_done(
         None => {
             return refusal(
                 "task::completion-operation-required",
-                Some(done.task.to_string()),
+                Some(entry.handle().to_string()),
                 "retry with a current client that supplies one durable completion operation",
             );
         }
@@ -261,20 +257,16 @@ fn done_entry<'a>(
     snapshot: &'a ValidatedSnapshot,
     done: &TaskDone,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
-    snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &done.task)
-        .ok_or_else(|| {
-            refusal(
-                "task::unknown",
-                Some(done.task.to_string()),
-                concat!(
-                    "read board and complete the task held by ",
-                    "this capability",
-                ),
-            )
-        })
+    task_entry(&snapshot.entries, &done.task).ok_or_else(|| {
+        refusal(
+            "task::unknown",
+            Some(done.task.to_string()),
+            concat!(
+                "read board and complete the task held by ",
+                "this capability",
+            ),
+        )
+    })
 }
 
 /// The committed reply for a completion this actor already landed.
@@ -527,7 +519,7 @@ fn append_done(
         ..claim
     });
     Ok(wire::intent::TaskAnswer {
-        task: done.task.clone(),
+        task: entry.handle().clone(),
         status,
         guidance,
         completion: None,
@@ -576,11 +568,7 @@ fn admit_review<'a>(
     command: &'a wire::AdmittedCommand,
     review: &TaskReview,
 ) -> Result<(&'a Entry, board::Transition, Instant, wire::CanonicalUuid), Outcome<CommandAnswer>> {
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &review.task)
-    else {
+    let Some(entry) = task_entry(&snapshot.entries, &review.task) else {
         return Err(refusal(
             "task::unknown",
             Some(review.task.to_string()),
@@ -592,7 +580,7 @@ fn admit_review<'a>(
     {
         return Err(refusal(
             "review::assignment-refused",
-            Some(review.task.to_string()),
+            Some(entry.handle().to_string()),
             "win the review phase with task next before recording its verdict",
         ));
     }
@@ -816,7 +804,7 @@ fn commit_review(
         fact,
         ..claim
     });
-    let answer = review_answer(review, verdict, next);
+    let answer = review_answer(entry.handle().clone(), verdict, next);
     if let Err(error) = write.command_result(
         request(command, review.clone()),
         command.epoch(),
@@ -903,12 +891,12 @@ fn append_review_statement(
 }
 
 fn review_answer(
-    review: &TaskReview,
+    task: TaskHandle,
     verdict: body::Verdict,
     next: Option<Box<str>>,
 ) -> wire::intent::TaskAnswer {
     wire::intent::TaskAnswer {
-        task: review.task.clone(),
+        task,
         status: match verdict {
             body::Verdict::Clean => "completed",
             body::Verdict::Finding => "pending",
@@ -1105,13 +1093,10 @@ fn commit_doc_plan(
     };
     let creates = plan.preview.document().nodes.iter().any(|node| {
         node.kind != dialect::NodeKind::SyntheticRoot
-            && plan.handles.get(&node.id).is_some_and(|handle| {
-                !plan
-                    .snapshot
-                    .entries
-                    .iter()
-                    .any(|entry| entry.handle() == handle)
-            })
+            && plan
+                .handles
+                .get(&node.id)
+                .is_some_and(|handle| task_entry(&plan.snapshot.entries, handle).is_none())
     });
     let creation = if creates {
         match task_creation_capture(bus, command, &plan.snapshot) {
@@ -1200,11 +1185,7 @@ fn doc_task_spec(
             .map(|station| phase(station.as_str()))
             .collect()
     };
-    let existing = plan
-        .snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &task);
+    let existing = task_entry(&plan.snapshot.entries, &task);
     if existing.is_none() {
         let _dependency_witnesses =
             derive_dependency_flow(&mut flow, &dependencies, &plan.snapshot)?;
@@ -1282,7 +1263,7 @@ fn write_doc_task(
         .snapshot
         .entries
         .iter()
-        .find(|entry| entry.handle() == &spec.task);
+        .find(|entry| entry.born() == &spec.born);
     let written = match existing {
         Some(entry) => edit_doc_task(write, entry, spec, cause),
         None => add_doc_task(write, spec, origin, creation, cause),

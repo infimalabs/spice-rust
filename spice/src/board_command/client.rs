@@ -271,7 +271,7 @@ fn client_reclaim(
         let (task, heads) = match task {
             Some(task) => {
                 let heads = task_heads(&board, &task)?;
-                (task, heads)
+                (heads.statement.body.handle.clone(), heads)
             }
             None => reclaim_active(&board)?,
         };
@@ -466,7 +466,7 @@ fn client_depends(
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
     mutate_task_from_board(repository, contract, matches, |board, task, heads| {
-        let after = matches
+        let written = matches
             .get_many::<String>("AFTER")
             .expect("generated syntax requires dependencies")
             .map(|value| value.parse::<TaskHandle>())
@@ -477,9 +477,11 @@ fn client_depends(
             workflow_witness(heads),
             claim_witness(heads),
         ];
+        let mut after = Vec::with_capacity(written.len());
         let mut new_edges = Vec::new();
-        for dependency in &after {
+        for dependency in &written {
             let dependency_heads = task_heads(board, dependency)?;
+            after.push(dependency_heads.statement.body.handle.clone());
             expected.push(statement_witness(dependency_heads));
             expected.push(workflow_witness(dependency_heads));
             let born = &dependency_heads.statement.body.born;
@@ -653,14 +655,20 @@ pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<C
         .collect()
 }
 
+/// Resolve a named task by its born stamp; the handle's stem is display only,
+/// so a handle rendered under an earlier project still names the same task.
 pub(super) fn task_heads<'a>(
     board: &'a BoardAnswer,
     task: &TaskHandle,
 ) -> Result<&'a BoardTask, Outcome<CommandAnswer>> {
-    board
-        .tasks
-        .iter()
-        .find(|heads| heads.statement.body.handle == *task)
+    task.born()
+        .ok()
+        .and_then(|born| {
+            board
+                .tasks
+                .iter()
+                .find(|heads| heads.statement.body.born == born)
+        })
         .ok_or_else(|| {
             refusal(
                 "task::unknown",
@@ -668,6 +676,12 @@ pub(super) fn task_heads<'a>(
                 "read board and name one current task handle",
             )
         })
+}
+
+/// The validated entry a named task resolves to by born stamp alone.
+pub(super) fn task_entry<'a>(entries: &'a [Entry], task: &TaskHandle) -> Option<&'a Entry> {
+    let born = task.born().ok()?;
+    entries.iter().find(|entry| entry.born() == &born)
 }
 
 fn task_heads_by_stamp<'a>(

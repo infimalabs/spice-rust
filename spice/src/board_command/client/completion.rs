@@ -35,7 +35,7 @@ pub(super) fn client_done(
                 Ok(heads) => heads,
                 Err(outcome) => return outcome,
             };
-            (task, heads)
+            (heads.statement.body.handle.clone(), heads)
         }
         None => match sole_active(&board) {
             Ok(active) => active,

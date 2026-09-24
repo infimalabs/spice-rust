@@ -76,7 +76,8 @@ pub(super) fn edit_bodies(bus: &Bus, task: &TaskHandle) -> Vec<(Actor, Seq, body
         .collect()
 }
 
-/// Shape CASE 146 / INVARIANTS ID-01: re-homing changes only the derived name.
+/// Shape CASE 146 / INVARIANTS ID-01: re-homing changes only the derived name,
+/// so the handle a task was filed under keeps naming it by birth stamp.
 #[test]
 fn rehoming_rerenders_the_handle_without_migrating_identity() {
     let (_root, bus, epoch, _seats) = fixture("task-edit-rehome-identity", 0);
@@ -117,7 +118,38 @@ fn rehoming_rerenders_the_handle_without_migrating_identity() {
     let moved = at(&answer, &expected);
     assert_eq!(moved.statement.body.born, born);
     assert_eq!(moved.statement.body.handle, expected);
-    assert!(task_heads(&answer, &original).is_err());
+    let stale = task_heads(&answer, &original).expect("the pre-move handle resolves by stamp");
+    assert_eq!(stale.statement.body.handle, expected);
+    let CommandAnswer::Task(noted) = assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskNote,
+        vec![Witness::Existence { task: born.clone() }],
+        &TaskNote {
+            task: original.clone(),
+            note: "named through the pre-move handle".to_owned(),
+        },
+    )) else {
+        panic!("task note answers with a task status");
+    };
+    assert_eq!(noted.task, expected, "answers render the current handle");
+    let CommandAnswer::Task(retitled) = assert_committed(correct(
+        &bus,
+        epoch,
+        Actor::Operator,
+        &TaskEdit {
+            title: Some("Moved and still addressable".to_owned()),
+            ..only(&original)
+        },
+    )) else {
+        panic!("task edit answers with a task status");
+    };
+    assert_eq!(retitled.task, expected);
+    assert_eq!(
+        at(&board(&bus, epoch, Actor::Operator), &expected).presentation_title(),
+        "Moved and still addressable",
+    );
     let stored = statement_head(&bus, &expected);
     let stored = serde_json::to_value(stored.body).expect("stored head JSON");
     let stored = stored.as_object().expect("stored head object");
