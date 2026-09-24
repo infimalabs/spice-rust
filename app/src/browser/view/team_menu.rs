@@ -553,8 +553,8 @@ fn render_solo_members_drop(
     html! {
         <section class="canvas-menu-section canvas-unassigned" {ondragover} {ondrop}>
             <header>
-                <h2>{"Agents Without Team"}</h2>
-                <span>{"drop here to remove from team"}</span>
+                <h2>{"Unassigned Agents"}</h2>
+                <span>{"drop to unassign"}</span>
             </header>
             <div class="canvas-team-members" data-team-drop="unassigned">
                 if members.is_empty() {
