@@ -475,6 +475,86 @@ fn an_ending_nobody_heard_reaches_the_lanes_next_occupant_once() {
 }
 
 #[test]
+fn steering_one_agent_backgrounds_only_that_agents_running_shell() {
+    let recipient = Scratch::new("recipient-steered");
+    let recipient_sink = Sink::default();
+    let recipient_driver = Driver::new(
+        recipient_sink.clone(),
+        recipient.inbox(),
+        Some(recipient.terminal()),
+    );
+    let recipient_fifo = recipient.0.join("hold");
+
+    let other = Scratch::new("other-foreground");
+    let other_sink = Sink::default();
+    let other_driver = Driver::new(other_sink.clone(), other.inbox(), Some(other.terminal()));
+    let other_fifo = other.0.join("hold");
+
+    for fifo in [&recipient_fifo, &other_fifo] {
+        assert!(
+            std::process::Command::new("mkfifo")
+                .arg(fifo)
+                .status()
+                .expect("mkfifo")
+                .success()
+        );
+    }
+    recipient_driver.observe(&decoded(
+        br#"{"type":"host_tool_call","id":"recipient","toolCallId":"call_recipient","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
+    ));
+    other_driver.observe(&decoded(
+        br#"{"type":"host_tool_call","id":"other","toolCallId":"call_other","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
+    ));
+
+    fs::write(recipient.inbox(), NEWS).expect("recipient inbox renders");
+    recipient_driver.deliver_inbox();
+    let recipient_frames = recipient_sink.answered(2);
+    let answer = recipient_frames
+        .iter()
+        .find(|frame| frame["id"] == "recipient")
+        .expect("the recipient call is answered");
+    assert!(
+        answer["result"]["content"][0]["text"]
+            .as_str()
+            .expect("recipient answer text")
+            .contains("Backgrounded early to handle an incoming message"),
+        "{answer:?}"
+    );
+
+    assert!(
+        other_sink.frames().is_empty(),
+        "the unrelated agent received a shell answer"
+    );
+    assert_eq!(
+        other_driver
+            .calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len(),
+        1,
+        "the unrelated agent's shell call stopped being foreground work"
+    );
+
+    release(&other_fifo);
+    let other_frames = other_sink.answered(1);
+    assert_eq!(other_frames.len(), 1, "{other_frames:?}");
+    assert_eq!(other_frames[0]["id"], "other");
+    let other_text = other_frames[0]["result"]["content"][0]["text"]
+        .as_str()
+        .expect("other answer text");
+    assert!(
+        !other_text.contains("Backgrounded as job"),
+        "the unrelated shell was backgrounded: {other_text}"
+    );
+    assert_eq!(other_frames[0]["result"]["details"]["exitCode"], 0);
+
+    release(&recipient_fifo);
+    recipient_sink.answered(3);
+    settled(&recipient);
+    settled(&other);
+}
+
+#[test]
 fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_as_steering() {
     let scratch = Scratch::new("steered");
     let sink = Sink::default();
