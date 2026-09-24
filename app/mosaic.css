@@ -487,6 +487,7 @@
   font-weight: 600;
   line-height: 1.45;
 }
+.team-mode:not(.selected):hover { background: color-mix(in srgb, var(--control) 68%, transparent); color: var(--ink); }
 .team-mode.selected {
   background: var(--control);
   color: var(--ink);

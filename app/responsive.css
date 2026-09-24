@@ -37,7 +37,6 @@
     gap: 7px;
     padding-inline: var(--canvas-shell-edge-start) var(--canvas-shell-edge-end);
   }
-  .axis-button { padding: 0 11px; }
   .split { grid-template-columns: 1fr; }
 }
 
@@ -51,15 +50,6 @@
 @media (max-width: 560px) {
   .canvas-menu-footer { gap: 6px; }
   .canvas-menu-version--update { padding-inline: 5px; }
-  .axis-button { min-height: 40px; padding: 0 9px; font-size: .74rem; }
-  .commandbar--mosaic .canvas-navigation {
-    min-width: 0;
-  }
-  .commandbar--mosaic .canvas-navigation .axis-button {
-    min-height: 26px;
-    padding-inline: 6px;
-    font-size: .58rem;
-  }
   .topbar { min-height: 58px; padding: 0 14px; }
   .mobile-brand { display: block; }
   .workspace-tabs { margin-left: auto; }
@@ -68,6 +58,7 @@
   .refresh { min-width: 36px; padding: 0 8px; }
   .content { padding: 18px 14px 28px; }
   .team-toolbar { grid-template-columns: max-content minmax(0, 1fr) 30px; padding-inline: 4px; }
+  .canvas-navigation { margin-inline: 4px; }
   .team-mode { padding-inline: 4px; }
   .team-mode-badge { display: none; }
   .team-task-workspace { padding-inline: 8px; }
