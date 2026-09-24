@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 
-static APP_ASSETS: [AppAsset; 8] = [
+static APP_ASSETS: [AppAsset; 9] = [
     AppAsset::new(
         "/",
         wire::manifest::CANVAS_APP_HTML,
@@ -37,6 +37,11 @@ static APP_ASSETS: [AppAsset; 8] = [
     AppAsset::new(
         "/composer.css",
         wire::manifest::CANVAS_COMPOSER_STYLE,
+        "text/css; charset=utf-8",
+    ),
+    AppAsset::new(
+        "/work.css",
+        wire::manifest::CANVAS_WORK_STYLE,
         "text/css; charset=utf-8",
     ),
     AppAsset::new(
@@ -827,6 +832,7 @@ mod tests {
                 ("/mosaic.css", "text/css; charset=utf-8"),
                 ("/chrome.css", "text/css; charset=utf-8"),
                 ("/composer.css", "text/css; charset=utf-8"),
+                ("/work.css", "text/css; charset=utf-8"),
                 ("/responsive.css", "text/css; charset=utf-8"),
                 ("/app_bg.wasm", "application/wasm"),
             ]
@@ -977,7 +983,8 @@ mod tests {
                 "composer.css",
                 "mosaic.css",
                 "responsive.css",
-                "style.css"
+                "style.css",
+                "work.css"
             ]
         );
         let message = error.to_string();

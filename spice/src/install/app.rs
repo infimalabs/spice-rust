@@ -7,7 +7,7 @@ use wire::{Digest, Domain};
 
 use super::{Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, Repository};
 
-pub(super) const ASSETS: [(Asset, &str); 8] = [
+pub(super) const ASSETS: [(Asset, &str); 9] = [
     (Asset::CanvasAppModule, "app.module"),
     (Asset::CanvasWasm, "app_bg.wasm"),
     (Asset::CanvasHtml, "canvas-app.html"),
@@ -16,6 +16,7 @@ pub(super) const ASSETS: [(Asset, &str); 8] = [
     (Asset::CanvasMosaic, "mosaic.css"),
     (Asset::CanvasResponsive, "responsive.css"),
     (Asset::CanvasStyle, "style.css"),
+    (Asset::CanvasWork, "work.css"),
 ];
 
 pub(super) struct Source {

@@ -1250,6 +1250,7 @@ fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>,
         | Asset::CanvasMosaic
         | Asset::CanvasResponsive
         | Asset::CanvasStyle
+        | Asset::CanvasWork
         | Asset::CanvasRenderer(_)
         | Asset::CanvasCurrent
         | Asset::Binary

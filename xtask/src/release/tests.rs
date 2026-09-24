@@ -456,6 +456,7 @@ fn assert_complete_app_inventory(payload: &wire::manifest::TargetPayload) {
         "app/mosaic.css",
         "app/responsive.css",
         "app/style.css",
+        "app/work.css",
         "bin/spice",
     ];
     if payload.target == ReleaseTarget::Aarch64AppleDarwin {

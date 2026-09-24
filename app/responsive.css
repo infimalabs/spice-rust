@@ -112,7 +112,13 @@
     border-bottom: 1px solid var(--line-soft);
   }
   .work-bucket:last-child { border-bottom: 0; }
+  .work-board-section > .section-heading { align-items: baseline; }
+  .work-swimlanes { gap: 14px; }
   .work-swimlane-heading { align-items: flex-start; padding-inline: 12px; }
+  .work-bucket { min-height: 0; padding: 12px; }
+  .work-bucket-empty { min-height: 0; margin-top: 5px; padding-block: 11px; }
+  .work-card { gap: 8px; padding: 12px; }
+  .work-history { margin-top: 14px; }
   .work-detail { width: 100vw; }
   .work-detail-header,
   .work-detail-content { padding-inline: 14px; }
