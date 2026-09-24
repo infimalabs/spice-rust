@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use listen::{Decoded, Dialog, Event, TurnMoment};
+use listen::{Decoded, Dialog, Event, ProseRole, TurnMoment};
 use serde::{Deserialize, Serialize};
 use vendor::omp::{JobCall, ShellCall};
 use wire::CanonicalUuid;
@@ -49,6 +49,10 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// point at it instead of spending it again. A compaction drops the
     /// context, and with it this set.
     told: Mutex<BTreeSet<String>>,
+    /// Told keys after whose telling the occupant wrote visible prose, so a
+    /// resend can say whether it saw a reply at all. Reasoning and tool
+    /// arguments are not prose. Cleared with `told`.
+    replied: Mutex<BTreeSet<String>>,
     /// The confirm dialog each open consent request will answer.
     asks: Mutex<HashMap<CanonicalUuid, String>>,
     /// Where the occupant's commands run, for an occupant that has a shell.
@@ -100,6 +104,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             told: Mutex::new(BTreeSet::new()),
+            replied: Mutex::new(BTreeSet::new()),
             asks: Mutex::new(HashMap::new()),
             terminal,
             calls: Mutex::new(HashMap::new()),
@@ -187,9 +192,21 @@ impl<W: Write + Send + 'static> Driver<W> {
                 handle.interrupt();
             }
         }
+        let replied = self.replied.lock().unwrap_or_else(PoisonError::into_inner);
         let resent = steer::inbox::keys(message)
             .any(|key| told.contains(key))
-            .then(|| steer::inbox::nudge(message, |key| told.contains(key)));
+            .then(|| {
+                steer::inbox::nudge(message, |key| {
+                    told.contains(key).then(|| {
+                        if replied.contains(key) {
+                            steer::inbox::Told::Replied
+                        } else {
+                            steer::inbox::Told::Silent
+                        }
+                    })
+                })
+            });
+        drop(replied);
         if self.steer(resent.as_deref().unwrap_or(message)).is_ok() {
             told.extend(steer::inbox::keys(message).map(str::to_owned));
             *delivered = Some(rendered);
@@ -234,6 +251,17 @@ impl<W: Write + Send + 'static> Driver<W> {
         if let Some(withdrawn) = context.and_then(|context| context.withdrawn.as_deref()) {
             self.cancel(withdrawn);
         }
+        let replied = decoded.events().iter().any(|event| {
+            matches!(event, Event::Prose(prose)
+                if prose.role == ProseRole::Assistant && !prose.text.trim().is_empty())
+        });
+        if replied {
+            let told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+            self.replied
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(told.iter().cloned());
+        }
         let compacted = decoded
             .events()
             .iter()
@@ -244,10 +272,13 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .delivered
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            self.told
+            let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+            told.clear();
+            self.replied
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .clear();
+            drop(told);
             delivered.take();
             drop(delivered);
             self.interject(false);
