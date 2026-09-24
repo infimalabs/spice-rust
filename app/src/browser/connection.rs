@@ -350,25 +350,6 @@ async fn send_topology_as(
             )
             .await
         }
-        ClientAction::ArrangeLane {
-            topology_revision,
-            lane,
-            before,
-        } => {
-            send_untracked_as(
-                principal,
-                writer,
-                id,
-                CommandKind::LaneArrange,
-                vec![],
-                LaneArrange {
-                    topology_revision: *topology_revision,
-                    lane: *lane,
-                    before: *before,
-                },
-            )
-            .await
-        }
         ClientAction::RenewLane {
             topology_revision,
             team,
@@ -435,7 +416,6 @@ async fn send_topology_as(
 fn topology_pending_kind(action: &ClientAction) -> PendingKind {
     match action {
         ClientAction::Seat { .. } => PendingKind::LaneSeat,
-        ClientAction::ArrangeLane { .. } => PendingKind::LaneArrange,
         ClientAction::RenewLane {
             team,
             lane,
@@ -704,7 +684,6 @@ async fn dispatch_action(
                 .map(|_| None)
         }
         ClientAction::Seat { .. }
-        | ClientAction::ArrangeLane { .. }
         | ClientAction::RenewLane { .. }
         | ClientAction::ArrangeTeams { .. }
         | ClientAction::ConfigureTeam { .. } => {

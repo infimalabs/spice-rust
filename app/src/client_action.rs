@@ -32,11 +32,6 @@ pub(crate) enum ClientAction {
         model: Option<String>,
         effort: Option<String>,
     },
-    ArrangeLane {
-        topology_revision: u64,
-        lane: CanonicalUuid,
-        before: CanonicalUuid,
-    },
     RenewLane {
         topology_revision: u64,
         team: CanonicalUuid,

@@ -182,7 +182,6 @@ impl PendingKind {
             | Self::TaskRelations { .. }
             | Self::WorkHistory { .. }
             | Self::LaneSeat
-            | Self::LaneArrange
             | Self::LaneRenewal { .. }
             | Self::WakeSubmission { .. }
             | Self::TeamConfigure { .. }
@@ -402,7 +401,6 @@ impl ClientAction {
             | Self::TaskRelations { .. }
             | Self::WorkHistory { .. }
             | Self::MessageHistory { .. }
-            | Self::ArrangeLane { .. }
             | Self::RenewLane { .. }
             | Self::ConfigureTeam { .. } => 0,
         }
@@ -423,7 +421,6 @@ impl ClientAction {
         matches!(
             self,
             Self::Seat { .. }
-                | Self::ArrangeLane { .. }
                 | Self::RenewLane { .. }
                 | Self::ConfigureTeam { .. }
                 | Self::ArrangeTeams { .. }
@@ -449,9 +446,6 @@ impl ClientAction {
     fn set_topology_revision(&mut self, revision: u64) {
         match self {
             Self::Seat {
-                topology_revision, ..
-            }
-            | Self::ArrangeLane {
                 topology_revision, ..
             }
             | Self::RenewLane {
@@ -911,10 +905,12 @@ mod tests {
     }
 
     fn arrange(revision: u64, suffix: u8) -> ClientAction {
-        ClientAction::ArrangeLane {
+        ClientAction::ArrangeTeams {
             topology_revision: revision,
-            lane: id(suffix),
-            before: id(suffix + 1),
+            teams: vec![wire::intent::TeamArrangement {
+                team: id(suffix),
+                lanes: vec![id(suffix), id(suffix + 1)],
+            }],
         }
     }
 
@@ -932,7 +928,7 @@ mod tests {
         assert_eq!(first.prepare_topology(7).unwrap(), id(1));
         assert!(matches!(
             first.action(),
-            ClientAction::ArrangeLane {
+            ClientAction::ArrangeTeams {
                 topology_revision: 1,
                 ..
             }
@@ -948,7 +944,7 @@ mod tests {
         assert_eq!(replay.prepare_topology(8).unwrap(), id(1));
         assert!(matches!(
             replay.action(),
-            ClientAction::ArrangeLane {
+            ClientAction::ArrangeTeams {
                 topology_revision: 1,
                 ..
             }
@@ -969,7 +965,7 @@ mod tests {
         assert_eq!(second.prepare_topology(9).unwrap(), id(2));
         assert!(matches!(
             second.action(),
-            ClientAction::ArrangeLane {
+            ClientAction::ArrangeTeams {
                 topology_revision: 9,
                 ..
             }

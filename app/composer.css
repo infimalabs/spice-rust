@@ -158,3 +158,55 @@
   padding-right: 36px;
   padding-bottom: 32px;
 }
+.composer-shard-prose[data-composer-drag-handle="true"] {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+.composer-shard-prose[data-composer-drag-handle="true"]:active {
+  cursor: grabbing;
+}
+/* Composer drag is a visual pairwise swap over the mounted grid. Transforms
+   leave both grid slots reserved, so neither the form nor the message plane
+   reflows while the pointer crosses a neighbor. */
+.team-agents:has([data-composer-drag-source]) .team-agent[data-composer-drag-left] {
+  transition: transform 130ms ease;
+  will-change: transform;
+}
+.team-agent[data-composer-drag-source] {
+  z-index: 2;
+  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
+  background: color-mix(in srgb, var(--control) 72%, transparent);
+  outline: 1px dashed color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
+  outline-offset: -1px;
+}
+.team-agent[data-composer-drag-source] > .agent-composer-stack {
+  visibility: hidden;
+}
+.team-agent[data-composer-drag-target] {
+  z-index: 1;
+  box-shadow: 0 10px 24px color-mix(in srgb, #000 18%, transparent);
+}
+.composer-drag-ghost {
+  position: fixed;
+  z-index: 60;
+  top: -10000px;
+  left: -10000px;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  flex-direction: column;
+  border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 72%, var(--line));
+  border-radius: 8px;
+  background: var(--control);
+  box-shadow: 0 18px 42px color-mix(in srgb, #000 32%, transparent);
+  opacity: .98;
+  pointer-events: none;
+  transform: rotate(.35deg) scale(1.015);
+  transform-origin: top left;
+}
+.composer-drag-ghost > .agent-composer-stack {
+  height: 100%;
+  max-height: none;
+  overflow: hidden;
+}
