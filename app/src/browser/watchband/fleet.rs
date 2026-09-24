@@ -71,6 +71,7 @@ pub(super) struct FleetRender<'a> {
     pub(super) submissions: &'a SubmissionHandle,
     pub(super) team_controls: &'a UseReducerHandle<TeamControls>,
     pub(super) controls: &'a view::AgentControls,
+    pub(super) composer_drag: &'a PrimaryComposerDragState,
 }
 
 pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_>) -> Html {
@@ -194,6 +195,7 @@ pub(super) fn render_populated_fleet(
                                     render.authority,
                                     render.can_arrange_teams,
                                     render.sender,
+                                    render.composer_drag,
                                     render.drafts,
                                     render.submissions,
                                     render.team_controls,

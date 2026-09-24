@@ -833,11 +833,79 @@ fn read_image(
         onload.forget();
     }
 }
-struct ComposerPointerState {
-    pointer_id: i32,
-    start_x: i32,
-    start_y: i32,
-    dragging: bool,
+#[derive(Clone, Default)]
+pub(in crate::browser) struct PrimaryComposerDragState(
+    std::rc::Rc<std::cell::RefCell<watchband::ComposerDragSession>>,
+    std::rc::Rc<std::cell::Cell<Option<CanonicalUuid>>>,
+);
+
+impl PrimaryComposerDragState {
+    fn clear(&self) {
+        self.0.borrow_mut().clear();
+        self.1.set(None);
+        clear_composer_drag_presentation();
+    }
+
+    fn clear_preview(&self) {
+        self.1.set(None);
+        if let Some(document) = composer_document() {
+            clear_composer_swap_preview(&document);
+        }
+    }
+
+    fn restore_presentation(&self) {
+        let Some(source) = self.0.borrow().dragging_source() else {
+            return;
+        };
+        let Some(document) = composer_document() else {
+            return;
+        };
+        let Some(source_element) = composer_drag_element(&document, source) else {
+            return;
+        };
+        let _ = source_element.set_attribute("data-composer-drag-source", "true");
+        if let Some(target) = self.1.get() {
+            apply_composer_swap(source, target);
+        }
+    }
+}
+
+#[hook]
+pub(in crate::browser) fn use_primary_composer_drag_state(
+    enabled: bool,
+    topology_revision: Option<u64>,
+) -> PrimaryComposerDragState {
+    let state = use_memo((), |()| PrimaryComposerDragState::default());
+    use_effect_with((enabled, topology_revision), {
+        let state = state.clone();
+        move |(enabled, topology_revision)| {
+            if state.0.borrow_mut().reconcile(*enabled, *topology_revision) {
+                state.1.set(None);
+                clear_composer_drag_presentation();
+            }
+        }
+    });
+    {
+        let state = state.clone();
+        use_effect(move || {
+            let source_removed = state.0.borrow().source().is_some_and(|source| {
+                composer_document()
+                    .as_ref()
+                    .and_then(|document| composer_drag_element(document, source))
+                    .is_none()
+            });
+            if source_removed {
+                state.clear();
+            } else {
+                state.restore_presentation();
+            }
+        });
+    }
+    use_effect_with((), {
+        let state = state.clone();
+        move |()| move || state.clear()
+    });
+    (*state).clone()
 }
 
 fn composer_document() -> Option<web_sys::Document> {
@@ -849,13 +917,15 @@ fn composer_drag_element(
     lane: CanonicalUuid,
 ) -> Option<web_sys::Element> {
     document
-        .query_selector(&format!("[data-agent-lane=\"{lane}\"]"))
+        .query_selector(&format!(
+            ".team-agents > .team-agent[data-agent-lane=\"{lane}\"]"
+        ))
         .ok()
         .flatten()
 }
 
 fn clear_composer_swap_preview(document: &web_sys::Document) {
-    let Ok(nodes) = document.query_selector_all("[data-composer-drag-left]") else {
+    let Ok(nodes) = document.query_selector_all(".team-agents > .team-agent") else {
         return;
     };
     for index in 0..nodes.length() {
@@ -877,7 +947,7 @@ fn clear_composer_drag_presentation() {
         return;
     };
     clear_composer_swap_preview(&document);
-    if let Ok(nodes) = document.query_selector_all("[data-composer-drag-left]") {
+    if let Ok(nodes) = document.query_selector_all(".team-agents > .team-agent") {
         for index in 0..nodes.length() {
             let Some(element) = nodes
                 .item(index)
@@ -885,10 +955,6 @@ fn clear_composer_drag_presentation() {
             else {
                 continue;
             };
-            let _ = element.remove_attribute("data-composer-drag-left");
-            let _ = element.remove_attribute("data-composer-drag-right");
-            let _ = element.remove_attribute("data-composer-drag-top");
-            let _ = element.remove_attribute("data-composer-drag-bottom");
             let _ = element.remove_attribute("data-composer-drag-source");
         }
     }
@@ -941,27 +1007,6 @@ fn begin_composer_drag_presentation(
     let document = composer_document()?;
     let source = composer_drag_element(&document, lane)?;
     let rect = source.get_bounding_client_rect();
-    let siblings = source
-        .parent_element()?
-        .query_selector_all(":scope > .team-agent")
-        .ok()?;
-    for index in 0..siblings.length() {
-        let Some(element) = siblings
-            .item(index)
-            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
-        else {
-            continue;
-        };
-        let rect = element.get_bounding_client_rect();
-        for (attribute, value) in [
-            ("data-composer-drag-left", rect.left()),
-            ("data-composer-drag-right", rect.right()),
-            ("data-composer-drag-top", rect.top()),
-            ("data-composer-drag-bottom", rect.bottom()),
-        ] {
-            let _ = element.set_attribute(attribute, &value.to_string());
-        }
-    }
     source
         .set_attribute("data-composer-drag-source", "true")
         .ok()?;
@@ -972,14 +1017,7 @@ fn begin_composer_drag_presentation(
         .dyn_into::<web_sys::HtmlElement>()
         .ok()?;
     ghost.set_class_name(&format!("{} composer-drag-ghost", ghost.class_name()));
-    for attribute in [
-        "data-composer-drag-source",
-        "data-composer-drag-target",
-        "data-composer-drag-left",
-        "data-composer-drag-right",
-        "data-composer-drag-top",
-        "data-composer-drag-bottom",
-    ] {
+    for attribute in ["data-composer-drag-source", "data-composer-drag-target"] {
         let _ = ghost.remove_attribute(attribute);
     }
     let _ = ghost.set_attribute("aria-hidden", "true");
@@ -1013,34 +1051,26 @@ fn begin_composer_drag_presentation(
     Some(())
 }
 
-fn preview_composer_swap(source: CanonicalUuid, target: CanonicalUuid) {
+fn apply_composer_swap(source: CanonicalUuid, target: CanonicalUuid) -> bool {
     let Some(document) = composer_document() else {
-        return;
+        return false;
     };
     clear_composer_swap_preview(&document);
     if source == target {
-        return;
+        return false;
     }
     let Some(source) = composer_drag_element(&document, source)
         .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
     else {
-        return;
+        return false;
     };
     let Some(target) = composer_drag_element(&document, target)
         .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
     else {
-        return;
+        return false;
     };
-    let source_left = source
-        .get_attribute("data-composer-drag-left")
-        .and_then(|value| value.parse::<f64>().ok());
-    let target_left = target
-        .get_attribute("data-composer-drag-left")
-        .and_then(|value| value.parse::<f64>().ok());
-    let (Some(source_left), Some(target_left)) = (source_left, target_left) else {
-        return;
-    };
-    let offset = target_left - source_left;
+    let offset =
+        target.get_bounding_client_rect().left() - source.get_bounding_client_rect().left();
     let _ = source
         .style()
         .set_property("transform", &format!("translateX({offset}px)"));
@@ -1048,12 +1078,25 @@ fn preview_composer_swap(source: CanonicalUuid, target: CanonicalUuid) {
         .style()
         .set_property("transform", &format!("translateX({}px)", -offset));
     let _ = target.set_attribute("data-composer-drag-target", "true");
+    true
+}
+
+fn preview_composer_swap(
+    source: CanonicalUuid,
+    target: CanonicalUuid,
+    state: &PrimaryComposerDragState,
+) {
+    if apply_composer_swap(source, target) {
+        state.1.set(Some(target));
+    } else {
+        state.clear_preview();
+    }
 }
 
 fn composer_at_point(client_x: i32, client_y: i32) -> Option<CanonicalUuid> {
     let document = composer_document()?;
     let nodes = document
-        .query_selector_all("[data-composer-drag-left]")
+        .query_selector_all(".team-agents > .team-agent")
         .ok()?;
     let x = f64::from(client_x);
     let y = f64::from(client_y);
@@ -1064,32 +1107,14 @@ fn composer_at_point(client_x: i32, client_y: i32) -> Option<CanonicalUuid> {
         else {
             continue;
         };
-        let boundary = |attribute| {
-            element
-                .get_attribute(attribute)
-                .and_then(|value| value.parse::<f64>().ok())
-        };
-        if boundary("data-composer-drag-left").is_some_and(|left| x >= left)
-            && boundary("data-composer-drag-right").is_some_and(|right| x <= right)
-            && boundary("data-composer-drag-top").is_some_and(|top| y >= top)
-            && boundary("data-composer-drag-bottom").is_some_and(|bottom| y <= bottom)
-        {
+        let rect = element.get_bounding_client_rect();
+        if x >= rect.left() && x <= rect.right() && y >= rect.top() && y <= rect.bottom() {
             return element
                 .get_attribute("data-agent-lane")
                 .and_then(|lane| lane.parse().ok());
         }
     }
     None
-}
-
-fn composer_swap_target() -> Option<CanonicalUuid> {
-    composer_document()?
-        .query_selector("[data-composer-drag-target]")
-        .ok()
-        .flatten()?
-        .get_attribute("data-agent-lane")?
-        .parse()
-        .ok()
 }
 
 fn release_composer_pointer(event: &PointerEvent) {
@@ -1101,33 +1126,39 @@ fn release_composer_pointer(event: &PointerEvent) {
     }
 }
 
-type ComposerPointerStateHandle = std::rc::Rc<std::cell::RefCell<Option<ComposerPointerState>>>;
-
 fn composer_drag_start(
+    lane: CanonicalUuid,
     enabled: bool,
-    state: &ComposerPointerStateHandle,
+    topology_revision: u64,
+    state: &PrimaryComposerDragState,
 ) -> Callback<PointerEvent> {
-    let state = std::rc::Rc::clone(state);
+    let state = state.clone();
     Callback::from(move |event: PointerEvent| {
-        if !enabled || event.button() != 0 || state.borrow().is_some() {
+        if event.button() != 0
+            || !state.0.borrow_mut().begin(
+                enabled,
+                lane,
+                event.pointer_id(),
+                event.client_x(),
+                event.client_y(),
+                topology_revision,
+            )
+        {
             return;
         }
         let Some(element) = event
             .target()
             .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
         else {
+            state.clear();
             return;
         };
         if element.set_pointer_capture(event.pointer_id()).is_err() {
+            state.clear();
             return;
         }
         clear_composer_drag_presentation();
-        state.replace(Some(ComposerPointerState {
-            pointer_id: event.pointer_id(),
-            start_x: event.client_x(),
-            start_y: event.client_y(),
-            dragging: false,
-        }));
+        state.1.set(None);
         event.prevent_default();
         event.stop_propagation();
     })
@@ -1135,40 +1166,40 @@ fn composer_drag_start(
 
 fn composer_drag_movement(
     lane: CanonicalUuid,
+    topology_revision: u64,
     members: Vec<CanonicalUuid>,
-    state: &ComposerPointerStateHandle,
+    state: &PrimaryComposerDragState,
 ) -> Callback<PointerEvent> {
-    let state = std::rc::Rc::clone(state);
+    let state = state.clone();
     Callback::from(move |event: PointerEvent| {
-        let mut state = state.borrow_mut();
-        let Some(active) = state
-            .as_mut()
-            .filter(|active| active.pointer_id == event.pointer_id())
-        else {
-            return;
-        };
-        if !active.dragging
-            && event.client_x().abs_diff(active.start_x) < 6
-            && event.client_y().abs_diff(active.start_y) < 6
-        {
-            return;
-        }
-        if !active.dragging {
-            if begin_composer_drag_presentation(lane, event.client_x(), event.client_y()).is_none()
-            {
-                *state = None;
+        let lift = {
+            let mut session = state.0.borrow_mut();
+            let Some(active) = session.movement(
+                lane,
+                event.pointer_id(),
+                event.client_x(),
+                event.client_y(),
+                topology_revision,
+            ) else {
                 return;
-            }
+            };
+            let lift = !active.dragging;
             active.dragging = true;
+            lift
+        };
+        if lift
+            && begin_composer_drag_presentation(lane, event.client_x(), event.client_y()).is_none()
+        {
+            state.clear();
+            return;
         }
-        drop(state);
         update_composer_drag_ghost(event.client_x(), event.client_y());
         if let Some(target) =
             composer_at_point(event.client_x(), event.client_y()).filter(|id| members.contains(id))
         {
-            preview_composer_swap(lane, target);
-        } else if let Some(document) = composer_document() {
-            clear_composer_swap_preview(&document);
+            preview_composer_swap(lane, target, &state);
+        } else {
+            state.clear_preview();
         }
         event.prevent_default();
         event.stop_propagation();
@@ -1180,27 +1211,24 @@ fn composer_drag_finish(
     topology_revision: u64,
     topology: Vec<(CanonicalUuid, Vec<CanonicalUuid>)>,
     sender: SenderHandle,
-    state: &ComposerPointerStateHandle,
+    state: &PrimaryComposerDragState,
 ) -> Callback<PointerEvent> {
-    let state = std::rc::Rc::clone(state);
+    let state = state.clone();
     Callback::from(move |event: PointerEvent| {
-        let active = {
-            let mut state = state.borrow_mut();
-            if !state
-                .as_ref()
-                .is_some_and(|active| active.pointer_id == event.pointer_id())
-            {
-                return;
-            }
-            state.take().expect("the matching pointer state exists")
+        let Some(active) = state
+            .0
+            .borrow_mut()
+            .finish(lane, event.pointer_id(), topology_revision)
+        else {
+            return;
         };
         release_composer_pointer(&event);
         let arranged = active
             .dragging
-            .then(composer_swap_target)
+            .then(|| state.1.get())
             .flatten()
             .and_then(|target| watchband::swap_members(&topology, lane, target));
-        clear_composer_drag_presentation();
+        state.clear();
         let Some(teams) = arranged else {
             return;
         };
@@ -1219,21 +1247,15 @@ fn composer_drag_finish(
     })
 }
 
-fn composer_drag_cancel(state: ComposerPointerStateHandle) -> Callback<PointerEvent> {
+fn composer_drag_cancel(
+    lane: CanonicalUuid,
+    state: &PrimaryComposerDragState,
+) -> Callback<PointerEvent> {
+    let state = state.clone();
     Callback::from(move |event: PointerEvent| {
-        let active = {
-            let mut state = state.borrow_mut();
-            if !state
-                .as_ref()
-                .is_some_and(|active| active.pointer_id == event.pointer_id())
-            {
-                return;
-            }
-            state.take()
-        };
-        if active.is_some() {
+        if state.0.borrow_mut().cancel(lane, event.pointer_id()) {
             release_composer_pointer(&event);
-            clear_composer_drag_presentation();
+            state.clear();
         }
     })
 }
@@ -1244,23 +1266,25 @@ pub(super) fn primary_composer_dragging(
     topology_revision: u64,
     topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
     sender: &SenderHandle,
+    state: &PrimaryComposerDragState,
 ) -> PrimaryComposerDragging {
-    let state = std::rc::Rc::new(std::cell::RefCell::new(None));
     let members = topology
         .iter()
         .find_map(|(_, members)| members.contains(&lane).then(|| members.clone()))
         .unwrap_or_default();
+    let cancel = composer_drag_cancel(lane, state);
     PrimaryComposerDragging {
         enabled,
-        start: composer_drag_start(enabled, &state),
-        movement: composer_drag_movement(lane, members, &state),
+        start: composer_drag_start(lane, enabled, topology_revision, state),
+        movement: composer_drag_movement(lane, topology_revision, members, state),
         finish: composer_drag_finish(
             lane,
             topology_revision,
             topology.to_vec(),
             sender.clone(),
-            &state,
+            state,
         ),
-        cancel: composer_drag_cancel(state),
+        cancel: cancel.clone(),
+        lost_capture: cancel,
     }
 }

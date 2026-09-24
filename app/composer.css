@@ -169,7 +169,7 @@
 /* Composer drag is a visual pairwise swap over the mounted grid. Transforms
    leave both grid slots reserved, so neither the form nor the message plane
    reflows while the pointer crosses a neighbor. */
-.team-agents:has([data-composer-drag-source]) .team-agent[data-composer-drag-left] {
+.team-agents:has([data-composer-drag-source]) .team-agent {
   transition: transform 130ms ease;
   will-change: transform;
 }
