@@ -48,6 +48,7 @@ mod task_detail;
 mod task_relations;
 mod view;
 mod watchband;
+mod work_history;
 
 use crate::PendingKind;
 use crate::action_mailbox::{self, ActionLease, ActionQueue};
@@ -518,14 +519,14 @@ fn canvas_app() -> Html {
         issue: action_issue.clone(),
     };
     let work_detail = task_detail::use_controls(sender.clone(), surface.clone());
+    let work_history = work_history::use_controls(sender.clone(), surface.clone());
     let work_map = use_state(view::WorkMapState::default);
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
     let speech_message = use_state(|| None::<String>);
     let speech_controller = use_mut_ref(crate::speech::Controller::default);
-    let speech_queue = use_mut_ref(SpeechQueue::default);
     let speech_runtime = SpeechRuntime {
-        queue: speech_queue,
+        queue: use_mut_ref(SpeechQueue::default),
         controller: speech_controller,
         speech: speech.clone(),
         status: speech_status.clone(),
@@ -599,6 +600,7 @@ fn canvas_app() -> Html {
             agents: &agents,
             selected_task: &work_detail.selected,
             work_map: &work_map,
+            work_history: &work_history,
             detail_close: &work_detail.close_ref,
             note_text: &work_detail.note_text,
             note_notice: &work_detail.notice,

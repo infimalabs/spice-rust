@@ -180,6 +180,7 @@ impl PendingKind {
             Self::Vendors => Some(CurrentRead::Vendors),
             Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
+            | Self::WorkHistory { .. }
             | Self::LaneSeat
             | Self::LaneArrange
             | Self::LaneRenewal { .. }
@@ -399,6 +400,7 @@ impl ClientAction {
             | Self::FastMode(_)
             | Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
+            | Self::WorkHistory { .. }
             | Self::MessageHistory { .. }
             | Self::ArrangeLane { .. }
             | Self::RenewLane { .. }
@@ -412,6 +414,7 @@ impl ClientAction {
             Self::Refresh
                 | Self::TaskDetail { .. }
                 | Self::TaskRelations { .. }
+                | Self::WorkHistory { .. }
                 | Self::MessageHistory { .. }
         )
     }

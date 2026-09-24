@@ -39,6 +39,7 @@ fn handle_stream_frame(
         }
         stale.retain_task_details(|task| changed && runtime.invalidate_task_detail(task));
         stale.resolve_task_relations(runtime, changed);
+        stale.resolve_work_history(runtime, changed);
         (application.into_directives(), changed)
     };
     if changed && publish {
@@ -205,6 +206,12 @@ fn apply_command_response(
             let admitted: crate::Admitted<Response<wire::intent::TaskRelationsAnswer>> =
                 admit_response(session, bytes)?;
             runtime.apply_task_relations(&key, &admitted);
+            CommandApplication::ordinary(false)
+        }
+        PendingKind::WorkHistory { request } => {
+            let admitted: crate::Admitted<Response<wire::intent::BoardAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_work_history(&request, &admitted);
             CommandApplication::ordinary(false)
         }
         // A read of the lane table and an arrangement of it answer with the

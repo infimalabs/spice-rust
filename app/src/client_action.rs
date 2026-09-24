@@ -14,6 +14,9 @@ pub(crate) enum ClientAction {
     TaskRelations {
         key: crate::TaskRelationsKey,
     },
+    WorkHistory {
+        request: crate::runtime::WorkHistoryRequest,
+    },
     /// Fetch the next retained page behind one member's oldest visible card.
     MessageHistory {
         lane: CanonicalUuid,
