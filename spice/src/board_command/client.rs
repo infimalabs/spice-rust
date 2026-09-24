@@ -406,15 +406,24 @@ fn client_wake(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    mutate_task(repository, contract, matches, |task, heads| {
+    mutate_task_from_board(repository, contract, matches, |board, task, heads| {
         let into = matches.get_one::<String>("into").cloned();
+        let claim = matches.get_flag("claim");
         let mut expected = vec![workflow_witness(heads), deferral_witness(heads)];
         if into.is_some() {
             expected.push(statement_witness(heads));
         }
+        if claim {
+            let (lane, occupant) = actor_seat(board)?;
+            expected.push(Witness::Eligibility {
+                rule: "capture".parse().expect("capture is a wire name"),
+            });
+            expected.push(residency_witness(board, lane, occupant));
+        }
         let body = TaskWake {
             task: task.clone(),
             into,
+            claim,
         };
         Ok((
             CommandKind::TaskWake,
@@ -1006,7 +1015,9 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskDefer(defer) => {
             task_defer(bus, command, defer, projects, allocation)
         }
-        wire::intent::Intent::TaskWake(wake) => task_wake(bus, command, wake, projects, allocation),
+        wire::intent::Intent::TaskWake(wake) => {
+            task_wake(bus, command, wake, repository, projects, allocation)
+        }
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {
             claim_free(bus, command, task, projects, allocation)
         }

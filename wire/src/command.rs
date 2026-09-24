@@ -294,10 +294,15 @@ impl Law {
         authority: Authority::Connected,
     };
     /// Exact workflow and defer disposition, plus the statement head when a
-    /// parked wake also promotes the task into another project.
+    /// parked wake also promotes the task into another project. Atomic claim
+    /// additionally carries capture eligibility and occupied residency.
     pub const WAKE: Self = Self {
         required: &[WitnessKind::Workflow, WitnessKind::Deferral],
-        optional: &[WitnessKind::Task],
+        optional: &[
+            WitnessKind::Task,
+            WitnessKind::Eligibility,
+            WitnessKind::Residency,
+        ],
         authority: Authority::Connected,
     };
     /// Exact task statement, workflow, and claim heads plus each new edge.
@@ -803,15 +808,28 @@ impl CommandKind {
                 WitnessKind::Residency,
             ];
         }
-        if matches!(
-            (self, body),
-            (Self::TaskWake, Intent::TaskWake(wake)) if wake.into.is_some()
-        ) {
-            return &[
-                WitnessKind::Workflow,
-                WitnessKind::Deferral,
-                WitnessKind::Task,
-            ];
+        if let (Self::TaskWake, Intent::TaskWake(wake)) = (self, body) {
+            return match (wake.into.is_some(), wake.claim) {
+                (true, true) => &[
+                    WitnessKind::Workflow,
+                    WitnessKind::Deferral,
+                    WitnessKind::Task,
+                    WitnessKind::Eligibility,
+                    WitnessKind::Residency,
+                ],
+                (true, false) => &[
+                    WitnessKind::Workflow,
+                    WitnessKind::Deferral,
+                    WitnessKind::Task,
+                ],
+                (false, true) => &[
+                    WitnessKind::Workflow,
+                    WitnessKind::Deferral,
+                    WitnessKind::Eligibility,
+                    WitnessKind::Residency,
+                ],
+                (false, false) => Law::WAKE.required,
+            };
         }
         if matches!(
             (self, body),

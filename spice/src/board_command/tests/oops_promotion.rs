@@ -326,6 +326,7 @@ fn assert_unwitnessed_promotion_refuses(
         body: serde_json::to_value(TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            claim: false,
         })
         .expect("promotion body encodes"),
     }
@@ -369,6 +370,7 @@ fn assert_unrelated_promotion_witness_refuses(
         body: serde_json::to_value(TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            claim: false,
         })
         .expect("promotion body encodes"),
     }
@@ -434,6 +436,7 @@ fn stale_promotion_after_edit(
         &TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            claim: false,
         },
     );
     assert!(matches!(
@@ -505,6 +508,7 @@ fn wake_into_is_the_only_unclaimed_oops_project_exit() {
         &TaskWake {
             task: parked.clone(),
             into: None,
+            claim: false,
         },
     );
     assert!(matches!(
@@ -550,6 +554,7 @@ fn wake_into_is_the_only_unclaimed_oops_project_exit() {
         &TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            claim: false,
         },
     )) else {
         panic!("promotion returned another answer shape");
@@ -588,6 +593,7 @@ fn wake_into_is_the_only_unclaimed_oops_project_exit() {
         &TaskWake {
             task: promoted,
             into: Some("board.identity".to_owned()),
+            claim: false,
         },
     );
     assert!(matches!(
@@ -639,6 +645,7 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
         &TaskWake {
             task: parked.clone(),
             into: Some("board.test".to_owned()),
+            claim: false,
         },
     )) else {
         panic!("promotion returned another answer shape");

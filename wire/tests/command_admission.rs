@@ -114,7 +114,11 @@ fn missing_witness_and_wrong_body_stop_before_business_logic() {
     ));
 }
 
-fn wake(into: Option<&str>, statement_tasks: &[wire::TaskStamp]) -> Command<serde_json::Value> {
+fn wake(
+    into: Option<&str>,
+    claim: bool,
+    statement_tasks: &[wire::TaskStamp],
+) -> Command<serde_json::Value> {
     let task: wire::TaskStamp = "0000000B".parse().expect("fixture task stamp");
     let mut expected = vec![
         Witness::Workflow {
@@ -134,17 +138,32 @@ fn wake(into: Option<&str>, statement_tasks: &[wire::TaskStamp]) -> Command<serd
             head: Seq::new(9).expect("fixture statement head"),
         });
     }
+    if claim {
+        expected.push(Witness::Eligibility {
+            rule: "capture".parse().expect("fixture capture rule"),
+        });
+        expected.push(Witness::Residency {
+            lane: uuid(2),
+            occupant: Some(uuid(3)),
+            epoch: uuid(1),
+        });
+    }
     let handle = wire::TaskHandle::for_project("spice", &task);
+    let body = match (into, claim) {
+        (Some(project), true) => {
+            serde_json::json!({ "task": handle, "into": project, "claim": true })
+        }
+        (Some(project), false) => serde_json::json!({ "task": handle, "into": project }),
+        (None, true) => serde_json::json!({ "task": handle, "claim": true }),
+        (None, false) => serde_json::json!({ "task": handle }),
+    };
     Command {
         v: WireVersion::CURRENT,
         id: uuid(5),
         epoch: uuid(1),
         kind: CommandKind::TaskWake,
         expected,
-        body: into.map_or_else(
-            || serde_json::json!({ "task": handle }),
-            |project| serde_json::json!({ "task": handle, "into": project }),
-        ),
+        body,
     }
 }
 
@@ -153,13 +172,13 @@ fn wake_promotion_requires_statement_authority_but_plain_wake_does_not() {
     let target: wire::TaskStamp = "0000000B".parse().expect("target task stamp");
     let unrelated: wire::TaskStamp = "0000000C".parse().expect("unrelated task stamp");
     let Err(CommandRejection::Refusal(refusal)) =
-        wake(Some("board.test"), &[]).admit(&accepted(Actor::Operator))
+        wake(Some("board.test"), false, &[]).admit(&accepted(Actor::Operator))
     else {
         panic!("promotion without a task witness must refuse");
     };
     assert_eq!(refusal.reason(), "command::witness-law");
 
-    let plain = wake(None, &[])
+    let plain = wake(None, false, &[])
         .admit(&accepted(Actor::Operator))
         .expect("plain wake retains workflow and deferral authority");
     assert!(matches!(
@@ -167,10 +186,12 @@ fn wake_promotion_requires_statement_authority_but_plain_wake_does_not() {
         Intent::TaskWake(wire::intent::TaskWake { into: None, .. })
     ));
 
-    let Err(CommandRejection::Refusal(refusal)) =
-        wake(Some("board.test"), &[unrelated.clone(), unrelated.clone()])
-            .admit(&accepted(Actor::Operator))
-    else {
+    let Err(CommandRejection::Refusal(refusal)) = wake(
+        Some("board.test"),
+        false,
+        &[unrelated.clone(), unrelated.clone()],
+    )
+    .admit(&accepted(Actor::Operator)) else {
         panic!("duplicate unrelated task witnesses must refuse");
     };
     assert_eq!(refusal.reason(), "command::witness-law");
@@ -181,7 +202,35 @@ fn wake_promotion_requires_statement_authority_but_plain_wake_does_not() {
             .is_some_and(|witness| witness.contains("bound to SPICE-0000000B"))
     );
 
-    wake(Some("board.test"), &[target.clone(), target, unrelated])
+    wake(
+        Some("board.test"),
+        false,
+        &[target.clone(), target, unrelated],
+    )
+    .admit(&accepted(Actor::Operator))
+    .expect("exact target authority admits despite duplicate and extra predicates");
+}
+
+#[test]
+fn wake_claim_requires_capture_authority_and_decodes_the_atomic_request() {
+    let mut missing = wake(None, true, &[]);
+    missing
+        .expected
+        .retain(|witness| !matches!(witness, Witness::Eligibility { .. }));
+    let Err(CommandRejection::Refusal(refusal)) = missing.admit(&accepted(Actor::Operator)) else {
+        panic!("wake claim without eligibility must refuse");
+    };
+    assert_eq!(refusal.reason(), "command::witness-law");
+
+    let admitted = wake(None, true, &[])
         .admit(&accepted(Actor::Operator))
-        .expect("exact target authority admits despite duplicate and extra predicates");
+        .expect("wake claim with capture authority admits");
+    assert!(matches!(
+        admitted.body(),
+        Intent::TaskWake(wire::intent::TaskWake {
+            into: None,
+            claim: true,
+            ..
+        })
+    ));
 }

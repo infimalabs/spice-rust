@@ -126,26 +126,26 @@ pub(in crate::board_command) fn claim_grant(
         source,
     })
 }
-/// Claim state prepared for a task that will be created in the same transaction.
-pub(super) struct AddedClaim {
+/// Claim state prepared for a task made ready in the same transaction.
+pub(super) struct PreparedClaim {
     grant: ClaimGrant,
 }
 
-/// Validate and prepare atomic create-and-claim before the journal opens.
-pub(super) fn prepare_added_claim(
+/// Validate and prepare an atomic mutation-and-claim before the journal opens.
+pub(super) fn prepare_capture_claim(
     bus: &Bus,
     command: &wire::AdmittedCommand,
     repository: Option<&Repository>,
     snapshot: &ValidatedSnapshot,
     selected: &Entry,
-) -> Result<AddedClaim, Outcome<CommandAnswer>> {
+) -> Result<PreparedClaim, Outcome<CommandAnswer>> {
     let capture_witness = command.expected().iter().any(
         |witness| matches!(witness, Witness::Eligibility { rule } if rule.as_str() == "capture"),
     );
     if !capture_witness {
         return Err(protocol_fault(
             "claim::capture-eligibility-witness",
-            "task add --claim has no capture eligibility witness",
+            "atomic capture has no capture eligibility witness",
         ));
     }
     refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
@@ -158,12 +158,12 @@ pub(super) fn prepare_added_claim(
         return Err(refusal(
             "claim::capture-ineligible",
             Some(selected.handle().to_string()),
-            "create and claim only a public, ready task whose environment requirements and dependencies are satisfied",
+            "atomically claim only a public, ready task whose environment requirements and dependencies are satisfied",
         ));
     }
-    // Creation starts future work. It shares capture's named-task eligibility
-    // and residency authority, but records the clean claim boundary used by
-    // allocator claims rather than requiring loose commits to capture.
+    // Atomic mutations share capture's named-task eligibility and residency
+    // authority, but record the clean claim boundary used by allocator claims
+    // rather than requiring loose commits to capture.
     let grant = claim_grant(
         bus,
         command,
@@ -172,10 +172,10 @@ pub(super) fn prepare_added_claim(
         selected,
         Possession::Next,
     )?;
-    Ok(AddedClaim { grant })
+    Ok(PreparedClaim { grant })
 }
 
-impl AddedClaim {
+impl PreparedClaim {
     pub(super) fn at(&self) -> Instant {
         self.grant.at
     }

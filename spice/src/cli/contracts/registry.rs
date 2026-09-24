@@ -573,11 +573,12 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "wake"],
-        "task wake HANDLE [--into PROJECT]",
+        "task wake HANDLE [--into PROJECT] [--claim]",
         OperatorOrLane,
         Command,
-        [TaskWoken, TaskEdited],
-        [Resident],
+        [TaskWoken, TaskEdited, ClaimWon],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
         Reply,
         "board::task_wake"
     ),
