@@ -26,6 +26,8 @@ pub(super) struct Node {
     pub(super) label: String,
     pub(super) detail: String,
     pub(super) task: Option<TaskStamp>,
+    /// Renderer-facing text with intentional semantic line boundaries.
+    diagram: String,
     pub(super) current: bool,
 }
 
@@ -151,19 +153,24 @@ fn present_node(node: &TaskRelationNode, index: usize, selected: &TaskStamp) -> 
             title,
             phase,
             status,
-        } => Node {
-            id,
-            kind: "Task",
-            label: format!("{} · {}", handle, compact(title)),
-            detail: format!("Phase {phase} · {status}"),
-            task: Some(task.clone()),
-            current: task == selected,
-        },
+        } => {
+            let title = compact(title);
+            Node {
+                id,
+                kind: "Task",
+                label: format!("{handle} · {title}"),
+                detail: format!("Phase {phase} · {status}"),
+                diagram: format!("{handle}\n{title}\nPhase {phase} — {status}"),
+                task: Some(task.clone()),
+                current: task == selected,
+            }
+        }
         TaskRelationNode::Origin { origin } => Node {
             id,
             kind: "ACK / origin",
             label: format!("Origin · {}", compact(origin.as_str())),
             detail: origin.to_string(),
+            diagram: format!("Origin\n{origin}"),
             task: None,
             current: false,
         },
@@ -174,37 +181,43 @@ fn present_node(node: &TaskRelationNode, index: usize, selected: &TaskStamp) -> 
             reviewer,
             verdict,
             ..
-        } => Node {
-            id,
-            kind: "Completed review",
-            label: format!(
-                "{} · {} → {} · {}",
-                phase,
-                compact_actor(author),
-                compact_actor(reviewer),
-                verdict_label(*verdict),
-            ),
-            detail: format!(
-                "Phase {phase}: author {author} → reviewer {reviewer} → verdict {} · fact {position}",
-                verdict_label(*verdict),
-            ),
-            task: None,
-            current: false,
-        },
+        } => {
+            let author = compact_actor(author);
+            let reviewer = compact_actor(reviewer);
+            let verdict = verdict_label(*verdict);
+            Node {
+                id,
+                kind: "Completed review",
+                label: format!("{phase} · {author} → {reviewer} · {verdict}"),
+                detail: format!(
+                    "Phase {phase}: author {author} → reviewer {reviewer} → verdict {verdict} · fact {position}"
+                ),
+                diagram: format!(
+                    "{phase} review\n{author} → {reviewer}\n{verdict}\nfact {position}"
+                ),
+                task: None,
+                current: false,
+            }
+        }
         TaskRelationNode::Lifecycle {
             position,
             at,
             actor,
             event,
             ..
-        } => Node {
-            id,
-            kind: "Lifecycle transition",
-            label: format!("{} · {}", lifecycle_label(*event), compact_actor(actor)),
-            detail: format!("{at} · {actor} · fact {position}"),
-            task: None,
-            current: false,
-        },
+        } => {
+            let actor_label = compact_actor(actor);
+            let event = lifecycle_label(*event);
+            Node {
+                id,
+                kind: "Lifecycle transition",
+                label: format!("{event} · {actor_label}"),
+                detail: format!("{at} · {actor} · fact {position}"),
+                diagram: format!("{event}\n{actor_label}\n{at}\nfact {position}"),
+                task: None,
+                current: false,
+            }
+        }
         TaskRelationNode::Claim {
             position,
             actor,
@@ -212,24 +225,39 @@ fn present_node(node: &TaskRelationNode, index: usize, selected: &TaskStamp) -> 
             occupant,
             disposition,
             ..
-        } => Node {
-            id,
-            kind: "Current possession",
-            label: format!("Current claim · {}", compact_actor(actor)),
-            detail: format!(
-                "{} · lane {lane} · occupant {occupant} · fact {position}",
-                disposition_label(*disposition),
-            ),
-            task: None,
-            current: false,
-        },
+        } => {
+            let actor_is_resident_lane =
+                matches!(actor, Actor::Lane(actor_lane) if actor_lane == lane);
+            let actor = compact_actor(actor);
+            let disposition = disposition_label(*disposition);
+            let detail =
+                format!("{disposition} · lane {lane} · occupant {occupant} · fact {position}");
+            let lane = compact_identity(lane);
+            let occupant = compact_identity(occupant);
+            let owner = if actor_is_resident_lane {
+                format!("lane {lane}")
+            } else {
+                format!("{actor}\nlane {lane}")
+            };
+            Node {
+                id,
+                kind: "Current possession",
+                label: format!("Current claim · {actor}"),
+                detail,
+                diagram: format!(
+                    "Current claim\n{owner}\n{disposition}\noccupant {occupant}\nfact {position}"
+                ),
+                task: None,
+                current: false,
+            }
+        }
     }
 }
 
 fn mermaid_source(nodes: &[Node], edges: &[Edge]) -> String {
     let mut source = String::from("flowchart LR\n");
     for node in nodes {
-        let label = escape(&format!("{} · {}", node.label, node.detail));
+        let label = crate::mermaid_label::multiline(&node.diagram);
         writeln!(source, "  {}[\"{label}\"]", node.id).expect("String writes are infallible");
     }
     for edge in edges {
@@ -261,18 +289,16 @@ fn compact(value: &str) -> String {
 
 fn compact_actor(actor: &Actor) -> String {
     match actor {
-        Actor::Lane(lane) => format!("lane {}", &lane.to_string()[..8]),
+        Actor::Lane(lane) => format!("lane {}", compact_identity(lane)),
         Actor::Operator => "operator".to_owned(),
         Actor::Spice => "spice".to_owned(),
     }
 }
 
-fn escape(label: &str) -> String {
-    label
-        .replace('&', "&amp;")
-        .replace('"', "&quot;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
+fn compact_identity(identity: impl ToString) -> String {
+    let mut identity = identity.to_string();
+    identity.truncate(8);
+    identity
 }
 
 pub(super) const fn edge_label(relation: TaskRelationKind) -> &'static str {
