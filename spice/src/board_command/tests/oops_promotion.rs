@@ -264,6 +264,7 @@ fn task_add_oops_dependency_refuses(
                 origin: Some("fixture:oops-promotion".parse().expect("fixture origin")),
                 flow: Some("todo".to_owned()),
                 depends: vec![forged_oops],
+                claim: false,
             },
         ),
         &[(unclaimed_oops, "claim=none")],

@@ -36,6 +36,7 @@ fn parse_followup(spec: &str) -> Result<TaskAdd, String> {
         origin: None,
         flow: None,
         depends: Vec::new(),
+        claim: false,
     };
     let mut seen: Vec<&str> = Vec::new();
     for field in spec.split('|') {

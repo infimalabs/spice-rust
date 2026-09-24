@@ -376,6 +376,7 @@ fn a_withdrawn_prerequisite_releases_the_task_that_waited_on_it() {
             origin: Some("fixture:delete-dependency".parse().expect("fixture origin")),
             flow: Some("todo".to_owned()),
             depends: vec![blocker.clone()],
+            claim: false,
         },
     ));
 
@@ -444,6 +445,7 @@ fn a_released_dependent_is_not_still_reported_blocked() {
             origin: Some("fixture:delete-dependency".parse().expect("fixture origin")),
             flow: Some("todo".to_owned()),
             depends: vec![blocker.clone()],
+            claim: false,
         },
     ));
 

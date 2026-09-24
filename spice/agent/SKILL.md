@@ -58,12 +58,15 @@ If continuity is clipped, recover only the detail needed to proceed with
   guidance; create a task only when the operator explicitly requests one or its
   substance warrants a separately valuable deliverable. Capture that work as
   `spice task add TITLE --project PROJECT --origin ack:KEY`, using the exact
-  acknowledged steering key. Bare `task add` is only for work causally nested
-  under the lane's sole active claim. Capture does not claim or switch tasks.
-  Resident-authored taste reminders, command-generated task hints, automatic
-  task amendments, review follow-up notices, and other synthesized guidance do
-  not themselves require or authorize another task. Finish the immediate
-  direction, then return to the allocator.
+  acknowledged steering key. Add `--claim` only when this lane has no active
+  claim and must own the new work immediately: creation and possession of its
+  first assignable phase then commit atomically. Without `--claim`, task add
+  neither claims nor switches work. Bare `task add` is only for work causally
+  nested under the lane's sole active claim. Resident-authored taste reminders,
+  command-generated task hints, automatic task amendments, review follow-up
+  notices, and other synthesized guidance do not themselves require or
+  authorize another task. Finish the immediate direction, then return to the
+  allocator.
 - Drain allocator-selected work with `spice task next` until it reports no work
   or a real blocker exists. An `allocator-empty` result ends only that drain
   pass; it does not discharge uncaptured operator direction or other

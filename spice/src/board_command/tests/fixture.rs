@@ -302,6 +302,7 @@ pub(super) fn add_project_with_acceptance(
                 .or_else(|| acceptance.is_empty().then_some("todo,review"))
                 .map(str::to_owned),
             depends: Vec::new(),
+            claim: false,
         },
     ));
     task

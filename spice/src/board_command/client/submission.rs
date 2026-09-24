@@ -44,6 +44,7 @@ pub(super) fn client_add(
             origin,
             flow: None,
             depends: Vec::new(),
+            claim: matches.get_flag("claim"),
         },
     )
 }
@@ -168,6 +169,7 @@ fn capture_new_task(
             origin,
             flow: None,
             depends: Vec::new(),
+            claim: false,
         },
     ) {
         Outcome::Reply(Reply {
@@ -241,9 +243,17 @@ pub(crate) fn submit_task_add(
         BoardRead::All { family: None },
         |board| {
             let stamp = allocate_task_stamp(&board, jiff::Timestamp::now().as_microsecond())?;
+            let mut expected = vec![Witness::Absence { task: stamp }];
+            if body.claim {
+                let (lane, occupant) = actor_seat(&board)?;
+                expected.push(Witness::Eligibility {
+                    rule: "capture".parse().expect("capture is a wire name"),
+                });
+                expected.push(residency_witness(&board, lane, occupant));
+            }
             Ok((
                 CommandKind::TaskAdd,
-                vec![Witness::Absence { task: stamp }],
+                expected,
                 serde_json::to_value(body).expect("typed intent encodes"),
             ))
         },

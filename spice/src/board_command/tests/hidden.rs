@@ -468,6 +468,7 @@ fn assert_manual_system_project_refuses(bus: &Bus, epoch: CanonicalUuid, lane: &
                 origin: None,
                 flow: None,
                 depends: Vec::new(),
+                claim: false,
             },
         );
         assert!(matches!(

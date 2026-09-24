@@ -86,6 +86,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         origin: Some(add.origin.clone()),
         flow: Some("todo,review".to_owned()),
         depends: expected_depends,
+        claim: false,
     };
     let origin =
         match resolve_creation_origin(normalized.origin.as_ref(), command.actor(), &snapshot, None)
@@ -101,7 +102,7 @@ pub(in crate::board_command) fn taste_proposal_add(
         Ok(observation) => observation,
         Err(outcome) => return outcome,
     };
-    let prepared = match prepare_task(
+    let mut prepared = match prepare_task(
         command,
         &normalized,
         &project,
@@ -119,19 +120,21 @@ pub(in crate::board_command) fn taste_proposal_add(
         format!("{OCCURRENCE_TAG_PREFIX}{}", add.occurrence),
         format!("{RECURRENCE_TAG_PREFIX}{}", add.recurrence),
     ];
+    let post = prepared_entry(&mut prepared, &tags, projects);
     commit_prepared_task(
         bus,
         command,
         &normalized,
         &project,
         add.clone(),
-        projects,
         &snapshot,
         prepared,
+        post,
         tags,
         None,
         dependency_witnesses,
         move |write| guard_proposal_observation(write, observation),
+        None,
     )
 }
 
@@ -299,6 +302,7 @@ fn reused(snapshot: &ValidatedSnapshot, index: usize, completed: bool) -> Outcom
             guidance: None,
             completion: None,
             learning: None,
+            claim: None,
             next: next_action(snapshot, entry),
         }),
     })

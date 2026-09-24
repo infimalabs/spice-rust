@@ -605,6 +605,7 @@ fn tool_postures_follow_the_closed_command_order() {
             ("up".to_owned(), vec![JUDGE_EXECUTABLE]),
             ("task next".to_owned(), vec!["git"]),
             ("task recover".to_owned(), vec!["git"]),
+            ("task add".to_owned(), vec!["git"]),
             ("task capture".to_owned(), vec!["git"]),
             ("task done".to_owned(), vec!["git", JUDGE_EXECUTABLE],),
             ("task review".to_owned(), vec!["git"]),

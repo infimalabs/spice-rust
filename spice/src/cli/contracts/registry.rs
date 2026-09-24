@@ -508,11 +508,12 @@ pub(super) const CONTRACTS: &[Contract] = &[
         ["task", "add"],
         "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
          [--acceptance ACCEPTANCE...] [--requires-journal-schema SCHEMA] \
-         [--requires-trust-grant DIGEST] [--origin ORIGIN]",
+         [--requires-trust-grant DIGEST] [--origin ORIGIN] [--claim]",
         OperatorOrLane,
         Command,
-        [TaskAdded, TaskNoted],
-        [Resident],
+        [TaskAdded, TaskNoted, ClaimWon],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
         Reply,
         "board::task_add"
     ),

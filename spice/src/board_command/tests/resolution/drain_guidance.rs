@@ -59,6 +59,7 @@ fn drain_guidance_follows_lane_ownership_across_add_release_and_wake() {
         origin: Some(origin.clone()),
         flow: Some("todo".to_owned()),
         depends: Vec::new(),
+        claim: false,
     };
     let idle_add = assert_committed(issue(
         &bus,

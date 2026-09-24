@@ -250,10 +250,15 @@ impl Law {
 /// lapsed. Every doc comment restates the row it implements.
 impl Law {
     /// Intended birth stamp is absent and every dependency exists at its
-    /// named workflow head.
+    /// named workflow head. Atomic create-and-claim additionally carries the
+    /// caller's eligibility and occupied residency predicates.
     pub const ADD: Self = Self {
         required: &[WitnessKind::Absence],
-        optional: &[WitnessKind::Workflow],
+        optional: &[
+            WitnessKind::Workflow,
+            WitnessKind::Eligibility,
+            WitnessKind::Residency,
+        ],
         authority: Authority::Connected,
     };
     /// Exact task statement head.
@@ -788,6 +793,16 @@ impl CommandKind {
     }
 
     fn required_for_intent(self, body: &Intent) -> &'static [WitnessKind] {
+        if matches!(
+            (self, body),
+            (Self::TaskAdd, Intent::TaskAdd(add)) if add.claim
+        ) {
+            return &[
+                WitnessKind::Absence,
+                WitnessKind::Eligibility,
+                WitnessKind::Residency,
+            ];
+        }
         if matches!(
             (self, body),
             (Self::TaskWake, Intent::TaskWake(wake)) if wake.into.is_some()

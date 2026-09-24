@@ -288,6 +288,7 @@ fn publish_correction(
         guidance: None,
         completion: None,
         learning: None,
+        claim: None,
         next,
     };
     if let Err(error) = write.command_result(

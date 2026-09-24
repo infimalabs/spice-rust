@@ -46,6 +46,7 @@ fn task_add() -> (&'static Contract, MappedCommand) {
             origin: None,
             flow: None,
             depends: Vec::new(),
+            claim: false,
         },
     )
     .expect("task add maps before discovery");
@@ -62,6 +63,7 @@ fn task_answer() -> serde_json::Value {
         guidance: None,
         completion: None,
         learning: None,
+        claim: None,
         next: None,
     })
     .expect("fixture task answer encodes")
