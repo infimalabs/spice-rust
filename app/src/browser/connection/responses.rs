@@ -345,7 +345,7 @@ fn reconcile_note_detail(
         return CommandApplication::ordinary(false);
     }
     match runtime.task_detail(task) {
-        Some(TaskDetailState::Available(detail)) => {
+        Some(TaskDetailState::Available(detail) | TaskDetailState::Refreshing(detail)) => {
             let actor = runtime.principal().actor();
             let visible = detail.notes.iter().any(|note| {
                 note.author == *actor

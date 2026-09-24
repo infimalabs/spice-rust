@@ -533,19 +533,38 @@ impl TaskRelationsKey {
 pub enum TaskRelationsState {
     Loading,
     Available(Box<TaskRelationsAnswer>),
+    Refreshing(Box<TaskRelationsAnswer>),
     Unavailable {
         reason: String,
         detail: Option<String>,
     },
 }
 
+impl TaskRelationsState {
+    /// Last admitted answer, retained while its typed family refreshes.
+    #[must_use]
+    pub fn answer(&self) -> Option<&TaskRelationsAnswer> {
+        match self {
+            Self::Available(answer) | Self::Refreshing(answer) => Some(answer),
+            Self::Loading | Self::Unavailable { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn refreshing(&self) -> bool {
+        matches!(self, Self::Refreshing(_))
+    }
+}
+
 /// Capability-scoped state for one on-demand task detail.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskDetailState {
-    /// A request is queued or in flight.
+    /// A request is queued or in flight without prior admitted detail.
     Loading,
     /// Current task evidence and its ordered durable notes.
     Available(Box<TaskDetailAnswer>),
+    /// Last admitted evidence retained while a changed task is refreshed.
+    Refreshing(Box<TaskDetailAnswer>),
     /// The resident refused or could not serve the selected task.
     Unavailable {
         /// Stable resident reason.
@@ -553,6 +572,22 @@ pub enum TaskDetailState {
         /// Human diagnostic detail, when the resident supplied it.
         detail: Option<String>,
     },
+}
+
+impl TaskDetailState {
+    /// Last admitted detail, retained during an in-flight refresh.
+    #[must_use]
+    pub fn answer(&self) -> Option<&TaskDetailAnswer> {
+        match self {
+            Self::Available(answer) | Self::Refreshing(answer) => Some(answer),
+            Self::Loading | Self::Unavailable { .. } => None,
+        }
+    }
+
+    #[must_use]
+    pub const fn refreshing(&self) -> bool {
+        matches!(self, Self::Refreshing(_))
+    }
 }
 
 /// One exact request against the current Work-history generation.
@@ -837,12 +872,20 @@ impl CanvasRuntime {
         self.task_details.insert(task, TaskDetailState::Loading);
     }
 
-    /// Drop one affected detail back to loading and report whether it was open.
+    /// Retain one affected detail while its replacement is requested.
     pub fn invalidate_task_detail(&mut self, task: &wire::TaskStamp) -> bool {
         let Some(detail) = self.task_details.get_mut(task) else {
             return false;
         };
-        *detail = TaskDetailState::Loading;
+        let previous = std::mem::replace(detail, TaskDetailState::Loading);
+        *detail = match previous {
+            TaskDetailState::Available(answer) | TaskDetailState::Refreshing(answer) => {
+                TaskDetailState::Refreshing(answer)
+            }
+            TaskDetailState::Loading | TaskDetailState::Unavailable { .. } => {
+                TaskDetailState::Loading
+            }
+        };
         true
     }
     /// One exact bounded relationship read retained for this capability scope.
@@ -851,18 +894,45 @@ impl CanvasRuntime {
         self.task_relations.get(key)
     }
 
-    /// Mark one request identity as queued or in flight.
-    pub fn begin_task_relations(&mut self, key: TaskRelationsKey) {
-        self.task_relations.insert(key, TaskRelationsState::Loading);
+    /// Whether one exact relationship projection needs a demand read.
+    #[must_use]
+    pub fn task_relations_needs_request(&self, key: &TaskRelationsKey) -> bool {
+        matches!(
+            self.task_relations.get(key),
+            None | Some(TaskRelationsState::Refreshing(_))
+        )
     }
 
-    /// Evict cached families moved by a stream update.
+    /// Mark one request identity as queued or in flight without discarding admitted geometry.
+    pub fn begin_task_relations(&mut self, key: TaskRelationsKey) {
+        if !matches!(
+            self.task_relations.get(&key),
+            Some(TaskRelationsState::Refreshing(_))
+        ) {
+            self.task_relations.insert(key, TaskRelationsState::Loading);
+        }
+    }
+
+    /// Retain cached families while a stream-triggered replacement is requested.
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn invalidate_task_relations(&mut self, relations: &BTreeSet<TaskRelationKind>) {
-        let before = self.task_relations.len();
-        self.task_relations
-            .retain(|key, _| !relations.contains(&key.relation));
-        if self.task_relations.len() != before {
+        let mut invalidated = false;
+        for (key, state) in &mut self.task_relations {
+            if !relations.contains(&key.relation) {
+                continue;
+            }
+            let previous = std::mem::replace(state, TaskRelationsState::Loading);
+            *state = match previous {
+                TaskRelationsState::Available(answer) | TaskRelationsState::Refreshing(answer) => {
+                    TaskRelationsState::Refreshing(answer)
+                }
+                TaskRelationsState::Loading | TaskRelationsState::Unavailable { .. } => {
+                    TaskRelationsState::Loading
+                }
+            };
+            invalidated = true;
+        }
+        if invalidated {
             self.task_relations_revision = self.task_relations_revision.saturating_add(1);
         }
     }

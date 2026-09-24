@@ -27,7 +27,8 @@ pub(super) fn use_request(
             let Some(runtime) = data.as_mut() else {
                 return;
             };
-            if !runtime.offers(CommandKind::TaskRelations) || runtime.task_relations(&key).is_some()
+            if !runtime.offers(CommandKind::TaskRelations)
+                || !runtime.task_relations_needs_request(&key)
             {
                 false
             } else {

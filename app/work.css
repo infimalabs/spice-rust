@@ -404,6 +404,8 @@
   box-shadow: var(--shadow);
 }
 
+.work-detail-panel[hidden] { display: none; }
+
 .work-detail-content { display: grid; gap: 16px; padding: 18px 22px 28px; }
 .work-detail-identity {
   display: flex;
