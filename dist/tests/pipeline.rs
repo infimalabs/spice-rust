@@ -175,6 +175,7 @@ fn build_order_payload_bytes_and_restaging_are_deterministic() {
             "app/mosaic.css",
             "app/responsive.css",
             "app/style.css",
+            "app/work.css",
             "bin/spice",
             "symbols/spice.dSYM.json",
         ]

@@ -40,43 +40,36 @@ fn the_axis_registry_lists_every_axis_that_exists() {
 }
 
 #[test]
-fn every_global_destination_has_one_stable_route_value() {
-    let destinations = descend_canvas_destinations();
-    assert_eq!(destinations, CanvasDestination::ALL);
+fn every_global_destination_has_one_exact_hash_route() {
+    let routes = [
+        (CanvasDestination::Info, "/info"),
+        (CanvasDestination::Work, "/work"),
+        (CanvasDestination::Chat, "/"),
+    ];
+    assert_eq!(descend_canvas_destinations(), CanvasDestination::ALL);
 
-    let mut route_values = BTreeSet::new();
-    for destination in destinations {
-        let value = destination.route_value();
-        assert!(
-            route_values.insert(value),
-            "{value:?} names two destinations"
-        );
-        assert_eq!(
-            CanvasDestination::from_route_value(Some(value)),
-            destination
-        );
+    let mut paths = BTreeSet::new();
+    for (destination, path) in routes {
+        assert!(paths.insert(path), "{path:?} names two destinations");
+        assert_eq!(destination.path(), path);
+        assert_eq!(CanvasDestination::from_path(path), Some(destination));
     }
 }
 
 #[test]
-fn missing_or_invalid_routes_retain_the_legacy_chat_default() {
-    assert_eq!(
-        CanvasDestination::from_route_value(None),
-        CanvasDestination::Chat
-    );
-    assert_eq!(
-        CanvasDestination::from_route_value(Some("unknown")),
-        CanvasDestination::Chat
-    );
-}
-
-#[test]
-fn global_surface_state_round_trips_through_every_destination() {
-    for destination in descend_canvas_destinations() {
-        let axis = destination.axis().unwrap_or(Axis::Topology);
+fn unrecognized_route_paths_are_refused() {
+    for path in [
+        "",
+        "/chat",
+        "/unknown",
+        "/work/",
+        "/info/",
+        "/work?scope=all",
+    ] {
         assert_eq!(
-            CanvasDestination::from_surface(axis, destination == CanvasDestination::Chat),
-            destination
+            CanvasDestination::from_path(path),
+            None,
+            "{path:?} unexpectedly named a Canvas destination"
         );
     }
 }
