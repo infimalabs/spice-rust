@@ -303,8 +303,10 @@ pub fn topology(lanes: &[LaneRow]) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
         })
         .collect()
 }
+#[cfg(any(target_arch = "wasm32", test))]
 const COMPOSER_DRAG_LIFT_PX: u32 = 6;
 
+#[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ComposerDragPointer {
     pub(crate) source: CanonicalUuid,
@@ -315,11 +317,13 @@ pub(crate) struct ComposerDragPointer {
     topology_revision: u64,
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 #[derive(Debug, Default)]
 pub(crate) struct ComposerDragSession {
     active: Option<ComposerDragPointer>,
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
 impl ComposerDragSession {
     pub(crate) fn begin(
         &mut self,
