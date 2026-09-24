@@ -57,10 +57,45 @@ pub fn select<'a>(
     recent_cell: Option<&ClaimCell>,
     environment: &wire::Environment,
 ) -> Option<Selection<'a>> {
+    let candidates = candidates(entries, actor, subscription, recent_cell, environment);
+    choose(&candidates, band).map(|index| candidates[index])
+}
+
+/// Every task [`select`] would hand `actor`, in the order it would hand them out.
+///
+/// Each step is exactly `select`'s choice among the tasks not yet offered, so
+/// the head is always `select`'s answer. Standing is held fixed between steps:
+/// the order answers what the allocator ranks next on this evidence, not what
+/// it would rank after the earlier offers were claimed.
+#[must_use]
+pub fn offer_order<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    band: u64,
+    recent_cell: Option<&ClaimCell>,
+    environment: &wire::Environment,
+) -> Vec<Selection<'a>> {
+    let mut remaining = candidates(entries, actor, subscription, recent_cell, environment);
+    let mut order = Vec::with_capacity(remaining.len());
+    while let Some(index) = choose(&remaining, band) {
+        order.push(remaining.swap_remove(index));
+    }
+    order
+}
+
+/// Every subscribed, eligible, environment-satisfied entry, scored once.
+fn candidates<'a>(
+    entries: &'a [Entry],
+    actor: &Actor,
+    subscription: &TeamSubscription,
+    recent_cell: Option<&ClaimCell>,
+    environment: &wire::Environment,
+) -> Vec<Selection<'a>> {
     let completed = satisfied_tasks(entries);
     let priorities = effective_priorities(entries);
     let downstream = downstream_weights(entries);
-    let candidates = entries
+    entries
         .iter()
         .filter(|entry| selectable(entry, actor, subscription, &completed))
         .filter(|entry| environment_satisfied(entry, environment))
@@ -79,7 +114,15 @@ pub fn select<'a>(
                 movement: recent_cell.map_or(0, |recent| movement_cost(recent, entry)),
             }
         })
-        .collect::<Vec<_>>();
+        .collect()
+}
+
+/// Index of the one candidate the allocator hands out first.
+///
+/// Peer work outranks the actor's own review, then effective priority, then
+/// downstream weight. Within `band` of that group's greatest urgency, peer
+/// occupancy repels, then locality movement costs, then the handle decides.
+fn choose(candidates: &[Selection<'_>], band: u64) -> Option<usize> {
     let peer_class = candidates.iter().any(|candidate| !candidate.self_review);
     let effective_priority = candidates
         .iter()
@@ -104,8 +147,9 @@ pub fn select<'a>(
         .map(|candidate| candidate.urgency)
         .max()?;
     let in_band = candidates
-        .into_iter()
-        .filter(|candidate| {
+        .iter()
+        .enumerate()
+        .filter(|(_, candidate)| {
             candidate.self_review != peer_class
                 && candidate.effective_priority == effective_priority
                 && candidate.downstream_weight == downstream_weight
@@ -114,19 +158,20 @@ pub fn select<'a>(
         .collect::<Vec<_>>();
     let peer_occupied = in_band
         .iter()
-        .map(|candidate| candidate.peer_occupied)
+        .map(|(_, candidate)| candidate.peer_occupied)
         .min()?;
     let movement = in_band
         .iter()
-        .filter(|candidate| candidate.peer_occupied == peer_occupied)
-        .map(|candidate| candidate.movement)
+        .filter(|(_, candidate)| candidate.peer_occupied == peer_occupied)
+        .map(|(_, candidate)| candidate.movement)
         .min()?;
     in_band
         .into_iter()
-        .filter(|candidate| {
+        .filter(|(_, candidate)| {
             candidate.peer_occupied == peer_occupied && candidate.movement == movement
         })
-        .min_by_key(|candidate| candidate.entry.handle())
+        .min_by_key(|(_, candidate)| candidate.entry.handle())
+        .map(|(index, _)| index)
 }
 
 fn peer_occupies(entries: &[Entry], candidate: &Entry, actor: &Actor) -> bool {

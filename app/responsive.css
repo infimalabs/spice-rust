@@ -94,9 +94,7 @@
 }
 
 @media (max-width: 920px) {
-  .work-buckets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .work-bucket:nth-child(2) { border-right: 0; }
-  .work-bucket:nth-child(-n + 2) { border-bottom: 1px solid var(--line-soft); }
+  .work-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .work-history-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .work-detail-facts,
   .work-detail-links { grid-template-columns: 1fr; }
@@ -104,19 +102,18 @@
 }
 
 @media (max-width: 560px) {
-  .work-buckets,
+  .work-lanes,
   .work-history-list { grid-template-columns: 1fr; }
-  .work-bucket,
-  .work-bucket:nth-child(2) {
-    border-right: 0;
-    border-bottom: 1px solid var(--line-soft);
+  /* One scrolling control row keeps the pinned header two rows tall. */
+  .work-arrangement {
+    flex-wrap: nowrap;
+    width: 100%;
+    margin-left: 0;
+    overflow-x: auto;
   }
-  .work-bucket:last-child { border-bottom: 0; }
-  .work-board-section > .section-heading { align-items: baseline; }
-  .work-swimlanes { gap: 14px; }
-  .work-swimlane-heading { align-items: flex-start; padding-inline: 12px; }
-  .work-bucket { min-height: 0; padding: 12px; }
-  .work-bucket-empty { min-height: 0; margin-top: 5px; padding-block: 11px; }
+  .work-arrangement-group { flex-wrap: nowrap; }
+  .work-lane { padding: 12px; }
+  .work-lane-empty { min-height: 0; margin-top: 5px; padding-block: 11px; }
   .work-card { gap: 8px; padding: 12px; }
   .work-history { margin-top: 14px; }
   .work-detail { width: 100vw; }

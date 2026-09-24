@@ -273,6 +273,7 @@ fn insert_receipts(
         },
         allocation_band: 0,
         recent_cell: None,
+        offer: Vec::new(),
         tasks: Vec::new(),
         history: None,
         trust: Vec::new(),

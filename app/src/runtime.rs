@@ -51,6 +51,8 @@ pub struct BoardView {
     pub cursor: Seq,
     /// Current task evidence bundles.
     pub tasks: Vec<BoardTask>,
+    /// Resident allocation order: the task offered next comes first.
+    pub offer: Vec<wire::TaskStamp>,
     /// Complete environment observed at the same board snapshot barrier.
     pub(crate) environment: wire::Environment,
     /// Current resident state.
@@ -60,11 +62,13 @@ pub struct BoardView {
 impl From<&BoardAnswer> for BoardView {
     fn from(answer: &BoardAnswer) -> Self {
         let tasks = answer.tasks.clone();
+        let offer = answer.offer.clone();
         let environment = answer.environment();
         Self {
             schema: answer.schema,
             cursor: answer.cursor,
             tasks,
+            offer,
             environment,
             resident: answer.residency.body.state,
         }
@@ -115,6 +119,12 @@ impl LaneView {
         self.renewals
             .get(&lane)
             .filter(|renewal| renewal.team == team)
+    }
+
+    /// Resolve one independently steerable member anywhere in the topology.
+    #[must_use]
+    pub fn member(&self, lane: CanonicalUuid) -> Option<&LaneMember> {
+        self.lanes.iter().find_map(|row| row.member(lane))
     }
 }
 

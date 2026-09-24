@@ -529,6 +529,7 @@ fn insert_legacy_board_receipt(connection: &Connection) {
         },
         allocation_band: 0,
         recent_cell: None,
+        offer: Vec::new(),
         tasks: vec![wire::intent::BoardTask::from_authoritative(
             wire::intent::ProjectVisibility::Public,
             "operator".to_owned(),

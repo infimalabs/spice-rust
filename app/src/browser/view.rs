@@ -1,7 +1,7 @@
 //! Canvas surface rendering for the operator browser app.
 
 use super::*;
-use crate::work::{WorkProjection, WorkScope};
+use crate::work::{WorkArrangement, WorkProjection, WorkScope};
 
 pub(super) mod chrome;
 mod team_menu;
@@ -76,6 +76,7 @@ pub(super) struct CanvasRender<'a> {
     pub canvas_menu_open: &'a UseStateHandle<bool>,
     pub work_scope: &'a UseStateHandle<WorkScope>,
     pub work_scope_notice: &'a UseStateHandle<Option<String>>,
+    pub work_arrangement: &'a UseStateHandle<WorkArrangement>,
     pub identity: &'a UseStateHandle<Option<CanvasIdentity>>,
     pub canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,
     pub team_controls: &'a UseReducerHandle<TeamControls>,
@@ -385,7 +386,6 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
         .work_scope
         .stem()
         .filter(|identity| work.stem(identity).is_some());
-    let counts = work.scope_counts(render.work_scope);
     let scope_key = scoped_stem.map_or_else(|| "all".to_owned(), ToString::to_string);
     let stale = matches!(&**render.connection, Connection::Offline(_));
     let selected = (**render.selected_task).as_ref();
@@ -400,10 +400,6 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
     html! {
         <div class="work-layout" data-work-scope={scope_key}>
             <section tabindex="-1" class="section work-board-section">
-                <div class="section-heading">
-                    <h2>{"Open tasks"}</h2>
-                    <span class="section-count">{format!("{} tasks", counts.open())}</span>
-                </div>
                 {work_board::render(
                     work,
                     render.work_scope,
@@ -413,6 +409,8 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
                         map: render.work_map,
                         select: render.select_task.clone(),
                         toggle_map_root,
+                        arrangement: render.work_arrangement,
+                        lanes: runtime.and_then(CanvasRuntime::lanes),
                         history_state: runtime.map(CanvasRuntime::work_history),
                         history: render.work_history,
                     },
@@ -421,6 +419,7 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
             {work_detail::render(work_detail::WorkDetailRender {
                 work,
                 scope: render.work_scope,
+                lanes: runtime.and_then(CanvasRuntime::lanes),
                 selected,
                 map: render.work_map,
                 detail,

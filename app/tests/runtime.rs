@@ -307,6 +307,7 @@ fn board_response(
     let body = wire::intent::BoardAnswer {
         allocation_band: 2,
         recent_cell: None,
+        offer: Vec::new(),
         schema: 1,
         cursor: seq(4),
         principal: wire::Actor::Operator,

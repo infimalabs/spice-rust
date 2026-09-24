@@ -2,12 +2,14 @@
 
 use super::*;
 use crate::TaskRelationsState;
+use crate::runtime::LaneView;
 use crate::work::{WorkProjection, WorkScope, WorkTask};
 use wire::TaskStamp;
 
 pub(super) struct WorkDetailRender<'a, 'work> {
     pub work: &'a WorkProjection<'work>,
     pub scope: &'a WorkScope,
+    pub lanes: Option<&'a LaneView>,
     pub selected: Option<&'a TaskStamp>,
     pub map: &'a UseStateHandle<work_map::WorkMapState>,
     pub detail: Option<&'a TaskDetailState>,
@@ -179,13 +181,13 @@ fn render_available(
                     {fact("Current phase", workflow.phase.to_string())}
                     {fact("Flow", workflow.flow.iter().map(ToString::to_string).collect::<Vec<_>>().join(" → "))}
                     {fact("Review", workflow.review.clone())}
-                    {fact("Assignment", workflow.assignment.as_ref().map_or_else(|| "Unassigned".to_owned(), ToString::to_string))}
+                    {assignment_fact(workflow.assignment.as_ref(), render.lanes)}
                     {fact("Priority", priority(&statement.tags))}
                     {fact("Tags", if statement.tags.is_empty() { "None".to_owned() } else { statement.tags.join(", ") })}
                     {fact("Deferral", workflow.deferral.as_ref().map_or_else(|| "None".to_owned(), ToString::to_string))}
                     {fact("Completion", workflow.completion.as_ref().map_or_else(|| "Open".to_owned(), ToString::to_string))}
                 </dl>
-                {render_possession(row)}
+                {render_possession(row, render.lanes)}
                 {render_blockers(projected)}
             </section>
             <section class="work-detail-section">
@@ -217,7 +219,9 @@ fn render_available(
                         {for answer.notes.iter().map(|note| html! {
                             <li class="work-note-card" key={note.position.to_string()} data-note-position={note.position.to_string()}>
                                 <header>
-                                    <strong>{note.author.to_string()}</strong>
+                                    <strong title={note.author.to_string()}>
+                                        {work_board::actor_name(&note.author, render.lanes)}
+                                    </strong>
                                     <time>{note.at.to_string()}</time>
                                 </header>
                                 <p>{note.text.clone()}</p>
@@ -238,6 +242,28 @@ fn fact(label: &'static str, value: String) -> Html {
     html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
 }
 
+fn assignment_fact(assignment: Option<&wire::Actor>, lanes: Option<&LaneView>) -> Html {
+    assignment.map_or_else(
+        || fact("Assignment", "Unassigned".to_owned()),
+        |actor| actor_fact("Assignment", actor, String::new(), lanes),
+    )
+}
+
+/// A fact naming one actor for the reader, its durable spelling on hover.
+fn actor_fact(
+    label: &'static str,
+    actor: &wire::Actor,
+    suffix: String,
+    lanes: Option<&LaneView>,
+) -> Html {
+    html! {
+        <div>
+            <dt>{label}</dt>
+            <dd title={actor.to_string()}>{work_board::actor_name(actor, lanes)}{suffix}</dd>
+        </div>
+    }
+}
+
 fn priority(tags: &[String]) -> String {
     tags.iter()
         .find_map(|tag| tag.strip_prefix("priority:"))
@@ -245,16 +271,21 @@ fn priority(tags: &[String]) -> String {
         .to_owned()
 }
 
-fn render_possession(row: &wire::intent::BoardTask) -> Html {
+fn render_possession(row: &wire::intent::BoardTask, lanes: Option<&LaneView>) -> Html {
     let claim = row.claim.as_ref();
     let lease = row.lease.as_ref();
     html! {
         <div class="work-detail-subsection">
             <h4>{"Claim and lease"}</h4>
             <dl class="work-detail-facts">
-                {fact("Claim", claim.map_or_else(|| "Unclaimed".to_owned(), |claim| {
-                    format!("{} · {:?}", claim.body.actor, claim.body.disposition)
-                }))}
+                {claim.map_or_else(|| fact("Claim", "Unclaimed".to_owned()), |claim| {
+                    actor_fact(
+                        "Claim",
+                        &claim.body.actor,
+                        format!(" · {:?}", claim.body.disposition),
+                        lanes,
+                    )
+                })}
                 {fact("Claim fact", claim.map_or_else(|| "None".to_owned(), |claim| claim.position.to_string()))}
                 {fact("Lease start", lease.map_or_else(|| "None".to_owned(), |lease| lease.body.start.to_string()))}
                 {fact("Lease expiry", lease.map_or_else(|| "None".to_owned(), |lease| lease.body.expiry.to_string()))}

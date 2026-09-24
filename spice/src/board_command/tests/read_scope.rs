@@ -177,6 +177,71 @@ fn scoped_reads_preserve_completed_dependencies_and_claim_conflicts_without_unre
     );
     clean(&root, bus);
 }
+
+#[test]
+fn open_read_offers_the_full_board_allocation_order_from_its_bounded_rows() {
+    let (root, bus, epoch, seats) = fixture("offered-board", 1);
+    let actor = Actor::Lane(seats[0].lane);
+    let completed = todo_task(&bus, epoch, "completed", "Completed prerequisite");
+    claim_task(&bus, epoch, &seats[0], &actor, &completed);
+    let held = board(&bus, epoch, actor.clone());
+    let heads = at(&held, &completed);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        actor.clone(),
+        CommandKind::TaskDone,
+        progress_witnesses(&held, heads, seats[0].lane, seats[0].occupant, false)
+            .expect("held task has completion witnesses"),
+        &TaskDone {
+            task: completed.clone(),
+            validation: "offer order fixture".to_owned(),
+            operation: Some(TaskDone::operation_for_claim(
+                heads.claim.as_ref().expect("claim").body.claimed,
+            )),
+        },
+    ));
+    append_terminal_tasks(&bus, 3);
+    let claimed = todo_task(&bus, epoch, "claimed", "Held by a lane");
+    claim_task(&bus, epoch, &seats[0], &actor, &claimed);
+    let unblocked = todo_task(&bus, epoch, "unblocked", "Ready after its prerequisite");
+    let waiting = todo_task(&bus, epoch, "waiting", "Waits on open work");
+    let middle = todo_task(&bus, epoch, "middle", "Open prerequisite");
+    connect_child(&bus, epoch, &unblocked, &completed);
+    connect_child(&bus, epoch, &waiting, &middle);
+
+    let open = scoped(&bus, epoch, Actor::Operator, BoardRead::Open);
+    assert_eq!(
+        handles(&open),
+        [unblocked.clone(), waiting.clone(), middle.clone(), claimed].into(),
+        "prerequisite evidence never leaves the resident"
+    );
+    let full = board(&bus, epoch, Actor::Operator);
+    let entries = actor_entries(&full).expect("full board entries validate");
+    assert_eq!(
+        open.offer,
+        crate::board_command::read_guard::board_offer(&entries, &full)
+    );
+    let offered = open
+        .offer
+        .iter()
+        .map(|born| at_born(&open, born))
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(offered, [unblocked, middle].into());
+    clean(&root, bus);
+}
+
+fn at_born(answer: &BoardAnswer, born: &TaskStamp) -> TaskHandle {
+    answer
+        .tasks
+        .iter()
+        .find(|task| &task.statement.body.born == born)
+        .expect("offered stamps name answered rows")
+        .statement
+        .body
+        .handle
+        .clone()
+}
 #[test]
 fn open_read_excludes_large_history_and_cursor_pages_cover_it_once() {
     const HISTORY_TASKS: usize = 1_301;
