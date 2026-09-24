@@ -206,11 +206,6 @@ fn render_analytics(
                     <p>{analytics_summary(active_axis, work, render.work_scope)}</p>
                 </div>
             </div>
-            <div class="pane-strip" aria-label="Panes on this axis">
-                {for active_axis.panes().map(|pane| html! {
-                    <span class="pane-chip">{pane.label()}</span>
-                })}
-            </div>
             {render_axis(active_axis, render, work)}
         </>
     }

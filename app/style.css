@@ -616,23 +616,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   font-size: .9rem;
 }
 
-.pane-strip {
-  display: flex;
-  gap: 7px;
-  overflow-x: auto;
-  padding: 17px 0 20px;
-}
-
-.pane-chip {
-  flex: 0 0 auto;
-  padding: 5px 8px;
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  background: var(--control-surface-soft);
-  color: var(--muted);
-  font-size: .74rem;
-}
-
 .section {
   padding: 22px 0;
   border-top: 1px solid var(--line);
