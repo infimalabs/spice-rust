@@ -84,11 +84,13 @@ impl WorkMapState {
         roots
     }
 
+    pub(in crate::browser) fn relations_key(&self, selected: &TaskStamp) -> TaskRelationsKey {
+        TaskRelationsKey::new(self.roots(selected), self.lens, self.depth, self.max_nodes)
+            .expect("Work map controls stay inside typed relationship limits")
+    }
+
     pub(in crate::browser) fn request_key(&self, selected: &TaskStamp) -> Option<TaskRelationsKey> {
-        (self.mode == WorkDetailMode::Map).then(|| {
-            TaskRelationsKey::new(self.roots(selected), self.lens, self.depth, self.max_nodes)
-                .expect("Work map controls stay inside typed relationship limits")
-        })
+        (self.mode == WorkDetailMode::Map).then(|| self.relations_key(selected))
     }
 
     fn toggle_pin(&mut self, task: TaskStamp) {
@@ -153,15 +155,19 @@ pub(super) fn render_tabs(state: &UseStateHandle<WorkMapState>, selected: &TaskS
     html! {
         <div class="work-detail-tabs" role="tablist" aria-label="Task view">
             <button
+                id="work-detail-tab"
                 type="button"
                 role="tab"
+                aria-controls="work-detail-panel"
                 aria-selected={(state.mode() == WorkDetailMode::Details).to_string()}
                 class={(state.mode() == WorkDetailMode::Details).then_some("active")}
                 onclick={details}
             >{"Details"}</button>
             <button
+                id="work-map-tab"
                 type="button"
                 role="tab"
+                aria-controls="work-map-panel"
                 aria-selected={(state.mode() == WorkDetailMode::Map).to_string()}
                 class={(state.mode() == WorkDetailMode::Map).then_some("active")}
                 onclick={map}
@@ -185,7 +191,7 @@ pub(super) fn render(render: WorkMapRender<'_>) -> Html {
             </div>
         };
     }
-    let answer = match render.relations {
+    let (answer, refreshing) = match render.relations {
         None | Some(TaskRelationsState::Loading) => {
             return html! {
                 <div class="work-map-content">
@@ -210,7 +216,8 @@ pub(super) fn render(render: WorkMapRender<'_>) -> Html {
                 </div>
             };
         }
-        Some(TaskRelationsState::Available(answer)) => answer.as_ref(),
+        Some(TaskRelationsState::Available(answer)) => (answer.as_ref(), false),
+        Some(TaskRelationsState::Refreshing(answer)) => (answer.as_ref(), true),
     };
     let Some(presentation) = lens::project(
         answer,
@@ -255,6 +262,9 @@ pub(super) fn render(render: WorkMapRender<'_>) -> Html {
             data-work-map-snapshot={answer.snapshot.to_string()}
         >
             {controls}
+            <p class="work-map-empty" role="status" hidden={!refreshing}>
+                {"Refreshing relationships without replacing this map."}
+            </p>
             {lens_context(render.state.lens)}
             if related == 0 {
                 <p class="work-map-empty" role="status">

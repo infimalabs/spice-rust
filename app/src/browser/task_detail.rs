@@ -66,10 +66,11 @@ pub(super) fn select_callback(
             let Some(runtime) = data.as_mut() else {
                 return;
             };
-            if matches!(
-                runtime.task_detail(&task),
-                Some(TaskDetailState::Available(_))
-            ) {
+            if runtime
+                .task_detail(&task)
+                .and_then(TaskDetailState::answer)
+                .is_some()
+            {
                 false
             } else {
                 runtime.begin_task_detail(task.clone());
@@ -176,8 +177,10 @@ pub(super) fn note_submit_callback(
         };
         let (handle, after) = {
             let data = surface.read();
-            let Some(TaskDetailState::Available(detail)) =
-                data.as_ref().and_then(|runtime| runtime.task_detail(&task))
+            let Some(detail) = data
+                .as_ref()
+                .and_then(|runtime| runtime.task_detail(&task))
+                .and_then(TaskDetailState::answer)
             else {
                 return;
             };

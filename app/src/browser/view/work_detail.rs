@@ -29,9 +29,10 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
         return Html::default();
     };
     let map_open = render.map.mode() == work_map::WorkDetailMode::Map;
+    let refreshing = render.detail.is_some_and(TaskDetailState::refreshing);
     let close_click = render.close.reform(|_: MouseEvent| ());
     html! {
-        <div class="work-detail-layer">
+        <div class="work-detail-layer" key={selected.to_string()}>
             <button
                 type="button"
                 class="work-detail-backdrop"
@@ -64,7 +65,27 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                     </p>
                 }
                 {work_map::render_tabs(render.map, selected)}
-                if map_open {
+                <div
+                    id="work-detail-panel"
+                    class="work-detail-panel"
+                    role="tabpanel"
+                    aria-labelledby="work-detail-tab"
+                    aria-hidden={map_open.to_string()}
+                    hidden={map_open}
+                >
+                    <p class="work-detail-state" role="status" hidden={!refreshing}>
+                        {"Refreshing task evidence without closing this detail."}
+                    </p>
+                    {render_detail_body(&render, selected)}
+                </div>
+                <div
+                    id="work-map-panel"
+                    class="work-detail-panel"
+                    role="tabpanel"
+                    aria-labelledby="work-map-tab"
+                    aria-hidden={(!map_open).to_string()}
+                    hidden={!map_open}
+                >
                     {work_map::render(work_map::WorkMapRender {
                         selected,
                         state: render.map,
@@ -72,19 +93,17 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                         relations: render.relations,
                         can_read_relations: render.can_read_relations,
                     })}
-                } else {
-                    {render_detail_body(&render, selected)}
-                }
+                </div>
             </aside>
         </div>
     }
 }
 
 fn detail_title(detail: Option<&TaskDetailState>, selected: &TaskStamp) -> String {
-    match detail {
-        Some(TaskDetailState::Available(answer)) => answer.task.presentation_title.clone(),
-        _ => format!("Task {selected}"),
-    }
+    detail.and_then(TaskDetailState::answer).map_or_else(
+        || format!("Task {selected}"),
+        |answer| answer.task.presentation_title.clone(),
+    )
 }
 
 fn render_detail_body(render: &WorkDetailRender<'_, '_>, selected: &TaskStamp) -> Html {
@@ -112,7 +131,9 @@ fn render_detail_body(render: &WorkDetailRender<'_, '_>, selected: &TaskStamp) -
                 </div>
             }
         }
-        Some(TaskDetailState::Available(answer)) => render_available(render, answer),
+        Some(TaskDetailState::Available(answer) | TaskDetailState::Refreshing(answer)) => {
+            render_available(render, answer)
+        }
     }
 }
 

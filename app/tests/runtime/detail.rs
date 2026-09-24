@@ -150,10 +150,10 @@ fn task_fact_invalidates_only_the_affected_open_detail() {
         assert!(runtime.invalidate_task_detail(&task));
     }
 
-    assert_eq!(
+    assert!(matches!(
         runtime.task_detail(&affected),
-        Some(&TaskDetailState::Loading)
-    );
+        Some(TaskDetailState::Refreshing(answer)) if answer.notes[0].text == "affected note"
+    ));
     assert!(matches!(
         runtime.task_detail(&untouched),
         Some(TaskDetailState::Available(answer)) if answer.notes[0].text == "untouched note"
@@ -163,6 +163,10 @@ fn task_fact_invalidates_only_the_affected_open_detail() {
         &affected,
         &detail_response(&session, detail_answer("detail-affected", "refreshed note")),
     );
+    assert!(matches!(
+        runtime.task_detail(&affected),
+        Some(TaskDetailState::Available(answer)) if answer.notes[0].text == "refreshed note"
+    ));
     let head = admitted_stream(&session, &fact_frame(task_phase_fact(&affected, 46)));
     assert_eq!(
         stale_reads(&head)

@@ -390,7 +390,7 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
     let stale = matches!(&**render.connection, Connection::Offline(_));
     let selected = (**render.selected_task).as_ref();
     let detail = selected.and_then(|task| runtime.and_then(|runtime| runtime.task_detail(task)));
-    let relation_key = selected.and_then(|selected| render.work_map.request_key(selected));
+    let relation_key = selected.map(|selected| render.work_map.relations_key(selected));
     let relations = relation_key
         .as_ref()
         .and_then(|key| runtime.and_then(|runtime| runtime.task_relations(key)));

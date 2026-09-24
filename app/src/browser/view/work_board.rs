@@ -145,6 +145,7 @@ fn render_project(
     let heading = format!("work-project-{index}");
     html! {
         <section
+            key={project.project().to_owned()}
             class="work-swimlane"
             data-work-project={project.project().to_owned()}
             aria-labelledby={heading.clone()}
@@ -182,7 +183,11 @@ fn render_bucket(
         .collect::<Vec<_>>();
     let label = availability_label(availability);
     html! {
-        <section class="work-bucket" data-work-bucket={availability_key(availability)}>
+        <section
+            key={availability_key(availability)}
+            class="work-bucket"
+            data-work-bucket={availability_key(availability)}
+        >
             <header class="work-bucket-heading">
                 <h3>{label}</h3>
                 <span aria-label={format!("{} tasks", tasks.len())}>{tasks.len()}</span>
