@@ -397,10 +397,11 @@ than disappearing.
 Cards default to the allocator's real offer order, so the task the resident
 would hand a draining lane next sits at the top; the resident computes that
 order with `task next`'s own selection step on the board read the Canvas
-already makes. Newest-first creation order and clusters by project, phase, or
-owner are secondary arrangements of the same cards: a cluster is marked by a
-thin labelled separator, never a separate board, and clusters follow their
-first card so the leading card still leads.
+already makes. Newest-first creation order and clusters by project or phase
+are secondary arrangements of the same cards: a cluster is marked by a thin
+labelled separator, never a separate board, and clusters follow their first
+card so the leading card still leads. There is no owner clustering: an agent
+holds at most one active task, so owner groups would each hold one card.
 
 Cards preserve their identity, flow, project, ownership, and map controls while
 the detail drawer and relationship map expose progressively deeper evidence.
