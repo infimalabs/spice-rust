@@ -47,6 +47,8 @@ mod composer_markdown;
 mod composer_submissions;
 #[cfg(any(target_arch = "wasm32", test))]
 mod mermaid_geometry;
+#[cfg(any(target_arch = "wasm32", test))]
+mod mermaid_label;
 pub mod mosaic;
 pub mod mosaic_plane;
 pub mod narration;
