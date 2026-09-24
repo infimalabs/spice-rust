@@ -691,14 +691,21 @@ pub fn css_row_start(card: &Card, max_row: i32) -> i32 {
     max_row - (card.base + card.rows) + 1
 }
 
-/// Project one user scroll input onto composer exposure.
+/// Move composer exposure with the plane's scroll motion.
 ///
-/// The caller owns only the composer offset. Native scrolling retains the full
-/// input; there is deliberately no remainder or scroll-position output.
+/// The composer overlays the plane above a spacer of its own height, so moving
+/// it exactly as far as the cards scrolled keeps it fused to the stream. It
+/// never hides more than the plane has scrolled, so reaching the top always
+/// reveals it rather than exposing the empty spacer.
 #[cfg(any(target_arch = "wasm32", test))]
 #[must_use]
-pub(crate) fn composer_collapse_offset(current: f64, maximum: f64, delta: f64) -> f64 {
-    (current + delta).clamp(0.0, maximum.max(0.0))
+pub(crate) fn composer_collapse_offset(
+    current: f64,
+    maximum: f64,
+    scrolled: f64,
+    scroll_top: f64,
+) -> f64 {
+    (current + scrolled).clamp(0.0, maximum.min(scroll_top).max(0.0))
 }
 
 /// Whether the pane is far enough from its leading edge to preserve its viewport.
@@ -750,9 +757,15 @@ mod tests {
     use super::composer_collapse_offset;
 
     #[test]
-    fn composer_collapse_clamps_strong_scroll_input_at_both_exposure_edges() {
-        assert_eq!(composer_collapse_offset(20.0, 140.0, 900.0), 140.0);
-        assert_eq!(composer_collapse_offset(120.0, 140.0, -900.0), 0.0);
-        assert_eq!(composer_collapse_offset(60.0, 140.0, 25.0), 85.0);
+    fn composer_moves_exactly_as_far_as_the_cards_until_an_exposure_edge() {
+        // Scrolling down from the top hides the composer pixel for pixel.
+        assert_eq!(composer_collapse_offset(0.0, 140.0, 37.5, 37.5), 37.5);
+        // Scrolling back up mid-stream reveals it by the same distance.
+        assert_eq!(composer_collapse_offset(140.0, 140.0, -25.0, 975.0), 115.0);
+        // Strong motion stops at either edge without leaving a remainder.
+        assert_eq!(composer_collapse_offset(20.0, 140.0, 900.0, 5_000.0), 140.0);
+        assert_eq!(composer_collapse_offset(120.0, 140.0, -900.0, 2_000.0), 0.0);
+        // A composer hidden further than the plane is scrolled reveals at the top.
+        assert_eq!(composer_collapse_offset(140.0, 140.0, -60.0, 0.0), 0.0);
     }
 }

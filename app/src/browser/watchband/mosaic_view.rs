@@ -556,8 +556,8 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     );
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(geometry_width));
     let max_row = committed_plane.map(crate::mosaic_plane::PersistentLanePlane::max_row);
-    use_plane_scroll(host.clone(), (*committed).clone());
-    composer_collapse::use_composer_collapse(host.clone());
+    let composer = composer_collapse::use_composer_collapse(host.clone());
+    use_plane_scroll(host.clone(), (*committed).clone(), composer);
     MosaicPlaneView {
         properties,
         measurement_width,
@@ -579,6 +579,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
 fn use_plane_scroll(
     host: NodeRef,
     plane: Option<crate::mosaic_plane::PersistentLanePlane<String>>,
+    composer: composer_collapse::ComposerCollapse,
 ) {
     let anchor = use_mut_ref(|| None::<ScrollAnchor>);
     {
@@ -621,7 +622,12 @@ fn use_plane_scroll(
         {
             let delta = current_offset - previous.offset;
             if delta.abs() >= 0.5 {
-                scroller.set_scroll_top((f64::from(scroller.scroll_top()) + delta).round() as i32);
+                // The correction keeps cards visually still, so the composer
+                // fused to them must not move either.
+                composer.correct_scroll(
+                    &scroller,
+                    (f64::from(scroller.scroll_top()) + delta).round() as i32,
+                );
             }
         }
         *anchor.borrow_mut() = visible_scroll_anchor(&scroller);

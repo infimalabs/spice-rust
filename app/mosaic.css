@@ -557,7 +557,9 @@
 .team-pane > .empty { flex: 1 1 auto; }
 
 .team-compose {
+  --team-composer-block: 0px;
   --team-composer-collapse: 0px;
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-height: 0;
@@ -572,22 +574,24 @@
   --team-composer-block-size: 120px;
   --team-composer-edge-gap: 10px;
   display: grid;
-  flex: 0 0 auto;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   padding: 8px 8px var(--team-composer-edge-gap);
 }
-/* Scroll input passively projects onto composer exposure while the browser
-   retains the complete gesture for the activity viewport. Transform clips the
-   form while the matching negative margin gives the revealed space to cards. */
+/* The composer overlays a spacer of its own height atop the Chat plane and moves
+   exactly as far as the cards scroll, so it reads as part of the stream. Browser
+   scrolls keep targets clear of whatever part of it is still exposed. */
 .team-composer {
-  margin-bottom: calc(-1 * var(--team-composer-collapse));
-  transform: translateY(calc(-1 * var(--team-composer-collapse)));
-  will-change: transform;
+  position: absolute; inset: 0 0 auto; z-index: 1;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+  transform: translateY(calc(-1 * var(--team-composer-collapse))); will-change: transform;
 }
-.team-compose[data-composer-fully-collapsed="true"] .team-composer {
-  pointer-events: none;
+.team-compose[data-composer-fully-collapsed="true"] .team-composer { pointer-events: none; }
+.team-compose .lane-mosaic-plane {
+  padding-top: var(--team-composer-block);
+  scroll-padding-top: calc(var(--team-composer-block) - var(--team-composer-collapse));
 }
+.team-compose .mosaic-message-empty { margin-top: var(--team-composer-block); }
 
 /* Agent columns keep a usable editing width and make their own east/west
    viewport. The form and page therefore never inherit this overflow. */
