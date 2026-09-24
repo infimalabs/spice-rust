@@ -314,7 +314,7 @@ fn apply_note_response(
                     text,
                     after,
                 });
-            runtime.begin_task_detail(task.clone());
+            refresh_task_detail(runtime, &task);
             Ok(CommandApplication::task_detail(task))
         }
         outcome => {
@@ -325,6 +325,12 @@ fn apply_note_response(
                 .replace(NoteSubmission::Failed(issue));
             Ok(CommandApplication::ordinary(false))
         }
+    }
+}
+
+fn refresh_task_detail(runtime: &mut CanvasRuntime, task: &wire::TaskStamp) {
+    if !runtime.invalidate_task_detail(task) {
+        runtime.begin_task_detail(task.clone());
     }
 }
 
@@ -356,7 +362,7 @@ fn reconcile_note_detail(
                 handles.note_submission.replace(NoteSubmission::Idle);
                 CommandApplication::ordinary(false)
             } else {
-                runtime.begin_task_detail(task.clone());
+                refresh_task_detail(runtime, task);
                 CommandApplication::task_detail(task.clone())
             }
         }
