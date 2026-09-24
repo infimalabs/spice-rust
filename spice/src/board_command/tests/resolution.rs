@@ -244,6 +244,7 @@ pub(super) fn complete_review_with_finding(
                     origin: None,
                     flow: Some("todo".to_owned()),
                     depends: Vec::new(),
+                    claim: false,
                 },
             }],
             followup: Vec::new(),
@@ -495,6 +496,7 @@ fn a_review_creates_and_links_its_follow_up_tracking() {
                     origin: None,
                     flow: None,
                     depends: Vec::new(),
+                    claim: false,
                 },
             }],
             followup: vec![linked.clone()],
@@ -587,6 +589,7 @@ fn unclean_review_blocks_downstream_until_correction_and_later_clean_review() {
                     origin: None,
                     flow: Some("todo".to_owned()),
                     depends: Vec::new(),
+                    claim: false,
                 },
             }],
             followup: Vec::new(),
@@ -842,6 +845,7 @@ fn add_raw_task(
             origin: Some("fixture:board-command".parse().expect("fixture origin")),
             flow: flow.map(str::to_owned),
             depends: Vec::new(),
+            claim: false,
         },
     ));
     task

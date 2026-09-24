@@ -126,6 +126,135 @@ pub(in crate::board_command) fn claim_grant(
         source,
     })
 }
+/// Claim state prepared for a task that will be created in the same transaction.
+pub(super) struct AddedClaim {
+    grant: ClaimGrant,
+}
+
+/// Validate and prepare atomic create-and-claim before the journal opens.
+pub(super) fn prepare_added_claim(
+    bus: &Bus,
+    command: &wire::AdmittedCommand,
+    repository: Option<&Repository>,
+    snapshot: &ValidatedSnapshot,
+    selected: &Entry,
+) -> Result<AddedClaim, Outcome<CommandAnswer>> {
+    let capture_witness = command.expected().iter().any(
+        |witness| matches!(witness, Witness::Eligibility { rule } if rule.as_str() == "capture"),
+    );
+    if !capture_witness {
+        return Err(protocol_fault(
+            "claim::capture-eligibility-witness",
+            "task add --claim has no capture eligibility witness",
+        ));
+    }
+    refuse_if_actor_already_claims(&snapshot.entries, command.actor())?;
+    if !board::capturable_entry(
+        &snapshot.entries,
+        selected,
+        command.actor(),
+        &snapshot.answer.environment(),
+    ) {
+        return Err(refusal(
+            "claim::capture-ineligible",
+            Some(selected.handle().to_string()),
+            "create and claim only a public, ready task whose environment requirements and dependencies are satisfied",
+        ));
+    }
+    // Creation starts future work. It shares capture's named-task eligibility
+    // and residency authority, but records the clean claim boundary used by
+    // allocator claims rather than requiring loose commits to capture.
+    let grant = claim_grant(
+        bus,
+        command,
+        repository,
+        snapshot,
+        selected,
+        Possession::Next,
+    )?;
+    Ok(AddedClaim { grant })
+}
+
+impl AddedClaim {
+    pub(super) fn at(&self) -> Instant {
+        self.grant.at
+    }
+
+    pub(super) fn guard(
+        &self,
+        write: &mut JournalWrite,
+        snapshot: &ValidatedSnapshot,
+        command: &wire::AdmittedCommand,
+    ) {
+        guard_capture(
+            write,
+            command.expected().to_vec(),
+            snapshot.cursor,
+            command.actor().clone(),
+        );
+    }
+
+    pub(super) fn answer(
+        &self,
+        command: &wire::AdmittedCommand,
+        snapshot: &ValidatedSnapshot,
+        selected: &Entry,
+    ) -> wire::intent::ClaimAnswer {
+        claim_answer(
+            command,
+            selected,
+            &snapshot.entries,
+            Some(claim_activation_next_action(selected)),
+        )
+    }
+
+    pub(super) fn append(
+        self,
+        write: &mut JournalWrite,
+        command: &wire::AdmittedCommand,
+        selected: &Entry,
+    ) -> Result<(), Outcome<CommandAnswer>> {
+        append_claim_heads(
+            write,
+            command,
+            selected,
+            selected.born(),
+            self.grant.lane,
+            self.grant.occupant,
+            self.grant.at,
+            self.grant.expiry,
+            self.grant.maximum,
+            self.grant.git,
+            None,
+            self.grant.source,
+        )
+    }
+}
+
+fn claim_answer(
+    command: &wire::AdmittedCommand,
+    selected: &Entry,
+    entries: &[Entry],
+    next: Option<Box<str>>,
+) -> wire::intent::ClaimAnswer {
+    wire::intent::ClaimAnswer {
+        task: selected.handle().clone(),
+        holder: command.actor().clone(),
+        expiry: None,
+        warnings: board::claim_overlaps(selected, entries)
+            .into_iter()
+            .map(|overlap| wire::intent::ClaimWarning {
+                task: overlap.task,
+                lane: overlap.lane,
+                surface: overlap.surface,
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+        creation_context: Some(task_creation_context_output(&selected.statement().creation)),
+        next,
+        phase: Some(claim_phase(selected.workflow())),
+    }
+}
 
 /// Write the decided claim: one origin, the guards it owes, its two heads, its
 /// receipt.
@@ -181,23 +310,7 @@ pub(in crate::board_command) fn commit_claim(
     ) {
         return outcome;
     }
-    let answer = wire::intent::ClaimAnswer {
-        task,
-        holder: command.actor().clone(),
-        expiry: None,
-        warnings: board::claim_overlaps(&selected, &snapshot.entries)
-            .into_iter()
-            .map(|overlap| wire::intent::ClaimWarning {
-                task: overlap.task,
-                lane: overlap.lane,
-                surface: overlap.surface,
-            })
-            .collect::<Vec<_>>()
-            .into_boxed_slice(),
-        creation_context: Some(task_creation_context_output(&selected.statement().creation)),
-        next,
-        phase: Some(claim_phase(selected.workflow())),
-    };
+    let answer = claim_answer(command, &selected, &snapshot.entries, next);
     if let Err(error) = write.command_result(
         request(command, win.clone()),
         command.epoch(),

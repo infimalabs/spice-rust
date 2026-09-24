@@ -26,6 +26,7 @@ fn add_command(epoch: CanonicalUuid, lane: CanonicalUuid) -> wire::AdmittedComma
             origin: Some("fixture:creation-context".parse().expect("fixture origin")),
             flow: Some("todo".to_owned()),
             depends: Vec::new(),
+            claim: false,
         },
     )
 }

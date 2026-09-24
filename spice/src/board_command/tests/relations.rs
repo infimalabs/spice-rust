@@ -52,6 +52,7 @@ fn related_task(bus: &Bus, epoch: CanonicalUuid, parent: &TaskHandle, name: &str
             origin: Some(task_origin(&parent_stamp).expect("fixture task origin")),
             flow: Some("todo".to_owned()),
             depends: vec![parent.clone()],
+            claim: false,
         },
     ));
     task

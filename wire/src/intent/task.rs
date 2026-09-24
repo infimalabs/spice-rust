@@ -57,6 +57,9 @@ pub struct TaskAdd {
     /// Handles this task must follow.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub depends: Vec<TaskHandle>,
+    /// Whether creation must atomically place the caller's lane in possession.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub claim: bool,
 }
 
 /// Add one task through the fixed server-owned `.oops` route.
@@ -387,7 +390,7 @@ pub struct TaskAnswer {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub completion: Option<TaskCompletionAnswer>,
+    pub completion: Option<Box<TaskCompletionAnswer>>,
     /// Compatibility-only learning report retained when decoding older answers.
     ///
     /// Current task completion does not produce this field.
@@ -397,6 +400,13 @@ pub struct TaskAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub learning: Option<Box<TaskLearning>>,
+    /// Active claim minted in the same transaction, when creation also boards the caller.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub claim: Option<Box<ClaimAnswer>>,
     /// Exact CLI command admitted as the next action, when one is available.
     #[serde(
         default,

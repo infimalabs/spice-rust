@@ -406,6 +406,7 @@ fn shape_case_418_inserts_plan_without_review_for_bare_review_followup() {
                     origin: None,
                     flow: None,
                     depends: Vec::new(),
+                    claim: false,
                 },
             }],
             followup: Vec::new(),

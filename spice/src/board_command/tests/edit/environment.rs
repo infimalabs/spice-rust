@@ -250,6 +250,7 @@ fn add_blocked_requirement(
             origin: Some("fixture:environment".parse().expect("fixture origin")),
             flow: Some("todo".to_owned()),
             depends: Vec::new(),
+            claim: false,
         },
     ));
     let blocked = board(bus, epoch, actor.clone());

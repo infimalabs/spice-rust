@@ -70,6 +70,7 @@ fn add_with_repository(
             origin: Some("fixture:taste-review".parse().expect("fixture origin")),
             flow: None,
             depends: Vec::new(),
+            claim: false,
         },
     );
     (handle, outcome)

@@ -8,6 +8,7 @@ mod taste_proposal;
 #[cfg(test)]
 pub(super) use claim::Possession;
 pub(super) use claim::claim_win;
+use claim::{AddedClaim, prepare_added_claim};
 #[cfg(test)]
 pub(super) use claim::{ClaimPlan, claim_git_boundary, claim_grant, claim_plan, commit_claim};
 pub(super) use edit::task_edit;
@@ -110,6 +111,7 @@ pub(super) fn task_oops_add(
         origin: add.origin.clone(),
         flow: None,
         depends: Vec::new(),
+        claim: false,
     };
     create_task(
         bus,
@@ -190,6 +192,15 @@ fn create_task<B: serde::Serialize>(
     if taste_review_required {
         require_taste_review(&mut tags);
     }
+    let post = prepared_entry(&mut prepared, &tags, projects);
+    let added_claim = if add.claim {
+        match prepare_added_claim(bus, command, repository, &snapshot, &post) {
+            Ok(claim) => Some(claim),
+            Err(outcome) => return outcome,
+        }
+    } else {
+        None
+    };
     after_validation();
     commit_prepared_task(
         bus,
@@ -197,13 +208,14 @@ fn create_task<B: serde::Serialize>(
         add,
         &project,
         request_body,
-        projects,
         &snapshot,
         prepared,
+        post,
         tags,
         taste_review.as_ref().filter(|review| review.required()),
         dependency_witnesses,
         |_| {},
+        added_claim,
     )
 }
 
@@ -214,39 +226,40 @@ fn commit_prepared_task<B, F>(
     add: &TaskAdd,
     project: &Project,
     request_body: B,
-    projects: &ProjectPolicy,
     snapshot: &ValidatedSnapshot,
-    mut prepared: PreparedTask,
+    prepared: PreparedTask,
+    post: Entry,
     tags: Vec<String>,
     taste_review: Option<&TasteReview>,
     dependency_witnesses: Vec<Witness>,
     extra_guard: F,
+    added_claim: Option<AddedClaim>,
 ) -> Outcome<CommandAnswer>
 where
     B: serde::Serialize,
     F: FnOnce(&mut JournalWrite),
 {
-    prepared.statement.tags.clone_from(&tags);
-    let post = Entry::new(
-        prepared.statement.clone(),
-        prepared.workflow.clone(),
-        None,
-        None,
-        projects,
-    )
-    .expect("prepared task already passed entry validation")
-    .with_creator_team(prepared.creation.creator_team());
-    let next = next_action(snapshot, &post);
+    let claim_answer = added_claim
+        .as_ref()
+        .map(|claim| Box::new(claim.answer(command, snapshot, &post)));
+    let next = claim_answer
+        .as_ref()
+        .and_then(|claim| claim.next.clone())
+        .or_else(|| next_action(snapshot, &post));
+    let at = added_claim.as_ref().map_or(prepared.at, AddedClaim::at);
     let mut write = JournalWrite::new(
         command.actor().clone(),
-        prepared.origin,
-        prepared.at,
+        prepared.origin.clone(),
+        at,
         Producer::CommandDoor,
     );
     let mut expected = command.expected().to_vec();
     expected.extend(dependency_witnesses);
     guard(&mut write, expected);
     prepared.creation.guard(&mut write);
+    if let Some(claim) = &added_claim {
+        claim.guard(&mut write, snapshot, command);
+    }
     extra_guard(&mut write);
     let added = match write.fact(
         body::TaskAdded {
@@ -288,12 +301,18 @@ where
     if let Err(outcome) = add_oops_note(&mut write, project, add, &prepared.born, added) {
         return outcome;
     }
+    if let Some(claim) = added_claim
+        && let Err(outcome) = claim.append(&mut write, command, &post)
+    {
+        return outcome;
+    }
     let answer = wire::intent::TaskAnswer {
         task: prepared.task,
         status: "pending".to_owned(),
         guidance: None,
         completion: None,
         learning: None,
+        claim: claim_answer,
         next,
     };
     if let Err(error) = write.command_result(
@@ -304,6 +323,23 @@ where
         return store_fault("task::add-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Task(answer))
+}
+
+fn prepared_entry(
+    prepared: &mut PreparedTask,
+    tags: &Vec<String>,
+    projects: &ProjectPolicy,
+) -> Entry {
+    prepared.statement.tags.clone_from(tags);
+    Entry::new(
+        prepared.statement.clone(),
+        prepared.workflow.clone(),
+        None,
+        None,
+        projects,
+    )
+    .expect("prepared task already passed entry validation")
+    .with_creator_team(prepared.creation.creator_team())
 }
 
 fn prepare_task(
@@ -531,6 +567,7 @@ pub(super) fn task_note(
         guidance: None,
         completion: None,
         learning: None,
+        claim: None,
         next,
     };
     if let Err(error) = write.command_result(
@@ -717,6 +754,7 @@ fn promote_oops(
         guidance: None,
         completion: None,
         learning: None,
+        claim: None,
         next,
     };
     if let Err(error) = write.command_result(
@@ -834,6 +872,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         guidance: None,
         completion: None,
         learning: None,
+        claim: None,
         next,
     };
     if let Err(error) =
@@ -956,6 +995,7 @@ pub(super) fn task_delete(
         guidance: None,
         completion: None,
         learning: None,
+        claim: None,
         next,
     };
     if let Err(error) = write.command_result(
@@ -1154,6 +1194,7 @@ fn commit_dependency_edit(
         guidance: None,
         completion: None,
         learning: None,
+        claim: None,
         next,
     };
     if let Err(error) = write.command_result(

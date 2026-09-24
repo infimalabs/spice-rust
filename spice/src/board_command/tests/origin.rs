@@ -23,6 +23,7 @@ fn add_and_claim_causal_parent(
             origin: Some(ack.clone()),
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
+            claim: false,
         },
     ));
     let lane = Actor::Lane(seat.lane);
@@ -71,6 +72,7 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             origin: None,
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
+            claim: false,
         },
     );
     let Outcome::Refusal(ref refusal) = refused else {
@@ -114,6 +116,7 @@ fn assert_invalid_creation_origins_refuse(bus: &Bus, epoch: CanonicalUuid) {
             origin: Some(self_origin.clone()),
             flow: Some("todo,review".to_owned()),
             depends: Vec::new(),
+            claim: false,
         },
     );
     let self_origin_text = self_origin.to_string();
@@ -165,6 +168,7 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
             origin: None,
             flow: Some("todo,review".to_owned()),
             depends: vec![dependency.clone()],
+            claim: false,
         },
     ));
     let causal = task_origin(&parent.born().expect("parent handle carries a birth stamp"))
