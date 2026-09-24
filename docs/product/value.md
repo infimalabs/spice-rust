@@ -371,9 +371,12 @@ unchanged. The global rail changes the question asked of the whole Canvas,
 not the mode of one lane or team.
 
 The global rail is the first row inside the Spice Canvas menu, immediately
-above global settings. It spans the menu width and divides that width equally
-among every destination, so adding another global destination preserves equal
-access rather than shrinking one privileged control.
+above global settings. It divides its width equally among every destination,
+so adding another global destination preserves equal access rather than
+shrinking one privileged control. It is the team tab rail itself, not a
+lookalike: the open menu frame lies over the team surface beneath it, and the
+global rail renders with the team rail's classes, top padding, and inset, so
+the two occupy the same band and read as one control changing scope.
 
 Panel variants and DOM mode identifiers use Info, Work, and Chat directly.
 The selected global destination is the `page` URL query: switching destinations

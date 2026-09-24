@@ -739,7 +739,7 @@ fn use_canvas_menu_dismissal(open: UseStateHandle<bool>) {
                 });
                 if !task_pill_focused
                     && let Some(first_destination) = document
-                        .query_selector(".canvas-navigation .axis-button")
+                        .query_selector(".canvas-navigation .team-mode")
                         .ok()
                         .flatten()
                         .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())

@@ -108,32 +108,43 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     }
 }
 
+/// The destination rail atop the Spice menu.
+///
+/// The open menu frame lies over the team surface beneath it, so this rail
+/// wears the team toolbar's own rail classes and lands on the same band.
 fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
     html! {
-        <nav class="canvas-navigation" aria-label="Canvas views">
+        <nav class="canvas-navigation team-mode-rail" aria-label="Canvas views">
             {for CanvasDestination::ALL.map(|destination| {
                 let menu_open = render.menu_open.clone();
                 let navigate = render.navigate.clone();
                 let work_scope = render.work_scope.clone();
                 let work_scope_notice = render.work_scope_notice.clone();
-                let destination_axis = destination.axis();
-                render_pill(
-                    destination.label(),
-                    destination.description(),
-                    destination_axis.map_or(**render.mosaic, |candidate| {
-                        !**render.mosaic && candidate == render.active_axis
-                    }),
-                    navigation_badge(destination, runtime, render.submissions),
-                    false,
-                    Callback::from(move |_| {
-                        if destination == CanvasDestination::Work {
-                            work_scope.set(WorkScope::AllOpen);
-                            work_scope_notice.set(None);
+                let selected = destination.axis().map_or(**render.mosaic, |candidate| {
+                    !**render.mosaic && candidate == render.active_axis
+                });
+                let badge = navigation_badge(destination, runtime, render.submissions);
+                html! {
+                    <button
+                        class={classes!("team-mode", selected.then_some("selected"))}
+                        type="button"
+                        aria-current={selected.then_some("page")}
+                        title={destination.description()}
+                        onclick={Callback::from(move |_| {
+                            if destination == CanvasDestination::Work {
+                                work_scope.set(WorkScope::AllOpen);
+                                work_scope_notice.set(None);
+                            }
+                            navigate.emit(destination);
+                            menu_open.set(false);
+                        })}
+                    >
+                        <span class="team-mode-label">{destination.label()}</span>
+                        if let Some(count) = badge {
+                            <span class="team-mode-badge">{count}</span>
                         }
-                        navigate.emit(destination);
-                        menu_open.set(false);
-                    }),
-                )
+                    </button>
+                }
             })}
         </nav>
     }
@@ -217,36 +228,6 @@ fn task_pills(work: Option<&WorkProjection<'_>>) -> Vec<TaskPill> {
         .filter(|stem| stem.counts().has_open())
         .map(TaskPill::from_stem)
         .collect()
-}
-
-fn render_pill(
-    label: &str,
-    question: &str,
-    selected: bool,
-    badge: Option<String>,
-    secondary: bool,
-    choose: Callback<MouseEvent>,
-) -> Html {
-    html! {
-        <button
-            class={classes!(
-                "axis-button",
-                "pill",
-                selected.then_some("selected"),
-                secondary.then_some("axis-button--secondary"),
-            )}
-            type="button"
-            aria-current={selected.then_some("page")}
-            data-navigation-tier={if secondary { "secondary" } else { "primary" }}
-            title={question.to_owned()}
-            onclick={choose}
-        >
-            <span class="pill-label">{label.to_owned()}</span>
-            if let Some(count) = badge {
-                <span class="pill-badge">{count}</span>
-            }
-        </button>
-    }
 }
 
 /// Directives waiting across every lane, which is what the feed is for.
