@@ -313,6 +313,7 @@ fn automatic_answer(
             .collect::<Vec<_>>()
             .into_boxed_slice(),
         creation_context: None,
+        origin_context: None,
         next: None,
         phase: None,
     }
@@ -353,6 +354,7 @@ pub(crate) fn release_automatic(
         expiry: None,
         warnings: Box::default(),
         creation_context: None,
+        origin_context: None,
         next: None,
         phase: None,
     };

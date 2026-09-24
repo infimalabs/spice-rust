@@ -1,4 +1,59 @@
 use super::*;
+fn seed_steering_origin(bus: &Bus, key: &str) {
+    let published: Instant = "2030-04-12T18:44:09.271Z"
+        .parse()
+        .expect("fixture publication instant");
+    let expires: Instant = "2030-04-12T19:44:09.271Z"
+        .parse()
+        .expect("fixture expiry instant");
+    let sent = body::SteerSent {
+        directive: uuid(16_201),
+        fanout: None,
+        key: key.to_owned(),
+        lane: uuid(16_202),
+        text: "Preserve this directive\nverbatim across hydration.".to_owned(),
+        control: None,
+        attachments: vec![body::DirectiveAttachment {
+            name: "operator capture.png".to_owned(),
+            content_type: "image/png".to_owned(),
+            data_url: "data:image/png;base64,iVBORw0KGgo=".to_owned(),
+        }],
+        expires,
+    };
+    let origin: wire::Origin = format!("ack:{key}")
+        .parse()
+        .expect("fixture steering origin");
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        origin.clone(),
+        published,
+        Producer::CommandDoor,
+    );
+    let pending = write
+        .fact(sent.clone(), FactCause::Root)
+        .expect("steering fact builds");
+    write.steering_head(pending, move |created| wire::SteeringHead {
+        directive: sent.directive,
+        fanout: sent.fanout,
+        key: sent.key,
+        lane: sent.lane,
+        text: sent.text,
+        control: sent.control,
+        attachments: sent.attachments,
+        published,
+        expires: sent.expires,
+        stage: body::SteeringStage::Published,
+        escalations: Vec::new(),
+        disposition: wire::Disposition::Live,
+        origin,
+        created,
+        minted_micros: None,
+    });
+    assert!(matches!(
+        bus.commit(write).expect("steering origin commits"),
+        CommitOutcome::Committed(_)
+    ));
+}
 
 fn add_and_claim_causal_parent(
     bus: &Bus,
@@ -7,6 +62,7 @@ fn add_and_claim_causal_parent(
 ) -> (TaskHandle, Actor, wire::Origin) {
     let parent_stamp = stamp("ORIGIN-parent1");
     let parent = TaskHandle::for_project("board.origin", &parent_stamp);
+    seed_steering_origin(bus, "1kLGp2NJ");
     let ack: wire::Origin = "ack:1kLGp2NJ".parse().expect("steering origin");
     assert_committed(issue(
         bus,
@@ -30,7 +86,7 @@ fn add_and_claim_causal_parent(
     let before = board(bus, epoch, lane.clone());
     let parent_heads = at(&before, &parent);
     let capture: Name = "capture".parse().expect("capture rule");
-    assert_committed(issue(
+    let CommandAnswer::Claim(claim) = assert_committed(issue(
         bus,
         epoch,
         lane.clone(),
@@ -48,7 +104,27 @@ fn add_and_claim_causal_parent(
             rule: capture,
             recovery: None,
         },
-    ));
+    )) else {
+        panic!("claim win must hydrate the claimed task");
+    };
+    let expected_origin = concat!(
+        "origin_steering key 1kLGp2NJ\n",
+        "origin_steering_text:\n",
+        "Preserve this directive\nverbatim across hydration.\n",
+        "origin_steering_attachments operator capture.png",
+    );
+    assert_eq!(claim.origin_context.as_deref(), Some(expected_origin));
+    let claimed = board(bus, epoch, lane.clone());
+    let shown = task_show_with_origin(
+        &claimed,
+        at(&claimed, &parent),
+        &[],
+        claim.origin_context.as_deref(),
+    );
+    assert!(
+        shown.contains(expected_origin),
+        "task show prints the same resolved origin hydration"
+    );
     (parent, lane, ack)
 }
 
@@ -215,4 +291,32 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
     );
     assert_invalid_creation_origins_refuse(&bus, epoch);
     clean(&root, bus);
+}
+
+#[test]
+fn resolved_steering_origin_renders_verbatim_directive_and_attachment_name() {
+    let (root, bus, _epoch, _seats) = fixture("task-resolved-steering-origin", 0);
+    seed_steering_origin(&bus, "1kLGp2NJ");
+    let origin = "ack:1kLGp2NJ".parse().expect("fixture steering origin");
+    let output = task_steering_origin_output(&bus, &origin)
+        .expect("steering index reads")
+        .expect("ack origin renders");
+    assert_eq!(
+        output.as_ref(),
+        concat!(
+            "origin_steering key 1kLGp2NJ\n",
+            "origin_steering_text:\n",
+            "Preserve this directive\nverbatim across hydration.\n",
+            "origin_steering_attachments operator capture.png",
+        )
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn unresolved_steering_origin_is_explicit() {
+    assert_eq!(
+        render_task_steering_origin("1kLGp2NZ", None).as_ref(),
+        "origin_steering key 1kLGp2NZ\norigin_steering unavailable unresolved-key"
+    );
 }

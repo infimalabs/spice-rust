@@ -105,10 +105,20 @@ pub(super) fn client_show(
                 Ok(artifacts) => artifacts,
                 Err(outcome) => return outcome,
             };
+            let origin_context =
+                match task_show_origin_context(repository, &task.statement.body.provenance) {
+                    Ok(context) => context,
+                    Err(outcome) => return outcome,
+                };
             Outcome::Reply(Reply {
                 position,
                 body: CommandAnswer::Text(TextAnswer {
-                    text: task_show(&board, task, &artifacts),
+                    text: task_show_with_origin(
+                        &board,
+                        task,
+                        &artifacts,
+                        origin_context.as_deref(),
+                    ),
                 }),
             })
         }
@@ -369,10 +379,50 @@ fn task_show_artifacts(
         .map_err(artifact_operation_failure)
 }
 
+fn task_show_origin_context(
+    repository: &Repository,
+    origin: &wire::Origin,
+) -> Result<Option<Box<str>>, Outcome<CommandAnswer>> {
+    let Some(key) = task_steering_origin_token(origin) else {
+        return Ok(None);
+    };
+    let state = repository
+        .admit_state()
+        .map_err(|error| repository_state_failure(&error))?;
+    let reader = journal::JournalReader::open(state.journal()).map_err(|error| {
+        store_fault(
+            "task::steering-journal-unreadable",
+            &format!("cannot inspect steering origin {key}: {error}"),
+        )
+    })?;
+    let head = reader
+        .read(|read| read.steering_key(key))
+        .map_err(|error| {
+            store_fault(
+                "task::steering-index-unreadable",
+                &format!("cannot inspect steering origin {key}: {error}"),
+            )
+        })?;
+    Ok(Some(render_task_steering_origin(
+        key,
+        head.as_ref().map(journal::JournalHead::body),
+    )))
+}
+
+#[cfg(test)]
 pub(in crate::board_command) fn task_show(
     board: &BoardAnswer,
     task: &BoardTask,
     artifacts: &[artifact::Artifact],
+) -> String {
+    task_show_with_origin(board, task, artifacts, None)
+}
+
+pub(in crate::board_command) fn task_show_with_origin(
+    board: &BoardAnswer,
+    task: &BoardTask,
+    artifacts: &[artifact::Artifact],
+    origin_context: Option<&str>,
 ) -> String {
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
@@ -393,6 +443,9 @@ pub(in crate::board_command) fn task_show(
         format!("claim {}", claim_line(task)),
         format!("claim_thread {}", claim_thread(task)),
     ];
+    if let Some(origin_context) = origin_context {
+        lines.extend(origin_context.lines().map(str::to_owned));
+    }
     lines.extend(creation_context_lines(statement));
     lines.extend(claim_context_lines(task));
     lines.push(format!("spice doc ledger {}", statement.handle));

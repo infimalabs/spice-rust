@@ -305,7 +305,7 @@ fn attach_steering_origin_artifacts(
             Ok(bytes) => bytes,
             Err(failure) => return failure,
         };
-        let name = steering_attachment_name(key, index, attachment);
+        let name = task_steering_attachment_name(key.as_str(), index, attachment);
         if let Err(error) = store.add_bytes(artifact::AddBytesRequest {
             task: &task,
             bytes: &bytes,
@@ -327,19 +327,27 @@ fn steering_origin_key(
         return Ok(None);
     };
     let text = origin.as_str();
-    let key = text
-        .strip_prefix("ack:")
-        .or_else(|| text.strip_prefix("steer:"));
-    key.map(|key| {
-        key.parse::<steer::Key>().map(Some).map_err(|error| {
-            refusal(
-                "task::steering-origin-invalid",
-                Some(text.to_owned()),
-                &error.to_string(),
-            )
+    if let Some(key) = text
+        .strip_prefix("steering:")
+        .or_else(|| text.strip_prefix("steer:"))
+    {
+        return Err(refusal(
+            "task::steering-origin-noncanonical",
+            Some(text.to_owned()),
+            &format!("use --origin ack:{key}"),
+        ));
+    }
+    text.strip_prefix("ack:")
+        .map(|key| {
+            key.parse::<steer::Key>().map(Some).map_err(|error| {
+                refusal(
+                    "task::steering-origin-invalid",
+                    Some(text.to_owned()),
+                    &error.to_string(),
+                )
+            })
         })
-    })
-    .unwrap_or(Ok(None))
+        .unwrap_or(Ok(None))
 }
 
 fn steering_attachments(
@@ -387,31 +395,6 @@ fn decode_attachment(
                 &format!("{} does not decode as base64: {error}", attachment.name),
             )
         })
-}
-
-fn steering_attachment_name(
-    key: &steer::Key,
-    index: usize,
-    attachment: &wire::body::DirectiveAttachment,
-) -> String {
-    if attachment.name.is_empty() {
-        format!(
-            "steering-{key}-attachment-{}.{}",
-            index + 1,
-            attachment_extension(&attachment.content_type)
-        )
-    } else {
-        attachment.name.clone()
-    }
-}
-
-fn attachment_extension(content_type: &str) -> &'static str {
-    match content_type {
-        artifact::MediaType::IMAGE_JPEG => "jpg",
-        artifact::MediaType::IMAGE_GIF => "gif",
-        artifact::MediaType::IMAGE_WEBP => "webp",
-        _ => "png",
-    }
 }
 
 pub(super) fn artifact_operation_failure(error: artifact::Error) -> Outcome<CommandAnswer> {
@@ -637,4 +620,30 @@ pub(in crate::board_command) fn mutation_read(
             dependencies,
         },
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steering_origin_admission_refuses_aliases_and_accepts_ack() {
+        for written in ["steering:1kLGp2NJ", "steer:1kLGp2NJ"] {
+            let origin: wire::Origin = written.parse().expect("fixture origin");
+            let failure =
+                steering_origin_key(Some(&origin)).expect_err("noncanonical origin refuses");
+            assert!(matches!(
+                &failure,
+                Outcome::Refusal(refusal)
+                    if refusal.reason() == "task::steering-origin-noncanonical"
+                        && refusal.explanation().contains("ack:1kLGp2NJ")
+            ));
+        }
+
+        let canonical: wire::Origin = "ack:1kLGp2NJ".parse().expect("canonical origin");
+        let key = steering_origin_key(Some(&canonical))
+            .expect("canonical origin is admitted")
+            .expect("canonical origin carries a steering key");
+        assert_eq!(key.as_str(), "1kLGp2NJ");
+    }
 }

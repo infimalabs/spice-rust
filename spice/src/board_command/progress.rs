@@ -91,6 +91,7 @@ pub(super) fn claim_free(
         expiry: None,
         warnings: Box::default(),
         creation_context: None,
+        origin_context: None,
         next,
         phase: None,
     };
@@ -154,6 +155,7 @@ pub(super) fn claim_reclaim_with_clock(
         expiry: Some(Box::new(until)),
         warnings: Box::default(),
         creation_context: None,
+        origin_context: None,
         next: None,
         phase: None,
     };
