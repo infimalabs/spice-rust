@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 
 use super::*;
 use crate::runtime::{LaneView, WorkHistoryState};
+use crate::watchband;
 use crate::work::{
     self as model, WorkArrangement, WorkAvailability, WorkCluster, WorkClusterKey, WorkClustering,
     WorkOrder, WorkProjection, WorkScope, WorkTask,
@@ -279,6 +280,13 @@ fn cluster_label(key: WorkClusterKey<'_>, lanes: Option<&LaneView>) -> Option<St
     }
 }
 
+fn claimant_accent(task: &WorkTask<'_>, lanes: Option<&LaneView>) -> Option<usize> {
+    let wire::Actor::Lane(lane) = task.working_claimant()? else {
+        return None;
+    };
+    watchband::lane_accent(&lanes?.lanes, *lane)
+}
+
 fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
     let row = task.row();
     let statement = &row.statement.body;
@@ -286,6 +294,7 @@ fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
     let availability = task.availability();
     let label = availability_label(availability);
     let owner = task.owner();
+    let claim_accent = claimant_accent(task, cards.lanes);
     let owner_name = owner.map_or_else(
         || "Unassigned".to_owned(),
         |actor| actor_name(actor, cards.lanes),
@@ -322,6 +331,9 @@ fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
             data-work-availability={availability_key(availability)}
             data-work-project={statement.project.clone()}
             data-selected={is_selected.to_string()}
+            data-work-claimed={task.working_claimant().is_some().to_string()}
+            data-work-claim-accent={claim_accent.map(|accent| accent.to_string())}
+            data-accent={claim_accent.map(|accent| accent.to_string())}
             aria-label={format!(
                 "{}: {}, {}, {label}",
                 statement.handle,

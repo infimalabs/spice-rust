@@ -164,6 +164,7 @@
 
 .work-card {
   --work-card-tone: var(--work-in-flight);
+  --work-claim-fill: transparent;
   position: relative;
   display: grid;
   gap: 9px;
@@ -172,11 +173,26 @@
   border-left: 3px solid var(--work-card-tone);
   border-radius: 8px;
   background:
+    linear-gradient(270deg, var(--work-claim-fill), transparent 42%),
     linear-gradient(145deg, color-mix(in srgb, var(--work-card-tone) 4%, transparent), transparent 55%),
     var(--control);
   box-shadow: var(--shadow);
   overflow-wrap: anywhere;
   transition: border-color 120ms ease, box-shadow 120ms ease, background-color 120ms ease;
+}
+
+.work-card[data-work-claim-accent] {
+  --work-claim-fill: color-mix(in srgb, var(--accent-slot) 16%, transparent);
+  border-right-color: color-mix(in srgb, var(--accent-slot) 68%, var(--line));
+}
+.work-card[data-work-claim-accent]::after {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: 4px;
+  border-radius: 0 7px 7px 0;
+  background: var(--accent-slot);
+  content: "";
+  pointer-events: none;
 }
 
 .work-card-open {

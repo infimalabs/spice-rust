@@ -693,6 +693,20 @@ pub const fn accent(members: usize, position: usize) -> usize {
     right_edge_ordinal(members, position) % ACCENTS
 }
 
+/// Resolve the accent slot currently dealt to one independently steerable lane.
+///
+/// Agent color follows canonical team position, so every surface that names a
+/// lane uses the same right-edge palette deal.
+#[must_use]
+pub fn lane_accent(lanes: &[LaneRow], lane: CanonicalUuid) -> Option<usize> {
+    lanes.iter().find_map(|team| {
+        team.members
+            .iter()
+            .position(|member| member.lane == lane)
+            .map(|position| accent(team.members.len(), position))
+    })
+}
+
 /// The part of a worktree path that names one lane rather than the fleet.
 ///
 /// Lanes of one fleet are siblings in a single parent directory, so a path cut
@@ -1116,7 +1130,7 @@ pub fn truncate(text: &str, budget: usize) -> String {
 mod tests {
     use super::{
         ComposerDragSession, MAX_TEAM_VISUAL_WEIGHT, agent_message_attribution,
-        agent_message_label, quote_label, swap_members, team_visual_weight,
+        agent_message_label, lane_accent, quote_label, swap_members, team_visual_weight,
         ticker_accessible_label, ticker_chunks, tool_media_description,
     };
 
@@ -1124,6 +1138,38 @@ mod tests {
         format!("00000000-0000-4000-8000-{suffix:012}")
             .parse()
             .expect("fixture identity is canonical")
+    }
+
+    fn member(suffix: u8) -> crate::runtime::LaneMember {
+        crate::runtime::LaneMember {
+            lane: id(suffix),
+            name: None,
+            worktree: format!("/work/lane-{suffix}"),
+            life: "steer".to_owned(),
+            vendor: "omp".parse().expect("fixture vendor is canonical"),
+            model: None,
+            effort: None,
+            occupant: None,
+            session: None,
+            disposition: "seated".to_owned(),
+            liveness: wire::intent::LaneLiveness::Vacant,
+            bound: false,
+            jobs: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn lane_accent_resolves_the_same_right_edge_palette_used_by_agent_surfaces() {
+        let lanes = [crate::runtime::LaneRow {
+            lane: id(10),
+            subscription: wire::intent::TeamLife::Steer,
+            members: vec![member(1), member(2), member(3)],
+        }];
+
+        assert_eq!(lane_accent(&lanes, id(1)), Some(2));
+        assert_eq!(lane_accent(&lanes, id(2)), Some(1));
+        assert_eq!(lane_accent(&lanes, id(3)), Some(0));
+        assert_eq!(lane_accent(&lanes, id(4)), None);
     }
 
     #[test]
