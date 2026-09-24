@@ -50,7 +50,6 @@ fn location_destination(history: &HashHistory) -> Option<CanvasDestination> {
 #[hook]
 pub(super) fn use_global_destination(
     destination: CanvasDestination,
-    canvas_menu_open: UseStateHandle<bool>,
 ) -> (UseStateHandle<Axis>, UseStateHandle<bool>) {
     let axis = use_state(move || destination.axis().unwrap_or(Axis::Topology));
     let mosaic = use_state(move || destination == CanvasDestination::Chat);
@@ -68,7 +67,6 @@ pub(super) fn use_global_destination(
             if *mosaic != destination_mosaic {
                 mosaic.set(destination_mosaic);
             }
-            canvas_menu_open.set(false);
         });
     }
 

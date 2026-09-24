@@ -541,8 +541,7 @@ fn canvas_app(properties: &CanvasAppProperties) -> Html {
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
     let canvas_menu_open = use_state(|| false);
-    let (axis, mosaic) =
-        navigation::use_global_destination(properties.destination, canvas_menu_open.clone());
+    let (axis, mosaic) = navigation::use_global_destination(properties.destination);
     let work_scope = use_state(WorkScope::default);
     let work_scope_notice = use_state(|| None::<String>);
     let work_arrangement = use_state(WorkArrangement::default);
@@ -734,27 +733,23 @@ fn use_canvas_menu_dismissal(open: UseStateHandle<bool>) {
         let registration = (*is_open)
             .then(|| {
                 let document = web_sys::window()?.document()?;
-                let task_pill_focused = document.active_element().is_some_and(|element| {
-                    element.closest(".task-pill-strip").ok().flatten().is_some()
-                });
-                if !task_pill_focused
-                    && let Some(first_destination) = document
-                        .query_selector(".canvas-navigation .team-mode")
-                        .ok()
-                        .flatten()
-                        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+                if let Some(first_destination) = document
+                    .query_selector(".canvas-navigation .team-mode")
+                    .ok()
+                    .flatten()
+                    .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
                 {
                     let _ = first_destination.focus();
                 }
                 let pointer_open = open.clone();
                 let pointer = Closure::<dyn FnMut(web_sys::Event)>::new(move |event| {
-                    if !canvas_disclosure_contains(&event) {
+                    if !canvas_menu_contains(&event) {
                         pointer_open.set(false);
                     }
                 });
                 let focus_open = open.clone();
                 let focus = Closure::<dyn FnMut(web_sys::Event)>::new(move |event| {
-                    if !canvas_disclosure_contains(&event) {
+                    if !canvas_menu_contains(&event) {
                         focus_open.set(false);
                     }
                 });
@@ -803,17 +798,11 @@ fn use_canvas_menu_dismissal(open: UseStateHandle<bool>) {
     });
 }
 
-fn canvas_disclosure_contains(event: &web_sys::Event) -> bool {
+fn canvas_menu_contains(event: &web_sys::Event) -> bool {
     event
         .target()
         .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .is_some_and(|target| {
-            target
-                .closest(".canvas-disclosure")
-                .ok()
-                .flatten()
-                .is_some()
-        })
+        .is_some_and(|target| target.closest(".canvas-menu").ok().flatten().is_some())
 }
 
 #[hook]
