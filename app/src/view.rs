@@ -103,12 +103,9 @@ impl CanvasDestination {
     /// Destination named by one exact hash-history path.
     #[must_use]
     pub fn from_path(path: &str) -> Option<Self> {
-        match path {
-            "/info" => Some(Self::Info),
-            "/work" => Some(Self::Work),
-            "/" => Some(Self::Chat),
-            _ => None,
-        }
+        Self::ALL
+            .into_iter()
+            .find(|destination| destination.path() == path)
     }
 
     /// Presentation label independent of internal protocol spelling.
