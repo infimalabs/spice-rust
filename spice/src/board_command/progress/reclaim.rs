@@ -37,17 +37,13 @@ pub(super) fn reclaim_entry<'a>(
     snapshot: &'a ValidatedSnapshot,
     renew: &ClaimRenew,
 ) -> Result<&'a Entry, Outcome<CommandAnswer>> {
-    snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &renew.task)
-        .ok_or_else(|| {
-            refusal(
-                "task::unknown",
-                Some(renew.task.to_string()),
-                "read board and reclaim one current task handle",
-            )
-        })
+    task_entry(&snapshot.entries, &renew.task).ok_or_else(|| {
+        refusal(
+            "task::unknown",
+            Some(renew.task.to_string()),
+            "read board and reclaim one current task handle",
+        )
+    })
 }
 
 pub(super) fn reclaim_window(
@@ -58,7 +54,7 @@ pub(super) fn reclaim_window(
     renew: &ClaimRenew,
     at: Instant,
 ) -> Result<ReclaimWindow, Outcome<CommandAnswer>> {
-    let claim = active_claim(entry, command, renew, at)?;
+    let claim = active_claim(entry, command, at)?;
     let lease = entry.lease().ok_or_else(|| {
         protocol_fault(
             "claim::lease-missing",
@@ -105,11 +101,10 @@ pub(super) fn reclaim_window(
 fn active_claim<'a>(
     entry: &'a Entry,
     command: &wire::AdmittedCommand,
-    renew: &ClaimRenew,
     at: Instant,
 ) -> Result<&'a ClaimHead, Outcome<CommandAnswer>> {
     let claim = entry.claim().ok_or_else(|| {
-        reclaim_authority_refusal("claim::head-missing", Some(renew.task.to_string()))
+        reclaim_authority_refusal("claim::head-missing", Some(entry.handle().to_string()))
     })?;
     let Actor::Lane(_) = command.actor() else {
         return Err(refusal(

@@ -105,7 +105,8 @@ flowchart LR
 task's name is derived.
 
 **Invariant —** Re-homing a task to a different project changes its rendered
-handle **for free**, because the key was never stored.
+handle **for free**, because the key was never stored. A handle is resolved by
+its stamp alone, so the name a task carried before the move still addresses it.
 
 **Invariant —** Current stamps are sortable as plain strings into
 represented-instant order. In the absence of a collision that is also current

@@ -246,26 +246,29 @@ fn selected_task(matches: &clap::ArgMatches, snapshot: &Snapshot) -> Result<Sele
     let task = text.parse::<TaskHandle>().map_err(|error| {
         Failure::refusal(
             "artifact::task-invalid",
-            "one canonical current task handle",
+            "one canonical task handle",
             error.to_string(),
-            "read board and pass the exact task handle",
+            "read board and pass the task handle",
         )
     })?;
     let born = task.born().map_err(|error| {
         Failure::refusal(
             "artifact::task-invalid",
-            "one current handle carrying a canonical birth stamp",
+            "one handle carrying a canonical birth stamp",
             error.to_string(),
-            "read board and pass the exact current task handle",
+            "read board and pass the task handle",
         )
     })?;
     match snapshot.statuses.get(&born) {
-        Some((current, _)) if current == &task => Ok(SelectedTask { handle: task, born }),
-        _ => Err(Failure::refusal(
+        Some((current, _)) => Ok(SelectedTask {
+            handle: current.clone(),
+            born,
+        }),
+        None => Err(Failure::refusal(
             "artifact::task-unknown",
-            "one canonical current task handle",
+            "one existing task",
             task.to_string(),
-            "read board and pass the exact current task handle",
+            "read board and pass an existing task handle",
         )),
     }
 }

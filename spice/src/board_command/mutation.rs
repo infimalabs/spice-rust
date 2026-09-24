@@ -494,11 +494,7 @@ pub(super) fn task_note(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &note.task)
-    else {
+    let Some(entry) = task_entry(&snapshot.entries, &note.task) else {
         return refusal(
             "task::unknown",
             Some(note.task.to_string()),
@@ -526,7 +522,7 @@ pub(super) fn task_note(
         return store_fault("task::note-build", &error.to_string());
     }
     let answer = wire::intent::TaskAnswer {
-        task: note.task.clone(),
+        task: entry.handle().clone(),
         status: "noted".to_owned(),
         guidance: None,
         completion: None,
@@ -585,7 +581,6 @@ pub(super) fn task_wake(
 fn validate_promotion_entry(
     entry: &Entry,
     command: &wire::AdmittedCommand,
-    wake: &TaskWake,
 ) -> Result<(), Outcome<CommandAnswer>> {
     let current_statement = Witness::Task {
         task: entry.born().clone(),
@@ -608,7 +603,7 @@ fn validate_promotion_entry(
     if entry.workflow().completion.is_some() {
         return Err(refusal(
             "task::settled",
-            Some(wake.task.to_string()),
+            Some(entry.handle().to_string()),
             "promote only pending .oops work",
         ));
     }
@@ -627,18 +622,14 @@ fn promote_oops(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &wake.task)
-    else {
+    let Some(entry) = task_entry(&snapshot.entries, &wake.task) else {
         return refusal(
             "task::unknown",
             Some(wake.task.to_string()),
             "read board and name one current task handle",
         );
     };
-    if let Err(outcome) = validate_promotion_entry(entry, command, wake) {
+    if let Err(outcome) = validate_promotion_entry(entry, command) {
         return outcome;
     }
     let project = match projects.admit_manual_creation(requested) {
@@ -742,7 +733,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot.entries.iter().find(|entry| entry.handle() == task) else {
+    let Some(entry) = task_entry(&snapshot.entries, task) else {
         return refusal(
             "task::unknown",
             Some(task.to_string()),
@@ -754,7 +745,8 @@ fn change_deferral<B: serde::Serialize + Clone>(
             "task::promotion-required",
             Some(oops_state(entry)),
             &format!(
-                "promote the parked row first with spice task wake {task} --into PUBLIC_PROJECT",
+                "promote the parked row first with spice task wake {} --into PUBLIC_PROJECT",
+                entry.handle(),
             ),
         );
     }
@@ -829,7 +821,7 @@ fn change_deferral<B: serde::Serialize + Clone>(
         "pending"
     };
     let answer = wire::intent::TaskAnswer {
-        task: task.clone(),
+        task: entry.handle().clone(),
         status: status.to_owned(),
         guidance: None,
         completion: None,
@@ -867,11 +859,7 @@ pub(super) fn task_delete(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &delete.task)
-    else {
+    let Some(entry) = task_entry(&snapshot.entries, &delete.task) else {
         return refusal(
             "task::unknown",
             Some(delete.task.to_string()),
@@ -881,7 +869,7 @@ pub(super) fn task_delete(
     if delete.reason.trim().is_empty() {
         return refusal(
             "task::delete-reason-empty",
-            Some(delete.task.to_string()),
+            Some(entry.handle().to_string()),
             "state why the task leaves the board",
         );
     }
@@ -889,14 +877,14 @@ pub(super) fn task_delete(
         "completed" => {
             return refusal(
                 "task::settled",
-                Some(delete.task.to_string()),
+                Some(entry.handle().to_string()),
                 "a completed task is history and stays on the board",
             );
         }
         "deleted" => {
             return refusal(
                 "task::already-deleted",
-                Some(delete.task.to_string()),
+                Some(entry.handle().to_string()),
                 "the task is already withdrawn; read its recorded reason",
             );
         }
@@ -951,7 +939,7 @@ pub(super) fn task_delete(
         });
     }
     let answer = wire::intent::TaskAnswer {
-        task: delete.task.clone(),
+        task: entry.handle().clone(),
         status: "deleted".to_owned(),
         guidance: None,
         completion: None,
@@ -1093,11 +1081,7 @@ fn dependency_entry<'a>(
     if !parked.is_empty() {
         return Err(oops_dependency_refusal(&parked));
     }
-    let Some(entry) = snapshot
-        .entries
-        .iter()
-        .find(|entry| entry.handle() == &depends.task)
-    else {
+    let Some(entry) = task_entry(&snapshot.entries, &depends.task) else {
         return Err(refusal(
             "task::unknown",
             Some(depends.task.to_string()),
@@ -1107,7 +1091,7 @@ fn dependency_entry<'a>(
     if entry.workflow().status == "completed" {
         return Err(refusal(
             "task::settled",
-            Some(depends.task.to_string()),
+            Some(entry.handle().to_string()),
             "edit dependencies only while the task is pending",
         ));
     }
@@ -1174,7 +1158,7 @@ fn dependency_statement(
     let prerequisites = depends
         .after
         .iter()
-        .map(|after| entries.iter().find(|candidate| candidate.handle() == after))
+        .map(|after| task_entry(entries, after))
         .collect::<Vec<_>>();
     let mut resolved = Vec::with_capacity(depends.after.len());
     for (after, prerequisite) in depends.after.iter().zip(prerequisites) {
@@ -1189,11 +1173,15 @@ fn dependency_statement(
     }
     let mut statement = entry.statement().clone();
     let mut added = Vec::new();
-    for (after, prerequisite) in depends.after.iter().zip(resolved) {
+    for prerequisite in resolved {
         if prerequisite.born() == entry.born() {
             return Err(refusal(
                 "task::dependency-refused",
-                Some(format!("{} after {after}", depends.task)),
+                Some(format!(
+                    "{} after {}",
+                    entry.handle(),
+                    prerequisite.handle()
+                )),
                 "a task cannot depend on itself",
             ));
         }
@@ -1205,7 +1193,11 @@ fn dependency_statement(
         if dependency_reaches(entries, prerequisite.born(), entry.born()) {
             return Err(refusal(
                 "task::dependency-refused",
-                Some(format!("{} after {after}", depends.task)),
+                Some(format!(
+                    "{} after {}",
+                    entry.handle(),
+                    prerequisite.handle()
+                )),
                 "name dependencies that keep the complete task graph acyclic",
             ));
         }

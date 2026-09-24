@@ -125,10 +125,11 @@ pub(super) fn plan_followup_edges(
                 &error.to_string(),
             )
         })?;
+        let heads = task_heads(board, &handle)?;
+        let handle = heads.statement.body.handle.clone();
         if linked.contains(&handle) {
             continue;
         }
-        let heads = task_heads(board, &handle)?;
         expected.push(statement_witness(heads));
         expected.push(workflow_witness(heads));
         if !reviewed
@@ -169,27 +170,23 @@ pub(super) fn correction_statement(
     }
     let mut seen = Vec::new();
     for handle in &review.followup {
-        if seen.contains(handle) {
+        let correction = task_entry(&snapshot.entries, handle).ok_or_else(|| {
+            refusal(
+                "task::unknown",
+                Some(handle.to_string()),
+                "name an existing task as the review correction",
+            )
+        })?;
+        if seen.contains(&correction.born()) {
             continue;
         }
-        seen.push(handle.clone());
-        let correction = snapshot
-            .entries
-            .iter()
-            .find(|candidate| candidate.handle() == handle)
-            .ok_or_else(|| {
-                refusal(
-                    "task::unknown",
-                    Some(handle.to_string()),
-                    "name an existing task as the review correction",
-                )
-            })?;
+        seen.push(correction.born());
         require_correction_witnesses(snapshot, command, handle)?;
         let already_related = statement.dependencies.contains(correction.born());
         if correction.workflow().status == "completed" && !already_related {
             return Err(refusal(
                 "task::settled",
-                Some(handle.to_string()),
+                Some(correction.handle().to_string()),
                 "track a review finding with a pending correction task",
             ));
         }
