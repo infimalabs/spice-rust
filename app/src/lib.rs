@@ -91,6 +91,9 @@ pub(crate) enum PendingKind {
     TaskRelations {
         key: runtime::TaskRelationsKey,
     },
+    WorkHistory {
+        request: runtime::WorkHistoryRequest,
+    },
     LaneSeat,
     LaneArrange,
     LaneRenewal {

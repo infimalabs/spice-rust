@@ -367,6 +367,24 @@ fn board_response(
         .expect("board response is admitted")
 }
 
+fn admitted_board_answer(
+    session: &Session,
+    body: wire::intent::BoardAnswer,
+) -> app::Admitted<Response<wire::intent::BoardAnswer>> {
+    let bytes = support::response(
+        WireVersion::CURRENT,
+        uuid(REQUEST),
+        uuid(EPOCH),
+        Outcome::Reply(Reply {
+            position: ReplyPosition::Snapshot(body.cursor),
+            body,
+        }),
+    );
+    session
+        .admit_frame(&bytes)
+        .expect("board answer is admitted")
+}
+
 /// One admitted safe lane roster, one row per `(lane, team, occupant, bound)` tuple.
 ///
 /// The display session identity crosses; capabilities remain outside this DTO.
@@ -1266,6 +1284,82 @@ fn browser_state_retains_hidden_rows_with_their_authored_prose() {
     assert!(
         !board.environment_satisfies(&board.tasks[1]),
         "the Canvas snapshot evaluates requirements against its observed schema",
+    );
+}
+
+#[test]
+fn work_history_merges_once_and_old_pages_cannot_cross_a_board_refresh() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let open = board_response(&session, "Hidden open work");
+    runtime.apply_board(&open);
+
+    let first = runtime
+        .begin_work_history()
+        .expect("the current open board admits its first history page");
+    assert_eq!(first.before, None);
+    assert!(
+        runtime.begin_work_history().is_none(),
+        "duplicate activation is coalesced while the page is loading",
+    );
+
+    let mut history_task = board_task(
+        "HISTORY-one",
+        THIRD_LANE,
+        "Retained terminal work",
+        "app.history",
+        wire::EnvironmentRequirements::default(),
+    );
+    history_task.workflow.position = seq(10);
+    history_task.workflow.body.status = "done".to_owned();
+    let next = wire::intent::TaskHistoryCursor {
+        workflow: history_task.workflow.position,
+        task: history_task.statement.body.born.clone(),
+    };
+    let mut body = match &open.get().outcome {
+        Outcome::Reply(reply) => reply.body.clone(),
+        Outcome::Refusal(_) | Outcome::Fault(_) => panic!("open fixture is a reply"),
+    };
+    body.tasks = vec![history_task];
+    body.history = Some(wire::intent::TaskHistoryPage {
+        before: None,
+        limit: 50,
+        total: 2,
+        next: Some(next.clone()),
+    });
+    runtime.apply_work_history(&first, &admitted_board_answer(&session, body.clone()));
+
+    assert_eq!(runtime.work_history().loaded(), 1);
+    assert_eq!(runtime.work_history().total(), Some(2));
+    assert_eq!(
+        runtime.board().expect("board remains present").tasks.len(),
+        3
+    );
+    let second = runtime
+        .begin_work_history()
+        .expect("the advertised next cursor is requested");
+    assert_eq!(second.before.as_ref(), Some(&next));
+
+    runtime.apply_board(&board_response(&session, "Refreshed hidden work"));
+    body.history = Some(wire::intent::TaskHistoryPage {
+        before: Some(next),
+        limit: 50,
+        total: 2,
+        next: None,
+    });
+    runtime.apply_work_history(&second, &admitted_board_answer(&session, body));
+
+    assert_eq!(runtime.work_history().loaded(), 0);
+    assert_eq!(runtime.work_history().total(), None);
+    assert_eq!(
+        runtime
+            .board()
+            .expect("refreshed board remains present")
+            .tasks
+            .len(),
+        2,
+        "a page from the previous revision cannot mix into the new snapshot",
     );
 }
 

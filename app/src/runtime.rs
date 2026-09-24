@@ -11,8 +11,8 @@ use std::rc::Rc;
 use wire::intent::{
     BoardAnswer, BoardTask, DirectiveAnswer, GlobalSettingsAnswer, InboxAnswer, LaneAnswer,
     LaneLiveness, TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT,
-    TaskDetailAnswer, TaskRelationKind, TaskRelationNodeRef, TaskRelations, TaskRelationsAnswer,
-    VendorCatalogAnswer,
+    TaskDetailAnswer, TaskHistoryCursor, TaskRelationKind, TaskRelationNodeRef, TaskRelations,
+    TaskRelationsAnswer, VendorCatalogAnswer,
 };
 use wire::{
     Accepted, Actor, AgentActivityKind, AgentMessage, CanonicalUuid, CommandKind, FactKind,
@@ -555,6 +555,72 @@ pub enum TaskDetailState {
     },
 }
 
+/// One exact request against the current Work-history generation.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WorkHistoryRequest {
+    pub revision: u64,
+    pub before: Option<TaskHistoryCursor>,
+}
+
+/// Capability-scoped paging state for terminal Work rows.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WorkHistoryState {
+    revision: u64,
+    loaded: usize,
+    total: Option<u64>,
+    next: Option<TaskHistoryCursor>,
+    loading: bool,
+    awaiting_board: bool,
+    issue: Option<String>,
+}
+
+impl WorkHistoryState {
+    #[must_use]
+    pub const fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    #[must_use]
+    pub const fn loaded(&self) -> usize {
+        self.loaded
+    }
+
+    #[must_use]
+    pub const fn total(&self) -> Option<u64> {
+        self.total
+    }
+
+    #[must_use]
+    pub const fn next(&self) -> Option<&TaskHistoryCursor> {
+        self.next.as_ref()
+    }
+
+    #[must_use]
+    pub const fn loading(&self) -> bool {
+        self.loading
+    }
+
+    #[must_use]
+    pub fn issue(&self) -> Option<&str> {
+        self.issue.as_deref()
+    }
+
+    #[must_use]
+    pub const fn exhausted(&self) -> bool {
+        self.total.is_some() && self.next.is_none() && !self.loading
+    }
+
+    fn invalidate(&mut self, awaiting_board: bool) {
+        self.revision = self.revision.saturating_add(1);
+        self.loaded = 0;
+        self.total = None;
+        self.next = None;
+        self.loading = false;
+        self.awaiting_board = awaiting_board;
+        self.issue = None;
+    }
+}
+
 /// All state rendered by one capability-scoped canvas.
 ///
 /// Deliberately not `Debug`: even though scopes redact themselves, snapshots
@@ -568,6 +634,7 @@ pub struct CanvasRuntime {
     task_details: BTreeMap<wire::TaskStamp, TaskDetailState>,
     task_relations: BTreeMap<TaskRelationsKey, TaskRelationsState>,
     task_relations_revision: u64,
+    work_history: WorkHistoryState,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
     settings: ScopedValue<GlobalSettingsAnswer>,
@@ -601,6 +668,7 @@ impl CanvasRuntime {
             task_details: BTreeMap::new(),
             task_relations: BTreeMap::new(),
             task_relations_revision: 0,
+            work_history: WorkHistoryState::default(),
             lane_position: None,
             inbox: ScopedValue::new(accepted),
             settings: ScopedValue::new(accepted),
@@ -711,6 +779,53 @@ impl CanvasRuntime {
     pub fn board(&self) -> Option<&BoardView> {
         self.board.get(&self.principal)
     }
+
+    /// Paging state for terminal Work rows retained in the current board.
+    #[must_use]
+    pub const fn work_history(&self) -> &WorkHistoryState {
+        &self.work_history
+    }
+
+    /// Reserve the first or next history page, coalescing duplicate activation.
+    pub fn begin_work_history(&mut self) -> Option<WorkHistoryRequest> {
+        if self.board().is_none()
+            || self.work_history.awaiting_board
+            || self.work_history.loading
+            || self.work_history.exhausted()
+        {
+            return None;
+        }
+        let before = self.work_history.total.and(self.work_history.next.clone());
+        self.work_history.loading = true;
+        self.work_history.issue = None;
+        Some(WorkHistoryRequest {
+            revision: self.work_history.revision,
+            before,
+        })
+    }
+
+    /// Restore one request to retryable state when browser admission fails.
+    pub fn refuse_work_history_request(&mut self, revision: u64, issue: String) {
+        if revision == self.work_history.revision {
+            self.work_history.loading = false;
+            self.work_history.issue = Some(issue);
+        }
+    }
+
+    /// Invalidate terminal rows until the corresponding open-board refresh lands.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn invalidate_work_history(&mut self) {
+        if self.work_history.total.is_some() || self.work_history.loading {
+            self.work_history.invalidate(true);
+            if let Some(board) = self.board.value.as_mut() {
+                board.tasks.retain(|task| {
+                    task.workflow.body.status == "pending"
+                        && task.workflow.body.completion.is_none()
+                });
+            }
+        }
+    }
+
     /// On-demand detail state retained only for this admitted capability scope.
     #[must_use]
     pub fn task_detail(&self, task: &wire::TaskStamp) -> Option<&TaskDetailState> {
@@ -830,7 +945,68 @@ impl CanvasRuntime {
             runtime
                 .board
                 .replace(admitted.scope(), BoardView::from(answer));
+            runtime.work_history.invalidate(false);
         });
+    }
+    /// Merge one correlated terminal page into the current open board.
+    pub fn apply_work_history(
+        &mut self,
+        request: &WorkHistoryRequest,
+        admitted: &Admitted<Response<BoardAnswer>>,
+    ) {
+        if admitted.scope() != self.accepted.scope()
+            || request.revision != self.work_history.revision
+        {
+            return;
+        }
+        self.work_history.loading = false;
+        let answer = match &admitted.get().outcome {
+            Outcome::Reply(reply) => &reply.body,
+            Outcome::Refusal(refusal) => {
+                let diagnostic = refusal.diagnostic();
+                self.work_history.issue = Some(
+                    diagnostic
+                        .map_or("board::history-refused", wire::RefusalDiagnostic::reason)
+                        .to_owned(),
+                );
+                return;
+            }
+            Outcome::Fault(fault) => {
+                self.work_history.issue = Some(fault.reason.clone());
+                return;
+            }
+        };
+        let Some(page) = answer.history.as_ref() else {
+            self.work_history.issue = Some("board::history-metadata-missing".to_owned());
+            return;
+        };
+        if page.before != request.before
+            || answer.tasks.len() > usize::from(page.limit)
+            || answer.tasks.iter().any(|task| {
+                task.workflow.body.status == "pending" && task.workflow.body.completion.is_none()
+            })
+        {
+            self.work_history.issue = Some("board::history-answer-invalid".to_owned());
+            return;
+        }
+        let Some(board) = self.board.value.as_mut() else {
+            self.work_history.issue = Some("board::history-open-board-missing".to_owned());
+            return;
+        };
+        let mut identities = board
+            .tasks
+            .iter()
+            .map(|task| task.statement.body.born.clone())
+            .collect::<BTreeSet<_>>();
+        for task in &answer.tasks {
+            if identities.insert(task.statement.body.born.clone()) {
+                board.tasks.push(task.clone());
+                self.work_history.loaded = self.work_history.loaded.saturating_add(1);
+            }
+        }
+        self.work_history.total = Some(page.total);
+        self.work_history.next = page.next.clone();
+        self.work_history.issue = None;
     }
     /// Apply one correlated detail response without crossing capability scope.
     pub fn apply_task_detail(
@@ -949,6 +1125,7 @@ impl CanvasRuntime {
                 wire::ReplyPosition::Snapshot(cursor) => Some(cursor),
                 wire::ReplyPosition::Direct {} => None,
             },
+
             Outcome::Refusal(_) | Outcome::Fault(_) => None,
         };
         self.apply_response(admitted, |runtime, answer| {
@@ -1125,6 +1302,14 @@ impl Stale {
             runtime.invalidate_task_relations(&self.task_relation_kinds);
         }
         self.task_relation_kinds.clear();
+    }
+
+    /// Hold terminal paging until a changed task snapshot has been refreshed.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn resolve_work_history(&self, runtime: &mut CanvasRuntime, changed: bool) {
+        if changed && self.board {
+            runtime.invalidate_work_history();
+        }
     }
 
     /// Affected open task details, in durable identity order.

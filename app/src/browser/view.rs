@@ -87,6 +87,7 @@ pub(super) struct CanvasRender<'a> {
     pub agents: &'a AgentControls,
     pub selected_task: &'a UseStateHandle<Option<wire::TaskStamp>>,
     pub work_map: &'a UseStateHandle<WorkMapState>,
+    pub work_history: &'a work_history::Controls,
     pub detail_close: &'a NodeRef,
     pub note_text: &'a UseStateHandle<String>,
     pub note_notice: &'a UseStateHandle<Notice>,
@@ -408,9 +409,13 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
                     render.work_scope,
                     stale,
                     selected,
-                    render.work_map,
-                    render.select_task.clone(),
-                    toggle_map_root,
+                    work_board::WorkBoardControls {
+                        map: render.work_map,
+                        select: render.select_task.clone(),
+                        toggle_map_root,
+                        history_state: runtime.map(CanvasRuntime::work_history),
+                        history: render.work_history,
+                    },
                 )}
             </section>
             {work_detail::render(work_detail::WorkDetailRender {

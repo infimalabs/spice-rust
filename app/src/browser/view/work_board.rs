@@ -3,10 +3,12 @@
 use std::cmp::Ordering;
 
 use super::*;
+use crate::runtime::WorkHistoryState;
 use crate::work::{WorkAvailability, WorkProject, WorkProjection, WorkScope, WorkTask};
 use wire::ClaimDisposition;
 
 use super::super::clock::Countdown;
+use super::super::work_history::Controls as WorkHistoryControls;
 
 const OPERATIONAL_BUCKETS: [WorkAvailability; 4] = [
     WorkAvailability::InFlight,
@@ -15,15 +17,28 @@ const OPERATIONAL_BUCKETS: [WorkAvailability; 4] = [
     WorkAvailability::Deferred,
 ];
 
+pub(super) struct WorkBoardControls<'a> {
+    pub map: &'a UseStateHandle<WorkMapState>,
+    pub select: Callback<wire::TaskStamp>,
+    pub toggle_map_root: Callback<wire::TaskStamp>,
+    pub history_state: Option<&'a WorkHistoryState>,
+    pub history: &'a WorkHistoryControls,
+}
+
 pub(super) fn render(
     work: &WorkProjection<'_>,
     scope: &WorkScope,
     stale: bool,
     selected: Option<&wire::TaskStamp>,
-    map: &UseStateHandle<WorkMapState>,
-    select: Callback<wire::TaskStamp>,
-    toggle_map_root: Callback<wire::TaskStamp>,
+    controls: WorkBoardControls<'_>,
 ) -> Html {
+    let WorkBoardControls {
+        map,
+        select,
+        toggle_map_root,
+        history_state,
+        history: history_controls,
+    } = controls;
     let projects = work
         .projects()
         .iter()
@@ -48,21 +63,74 @@ pub(super) fn render(
                     })}
                 </div>
             }
-            <details class="work-history">
+            <details
+                class="work-history"
+                open={*history_controls.open}
+                ontoggle={history_controls.toggle.clone()}
+            >
                 <summary>
                     <span>{"History"}</span>
-                    <span class="work-history-count">{history.len()}</span>
+                    <span class="work-history-count">
+                        {history_count(history_state)}
+                    </span>
                 </summary>
-                if history.is_empty() {
-                    <div class="empty">{"No completed or deleted tasks in this scope."}</div>
-                } else {
-                    <div class="work-history-list">
-                        {for history.into_iter().map(|task| render_card(task, selected, map, &select, &toggle_map_root))}
-                    </div>
+                if *history_controls.open {
+                    if history_state.is_some_and(WorkHistoryState::loading) {
+                        <p class="work-board-state" role="status">{"Loading history…"}</p>
+                    }
+                    if let Some(issue) = history_state.and_then(WorkHistoryState::issue) {
+                        <div class="work-history-actions">
+                            <p class="form-refusal" role="alert">{issue}</p>
+                            <button type="button" onclick={history_controls.load.clone()}>{"Retry"}</button>
+                        </div>
+                    }
+                    if history.is_empty()
+                        && history_state.and_then(WorkHistoryState::total) == Some(0)
+                    {
+                        <div class="empty">{"No completed or deleted tasks in this scope."}</div>
+                    } else if history.is_empty()
+                        && history_state.is_some_and(|state| state.loaded() > 0)
+                    {
+                        <div class="empty">
+                            {format!(
+                                "No history in this scope among {} loaded tasks.",
+                                history_state.map_or(0, WorkHistoryState::loaded),
+                            )}
+                        </div>
+                    } else if !history.is_empty() {
+                        <div class="work-history-list">
+                            {for history.into_iter().map(|task| render_card(task, selected, map, &select, &toggle_map_root))}
+                        </div>
+                    }
+                    if history_state.is_some_and(|state| {
+                        state.next().is_some() && !state.loading() && state.issue().is_none()
+                    }) {
+                        <div class="work-history-actions">
+                            <button type="button" onclick={history_controls.load.clone()}>
+                                {"Load more"}
+                            </button>
+                        </div>
+                    } else if history_state.is_some_and(|state| {
+                        state.exhausted() && state.total().is_some_and(|total| total > 0)
+                    }) {
+                        <p class="work-board-state" role="status">
+                            {format!(
+                                "All {} history tasks loaded.",
+                                history_state.map_or(0, WorkHistoryState::loaded),
+                            )}
+                        </p>
+                    }
                 }
             </details>
         </div>
     }
+}
+
+fn history_count(state: Option<&WorkHistoryState>) -> String {
+    state.and_then(WorkHistoryState::total).map_or_else(
+        || "Not loaded".to_owned(),
+        |total| format!("{} / {total}", state.map_or(0, WorkHistoryState::loaded)),
+    )
 }
 
 fn render_project(

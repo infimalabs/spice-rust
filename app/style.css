@@ -1152,6 +1152,10 @@ tbody tr:last-child td { border-bottom: 0; }
   padding: 12px;
 }
 
+.work-history-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px; }
+
+.work-history-actions .form-refusal { margin: 0; }
+
 /* Cards never animate or expose a drag cursor: board updates replace their
    stable keyed position without implying an operator mutation. */
 

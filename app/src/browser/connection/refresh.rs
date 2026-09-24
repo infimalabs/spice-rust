@@ -74,9 +74,32 @@ async fn send_board(
         actions,
         PendingKind::Board,
         CommandKind::BoardRead,
-        BoardRead::All { family: None },
+        BoardRead::Open,
     )
     .await
+}
+pub(super) async fn send_work_history(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    request: &crate::runtime::WorkHistoryRequest,
+) -> Result<Option<CanonicalUuid>, String> {
+    send_typed(
+        principal,
+        writer,
+        actions,
+        PendingKind::WorkHistory {
+            request: request.clone(),
+        },
+        CommandKind::BoardRead,
+        vec![],
+        BoardRead::History {
+            before: request.before.clone(),
+            limit: 50,
+        },
+    )
+    .await
+    .map(Some)
 }
 pub(super) async fn send_task_detail(
     principal: &Principal,
