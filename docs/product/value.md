@@ -579,10 +579,12 @@ team. Selecting a mode directly replaces pane content; there is no slide
 transition. Info and Work replace Chat completely and do not mount the message
 plane. Chat's member columns own horizontal overflow. The browser retains native
 ownership of every vertical wheel, touch, and keyboard gesture. The composer
-passively follows the same direction, clipping or revealing by the input delta
-without cancelling the event or writing the message plane's scroll position.
-Home and End set the corresponding composer exposure while reaching the native
-stream edge in one command. The team toolbar and ticker remain fixed above both.
+overlays the top of the message plane, whose content starts below a spacer of
+the composer's height, and moves exactly as far as the cards scroll until it is
+fully hidden or revealed. It reads as part of the stream, never cancels the
+event, and never writes the plane's scroll position. Home and End set the
+corresponding composer exposure while reaching the native stream edge in one
+command. The team toolbar and ticker remain fixed above both.
 
 **Value:** the operator can turn the whole console into a reading surface
 without a toggle, threshold, or animation. The composer remains mounted, so

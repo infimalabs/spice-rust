@@ -1,45 +1,88 @@
-//! Passive scroll-input projection onto one team's composer exposure.
+//! One team's composer exposure, fused to the Chat plane's scroll motion.
+//!
+//! The composer overlays the top of the plane, whose scroll content starts
+//! below an equal spacer. Every change to the plane's scroll position moves the
+//! composer by the same distance until it is fully revealed or hidden, so it
+//! reads as part of the stream. Only Mosaic's own anchor correction, which keeps
+//! cards visually still, is excluded.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
-use web_sys::{Element, HtmlElement, KeyboardEvent, ResizeObserver, TouchEvent, WheelEvent};
+use wasm_bindgen::{JsCast, JsValue};
+use web_sys::{Element, Event, HtmlElement, KeyboardEvent, ResizeObserver};
 use yew::prelude::*;
 
 const COLLAPSE_EPSILON_PX: f64 = 0.25;
-const WHEEL_LINE_PX: f64 = 16.0;
 
-#[derive(Default)]
 struct CollapseState {
     offset: f64,
     maximum: f64,
-    touch_y: Option<i32>,
+    /// The plane scroll position the offset last followed.
+    scroll_top: f64,
+    /// `scrollTop` read through JavaScript keeps subpixel positions that the
+    /// integer `web_sys` getter truncates, so the composer never drifts off the
+    /// cards on high-density displays.
+    scroll_top_key: JsValue,
+}
+
+impl CollapseState {
+    fn new() -> Self {
+        Self {
+            offset: 0.0,
+            maximum: 0.0,
+            scroll_top: 0.0,
+            scroll_top_key: JsValue::from_str("scrollTop"),
+        }
+    }
+
+    fn plane_scroll_top(&self, scroller: &Element) -> f64 {
+        js_sys::Reflect::get(scroller, &self.scroll_top_key)
+            .ok()
+            .and_then(|top| top.as_f64())
+            .unwrap_or_else(|| f64::from(scroller.scroll_top()))
+    }
 }
 
 type SharedCollapse = Rc<RefCell<CollapseState>>;
 
+/// The composer exposure a plane's scroll owner consults before correcting it.
+#[derive(Clone)]
+pub(super) struct ComposerCollapse(SharedCollapse);
+
+impl ComposerCollapse {
+    /// Write a programmatic scroll position without moving the composer.
+    pub(super) fn correct_scroll(&self, scroller: &Element, top: i32) {
+        let before = self.0.borrow().plane_scroll_top(scroller);
+        scroller.set_scroll_top(top);
+        let mut state = self.0.borrow_mut();
+        let applied = state.plane_scroll_top(scroller) - before;
+        state.scroll_top += applied;
+    }
+}
+
 #[hook]
-pub(super) fn use_composer_collapse(host: NodeRef) {
-    let state = use_mut_ref(CollapseState::default);
-    use_effect_with(host, move |host| {
-        let registration = host
-            .cast::<Element>()
-            .and_then(|scroller| Registration::new(scroller, state));
-        move || drop(registration)
-    });
+pub(super) fn use_composer_collapse(host: NodeRef) -> ComposerCollapse {
+    let state = use_mut_ref(CollapseState::new);
+    {
+        let state = Rc::clone(&state);
+        use_effect_with(host, move |host| {
+            let registration = host
+                .cast::<Element>()
+                .and_then(|scroller| Registration::new(scroller, state));
+            move || drop(registration)
+        });
+    }
+    ComposerCollapse(state)
 }
 
 struct Registration {
     scroller: Element,
     observer: ResizeObserver,
     _resize: Closure<dyn FnMut(js_sys::Array, ResizeObserver)>,
-    wheel: Closure<dyn FnMut(WheelEvent)>,
+    scroll: Closure<dyn FnMut(Event)>,
     key: Closure<dyn FnMut(KeyboardEvent)>,
-    touch_start: Closure<dyn FnMut(TouchEvent)>,
-    touch_move: Closure<dyn FnMut(TouchEvent)>,
-    touch_end: Closure<dyn FnMut(TouchEvent)>,
 }
 
 fn composer_elements(scroller: &Element) -> Option<(HtmlElement, HtmlElement)> {
@@ -61,6 +104,10 @@ fn composer_elements(scroller: &Element) -> Option<(HtmlElement, HtmlElement)> {
 impl Registration {
     fn new(scroller: Element, state: SharedCollapse) -> Option<Self> {
         let (surface, composer) = composer_elements(&scroller)?;
+        {
+            let mut state = state.borrow_mut();
+            state.scroll_top = state.plane_scroll_top(&scroller);
+        }
         sync_metrics(&surface, &composer, &state);
 
         let resized_surface = surface.clone();
@@ -72,81 +119,34 @@ impl Registration {
         let observer = ResizeObserver::new(resize.as_ref().unchecked_ref()).ok()?;
         observer.observe(&composer);
 
-        let wheel_scroller = scroller.clone();
-        let wheel_surface = surface.clone();
-        let wheel_state = Rc::clone(&state);
-        let wheel = Closure::<dyn FnMut(WheelEvent)>::new(move |event| {
-            apply_input_delta(
-                &wheel_surface,
-                &wheel_state,
-                wheel_delta(&wheel_scroller, &event),
-            );
+        let scroll_scroller = scroller.clone();
+        let scroll_surface = surface.clone();
+        let scroll_state = Rc::clone(&state);
+        let scroll = Closure::<dyn FnMut(Event)>::new(move |_| {
+            follow_scroll(&scroll_surface, &scroll_scroller, &scroll_state);
         });
         scroller
-            .add_event_listener_with_callback("wheel", wheel.as_ref().unchecked_ref())
-            .expect("the owned activity plane accepts its wheel listener");
+            .add_event_listener_with_callback("scroll", scroll.as_ref().unchecked_ref())
+            .expect("the owned activity plane accepts its scroll listener");
 
-        let key_scroller = scroller.clone();
-        let key_surface = surface.clone();
-        let key_state = Rc::clone(&state);
-        let key = Closure::<dyn FnMut(KeyboardEvent)>::new(move |event| {
-            let Some(requested) = keyboard_offset(&key_scroller, &key_state, &event) else {
-                return;
+        let key = Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
+            let requested = match event.key().as_str() {
+                "Home" => 0.0,
+                "End" => state.borrow().maximum,
+                _ => return,
             };
-            set_collapse(&key_surface, &key_state, requested);
+            set_collapse(&surface, &state, requested);
         });
         scroller
             .add_event_listener_with_callback("keydown", key.as_ref().unchecked_ref())
             .expect("the owned activity plane accepts its keyboard listener");
 
-        let start_state = Rc::clone(&state);
-        let touch_start = Closure::<dyn FnMut(TouchEvent)>::new(move |event| {
-            start_state.borrow_mut().touch_y = first_touch_y(&event);
-        });
-        scroller
-            .add_event_listener_with_callback("touchstart", touch_start.as_ref().unchecked_ref())
-            .expect("the owned activity plane accepts its touch-start listener");
-
-        let move_surface = surface;
-        let move_state = Rc::clone(&state);
-        let touch_move = Closure::<dyn FnMut(TouchEvent)>::new(move |event| {
-            let Some(y) = first_touch_y(&event) else {
-                return;
-            };
-            let delta = {
-                let mut state = move_state.borrow_mut();
-                let Some(previous) = state.touch_y.replace(y) else {
-                    return;
-                };
-                f64::from(previous - y)
-            };
-            apply_input_delta(&move_surface, &move_state, delta);
-        });
-        scroller
-            .add_event_listener_with_callback("touchmove", touch_move.as_ref().unchecked_ref())
-            .expect("the owned activity plane accepts its touch-move listener");
-
-        let end_state = state;
-        let touch_end = Closure::<dyn FnMut(TouchEvent)>::new(move |_| {
-            end_state.borrow_mut().touch_y = None;
-        });
-        let touch_end_callback = touch_end.as_ref().unchecked_ref();
-        scroller
-            .add_event_listener_with_callback("touchend", touch_end_callback)
-            .expect("the owned activity plane accepts its touch-end listener");
-        scroller
-            .add_event_listener_with_callback("touchcancel", touch_end_callback)
-            .expect("the owned activity plane accepts its touch-cancel listener");
-
         Some(Self {
             scroller,
             observer,
             _resize: resize,
-            wheel,
+            scroll,
             key,
-            touch_start,
-            touch_move,
-            touch_end,
         })
     }
 }
@@ -156,72 +156,30 @@ impl Drop for Registration {
         self.observer.disconnect();
         let _ = self
             .scroller
-            .remove_event_listener_with_callback("wheel", self.wheel.as_ref().unchecked_ref());
+            .remove_event_listener_with_callback("scroll", self.scroll.as_ref().unchecked_ref());
         let _ = self
             .scroller
             .remove_event_listener_with_callback("keydown", self.key.as_ref().unchecked_ref());
-        let _ = self.scroller.remove_event_listener_with_callback(
-            "touchstart",
-            self.touch_start.as_ref().unchecked_ref(),
-        );
-        let _ = self.scroller.remove_event_listener_with_callback(
-            "touchmove",
-            self.touch_move.as_ref().unchecked_ref(),
-        );
-        let callback = self.touch_end.as_ref().unchecked_ref();
-        let _ = self
-            .scroller
-            .remove_event_listener_with_callback("touchend", callback);
-        let _ = self
-            .scroller
-            .remove_event_listener_with_callback("touchcancel", callback);
     }
 }
 
-fn first_touch_y(event: &TouchEvent) -> Option<i32> {
-    event.touches().item(0).map(|touch| touch.client_y())
-}
-
-fn wheel_delta(scroller: &Element, event: &WheelEvent) -> f64 {
-    match event.delta_mode() {
-        WheelEvent::DOM_DELTA_LINE => event.delta_y() * WHEEL_LINE_PX,
-        WheelEvent::DOM_DELTA_PAGE => event.delta_y() * f64::from(scroller.client_height()),
-        _ => event.delta_y(),
-    }
-}
-
-fn keyboard_offset(
-    scroller: &Element,
-    state: &SharedCollapse,
-    event: &KeyboardEvent,
-) -> Option<f64> {
-    let state = state.borrow();
-    match event.key().as_str() {
-        "Home" => Some(0.0),
-        "End" => Some(state.maximum),
-        "ArrowDown" => Some(state.offset + WHEEL_LINE_PX),
-        "ArrowUp" => Some(state.offset - WHEEL_LINE_PX),
-        "PageDown" => Some(state.offset + f64::from(scroller.client_height())),
-        "PageUp" => Some(state.offset - f64::from(scroller.client_height())),
-        " " if event.shift_key() => Some(state.offset - f64::from(scroller.client_height())),
-        " " => Some(state.offset + f64::from(scroller.client_height())),
-        _ => None,
-    }
-}
-
-fn apply_input_delta(surface: &HtmlElement, state: &SharedCollapse, delta: f64) {
-    if !delta.is_finite() || delta.abs() <= COLLAPSE_EPSILON_PX {
-        return;
-    }
+fn follow_scroll(surface: &HtmlElement, scroller: &Element, state: &SharedCollapse) {
     let requested = {
-        let state = state.borrow();
-        crate::mosaic::composer_collapse_offset(state.offset, state.maximum, delta)
+        let mut state = state.borrow_mut();
+        let top = state.plane_scroll_top(scroller);
+        let scrolled = top - state.scroll_top;
+        state.scroll_top = top;
+        crate::mosaic::composer_collapse_offset(state.offset, state.maximum, scrolled, top)
     };
     set_collapse(surface, state, requested);
 }
 
 fn sync_metrics(surface: &HtmlElement, composer: &HtmlElement, state: &SharedCollapse) {
     let maximum = f64::from(composer.offset_height());
+    surface
+        .style()
+        .set_property("--team-composer-block", &format!("{maximum}px"))
+        .expect("the composer block CSS property is valid");
     let requested = {
         let mut state = state.borrow_mut();
         let was_fully_collapsed = state.maximum > COLLAPSE_EPSILON_PX
