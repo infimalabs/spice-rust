@@ -96,12 +96,39 @@ impl PartialEq for ActivityFingerprint {
                 },
             ) => {
                 left_worktree == right_worktree
-                    && (Rc::ptr_eq(left_message, right_message) || left_message == right_message)
+                    && (Rc::ptr_eq(left_message, right_message)
+                        || same_measured_agent_content(left_message, right_message))
             }
             (Self::Lifecycle(left), Self::Lifecycle(right)) => left == right,
             _ => false,
         }
     }
+}
+
+/// Receipt settlement changes only a fixed-width inline pill. Treating it as
+/// new measured content would transiently rewrite the live card's measurement
+/// attributes and could move its packed-plane placement.
+fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMessage) -> bool {
+    if left.lane != right.lane
+        || left.author != right.author
+        || left.locus != right.locus
+        || left.authored != right.authored
+        || left.authored_synthetic != right.authored_synthetic
+        || left.observed != right.observed
+        || left.activity != right.activity
+        || left.final_answer != right.final_answer
+        || left.text.trim().is_empty() != right.text.trim().is_empty()
+        || left.unavailable_tool_terminals != right.unavailable_tool_terminals
+        || left.boundary != right.boundary
+        || left.media != right.media
+    {
+        return false;
+    }
+    let left = crate::composer_markdown::render_received_with_badges(&left.text, left.badges);
+    let right = crate::composer_markdown::render_received_with_badges(&right.text, right.badges);
+    left.html == right.html
+        && left.image_only == right.image_only
+        && left.diagrams == right.diagrams
 }
 
 impl ActivityCard {
