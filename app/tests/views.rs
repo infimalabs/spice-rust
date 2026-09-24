@@ -14,7 +14,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use app::{Axis, Pane};
+use app::{Axis, CanvasDestination, Pane};
 
 /// Every axis, gathered by exhaustive descent rather than by reading `ALL`.
 ///
@@ -25,6 +25,19 @@ fn descend_axes() -> Vec<Axis> {
         Axis::Flow => Some(Axis::Topology),
         Axis::Topology => None,
     })
+    .collect()
+}
+
+/// Every global Canvas destination, independent of its convenience registry.
+fn descend_canvas_destinations() -> Vec<CanvasDestination> {
+    std::iter::successors(
+        Some(CanvasDestination::Info),
+        |destination| match destination {
+            CanvasDestination::Info => Some(CanvasDestination::Work),
+            CanvasDestination::Work => Some(CanvasDestination::Chat),
+            CanvasDestination::Chat => None,
+        },
+    )
     .collect()
 }
 
@@ -55,6 +68,48 @@ fn the_axis_registry_lists_every_axis_that_exists() {
 #[test]
 fn the_pane_registry_lists_every_pane_that_exists() {
     assert_eq!(descend_panes(), Pane::ALL.to_vec());
+}
+
+#[test]
+fn every_global_destination_has_one_stable_route_value() {
+    let destinations = descend_canvas_destinations();
+    assert_eq!(destinations, CanvasDestination::ALL);
+
+    let mut route_values = BTreeSet::new();
+    for destination in destinations {
+        let value = destination.route_value();
+        assert!(
+            route_values.insert(value),
+            "{value:?} names two destinations"
+        );
+        assert_eq!(
+            CanvasDestination::from_route_value(Some(value)),
+            destination
+        );
+    }
+}
+
+#[test]
+fn missing_or_invalid_routes_retain_the_legacy_chat_default() {
+    assert_eq!(
+        CanvasDestination::from_route_value(None),
+        CanvasDestination::Chat
+    );
+    assert_eq!(
+        CanvasDestination::from_route_value(Some("unknown")),
+        CanvasDestination::Chat
+    );
+}
+
+#[test]
+fn global_surface_state_round_trips_through_every_destination() {
+    for destination in descend_canvas_destinations() {
+        let axis = destination.axis().unwrap_or(Axis::Topology);
+        assert_eq!(
+            CanvasDestination::from_surface(axis, destination == CanvasDestination::Chat),
+            destination
+        );
+    }
 }
 
 #[test]
