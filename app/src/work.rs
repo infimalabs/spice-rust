@@ -302,6 +302,22 @@ impl<'a> WorkTask<'a> {
             .filter(|dependency| !dependency.satisfied)
     }
 
+    /// The actor currently working this open task.
+    ///
+    /// Terminal rows can retain stale active-claim evidence, so lifecycle must
+    /// agree before a claim is presented as live possession.
+    #[must_use]
+    pub fn working_claimant(&self) -> Option<&'a Actor> {
+        if self.availability != WorkAvailability::InFlight {
+            return None;
+        }
+        self.row
+            .claim
+            .as_ref()
+            .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
+            .map(|claim| &claim.body.actor)
+    }
+
     /// The actor that owns this task: its active claimant, else its assignee.
     #[must_use]
     pub fn owner(&self) -> Option<&'a Actor> {
@@ -928,6 +944,11 @@ mod tests {
                 WorkAvailability::Ready,
             ]
         );
+        assert_eq!(projection.tasks[0].working_claimant(), None);
+        assert_eq!(
+            projection.tasks[1].working_claimant(),
+            Some(&Actor::Operator),
+        );
         assert!(projection.tasks[1].environment_blocked);
         assert!(projection.tasks[2].environment_blocked);
         assert!(projection.tasks[3].environment_blocked);
@@ -1251,5 +1272,11 @@ mod tests {
         assert_eq!(projection.tasks[0].owner(), Some(&Actor::Operator));
         assert_eq!(projection.tasks[1].owner(), Some(&Actor::Spice));
         assert_eq!(projection.tasks[2].owner(), None);
+        assert_eq!(
+            projection.tasks[0].working_claimant(),
+            Some(&Actor::Operator),
+        );
+        assert_eq!(projection.tasks[1].working_claimant(), None);
+        assert_eq!(projection.tasks[2].working_claimant(), None);
     }
 }
