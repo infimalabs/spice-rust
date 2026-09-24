@@ -58,7 +58,6 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
             >
                 <nav class="task-pill-strip" aria-label="Open task projects">
                     {for task_pills.into_iter().map(|pill| {
-                        let menu_open = render.menu_open.clone();
                         let navigate = render.navigate.clone();
                         let work_scope = render.work_scope.clone();
                         let work_scope_notice = render.work_scope_notice.clone();
@@ -92,7 +91,6 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                                     work_scope.set(WorkScope::Stem(identity.clone()));
                                     work_scope_notice.set(None);
                                     navigate.emit(CanvasDestination::Work);
-                                    menu_open.set(false);
                                 })}
                             >
                                 <span>{pill.stem.clone()}</span>
@@ -116,7 +114,6 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
     html! {
         <nav class="canvas-navigation team-mode-rail" aria-label="Canvas views">
             {for CanvasDestination::ALL.map(|destination| {
-                let menu_open = render.menu_open.clone();
                 let navigate = render.navigate.clone();
                 let work_scope = render.work_scope.clone();
                 let work_scope_notice = render.work_scope_notice.clone();
@@ -136,7 +133,6 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                                 work_scope_notice.set(None);
                             }
                             navigate.emit(destination);
-                            menu_open.set(false);
                         })}
                     >
                         <span class="team-mode-label">{destination.label()}</span>
