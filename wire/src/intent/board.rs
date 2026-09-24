@@ -706,6 +706,12 @@ pub struct BoardAnswer {
     /// Selected current task evidence; history pages are newest-workflow-first,
     /// while every other scope retains durable task-stamp order.
     pub tasks: Vec<BoardTask>,
+    /// Open-read allocation order: the successive choices of the resident
+    /// allocator's own selection step for a draining lane with no locality
+    /// history, so the first stamp is the task offered next. Standing is held
+    /// fixed across steps. Empty for every other read.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub offer: Vec<crate::TaskStamp>,
     /// Terminal-page metadata, present only for [`BoardRead::History`].
     #[serde(
         default,

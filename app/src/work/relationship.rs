@@ -704,6 +704,7 @@ mod tests {
             schema: 1,
             cursor: seq(100),
             tasks,
+            offer: Vec::new(),
             resident: wire::ResidentState::Seated,
             environment: Environment::journal_schema(1).expect("fixture schema"),
         }

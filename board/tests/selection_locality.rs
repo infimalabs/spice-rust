@@ -324,3 +324,69 @@ fn affinity_history_reads_the_indexed_newest_win_and_migrates_one_legacy_cell() 
         "another actor's head never supplies the cell"
     );
 }
+
+#[test]
+fn offer_order_is_select_repeated_over_the_work_not_yet_offered() {
+    let actor = Actor::Spice;
+    let other = Actor::Lane(uuid("019fbbde-5105-75a3-a76a-722afde1e499"));
+    let peer = peer_entry(
+        "BOARD-peer1",
+        other,
+        ".oops.correctness",
+        "board.alpha",
+        "todo",
+    );
+    let open = [
+        placed_entry("BOARD-a1", "board.alpha", "todo", 1),
+        placed_entry("BOARD-b1", "board.beta", "todo", 1),
+        placed_entry("BOARD-c1", "board.beta", "review", 40),
+        placed_entry("BOARD-d1", "board.gamma", "todo", 9),
+    ];
+    let recent = wire::ClaimCell {
+        project: "board.gamma".to_owned(),
+        phase: phase("todo"),
+    };
+    let entries = open
+        .iter()
+        .cloned()
+        .chain([peer.clone()])
+        .collect::<Vec<_>>();
+
+    let order = board::offer_order(
+        &entries,
+        &actor,
+        &all_projects(),
+        10,
+        Some(&recent),
+        &environment(),
+    )
+    .into_iter()
+    .map(|selection| selection.entry().born().clone())
+    .collect::<Vec<_>>();
+
+    let mut remaining = entries.clone();
+    let mut repeated = Vec::new();
+    while let Some(next) = board::select(
+        &remaining,
+        &actor,
+        &all_projects(),
+        10,
+        Some(&recent),
+        &environment(),
+    ) {
+        let born = next.entry().born().clone();
+        remaining.retain(|entry| entry.born() != &born);
+        repeated.push(born);
+    }
+    assert_eq!(order, repeated);
+    assert_eq!(
+        order,
+        [
+            stamp("BOARD-d1"),
+            stamp("BOARD-b1"),
+            stamp("BOARD-a1"),
+            stamp("BOARD-c1"),
+        ],
+        "locality leads within the band, peer crowding follows, and the oldest-band task is last"
+    );
+}

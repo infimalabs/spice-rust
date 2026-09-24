@@ -121,6 +121,7 @@ fn validated_snapshot_from_with_occupant(
             allocation_band: allocation.band(),
             recent_cell,
             tasks,
+            offer: Vec::new(),
             history: None,
             trust: positioned_trust(observed),
             residency,
@@ -918,6 +919,7 @@ pub(super) fn read_board(
     };
     let TaskSelection {
         tasks: selected,
+        evidence,
         history,
     } = match selected_tasks(&observed, read, &principal) {
         Ok(selection) => selection,
@@ -935,6 +937,13 @@ pub(super) fn read_board(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    if matches!(read, BoardRead::Open) {
+        snapshot.answer.offer = board_offer(&snapshot.entries, &snapshot.answer);
+        snapshot
+            .answer
+            .tasks
+            .retain(|task| !evidence.contains(&task.statement.body.born));
+    }
     if let BoardRead::All {
         family: Some(family),
     } = read
@@ -973,6 +982,29 @@ pub(super) fn read_board(
         snapshot.cursor,
         CommandAnswer::Board(Box::new(snapshot.answer)),
     )
+}
+
+/// The order the allocator would offer this board's work to a draining lane.
+///
+/// The Canvas asks no particular lane, so the reader is a neutral seat: every
+/// active claim is a peer's, no subscription narrows the creator team, and no
+/// locality history moves the band. Each step is `task next`'s own choice.
+pub(super) fn board_offer(entries: &[Entry], answer: &BoardAnswer) -> Vec<wire::TaskStamp> {
+    let subscription = wire::TeamSubscription {
+        team: wire::CanonicalUuid::new(uuid::Uuid::nil()),
+        policy: wire::intent::TeamLife::Drain,
+    };
+    board::offer_order(
+        entries,
+        &wire::Actor::Spice,
+        &subscription,
+        answer.allocation_band,
+        None,
+        &answer.environment(),
+    )
+    .into_iter()
+    .map(|selection| selection.entry().born().clone())
+    .collect()
 }
 
 pub(super) fn read_graph(

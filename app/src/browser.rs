@@ -32,7 +32,7 @@ use crate::speech_queue::{
     Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
     SpeechRequest, SuppressAutomatic,
 };
-use crate::work::{WorkProjection, WorkScope};
+use crate::work::{WorkArrangement, WorkProjection, WorkScope};
 use crate::{
     Axis, CanvasDestination, CanvasRuntime, Principal, Session, SteerPane, StreamDirective,
     TaskDetailState, TeamDestination, stale_reads,
@@ -502,6 +502,7 @@ fn canvas_app() -> Html {
     let (axis, mosaic) = navigation::use_global_destination(canvas_menu_open.clone());
     let work_scope = use_state(WorkScope::default);
     let work_scope_notice = use_state(|| None::<String>);
+    let work_arrangement = use_state(WorkArrangement::default);
     let identity = use_state(|| None::<CanvasIdentity>);
     let canvas_update = use_state(|| None::<CanvasUpdate>);
     let team_controls = use_reducer(TeamControls::restore);
@@ -564,14 +565,7 @@ fn canvas_app() -> Html {
     watchband::use_team_fleet_right_edge(team_fleet.clone(), team_count);
     let surface_view = surface.read();
     let work = project_work(surface_view.as_ref());
-    let work_scope_available = work
-        .as_ref()
-        .map(|projection| projection.contains_scope(&work_scope));
-    use_work_scope_reconciliation(
-        work_scope_available,
-        work_scope.clone(),
-        work_scope_notice.clone(),
-    );
+    use_work_scope_reconciliation(work.as_ref(), work_scope.clone(), work_scope_notice.clone());
 
     let refresh = refresh_callback(
         sender.clone(),
@@ -588,6 +582,7 @@ fn canvas_app() -> Html {
             canvas_menu_open: &canvas_menu_open,
             work_scope: &work_scope,
             work_scope_notice: &work_scope_notice,
+            work_arrangement: &work_arrangement,
             identity: &identity,
             canvas_update: &canvas_update,
             team_controls: &team_controls,
@@ -633,10 +628,11 @@ fn teamed_lane_count(surface: &SurfaceData) -> usize {
 
 #[hook]
 fn use_work_scope_reconciliation(
-    available: Option<bool>,
+    work: Option<&WorkProjection<'_>>,
     scope: UseStateHandle<WorkScope>,
     notice: UseStateHandle<Option<String>>,
 ) {
+    let available = work.map(|projection| projection.contains_scope(&scope));
     use_effect_with(
         ((*scope).clone(), available),
         move |(requested, available)| {

@@ -1,28 +1,64 @@
-//! Deterministic card workspace for the global Work surface.
+//! One deterministic card board for the global Work surface.
+//!
+//! Every in-scope project shares the same four lifecycle lanes. Cards default
+//! to the resident allocator's offer order, so the task offered next leads;
+//! newest-first creation order and attribute clusters behind thin labelled
+//! separators are secondary arrangements of the same cards. The board header
+//! stays pinned under the command bar while the page scrolls.
 
 use std::cmp::Ordering;
 
 use super::*;
-use crate::runtime::WorkHistoryState;
-use crate::work::{WorkAvailability, WorkProject, WorkProjection, WorkScope, WorkTask};
+use crate::runtime::{LaneView, WorkHistoryState};
+use crate::work::{
+    self as model, WorkArrangement, WorkAvailability, WorkCluster, WorkClusterKey, WorkClustering,
+    WorkOrder, WorkProjection, WorkScope, WorkTask,
+};
 use wire::ClaimDisposition;
 
 use super::super::clock::Countdown;
 use super::super::work_history::Controls as WorkHistoryControls;
 
-const OPERATIONAL_BUCKETS: [WorkAvailability; 4] = [
+const OPEN_LANES: [WorkAvailability; 4] = [
     WorkAvailability::InFlight,
     WorkAvailability::Ready,
     WorkAvailability::Blocked,
     WorkAvailability::Deferred,
 ];
 
+const ORDERS: [(WorkOrder, &str, &str); 2] = [
+    (
+        WorkOrder::Offer,
+        "Next up",
+        "The order the allocator offers work: the next task leads",
+    ),
+    (WorkOrder::Newest, "Newest", "Newest created first"),
+];
+
+const CLUSTERINGS: [(WorkClustering, &str); 4] = [
+    (WorkClustering::None, "None"),
+    (WorkClustering::Project, "Project"),
+    (WorkClustering::Phase, "Phase"),
+    (WorkClustering::Owner, "Owner"),
+];
+
 pub(super) struct WorkBoardControls<'a> {
     pub map: &'a UseStateHandle<WorkMapState>,
     pub select: Callback<wire::TaskStamp>,
     pub toggle_map_root: Callback<wire::TaskStamp>,
+    pub arrangement: &'a UseStateHandle<WorkArrangement>,
+    pub lanes: Option<&'a LaneView>,
     pub history_state: Option<&'a WorkHistoryState>,
     pub history: &'a WorkHistoryControls,
+}
+
+/// What every card on the board reads besides its own task.
+struct Cards<'a> {
+    selected: Option<&'a wire::TaskStamp>,
+    map: &'a UseStateHandle<WorkMapState>,
+    select: &'a Callback<wire::TaskStamp>,
+    toggle_map_root: &'a Callback<wire::TaskStamp>,
+    lanes: Option<&'a LaneView>,
 }
 
 pub(super) fn render(
@@ -36,30 +72,50 @@ pub(super) fn render(
         map,
         select,
         toggle_map_root,
+        arrangement: arrangement_state,
+        lanes,
         history_state,
         history: history_controls,
     } = controls;
-    let projects = work
-        .projects()
+    let cards = Cards {
+        selected,
+        map,
+        select: &select,
+        toggle_map_root: &toggle_map_root,
+        lanes,
+    };
+    let arrangement = **arrangement_state;
+    let board_lanes =
+        OPEN_LANES.map(|availability| (availability, work.lane(availability, scope, arrangement)));
+    let open = board_lanes
         .iter()
-        .enumerate()
-        .filter(|(_, project)| project.counts().has_open())
-        .filter(|(_, project)| project_in_scope(work, project, scope))
-        .collect::<Vec<_>>();
+        .flat_map(|(_, clusters)| clusters)
+        .map(|cluster| cluster.tasks.len())
+        .sum::<usize>();
     let history = history_tasks(work, scope);
     html! {
-        <div class="work-board" aria-label="Work board">
+        <div
+            class="work-board"
+            aria-label="Work board"
+            data-work-order={order_key(arrangement.order)}
+            data-work-clustering={clustering_key(arrangement.clustering)}
+        >
+            <header class="work-board-header">
+                <h2>{"Open tasks"}</h2>
+                <span class="section-count">{format!("{open} tasks")}</span>
+                {render_arrangement(arrangement_state)}
+            </header>
             if stale {
                 <p class="work-board-state" role="status">
                     {"Showing the last admitted board snapshot while reconnecting."}
                 </p>
             }
-            if projects.is_empty() {
+            if open == 0 {
                 <div class="empty">{"No open tasks in this scope."}</div>
             } else {
-                <div class="work-swimlanes">
-                    {for projects.into_iter().map(|(index, project)| {
-                        render_project(work, project, index, selected, map, &select, &toggle_map_root)
+                <div class="work-lanes">
+                    {for board_lanes.into_iter().map(|(availability, clusters)| {
+                        render_lane(availability, &clusters, &cards)
                     })}
                 </div>
             }
@@ -99,7 +155,7 @@ pub(super) fn render(
                         </div>
                     } else if !history.is_empty() {
                         <div class="work-history-list">
-                            {for history.into_iter().map(|task| render_card(task, selected, map, &select, &toggle_map_root))}
+                            {for history.into_iter().map(|task| render_card(task, &cards))}
                         </div>
                     }
                     if history_state.is_some_and(|state| {
@@ -133,89 +189,107 @@ fn history_count(state: Option<&WorkHistoryState>) -> String {
     )
 }
 
-fn render_project(
-    work: &WorkProjection<'_>,
-    project: &WorkProject<'_>,
-    index: usize,
-    selected: Option<&wire::TaskStamp>,
-    map: &UseStateHandle<WorkMapState>,
-    select: &Callback<wire::TaskStamp>,
-    toggle_map_root: &Callback<wire::TaskStamp>,
-) -> Html {
-    let heading = format!("work-project-{index}");
+fn render_arrangement(state: &UseStateHandle<WorkArrangement>) -> Html {
+    let current = **state;
+    let choice = |label: &'static str, title: Option<&'static str>, pressed, next| {
+        let state = state.clone();
+        html! {
+            <button
+                type="button"
+                title={title}
+                aria-pressed={bool::to_string(&pressed)}
+                onclick={Callback::from(move |_| state.set(next))}
+            >{label}</button>
+        }
+    };
     html! {
-        <section
-            key={project.project().to_owned()}
-            class="work-swimlane"
-            data-work-project={project.project().to_owned()}
-            aria-labelledby={heading.clone()}
-        >
-            <header class="work-swimlane-heading">
-                <div>
-                    <p class="work-project-suffix">{project_suffix(project.project())}</p>
-                    <h2 id={heading}>{project.project()}</h2>
-                </div>
-                <span class="section-count">{format!("{} open", project.counts().open())}</span>
-            </header>
-            <div class="work-buckets">
-                {for OPERATIONAL_BUCKETS.into_iter().map(|availability| {
-                    render_bucket(work, project, availability, selected, map, select, toggle_map_root)
-                })}
+        <div class="work-arrangement">
+            <div class="work-arrangement-group" role="group" aria-label="Order cards">
+                <span aria-hidden="true">{"Order"}</span>
+                {for ORDERS.into_iter().map(|(order, label, title)| choice(
+                    label,
+                    Some(title),
+                    current.order == order,
+                    WorkArrangement { order, ..current },
+                ))}
             </div>
-        </section>
+            <div class="work-arrangement-group" role="group" aria-label="Cluster cards">
+                <span aria-hidden="true">{"Cluster"}</span>
+                {for CLUSTERINGS.into_iter().map(|(clustering, label)| choice(
+                    label,
+                    None,
+                    current.clustering == clustering,
+                    WorkArrangement { clustering, ..current },
+                ))}
+            </div>
+        </div>
     }
 }
 
-fn render_bucket(
-    work: &WorkProjection<'_>,
-    project: &WorkProject<'_>,
+fn render_lane(
     availability: WorkAvailability,
-    selected: Option<&wire::TaskStamp>,
-    map: &UseStateHandle<WorkMapState>,
-    select: &Callback<wire::TaskStamp>,
-    toggle_map_root: &Callback<wire::TaskStamp>,
+    clusters: &[WorkCluster<'_, '_>],
+    cards: &Cards<'_>,
 ) -> Html {
-    let tasks = project
-        .tasks()
-        .iter()
-        .map(|&index| &work.tasks()[index])
-        .filter(|task| task.availability() == availability)
-        .collect::<Vec<_>>();
+    let key = availability_key(availability);
     let label = availability_label(availability);
+    let heading = format!("work-lane-{key}");
+    let count = clusters
+        .iter()
+        .map(|cluster| cluster.tasks.len())
+        .sum::<usize>();
     html! {
         <section
-            key={availability_key(availability)}
-            class="work-bucket"
-            data-work-bucket={availability_key(availability)}
+            key={key}
+            class="work-lane"
+            data-work-lane={key}
+            aria-labelledby={heading.clone()}
         >
-            <header class="work-bucket-heading">
-                <h3>{label}</h3>
-                <span aria-label={format!("{} tasks", tasks.len())}>{tasks.len()}</span>
+            <header class="work-lane-heading">
+                <h3 id={heading}>{label}</h3>
+                <span aria-label={format!("{count} tasks")}>{count}</span>
             </header>
-            if tasks.is_empty() {
-                <p class="work-bucket-empty">{format!("No {} tasks.", label.to_lowercase())}</p>
+            if count == 0 {
+                <p class="work-lane-empty">{format!("No {} tasks.", label.to_lowercase())}</p>
             } else {
                 <div class="work-card-list">
-                    {for tasks.into_iter().map(|task| render_card(task, selected, map, select, toggle_map_root))}
+                    {for clusters.iter().flat_map(|cluster| {
+                        let separator = cluster_label(cluster.key, cards.lanes).map(|name| html! {
+                            <p key={format!("cluster:{name}")} class="work-lane-cluster">{name}</p>
+                        });
+                        separator
+                            .into_iter()
+                            .chain(cluster.tasks.iter().map(|task| render_card(task, cards)))
+                    })}
                 </div>
             }
         </section>
     }
 }
 
-fn render_card(
-    task: &WorkTask<'_>,
-    selected: Option<&wire::TaskStamp>,
-    map: &UseStateHandle<WorkMapState>,
-    select: &Callback<wire::TaskStamp>,
-    toggle_map_root: &Callback<wire::TaskStamp>,
-) -> Html {
+/// The separator text for one cluster; the unclustered lane has none.
+fn cluster_label(key: WorkClusterKey<'_>, lanes: Option<&LaneView>) -> Option<String> {
+    match key {
+        WorkClusterKey::Lane => None,
+        WorkClusterKey::Project(project) => Some(project.to_owned()),
+        WorkClusterKey::Phase(phase) => Some(phase.to_owned()),
+        WorkClusterKey::Owner(owner) => {
+            Some(owner.map_or_else(|| "Unassigned".to_owned(), |actor| actor_name(actor, lanes)))
+        }
+    }
+}
+
+fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
     let row = task.row();
     let statement = &row.statement.body;
     let workflow = &row.workflow.body;
     let availability = task.availability();
     let label = availability_label(availability);
-    let owner = active_owner(task);
+    let owner = task.owner();
+    let owner_name = owner.map_or_else(
+        || "Unassigned".to_owned(),
+        |actor| actor_name(actor, cards.lanes),
+    );
     let priority = priority_label(&statement.tags);
     let progress = flow_progress(workflow);
     let blocker = blocker_summary(task);
@@ -224,16 +298,16 @@ fn render_card(
     let dependents = task.dependents().len();
     let completion = workflow.completion.as_ref().map(ToString::to_string);
     let born = statement.born.clone();
-    let is_selected = selected == Some(&born);
-    let is_pinned = map.pinned(&born);
-    let pin_disabled = !is_pinned && map.pin_limit_reached();
+    let is_selected = cards.selected == Some(&born);
+    let is_pinned = cards.map.pinned(&born);
+    let pin_disabled = !is_pinned && cards.map.pin_limit_reached();
     let toggle_pin = {
-        let toggle_map_root = toggle_map_root.clone();
+        let toggle_map_root = cards.toggle_map_root.clone();
         let born = born.clone();
         Callback::from(move |_| toggle_map_root.emit(born.clone()))
     };
     let open = {
-        let select = select.clone();
+        let select = cards.select.clone();
         let born = born.clone();
         Callback::from(move |_| select.emit(born.clone()))
     };
@@ -246,8 +320,14 @@ fn render_card(
                 is_pinned.then_some("work-card--mapped"),
             )}
             data-work-availability={availability_key(availability)}
+            data-work-project={statement.project.clone()}
             data-selected={is_selected.to_string()}
-            aria-label={format!("{}: {}, {label}", statement.handle, row.presentation_title())}
+            aria-label={format!(
+                "{}: {}, {}, {label}",
+                statement.handle,
+                row.presentation_title(),
+                statement.project,
+            )}
         >
             <button
                 type="button"
@@ -264,11 +344,14 @@ fn render_card(
             <h4>{row.presentation_title()}</h4>
             <div class="work-card-badges">
                 <span class={phase_class(&workflow.status)}>{workflow.phase.to_string()}</span>
-                <span class="tag">{progress}</span>
-                <span class="tag">{project_suffix(&statement.project)}</span>
+                <span class="tag" title="Phase in flow">{progress}</span>
+                <span class="tag work-card-project" title="Project">{statement.project.clone()}</span>
             </div>
             <dl class="work-card-facts">
-                <div><dt>{"Owner"}</dt><dd>{owner}</dd></div>
+                <div>
+                    <dt>{"Owner"}</dt>
+                    <dd title={owner.map(ToString::to_string)}>{owner_name}</dd>
+                </div>
                 {render_lease(task)}
                 if let Some(blocker) = blocker {
                     <div class="work-card-alert"><dt>{"Blocked"}</dt><dd>{blocker}</dd></div>
@@ -323,21 +406,13 @@ fn render_lease(task: &WorkTask<'_>) -> Html {
     }
 }
 
-fn active_owner(task: &WorkTask<'_>) -> String {
-    task.row()
-        .claim
-        .as_ref()
-        .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
-        .map(|claim| claim.body.actor.to_string())
-        .or_else(|| {
-            task.row()
-                .workflow
-                .body
-                .assignment
-                .as_ref()
-                .map(ToString::to_string)
-        })
-        .unwrap_or_else(|| "Unassigned".to_owned())
+/// One actor named for Work readers, resolved against the current topology.
+pub(super) fn actor_name(actor: &wire::Actor, lanes: Option<&LaneView>) -> String {
+    let member = match actor {
+        wire::Actor::Lane(lane) => lanes.and_then(|lanes| lanes.member(*lane)),
+        wire::Actor::Operator | wire::Actor::Spice => None,
+    };
+    model::owner_label(actor, member)
 }
 
 fn blocker_summary(task: &WorkTask<'_>) -> Option<String> {
@@ -388,13 +463,6 @@ fn priority_label(tags: &[String]) -> String {
         .unwrap_or_else(|| "—".to_owned())
 }
 
-fn project_suffix(project: &str) -> &str {
-    project
-        .trim_start_matches('.')
-        .split_once('.')
-        .map_or("root", |(_, suffix)| suffix)
-}
-
 fn terminal_summary(status: &str, completion: Option<&str>) -> String {
     completion.map_or_else(
         || status.to_owned(),
@@ -402,22 +470,12 @@ fn terminal_summary(status: &str, completion: Option<&str>) -> String {
     )
 }
 
-fn project_in_scope(
-    work: &WorkProjection<'_>,
-    project: &WorkProject<'_>,
-    scope: &WorkScope,
-) -> bool {
-    scope
-        .stem()
-        .is_none_or(|identity| work.stems()[project.stem()].identity() == identity)
-}
-
 fn history_tasks<'a>(work: &'a WorkProjection<'a>, scope: &WorkScope) -> Vec<&'a WorkTask<'a>> {
     let mut tasks = work
         .tasks()
         .iter()
         .filter(|task| task.availability() == WorkAvailability::Terminal)
-        .filter(|task| project_in_scope(work, &work.projects()[task.project()], scope))
+        .filter(|task| work.in_scope(task, scope))
         .collect::<Vec<_>>();
     tasks.sort_by(history_order);
     tasks
@@ -437,6 +495,22 @@ fn history_order(left: &&WorkTask<'_>, right: &&WorkTask<'_>) -> Ordering {
                 .handle
                 .cmp(&right.row().statement.body.handle)
         })
+}
+
+const fn order_key(order: WorkOrder) -> &'static str {
+    match order {
+        WorkOrder::Offer => "offer",
+        WorkOrder::Newest => "newest",
+    }
+}
+
+const fn clustering_key(clustering: WorkClustering) -> &'static str {
+    match clustering {
+        WorkClustering::None => "none",
+        WorkClustering::Project => "project",
+        WorkClustering::Phase => "phase",
+        WorkClustering::Owner => "owner",
+    }
 }
 
 const fn availability_key(availability: WorkAvailability) -> &'static str {

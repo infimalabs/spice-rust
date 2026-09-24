@@ -386,17 +386,29 @@ reset is needed.
 ### The global Work page
 
 The global Work page keeps the complete open-work set visible as one board:
-scope controls and totals establish context, each project's swimlane contains
-the same in-flight, ready, blocked, and deferred status buckets, and History
-follows the open board. Status is named in text and reinforced consistently by
-the bucket header, count, empty well, and card edge; color never carries status
-alone. Empty buckets remain visible evidence rather than disappearing.
+every project shares the same in-flight, ready, blocked, and deferred lanes,
+each card names its full project, and History follows the open board. The
+board header, with its totals and arrangement controls, stays pinned under the
+command bar while the lanes scroll beneath it. Status is named in text and
+reinforced consistently by the lane header, count, empty well, and card edge;
+color never carries status alone. Empty lanes remain visible evidence rather
+than disappearing.
+
+Cards default to the allocator's real offer order, so the task the resident
+would hand a draining lane next sits at the top; the resident computes that
+order with `task next`'s own selection step on the board read the Canvas
+already makes. Newest-first creation order and clusters by project, phase, or
+owner are secondary arrangements of the same cards: a cluster is marked by a
+thin labelled separator, never a separate board, and clusters follow their
+first card so the leading card still leads.
 
 Cards preserve their identity, flow, project, ownership, and map controls while
 the detail drawer and relationship map expose progressively deeper evidence.
-Those surfaces share the board's typography, borders, spacing, and interaction
-states. The board moves from four columns to two and then one as width narrows;
-narrow empty buckets stay compact so absent work does not dominate the page.
+Owners and note authors read as agent names, keeping the full identity for
+disambiguation. Those surfaces share the board's typography, borders, spacing,
+and interaction states. The board moves from four columns to two and then one
+as width narrows; narrow empty lanes stay compact so absent work does not
+dominate the page.
 
 ### The team console
 

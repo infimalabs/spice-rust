@@ -4,6 +4,8 @@ use super::*;
 
 pub(super) struct TaskSelection {
     pub(super) tasks: Option<std::collections::BTreeSet<wire::TaskStamp>>,
+    /// Rows read only as allocation evidence and dropped from the answer.
+    pub(super) evidence: std::collections::BTreeSet<wire::TaskStamp>,
     pub(super) history: Option<TaskHistoryPage>,
 }
 
@@ -19,22 +21,36 @@ pub(super) fn selected_tasks(
     match read {
         BoardRead::All { .. } => Ok(TaskSelection {
             tasks: None,
+            evidence: Default::default(),
             history: None,
         }),
-        BoardRead::Open => Ok(TaskSelection {
-            tasks: Some(
-                observed
-                    .tasks()
-                    .iter()
-                    .filter(|heads| !terminal_task(heads))
-                    .map(|heads| heads.statement().body().born.clone())
-                    .collect(),
-            ),
-            history: None,
-        }),
+        BoardRead::Open => {
+            let open = observed
+                .tasks()
+                .iter()
+                .filter(|heads| !terminal_task(heads));
+            let mut tasks: std::collections::BTreeSet<_> = open
+                .clone()
+                .map(|heads| heads.statement().body().born.clone())
+                .collect();
+            // Readiness reads each open row's direct prerequisites: a settled
+            // one is terminal, so it is carried only as allocation evidence.
+            let evidence = open
+                .flat_map(|heads| &heads.statement().body().dependencies)
+                .filter(|dependency| !tasks.contains(*dependency))
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>();
+            tasks.extend(evidence.iter().cloned());
+            Ok(TaskSelection {
+                tasks: Some(tasks),
+                evidence,
+                history: None,
+            })
+        }
         BoardRead::History { before, limit } => history_selection(observed, before, *limit),
         BoardRead::Trust => Ok(TaskSelection {
             tasks: Some(Default::default()),
+            evidence: Default::default(),
             history: None,
         }),
         BoardRead::Tasks {
@@ -49,6 +65,7 @@ pub(super) fn selected_tasks(
                 *claims,
                 principal,
             )),
+            evidence: Default::default(),
             history: None,
         }),
     }
@@ -141,6 +158,7 @@ fn history_selection(
     let next = (end < history.len()).then(|| history[end.saturating_sub(1)].clone());
     Ok(TaskSelection {
         tasks: Some(selected),
+        evidence: Default::default(),
         history: Some(TaskHistoryPage {
             before: before.clone(),
             limit,

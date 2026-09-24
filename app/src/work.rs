@@ -2,7 +2,8 @@
 //!
 //! The admitted board snapshot is the sole input. This module owns lifecycle
 //! precedence, stable stem identity, full-project grouping, relationship
-//! summaries, counts, and ranking so chrome and Work views cannot drift.
+//! summaries, counts, the board arrangements over the resident's offer
+//! order, and owner naming so chrome and Work views cannot drift.
 
 mod relationship;
 pub use relationship::{
@@ -16,11 +17,12 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::fmt::{self, Display, Formatter};
 
-use wire::TaskStamp;
 use wire::head::ClaimDisposition;
 use wire::intent::{BoardTask, ProjectVisibility};
+use wire::{Actor, TaskStamp};
 
-use crate::runtime::BoardView;
+use crate::runtime::{BoardView, LaneMember};
+use crate::watchband;
 
 /// One mutually exclusive task lifecycle in the Work surface.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -93,6 +95,59 @@ impl WorkScope {
             Self::Stem(identity) => Some(identity),
         }
     }
+}
+
+/// The vertical order of cards inside each shared board lane.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WorkOrder {
+    /// The resident allocator's offer order: the task offered next leads.
+    /// Work the allocator does not offer follows in queue order.
+    #[default]
+    Offer,
+    /// Newest creation first, by durable birth stamp.
+    Newest,
+}
+
+/// The attribute that clusters cards inside each shared board lane.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WorkClustering {
+    /// One unbroken column per lane.
+    #[default]
+    None,
+    /// One cluster per full dotted project.
+    Project,
+    /// One cluster per workflow phase.
+    Phase,
+    /// One cluster per owner, with unowned work as its own cluster.
+    Owner,
+}
+
+/// How cards sit inside the one shared set of board lanes.
+///
+/// Every arrangement renders the same cards in the same lanes; only their
+/// vertical order and separation differ, so switching never loses,
+/// duplicates, or reorders durable data.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct WorkArrangement {
+    pub order: WorkOrder,
+    pub clustering: WorkClustering,
+}
+
+/// The shared attribute of one cluster of cards.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WorkClusterKey<'a> {
+    /// The whole lane, when no clustering is chosen.
+    Lane,
+    Project(&'a str),
+    Phase(&'a str),
+    Owner(Option<&'a Actor>),
+}
+
+/// Consecutive cards sharing one cluster attribute, in the chosen order.
+#[derive(Debug)]
+pub struct WorkCluster<'p, 'a> {
+    pub key: WorkClusterKey<'a>,
+    pub tasks: Vec<&'p WorkTask<'a>>,
 }
 
 /// Exclusive lifecycle totals for one scope.
@@ -246,9 +301,31 @@ impl<'a> WorkTask<'a> {
             .iter()
             .filter(|dependency| !dependency.satisfied)
     }
+
+    /// The actor that owns this task: its active claimant, else its assignee.
+    #[must_use]
+    pub fn owner(&self) -> Option<&'a Actor> {
+        self.row
+            .claim
+            .as_ref()
+            .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
+            .map(|claim| &claim.body.actor)
+            .or(self.row.workflow.body.assignment.as_ref())
+    }
+
+    /// The attribute this task shares with its cluster.
+    #[must_use]
+    pub fn cluster_key(&self, clustering: WorkClustering) -> WorkClusterKey<'a> {
+        match clustering {
+            WorkClustering::None => WorkClusterKey::Lane,
+            WorkClustering::Project => WorkClusterKey::Project(&self.row.statement.body.project),
+            WorkClustering::Phase => WorkClusterKey::Phase(self.row.workflow.body.phase.as_str()),
+            WorkClustering::Owner => WorkClusterKey::Owner(self.owner()),
+        }
+    }
 }
 
-/// One full dotted project swimlane.
+/// One full dotted project in the stem-ordered project grouping.
 #[derive(Debug)]
 pub struct WorkProject<'a> {
     project: &'a str,
@@ -314,6 +391,11 @@ pub struct WorkProjection<'a> {
     tasks: Vec<WorkTask<'a>>,
     projects: Vec<WorkProject<'a>>,
     stems: Vec<WorkStem>,
+    /// Every task index in the resident's offer order, then every task the
+    /// allocator does not offer in lifecycle and queue order.
+    offered: Vec<usize>,
+    /// Every task index, newest birth stamp first.
+    newest: Vec<usize>,
 }
 
 impl<'a> WorkProjection<'a> {
@@ -354,6 +436,49 @@ impl<'a> WorkProjection<'a> {
             .stem()
             .and_then(|identity| self.stem(identity))
             .map_or(self.counts, WorkStem::counts)
+    }
+
+    /// Whether one task's project belongs to the selected scope.
+    #[must_use]
+    pub fn in_scope(&self, task: &WorkTask<'_>, scope: &WorkScope) -> bool {
+        scope.stem().is_none_or(|identity| {
+            self.stems[self.projects[task.project].stem].identity == *identity
+        })
+    }
+
+    /// The in-scope tasks of one shared board lane, top to bottom, clustered.
+    ///
+    /// Cards follow the chosen order. Clustering gathers each attribute's
+    /// cards into one cluster that keeps that order, and clusters follow the
+    /// order of their first card, so the lane's leading card still leads.
+    /// Every arrangement places a task in exactly the one lane its
+    /// availability names.
+    #[must_use]
+    pub fn lane<'p>(
+        &'p self,
+        availability: WorkAvailability,
+        scope: &WorkScope,
+        arrangement: WorkArrangement,
+    ) -> Vec<WorkCluster<'p, 'a>> {
+        let order = match arrangement.order {
+            WorkOrder::Offer => &self.offered,
+            WorkOrder::Newest => &self.newest,
+        };
+        let mut clusters = Vec::<WorkCluster<'p, 'a>>::new();
+        for task in order.iter().map(|&index| &self.tasks[index]) {
+            if task.availability != availability || !self.in_scope(task, scope) {
+                continue;
+            }
+            let key = task.cluster_key(arrangement.clustering);
+            match clusters.iter_mut().find(|cluster| cluster.key == key) {
+                Some(cluster) => cluster.tasks.push(task),
+                None => clusters.push(WorkCluster {
+                    key,
+                    tasks: vec![task],
+                }),
+            }
+        }
+        clusters
     }
 
     #[must_use]
@@ -462,12 +587,69 @@ impl<'a> WorkProjection<'a> {
             })
             .collect();
 
+        let (offered, newest) = board_orders(board, &by_born, &availability);
+
         Self {
             counts,
             tasks,
             projects,
             stems,
+            offered,
+            newest,
         }
+    }
+}
+
+/// Every task index in the resident's offer order, and newest first.
+///
+/// The resident ranks only work it would offer; that rank leads, and the rest
+/// keeps lifecycle and queue order beneath it.
+fn board_orders(
+    board: &BoardView,
+    by_born: &BTreeMap<&TaskStamp, usize>,
+    availability: &[WorkAvailability],
+) -> (Vec<usize>, Vec<usize>) {
+    let offer_rank = board
+        .offer
+        .iter()
+        .enumerate()
+        .filter_map(|(rank, born)| by_born.get(born).map(|&index| (index, rank)))
+        .collect::<BTreeMap<_, _>>();
+    let rank = |index: &usize| offer_rank.get(index).copied().unwrap_or(usize::MAX);
+    let mut offered = (0..board.tasks.len()).collect::<Vec<_>>();
+    offered.sort_by(|left, right| {
+        rank(left)
+            .cmp(&rank(right))
+            .then_with(|| compare_tasks(&board.tasks, availability, *left, *right))
+    });
+    let mut newest = (0..board.tasks.len()).collect::<Vec<_>>();
+    newest.sort_by(|left, right| {
+        board.tasks[*right]
+            .statement
+            .body
+            .born
+            .cmp(&board.tasks[*left].statement.body.born)
+    });
+    (offered, newest)
+}
+
+/// The name an operator reads for one task owner.
+///
+/// A seated lane reads as its agent's configured name or worktree, exactly as
+/// its message cards sign themselves. A lane absent from the current topology
+/// keeps a short identity prefix, since no name for it is known. The full
+/// actor spelling remains the caller's to expose for disambiguation.
+#[must_use]
+pub fn owner_label(actor: &Actor, member: Option<&LaneMember>) -> String {
+    match actor {
+        Actor::Operator => "Operator".to_owned(),
+        Actor::Spice => "Spice".to_owned(),
+        Actor::Lane(lane) => member.filter(|member| member.lane == *lane).map_or_else(
+            || format!("lane {}", watchband::short(*lane)),
+            |member| {
+                watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned()
+            },
+        ),
     }
 }
 
@@ -686,6 +868,7 @@ mod tests {
             schema: 1,
             cursor: seq(100),
             tasks,
+            offer: Vec::new(),
             resident: wire::ResidentState::Seated,
             environment: Environment::journal_schema(1).expect("fixture schema"),
         }
@@ -879,5 +1062,194 @@ mod tests {
         assert_eq!(lane.tasks, [1, 3, 2, 0]);
         assert_eq!(projection.tasks[2].project, 0);
         assert_eq!(lane.counts.unavailable(), 1);
+    }
+
+    const OPEN_LANES: [WorkAvailability; 4] = [
+        WorkAvailability::InFlight,
+        WorkAvailability::Ready,
+        WorkAvailability::Blocked,
+        WorkAvailability::Deferred,
+    ];
+
+    fn titles<'a>(clusters: &[WorkCluster<'_, 'a>]) -> Vec<&'a str> {
+        clusters
+            .iter()
+            .flat_map(|cluster| &cluster.tasks)
+            .map(|task| task.row().presentation_title.as_str())
+            .collect()
+    }
+
+    fn arrangement(order: WorkOrder, clustering: WorkClustering) -> WorkArrangement {
+        WorkArrangement { order, clustering }
+    }
+
+    #[test]
+    fn one_board_follows_the_resident_offer_and_clusters_by_first_card() {
+        let mut active = task(6, "beta.core");
+        active.claim = Some(claim(&active, ClaimDisposition::Active));
+        let mut done = task(1, "alpha.render");
+        done.workflow.body.completion = Some(
+            "2026-09-23T06:00:00.000Z"
+                .parse()
+                .expect("fixture completion"),
+        );
+        let mut assigned = task(2, "beta.core");
+        assigned.workflow.body.assignment = Some(Actor::Spice);
+        // Board rows arrive in neither offer, time, nor project order.
+        let mut board = board(vec![
+            task(9, "alpha.render"),
+            task(7, "beta.core"),
+            active,
+            task(4, ".alpha.audit"),
+            done,
+            task(5, "alpha.render"),
+            assigned,
+        ]);
+        // The resident offers no hidden work; one stale stamp is ignored.
+        board.offer = [7, 5, 99, 9, 2].map(stamp).to_vec();
+        let projection = WorkProjection::from_board(&board);
+        let all = WorkScope::AllOpen;
+        let ready = |order, clustering| {
+            projection.lane(
+                WorkAvailability::Ready,
+                &all,
+                arrangement(order, clustering),
+            )
+        };
+
+        let offered = ready(WorkOrder::Offer, WorkClustering::None);
+        assert!(matches!(offered.as_slice(), [lane] if lane.key == WorkClusterKey::Lane));
+        assert_eq!(
+            titles(&offered),
+            ["task 7", "task 5", "task 9", "task 2", "task 4"],
+            "the next offer leads every project; unoffered work follows in queue order"
+        );
+        assert_eq!(
+            titles(&projection.lane(WorkAvailability::Ready, &all, WorkArrangement::default())),
+            titles(&offered),
+            "the offer order is the default arrangement"
+        );
+        assert_eq!(
+            titles(&ready(WorkOrder::Newest, WorkClustering::None)),
+            ["task 9", "task 7", "task 5", "task 4", "task 2"]
+        );
+
+        let by_project = ready(WorkOrder::Offer, WorkClustering::Project);
+        assert_eq!(
+            by_project
+                .iter()
+                .map(|cluster| cluster.key)
+                .collect::<Vec<_>>(),
+            [
+                WorkClusterKey::Project("beta.core"),
+                WorkClusterKey::Project("alpha.render"),
+                WorkClusterKey::Project(".alpha.audit"),
+            ],
+            "clusters follow their first card, so the next offer still leads"
+        );
+        assert_eq!(
+            titles(&by_project),
+            ["task 7", "task 2", "task 5", "task 9", "task 4"]
+        );
+        assert_eq!(
+            titles(&ready(WorkOrder::Newest, WorkClustering::Project)),
+            ["task 9", "task 5", "task 7", "task 2", "task 4"]
+        );
+        let by_owner = ready(WorkOrder::Offer, WorkClustering::Owner);
+        assert_eq!(
+            by_owner
+                .iter()
+                .map(|cluster| (cluster.key, cluster.tasks.len()))
+                .collect::<Vec<_>>(),
+            [
+                (WorkClusterKey::Owner(None), 4),
+                (WorkClusterKey::Owner(Some(&Actor::Spice)), 1),
+            ]
+        );
+
+        for order in [WorkOrder::Offer, WorkOrder::Newest] {
+            for clustering in [
+                WorkClustering::None,
+                WorkClustering::Project,
+                WorkClustering::Phase,
+                WorkClustering::Owner,
+            ] {
+                let mut placed = OPEN_LANES
+                    .into_iter()
+                    .flat_map(|lane| {
+                        titles(&projection.lane(lane, &all, arrangement(order, clustering)))
+                    })
+                    .collect::<Vec<_>>();
+                placed.sort_unstable();
+                assert_eq!(
+                    placed,
+                    ["task 2", "task 4", "task 5", "task 6", "task 7", "task 9"],
+                    "{order:?}/{clustering:?} places every open task in exactly one shared lane"
+                );
+            }
+        }
+        assert_eq!(
+            titles(&projection.lane(WorkAvailability::InFlight, &all, WorkArrangement::default())),
+            ["task 6"]
+        );
+
+        let public_alpha = WorkScope::Stem(projection.stems[0].identity.clone());
+        assert_eq!(
+            titles(&projection.lane(
+                WorkAvailability::Ready,
+                &public_alpha,
+                WorkArrangement::default()
+            )),
+            ["task 5", "task 9"],
+            "a stem scope narrows the one board without splitting it"
+        );
+    }
+
+    #[test]
+    fn owners_read_as_agent_names_and_unknown_lanes_stay_distinguishable() {
+        let lane = "11111111-1111-4111-8111-111111111111"
+            .parse::<CanonicalUuid>()
+            .expect("fixture lane");
+        let other = "44444444-4444-4444-8444-444444444444"
+            .parse::<CanonicalUuid>()
+            .expect("fixture lane");
+        let mut member = LaneMember {
+            lane,
+            name: None,
+            worktree: "/work/spice-rust-h".to_owned(),
+            life: "steer".to_owned(),
+            vendor: "omp".parse().expect("fixture vendor"),
+            model: None,
+            effort: None,
+            occupant: None,
+            session: None,
+            disposition: "seated".to_owned(),
+            liveness: wire::intent::LaneLiveness::Working,
+            bound: true,
+            jobs: Vec::new(),
+        };
+        let actor = Actor::Lane(lane);
+        assert_eq!(owner_label(&actor, Some(&member)), "spice-rust-h");
+        member.name = Some("builder".to_owned());
+        assert_eq!(owner_label(&actor, Some(&member)), "builder");
+        assert_eq!(owner_label(&actor, None), "lane 11111111");
+        assert_eq!(
+            owner_label(&Actor::Lane(other), Some(&member)),
+            "lane 44444444",
+            "a member of another lane never lends its name"
+        );
+        assert_eq!(owner_label(&Actor::Operator, None), "Operator");
+
+        let mut held = task(1, "alpha.core");
+        held.workflow.body.assignment = Some(Actor::Spice);
+        held.claim = Some(claim(&held, ClaimDisposition::Active));
+        let mut lapsed = task(2, "alpha.core");
+        lapsed.workflow.body.assignment = Some(Actor::Spice);
+        lapsed.claim = Some(claim(&lapsed, ClaimDisposition::Lapsed));
+        let board = board(vec![held, lapsed, task(3, "alpha.core")]);
+        let projection = WorkProjection::from_board(&board);
+        assert_eq!(projection.tasks[0].owner(), Some(&Actor::Operator));
+        assert_eq!(projection.tasks[1].owner(), Some(&Actor::Spice));
+        assert_eq!(projection.tasks[2].owner(), None);
     }
 }
