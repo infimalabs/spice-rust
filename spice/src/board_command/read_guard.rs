@@ -9,6 +9,10 @@ mod task_detail;
 pub(super) use task_detail::read_task_detail;
 mod task_relations;
 pub(super) use task_relations::read_task_relations;
+mod task_selection;
+#[cfg(test)]
+pub(in crate::board_command) use task_selection::history_cursor_order;
+use task_selection::{TaskSelection, selected_tasks};
 
 pub(super) fn phase(name: &str) -> wire::Phase {
     name.parse()
@@ -99,9 +103,11 @@ fn validated_snapshot_from_with_occupant(
     };
     Ok(ValidatedSnapshot {
         cursor,
-        facts: retain_facts
-            .then(|| observed.facts().clone())
-            .unwrap_or_default(),
+        facts: if retain_facts {
+            observed.facts().clone()
+        } else {
+            Default::default()
+        },
         answer: BoardAnswer {
             schema: journal::SCHEMA_VERSION,
             cursor,
@@ -115,6 +121,7 @@ fn validated_snapshot_from_with_occupant(
             allocation_band: allocation.band(),
             recent_cell,
             tasks,
+            history: None,
             trust: positioned_trust(observed),
             residency,
         },
@@ -909,7 +916,13 @@ pub(super) fn read_board(
         Ok(observed) => observed,
         Err(error) => return store_fault("board::heads-unreadable", &error.to_string()),
     };
-    let selected = selected_tasks(&observed, read, &principal);
+    let TaskSelection {
+        tasks: selected,
+        history,
+    } = match selected_tasks(&observed, read, &principal) {
+        Ok(selection) => selection,
+        Err(outcome) => return outcome,
+    };
     let mut snapshot = match validated_snapshot_from_with_occupant(
         &observed,
         principal,
@@ -917,7 +930,7 @@ pub(super) fn read_board(
         allocation,
         None,
         selected.as_ref(),
-        true,
+        false,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -946,60 +959,20 @@ pub(super) fn read_board(
                 .is_some_and(|(stem, _)| stem == family)
         });
     }
+    if history.is_some() {
+        snapshot.answer.tasks.sort_by(|left, right| {
+            right
+                .workflow
+                .position
+                .cmp(&left.workflow.position)
+                .then_with(|| left.statement.body.born.cmp(&right.statement.body.born))
+        });
+    }
+    snapshot.answer.history = history;
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::Board(Box::new(snapshot.answer)),
     )
-}
-
-/// Select identities before cloning or projecting their task heads. Dependencies
-/// and claims come from the same immutable barrier, including completed tasks.
-fn selected_tasks(
-    observed: &bus::TaskSnapshot,
-    read: &BoardRead,
-    principal: &wire::Actor,
-) -> Option<std::collections::BTreeSet<wire::TaskStamp>> {
-    let BoardRead::Tasks {
-        tasks,
-        dependencies,
-        claims,
-    } = read
-    else {
-        return match read {
-            BoardRead::All { .. } => None,
-            BoardRead::Trust => Some(Default::default()),
-            BoardRead::Tasks { .. } => unreachable!(),
-        };
-    };
-    let mut selected: std::collections::BTreeSet<_> = tasks.iter().cloned().collect();
-    if *claims {
-        selected.extend(observed.tasks().iter().filter_map(|heads| {
-            heads
-                .claim()
-                .filter(|claim| {
-                    claim.body().actor == *principal
-                        && claim.body().disposition == wire::ClaimDisposition::Active
-                })
-                .map(|_| heads.statement().body().born.clone())
-        }));
-    }
-    if *dependencies {
-        let mut pending: Vec<_> = selected.iter().cloned().collect();
-        while let Some(task) = pending.pop() {
-            // The immutable bus projection is ordered by durable task stamp.
-            if let Ok(index) = observed
-                .tasks()
-                .binary_search_by(|heads| heads.statement().body().born.cmp(&task))
-            {
-                for dependency in &observed.tasks()[index].statement().body().dependencies {
-                    if selected.insert(dependency.clone()) {
-                        pending.push(dependency.clone());
-                    }
-                }
-            }
-        }
-    }
-    Some(selected)
 }
 
 pub(super) fn read_graph(

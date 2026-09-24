@@ -4,9 +4,46 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Actor, TaskHandle};
 
+/// Largest terminal-task page one board read accepts.
+pub const TASK_HISTORY_PAGE_LIMIT_MAX: u16 = 100;
+
+/// Stable keyset cursor for terminal tasks in newest-workflow-first order.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskHistoryCursor {
+    /// Durable workflow head ordering this terminal task.
+    pub workflow: crate::Seq,
+    /// Durable task identity breaking equal-head ties.
+    pub task: crate::TaskStamp,
+}
+
+/// Metadata for one bounded terminal-task page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskHistoryPage {
+    /// Cursor supplied by the request, absent for the first page.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub before: Option<TaskHistoryCursor>,
+    /// Accepted maximum number of rows in this page.
+    pub limit: u16,
+    /// Total terminal rows at this answer's snapshot barrier.
+    pub total: u64,
+    /// Cursor for the next page, absent once this snapshot is exhausted.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub next: Option<TaskHistoryCursor>,
+}
+
 /// Read an explicit projection of one authoritative board snapshot.
 ///
-/// Scopes never implicitly discard completed tasks.
+/// `All` remains complete; `Open` and `History` name their exclusions explicitly.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "scope", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BoardRead {
@@ -18,6 +55,20 @@ pub enum BoardRead {
             deserialize_with = "crate::optional::present"
         )]
         family: Option<String>,
+    },
+    /// Every currently nonterminal task, without terminal history.
+    Open,
+    /// One bounded keyset page of terminal tasks.
+    History {
+        /// Last row returned by the preceding page.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        before: Option<TaskHistoryCursor>,
+        /// Maximum rows returned by this page.
+        limit: u16,
     },
     /// Named durable identities plus the context required by the caller.
     Tasks {
@@ -652,8 +703,16 @@ pub struct BoardAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub recent_cell: Option<crate::ClaimCell>,
-    /// Selected current task evidence, including completed tasks, in stamp order.
+    /// Selected current task evidence; history pages are newest-workflow-first,
+    /// while every other scope retains durable task-stamp order.
     pub tasks: Vec<BoardTask>,
+    /// Terminal-page metadata, present only for [`BoardRead::History`].
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub history: Option<TaskHistoryPage>,
     /// Current executable-configuration trust heads in ascending digest order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trust: Vec<Positioned<crate::TrustHead>>,

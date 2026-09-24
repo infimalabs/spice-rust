@@ -541,6 +541,7 @@ fn insert_legacy_board_receipt(connection: &Connection) {
             None,
             None,
         )],
+        history: None,
         trust: Vec::new(),
         residency: wire::intent::Positioned {
             position: Seq::new(2).expect("residency position"),
