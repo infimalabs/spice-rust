@@ -346,22 +346,22 @@ fn abbreviated_product(product: &str) -> String {
 }
 
 fn render_theme_selector() -> Html {
-    let document = web_sys::window().and_then(|window| window.document());
-    let selected = document
-        .as_ref()
+    let selected = web_sys::window()
+        .and_then(|window| window.document())
         .and_then(|document| document.document_element())
         .and_then(|root| root.get_attribute("data-canvas-theme"))
         .unwrap_or_else(|| "system".to_owned());
     html! {
-        <div class="canvas-theme-selector" role="group" aria-label="Canvas theme">
-            {for [
-                ("light", "Light", "L"),
-                ("system", "System", "S"),
-                ("dark", "Dark", "D"),
-            ]
+        <div
+            class="canvas-theme-selector"
+            role="group"
+            aria-label="Canvas theme"
+            data-selected-theme={selected.clone()}
+        >
+            <span class="canvas-theme-thumb" aria-hidden="true"></span>
+            {for [("light", "Light"), ("system", "System"), ("dark", "Dark")]
                 .into_iter()
-                .map(|(mode, label, mark)| {
-                    let accessible = format!("Use {label} theme");
+                .map(|(mode, label)| {
                     let choose = Callback::from(move |_| {
                         let Some(window) = web_sys::window() else { return; };
                         let Ok(setter) = js_sys::Reflect::get(
@@ -371,16 +371,37 @@ fn render_theme_selector() -> Html {
                         let Ok(setter) = setter.dyn_into::<js_sys::Function>() else { return; };
                         let _ = setter.call1(&JsValue::NULL, &JsValue::from_str(mode));
                     });
+                    let icon = match mode {
+                        "light" => html! {
+                            <svg class="canvas-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <circle cx="12" cy="12" r="3.25"></circle>
+                                <path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.28 5.28 6.7 6.7M17.3 17.3l1.42 1.42M18.72 5.28 17.3 6.7M6.7 17.3l-1.42 1.42"></path>
+                            </svg>
+                        },
+                        "system" => html! {
+                            <svg class="canvas-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <rect x="3.25" y="4.5" width="17.5" height="13" rx="1.8"></rect>
+                                <path d="M8.5 21h7M12 17.5V21"></path>
+                            </svg>
+                        },
+                        "dark" => html! {
+                            <svg class="canvas-theme-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                                <path d="M20.2 15.3A8.7 8.7 0 0 1 8.7 3.8a8.7 8.7 0 1 0 11.5 11.5Z"></path>
+                            </svg>
+                        },
+                        _ => unreachable!("Canvas theme modes are closed"),
+                    };
+                    let accessible = format!("Use {label} theme");
                     html! {
                         <button
                             class="canvas-theme-option"
                             type="button"
-                            aria-label={accessible.clone()}
-                            title={accessible}
+                            aria-label={accessible}
+                            title={format!("{label} theme")}
                             aria-pressed={(selected == mode).to_string()}
                             data-canvas-theme={mode}
                             onclick={choose}
-                        ><span class="canvas-theme-position" aria-hidden="true">{mark}</span></button>
+                        >{icon}</button>
                     }
                 })}
         </div>

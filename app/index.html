@@ -21,6 +21,9 @@
         root.style.colorScheme = effective;
         const meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.content = effective === "dark" ? "#101411" : "#f7f8f4";
+        document.querySelectorAll(".canvas-theme-selector").forEach((control) => {
+          control.dataset.selectedTheme = next;
+        });
         document.querySelectorAll(".canvas-theme-option").forEach((button) => {
           button.setAttribute("aria-pressed", String(button.dataset.canvasTheme === next));
         });
