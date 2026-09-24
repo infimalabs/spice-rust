@@ -155,21 +155,21 @@ body:has(.shell--mosaic),
   max-height: calc(100dvh - 46px - var(--canvas-frame-edge-block-end));
   padding: 10px 9px 0;
   overflow: hidden;
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+  border: 1px solid var(--control-line-soft);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--panel) 96%, var(--accent) 4%);
-  box-shadow: var(--shadow), inset 0 1px 0 color-mix(in srgb, var(--ink) 5%, transparent);
+  background: var(--panel);
+  box-shadow: var(--shadow);
 }
 .canvas-navigation {
   display: flex;
   align-items: stretch;
-  gap: 4px;
+  gap: 2px;
   width: 100%;
   min-width: 0;
-  padding: 3px;
-  border: 1px solid var(--line-soft);
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--page) 88%, var(--panel));
+  padding: 4px;
+  border: 1px solid var(--control-line-soft);
+  border-radius: 999px;
+  background: var(--control-surface-soft);
 }
 .canvas-navigation .axis-button {
   flex: 1 1 0;
@@ -177,21 +177,22 @@ body:has(.shell--mosaic),
   min-width: 0;
   min-height: 31px;
   padding: 0 8px;
-  border-color: transparent;
-  border-radius: 7px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--muted);
   font-size: .62rem;
 }
 .canvas-navigation .axis-button:hover {
-  border-color: var(--line);
-  background: color-mix(in srgb, var(--control) 72%, transparent);
+  background: color-mix(in srgb, var(--control) 68%, transparent);
+  color: var(--ink);
 }
 .canvas-navigation .axis-button:focus-visible {
   outline-offset: 1px;
 }
 .canvas-navigation .axis-button[aria-current="page"] {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
-  background: color-mix(in srgb, var(--accent-soft) 78%, var(--panel));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+  background: var(--control);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
 }
 .canvas-navigation .axis-button--secondary {
   margin-left: 0;
@@ -246,9 +247,9 @@ body:has(.shell--mosaic),
   justify-content: space-between;
   min-height: 40px;
   padding: 0 12px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--control-line-soft);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--page) 90%, var(--panel));
+  background: var(--control-surface-soft);
   font-size: .74rem;
 }
 .canvas-menu-setting span { color: var(--muted); font-family: ui-monospace, monospace; }
@@ -260,17 +261,17 @@ body:has(.shell--mosaic),
   cursor: pointer;
 }
 .canvas-menu-setting--action:hover {
-  border-color: color-mix(in srgb, var(--accent) 72%, var(--line));
-  background: color-mix(in srgb, var(--accent) 6%, var(--page));
+  border-color: var(--control-line-soft);
+  background: var(--control);
 }
 .canvas-menu-setting--action:focus-visible {
   border-color: var(--focus);
 }
 .canvas-menu-setting--checked {
-  border-color: color-mix(in srgb, var(--warning) 54%, var(--line));
-  background: color-mix(in srgb, var(--warning) 10%, var(--page));
+  border-color: var(--control-line-soft);
+  background: var(--control);
 }
-.canvas-menu-setting--checked span { color: var(--warning); }
+.canvas-menu-setting--checked span { color: var(--ink); }
 .canvas-menu-setting--action:disabled { cursor: wait; opacity: .58; }
 .canvas-menu-global-controls {
   display: flex;
@@ -282,7 +283,7 @@ body:has(.shell--mosaic),
 .canvas-menu-global {
   gap: 8px;
   padding: 0 1px 12px;
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: 1px solid var(--control-line-soft);
 }
 .canvas-fast-setting {
   width: auto;
@@ -306,11 +307,11 @@ body:has(.shell--mosaic),
   display: inline-flex;
   flex: 0 0 auto;
   gap: 2px;
-  padding: 2px;
-  border: 1px solid var(--line);
+  padding: 4px;
+  border: 1px solid var(--control-line-soft);
   border-radius: 999px;
-  background: color-mix(in srgb, var(--page) 88%, var(--panel));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ink) 3%, transparent);
+  background: var(--control-surface-soft);
+  box-shadow: none;
 }
 .canvas-theme-option {
   display: inline-flex;
@@ -327,8 +328,8 @@ body:has(.shell--mosaic),
   color: var(--muted);
 }
 .canvas-theme-option:hover {
-  border-color: var(--line);
-  background: var(--control);
+  border-color: transparent;
+  background: color-mix(in srgb, var(--control) 68%, transparent);
   color: var(--ink);
 }
 .canvas-theme-option:focus-visible {
@@ -343,13 +344,12 @@ body:has(.shell--mosaic),
   font: 700 .56rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .canvas-theme-option[aria-pressed="true"] {
-  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
-  background: var(--accent-soft);
-  color: var(--accent);
+  border-color: transparent;
+  background: var(--control);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
 }
-.canvas-theme-option[aria-pressed="true"] .canvas-theme-position {
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-}
+.canvas-theme-option[aria-pressed="true"] .canvas-theme-position { background: transparent; }
 .canvas-menu-version {
   flex: 1 1 auto;
   min-width: 0;
@@ -406,9 +406,9 @@ body:has(.shell--mosaic),
 .canvas-menu-context {
   gap: 8px;
   padding: 10px;
-  border: 1px solid var(--line-soft);
+  border: 1px solid var(--control-line-soft);
   border-radius: 9px;
-  background: color-mix(in srgb, var(--page) 72%, transparent);
+  background: var(--control-surface-soft);
 }
 .canvas-menu-context-copy {
   margin: 0;
@@ -421,13 +421,13 @@ body:has(.shell--mosaic),
   display: grid;
   gap: 8px;
   padding: 9px;
-  border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line));
+  border: 1px solid var(--control-line-soft);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 3%, var(--page));
+  background: var(--control-surface-soft);
 }
 .canvas-team[data-drop-enabled="true"]:hover {
-  border-color: color-mix(in srgb, var(--accent) 62%, var(--line));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--control-line-soft));
+  background: color-mix(in srgb, var(--control-surface-soft) 94%, var(--accent) 6%);
 }
 .canvas-team > header {
   display: flex;
@@ -454,14 +454,14 @@ body:has(.shell--mosaic),
   gap: 9px;
   min-height: 58px;
   padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--accent-slot) 52%, var(--line));
+  border: 1px solid var(--control-line-soft);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--page) 94%, var(--accent-slot) 6%);
+  background: var(--control);
   cursor: grab;
 }
 .canvas-team-member[draggable="true"]:hover {
-  border-color: color-mix(in srgb, var(--accent-slot) 76%, var(--line));
-  background: color-mix(in srgb, var(--page) 89%, var(--accent-slot) 11%);
+  border-color: color-mix(in srgb, var(--accent-slot) 24%, var(--control-line-soft));
+  background: color-mix(in srgb, var(--control) 94%, var(--accent-slot) 6%);
 }
 .canvas-team-member[draggable="true"]:active { cursor: grabbing; }
 .canvas-team-member[aria-disabled="true"] { cursor: default; }
@@ -494,29 +494,28 @@ body:has(.shell--mosaic),
 .canvas-team-drop,
 .canvas-unassigned {
   padding: 10px;
-  border: 1px dashed color-mix(in srgb, var(--accent) 42%, var(--line));
+  border: 1px dashed var(--control-line-soft);
   border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 2%, var(--page));
+  background: var(--control-surface-soft);
 }
 .canvas-team-drop[data-drop-enabled="true"]:hover,
 .canvas-unassigned[data-drop-enabled="true"]:hover {
-  border-color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 6%, var(--page));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 8%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 36%, var(--control-line-soft));
+  background: color-mix(in srgb, var(--control-surface-soft) 94%, var(--accent) 6%);
 }
 .canvas-team-drop[data-drop-enabled="false"],
 .canvas-unassigned[data-drop-enabled="false"] {
-  border-color: var(--line-soft);
-  background: color-mix(in srgb, var(--page) 54%, transparent);
+  border-color: var(--control-line-soft);
+  background: var(--control-surface-soft);
 }
 .canvas-drop-target {
   display: grid;
   min-height: 48px;
   place-items: center;
-  border: 1px dashed color-mix(in srgb, var(--accent) 52%, var(--line));
+  border: 1px dashed var(--control-line-soft);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--accent) 2%, transparent);
-  color: var(--accent);
+  background: color-mix(in srgb, var(--control) 52%, transparent);
+  color: var(--muted);
   font: 700 .65rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .04em;
   text-transform: uppercase;
