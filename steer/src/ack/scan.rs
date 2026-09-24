@@ -442,11 +442,12 @@ fn tokens_after(line: &str, marker_end: usize) -> Option<Header> {
 
     let mut probe = skip_emphasis(line, header_end);
     probe = skip_horizontal(line, probe);
-    let separator = line
-        .get(probe..)?
-        .chars()
-        .next()
-        .filter(|character| matches!(character, ':' | '.' | ',' | ';' | '!' | '?'));
+    let separator = line.get(probe..)?.chars().next().filter(|character| {
+        matches!(
+            character,
+            ':' | '.' | ',' | ';' | '!' | '?' | '\u{2013}' | '\u{2014}'
+        )
+    });
     if let Some(separator) = separator {
         probe += separator.len_utf8();
         probe = skip_emphasis(line, probe);

@@ -98,6 +98,46 @@ fn current_header_forms_share_one_packet_grammar() {
     }
 }
 
+/// Every prose boundary ends the key list for both dispositions. The Unicode
+/// dashes are multi-byte separators, while a bare space remains an unconsumed
+/// boundary rather than punctuation owned by the packet.
+#[test]
+fn ack_and_nack_key_lists_stop_at_every_prose_delimiter() {
+    for (delimiter, separator) in [
+        (":", Some(':')),
+        (".", Some('.')),
+        (";", Some(';')),
+        (",", Some(',')),
+        ("!", Some('!')),
+        ("?", Some('?')),
+        ("\u{2013}", Some('\u{2013}')),
+        ("\u{2014}", Some('\u{2014}')),
+        (" ", None),
+    ] {
+        for (marker, key, column, disposition) in [
+            ("ACK", "1kJK6N3R", 5, "acked"),
+            ("NACK", "1kJK7Sqy", 6, "declined"),
+        ] {
+            let prose = format!("{marker} {key}{delimiter}ordinary response prose");
+            let packets = scan_acknowledgements(&prose, &board());
+
+            assert_eq!(packets.len(), 1, "missed {prose:?}");
+            assert_eq!(
+                packets[0].separator, separator,
+                "wrong separator for {prose:?}"
+            );
+            assert_eq!(
+                report(&packets[0].recognitions),
+                [format!("1:{column} {key} {disposition}")]
+            );
+            assert!(
+                packets[0].end <= prose.find("ordinary").expect("fixture has response prose"),
+                "response prose was consumed by {prose:?}"
+            );
+        }
+    }
+}
+
 /// One assistant message may distribute acknowledgements across separate
 /// paragraphs. Each header remains an independent disposition rather than the
 /// first header consuming the rest of the message as its body.
