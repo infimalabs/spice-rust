@@ -513,12 +513,36 @@ fn use_composer_drag(surface: &SurfaceData) -> watchband::PrimaryComposerDragSta
     watchband::use_primary_composer_drag_state(context.0, context.1)
 }
 
+#[function_component(CanvasRouter)]
+fn canvas_router() -> Html {
+    let (destination, navigate) = navigation::use_destination();
+    if let Some(destination) = destination {
+        html! { <CanvasApp {destination} {navigate} /> }
+    } else {
+        html! {
+            <main class="shell">
+                <section class="empty" role="alert" data-route-unavailable="true">
+                    <h1>{"Canvas route unavailable"}</h1>
+                    <p>{"Use #/, #/work, or #/info."}</p>
+                </section>
+            </main>
+        }
+    }
+}
+
+#[derive(Properties, PartialEq)]
+struct CanvasAppProperties {
+    destination: CanvasDestination,
+    navigate: Callback<CanvasDestination>,
+}
+
 #[function_component(CanvasApp)]
-fn canvas_app() -> Html {
+fn canvas_app(properties: &CanvasAppProperties) -> Html {
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
     let canvas_menu_open = use_state(|| false);
-    let (axis, mosaic) = navigation::use_global_destination(canvas_menu_open.clone());
+    let (axis, mosaic) =
+        navigation::use_global_destination(properties.destination, canvas_menu_open.clone());
     let work_scope = use_state(WorkScope::default);
     let work_scope_notice = use_state(|| None::<String>);
     let work_arrangement = use_state(WorkArrangement::default);
@@ -598,6 +622,7 @@ fn canvas_app() -> Html {
             surface: &surface,
             axis: &axis,
             mosaic: &mosaic,
+            navigate: &properties.navigate,
             canvas_menu_open: &canvas_menu_open,
             work_scope: &work_scope,
             work_scope_notice: &work_scope_notice,
@@ -1383,5 +1408,5 @@ pub fn start() {
         .expect("canvas app root");
     root.set_attribute("data-app-source", APP_SOURCE_IDENTITY)
         .expect("stamp canvas app source identity");
-    yew::Renderer::<CanvasApp>::with_root(root).render();
+    yew::Renderer::<CanvasRouter>::with_root(root).render();
 }

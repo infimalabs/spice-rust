@@ -90,38 +90,24 @@ impl TeamDestination {
 impl CanvasDestination {
     /// Every global destination, left to right.
     pub const ALL: [Self; 3] = [Self::Info, Self::Work, Self::Chat];
-    /// Destination shown when the URL carries no global-page selection.
-    pub const DEFAULT: Self = Self::Chat;
-
-    /// Stable URL spelling for this global destination.
+    /// Exact hash-history path for this destination.
     #[must_use]
-    pub const fn route_value(self) -> &'static str {
+    pub const fn path(self) -> &'static str {
         match self {
-            Self::Info => "info",
-            Self::Work => "work",
-            Self::Chat => "chat",
+            Self::Info => "/info",
+            Self::Work => "/work",
+            Self::Chat => "/",
         }
     }
 
-    /// Global destination named by a URL value.
-    ///
-    /// Missing and unrecognized values retain the legacy default page.
+    /// Destination named by one exact hash-history path.
     #[must_use]
-    pub fn from_route_value(value: Option<&str>) -> Self {
-        match value {
-            Some("info") => Self::Info,
-            Some("work") => Self::Work,
-            Some("chat") | None | Some(_) => Self::DEFAULT,
-        }
-    }
-
-    /// Global destination represented by the current Canvas surface state.
-    #[must_use]
-    pub const fn from_surface(axis: Axis, mosaic: bool) -> Self {
-        if mosaic {
-            Self::Chat
-        } else {
-            Self::for_axis(axis)
+    pub fn from_path(path: &str) -> Option<Self> {
+        match path {
+            "/info" => Some(Self::Info),
+            "/work" => Some(Self::Work),
+            "/" => Some(Self::Chat),
+            _ => None,
         }
     }
 

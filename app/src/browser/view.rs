@@ -73,6 +73,7 @@ pub(super) struct CanvasRender<'a> {
     pub surface: &'a UseStateHandle<SurfaceData>,
     pub axis: &'a UseStateHandle<Axis>,
     pub mosaic: &'a UseStateHandle<bool>,
+    pub navigate: &'a Callback<CanvasDestination>,
     pub canvas_menu_open: &'a UseStateHandle<bool>,
     pub work_scope: &'a UseStateHandle<WorkScope>,
     pub work_scope_notice: &'a UseStateHandle<Option<String>>,
@@ -123,9 +124,9 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
         >
             {chrome::render_command_bar(chrome::CommandBarRender {
                 connection: render.connection,
-                axis: render.axis,
                 mosaic: render.mosaic,
                 menu_open: render.canvas_menu_open,
+                navigate: render.navigate,
                 identity: render.identity,
                 canvas_update: render.canvas_update,
                 work_scope: render.work_scope,

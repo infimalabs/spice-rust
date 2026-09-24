@@ -19,6 +19,7 @@ base64 = "0.22.1"
 futures-util = "0.3.33"
 futures-channel = "0.3.33"
 gloo-net = "0.6.0"
+gloo-history = "0.2.2"
 gloo-timers = { version = "0.3.0", features = ["futures"] }
 js-sys = "0.3.83"
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }

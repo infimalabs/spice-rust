@@ -29,8 +29,8 @@ const TICKER_BUDGET: usize = 160;
 /// The bar of view pills, each wearing what its axis currently counts.
 pub(super) struct CommandBarRender<'a> {
     pub(super) connection: &'a UseStateHandle<Connection>,
-    pub(super) axis: &'a UseStateHandle<Axis>,
     pub(super) mosaic: &'a UseStateHandle<bool>,
+    pub(super) navigate: &'a Callback<CanvasDestination>,
     pub(super) menu_open: &'a UseStateHandle<bool>,
     pub(super) work_scope: &'a UseStateHandle<WorkScope>,
     pub(super) work_scope_notice: &'a UseStateHandle<Option<String>>,
@@ -58,9 +58,8 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
             >
                 <nav class="task-pill-strip" aria-label="Open task projects">
                     {for task_pills.into_iter().map(|pill| {
-                        let axis = render.axis.clone();
-                        let mosaic = render.mosaic.clone();
                         let menu_open = render.menu_open.clone();
+                        let navigate = render.navigate.clone();
                         let work_scope = render.work_scope.clone();
                         let work_scope_notice = render.work_scope_notice.clone();
                         let identity = pill.identity.clone();
@@ -92,8 +91,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                                 onclick={Callback::from(move |_| {
                                     work_scope.set(WorkScope::Stem(identity.clone()));
                                     work_scope_notice.set(None);
-                                    axis.set(Axis::Flow);
-                                    mosaic.set(false);
+                                    navigate.emit(CanvasDestination::Work);
                                     menu_open.set(false);
                                 })}
                             >
@@ -114,9 +112,8 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
     html! {
         <nav class="canvas-navigation" aria-label="Canvas views">
             {for CanvasDestination::ALL.map(|destination| {
-                let axis = render.axis.clone();
-                let mosaic = render.mosaic.clone();
                 let menu_open = render.menu_open.clone();
+                let navigate = render.navigate.clone();
                 let work_scope = render.work_scope.clone();
                 let work_scope_notice = render.work_scope_notice.clone();
                 let destination_axis = destination.axis();
@@ -133,12 +130,7 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                             work_scope.set(WorkScope::AllOpen);
                             work_scope_notice.set(None);
                         }
-                        if let Some(candidate) = destination_axis {
-                            axis.set(candidate);
-                            mosaic.set(false);
-                        } else {
-                            mosaic.set(true);
-                        }
+                        navigate.emit(destination);
                         menu_open.set(false);
                     }),
                 )
