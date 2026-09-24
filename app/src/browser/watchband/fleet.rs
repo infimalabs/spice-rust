@@ -137,10 +137,12 @@ pub(super) fn render_populated_fleet(
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
             tabindex="0" aria-label="Agent teams" onclick={dismiss} onkeydown={escape}>
-            {for teams.iter().map(|team| {
-                if render.team_controls.is_closed(team.lane) {
-                    return Html::default();
-                }
+            // Every team keeps its own subtree, so a reorder, fusion, or split moves
+            // composers with their drafts, focus, and open menus instead of
+            // repainting a neighbour's nodes. Yew diffs a list positionally unless
+            // every child is keyed, so closed teams leave the list rather than
+            // holding an unkeyed slot.
+            {for teams.iter().filter(|team| !render.team_controls.is_closed(team.lane)).map(|team| {
                 let team_standings = standings
                     .iter()
                     .filter(|standing| standing.team == team.lane)
@@ -151,6 +153,7 @@ pub(super) fn render_populated_fleet(
                     .mode;
                 html! {
                     <section
+                        key={team.lane.to_string()}
                         class="team-surface"
                         data-team={team.lane.to_string()}
                         data-team-weight={watchband::team_visual_weight(team.members.len()).to_string()}
