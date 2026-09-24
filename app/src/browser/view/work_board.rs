@@ -36,11 +36,10 @@ const ORDERS: [(WorkOrder, &str, &str); 2] = [
     (WorkOrder::Newest, "Newest", "Newest created first"),
 ];
 
-const CLUSTERINGS: [(WorkClustering, &str); 4] = [
+const CLUSTERINGS: [(WorkClustering, &str); 3] = [
     (WorkClustering::None, "None"),
     (WorkClustering::Project, "Project"),
     (WorkClustering::Phase, "Phase"),
-    (WorkClustering::Owner, "Owner"),
 ];
 
 pub(super) struct WorkBoardControls<'a> {
@@ -255,7 +254,7 @@ fn render_lane(
             } else {
                 <div class="work-card-list">
                     {for clusters.iter().flat_map(|cluster| {
-                        let separator = cluster_label(cluster.key, cards.lanes).map(|name| html! {
+                        let separator = cluster_label(cluster.key).map(|name| html! {
                             <p key={format!("cluster:{name}")} class="work-lane-cluster">{name}</p>
                         });
                         separator
@@ -269,14 +268,11 @@ fn render_lane(
 }
 
 /// The separator text for one cluster; the unclustered lane has none.
-fn cluster_label(key: WorkClusterKey<'_>, lanes: Option<&LaneView>) -> Option<String> {
+fn cluster_label(key: WorkClusterKey<'_>) -> Option<String> {
     match key {
         WorkClusterKey::Lane => None,
         WorkClusterKey::Project(project) => Some(project.to_owned()),
         WorkClusterKey::Phase(phase) => Some(phase.to_owned()),
-        WorkClusterKey::Owner(owner) => {
-            Some(owner.map_or_else(|| "Unassigned".to_owned(), |actor| actor_name(actor, lanes)))
-        }
     }
 }
 
@@ -521,7 +517,6 @@ const fn clustering_key(clustering: WorkClustering) -> &'static str {
         WorkClustering::None => "none",
         WorkClustering::Project => "project",
         WorkClustering::Phase => "phase",
-        WorkClustering::Owner => "owner",
     }
 }
 

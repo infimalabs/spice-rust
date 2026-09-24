@@ -118,8 +118,6 @@ pub enum WorkClustering {
     Project,
     /// One cluster per workflow phase.
     Phase,
-    /// One cluster per owner, with unowned work as its own cluster.
-    Owner,
 }
 
 /// How cards sit inside the one shared set of board lanes.
@@ -140,7 +138,6 @@ pub enum WorkClusterKey<'a> {
     Lane,
     Project(&'a str),
     Phase(&'a str),
-    Owner(Option<&'a Actor>),
 }
 
 /// Consecutive cards sharing one cluster attribute, in the chosen order.
@@ -336,7 +333,6 @@ impl<'a> WorkTask<'a> {
             WorkClustering::None => WorkClusterKey::Lane,
             WorkClustering::Project => WorkClusterKey::Project(&self.row.statement.body.project),
             WorkClustering::Phase => WorkClusterKey::Phase(self.row.workflow.body.phase.as_str()),
-            WorkClustering::Owner => WorkClusterKey::Owner(self.owner()),
         }
     }
 }
@@ -1176,24 +1172,11 @@ mod tests {
             titles(&ready(WorkOrder::Newest, WorkClustering::Project)),
             ["task 9", "task 5", "task 7", "task 2", "task 4"]
         );
-        let by_owner = ready(WorkOrder::Offer, WorkClustering::Owner);
-        assert_eq!(
-            by_owner
-                .iter()
-                .map(|cluster| (cluster.key, cluster.tasks.len()))
-                .collect::<Vec<_>>(),
-            [
-                (WorkClusterKey::Owner(None), 4),
-                (WorkClusterKey::Owner(Some(&Actor::Spice)), 1),
-            ]
-        );
-
         for order in [WorkOrder::Offer, WorkOrder::Newest] {
             for clustering in [
                 WorkClustering::None,
                 WorkClustering::Project,
                 WorkClustering::Phase,
-                WorkClustering::Owner,
             ] {
                 let mut placed = OPEN_LANES
                     .into_iter()
