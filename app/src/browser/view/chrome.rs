@@ -1,6 +1,6 @@
 //! The chrome standing above the feed.
 //!
-//! One bar of pills and the connectivity-bearing Spice button across the top, one
+//! One bar of project pills and the connectivity-bearing Spice button across the top, one
 //! band of lane standings under it, one line of the newest command outcome
 //! under that, and the card the feed packs. All four are placement and markup
 //! only: every number they show is derived in [`crate::watchband`], which a
@@ -104,9 +104,6 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                     })}
                 </nav>
                 <span class="visually-hidden" role="status">{connection_label.clone()}</span>
-                if **render.menu_open {
-                    {render_navigation(&render, runtime)}
-                }
                 {render_canvas_menu(&render, runtime, &connection_label)}
             </div>
         </header>
@@ -200,6 +197,7 @@ fn render_canvas_menu(
                 <span class="canvas-menu-pepper" aria-hidden="true">{"🌶️"}</span>
             </summary>
             <div class="canvas-menu-frame">
+                {render_navigation(render, runtime)}
                 <div class="canvas-menu-panel">
                     {super::team_menu::render(
                         **render.mosaic,

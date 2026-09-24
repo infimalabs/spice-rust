@@ -142,7 +142,8 @@ body:has(.shell--mosaic),
   left: auto;
   z-index: 1;
   display: grid;
-  grid-template-rows: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 9px;
   width: min(360px, 100%);
   max-height: calc(100vh - 46px - var(--canvas-frame-edge-block-end));
   max-height: calc(100dvh - 46px - var(--canvas-frame-edge-block-end));
@@ -154,27 +155,17 @@ body:has(.shell--mosaic),
   box-shadow: var(--shadow);
 }
 .canvas-navigation {
-  grid-area: 1 / 1;
-  position: relative;
-  z-index: 1;
   display: flex;
-  flex-wrap: nowrap;
-  justify-content: flex-start;
-  justify-self: end;
-  gap: 3px;
-  width: max-content;
-  max-width: min(360px, 100%);
+  align-items: stretch;
+  gap: 6px;
+  width: 100%;
   min-width: 0;
-  overflow-x: auto;
-  overscroll-behavior-inline: contain;
-  background: var(--page);
-  scrollbar-width: thin;
 }
 .canvas-navigation .axis-button {
-  flex: 0 0 auto;
+  flex: 1 1 0;
   justify-content: center;
-  min-width: max-content;
-  min-height: 23px;
+  min-width: 0;
+  min-height: 30px;
   padding: 0 8px;
   border-color: color-mix(in srgb, var(--line) 74%, transparent);
   font-size: .62rem;

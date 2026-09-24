@@ -370,6 +370,11 @@ those analytical identities and the domain team, task, and agent names stay
 unchanged. The global rail changes the question asked of the whole Canvas,
 not the mode of one lane or team.
 
+The global rail is the first row inside the Spice Canvas menu, immediately
+above global settings. It spans the menu width and divides that width equally
+among every destination, so adding another global destination preserves equal
+access rather than shrinking one privileged control.
+
 Panel variants and DOM mode identifiers use Info, Work, and Chat directly.
 Selection is in-memory: switching global views or reconnecting preserves each
 team's selection, while a page reload starts in Chat as before. Stored team
