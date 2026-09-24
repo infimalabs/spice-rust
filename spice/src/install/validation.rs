@@ -48,7 +48,7 @@ fn validate_operation_inventory(
         Asset::HookWrapperSpice,
         Asset::Skill,
     ];
-    current.extend(app_operation_inventory(plan)?);
+    current.extend(app_operation_inventory(plan, content)?);
     let previous = [
         Asset::GitPreCommit,
         Asset::GitCommitMessage,
@@ -125,7 +125,10 @@ fn validate_optional_tail(plan: &InstallPlan, tail: &[Operation]) -> Result<(), 
     Ok(())
 }
 
-fn app_operation_inventory(plan: &InstallPlan) -> Result<Vec<Asset>, InstallError> {
+fn app_operation_inventory(
+    plan: &InstallPlan,
+    content: GeneratedContentAuthority,
+) -> Result<Vec<Asset>, InstallError> {
     let Some(current) = &plan.app else {
         return Ok(Vec::new());
     };
@@ -157,10 +160,20 @@ fn app_operation_inventory(plan: &InstallPlan) -> Result<Vec<Asset>, InstallErro
             ));
         }
     }
-    for assets in groups.values() {
-        if app::ASSETS.iter().any(|(asset, _)| !assets.contains(asset))
-            || assets.len() > app::ASSETS.len() + wire::manifest::renderer::MAX_FILES
-        {
+    for (generation, assets) in &groups {
+        // work.css was introduced without changing the receipt schema. Old
+        // generations retain their original inventory, even inside a new plan;
+        // only the current generation of a new plan must carry the new file.
+        let historical = content == GeneratedContentAuthority::HistoricalReceipt
+            || *generation != current.as_str();
+        let missing = app::ASSETS.iter().any(|(asset, _)| {
+            !assets.contains(asset) && !(historical && *asset == Asset::CanvasWork)
+        });
+        let renderers = assets
+            .iter()
+            .filter(|asset| matches!(asset, Asset::CanvasRenderer(_)))
+            .count();
+        if missing || renderers > wire::manifest::renderer::MAX_FILES {
             return Err(InstallError::InvalidRecord(
                 "Canvas generation is incomplete or exceeds its bound".to_owned(),
             ));

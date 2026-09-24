@@ -254,6 +254,19 @@ impl AppSource {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(generation) = cache.generations.get(&identity).cloned() {
             if current {
+                if !generation
+                    .assets
+                    .contains_key(wire::manifest::CANVAS_WORK_STYLE)
+                {
+                    return Err(AppSourceError::Incomplete {
+                        directory: self
+                            .stage
+                            .join(APP_STAGE_GENERATIONS)
+                            .join(identity.as_str()),
+                        missing: vec![wire::manifest::CANVAS_WORK_STYLE.to_owned()],
+                        source: None,
+                    });
+                }
                 cache.current = Some(identity.clone());
             }
             cache.touch(&identity);
@@ -264,14 +277,14 @@ impl AppSource {
             .stage
             .join(APP_STAGE_GENERATIONS)
             .join(identity.as_str());
-        let (members, html) = validate_generation(&directory)?;
-        let assets = APP
-            .assets()
+        let inventory = validate_generation(&directory, current)?;
+        let assets = inventory
+            .assets
             .iter()
             .map(|asset| {
                 let path = directory.join(asset.file());
                 let bytes = if asset.file() == wire::manifest::CANVAS_APP_HTML {
-                    Arc::clone(&html)
+                    Arc::clone(&inventory.html)
                 } else {
                     Arc::<[u8]>::from(
                         std::fs::read(&path)
@@ -291,7 +304,7 @@ impl AppSource {
             .collect::<Result<BTreeMap<_, _>, AppSourceError>>()?;
         let mut renderers = BTreeMap::new();
         let mut total = 0_u64;
-        for member in members {
+        for member in inventory.renderers {
             let path = directory.join(member.file.to_string());
             let metadata =
                 std::fs::symlink_metadata(&path).map_err(|source| AppSourceError::Unreadable {
@@ -359,7 +372,11 @@ impl AppSource {
             return Ok(None);
         };
         if let Some(asset) = APP.asset_file(file) {
-            return self.generation(identity, false)?.served(asset).map(Some);
+            return Ok(self
+                .generation(identity, false)?
+                .assets
+                .get(asset.file())
+                .cloned());
         }
         let Some(file) = wire::manifest::renderer::File::parse_filename(file) else {
             return Ok(None);
@@ -502,9 +519,16 @@ fn generation_route(route: &str) -> Option<(wire::Digest, &str)> {
     Some((identity.parse().ok()?, file))
 }
 
+struct GenerationInventory {
+    assets: Vec<AppAsset>,
+    renderers: Vec<wire::manifest::renderer::Member>,
+    html: Arc<[u8]>,
+}
+
 fn validate_generation(
     directory: &Path,
-) -> Result<(Vec<wire::manifest::renderer::Member>, Arc<[u8]>), AppSourceError> {
+    current: bool,
+) -> Result<GenerationInventory, AppSourceError> {
     let mut observed = std::fs::read_dir(directory)
         .map_err(|source| AppSourceError::Incomplete {
             directory: directory.to_path_buf(),
@@ -554,7 +578,15 @@ fn validate_generation(
     );
     let members = wire::manifest::renderer::from_html(&html)
         .map_err(|error| AppSourceError::Inventory(error.to_owned()))?;
+    // A page opened before work.css was introduced must keep loading its own
+    // immutable generation after an upgrade. The active publication still
+    // requires the current complete inventory.
+    let legacy = !current
+        && !observed
+            .iter()
+            .any(|file| file == wire::manifest::CANVAS_WORK_STYLE);
     let mut expected = wire::manifest::renderer::filenames(&members)
+        .filter(|file| !legacy || file.as_ref() != wire::manifest::CANVAS_WORK_STYLE)
         .map(std::borrow::Cow::into_owned)
         .collect::<Vec<_>>();
     expected.sort();
@@ -580,7 +612,16 @@ fn validate_generation(
             directory.display()
         )));
     }
-    Ok((members, html))
+    Ok(GenerationInventory {
+        assets: APP
+            .assets()
+            .iter()
+            .copied()
+            .filter(|asset| !legacy || asset.file() != wire::manifest::CANVAS_WORK_STYLE)
+            .collect(),
+        renderers: members,
+        html,
+    })
 }
 
 /// One shared lane-built asset resolved for one request.
@@ -1054,6 +1095,48 @@ mod tests {
         };
         assert_eq!(directory, second);
         assert!(missing.iter().any(|file| file == "app_bg.wasm"));
+        fs::remove_dir_all(root).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn canvas_history_without_work_css_cannot_be_promoted_to_the_current_generation() {
+        let root = worktree();
+        let legacy = app()
+            .into_iter()
+            .filter(|(file, _)| *file != "work.css")
+            .collect::<Vec<_>>();
+        staged(&root, &legacy);
+        assert!(matches!(
+            AppSource::resolve(&root),
+            Err(AppSourceError::Incomplete { .. })
+        ));
+        staged_as(&root, SECOND_GENERATION, &app());
+        let source = AppSource::resolve(&root).expect("current generation is complete");
+        let old_style = format!("{APP_GENERATION_ROUTE}/{FIRST_GENERATION}/style.css");
+        assert_eq!(
+            source.served(&old_style).unwrap().unwrap().bytes(),
+            b"locally built style.css"
+        );
+        assert!(
+            source
+                .served(&format!(
+                    "{APP_GENERATION_ROUTE}/{FIRST_GENERATION}/work.css"
+                ))
+                .unwrap()
+                .is_none()
+        );
+
+        fs::write(
+            root.join(APP_STAGE).join(APP_STAGE_CURRENT),
+            format!("{FIRST_GENERATION}\n"),
+        )
+        .expect("promote the cached legacy generation");
+        let error = source
+            .current_generation()
+            .expect_err("a historical cache hit cannot bypass current completeness");
+        assert!(
+            matches!(error, AppSourceError::Incomplete { missing, .. } if missing == ["work.css"])
+        );
         fs::remove_dir_all(root).expect("fixture cleanup");
     }
 

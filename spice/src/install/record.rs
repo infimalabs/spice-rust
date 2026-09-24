@@ -14,6 +14,9 @@ use super::{
     ReceiptSupport, Repository, RepositoryIdentity, RollbackArchive,
 };
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct InstallRecord {
