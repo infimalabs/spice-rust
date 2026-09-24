@@ -421,7 +421,7 @@ fn render_composer(render: &WorkDetailRender<'_, '_>, handle: &str) -> Html {
             <textarea
                 id="work-detail-note"
                 value={(**render.note_text).clone()}
-                disabled={busy}
+                readonly={busy}
                 oninput={state_from_textarea(render.note_text.clone())}
             ></textarea>
             <button type="submit" disabled={busy || render.note_text.trim().is_empty()}>
