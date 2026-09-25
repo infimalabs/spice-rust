@@ -34,6 +34,27 @@ authority. A missing, symbolic, non-regular, or non-executable asset is a hard
 stop. Do not substitute another Cargo route or point `CARGO_HOME` at a shared
 mutable cache to work around a stale generation.
 
+## Permanent test value
+
+Permanent tests are maintained product contracts, not proof that one change
+worked. Add one only when a plausible bug could violate current observable
+behavior: a contract, boundary, invariant, state transition, precedence rule,
+or real error. Prefer deterministic, fast, in-process, in-memory tests.
+
+Do not add a test solely because a bug once occurred. Do not retain
+process-orchestration tests when the same contract can be exercised in process,
+or assertions of source text, plumbing and wiring, mock echoes, incidental
+defaults, exact wording, implementation shape, or retired behavior. Bare
+does-not-throw, non-empty-output, and length-grew checks do not earn permanent
+maintenance. Delete an existing test that enforces vestigial behavior instead
+of updating its expected output.
+
+Prove a change by reproducing the failure and exercising the actual changed
+path. Use a throwaway script or smoke check when that evidence does not meet the
+bar for a permanent test. Use a broader or slower process test only when it is
+the indispensable boundary of a current external contract and no focused
+substitute can protect that contract.
+
 ## Rust source organization
 
 Use ordinary Rust modules all the way down when organizing handwritten source:
