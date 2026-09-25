@@ -4,6 +4,7 @@ use web_sys::{ClipboardEvent, DragEvent, File, FileList, FileReader};
 use yew::functional::UseReducerDispatcher;
 
 use super::*;
+mod task_inspector;
 
 pub(super) fn update_body(
     lane_key: String,
@@ -146,7 +147,8 @@ impl PartialEq for AgentMessageCardProps {
 #[function_component(AgentMessageCard)]
 pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
     let lane = props.lane.to_string();
-    let message_key = agent_message_source_id(&props.message);
+    let card_key = agent_message_source_id(&props.message);
+    let speech_message_key = card_key.clone();
     let speech_queue = props.speech_queue.clone();
     let response = props
         .message
@@ -158,7 +160,7 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
         if let Some(text) = response.clone() {
             speech_queue.emit(SpeechRequest::message(
                 lane.clone(),
-                message_key.clone(),
+                speech_message_key.clone(),
                 text,
             ));
         }
@@ -172,22 +174,27 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
         props.speaking,
         props.order,
     );
+    let inspector = task_inspector::use_card(card_key);
     render_agent_message_card(
-        &props.member,
-        props.quote_lane,
-        &props.message,
+        props,
         &correspondent,
-        &props.layout,
+        inspector.context.as_ref(),
+        inspector.inspection.as_ref(),
+        inspector.root,
     )
 }
 
 fn render_agent_message_card(
-    member: &crate::runtime::LaneMember,
-    quote_lane: CanonicalUuid,
-    message: &wire::AgentMessage,
+    props: &AgentMessageCardProps,
     correspondent: &view::chrome::Correspondent,
-    layout: &CardLayout,
+    inspector: Option<&crate::browser::message_task_inspector::Context>,
+    inspection: Option<&crate::browser::message_task_inspector::Inspection>,
+    inspector_ref: NodeRef,
 ) -> Html {
+    let member = &props.member;
+    let quote_lane = props.quote_lane;
+    let message = &props.message;
+    let layout = &props.layout;
     let AgentMessagePresentation {
         source_id,
         attribution,
@@ -201,6 +208,13 @@ fn render_agent_message_card(
         card_label,
         badges,
     } = agent_message_presentation(member, message);
+    let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
+    let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
+    let close_inspection = task_inspector::close_inspector(
+        inspector.cloned(),
+        source_id.clone(),
+        inspection.map(|inspection| inspection.handle.to_string()),
+    );
     html! {
         <article
             key={source_id.clone()}
@@ -212,11 +226,15 @@ fn render_agent_message_card(
                 message.final_answer.then_some("final"),
                 correspondent.speaking.then_some("now-playing"),
                 layout.lifecycle.as_str(),
+                inspection.is_some().then_some("mosaic-message-card--inspecting-task"),
             )}
             aria-label={card_label}
             data-card-kind={if is_boundary { "compaction" } else { "agent-message" }}
             data-message-role="agent"
             data-mosaic-card-key={source_id}
+            data-task-inspection={inspection.is_some().to_string()}
+            onclick={task_click}
+            onkeydown={task_keydown}
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={member.lane.to_string()}
             data-agent-activity={watchband::agent_activity_name(message.activity)}
@@ -245,18 +263,28 @@ fn render_agent_message_card(
             data-candidate-spans={layout.candidate_spans.clone()}
             data-measure-span={layout.measure_span.to_string()}
         >
-            if is_boundary {
-                {render_agent_boundary(message, &footer_label)}
-            } else {
-                {rendered_html}
-                {render_agent_message_media(unlinked_media, media_description.as_deref())}
-                {render_agent_message_footer(
-                    message,
-                    &shown_text,
-                    correspondent,
-                    crate::runtime::agent_message_display_millis(message),
-                    &footer_label,
-                    &attribution,
+            <div class="mosaic-message-normal" hidden={inspection.is_some()}>
+                if is_boundary {
+                    {render_agent_boundary(message, &footer_label)}
+                } else {
+                    {rendered_html}
+                    {render_agent_message_media(unlinked_media, media_description.as_deref())}
+                    {render_agent_message_footer(
+                        message,
+                        &shown_text,
+                        correspondent,
+                        crate::runtime::agent_message_display_millis(message),
+                        &footer_label,
+                        &attribution,
+                    )}
+                }
+            </div>
+            if let (Some(inspector), Some(inspection)) = (inspector, inspection) {
+                {crate::browser::message_task_inspector::render(
+                    inspector,
+                    inspection,
+                    inspector_ref,
+                    close_inspection,
                 )}
             }
         </article>

@@ -42,6 +42,7 @@ mod clock;
 mod connection;
 mod image_viewer;
 mod mermaid;
+mod message_task_inspector;
 mod navigation;
 mod task_detail;
 mod task_relations;
@@ -562,6 +563,8 @@ fn canvas_app(properties: &CanvasAppProperties) -> Html {
     };
     let composer_drag = use_composer_drag(&surface);
     let work_detail = task_detail::use_controls(sender.clone(), surface.clone());
+    let task_context =
+        message_task_inspector::use_controls(&surface, &work_detail, &properties.navigate);
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
     let work_map = use_state(view::WorkMapState::default);
     let speech = use_state(|| wire::SpeechPlayback::Disabled {});
@@ -655,8 +658,9 @@ fn canvas_app(properties: &CanvasAppProperties) -> Html {
         },
         work.as_ref(),
     );
-    html! { <image_viewer::Provider><mermaid::Provider>{canvas}</mermaid::Provider></image_viewer::Provider> }
+    message_task_inspector::provide(task_context, canvas)
 }
+
 fn project_work(runtime: Option<&CanvasRuntime>) -> Option<WorkProjection<'_>> {
     runtime
         .and_then(CanvasRuntime::board)

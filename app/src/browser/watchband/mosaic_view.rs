@@ -344,27 +344,31 @@ fn use_layout_properties(
     width: i32,
     keys: Vec<String>,
     plane: Option<crate::mosaic_plane::PersistentLanePlane<String>>,
+    suspended: bool,
 ) {
-    use_effect_with((host, width, keys, plane), move |(host, width, _, _)| {
-        if *width < MIN_MEASURABLE_WIDTH_PX {
-            return;
-        }
-        let host = host
-            .cast::<web_sys::HtmlElement>()
-            .expect("a rendered Mosaic plane is an HTML element");
-        copy_layout_properties(&host, &PLANE_LAYOUT_PROPERTIES);
-        let cards = host
-            .query_selector_all(".mosaic-message-card")
-            .expect("the fixed Mosaic card selector is valid");
-        for index in 0..cards.length() {
-            let card = cards
-                .item(index)
-                .expect("the Mosaic card list retains every indexed node")
-                .dyn_into::<web_sys::HtmlElement>()
-                .expect("a Mosaic card is an HTML element");
-            copy_layout_properties(&card, &CARD_LAYOUT_PROPERTIES);
-        }
-    });
+    use_effect_with(
+        (host, width, keys, plane, suspended),
+        move |(host, width, _, _, suspended)| {
+            if *suspended || *width < MIN_MEASURABLE_WIDTH_PX {
+                return;
+            }
+            let host = host
+                .cast::<web_sys::HtmlElement>()
+                .expect("a rendered Mosaic plane is an HTML element");
+            copy_layout_properties(&host, &PLANE_LAYOUT_PROPERTIES);
+            let cards = host
+                .query_selector_all(".mosaic-message-card")
+                .expect("the fixed Mosaic card selector is valid");
+            for index in 0..cards.length() {
+                let card = cards
+                    .item(index)
+                    .expect("the Mosaic card list retains every indexed node")
+                    .dyn_into::<web_sys::HtmlElement>()
+                    .expect("a Mosaic card is an HTML element");
+                copy_layout_properties(&card, &CARD_LAYOUT_PROPERTIES);
+            }
+        },
+    );
 }
 
 struct MeasurementIndex<'a> {
@@ -439,6 +443,7 @@ struct MosaicPlaneView<'a> {
     geometry: crate::mosaic::Geometry,
     max_row: Option<i32>,
     narration_cursor: String,
+    inspection_active: bool,
 }
 
 impl MosaicPlaneView<'_> {
@@ -498,6 +503,7 @@ impl MosaicPlaneView<'_> {
                 data-observed-width={self.measurement_width.to_string()}
                 data-committed-width={committed_width.to_string()}
                 data-narration-cursor={self.narration_cursor}
+                data-task-inspection={self.inspection_active.to_string()}
                 tabindex="0"
                 aria-label={format!(
                     "Packed team plane: {} policy, {} {}",
@@ -533,6 +539,8 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let track_host = use_node_ref();
     let width = use_element_width(track_host.clone());
     let measurement_width = width.round() as i32;
+    let inspection_active = use_context::<crate::browser::message_task_inspector::Context>()
+        .is_some_and(|context| context.inspection.is_some());
     use_history_paging(
         host.clone(),
         &properties.cards,
@@ -541,6 +549,32 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         properties.history.clone(),
     );
     let committed = use_state_eq(|| None::<crate::mosaic_plane::PersistentLanePlane<String>>);
+    let displayed = use_state_eq(|| None::<crate::mosaic_plane::PersistentLanePlane<String>>);
+    let inspection_was_active = use_mut_ref(|| false);
+    {
+        let displayed = displayed.clone();
+        let inspection_was_active = inspection_was_active.clone();
+        use_effect_with(
+            ((*committed).clone(), inspection_active),
+            move |(plane, inspection_active)| {
+                if *inspection_active {
+                    *inspection_was_active.borrow_mut() = true;
+                    return;
+                }
+                if std::mem::take(&mut *inspection_was_active.borrow_mut()) {
+                    return;
+                }
+                if displayed.as_ref() != plane.as_ref() {
+                    displayed.set(plane.clone());
+                }
+            },
+        );
+    }
+    let rendered_plane = if displayed.is_some() {
+        (*displayed).clone()
+    } else {
+        (*committed).clone()
+    };
     let card_keys = properties
         .cards
         .iter()
@@ -550,9 +584,10 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         host.clone(),
         measurement_width,
         card_keys,
-        (*committed).clone(),
+        rendered_plane.clone(),
+        inspection_active,
     );
-    let committed_spans = committed_spans(committed.as_ref());
+    let committed_spans = committed_spans(rendered_plane.as_ref());
     let measurements = use_state_eq(Vec::<ActivityMeasurement>::new);
     let narration_cursor = use_state_eq(|| None::<String>);
     use_image_resolution_events(host.clone(), properties.cards.clone());
@@ -568,6 +603,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         measurement_width,
         properties.cards.clone(),
         (*measurements).clone(),
+        inspection_active,
     );
     use_narration(
         properties.lane,
@@ -576,7 +612,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         properties.narrate.clone(),
         narration_cursor.clone(),
     );
-    let committed_plane = committed.as_ref();
+    let committed_plane = rendered_plane.as_ref();
     let geometry_width = committed_plane.map_or(
         measurement_width,
         crate::mosaic_plane::PersistentLanePlane::geometry,
@@ -584,7 +620,12 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(geometry_width));
     let max_row = committed_plane.map(crate::mosaic_plane::PersistentLanePlane::max_row);
     let composer = composer_collapse::use_composer_collapse(host.clone());
-    use_plane_scroll(host.clone(), (*committed).clone(), composer);
+    use_plane_scroll(
+        host.clone(),
+        rendered_plane.clone(),
+        composer,
+        inspection_active,
+    );
     MosaicPlaneView {
         properties,
         measurement_width,
@@ -593,6 +634,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         geometry,
         max_row,
         narration_cursor: (*narration_cursor).clone().unwrap_or_default(),
+        inspection_active,
     }
     .render(host, track_host)
 }
@@ -607,6 +649,7 @@ fn use_plane_scroll(
     host: NodeRef,
     plane: Option<crate::mosaic_plane::PersistentLanePlane<String>>,
     composer: composer_collapse::ComposerCollapse,
+    suspended: bool,
 ) {
     let anchor = use_mut_ref(|| None::<ScrollAnchor>);
     {
@@ -634,7 +677,10 @@ fn use_plane_scroll(
             }
         });
     }
-    use_effect_with((host, plane), move |(host, plane)| {
+    use_effect_with((host, plane, suspended), move |(host, plane, suspended)| {
+        if *suspended {
+            return;
+        }
         let Some(scroller) = host.cast::<web_sys::Element>() else {
             return;
         };
@@ -1014,10 +1060,14 @@ fn use_persistent_plane(
     width: i32,
     cards: Vec<ActivityCard>,
     measurements: Vec<ActivityMeasurement>,
+    inspection_active: bool,
 ) {
     use_effect_with(
-        (width, cards, measurements),
-        move |(width, cards, measurements)| {
+        (width, cards, measurements, inspection_active),
+        move |(width, cards, measurements, inspection_active)| {
+            if *inspection_active {
+                return;
+            }
             let Some(measured) = measured_activity(cards, measurements, *width) else {
                 return;
             };
