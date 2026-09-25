@@ -23,6 +23,10 @@
   --accent-3: #b3402a;
   --accent-4: #007c89;
   --accent-5: #8a4fbf;
+  /* The one treatment for anything shown over the interface: the page
+     beneath stays visible as frosted glass under a theme-weighted veil. */
+  --overlay-veil: rgb(21 27 21 / 26%);
+  --overlay-frost: blur(14px) saturate(115%);
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 16px;
   font-synthesis: none;
@@ -50,6 +54,7 @@
     --accent-3: #e0734f;
     --accent-4: #5fd6d0;
     --accent-5: #d1a3ff;
+    --overlay-veil: rgb(0 0 0 / 52%);
 }
 
 * { box-sizing: border-box; }
