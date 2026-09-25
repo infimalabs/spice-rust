@@ -353,7 +353,7 @@ fn render_theme_selector() -> Html {
         .unwrap_or_else(|| "system".to_owned());
     html! {
         <div
-            class="canvas-theme-selector"
+            class="canvas-control-rail canvas-theme-selector"
             role="group"
             aria-label="Canvas theme"
             data-selected-theme={selected.clone()}
