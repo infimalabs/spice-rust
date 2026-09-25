@@ -85,15 +85,14 @@
 }
 
 @media (max-width: 920px) {
-  .work-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .work-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 20px; }
   .work-history-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .work-detail-facts,
   .work-detail-links { grid-template-columns: 1fr; }
   .work-map-task-list { grid-template-columns: 1fr; }
 }
-
 @media (max-width: 560px) {
-  .work-lanes,
+  .work-lanes { grid-template-columns: 1fr; gap: 0; }
   .work-history-list { grid-template-columns: 1fr; }
   /* One scrolling control row keeps the pinned header two rows tall. */
   .work-arrangement {
@@ -103,8 +102,9 @@
     overflow-x: auto;
   }
   .work-arrangement-group { flex-wrap: nowrap; }
-  .work-lane { padding: 12px; }
-  .work-lane-empty { min-height: 0; margin-top: 5px; padding-block: 11px; }
+  .work-lane { padding-block: 14px; padding-inline: 0; }
+  .work-lane + .work-lane { border-top: var(--canvas-edge-soft); }
+  .work-lane-empty { padding-block: 11px 2px; }
   .work-card { gap: 8px; padding: 12px; }
   .work-history { margin-top: 14px; }
   .work-history-finder { grid-template-columns: 1fr; }
