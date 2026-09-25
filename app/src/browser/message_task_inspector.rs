@@ -185,25 +185,30 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
     };
     html! {
         <section
-            ref={properties.root.clone()}
             class="message-task-inspector"
-            tabindex="-1"
             aria-label={format!("Task {} quick view", properties.inspection.handle)}
             data-task-stamp={properties.inspection.task.to_string()}
         >
             <header class="message-task-inspector-header work-detail-header">
                 <div>
                     <p class="work-detail-kicker">{"Task detail"}</p>
-                    <h2>{title}</h2>
+                    <h2 title={title.clone()}>{title}</h2>
                 </div>
                 <button
                     type="button"
                     class="work-detail-close"
                     aria-label="Close task quick view"
+                    title="Close task quick view"
                     onclick={properties.close.clone()}
-                >{"Close"}</button>
+                >{"×"}</button>
             </header>
-            <div class="message-task-inspector-body">
+            <div
+                ref={properties.root.clone()}
+                class="message-task-inspector-body"
+                role="region"
+                aria-label="Task detail contents"
+                tabindex="-1"
+            >
                 {render_detail(&detail, &properties.inspection, retry)}
             </div>
             <footer class="message-task-inspector-footer">
@@ -252,7 +257,7 @@ fn render_detail(
         Some(TaskDetailState::Unavailable { reason, detail }) => html! {
             <div class="work-detail-problem message-task-inspector-state" role="alert">
                 <h3>{"Task detail unavailable"}</h3>
-                <p><code>{reason}</code></p>
+                <p><code class="message-task-inspector-token" title={reason.clone()}>{reason}</code></p>
                 if let Some(detail) = detail {
                     <p>{detail}</p>
                 }
@@ -273,10 +278,15 @@ fn render_available(
     let statement = &answer.task.statement.body;
     let workflow = &answer.task.workflow.body;
     let note_start = answer.notes.len().saturating_sub(3);
+    let handle = inspection.handle.to_string();
+    let project = statement.project.clone();
+    let status = workflow.status.clone();
+    let phase = workflow.phase.to_string();
+    let review = workflow.review.clone();
     html! {
         <div class="work-detail-content message-task-inspector-content">
             <div class="work-detail-identity">
-                <code>{inspection.handle.to_string()}</code>
+                <code class="message-task-inspector-token" title={handle.clone()}>{handle}</code>
             </div>
             <section class="work-detail-section">
                 <h3>{"Contract"}</h3>
@@ -289,10 +299,10 @@ fn render_available(
             <section class="work-detail-section">
                 <h3>{"State"}</h3>
                 <dl class="work-detail-facts">
-                    <div><dt>{"Project"}</dt><dd>{statement.project.clone()}</dd></div>
-                    <div><dt>{"Status"}</dt><dd>{workflow.status.clone()}</dd></div>
-                    <div><dt>{"Current phase"}</dt><dd>{workflow.phase.to_string()}</dd></div>
-                    <div><dt>{"Review"}</dt><dd>{workflow.review.clone()}</dd></div>
+                    <div><dt>{"Project"}</dt><dd class="message-task-inspector-token" title={project.clone()}>{project}</dd></div>
+                    <div><dt>{"Status"}</dt><dd class="message-task-inspector-token" title={status.clone()}>{status}</dd></div>
+                    <div><dt>{"Current phase"}</dt><dd class="message-task-inspector-token" title={phase.clone()}>{phase}</dd></div>
+                    <div><dt>{"Review"}</dt><dd class="message-task-inspector-token" title={review.clone()}>{review}</dd></div>
                 </dl>
             </section>
             <section class="work-detail-section work-detail-activity">
