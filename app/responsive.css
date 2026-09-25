@@ -119,10 +119,12 @@
   .work-detail-tabs,
   .work-map-content { padding-inline: 14px; }
   .work-map-controls { align-items: stretch; }
-  .work-map-control-group { display: grid; grid-template-columns: 1fr; width: 100%; }
-  .work-map-zoom { grid-template-columns: auto 1fr auto; }
-  .work-map-pan { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-  .work-map-controls > button { flex: 1 1 auto; }
+  .work-map-control-group { display: flex; width: 100%; }
+  .work-map-control-group button { flex: 1 1 0; }
+  .work-map-depth,
+  .work-map-zoom { display: grid; grid-template-columns: auto 1fr auto; }
+  .work-map-pan { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .work-map-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .work-map-bounds { width: 100%; margin-left: 0; text-align: center; }
   .work-map-heading { align-items: flex-start; flex-direction: column; }
   .work-map-heading > span { text-align: left; }
