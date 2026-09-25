@@ -163,6 +163,48 @@ pub(super) fn append_control_cancellation(
     Ok(Some(pending))
 }
 
+/// Return one lapsed or dead-lettered resident control directive to live
+/// standing for another `lifetime`, keeping its identity and text.
+pub(super) fn append_control_recovery(
+    bus: &Bus,
+    proposal: &mut JournalWrite,
+    directive: CanonicalUuid,
+    at: Instant,
+    lifetime: std::time::Duration,
+) -> CommandResult<PendingFact> {
+    let head = bus
+        .read(move |read| read.steering_head(directive))
+        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?
+        .ok_or_else(|| store_fault("steer::recovery-missing", "the control directive vanished"))?;
+    let body = head.body();
+    let key: steer::Key = body
+        .key
+        .parse()
+        .map_err(|_| store_fault("steer::index-invalid", "indexed steering key is admitted"))?;
+    proposal.guard(recovery_guard(
+        directive,
+        head.position(),
+        key,
+        body.lane,
+        body.expires,
+        body.disposition,
+    ));
+    let recovered = wire::body::SteerRecovered {
+        directive,
+        key: body.key.clone(),
+        lane: body.lane,
+        lapsed_at: body.expires,
+        expires: expiry(at, lifetime).map_err(unit_outcome)?,
+    };
+    let pending = proposal
+        .fact(recovered.clone(), FactCause::Existing(body.created))
+        .map_err(|error| store_fault("steer::fact-invalid", &error.to_string()))?;
+    let next = steer::Ledger::transition_head(body, steer::Steering::Recovered(&recovered), at)
+        .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
+    proposal.steering_head(pending, move |_| next);
+    Ok(pending)
+}
+
 /// Admit or rebuild the bounded steering authority before the bus accepts work.
 pub(super) fn admit_index(journal: &mut journal::Journal) -> CommandResult<()> {
     if journal

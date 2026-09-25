@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use journal::{JournalGuard, JournalHead, TaskHeads};
-use wire::{ClaimHead, TaskHandle};
+use wire::{ClaimHead, Disposition, TaskHandle};
 
 use super::*;
 
@@ -185,25 +185,35 @@ fn publish(
 ) -> CommandResult<bool> {
     let control = authority.control();
     let directive = identity(&control);
-    if super::super::steering::control_standing(bus, directive, lane, &control)?.is_some() {
-        return Ok(false);
-    }
+    let standing = super::super::steering::control_standing(bus, directive, lane, &control)?;
     let (mut proposal, published) = super::super::steering::internal_write(epoch)?;
     proposal.guard(claim_guard(authority.clone(), lane));
-    super::super::steering::append_internal_directive(
-        bus,
-        &mut proposal,
-        epoch,
-        super::super::steering::InternalDirective {
-            directive,
-            lane,
-            text,
-            control,
-            lifetime,
-            cause: FactCause::Root,
-            published,
-        },
-    )?;
+    match standing {
+        None => {
+            let notice = super::super::steering::InternalDirective {
+                directive,
+                lane,
+                text,
+                control,
+                lifetime,
+                cause: FactCause::Root,
+                published,
+            };
+            super::super::steering::append_internal_directive(bus, &mut proposal, epoch, notice)?;
+        }
+        // Expiry is not retirement: a notice outlives its lifetime while its
+        // claim still trails the generation it names.
+        Some(Disposition::Lapsed | Disposition::DeadLettered) => {
+            super::super::steering::append_control_recovery(
+                bus,
+                &mut proposal,
+                directive,
+                published,
+                lifetime,
+            )?;
+        }
+        Some(_) => return Ok(false),
+    }
     match commit(bus, proposal) {
         Ok(_) => {
             let residency = current_residency(bus, epoch)?;
