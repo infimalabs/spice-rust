@@ -266,7 +266,6 @@
   contain: inline-size;
   overflow-x: hidden;
   overflow-y: auto;
-  overscroll-behavior: contain;
   scrollbar-gutter: stable;
   background: color-mix(in srgb, var(--panel) 96%, var(--page));
 }
