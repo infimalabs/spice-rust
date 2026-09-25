@@ -47,7 +47,12 @@ pub(super) fn selected_tasks(
                 history: None,
             })
         }
-        BoardRead::History { before, limit } => history_selection(observed, before, *limit),
+        BoardRead::History {
+            before,
+            query,
+            completed_before,
+            limit,
+        } => history_selection(observed, before, query, completed_before.as_ref(), *limit),
         BoardRead::Trust => Ok(TaskSelection {
             tasks: Some(Default::default()),
             evidence: Default::default(),
@@ -112,6 +117,8 @@ fn context_tasks(
 fn history_selection(
     observed: &bus::TaskSnapshot,
     before: &Option<TaskHistoryCursor>,
+    query: &Option<String>,
+    completed_before: Option<&wire::Instant>,
     limit: u16,
 ) -> Result<TaskSelection, Outcome<CommandAnswer>> {
     if limit == 0 || limit > TASK_HISTORY_PAGE_LIMIT_MAX {
@@ -123,10 +130,26 @@ fn history_selection(
             "request between one and the advertised maximum history rows",
         ));
     }
+    let query = normalized_history_query(query)?;
     let mut history = observed
         .tasks()
         .iter()
         .filter(|heads| terminal_task(heads))
+        .filter(|heads| {
+            completed_before.is_none_or(|cutoff| {
+                heads
+                    .workflow()
+                    .body()
+                    .completion
+                    .as_ref()
+                    .is_some_and(|completed| completed <= cutoff)
+            })
+        })
+        .filter(|heads| {
+            query
+                .as_deref()
+                .is_none_or(|query| history_query_matches(heads, query))
+        })
         .map(|heads| TaskHistoryCursor {
             workflow: heads.workflow().position(),
             task: heads.statement().body().born.clone(),
@@ -166,6 +189,60 @@ fn history_selection(
             next,
         }),
     })
+}
+
+fn normalized_history_query(
+    query: &Option<String>,
+) -> Result<Option<String>, Outcome<CommandAnswer>> {
+    let Some(query) = query.as_deref() else {
+        return Ok(None);
+    };
+    if query.len() > TASK_HISTORY_QUERY_BYTES_MAX {
+        return Err(refusal(
+            "board::history-query-invalid",
+            Some(format!(
+                "bytes={}; maximum={TASK_HISTORY_QUERY_BYTES_MAX}",
+                query.len()
+            )),
+            "shorten the terminal history query",
+        ));
+    }
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(None);
+    }
+    if query.chars().any(char::is_control) {
+        return Err(refusal(
+            "board::history-query-invalid",
+            Some("query contains a control character".to_owned()),
+            "search terminal history with printable text",
+        ));
+    }
+    Ok(Some(query.to_lowercase()))
+}
+
+fn history_query_matches(heads: &journal::TaskHeads, query: &str) -> bool {
+    let statement = heads.statement().body();
+    contains_case_insensitive(&statement.title, query)
+        || contains_case_insensitive(&statement.project, query)
+        || statement
+            .description
+            .as_deref()
+            .is_some_and(|description| contains_case_insensitive(description, query))
+        || contains_case_insensitive(
+            wire::TaskHandle::for_project(&statement.project, &statement.born).as_str(),
+            query,
+        )
+}
+
+fn contains_case_insensitive(text: &str, lowercase_query: &str) -> bool {
+    if text.is_ascii() && lowercase_query.is_ascii() {
+        return text
+            .as_bytes()
+            .windows(lowercase_query.len())
+            .any(|window| window.eq_ignore_ascii_case(lowercase_query.as_bytes()));
+    }
+    text.to_lowercase().contains(lowercase_query)
 }
 
 pub(in crate::board_command) fn history_cursor_order(

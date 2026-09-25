@@ -6,6 +6,8 @@ use crate::{Actor, TaskHandle};
 
 /// Largest terminal-task page one board read accepts.
 pub const TASK_HISTORY_PAGE_LIMIT_MAX: u16 = 100;
+/// Largest UTF-8 search query one terminal-task history read accepts.
+pub const TASK_HISTORY_QUERY_BYTES_MAX: usize = 256;
 
 /// Stable keyset cursor for terminal tasks in newest-workflow-first order.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -67,6 +69,21 @@ pub enum BoardRead {
             deserialize_with = "crate::optional::present"
         )]
         before: Option<TaskHistoryCursor>,
+        /// Case-insensitive substring matched against handle, title, project,
+        /// and description. Empty or whitespace-only text is unfiltered.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        query: Option<String>,
+        /// Include only tasks completed at or before this instant.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        completed_before: Option<crate::Instant>,
         /// Maximum rows returned by this page.
         limit: u16,
     },
