@@ -82,18 +82,10 @@
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: start;
-  gap: 10px;
+  gap: 0 20px;
 }
 
-.work-lane {
-  --work-state: var(--muted);
-  padding: 10px;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-frame);
-  background:
-    linear-gradient(180deg, color-mix(in srgb, var(--work-state) 4%, transparent), transparent 4.5rem),
-    color-mix(in srgb, var(--page) 70%, var(--panel));
-}
+.work-lane { --work-state: var(--muted); }
 
 .work-lane-heading {
   display: flex;
@@ -102,6 +94,8 @@
   gap: 8px;
   min-height: 28px;
   margin-bottom: 9px;
+  padding: 0 1px 8px;
+  border-bottom: 2px solid color-mix(in srgb, var(--work-state) 42%, var(--line-soft));
   color: var(--work-state);
 }
 
@@ -150,42 +144,31 @@
 .work-card-list > .work-lane-cluster:first-child { margin-top: 0; }
 
 .work-lane-empty {
-  display: grid;
-  min-height: 5.5rem;
-  margin: 6px 0 0;
-  padding: 12px;
-  place-items: center;
-  border: 1px dashed color-mix(in srgb, var(--work-state) 22%, var(--line-soft));
-  border-radius: var(--canvas-radius-compact);
-  background: color-mix(in srgb, var(--work-state) 2.5%, transparent);
+  margin: 0;
+  padding: 11px 1px 2px;
   color: var(--muted);
   font-size: .7rem;
   line-height: 1.4;
-  text-align: center;
 }
 
 .work-card {
   --work-card-tone: var(--work-in-flight);
-  --work-claim-fill: transparent;
   position: relative;
   display: grid;
   gap: 9px;
   padding: 11px;
-  border: var(--canvas-edge);
+  border: var(--canvas-control-edge);
   border-left: 3px solid var(--work-card-tone);
   border-radius: var(--canvas-radius-inset);
-  background:
-    linear-gradient(180deg, var(--work-claim-fill), transparent),
-    linear-gradient(145deg, color-mix(in srgb, var(--work-card-tone) 4%, transparent), transparent 55%),
-    var(--control);
+  background: var(--panel);
   box-shadow: var(--shadow);
   overflow-wrap: anywhere;
-  transition: border-color var(--canvas-motion-fast) var(--canvas-ease-standard), box-shadow var(--canvas-motion-fast) var(--canvas-ease-standard), background-color var(--canvas-motion-fast) var(--canvas-ease-standard);
+  transition: border-color var(--canvas-motion-fast) var(--canvas-ease-standard), background-color var(--canvas-motion-fast) var(--canvas-ease-standard);
 }
 
-/* The claimant's watchband colour washes the card from the top down. */
+/* Claim identity adds one quiet wash; lifecycle remains the only card edge accent. */
 .work-card[data-work-claim-accent] {
-  --work-claim-fill: color-mix(in srgb, var(--accent-slot) 16%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-slot) 16%, transparent), transparent 7rem), var(--panel);
 }
 
 .work-card-open {
@@ -207,12 +190,9 @@
   outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
-.work-card:hover {
-  border-color: color-mix(in srgb, var(--work-card-tone) 45%, var(--line));
-  box-shadow: 0 5px 16px color-mix(in srgb, var(--work-card-tone) 10%, transparent), var(--shadow);
-}
-.work-card--mapped { box-shadow: inset 0 0 0 1px var(--accent), var(--shadow); }
-.work-card--selected { box-shadow: 0 0 0 2px var(--focus), var(--shadow); }
+.work-card:hover { border-color: color-mix(in srgb, var(--work-card-tone) 45%, var(--line)); }
+.work-card--mapped { outline: 1px solid var(--accent); outline-offset: -2px; }
+.work-card--selected { outline: 2px solid var(--focus); outline-offset: 2px; }
 
 .work-card[data-work-availability="in-flight"] { --work-card-tone: var(--work-in-flight); }
 .work-card[data-work-availability="ready"] { --work-card-tone: var(--work-ready); }
