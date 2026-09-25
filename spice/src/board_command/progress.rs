@@ -339,6 +339,7 @@ fn done_transition(
             ),
         ));
     }
+    acknowledged(entry)?;
     let current = entry
         .workflow()
         .flow
@@ -596,6 +597,7 @@ fn admit_review<'a>(
             "win a current review claim before recording its verdict",
         )
     })?;
+    acknowledged(entry)?;
     let transition = board::Transition::complete(entry, &active, at).map_err(|error| {
         refusal(
             "review::phase-refused",
@@ -604,6 +606,32 @@ fn admit_review<'a>(
         )
     })?;
     Ok((entry, transition, at, active.lane()))
+}
+
+/// Refuse an active claim that has not acknowledged its task's generation.
+///
+/// The task changed after this claim last took stock of it (a statement edit,
+/// an observation, a deferral, or a workflow move), so the holder must reread
+/// and reclaim before completing or reviewing on stale understanding.
+fn acknowledged(entry: &Entry) -> Result<(), Outcome<CommandAnswer>> {
+    let claim = entry.claim().expect("an admitted active claim has a head");
+    if !claim.is_stale(entry.workflow()) {
+        return Ok(());
+    }
+    Err(refusal(
+        "claim::generation-stale",
+        Some(format!(
+            "task {} is at generation {}; this claim acknowledged {}",
+            entry.handle(),
+            entry.workflow().generation,
+            claim.acknowledged
+        )),
+        &format!(
+            "task {} changed since this claim acknowledged it; reread it, then run spice task reclaim {}",
+            entry.handle(),
+            entry.handle()
+        ),
+    ))
 }
 
 /// Decide the verdict a review records and the finding text it carries.
@@ -1417,6 +1445,7 @@ fn add_doc_task(
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     if let Some(review) = taste_review.as_ref() {
         return append_taste_review_audit(write, &audit_task, review, FactCause::Pending(added));

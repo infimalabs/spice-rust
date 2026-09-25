@@ -372,6 +372,7 @@ fn seed_task(journal: &mut Journal, actor: Actor, task: &TaskStamp, creation: Ta
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     journal.apply(write).expect("task commits");
 }

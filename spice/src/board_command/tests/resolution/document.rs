@@ -500,6 +500,8 @@ fn wk_plan_phase_requires_acceptance_before_it_advances() {
             project: None,
         },
     ));
+    // The operator changed the held task, so the holder acknowledges it first.
+    reclaim_held(&bus, epoch, &lane, &seats[0], &task);
     let repaired = board(&bus, epoch, lane.clone());
     assert_committed(issue(
         &bus,

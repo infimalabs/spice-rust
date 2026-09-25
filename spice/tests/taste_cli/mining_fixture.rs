@@ -401,6 +401,7 @@ pub(super) fn complete_mined_proposal(fixture: &Fixture, proposal: &wire::TaskHa
             assignment: None,
             deferral: None,
             completion: Some(completed_at),
+            generation: 0,
         }
     });
     assert!(matches!(

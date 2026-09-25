@@ -122,6 +122,8 @@ fn plan_advance_warns_that_next_may_select_a_competing_eligible_task() {
     );
     claim_task(&bus, epoch, &seats[0], &lane, &plan);
     let sibling = prepare_plan_advance_competitor(&bus, epoch, &plan);
+    // The operator edited the held plan, so the holder acknowledges it first.
+    reclaim_held(&bus, epoch, &lane, &seats[0], &plan);
     let (done, answer) =
         complete_plan_with_ownership_guidance(&bus, epoch, &seats[0], &lane, &plan);
     let released =

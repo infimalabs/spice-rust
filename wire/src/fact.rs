@@ -578,6 +578,30 @@ impl AnyFact {
     pub fn read<F: Body>(&self) -> Option<F> {
         F::registered(&self.decoded).cloned()
     }
+
+    /// The task whose content or workflow this fact changes, if any.
+    ///
+    /// This is the one classification behind the task generation: a journal
+    /// transaction holding any such fact advances that task's generation once.
+    /// Claim, lease, and notification facts are maintenance and answer
+    /// [`None`], as does every fact outside the task vocabulary.
+    #[must_use]
+    pub fn mutated_task(&self) -> Option<&crate::witness::TaskStamp> {
+        use sealed::RegisteredBody as Decoded;
+        match &self.decoded {
+            Decoded::TaskAdded(body) => Some(&body.task),
+            Decoded::TaskPhased(body) => Some(&body.task),
+            Decoded::TaskDone(body) => Some(&body.task),
+            Decoded::TaskReviewed(body) => Some(&body.task),
+            Decoded::TaskAssigned(body) => Some(&body.task),
+            Decoded::TaskNoted(body) => Some(&body.task),
+            Decoded::TaskDeferred(body) => Some(&body.task),
+            Decoded::TaskWoken(body) => Some(&body.task),
+            Decoded::TaskEdited(body) => Some(&body.task),
+            Decoded::TaskDeleted(body) => Some(&body.task),
+            _ => None,
+        }
+    }
 }
 
 impl<F: Body> Fact<F> {

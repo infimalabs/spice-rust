@@ -140,6 +140,7 @@ impl Fixture {
                 epoch: self.epoch,
                 recovery: None,
                 disposition: ClaimDisposition::Active,
+                acknowledged: 0,
             }),
             lease: Some(lease(self.epoch, "2026-08-21T00:00:10.000Z")),
         }
@@ -196,6 +197,7 @@ fn workflow(current: &str) -> WorkflowHead {
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     }
 }
 

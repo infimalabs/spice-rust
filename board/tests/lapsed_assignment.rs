@@ -94,6 +94,7 @@ fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -
         assignment: Some(assignee.clone()),
         deferral: None,
         completion: None,
+        generation: 0,
     };
     let claim = ClaimHead {
         actor: holder.clone(),
@@ -108,6 +109,7 @@ fn review_row(assignee: &Actor, holder: &Actor, disposition: ClaimDisposition) -
         epoch: uuid("019fbbde-5105-75a3-a76a-722afde1e410"),
         recovery: None,
         disposition,
+        acknowledged: 0,
     };
     let lease = LeaseHead {
         start: instant("2026-08-01T06:00:00.000Z"),

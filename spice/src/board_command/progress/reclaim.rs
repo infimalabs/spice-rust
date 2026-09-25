@@ -219,7 +219,28 @@ fn append_renewal(
     lease.renewal = at;
     lease.expiry = window.until;
     write.lease_head(entry.born().clone(), renewed, move |_| lease);
+    acknowledge(write, entry, renewed);
     Ok(())
+}
+
+/// Record that this explicit reclaim acknowledges the task's generation.
+///
+/// Only a stale claim is rewritten, so reclaiming a current claim remains the
+/// lease-only renewal it always was.
+fn acknowledge(write: &mut JournalWrite, entry: &Entry, renewed: journal::PendingFact) {
+    let claim = entry
+        .claim()
+        .expect("reclaim admission requires a claim")
+        .clone();
+    if !claim.is_stale(entry.workflow()) {
+        return;
+    }
+    let acknowledged = entry.workflow().generation;
+    write.claim_head(entry.born().clone(), renewed, move |fact| ClaimHead {
+        fact,
+        acknowledged,
+        ..claim
+    });
 }
 
 #[allow(
@@ -258,6 +279,7 @@ fn append_rebound(
         .clone();
     claim.occupant = occupant;
     claim.epoch = epoch;
+    claim.acknowledged = entry.workflow().generation;
     write.claim_head(entry.born().clone(), rebound, move |fact| ClaimHead {
         fact,
         ..claim

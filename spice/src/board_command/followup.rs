@@ -454,6 +454,7 @@ fn create_followup(
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     };
     if let Err(error) = Entry::new(
         statement.clone(),

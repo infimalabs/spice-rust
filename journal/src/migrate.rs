@@ -629,7 +629,48 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (24, MigrationStep::Sql(MIGRATE_24_TO_25_SQL)),
     (25, MigrationStep::Rust(team::migrate)),
     (26, MigrationStep::Rust(crate::historical_receipts::migrate)),
+    (27, MigrationStep::Rust(migrate_schema_27)),
 ];
+
+/// Schema 27 to 28: task generations and claim acknowledgements.
+///
+/// Workflow heads gain a mutation generation and claim heads the generation
+/// they acknowledged, both stored only when nonzero. Every retained task and
+/// claim therefore crosses byte-for-byte at generation zero with zero
+/// acknowledged: coherent, and no active claim starts stale. No head or fact
+/// is rewritten.
+///
+/// A mutation that writes no workflow head advances the generation inside the
+/// stored body, keeping `head_seq` on the last workflow transition, so
+/// `revised_seq` records where that in-place revision landed for readers
+/// that follow head changes by position. Retained rows were never revised.
+/// SQLite cannot add a column conditionally, and an authority built from the
+/// current baseline already carries it, so the column is added only when
+/// absent.
+fn migrate_schema_27(connection: &Connection) -> Result<(), OpenError> {
+    let revised: bool = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('workflow_heads') \
+             WHERE name = 'revised_seq')",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(OpenError::Sqlite)?;
+    if !revised {
+        connection
+            .execute_batch(
+                "ALTER TABLE workflow_heads \
+                 ADD COLUMN revised_seq INTEGER REFERENCES fact_envelopes(seq);",
+            )
+            .map_err(OpenError::Sqlite)?;
+    }
+    connection
+        .execute_batch(
+            "CREATE INDEX IF NOT EXISTS workflow_heads_revised_seq \
+             ON workflow_heads(revised_seq) WHERE revised_seq IS NOT NULL;",
+        )
+        .map_err(OpenError::Sqlite)
+}
 
 /// Schema 24 to 25: exact-project current task lookup.
 const MIGRATE_24_TO_25_SQL: &str = r#"
@@ -871,10 +912,13 @@ ON task_heads(json_extract(CAST(body AS TEXT), '$.project'), stamp);
 CREATE TABLE workflow_heads (
     stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
-    body BLOB NOT NULL
+    body BLOB NOT NULL,
+    revised_seq INTEGER REFERENCES fact_envelopes(seq)
 ) STRICT;
 CREATE INDEX task_heads_head_seq ON task_heads(head_seq);
 CREATE INDEX workflow_heads_head_seq ON workflow_heads(head_seq);
+CREATE INDEX workflow_heads_revised_seq ON workflow_heads(revised_seq)
+    WHERE revised_seq IS NOT NULL;
 CREATE TABLE claim_heads (
     stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -966,8 +1010,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 27, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 28, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 27;
+PRAGMA user_version = 28;
 "#;

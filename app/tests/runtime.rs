@@ -293,6 +293,7 @@ fn board_task(
                 assignment: None,
                 deferral: None,
                 completion: None,
+                generation: 0,
             },
         },
         claim: None,

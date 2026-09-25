@@ -359,10 +359,7 @@ fn a_live_claimed_correction_carries_bounded_contract_changes_without_moving_own
 
     let corrected = board(&bus, epoch, Actor::Operator);
     let moved = at(&corrected, &notice.handle);
-    assert_eq!(
-        moved.claim, before.claim,
-        "the edit preserves the claim head"
-    );
+    assert_holder_kept(moved, &before.claim.as_ref().expect("claim head").body);
     assert_eq!(
         moved.lease, before.lease,
         "the edit preserves the lease head"

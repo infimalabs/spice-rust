@@ -58,6 +58,7 @@ fn workflow(current: &str) -> WorkflowHead {
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     }
 }
 
@@ -119,6 +120,7 @@ fn peer_entry(
         epoch: uuid("019fbbde-5105-75a3-a76a-722afde1e410"),
         recovery: None,
         disposition: ClaimDisposition::Active,
+        acknowledged: 0,
     };
     Entry::new(
         head,

@@ -297,11 +297,12 @@ fn add_unclaimed_task(write: &mut JournalWrite, offset: u64) -> TaskStamp {
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     task
 }
 
-fn add_claimed_task(journal: &mut Journal, offset: u64, actor: Actor) -> TaskStamp {
+pub(super) fn add_claimed_task(journal: &mut Journal, offset: u64, actor: Actor) -> TaskStamp {
     let mut add = JournalWrite::new(
         Actor::Operator,
         "task:claim-index-peer".parse().expect("peer origin"),
@@ -354,6 +355,7 @@ fn add_claimed_task(journal: &mut Journal, offset: u64, actor: Actor) -> TaskSta
         epoch,
         recovery: None,
         disposition: ClaimDisposition::Active,
+        acknowledged: 0,
     });
     let lease_task = task.clone();
     claim.lease_head(lease_task, won, move |_| LeaseHead {

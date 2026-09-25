@@ -459,6 +459,7 @@ fn prepare_task(
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     };
     if let Err(error) = Entry::new(statement.clone(), workflow.clone(), None, None, projects) {
         return Err(refusal(

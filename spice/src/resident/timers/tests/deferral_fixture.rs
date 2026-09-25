@@ -76,6 +76,7 @@ pub(super) fn seed_timer_task(
         assignment: None,
         deferral,
         completion: None,
+        generation: 0,
     });
     assert!(matches!(
         bus.commit(write).expect("fixture task commits"),

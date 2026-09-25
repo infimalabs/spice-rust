@@ -9,6 +9,7 @@ use crate::Journal;
 
 mod claim_index;
 mod commit;
+mod generation;
 mod indexed_read;
 mod lane;
 mod read_metrics;

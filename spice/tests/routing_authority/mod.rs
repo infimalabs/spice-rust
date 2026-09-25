@@ -73,6 +73,7 @@ fn add_task(journal: &mut Journal, task: &TaskStamp, todo: &wire::Phase, at: Ins
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     journal.apply(add).expect("commit routing task");
 }
@@ -126,6 +127,7 @@ fn add_claim(
         epoch,
         recovery: None,
         disposition: ClaimDisposition::Active,
+        acknowledged: 0,
     });
     let lease_task = task.clone();
     claim.lease_head(lease_task, won, move |_| LeaseHead {

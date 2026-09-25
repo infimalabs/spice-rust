@@ -659,6 +659,7 @@ mod tests {
             assignment: None,
             deferral: None,
             completion: None,
+            generation: 0,
         });
         write.residency_head(fact, |_| ResidencyHead {
             epoch: uuid(22),

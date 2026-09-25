@@ -658,7 +658,7 @@ fn claimed_oops_must_promote_before_done_and_keeps_its_exact_claim_and_lease() {
     );
     let public = board(&bus, epoch, lane.clone());
     let promoted_heads = at(&public, &promoted);
-    assert_eq!(promoted_heads.claim.as_ref(), Some(&claim));
+    assert_holder_kept(promoted_heads, &claim.body);
     assert_eq!(promoted_heads.lease.as_ref(), Some(&lease));
     assert_eq!(
         promoted_heads.statement.body.born,

@@ -49,6 +49,7 @@ fn entry(task: TaskStamp, assignment: Option<Actor>) -> Entry {
         assignment,
         deferral: None,
         completion: None,
+        generation: 0,
     };
     let projects =
         ProjectPolicy::new(["board".to_owned()], Vec::new(), 2, 8).expect("fixture project policy");

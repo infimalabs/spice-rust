@@ -92,6 +92,7 @@ impl RepositoryFixture {
             assignment: None,
             deferral: None,
             completion: None,
+            generation: 0,
         };
         let claim = ClaimHead {
             actor: actor.clone(),
@@ -106,6 +107,7 @@ impl RepositoryFixture {
             epoch,
             recovery: None,
             disposition: ClaimDisposition::Active,
+            acknowledged: 0,
         };
         let start = instant("2030-04-12T18:44:00.000Z");
         let now = instant("2030-04-12T18:44:01.000Z");

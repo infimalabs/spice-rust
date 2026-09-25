@@ -840,6 +840,7 @@ mod tests {
                     assignment: None,
                     deferral: None,
                     completion: None,
+                    generation: 0,
                 },
             },
             claim: None,
@@ -871,6 +872,7 @@ mod tests {
                     .expect("fixture epoch"),
                 recovery: None,
                 disposition,
+                acknowledged: 0,
             },
         }
     }
