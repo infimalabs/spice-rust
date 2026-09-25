@@ -140,7 +140,9 @@ fn render_history_archive(
                 <span>{"History"}</span>
                 <span class="work-history-count">{history_count(state)}</span>
             </summary>
-            if *controls.open {
+            // Once a page has loaded the body stays mounted, bounded to that
+            // one page, so closing can transition out instead of cutting.
+            if *controls.open || state.and_then(WorkHistoryState::total).is_some() {
                 <div class="work-history-finder" role="search" aria-label="Find terminal tasks">
                     <label>
                         <span>{"Search"}</span>
@@ -160,9 +162,9 @@ fn render_history_archive(
                             oninput={state_from_input(controls.cutoff.clone())}
                         />
                     </label>
-                    <div class="work-history-filter-actions">
-                        <button type="button" onclick={controls.apply.clone()}>{"Apply"}</button>
-                        <button type="button" onclick={controls.clear.clone()}>{"Clear"}</button>
+                    <div class="work-history-filter-actions canvas-control-rail team-mode-rail">
+                        <button type="button" class="team-mode" onclick={controls.apply.clone()}>{"Apply"}</button>
+                        <button type="button" class="team-mode" onclick={controls.clear.clone()}>{"Clear"}</button>
                     </div>
                 </div>
                 if let Some(issue) = controls.validation.as_ref() {
@@ -174,7 +176,9 @@ fn render_history_archive(
                 if let Some(issue) = state.and_then(WorkHistoryState::issue) {
                     <div class="work-history-actions">
                         <p class="form-refusal" role="alert">{issue}</p>
-                        <button type="button" onclick={controls.retry.clone()}>{"Retry"}</button>
+                        <span class="canvas-control-rail team-mode-rail">
+                            <button type="button" class="team-mode" onclick={controls.retry.clone()}>{"Retry"}</button>
+                        </span>
                     </div>
                 }
                 if history.is_empty() && state.and_then(WorkHistoryState::total) == Some(0) {
@@ -207,9 +211,15 @@ fn render_history_pagination(
                 <strong>{history_count(Some(state))}</strong>
                 <span>{history_page_position(state)}</span>
             </div>
-            <div class="work-history-page-actions" aria-label="History pages">
+            <div
+                class="work-history-page-actions canvas-control-rail team-mode-rail"
+                role="group"
+                aria-label="History pages"
+                aria-busy={state.loading().to_string()}
+            >
                 <button
                     type="button"
+                    class="team-mode"
                     disabled={state.loading() || !state.has_newer()}
                     onclick={controls.newer.clone()}
                 >
@@ -217,6 +227,7 @@ fn render_history_pagination(
                 </button>
                 <button
                     type="button"
+                    class="team-mode"
                     disabled={state.loading() || !state.has_older()}
                     onclick={controls.older.clone()}
                 >
@@ -296,6 +307,7 @@ fn render_arrangement(state: &UseStateHandle<WorkArrangement>) -> Html {
         html! {
             <button
                 type="button"
+                class={classes!("team-mode", pressed.then_some("selected"))}
                 title={title}
                 aria-pressed={bool::to_string(&pressed)}
                 onclick={Callback::from(move |_| state.set(next))}
@@ -306,21 +318,25 @@ fn render_arrangement(state: &UseStateHandle<WorkArrangement>) -> Html {
         <div class="work-arrangement">
             <div class="work-arrangement-group" role="group" aria-label="Order cards">
                 <span aria-hidden="true">{"Order"}</span>
+                <span class="canvas-control-rail team-mode-rail">
                 {for ORDERS.into_iter().map(|(order, label, title)| choice(
                     label,
                     Some(title),
                     current.order == order,
                     WorkArrangement { order, ..current },
                 ))}
+                </span>
             </div>
             <div class="work-arrangement-group" role="group" aria-label="Cluster cards">
                 <span aria-hidden="true">{"Cluster"}</span>
+                <span class="canvas-control-rail team-mode-rail">
                 {for CLUSTERINGS.into_iter().map(|(clustering, label)| choice(
                     label,
                     None,
                     current.clustering == clustering,
                     WorkArrangement { clustering, ..current },
                 ))}
+                </span>
             </div>
         </div>
     }
