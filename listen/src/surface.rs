@@ -1,9 +1,11 @@
 //! Daemonless observation and replay over owned transcript tape.
 //!
-//! A selected root contains sessions at `<root>/<lane>/<vendor>`; the supplied
-//! vendor map binds that final component to the decoder contract and the parent
-//! component is the lane spelling. Discovery follows real directories only
-//! and never guesses a dialect from transcript contents.
+//! A selected root contains sessions at exactly `<root>/<lane>/<vendor>`; the
+//! supplied vendor map binds that final component to the decoder contract and
+//! the parent component is the lane spelling. A root that is itself a
+//! `<lane>/<vendor>` tape directory selects that one session. A vendor-named
+//! directory at any other depth is not a session. Discovery follows real
+//! directories only and never guesses a dialect from transcript contents.
 //!
 //! [`Watch`] retains one cursor per tape. A filesystem watcher may coalesce or
 //! miss notifications without losing a record because every wakeup compares
@@ -990,32 +992,44 @@ fn discover(
     }
 
     let mut sessions = Vec::new();
-    discover_beneath(root, dialects, &mut sessions)?;
+    if let Some(session) = tape_session(root, dialects)? {
+        sessions.push(session);
+        return Ok(sessions);
+    }
+    for lane in real_directories(root)? {
+        for tape in real_directories(&lane)? {
+            sessions.extend(tape_session(&tape, dialects)?);
+        }
+    }
     sessions.sort();
     Ok(sessions)
 }
 
-fn discover_beneath(
+/// The session a `<lane>/<vendor>` directory names, if its final component is
+/// a known vendor.
+fn tape_session(
     path: &Path,
     dialects: &[(&'static str, Dialect)],
-    sessions: &mut Vec<Session>,
-) -> Result<(), SurfaceError> {
-    if let Some(dialect) = dialect_name(path.file_name(), dialects) {
-        let Some(lane) = path
-            .parent()
-            .and_then(Path::file_name)
-            .and_then(OsStr::to_str)
-        else {
-            return Err(SurfaceError::NonUtf8Lane(path.to_path_buf()));
-        };
-        sessions.push(Session {
-            lane: lane.to_owned(),
-            dialect,
-            tape: path.to_path_buf(),
-        });
-        return Ok(());
-    }
+) -> Result<Option<Session>, SurfaceError> {
+    let Some(dialect) = dialect_name(path.file_name(), dialects) else {
+        return Ok(None);
+    };
+    let Some(lane) = path
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(OsStr::to_str)
+    else {
+        return Err(SurfaceError::NonUtf8Lane(path.to_path_buf()));
+    };
+    Ok(Some(Session {
+        lane: lane.to_owned(),
+        dialect,
+        tape: path.to_path_buf(),
+    }))
+}
 
+/// The non-symlink subdirectories of `path`, in path order.
+fn real_directories(path: &Path) -> Result<Vec<PathBuf>, SurfaceError> {
     let mut entries = fs::read_dir(path)
         .map_err(|source| SurfaceError::Io {
             operation: "read observation root",
@@ -1029,6 +1043,7 @@ fn discover_beneath(
             source,
         })?;
     entries.sort_by_key(std::fs::DirEntry::path);
+    let mut directories = Vec::new();
     for entry in entries {
         let file_type = entry.file_type().map_err(|source| SurfaceError::Io {
             operation: "inspect observation entry",
@@ -1036,10 +1051,10 @@ fn discover_beneath(
             source,
         })?;
         if file_type.is_dir() && !file_type.is_symlink() {
-            discover_beneath(&entry.path(), dialects, sessions)?;
+            directories.push(entry.path());
         }
     }
-    Ok(())
+    Ok(directories)
 }
 
 fn dialect_name(name: Option<&OsStr>, dialects: &[(&'static str, Dialect)]) -> Option<Dialect> {

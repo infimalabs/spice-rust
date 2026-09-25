@@ -128,6 +128,36 @@ fn a_third_declared_name_changes_discovery_only_through_the_supplied_value() {
 }
 
 #[test]
+fn only_root_lane_vendor_directories_are_sessions() {
+    let scratch = Scratch::new("fixed-depth");
+    let (_, tape) = session(scratch.path(), "lane-a", "codex");
+    tape.tee(&record(CODEX_PROSE))
+        .expect("fixture record is durable");
+    // Source trees under the root may name a module after a vendor; such a
+    // directory has no tape identity and must not be adopted as a session.
+    let nested = scratch.path().join("target/copy/vendor/src/codex");
+    fs::create_dir_all(&nested).expect("nested vendor-named directory is created");
+    fs::write(nested.join("lib.rs"), b"// not a tape\n").expect("nested source file is written");
+
+    let replay = retro(
+        scratch.path(),
+        RetroSelector::Path(scratch.path().to_path_buf()),
+        DIALECTS,
+    )
+    .expect("a vendor-named directory below the session depth is not scanned");
+    assert_eq!(event_count(&replay.observations), 1);
+    assert!(
+        replay
+            .observations
+            .iter()
+            .all(|observation| match observation {
+                Observation::Event { lane, .. } => lane == "lane-a",
+                _ => true,
+            })
+    );
+}
+
+#[test]
 fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_sealing() {
     let scratch = Scratch::new("watch");
     let (_, tape) = session(scratch.path(), "lane-a", "codex");
