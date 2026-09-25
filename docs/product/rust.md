@@ -301,8 +301,10 @@ event loop: **not CPU isolation or a hard timeout**. Loaded modules work offline
 reopening the iframe needs the local appliance.
 
 Diagrams reserve full-width `cover` slots: 15.75rem media-only, 8.75rem mixed.
-Source/error stays in-place. All images share an inert modal, closed by
-Escape/Close/backdrop without reflow. Copy writes PNG; Download keeps originals,
+Source/error stays in-place. All images share an inert modal over the whole
+viewport: the interface beneath shows through the shared frosted veil, the image
+sits at natural size capped to the viewport, and Escape, Close, or a click on the
+frost closes it without reflow. Copy writes PNG; Download keeps originals,
 including SVG. Exports need data/same-origin access; unavailable/refused actions
 are explained.
 

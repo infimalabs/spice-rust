@@ -370,7 +370,8 @@
   padding: 0;
   border: 0;
   border-radius: 0;
-  background: color-mix(in srgb, var(--page) 58%, transparent);
+  background: var(--overlay-veil);
+  backdrop-filter: var(--overlay-frost);
   box-shadow: none;
   cursor: default;
 }
