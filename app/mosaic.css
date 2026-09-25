@@ -1324,7 +1324,7 @@ html[data-command-modifier-held="true"]
   padding: 10px 12px;
   border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 32%, var(--line));
   border-left: 3px solid var(--accent-slot, var(--accent));
-  border-radius: 6px;
+  border-radius: var(--canvas-radius-element);
   background: color-mix(in srgb, var(--panel) 76%, var(--page));
   line-height: 1.2;
 }
