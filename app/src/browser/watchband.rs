@@ -6,7 +6,7 @@ use web_sys::{DragEvent, HtmlInputElement, PointerEvent};
 
 use super::clock::{Age, Countdown};
 use super::*;
-use crate::composer_drafts::{ComposerDraft, compose};
+use crate::composer_drafts::ComposerDraft;
 use crate::watchband::{
     self, Standing, SubmissionAuthority, SubmissionTarget, TeamTaskSectionState,
 };
@@ -22,9 +22,9 @@ mod vendor_icon;
 
 pub(super) use command_preview::use_command_modifier_preview;
 use composer::{
-    AgentMessageCard, agent_message_source_id, drop_on_lane, keyboard_submit, paste_images,
-    primary_composer_dragging, primary_textarea_id, render_image_indicators, render_quote_shards,
-    update_body,
+    AgentMessageCard, ComposerTextarea, agent_message_source_id, drop_on_lane, keyboard_submit,
+    paste_images, primary_composer_dragging, primary_textarea_id, render_image_indicators,
+    render_quote_shards,
 };
 pub(super) use composer::{PrimaryComposerDragState, use_primary_composer_drag_state};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
@@ -176,9 +176,6 @@ fn render_compose(
             authority
                 .target(member.occupant, member.bound, epoch)
                 .is_some()
-                && drafts
-                    .get(&member.lane.to_string())
-                    .is_some_and(|draft| !compose(draft).trim().is_empty())
         });
     let cards = activity_cards(runtime, team);
     let dismiss_agent_menus = Callback::from(dismiss_other_agent_action_menus);
@@ -843,11 +840,11 @@ fn render_agent_composer(
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
     let target = authority.target(member.occupant, member.bound, epoch);
     let wake = target == Some(SubmissionTarget::Wake);
-    let command_submit_eligible = target.is_some() && !draft.body.trim().is_empty();
+    let command_submit_eligible = target.is_some();
     let broadcast_target_eligible = broadcast_targets
         .iter()
         .any(|target| target.lane == lane_id);
-    let broadcast_source_eligible = broadcast_target_eligible && !draft.body.trim().is_empty();
+    let broadcast_source_eligible = broadcast_target_eligible;
     let renewal = watchband::agent_renewal_control(&standing.label, authority.send, renewal);
     let renew = renewal_callback(
         topology_revision,
@@ -960,7 +957,6 @@ fn render_composer_body(
     prose: String,
     dragging: PrimaryComposerDragging,
 ) -> Html {
-    let oninput = update_body(lane_key.to_owned(), drafts.clone());
     let onpaste = paste_images(lane_key.to_owned(), None, drafts.clone());
     // Pointer capture stays on prose, leaving textarea editing and attachment
     // drag/drop untouched while the lifted composer can cross sibling slots.
@@ -1005,19 +1001,19 @@ fn render_composer_body(
                 drag_start,
                 drag_lost_capture,
             )}
-            <textarea
+            <ComposerTextarea
+                key={draft.body.clone()}
                 id={primary_textarea_id(lane_key)}
-                aria-label={format!("Message for agent {lane}")}
-                data-primary-composer-target-id={lane.to_string()}
-                aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"
-                aria-describedby={broadcast_help.to_owned()}
-                rows="4"
-                value={draft.body.clone()}
+                label={format!("Message for agent {lane}")}
+                body={draft.body.clone()}
                 placeholder={composer_placeholder(standing, pending)}
-                {oninput}
+                rows="4"
+                primary_target={Some(lane.to_string())}
+                quote_identity={None::<String>}
+                broadcast_help={Some(broadcast_help.to_owned())}
                 {onkeydown}
                 {onpaste}
-            ></textarea>
+            />
             {render_composer_vendor_icon(standing)}
             if let Some(issue) = &draft.issue {
                 <p class="composer-issue" role="status">{issue.clone()}</p>
@@ -1204,6 +1200,41 @@ fn composer_placeholder(standing: &Standing, pending: usize) -> String {
     lines.join("\n")
 }
 
+pub(in crate::browser) fn current_composer_draft(
+    lane_key: &str,
+    drafts: &ComposerDrafts,
+) -> ComposerDraft {
+    let mut draft = drafts.get(lane_key).cloned().unwrap_or_default();
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return draft;
+    };
+    if let Some(textarea) = document
+        .get_element_by_id(&primary_textarea_id(lane_key))
+        .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+    {
+        draft.body = textarea.value();
+    }
+    for quote in &mut draft.quotes {
+        if let Some(textarea) = document
+            .get_element_by_id(&format!("composer-quote-{lane_key}-{}", quote.identity))
+            .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+        {
+            quote.body = textarea.value();
+        }
+    }
+    draft
+}
+
+fn clear_primary_composer(lane_key: &str) {
+    if let Some(textarea) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(&primary_textarea_id(lane_key)))
+        .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+    {
+        textarea.set_value("");
+    }
+}
+
 fn submit_team_callback(
     members: &[crate::runtime::LaneMember],
     epoch: CanonicalUuid,
@@ -1247,7 +1278,9 @@ fn submit_draft(
     drafts: &UseReducerHandle<ComposerDrafts>,
     submissions: &SubmissionHandle,
 ) -> bool {
-    let Some(prepared) = drafts.0.prepare(lane_key) else {
+    let mut current = drafts.0.clone();
+    *current.draft_mut(lane_key.to_owned()) = current_composer_draft(lane_key, drafts);
+    let Some(prepared) = current.prepare(lane_key) else {
         return false;
     };
     let Ok(id) = random_uuid() else {
@@ -1276,6 +1309,7 @@ fn submit_draft(
     if !queue_submission(sender, submissions, submission) {
         return false;
     }
+    clear_primary_composer(lane_key);
     drafts.dispatch(ComposerAction::Clear {
         lane: lane_key.to_owned(),
     });
@@ -1293,7 +1327,9 @@ fn submit_broadcast(
     if !targets.iter().any(|target| target.lane == source_lane) {
         return false;
     }
-    let Some(prepared) = drafts.0.prepare_primary(source_key) else {
+    let mut current = drafts.0.clone();
+    *current.draft_mut(source_key.to_owned()) = current_composer_draft(source_key, drafts);
+    let Some(prepared) = current.prepare_primary(source_key) else {
         return false;
     };
     let message = crate::composer_markdown::mark_broadcast(&prepared.message);
@@ -1327,6 +1363,7 @@ fn submit_broadcast(
     if !queue_submissions(sender, submissions, batch) {
         return false;
     }
+    clear_primary_composer(source_key);
     drafts.dispatch(ComposerAction::ClearPrimary {
         lane: source_key.to_owned(),
     });

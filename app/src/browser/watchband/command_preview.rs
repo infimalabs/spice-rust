@@ -8,6 +8,9 @@ const HELD_ATTRIBUTE: &str = "data-command-modifier-held";
 const SHIFT_HELD_ATTRIBUTE: &str = "data-shift-modifier-held";
 
 fn set_attribute(root: &web_sys::Element, attribute: &str, held: bool) {
+    if root.has_attribute(attribute) == held {
+        return;
+    }
     if held {
         let _ = root.set_attribute(attribute, "true");
     } else {
@@ -29,6 +32,9 @@ pub(in crate::browser) fn use_command_modifier_preview() {
             let pressed_root = root.clone();
             let keydown = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
                 move |event: web_sys::KeyboardEvent| {
+                    if !matches!(event.key().as_str(), "Meta" | "Control" | "Shift") {
+                        return;
+                    }
                     set_held(
                         &pressed_root,
                         event.meta_key() || event.ctrl_key(),
@@ -39,6 +45,9 @@ pub(in crate::browser) fn use_command_modifier_preview() {
             let released_root = root.clone();
             let keyup = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
                 move |event: web_sys::KeyboardEvent| {
+                    if !matches!(event.key().as_str(), "Meta" | "Control" | "Shift") {
+                        return;
+                    }
                     set_held(
                         &released_root,
                         event.meta_key() || event.ctrl_key(),

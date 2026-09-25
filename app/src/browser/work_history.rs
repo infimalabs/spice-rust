@@ -5,8 +5,6 @@ use super::*;
 #[derive(Clone)]
 pub(super) struct Controls {
     pub open: UseStateHandle<bool>,
-    pub query: UseStateHandle<String>,
-    pub cutoff: UseStateHandle<String>,
     pub validation: UseStateHandle<Option<String>>,
     pub toggle: Callback<Event>,
     pub apply: Callback<MouseEvent>,
@@ -14,6 +12,25 @@ pub(super) struct Controls {
     pub newer: Callback<MouseEvent>,
     pub older: Callback<MouseEvent>,
     pub retry: Callback<MouseEvent>,
+}
+
+fn input_value(id: &str) -> String {
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(id))
+        .and_then(|element| element.dyn_into::<web_sys::HtmlInputElement>().ok())
+        .map(|input| input.value())
+        .unwrap_or_default()
+}
+
+fn clear_input(id: &str) {
+    if let Some(input) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(id))
+        .and_then(|element| element.dyn_into::<web_sys::HtmlInputElement>().ok())
+    {
+        input.set_value("");
+    }
 }
 
 fn queue(
@@ -86,12 +103,15 @@ pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<Surface
         let cutoff = cutoff.clone();
         let validation = validation.clone();
         Callback::from(move |_: MouseEvent| {
-            match crate::runtime::work_history_completion_cutoff(&cutoff) {
+            let current_query = input_value("work-history-query");
+            let current_cutoff = input_value("work-history-cutoff");
+            match crate::runtime::work_history_completion_cutoff(&current_cutoff) {
                 Ok(completed_before) => {
                     validation.set(None);
-                    let query = (*query).clone();
+                    query.set(current_query.clone());
+                    cutoff.set(current_cutoff);
                     queue(&sender, &surface, move |runtime| {
-                        runtime.apply_work_history_filters(query, completed_before)
+                        runtime.apply_work_history_filters(current_query, completed_before)
                     });
                 }
                 Err(issue) => validation.set(Some(issue)),
@@ -105,6 +125,8 @@ pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<Surface
         let cutoff = cutoff.clone();
         let validation = validation.clone();
         Callback::from(move |_: MouseEvent| {
+            clear_input("work-history-query");
+            clear_input("work-history-cutoff");
             query.set(String::new());
             cutoff.set(String::new());
             validation.set(None);
@@ -136,8 +158,6 @@ pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<Surface
     };
     Controls {
         open,
-        query,
-        cutoff,
         validation,
         toggle,
         apply,

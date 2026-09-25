@@ -212,7 +212,10 @@
 }
 .team-surface .mosaic-message-normal { display: contents; }
 .team-surface .mosaic-message-normal[hidden] { display: none; }
-.team-surface .mosaic-message-card--inspecting-task { overflow: hidden; }
+.team-surface .mosaic-message-card--inspecting-task {
+  contain: layout paint;
+  overflow: hidden;
+}
 .team-surface .message-task-inspector {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -258,7 +261,6 @@
   min-height: 0;
   padding: 10px 2px 10px 0;
   overflow-y: auto;
-  overscroll-behavior: contain;
   scrollbar-gutter: stable;
 }
 .team-surface .message-task-inspector-summary h3,
@@ -348,7 +350,19 @@
   padding-top: 8px;
   border-top: 1px solid var(--line-soft);
 }
-.team-surface .message-task-inspector-footer button { margin-left: 0; }
+.team-surface .message-task-inspector-open-work {
+  display: grid;
+  flex: 0 0 2rem;
+  place-items: center;
+  width: 2rem;
+  min-width: 2rem;
+  height: 2rem;
+  min-height: 2rem;
+  margin-left: 0;
+  padding: 0;
+  font-size: 1.125rem;
+  line-height: 1;
+}
 .team-surface .message-task-chip[role="button"] { cursor: pointer; }
 .team-surface .message-task-chip[role="button"]:hover { filter: brightness(1.08); }
 .team-surface .message-task-chip[role="button"]:focus-visible {

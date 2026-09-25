@@ -537,120 +537,182 @@ struct CanvasAppProperties {
     navigate: Callback<CanvasDestination>,
 }
 
-#[function_component(CanvasApp)]
-fn canvas_app(properties: &CanvasAppProperties) -> Html {
-    let connection = use_state(|| Connection::Starting);
-    let surface = use_state(SurfaceData::default);
-    let canvas_menu_open = use_state(|| false);
-    let (axis, mosaic) = navigation::use_global_destination(properties.destination);
-    let work_scope = use_state(WorkScope::default);
-    let work_scope_notice = use_state(|| None::<String>);
-    let work_arrangement = use_state(WorkArrangement::default);
-    let identity = use_state(|| None::<CanvasIdentity>);
-    let canvas_update = use_state(|| None::<CanvasUpdate>);
-    let team_controls = use_reducer(TeamControls::restore);
-    let team_fleet = use_node_ref();
-    let composer_drafts = use_reducer(ComposerDrafts::default);
-    let submission_status = use_state(SubmissionStatus::default);
-    let submissions = SubmissionHandle {
-        queue: use_mut_ref(SubmissionQueue::default),
-        status: submission_status.clone(),
-    };
+struct CanvasHandles {
+    connection: UseStateHandle<Connection>,
+    surface: UseStateHandle<SurfaceData>,
+    canvas_menu_open: UseStateHandle<bool>,
+    work_scope: UseStateHandle<WorkScope>,
+    work_scope_notice: UseStateHandle<Option<String>>,
+    work_arrangement: UseStateHandle<WorkArrangement>,
+    identity: UseStateHandle<Option<CanvasIdentity>>,
+    canvas_update: UseStateHandle<Option<CanvasUpdate>>,
+    team_controls: UseReducerHandle<TeamControls>,
+    team_fleet: NodeRef,
+    composer_drafts: UseReducerHandle<ComposerDrafts>,
+    submissions: SubmissionHandle,
+    action_issue: UseStateHandle<Option<String>>,
+    sender: SenderHandle,
+    work_map: UseStateHandle<view::WorkMapState>,
+    speech: UseStateHandle<wire::SpeechPlayback>,
+    speech_status: UseStateHandle<SpeechStatus>,
+    speech_message: UseStateHandle<Option<String>>,
+}
+
+#[hook]
+fn use_canvas_handles() -> CanvasHandles {
     let action_issue = use_state(|| None::<String>);
-    let sender = SenderHandle {
-        queue: use_mut_ref(|| None::<ActionQueue>),
-        issue: action_issue.clone(),
-    };
-    let composer_drag = use_composer_drag(&surface);
-    let work_detail = task_detail::use_controls(sender.clone(), surface.clone());
-    let task_context =
-        message_task_inspector::use_controls(&surface, &work_detail, &properties.navigate);
-    let work_history = work_history::use_controls(sender.clone(), surface.clone());
-    let work_map = use_state(view::WorkMapState::default);
-    let speech = use_state(|| wire::SpeechPlayback::Disabled {});
-    let speech_status = use_state(SpeechStatus::default);
-    let speech_message = use_state(|| None::<String>);
-    let speech_controller = use_mut_ref(crate::speech::Controller::default);
+    CanvasHandles {
+        connection: use_state(|| Connection::Starting),
+        surface: use_state(SurfaceData::default),
+        canvas_menu_open: use_state(|| false),
+        work_scope: use_state(WorkScope::default),
+        work_scope_notice: use_state(|| None::<String>),
+        work_arrangement: use_state(WorkArrangement::default),
+        identity: use_state(|| None::<CanvasIdentity>),
+        canvas_update: use_state(|| None::<CanvasUpdate>),
+        team_controls: use_reducer(TeamControls::restore),
+        team_fleet: use_node_ref(),
+        composer_drafts: use_reducer(ComposerDrafts::default),
+        submissions: SubmissionHandle {
+            queue: use_mut_ref(SubmissionQueue::default),
+            status: use_state(SubmissionStatus::default),
+        },
+        sender: SenderHandle {
+            queue: use_mut_ref(|| None::<ActionQueue>),
+            issue: action_issue.clone(),
+        },
+        action_issue,
+        work_map: use_state(view::WorkMapState::default),
+        speech: use_state(|| wire::SpeechPlayback::Disabled {}),
+        speech_status: use_state(SpeechStatus::default),
+        speech_message: use_state(|| None::<String>),
+    }
+}
+
+#[hook]
+fn use_canvas_agents(handles: &CanvasHandles) -> (SpeechRuntime, view::AgentControls) {
     let speech_runtime = SpeechRuntime {
         queue: use_mut_ref(SpeechQueue::default),
-        controller: speech_controller,
-        speech: speech.clone(),
-        status: speech_status.clone(),
-        message: speech_message.clone(),
+        controller: use_mut_ref(crate::speech::Controller::default),
+        speech: handles.speech.clone(),
+        status: handles.speech_status.clone(),
+        message: handles.speech_message.clone(),
     };
     let speech_ref = use_mut_ref(|| speech_runtime.clone());
     *speech_ref.borrow_mut() = speech_runtime.clone();
     let narration_cursors = use_mut_ref(load_narration_cursors);
-    let agent_speech = use_agent_speech_controls(speech_ref, narration_cursors, speech_message);
-    let agents = use_agent_controls(sender.clone(), surface.clone(), agent_speech);
-    let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
+    let agent_speech = use_agent_speech_controls(
+        speech_ref,
+        narration_cursors,
+        handles.speech_message.clone(),
+    );
+    let agents = use_agent_controls(
+        handles.sender.clone(),
+        handles.surface.clone(),
+        agent_speech,
+    );
+    (speech_runtime, agents)
+}
+
+#[hook]
+fn use_canvas_effects(
+    handles: &CanvasHandles,
+    work_detail: &task_detail::Controls,
+    speech_runtime: &SpeechRuntime,
+    mosaic: bool,
+) {
     use_surface_connection(
-        sender.clone(),
+        handles.sender.clone(),
         SurfaceHandles {
-            connection: connection.clone(),
-            surface: surface.clone(),
-            speech: speech.clone(),
-            identity: identity.clone(),
-            canvas_update: canvas_update.clone(),
-            team_controls: team_controls.clone(),
-            composer_drafts: composer_drafts.clone(),
-            submissions: submissions.clone(),
+            connection: handles.connection.clone(),
+            surface: handles.surface.clone(),
+            speech: handles.speech.clone(),
+            identity: handles.identity.clone(),
+            canvas_update: handles.canvas_update.clone(),
+            team_controls: handles.team_controls.clone(),
+            composer_drafts: handles.composer_drafts.clone(),
+            submissions: handles.submissions.clone(),
             note_text: work_detail.note_text.clone(),
             note_notice: work_detail.notice.clone(),
             note_submission: work_detail.submission.clone(),
         },
     );
-    task_relations::use_request(&sender, &surface, &work_detail.selected, &work_map);
-    use_team_speech_abandonment(&surface, speech_runtime.clone());
-    use_speech_reset(speech.clone(), speech_runtime.clone());
+    task_relations::use_request(
+        &handles.sender,
+        &handles.surface,
+        &work_detail.selected,
+        &handles.work_map,
+    );
+    use_team_speech_abandonment(&handles.surface, speech_runtime.clone());
+    use_speech_reset(handles.speech.clone(), speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime.clone());
-    use_mosaic_root_scroll(*mosaic);
-    use_canvas_menu_dismissal(canvas_menu_open.clone());
+    use_mosaic_root_scroll(mosaic);
+    use_canvas_menu_dismissal(handles.canvas_menu_open.clone());
     watchband::use_command_modifier_preview();
-    watchband::use_team_fleet_right_edge(team_fleet.clone(), teamed_lane_count(&surface));
-    let surface_view = surface.read();
-    let work = project_work(surface_view.as_ref());
-    use_work_scope_reconciliation(work.as_ref(), work_scope.clone(), work_scope_notice.clone());
+    watchband::use_team_fleet_right_edge(
+        handles.team_fleet.clone(),
+        teamed_lane_count(&handles.surface),
+    );
+}
 
+#[function_component(CanvasApp)]
+fn canvas_app(properties: &CanvasAppProperties) -> Html {
+    let handles = use_canvas_handles();
+    let (axis, mosaic) = navigation::use_global_destination(properties.destination);
+    let composer_drag = use_composer_drag(&handles.surface);
+    let work_detail = task_detail::use_controls(handles.sender.clone(), handles.surface.clone());
+    let task_context =
+        message_task_inspector::use_controls(&handles.surface, &work_detail, &properties.navigate);
+    let work_history = work_history::use_controls(handles.sender.clone(), handles.surface.clone());
+    let (speech_runtime, agents) = use_canvas_agents(&handles);
+    let unsafe_intent = use_unsafe_intent(&handles.composer_drafts, &handles.submissions.status);
+    use_canvas_effects(&handles, &work_detail, &speech_runtime, *mosaic);
+    let surface_view = handles.surface.read();
+    let work = project_work(surface_view.as_ref());
+    use_work_scope_reconciliation(
+        work.as_ref(),
+        handles.work_scope.clone(),
+        handles.work_scope_notice.clone(),
+    );
     let refresh = refresh_callback(
-        sender.clone(),
+        handles.sender.clone(),
         axis.clone(),
         work_detail.selected.clone(),
-        work_map.clone(),
+        handles.work_map.clone(),
     );
     let canvas = render_canvas(
         CanvasRender {
-            connection: &connection,
-            surface: &surface,
+            connection: &handles.connection,
+            surface: &handles.surface,
             axis: &axis,
             mosaic: &mosaic,
             navigate: &properties.navigate,
-            canvas_menu_open: &canvas_menu_open,
-            work_scope: &work_scope,
-            work_scope_notice: &work_scope_notice,
-            work_arrangement: &work_arrangement,
-            identity: &identity,
-            canvas_update: &canvas_update,
-            team_controls: &team_controls,
-            composer_drafts: &composer_drafts,
-            submissions: &submissions,
+            canvas_menu_open: &handles.canvas_menu_open,
+            work_scope: &handles.work_scope,
+            work_scope_notice: &handles.work_scope_notice,
+            work_arrangement: &handles.work_arrangement,
+            identity: &handles.identity,
+            canvas_update: &handles.canvas_update,
+            team_controls: &handles.team_controls,
+            composer_drafts: &handles.composer_drafts,
+            submissions: &handles.submissions,
             composer_drag: &composer_drag,
-            team_fleet: &team_fleet,
+            team_fleet: &handles.team_fleet,
             unsafe_intent,
-            sender: &sender,
+            sender: &handles.sender,
             agents: &agents,
             selected_task: &work_detail.selected,
             detail_presented: *work_detail.presented,
             detail_closing: *work_detail.closing,
-            work_map: &work_map,
+            work_map: &handles.work_map,
             work_history: &work_history,
             detail_close: &work_detail.close_ref,
             detail_sheet: &work_detail.sheet_ref,
             note_text: &work_detail.note_text,
             note_notice: &work_detail.notice,
             note_submission: &work_detail.submission.status,
-            action_issue: &action_issue,
-            speech_status: &speech_status,
+            action_issue: &handles.action_issue,
+            speech_status: &handles.speech_status,
             submit_note: work_detail.submit_note.clone(),
             select_task: work_detail.select.clone(),
             close_task: work_detail.close.clone(),
@@ -929,27 +991,44 @@ fn use_unsafe_intent(
 #[hook]
 fn use_unsafe_intent_guard(unsafe_intent: bool) {
     use_effect_with(unsafe_intent, move |unsafe_intent| {
-        let registration = (*unsafe_intent)
-            .then(|| {
-                let window = web_sys::window()?;
-                let callback =
-                    Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+        let unsafe_intent = *unsafe_intent;
+        let registration = web_sys::window().and_then(|window| {
+            let callback =
+                Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+                    let has_native_draft = web_sys::window()
+                        .and_then(|window| window.document())
+                        .and_then(|document| {
+                            document
+                                .query_selector_all(
+                                    ".team-composer textarea, .work-note-composer textarea, \
+                                 .message-task-inspector-note textarea",
+                                )
+                                .ok()
+                        })
+                        .is_some_and(|textareas| {
+                            (0..textareas.length()).any(|index| {
+                                textareas
+                                    .get(index)
+                                    .and_then(|node| {
+                                        node.dyn_into::<web_sys::HtmlTextAreaElement>().ok()
+                                    })
+                                    .is_some_and(|textarea| !textarea.value().is_empty())
+                            })
+                        });
+                    if unsafe_intent || has_native_draft {
                         event.prevent_default();
                         let _ = js_sys::Reflect::set(
                             event.as_ref(),
                             &JsValue::from_str("returnValue"),
                             &JsValue::from_str(""),
                         );
-                    });
-                window
-                    .add_event_listener_with_callback(
-                        "beforeunload",
-                        callback.as_ref().unchecked_ref(),
-                    )
-                    .ok()?;
-                Some((window, callback))
-            })
-            .flatten();
+                    }
+                });
+            window
+                .add_event_listener_with_callback("beforeunload", callback.as_ref().unchecked_ref())
+                .ok()?;
+            Some((window, callback))
+        });
         move || {
             if let Some((window, callback)) = registration {
                 let _ = window.remove_event_listener_with_callback(
@@ -1029,11 +1108,8 @@ fn use_agent_controls(
     speech: AgentSpeechControls,
 ) -> view::AgentControls {
     let seat = view::SeatDraft {
-        name: use_state(String::new),
-        worktree: use_state(String::new),
         vendor: use_state(String::new),
         life: use_state(|| wire::intent::TeamLife::Steer.as_str().to_owned()),
-        model: use_state(String::new),
         effort: use_state(String::new),
         notice: use_state(Notice::none),
     };
@@ -1084,6 +1160,19 @@ fn seat_submit(
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        let value = |id: &str| {
+            document
+                .get_element_by_id(id)
+                .and_then(|element| element.dyn_into::<web_sys::HtmlInputElement>().ok())
+                .map(|input| input.value())
+                .unwrap_or_default()
+        };
+        let name = value("seat-name");
+        let worktree = value("seat-worktree");
+        let model = value("seat-model");
         let Some(topology_revision) = surface
             .read()
             .as_ref()
@@ -1092,12 +1181,12 @@ fn seat_submit(
         else {
             return;
         };
-        match compose::seat(&draft.name, &draft.worktree, &draft.vendor, &draft.life) {
+        match compose::seat(&name, &worktree, &draft.vendor, &draft.life) {
             Ok(seat) => {
                 let Ok(lane) = random_uuid() else {
                     return;
                 };
-                let selection = compose::selection(&draft.model, &draft.effort);
+                let selection = compose::selection(&model, &draft.effort);
                 if admit_action(
                     &sender,
                     ClientAction::Seat {
@@ -1373,24 +1462,10 @@ fn phase_class(status: &str) -> Classes {
     }
 }
 
-fn state_from_input(state: UseStateHandle<String>) -> Callback<InputEvent> {
-    Callback::from(move |event: InputEvent| {
-        let input: web_sys::HtmlInputElement = event.target_unchecked_into();
-        state.set(input.value());
-    })
-}
-
 fn state_from_select(state: UseStateHandle<String>) -> Callback<Event> {
     Callback::from(move |event: Event| {
         let select: web_sys::HtmlSelectElement = event.target_unchecked_into();
         state.set(select.value());
-    })
-}
-
-fn state_from_textarea(state: UseStateHandle<String>) -> Callback<InputEvent> {
-    Callback::from(move |event: InputEvent| {
-        let input: web_sys::HtmlTextAreaElement = event.target_unchecked_into();
-        state.set(input.value());
     })
 }
 

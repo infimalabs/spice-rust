@@ -249,11 +249,8 @@ fn analytics_summary(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &Work
 /// The seat form's fields as the operator has written them so far.
 #[derive(Clone)]
 pub(super) struct SeatDraft {
-    pub(super) name: UseStateHandle<String>,
-    pub(super) worktree: UseStateHandle<String>,
     pub(super) vendor: UseStateHandle<String>,
     pub(super) life: UseStateHandle<String>,
-    pub(super) model: UseStateHandle<String>,
     pub(super) effort: UseStateHandle<String>,
     pub(super) notice: UseStateHandle<Notice>,
 }
@@ -268,19 +265,21 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
             .iter()
             .find(|vendor| vendor.name.as_str() == draft.vendor.trim())
     });
-    let ready = can_seat
-        && !draft.worktree.trim().is_empty()
-        && selected.is_some()
-        && !draft.life.trim().is_empty();
+    let ready = can_seat && selected.is_some() && !draft.life.trim().is_empty();
     // A model spelling belongs to the vendor that resolves it, so choosing
     // another vendor drops one the operator selected for the previous.
     let choose_vendor = {
         let vendor = draft.vendor.clone();
-        let model = draft.model.clone();
         Callback::from(move |event: Event| {
             let select: web_sys::HtmlSelectElement = event.target_unchecked_into();
             vendor.set(select.value());
-            model.set(String::new());
+            if let Some(model) = web_sys::window()
+                .and_then(|window| window.document())
+                .and_then(|document| document.get_element_by_id("seat-model"))
+                .and_then(|element| element.dyn_into::<web_sys::HtmlInputElement>().ok())
+            {
+                model.set_value("");
+            }
         })
     };
     let default_model = selected.map_or("", |vendor| vendor.default_model.as_str());
@@ -291,15 +290,11 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                 <button type="submit" disabled={!ready}>{"Seat agent"}</button>
                 <label>
                     <span title="Name">{"Name"}</span>
-                    <input type="text" placeholder="Ava"
-                        value={(*draft.name).clone()}
-                        oninput={state_from_input(draft.name.clone())} />
+                    <input id="seat-name" type="text" placeholder="Ava" />
                 </label>
                 <label>
                     <span title="Worktree">{"Worktree"}</span>
-                    <input type="text" placeholder="/absolute/path/to/worktree"
-                        value={(*draft.worktree).clone()}
-                        oninput={state_from_input(draft.worktree.clone())} />
+                    <input id="seat-worktree" type="text" placeholder="/absolute/path/to/worktree" />
                 </label>
                 <label>
                     <span title="Vendor">{"Vendor"}</span>
@@ -329,10 +324,8 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                 </label>
                 <label>
                     <span title="Model">{"Model"}</span>
-                    <input type="text" list="lane-models"
-                        placeholder={format!("vendor default ({default_model})")}
-                        value={(*draft.model).clone()}
-                        oninput={state_from_input(draft.model.clone())} />
+                    <input id="seat-model" type="text" list="lane-models"
+                        placeholder={format!("vendor default ({default_model})")} />
                 </label>
                 <datalist id="lane-models">
                     <option value={default_model.to_owned()} />

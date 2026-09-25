@@ -63,6 +63,7 @@ impl DraftStore {
         self.0.entry(target).or_default()
     }
 
+    #[cfg(test)]
     pub(crate) fn set_body(&mut self, target: String, body: String) {
         self.draft_mut(target).body = body;
     }
@@ -104,6 +105,7 @@ impl DraftStore {
             .retain(|quote| quote.identity != identity);
     }
 
+    #[cfg(test)]
     pub(crate) fn set_quote_body(&mut self, target: String, identity: &str, body: String) {
         if let Some(quote) = self
             .draft_mut(target)

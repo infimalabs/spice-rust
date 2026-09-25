@@ -477,11 +477,10 @@ fn render_composer(render: &WorkDetailRender<'_, '_>, handle: &str) -> Html {
             <label for="work-detail-note">{format!("Observation for {handle}")}</label>
             <textarea
                 id="work-detail-note"
-                value={(**render.note_text).clone()}
+                key={(**render.note_text).clone()}
                 readonly={busy}
-                oninput={state_from_textarea(render.note_text.clone())}
-            ></textarea>
-            <button type="submit" disabled={busy || render.note_text.trim().is_empty()}>
+            >{(**render.note_text).clone()}</textarea>
+            <button type="submit" disabled={busy}>
                 {if busy { "Saving…" } else { "Add observation" }}
             </button>
             {super::render_notice(render.note_notice)}

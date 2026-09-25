@@ -15,10 +15,6 @@ use crate::composer_drafts::{ComposerDraft, DraftStore};
 pub(in crate::browser) struct ComposerDrafts(pub(super) DraftStore);
 
 pub(in crate::browser) enum ComposerAction {
-    SetBody {
-        lane: String,
-        body: String,
-    },
     AddQuote {
         lane: String,
         identity: String,
@@ -30,11 +26,6 @@ pub(in crate::browser) enum ComposerAction {
     RemoveQuote {
         lane: String,
         identity: String,
-    },
-    SetQuoteBody {
-        lane: String,
-        identity: String,
-        body: String,
     },
     AddAttachment {
         lane: String,
@@ -67,6 +58,7 @@ pub(in crate::browser) enum ComposerAction {
     RestoreAll {
         lane: String,
         drafts: Vec<ComposerDraft>,
+        current: ComposerDraft,
     },
 }
 
@@ -76,7 +68,6 @@ impl Reducible for ComposerDrafts {
     fn reduce(self: Rc<Self>, action: Self::Action) -> Rc<Self> {
         let mut next = (*self).clone();
         match action {
-            ComposerAction::SetBody { lane, body } => next.0.set_body(lane, body),
             ComposerAction::AddQuote {
                 lane,
                 identity,
@@ -90,13 +81,6 @@ impl Reducible for ComposerDrafts {
             }
             ComposerAction::RemoveQuote { lane, identity } => {
                 next.0.remove_quote(lane, &identity);
-            }
-            ComposerAction::SetQuoteBody {
-                lane,
-                identity,
-                body,
-            } => {
-                next.0.set_quote_body(lane, &identity, body);
             }
             ComposerAction::AddAttachment {
                 lane,
@@ -145,7 +129,12 @@ impl Reducible for ComposerDrafts {
             ComposerAction::ClearPrimary { lane } => {
                 next.0.clear_primary(&lane);
             }
-            ComposerAction::RestoreAll { lane, drafts } => {
+            ComposerAction::RestoreAll {
+                lane,
+                drafts,
+                current,
+            } => {
+                *next.0.draft_mut(lane.clone()) = current;
                 next.0.restore_all(lane, drafts.into_iter());
             }
         }
