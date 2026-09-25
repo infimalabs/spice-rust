@@ -38,12 +38,14 @@ use crate::{
     TaskDetailState, TeamDestination, stale_reads,
 };
 
+mod canvas_menu;
 mod clock;
 mod connection;
 mod image_viewer;
 mod mermaid;
 mod message_task_inspector;
 mod navigation;
+mod overlay;
 mod task_detail;
 mod task_relations;
 mod view;
@@ -644,7 +646,11 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
         issue: action_issue.clone(),
     };
     let composer_drag = use_composer_drag(&surface);
-    let work_detail = task_detail::use_controls(sender.clone(), surface.clone());
+    let work_detail = task_detail::use_controls(
+        sender.clone(),
+        surface.clone(),
+        work_detail_mounted(properties.destination, &surface),
+    );
     let task_inspector = message_task_inspector::use_controls(&surface, &work_detail, &navigate);
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
     let work_map = use_state(view::WorkMapState::default);
@@ -718,8 +724,11 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
     );
     use_team_speech_abandonment(&state.surface, speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime);
-    use_mosaic_root_scroll(state.destination == CanvasDestination::Chat);
-    use_canvas_menu_dismissal(state.canvas_menu_open.clone());
+    let chat_visible = state.destination == CanvasDestination::Chat;
+    use_mosaic_root_scroll(chat_visible);
+    canvas_menu::use_dismissal(state.canvas_menu_open.clone());
+    message_task_inspector::use_surface_lifetime(&state.task_inspector, chat_visible);
+    watchband::use_team_menu_escape(&state.team_controls, chat_visible);
     watchband::use_command_modifier_preview();
     watchband::use_team_fleet_right_edge(
         state.team_fleet.clone(),
@@ -739,6 +748,16 @@ fn canvas_app(properties: &CanvasAppProperties) -> Html {
     let (state, speech_runtime) = use_canvas_app_state(properties);
     use_canvas_app_effects(&state, speech_runtime);
     state.render()
+}
+
+/// The Work detail layer renders only on the Work destination with a board.
+fn work_detail_mounted(destination: CanvasDestination, surface: &SurfaceData) -> bool {
+    destination == CanvasDestination::Work
+        && surface
+            .read()
+            .as_ref()
+            .and_then(CanvasRuntime::board)
+            .is_some()
 }
 
 fn project_work(runtime: Option<&CanvasRuntime>) -> Option<WorkProjection<'_>> {
@@ -812,84 +831,6 @@ fn use_agent_speech_controls(
         suppress_automatic: (*suppress_automatic).clone(),
         message,
     }
-}
-
-#[hook]
-fn use_canvas_menu_dismissal(open: UseStateHandle<bool>) {
-    use_effect_with(*open, move |is_open| {
-        let registration = (*is_open)
-            .then(|| {
-                let document = web_sys::window()?.document()?;
-                if let Some(first_destination) = document
-                    .query_selector(".canvas-navigation .team-mode")
-                    .ok()
-                    .flatten()
-                    .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-                {
-                    let _ = first_destination.focus();
-                }
-                let pointer_open = open.clone();
-                let pointer = Closure::<dyn FnMut(web_sys::Event)>::new(move |event| {
-                    if !canvas_menu_contains(&event) {
-                        pointer_open.set(false);
-                    }
-                });
-                let focus_open = open.clone();
-                let focus = Closure::<dyn FnMut(web_sys::Event)>::new(move |event| {
-                    if !canvas_menu_contains(&event) {
-                        focus_open.set(false);
-                    }
-                });
-                let key_open = open.clone();
-                let key_document = document.clone();
-                let key = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
-                    move |event: web_sys::KeyboardEvent| {
-                        if event.key() != "Escape" {
-                            return;
-                        }
-                        event.prevent_default();
-                        key_open.set(false);
-                        if let Some(trigger) = key_document
-                            .query_selector(".canvas-menu > summary")
-                            .ok()
-                            .flatten()
-                            .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-                        {
-                            let _ = trigger.focus();
-                        }
-                    },
-                );
-                let _ = document.add_event_listener_with_callback(
-                    "pointerdown",
-                    pointer.as_ref().unchecked_ref(),
-                );
-                let _ = document
-                    .add_event_listener_with_callback("focusin", focus.as_ref().unchecked_ref());
-                let _ = document
-                    .add_event_listener_with_callback("keydown", key.as_ref().unchecked_ref());
-                Some((document, pointer, focus, key))
-            })
-            .flatten();
-        move || {
-            if let Some((document, pointer, focus, key)) = registration {
-                let _ = document.remove_event_listener_with_callback(
-                    "pointerdown",
-                    pointer.as_ref().unchecked_ref(),
-                );
-                let _ = document
-                    .remove_event_listener_with_callback("focusin", focus.as_ref().unchecked_ref());
-                let _ = document
-                    .remove_event_listener_with_callback("keydown", key.as_ref().unchecked_ref());
-            }
-        }
-    });
-}
-
-fn canvas_menu_contains(event: &web_sys::Event) -> bool {
-    event
-        .target()
-        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .is_some_and(|target| target.closest(".canvas-menu").ok().flatten().is_some())
 }
 
 #[hook]

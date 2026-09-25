@@ -16,8 +16,14 @@ pub(super) struct Controls {
     pub submit_note: Callback<SubmitEvent>,
 }
 
+/// `mounted` is whether the Work surface currently renders the detail layer;
+/// only a mounted layer owns Escape, animates its close, or returns focus.
 #[hook]
-pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<SurfaceData>) -> Controls {
+pub(super) fn use_controls(
+    sender: SenderHandle,
+    surface: UseStateHandle<SurfaceData>,
+    mounted: bool,
+) -> Controls {
     let selected = use_state(|| None::<TaskStamp>);
     let presented = use_state_eq(|| false);
     let closing = use_state_eq(|| false);
@@ -42,14 +48,13 @@ pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<Surface
         complete_close_callback(selected.clone(), presented.clone(), closing.clone());
     let close = close_callback(
         selected.clone(),
-        presented.clone(),
-        closing.clone(),
+        (*presented && mounted).then_some(closing.clone()),
         complete_close.clone(),
     );
     use_present((*selected).clone(), presented.clone());
-    use_close_transition(*closing, sheet_ref.clone(), complete_close.clone());
-    use_focus(&selected, close_ref.clone());
-    use_escape_close(selected.is_some(), close.clone());
+    use_close_transition(*closing, mounted, sheet_ref.clone(), complete_close.clone());
+    use_focus(&selected, mounted, close_ref.clone());
+    overlay::use_escape_owner(selected.is_some() && !*closing && mounted, close.clone());
     let submit_note = note_submit_callback(
         sender,
         surface,
@@ -110,22 +115,21 @@ pub(super) fn select_callback(
     })
 }
 
+/// Close through the sheet transition only when a presented sheet is on
+/// screen to animate; otherwise nothing would ever finish the transition.
 fn close_callback(
     selected: UseStateHandle<Option<TaskStamp>>,
-    presented: UseStateHandle<bool>,
-    closing: UseStateHandle<bool>,
+    animated: Option<UseStateHandle<bool>>,
     complete: Callback<()>,
 ) -> Callback<()> {
     Callback::from(move |()| {
         if selected.is_none() {
             return;
         }
-        if reduced_motion() {
-            complete.emit(());
-            return;
+        match animated.as_ref().filter(|_| !reduced_motion()) {
+            Some(closing) => closing.set(true),
+            None => complete.emit(()),
         }
-        presented.set(false);
-        closing.set(true);
     })
 }
 
@@ -173,12 +177,17 @@ fn use_present(selected: Option<TaskStamp>, presented: UseStateHandle<bool>) {
     });
 }
 
+/// Finish a close when the sheet's slide ends or is canceled, or at once when
+/// the layer is no longer mounted to run it.
 #[hook]
-fn use_close_transition(closing: bool, sheet: NodeRef, complete: Callback<()>) {
+fn use_close_transition(closing: bool, mounted: bool, sheet: NodeRef, complete: Callback<()>) {
     use_effect_with(
-        (closing, sheet.clone(), complete),
-        move |(closing, sheet, complete)| {
-            let registration = closing
+        (closing, mounted, sheet.clone(), complete),
+        move |(closing, mounted, sheet, complete)| {
+            if *closing && !*mounted {
+                complete.emit(());
+            }
+            let registration = (*closing && *mounted)
                 .then(|| {
                     let element = sheet.cast::<web_sys::Element>()?;
                     let target = element.clone();
@@ -199,65 +208,44 @@ fn use_close_transition(closing: bool, sheet: NodeRef, complete: Callback<()>) {
                                 complete.emit(());
                             }
                         });
-                    element
-                        .add_event_listener_with_callback(
-                            "transitionend",
-                            callback.as_ref().unchecked_ref(),
-                        )
-                        .ok()?;
+                    for kind in CLOSE_TRANSITION_EVENTS {
+                        element
+                            .add_event_listener_with_callback(
+                                kind,
+                                callback.as_ref().unchecked_ref(),
+                            )
+                            .ok()?;
+                    }
                     Some((element, callback))
                 })
                 .flatten();
             move || {
                 if let Some((element, callback)) = registration {
-                    let _ = element.remove_event_listener_with_callback(
-                        "transitionend",
-                        callback.as_ref().unchecked_ref(),
-                    );
+                    for kind in CLOSE_TRANSITION_EVENTS {
+                        let _ = element.remove_event_listener_with_callback(
+                            kind,
+                            callback.as_ref().unchecked_ref(),
+                        );
+                    }
                 }
             }
         },
     );
 }
 
-#[hook]
-fn use_escape_close(open: bool, close: Callback<()>) {
-    use_effect_with(open, move |open| {
-        let registration = (*open)
-            .then(|| {
-                let document = web_sys::window()?.document()?;
-                let callback = Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(
-                    move |event: web_sys::KeyboardEvent| {
-                        if event.key() == "Escape" {
-                            event.prevent_default();
-                            close.emit(());
-                        }
-                    },
-                );
-                document
-                    .add_event_listener_with_callback("keydown", callback.as_ref().unchecked_ref())
-                    .ok()?;
-                Some((document, callback))
-            })
-            .flatten();
-        move || {
-            if let Some((document, callback)) = registration {
-                let _ = document.remove_event_listener_with_callback(
-                    "keydown",
-                    callback.as_ref().unchecked_ref(),
-                );
-            }
-        }
-    });
-}
+const CLOSE_TRANSITION_EVENTS: [&str; 2] = ["transitionend", "transitioncancel"];
 
 #[hook]
-pub(super) fn use_focus(selected: &UseStateHandle<Option<TaskStamp>>, close: NodeRef) {
+pub(super) fn use_focus(
+    selected: &UseStateHandle<Option<TaskStamp>>,
+    mounted: bool,
+    close: NodeRef,
+) {
     let last_selected = use_mut_ref(|| None::<TaskStamp>);
     use_effect_with((**selected).clone(), move |selected| {
         let target = match selected {
             Some(task) => {
-                *last_selected.borrow_mut() = Some(task.clone());
+                *last_selected.borrow_mut() = mounted.then(|| task.clone());
                 None
             }
             None => last_selected.borrow_mut().take(),
@@ -275,8 +263,8 @@ pub(super) fn use_focus(selected: &UseStateHandle<Option<TaskStamp>>, close: Nod
                 let selector = format!(".work-card-open[data-task-stamp=\"{task}\"]");
                 document.query_selector(&selector).ok().flatten()
             })
+            .filter(overlay::returnable)
             .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-            .filter(|element| element.offset_width() > 0 || element.offset_height() > 0)
             .is_some_and(|element| element.focus().is_ok());
         if !focused
             && target.is_some()

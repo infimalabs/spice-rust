@@ -45,7 +45,12 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
         "opening"
     };
     html! {
-        <div class="work-detail-layer" key={selected.to_string()} data-work-detail-state={state}>
+        <div
+            class="work-detail-layer"
+            key={selected.to_string()}
+            data-work-detail-state={state}
+            inert={render.closing.then_some("true")}
+        >
             <button
                 type="button"
                 class="work-detail-backdrop"

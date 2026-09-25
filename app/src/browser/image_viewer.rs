@@ -1,16 +1,82 @@
 //! One image-only top-layer viewer for Markdown, diagrams, and attachments.
+//!
+//! The viewer lives only while its opener could take focus back: it closes
+//! when the opener leaves the document, stops rendering, or falls inside an
+//! inert subtree, which is how a route change or a hidden owner ends it. Every
+//! close path converges on one generation-checked clear, so stale close
+//! events and repeated dismissals are no-ops.
+
+use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 use yew::prelude::*;
+
+use super::overlay;
 
 mod actions;
 
 #[derive(Clone, PartialEq)]
 struct Selection {
+    generation: u64,
     source: AttrValue,
     alt: AttrValue,
     name: AttrValue,
     opener: web_sys::Element,
+}
+
+#[derive(Default, PartialEq)]
+struct Viewing {
+    issued: u64,
+    current: Option<Selection>,
+}
+
+enum Change {
+    Open {
+        source: AttrValue,
+        alt: AttrValue,
+        name: AttrValue,
+        opener: web_sys::Element,
+    },
+    Close(u64),
+}
+
+impl Reducible for Viewing {
+    type Action = Change;
+
+    fn reduce(self: Rc<Self>, change: Change) -> Rc<Self> {
+        match change {
+            Change::Open {
+                source,
+                alt,
+                name,
+                opener,
+            } => {
+                let generation = self.issued + 1;
+                Rc::new(Self {
+                    issued: generation,
+                    current: Some(Selection {
+                        generation,
+                        source,
+                        alt,
+                        name,
+                        opener,
+                    }),
+                })
+            }
+            Change::Close(generation)
+                if self
+                    .current
+                    .as_ref()
+                    .is_some_and(|current| current.generation == generation) =>
+            {
+                Rc::new(Self {
+                    issued: self.issued,
+                    current: None,
+                })
+            }
+            Change::Close(_) => self,
+        }
+    }
 }
 
 #[derive(Properties, PartialEq)]
@@ -20,56 +86,57 @@ pub(super) struct ProviderProps {
 
 #[function_component(Provider)]
 pub(super) fn provider(props: &ProviderProps) -> Html {
-    let selected = use_state_eq(|| None::<Selection>);
-    use_effect_with((), {
-        let selected = selected.clone();
-        move |()| {
-            let document = web_sys::window()
-                .expect("Canvas window")
-                .document()
-                .expect("Canvas document");
-            let opened = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-                let Some(opener) = event
-                    .target()
-                    .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-                    .and_then(|target| target.closest("button[data-image-preview]").ok().flatten())
-                else {
-                    return;
-                };
-                let Some(image) = opener
-                    .query_selector("img")
-                    .ok()
-                    .flatten()
-                    .and_then(|image| image.dyn_into::<web_sys::HtmlImageElement>().ok())
-                else {
-                    return;
-                };
-                event.prevent_default();
-                selected.set(Some(Selection {
-                    source: image.src().into(),
-                    alt: image.alt().into(),
-                    name: opener
-                        .get_attribute("data-image-name")
-                        .unwrap_or_default()
-                        .into(),
-                    opener,
-                }));
+    let viewing = use_reducer_eq(Viewing::default);
+    use_effect_with(viewing.dispatcher(), |viewing| {
+        let document = web_sys::window()
+            .expect("Canvas window")
+            .document()
+            .expect("Canvas document");
+        let viewing = viewing.clone();
+        let opened = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            let Some(opener) = event
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                .and_then(|target| target.closest("button[data-image-preview]").ok().flatten())
+            else {
+                return;
+            };
+            let Some(image) = opener
+                .query_selector("img")
+                .ok()
+                .flatten()
+                .and_then(|image| image.dyn_into::<web_sys::HtmlImageElement>().ok())
+            else {
+                return;
+            };
+            event.prevent_default();
+            viewing.dispatch(Change::Open {
+                source: image.src().into(),
+                alt: image.alt().into(),
+                name: opener
+                    .get_attribute("data-image-name")
+                    .unwrap_or_default()
+                    .into(),
+                opener,
             });
-            document
-                .add_event_listener_with_callback("click", opened.as_ref().unchecked_ref())
-                .expect("the Canvas document accepts image activation");
-            move || {
-                let _ = document
-                    .remove_event_listener_with_callback("click", opened.as_ref().unchecked_ref());
-            }
+        });
+        document
+            .add_event_listener_with_callback("click", opened.as_ref().unchecked_ref())
+            .expect("the Canvas document accepts image activation");
+        move || {
+            let _ = document
+                .remove_event_listener_with_callback("click", opened.as_ref().unchecked_ref());
         }
     });
-    let close = use_callback(selected.clone(), |(), selected| selected.set(None));
     html! {
         <>
             {props.children.clone()}
-            if let Some(selection) = selected.as_ref() {
-                <Viewer selection={selection.clone()} onclose={close} />
+            if let Some(selection) = viewing.current.as_ref() {
+                <Viewer
+                    key={selection.generation.to_string()}
+                    selection={selection.clone()}
+                    viewing={viewing.dispatcher()}
+                />
             }
         </>
     }
@@ -103,7 +170,7 @@ pub(super) fn use_button(action: Callback<()>) -> NodeRef {
 #[derive(Properties, PartialEq)]
 struct ViewerProps {
     selection: Selection,
-    onclose: Callback<()>,
+    viewing: UseReducerDispatcher<Viewing>,
 }
 
 #[function_component(Viewer)]
@@ -122,65 +189,19 @@ fn viewer(props: &ViewerProps) -> Html {
         }
     });
     use_effect_with(
-        (
-            host.clone(),
-            props.onclose.clone(),
-            props.selection.opener.clone(),
-        ),
-        |(host, onclose, opener)| {
+        (host.clone(), props.selection.clone(), props.viewing.clone()),
+        |(host, selection, viewing)| {
             let dialog = host
                 .cast::<web_sys::HtmlDialogElement>()
                 .expect("the mounted viewer owns its dialog");
-            let onclose = onclose.clone();
-            let closed = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| onclose.emit(()));
-            let backdrop =
-                Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-                    if let Some(dialog) = event
-                        .target()
-                        .and_then(|target| target.dyn_into::<web_sys::HtmlDialogElement>().ok())
-                    {
-                        dialog.close();
-                    }
-                });
-            dialog
-                .add_event_listener_with_callback("close", closed.as_ref().unchecked_ref())
-                .expect("dialog close listener");
-            dialog
-                .add_event_listener_with_callback("click", backdrop.as_ref().unchecked_ref())
-                .expect("dialog backdrop listener");
-            let owner = opener.clone();
-            let owned_dialog = dialog.clone();
-            let detached =
-                Closure::<dyn FnMut(js_sys::Array, web_sys::MutationObserver)>::new(move |_, _| {
-                    if !owner.is_connected() {
-                        owned_dialog.close();
-                    }
-                });
-            let observer = web_sys::MutationObserver::new(detached.as_ref().unchecked_ref())
-                .expect("viewer ownership observer");
-            let options = web_sys::MutationObserverInit::new();
-            options.set_child_list(true);
-            options.set_subtree(true);
-            observer
-                .observe_with_options(
-                    &opener.owner_document().expect("preview document"),
-                    &options,
-                )
-                .expect("observe preview lifetime");
-            dialog
-                .show_modal()
-                .expect("the connected viewer opens in the top layer");
-            move || {
-                observer.disconnect();
-                drop(detached);
-                let _ = dialog
-                    .remove_event_listener_with_callback("close", closed.as_ref().unchecked_ref());
-                let _ = dialog.remove_event_listener_with_callback(
-                    "click",
-                    backdrop.as_ref().unchecked_ref(),
-                );
-                dialog.close();
-            }
+            let generation = selection.generation;
+            let viewing = viewing.clone();
+            let presentation = Presentation::show(
+                dialog,
+                selection.opener.clone(),
+                Callback::from(move |()| viewing.dispatch(Change::Close(generation))),
+            );
+            move || drop(presentation)
         },
     );
     html! {
@@ -188,5 +209,129 @@ fn viewer(props: &ViewerProps) -> Html {
             <actions::Actions source={props.selection.source.clone()} name={props.selection.name.clone()} onclose={close} image_status={(*image_status).clone()} />
             <img class="image-lightbox-image" src={props.selection.source.clone()} alt={props.selection.alt.clone()} onload={loaded} onerror={failed} />
         </dialog>
+    }
+}
+
+/// One modal showing and the listeners that end it. Native cancel, backdrop,
+/// Close, and an opener that lapses all close the dialog, whose single `close`
+/// event returns focus and clears the selection; dropping the presentation
+/// detaches every listener first, so teardown closes silently.
+struct Presentation {
+    dialog: web_sys::HtmlDialogElement,
+    closed: Closure<dyn FnMut(web_sys::Event)>,
+    backdrop: Closure<dyn FnMut(web_sys::Event)>,
+    _ownership: Ownership,
+}
+
+/// Closes the dialog as soon as its opener can no longer take focus back.
+/// The opener's own box reports detachment and every kind of hiding; `inert`
+/// changes nothing about layout, so ancestors' `inert` is watched separately.
+struct Ownership {
+    resized: web_sys::ResizeObserver,
+    inerted: web_sys::MutationObserver,
+    _lapsed: Closure<dyn FnMut()>,
+}
+
+impl Ownership {
+    fn watch(dialog: web_sys::HtmlDialogElement, opener: web_sys::Element) -> Self {
+        let document = opener.owner_document().expect("preview document");
+        let observed = opener.clone();
+        let lapsed = Closure::<dyn FnMut()>::new(move || {
+            if !overlay::returnable(&observed) {
+                dialog.close();
+            }
+        });
+        let resized = web_sys::ResizeObserver::new(lapsed.as_ref().unchecked_ref())
+            .expect("viewer opener box observer");
+        resized.observe(&opener);
+        let inerted = web_sys::MutationObserver::new(lapsed.as_ref().unchecked_ref())
+            .expect("viewer opener inertness observer");
+        let options = web_sys::MutationObserverInit::new();
+        options.set_subtree(true);
+        options.set_attribute_filter(&js_sys::Array::of1(&JsValue::from_str("inert")));
+        inerted
+            .observe_with_options(&document, &options)
+            .expect("observe opener inertness");
+        Self {
+            resized,
+            inerted,
+            _lapsed: lapsed,
+        }
+    }
+}
+
+impl Drop for Ownership {
+    fn drop(&mut self) {
+        self.resized.disconnect();
+        self.inerted.disconnect();
+    }
+}
+
+impl Presentation {
+    fn show(
+        dialog: web_sys::HtmlDialogElement,
+        opener: web_sys::Element,
+        dismissed: Callback<()>,
+    ) -> Self {
+        let returned = opener.clone();
+        let closed = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+            return_focus(&returned);
+            dismissed.emit(());
+        });
+        let backdrop = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+            if let Some(dialog) = event
+                .target()
+                .and_then(|target| target.dyn_into::<web_sys::HtmlDialogElement>().ok())
+            {
+                dialog.close();
+            }
+        });
+        dialog
+            .add_event_listener_with_callback("close", closed.as_ref().unchecked_ref())
+            .expect("dialog close listener");
+        dialog
+            .add_event_listener_with_callback("click", backdrop.as_ref().unchecked_ref())
+            .expect("dialog backdrop listener");
+        let ownership = Ownership::watch(dialog.clone(), opener.clone());
+        // Focus returns only to an eligible opener, never to whatever the
+        // browser remembers as focused before the modal opened.
+        if let Some(active) = opener
+            .owner_document()
+            .and_then(|document| document.active_element())
+            .and_then(|active| active.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            let _ = active.blur();
+        }
+        dialog
+            .show_modal()
+            .expect("the connected viewer opens in the top layer");
+        Self {
+            dialog,
+            closed,
+            backdrop,
+            _ownership: ownership,
+        }
+    }
+}
+
+impl Drop for Presentation {
+    fn drop(&mut self) {
+        let _ = self
+            .dialog
+            .remove_event_listener_with_callback("close", self.closed.as_ref().unchecked_ref());
+        let _ = self
+            .dialog
+            .remove_event_listener_with_callback("click", self.backdrop.as_ref().unchecked_ref());
+        self.dialog.close();
+    }
+}
+
+fn return_focus(opener: &web_sys::Element) {
+    if overlay::returnable(opener)
+        && let Some(opener) = opener.dyn_ref::<web_sys::HtmlElement>()
+    {
+        let options = web_sys::FocusOptions::new();
+        options.set_prevent_scroll(true);
+        let _ = opener.focus_with_options(&options);
     }
 }

@@ -29,6 +29,7 @@ use composer::{
 pub(super) use composer::{PrimaryComposerDragState, use_primary_composer_drag_state};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
 use controls::{TeamLife, render_team_controls};
+pub(super) use fleet::use_team_menu_escape;
 use fleet::{FleetRender, TeamMode, carries_team, render_empty_fleet, render_populated_fleet};
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
