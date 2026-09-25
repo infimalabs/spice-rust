@@ -97,11 +97,5 @@ pub(super) fn acknowledgment_directive(
             .iter()
             .find(|pending| pending.key == key.as_str())
             .map(|pending| pending.directive)
-            .or_else(|| {
-                row.task_contract_notices
-                    .iter()
-                    .find(|notice| notice.key == key.as_str())
-                    .map(|notice| notice.directive)
-            })
     })
 }

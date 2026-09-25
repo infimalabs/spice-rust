@@ -11,7 +11,7 @@ use steer::{Miss, Outcome as ScanOutcome};
 use wire::body::TranscriptLocus;
 use wire::intent::{
     CommandAnswer, DeliveryAnswer, DeliveryStanding, DirectiveAnswer, InboxAnswer, LaneInbox,
-    PendingDirective, TaskContractNotice,
+    PendingDirective, TaskGenerationNotice,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Disposition, Fault, FaultClass, Instant, Outcome, Producer,
@@ -630,7 +630,7 @@ fn publish_lane_inbox(
         .into_iter()
         .filter(|directive| {
             !directive.control().is_some_and(|control| {
-                control.starts_with(spice::session_meter::TASK_CONTRACT_CONTROL_PREFIX)
+                control.starts_with(spice::session_meter::TASK_GENERATION_CONTROL_PREFIX)
             })
         })
         .collect::<Vec<_>>();
@@ -697,7 +697,11 @@ pub(super) fn inbox(
         }
         let compaction = match lane.occupant {
             Some(occupant) => {
-                match super::taste_surface::context_anchor(&snapshot.facts, lane.lane, occupant) {
+                match super::taste_surface::context_anchor(
+                    snapshot.authority.facts(),
+                    lane.lane,
+                    occupant,
+                ) {
                     Ok(anchor) => Some(anchor.get()),
                     Err(error) => {
                         return typed_store_fault("steer::compaction-anchor-missing", &error);
@@ -706,11 +710,11 @@ pub(super) fn inbox(
             }
             None => None,
         };
-        let (pending, task_contract_notices) =
-            match pending_presentations(&snapshot.ledger, lane.lane) {
+        let (pending, generation_notices) =
+            match pending_presentations(&snapshot.ledger, lane.lane, snapshot.authority.tasks()) {
                 Ok(presentations) => presentations,
                 Err(error) => {
-                    return typed_store_fault("task-contract::control-invalid", &error);
+                    return typed_store_fault("task-generation::control-invalid", &error);
                 }
             };
         lanes.push(LaneInbox {
@@ -718,7 +722,7 @@ pub(super) fn inbox(
             occupant: lane.occupant,
             compaction,
             pending,
-            task_contract_notices,
+            generation_notices,
             delivery: match fold_delivery(paths, lane.lane) {
                 Ok(delivery) => delivery,
                 Err(outcome) => return typed_outcome(outcome),
@@ -798,7 +802,7 @@ pub(super) fn repair(
 struct SteeringSnapshot {
     ledger: steer::Ledger,
     position: Seq,
-    facts: bus::TaskFacts,
+    authority: bus::TaskSnapshot,
     residency: journal::JournalHead<ResidencyHead>,
 }
 
@@ -862,7 +866,7 @@ fn pending_snapshot(
         return Ok(SteeringSnapshot {
             ledger,
             position,
-            facts: authority.facts().clone(),
+            authority,
             residency,
         });
     }
@@ -954,37 +958,51 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
     }
 }
 
+/// Split one lane's pending directives into authored direction and task
+/// generation notices, naming each notice's task by its current handle.
 pub(super) fn pending_presentations(
     ledger: &steer::Ledger,
     lane: CanonicalUuid,
-) -> Result<(Vec<PendingDirective>, Vec<TaskContractNotice>), String> {
+    tasks: &[journal::TaskHeads],
+) -> Result<(Vec<PendingDirective>, Vec<TaskGenerationNotice>), String> {
     let mut pending = Vec::new();
-    let mut task_contract_notices = Vec::new();
+    let mut generation_notices = Vec::new();
     for directive in ledger.pending(lane) {
-        match super::lifecycle::contract_edits::notice_authority(directive.control())? {
+        match super::lifecycle::generation_notices::notice_authority(directive.control())? {
             Some(authority) => {
-                task_contract_notices.push(task_contract_notice(directive, authority));
+                generation_notices.push(generation_notice(directive, authority, tasks)?);
             }
             None => pending.push(pending_directive(directive)),
         }
     }
-    Ok((pending, task_contract_notices))
+    Ok((pending, generation_notices))
 }
 
-fn task_contract_notice(
+fn generation_notice(
     directive: &steer::Directive,
-    authority: super::lifecycle::contract_edits::NoticeAuthority,
-) -> TaskContractNotice {
-    TaskContractNotice {
+    authority: super::lifecycle::generation_notices::NoticeAuthority,
+    tasks: &[journal::TaskHeads],
+) -> Result<TaskGenerationNotice, String> {
+    let statement = tasks
+        .binary_search_by(|heads| heads.statement().body().born.cmp(&authority.task))
+        .map(|index| tasks[index].statement().body())
+        .map_err(|_| {
+            format!(
+                "task-generation notice names unknown task {}",
+                authority.task
+            )
+        })?;
+    Ok(TaskGenerationNotice {
         directive: directive.directive(),
         key: directive.key().to_string(),
+        handle: wire::TaskHandle::for_project(&statement.project, &statement.born),
         task: authority.task,
-        edit: authority.edit,
+        generation: authority.generation,
         claim: authority.claim,
         text: directive.text().to_owned(),
         stage: directive.stage(),
         expires: directive.expires(),
-    }
+    })
 }
 
 fn live_head(

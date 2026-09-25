@@ -20,8 +20,8 @@ mod live;
 #[cfg(not(target_arch = "wasm32"))]
 pub use live::LiveMeter;
 
-/// Prefix identifying resident-authored task-contract acknowledgment controls.
-pub const TASK_CONTRACT_CONTROL_PREFIX: &str = "task-contract-edit:";
+/// Prefix identifying resident-authored task generation notice controls.
+pub const TASK_GENERATION_CONTROL_PREFIX: &str = "task-generation:";
 
 /// Remaining lease below this duration enters the warning tier.
 pub const CLAIM_WARNING_BOUNDARY: Duration = Duration::from_secs(10 * 60);

@@ -440,12 +440,12 @@ mod tests {
     }
 
     #[test]
-    fn task_contract_acknowledgment_is_not_speech_evidence() {
+    fn system_acknowledgment_is_not_speech_evidence() {
         let key = "dRyzkGX8b";
         let mut directives = directives(&[key]);
         directives
             .0
-            .get_mut(&key.parse().expect("current task-contract key parses"))
+            .get_mut(&key.parse().expect("current system key parses"))
             .expect("fixture directive exists")
             .authored = false;
 

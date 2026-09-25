@@ -95,14 +95,6 @@ fn active_todo_claim_appends_atomically_without_moving_possession() {
     );
     assert_eq!(after_heads.workflow.body.phase.as_str(), "todo");
     assert_eq!(after_heads.statement.body.dependencies.len(), 2);
-    let edits = edit_bodies(&bus, &todo);
-    let notice = edits
-        .last()
-        .and_then(|(_, _, edited)| edited.notice.as_ref())
-        .expect("claimed dependency edit carries a contract notice");
-    assert_eq!(notice.claim, claim);
-    assert_eq!(notice.changes.len(), 1);
-    assert_eq!(notice.changes[0].field, "dependencies");
     clean(&root, bus);
 }
 

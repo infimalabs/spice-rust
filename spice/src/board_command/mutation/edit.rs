@@ -82,7 +82,6 @@ fn prepare_correction(
         )
     })?;
     let publication = CorrectionPublication {
-        notice: task_edit_notice(entry, &statement),
         next: next_action(snapshot, &post),
         at,
         requirement_change,
@@ -224,7 +223,6 @@ fn corrected_project(
 
 /// Write one corrected statement as a fresh revision attributed to its editor.
 struct CorrectionPublication {
-    notice: Option<body::TaskEditNotice>,
     next: Option<Box<str>>,
     at: Instant,
     requirement_change: requirements::Change,
@@ -239,7 +237,6 @@ fn publish_correction(
     publication: CorrectionPublication,
 ) -> Outcome<CommandAnswer> {
     let CorrectionPublication {
-        notice,
         next,
         at,
         requirement_change,
@@ -259,7 +256,7 @@ fn publish_correction(
         body::TaskEdited {
             task: statement.born.clone(),
             revision,
-            notice,
+            notice: None,
         },
         FactCause::Root,
     ) {

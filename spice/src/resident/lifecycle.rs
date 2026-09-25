@@ -26,7 +26,7 @@ use super::{CommandResult, RuntimePaths, SurfaceConfig, commit, new_uuid, store_
 
 mod materialization;
 use materialization::Projection;
-pub(super) mod contract_edits;
+pub(super) mod generation_notices;
 mod review_feedback;
 pub(super) const REVIEW_FEEDBACK_CONTROL_PREFIX: &str = review_feedback::CONTROL_PREFIX;
 mod targets;
@@ -332,7 +332,7 @@ impl Runtime {
             .task_snapshot()
             .map_err(|error| store_fault("lifecycle::snapshot-unreadable", &error.to_string()))?;
         self.synchronize_holds(&snapshot, self.projection.cursor())?;
-        if contract_edits::reconcile(
+        if generation_notices::reconcile(
             bus,
             paths,
             epoch,

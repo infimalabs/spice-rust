@@ -664,7 +664,7 @@ fn steering_keys<'a>(texts: impl IntoIterator<Item = &'a str>) -> BTreeSet<steer
 
 fn presents_as_authored_steering(control: Option<&str>) -> bool {
     !control.is_some_and(|control| {
-        control.starts_with(spice::session_meter::TASK_CONTRACT_CONTROL_PREFIX)
+        control.starts_with(spice::session_meter::TASK_GENERATION_CONTROL_PREFIX)
     })
 }
 

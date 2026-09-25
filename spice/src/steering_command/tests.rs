@@ -243,34 +243,40 @@ fn sequential_duplicate_content_publishes_each_new_key_without_replaying_text() 
 }
 
 #[test]
-fn task_contract_revision_is_a_system_hud_notice_not_authored_steering() {
+fn task_generation_notice_is_a_system_hud_notice_naming_the_reclaim() {
     let scratch = HookScratch::new();
-    let answer = task_contract_answer();
+    let answer = generation_answer();
     let CommandAnswer::Inbox(inbox) = &answer else {
         panic!("fixture answer is an inbox");
     };
     assert!(inbox.lanes[0].pending.is_empty());
-    assert_eq!(inbox.lanes[0].task_contract_notices.len(), 1);
+    assert_eq!(inbox.lanes[0].generation_notices.len(), 1);
 
-    let document = deliver(&scratch, &answer).expect("task-contract HUD publishes");
+    let document = deliver(&scratch, &answer).expect("generation HUD publishes");
     let context = additional_context(&document);
     assert!(context.starts_with("Rust Spice system status."));
-    assert!(context.contains("TASK CONTRACT REVISION"));
     assert!(
-        context.contains("task=1kKRRsDP edit=44 claim=33 key=1kL5y53c"),
+        context.contains(&format!(
+            "TASK GENERATION lane={LANE} task=1kKRRsDP handle=SPICE-1kKRRsDP generation=4 \
+             claim=33 key={KEY}"
+        )),
         "{context}"
     );
-    assert!(context.contains("Task contract changed for SPICE-1kKRRsDP."));
-    assert!(context.contains("ack 1kL5y53c"));
+    assert!(context.contains("Task SPICE-1kKRRsDP changed"));
+    assert!(context.contains("task reclaim SPICE-1kKRRsDP`"));
+    assert!(
+        !context.contains("ack 1kL5y53c"),
+        "answering the key is not the action that retires a notice"
+    );
     assert!(!context.contains("Rust Spice steering is pending"));
     assert_eq!(deliver(&scratch, &answer), None);
 }
 
 #[test]
-fn task_contract_status_and_authored_direction_share_one_hook_document_without_conflation() {
+fn generation_status_and_authored_direction_share_one_hook_document_without_conflation() {
     let scratch = HookScratch::new();
-    let CommandAnswer::Inbox(mut mixed) = task_contract_answer() else {
-        panic!("task-contract fixture is an inbox");
+    let CommandAnswer::Inbox(mut mixed) = generation_answer() else {
+        panic!("generation fixture is an inbox");
     };
     let CommandAnswer::Inbox(authored) = inbox_answer(
         OCCUPANT,
@@ -291,9 +297,9 @@ fn task_contract_status_and_authored_direction_share_one_hook_document_without_c
         .find("Rust Spice steering is pending.")
         .expect("authored steering section");
     assert!(system < steering);
-    assert!(context.contains("TASK CONTRACT REVISION"));
+    assert!(context.contains("TASK GENERATION"));
     assert!(context.contains("Inspect the authored request."));
-    assert!(context.contains("ack 1kL5y53c"));
+    assert!(context.contains("task reclaim SPICE-1kKRRsDP`"));
     assert!(context.contains("ack 1kFirst1"));
 }
 
@@ -763,7 +769,7 @@ fn inbox_answer(
     CommandAnswer::Inbox(inbox)
 }
 
-fn task_contract_answer() -> CommandAnswer {
+fn generation_answer() -> CommandAnswer {
     let inbox: InboxAnswer = serde_json::from_value(serde_json::json!({
         "epoch": EPOCH,
         "lanes": [{
@@ -771,19 +777,20 @@ fn task_contract_answer() -> CommandAnswer {
             "occupant": OCCUPANT,
             "compaction": 1,
             "pending": [],
-            "task_contract_notices": [{
+            "generation_notices": [{
                 "directive": DIRECTIVE,
                 "key": KEY,
                 "task": "1kKRRsDP",
-                "edit": 44,
+                "handle": "SPICE-1kKRRsDP",
+                "generation": 4,
                 "claim": 33,
-                "text": "Task contract changed for SPICE-1kKRRsDP.",
+                "text": "Task SPICE-1kKRRsDP changed after this claim last acknowledged it.",
                 "stage": "published",
                 "expires": "2026-08-30T10:00:00.000Z",
             }],
         }],
     }))
-    .expect("task-contract hook inbox fixture admits");
+    .expect("generation hook inbox fixture admits");
     CommandAnswer::Inbox(inbox)
 }
 

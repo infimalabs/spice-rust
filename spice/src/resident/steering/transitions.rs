@@ -546,6 +546,16 @@ pub(in crate::resident) fn dispose(
         },
         None => None,
     };
+    if let Some(head) = indexed.as_ref()
+        && super::super::lifecycle::generation_notices::is_notice(head.body().control.as_deref())
+    {
+        return refusal(
+            "steer::reclaim-required",
+            Some("spice task reclaim HANDLE".to_owned()),
+            Some(head.body().key.clone()),
+            "reclaim the task this notice names; answering its key records delivery but never retires it",
+        );
+    }
     let standing = IndexedStanding::new(parsed, indexed.as_ref());
     let Some(vendor) = residency
         .body()
