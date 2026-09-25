@@ -11,9 +11,9 @@ pub(super) struct Controls {
     pub notice: UseStateHandle<Notice>,
     pub submission: NoteSubmissionHandle,
     pub select: Callback<TaskStamp>,
+    pub request: Callback<TaskStamp>,
     pub close: Callback<()>,
-    pub dismiss: Callback<()>,
-    pub submit_note: Callback<SubmitEvent>,
+    pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
 }
 
 /// `mounted` is whether the Work surface currently renders the detail layer;
@@ -36,9 +36,9 @@ pub(super) fn use_controls(
         state: use_mut_ref(NoteSubmission::default),
         status: submission_status,
     };
+    let request = request_callback(sender.clone(), surface.clone());
     let select = select_callback(
-        sender.clone(),
-        surface.clone(),
+        request.clone(),
         selected.clone(),
         presented.clone(),
         closing.clone(),
@@ -51,14 +51,16 @@ pub(super) fn use_controls(
         (*presented && mounted).then_some(closing.clone()),
         complete_close.clone(),
     );
-    use_present((*selected).clone(), presented.clone());
+    use_present(
+        selected.is_some() && mounted && !*presented,
+        presented.clone(),
+    );
     use_close_transition(*closing, mounted, sheet_ref.clone(), complete_close.clone());
     use_focus(&selected, mounted, close_ref.clone());
     overlay::use_escape_owner(selected.is_some() && !*closing && mounted, close.clone());
     let submit_note = note_submit_callback(
         sender,
         surface,
-        selected.clone(),
         note_text.clone(),
         notice.clone(),
         submission.clone(),
@@ -73,15 +75,15 @@ pub(super) fn use_controls(
         notice,
         submission,
         select,
+        request,
         close,
-        dismiss: complete_close,
         submit_note,
     }
 }
 
-pub(super) fn select_callback(
-    sender: SenderHandle,
-    surface: UseStateHandle<SurfaceData>,
+/// Select one task for the Work sheet and make sure its detail is read.
+fn select_callback(
+    request: Callback<TaskStamp>,
     selected: UseStateHandle<Option<TaskStamp>>,
     presented: UseStateHandle<bool>,
     closing: UseStateHandle<bool>,
@@ -92,6 +94,17 @@ pub(super) fn select_callback(
         closing.set(false);
         selected.set(Some(task.clone()));
         note_notice.set(Notice::none());
+        request.emit(task);
+    })
+}
+
+/// Read one task's detail unless an admitted answer is already held; every
+/// surface showing a task reads it here without selecting it anywhere.
+fn request_callback(
+    sender: SenderHandle,
+    surface: UseStateHandle<SurfaceData>,
+) -> Callback<TaskStamp> {
+    Callback::from(move |task: TaskStamp| {
         let request = {
             let mut data = surface.write();
             let Some(runtime) = data.as_mut() else {
@@ -156,10 +169,13 @@ pub(super) fn reduced_motion() -> bool {
         .is_none_or(|query| query.matches())
 }
 
+/// Present the sheet one frame after a mounted layer renders it unpresented,
+/// so reselecting the shown task, or a selection made before its layer
+/// mounted, still slides in from the opening state instead of sticking there.
 #[hook]
-fn use_present(selected: Option<TaskStamp>, presented: UseStateHandle<bool>) {
-    use_effect_with(selected, move |selected| {
-        let frame = selected.as_ref().map(|_| {
+fn use_present(pending: bool, presented: UseStateHandle<bool>) {
+    use_effect_with(pending, move |pending| {
+        let frame = pending.then(|| {
             let window = web_sys::window().expect("Canvas presentation has a browser window");
             let show = presented.clone();
             let callback = Closure::once(move |_: f64| show.set(true));
@@ -235,27 +251,37 @@ fn use_close_transition(closing: bool, mounted: bool, sheet: NodeRef, complete: 
 
 const CLOSE_TRANSITION_EVENTS: [&str; 2] = ["transitionend", "transitioncancel"];
 
+/// Focus enters the sheet once each time a selected sheet mounts, and a close
+/// returns it to the card that opened a sheet the operator saw.
 #[hook]
 pub(super) fn use_focus(
     selected: &UseStateHandle<Option<TaskStamp>>,
     mounted: bool,
     close: NodeRef,
 ) {
-    let last_selected = use_mut_ref(|| None::<TaskStamp>);
+    let last_seen = use_mut_ref(|| None::<TaskStamp>);
+    {
+        let last_seen = last_seen.clone();
+        use_effect_with(
+            ((**selected).clone(), mounted),
+            move |(selected, mounted)| {
+                let Some(task) = selected else {
+                    return;
+                };
+                *last_seen.borrow_mut() = mounted.then(|| task.clone());
+                if *mounted && let Some(button) = close.cast::<web_sys::HtmlElement>() {
+                    let options = web_sys::FocusOptions::new();
+                    options.set_prevent_scroll(true);
+                    let _ = button.focus_with_options(&options);
+                }
+            },
+        );
+    }
     use_effect_with((**selected).clone(), move |selected| {
-        let target = match selected {
-            Some(task) => {
-                *last_selected.borrow_mut() = mounted.then(|| task.clone());
-                None
-            }
-            None => last_selected.borrow_mut().take(),
-        };
         if selected.is_some() {
-            if let Some(button) = close.cast::<web_sys::HtmlElement>() {
-                let _ = button.focus();
-            }
             return;
         }
+        let target = last_seen.borrow_mut().take();
         let focused = target
             .as_ref()
             .and_then(|task| {
@@ -277,15 +303,15 @@ pub(super) fn use_focus(
     });
 }
 
+/// Append one observation to the task named by the submitting surface.
 pub(super) fn note_submit_callback(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
-    selected: UseStateHandle<Option<TaskStamp>>,
     note_text: UseStateHandle<String>,
     note_notice: UseStateHandle<Notice>,
     note_submission: NoteSubmissionHandle,
-) -> Callback<SubmitEvent> {
-    Callback::from(move |event: SubmitEvent| {
+) -> Callback<(TaskStamp, SubmitEvent)> {
+    Callback::from(move |(task, event): (TaskStamp, SubmitEvent)| {
         event.prevent_default();
         let text = event
             .target()
@@ -295,9 +321,6 @@ pub(super) fn note_submit_callback(
             .map(|textarea| textarea.value())
             .unwrap_or_default();
         note_text.set(text.clone());
-        let Some(task) = (*selected).clone() else {
-            return;
-        };
         let (handle, after) = {
             let data = surface.read();
             let Some(detail) = data

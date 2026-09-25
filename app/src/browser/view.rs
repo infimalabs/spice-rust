@@ -99,7 +99,7 @@ pub(super) struct CanvasRender<'a> {
     pub note_submission: &'a UseStateHandle<NoteSubmission>,
     pub action_issue: &'a UseStateHandle<Option<String>>,
     pub speech_status: &'a UseStateHandle<SpeechStatus>,
-    pub submit_note: Callback<SubmitEvent>,
+    pub submit_note: Callback<(wire::TaskStamp, SubmitEvent)>,
     pub select_task: Callback<wire::TaskStamp>,
     pub close_task: Callback<()>,
     pub refresh: Callback<MouseEvent>,

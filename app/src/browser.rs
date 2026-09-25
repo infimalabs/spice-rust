@@ -627,11 +627,6 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     let work_arrangement = use_state(WorkArrangement::default);
     let identity = use_state(|| None::<CanvasIdentity>);
     let canvas_update = use_state(|| None::<CanvasUpdate>);
-    let navigate = navigation::intent_callback(
-        properties.navigate.clone(),
-        work_scope.clone(),
-        work_scope_notice.clone(),
-    );
     let team_controls = use_reducer(TeamControls::restore);
     let team_fleet = use_node_ref();
     let composer_drafts = use_reducer(ComposerDrafts::default);
@@ -650,6 +645,13 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
         sender.clone(),
         surface.clone(),
         work_detail_mounted(properties.destination, &surface),
+    );
+    let navigate = navigation::intent_callback(
+        properties.navigate.clone(),
+        work_scope.clone(),
+        work_scope_notice.clone(),
+        work_detail.select.clone(),
+        surface.clone(),
     );
     let task_inspector = message_task_inspector::use_controls(&surface, &work_detail, &navigate);
     let work_history = work_history::use_controls(sender.clone(), surface.clone());

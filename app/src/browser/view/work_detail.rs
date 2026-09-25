@@ -25,7 +25,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub note_text: &'a UseStateHandle<String>,
     pub note_notice: &'a UseStateHandle<Notice>,
     pub note_submission: &'a UseStateHandle<NoteSubmission>,
-    pub submit_note: Callback<SubmitEvent>,
+    pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
     pub select_task: Callback<TaskStamp>,
     pub close: Callback<()>,
 }
@@ -267,7 +267,7 @@ fn render_available(
                         })}
                     </ol>
                 }
-                {render_composer(render, statement.handle.as_str())}
+                {render_composer(render, statement.handle.as_str(), &statement.born)}
             </section>
             <button type="button" class="work-detail-back" onclick={render.close.reform(|_: MouseEvent| ())}>
                 {"Back to Work"}
@@ -465,7 +465,7 @@ fn render_git_context(row: &wire::intent::BoardTask) -> Html {
     }
 }
 
-fn render_composer(render: &WorkDetailRender<'_, '_>, handle: &str) -> Html {
+fn render_composer(render: &WorkDetailRender<'_, '_>, handle: &str, task: &TaskStamp) -> Html {
     if !render.can_note {
         return html! {
             <p class="work-note-capability">{"This capability can read observations but cannot append them."}</p>
@@ -484,8 +484,12 @@ fn render_composer(render: &WorkDetailRender<'_, '_>, handle: &str) -> Html {
             <p class="form-refusal" role="alert">{issue}</p>
         },
     };
+    let task = task.clone();
     html! {
-        <form class="form work-note-composer" onsubmit={render.submit_note.clone()}>
+        <form
+            class="form work-note-composer"
+            onsubmit={render.submit_note.reform(move |event| (task.clone(), event))}
+        >
             <label for="work-detail-note">{format!("Observation for {handle}")}</label>
             <textarea
                 id="work-detail-note"
