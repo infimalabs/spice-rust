@@ -256,15 +256,18 @@
   overflow: hidden;
 }
 .team-surface .message-task-inspector {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   inline-size: 100%;
   min-inline-size: 0;
   max-inline-size: 100%;
   block-size: 100%;
   min-block-size: 0;
   contain: inline-size;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   background: color-mix(in srgb, var(--panel) 96%, var(--page));
 }
 .team-surface .message-task-inspector:focus { outline: none; }
@@ -277,6 +280,7 @@
 }
 .team-surface .message-task-inspector-header {
   position: relative;
+  flex: none;
   gap: 8px;
   padding: 10px 12px;
   backdrop-filter: none;
@@ -301,10 +305,8 @@
   min-inline-size: 0;
   max-inline-size: 100%;
   min-block-size: 0;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior-inline: contain;
-  scrollbar-gutter: stable;
+  flex: 1 0 auto;
+  overflow: visible;
 }
 .team-surface .message-task-inspector-content {
   inline-size: 100%;
@@ -378,6 +380,7 @@
 }
 .team-surface .message-task-inspector-footer {
   display: flex;
+  flex: none;
   align-items: center;
   justify-content: flex-end;
   inline-size: 100%;
