@@ -4,6 +4,8 @@
 //! have to decode through the current strict reply shape. Historical lane rows
 //! therefore gain the inert `disabled` spelling once; runtime reads replace it
 //! with the worktree's current admitted configuration.
+//! The same retained rows may still call a quiet occupant `running-stale`;
+//! that retired liveness spelling crosses as `running`.
 
 use rusqlite::{Connection, params};
 use serde::Serialize;
@@ -22,6 +24,9 @@ const DIRECT_KINDS: &[&str] = &[
     "team::arrange",
 ];
 const RECALL_KIND: &str = "lane::recall";
+
+#[cfg(test)]
+mod tests;
 
 pub(super) fn migrate(connection: &Connection) -> Result<(), OpenError> {
     let mut statement = connection
@@ -88,6 +93,7 @@ fn set_direct_speech(document: &mut Value, present: bool) -> Result<(), String> 
         let lane = lane
             .as_object_mut()
             .ok_or_else(|| format!("lane row {index} is not an object"))?;
+        normalize_liveness(lane);
         if present {
             lane.insert("speech".to_owned(), json!({"backend": "disabled"}));
         } else {
@@ -156,12 +162,21 @@ fn normalize_response(command: &str, kind: &str, document: &mut Value) -> Result
         let lane = lane
             .as_object_mut()
             .ok_or_else(|| invalid(command, &format!("lane row {index} is not an object")))?;
+        changed |= normalize_liveness(lane);
         if !lane.contains_key("speech") {
             lane.insert("speech".to_owned(), json!({"backend": "disabled"}));
             changed = true;
         }
     }
     Ok(changed)
+}
+
+fn normalize_liveness(lane: &mut Map<String, Value>) -> bool {
+    if lane.get("liveness").and_then(Value::as_str) != Some("running-stale") {
+        return false;
+    }
+    lane.insert("liveness".to_owned(), json!("running"));
+    true
 }
 
 fn lane_rows<'a>(
