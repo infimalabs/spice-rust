@@ -153,7 +153,7 @@ pub(super) fn render_tabs(state: &UseStateHandle<WorkMapState>, selected: &TaskS
     let details = set_mode_callback(state.clone(), WorkDetailMode::Details);
     let map = set_mode_callback(state.clone(), WorkDetailMode::Map);
     html! {
-        <div class="work-detail-tabs" role="tablist" aria-label="Task view">
+        <div class="work-detail-tabs canvas-control-rail" role="tablist" aria-label="Task view">
             <button
                 id="work-detail-tab"
                 type="button"

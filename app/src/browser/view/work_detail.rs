@@ -11,6 +11,8 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub scope: &'a WorkScope,
     pub lanes: Option<&'a LaneView>,
     pub selected: Option<&'a TaskStamp>,
+    pub presented: bool,
+    pub closing: bool,
     pub map: &'a UseStateHandle<work_map::WorkMapState>,
     pub detail: Option<&'a TaskDetailState>,
     pub relations: Option<&'a TaskRelationsState>,
@@ -18,6 +20,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub stale: bool,
     pub can_note: bool,
     pub close_ref: &'a NodeRef,
+    pub sheet_ref: &'a NodeRef,
     pub note_text: &'a UseStateHandle<String>,
     pub note_notice: &'a UseStateHandle<Notice>,
     pub note_submission: &'a UseStateHandle<NoteSubmission>,
@@ -33,8 +36,15 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
     let map_open = render.map.mode() == work_map::WorkDetailMode::Map;
     let refreshing = render.detail.is_some_and(TaskDetailState::refreshing);
     let close_click = render.close.reform(|_: MouseEvent| ());
+    let state = if render.closing {
+        "closing"
+    } else if render.presented {
+        "open"
+    } else {
+        "opening"
+    };
     html! {
-        <div class="work-detail-layer" key={selected.to_string()}>
+        <div class="work-detail-layer" key={selected.to_string()} data-work-detail-state={state}>
             <button
                 type="button"
                 class="work-detail-backdrop"
@@ -42,6 +52,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                 onclick={close_click.clone()}
             ></button>
             <aside
+                ref={render.sheet_ref.clone()}
                 class={classes!("work-detail", map_open.then_some("work-detail--map"))}
                 role="dialog"
                 aria-modal="true"
