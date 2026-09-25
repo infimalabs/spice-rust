@@ -109,6 +109,11 @@ pub(super) fn use_history_paging(
             let observed_request = request.clone();
             let observed_last_admitted = last_admitted.clone();
             let inspect = Rc::new(move || {
+                // A plane hidden behind another destination has no viewport: its
+                // zero extent is not a trailing edge, so it pages nothing until shown.
+                if observed.client_height() == 0 {
+                    return;
+                }
                 let at_edge = crate::mosaic::history_edge_is_near(
                     f64::from(observed.scroll_top()),
                     f64::from(observed.client_height()),
@@ -154,10 +159,18 @@ pub(super) fn use_history_paging(
             element
                 .add_event_listener_with_callback("scroll", on_scroll.as_ref().unchecked_ref())
                 .ok()?;
-            Some((element, on_scroll))
+            // Showing the plane again gives it a viewport without scrolling it.
+            let on_resize =
+                Closure::<dyn FnMut(js_sys::Array, web_sys::ResizeObserver)>::new(move |_, _| {
+                    inspect()
+                });
+            let resized = web_sys::ResizeObserver::new(on_resize.as_ref().unchecked_ref()).ok()?;
+            resized.observe(&element);
+            Some((element, on_scroll, resized, on_resize))
         });
         move || {
-            if let Some((element, on_scroll)) = registration {
+            if let Some((element, on_scroll, resized, _on_resize)) = registration {
+                resized.disconnect();
                 let _ = element.remove_event_listener_with_callback(
                     "scroll",
                     on_scroll.as_ref().unchecked_ref(),

@@ -22,9 +22,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub can_note: bool,
     pub close_ref: &'a NodeRef,
     pub sheet_ref: &'a NodeRef,
-    pub note_text: &'a UseStateHandle<String>,
-    pub note_notice: &'a UseStateHandle<Notice>,
-    pub note_submission: &'a UseStateHandle<NoteSubmission>,
+    pub notes: &'a NoteComposers,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
     pub select_task: Callback<TaskStamp>,
     pub close: Callback<()>,
@@ -245,34 +243,52 @@ fn render_available(
                 {render_claim_context(row)}
                 {render_git_context(row)}
             </section>
-            <section class="work-detail-section work-detail-activity">
-                <div class="work-detail-section-heading">
-                    <h3>{"Activity"}</h3>
-                    <span>{format!("{} observations", answer.notes.len())}</span>
-                </div>
-                if answer.notes.is_empty() {
-                    <p class="muted">{"No observations have been recorded."}</p>
-                } else {
-                    <ol class="work-note-list">
-                        {for answer.notes.iter().map(|note| html! {
-                            <li class="work-note-card" key={note.position.to_string()} data-note-position={note.position.to_string()}>
-                                <header>
-                                    <strong title={note.author.to_string()}>
-                                        {work_board::actor_name(&note.author, render.lanes)}
-                                    </strong>
-                                    {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
-                                </header>
-                                <p>{note.text.clone()}</p>
-                            </li>
-                        })}
-                    </ol>
-                }
-                {render_composer(render, statement.handle.as_str(), &statement.born)}
-            </section>
+            {render_activity(render, answer)}
             <button type="button" class="work-detail-back" onclick={render.close.reform(|_: MouseEvent| ())}>
                 {"Back to Work"}
             </button>
         </div>
+    }
+}
+
+/// The task's observations and the composer that appends to them.
+fn render_activity(
+    render: &WorkDetailRender<'_, '_>,
+    answer: &wire::intent::TaskDetailAnswer,
+) -> Html {
+    let statement = &answer.task.statement.body;
+    html! {
+        <section class="work-detail-section work-detail-activity">
+            <div class="work-detail-section-heading">
+                <h3>{"Activity"}</h3>
+                <span>{format!("{} observations", answer.notes.len())}</span>
+            </div>
+            if answer.notes.is_empty() {
+                <p class="muted">{"No observations have been recorded."}</p>
+            } else {
+                <ol class="work-note-list">
+                    {for answer.notes.iter().map(|note| html! {
+                        <li class="work-note-card" key={note.position.to_string()} data-note-position={note.position.to_string()}>
+                            <header>
+                                <strong title={note.author.to_string()}>
+                                    {work_board::actor_name(&note.author, render.lanes)}
+                                </strong>
+                                {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
+                            </header>
+                            <p>{note.text.clone()}</p>
+                        </li>
+                    })}
+                </ol>
+            }
+            {task_detail::render_note_composer(
+                "work-detail-note",
+                statement.handle.as_str(),
+                &statement.born,
+                render.can_note,
+                &render.notes.shown(&statement.born),
+                &render.submit_note,
+            )}
+        </section>
     }
 }
 
@@ -462,45 +478,5 @@ fn render_git_context(row: &wire::intent::BoardTask) -> Html {
                 {fact("Local commits", context.boundary.local_commits.to_string())}
             </dl>
         </div>
-    }
-}
-
-fn render_composer(render: &WorkDetailRender<'_, '_>, handle: &str, task: &TaskStamp) -> Html {
-    if !render.can_note {
-        return html! {
-            <p class="work-note-capability">{"This capability can read observations but cannot append them."}</p>
-        };
-    }
-    let busy = render.note_submission.busy();
-    let status = match &**render.note_submission {
-        NoteSubmission::Idle => Html::default(),
-        NoteSubmission::Pending { task, .. } => html! {
-            <p class="work-note-pending" role="status">{format!("Saving observation for {task}…")}</p>
-        },
-        NoteSubmission::Reconciling { task, .. } => html! {
-            <p class="work-note-pending" role="status">{format!("Saved for {task}; waiting for durable activity…")}</p>
-        },
-        NoteSubmission::Failed(issue) => html! {
-            <p class="form-refusal" role="alert">{issue}</p>
-        },
-    };
-    let task = task.clone();
-    html! {
-        <form
-            class="form work-note-composer"
-            onsubmit={render.submit_note.reform(move |event| (task.clone(), event))}
-        >
-            <label for="work-detail-note">{format!("Observation for {handle}")}</label>
-            <textarea
-                id="work-detail-note"
-                key={(**render.note_text).clone()}
-                readonly={busy}
-            >{(**render.note_text).clone()}</textarea>
-            <button type="submit" disabled={busy}>
-                {if busy { "Saving…" } else { "Add observation" }}
-            </button>
-            {super::render_notice(render.note_notice)}
-            {status}
-        </form>
     }
 }
