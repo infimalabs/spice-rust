@@ -1,3 +1,4 @@
+use super::clock::{TaskTimePresentation, task_time};
 use super::*;
 
 const CARD_PROPERTIES: [&str; 5] = [
@@ -241,7 +242,7 @@ fn render_available(
                     <ol>
                         {for answer.notes[note_start..].iter().map(|note| html! {
                             <li key={note.position.to_string()}>
-                                <time title={note.at.to_string()}>{note.at.to_string()}</time>
+                                {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
                                 <p>{note.text.clone()}</p>
                             </li>
                         })}
