@@ -107,6 +107,12 @@
   .work-lane-empty { min-height: 0; margin-top: 5px; padding-block: 11px; }
   .work-card { gap: 8px; padding: 12px; }
   .work-history { margin-top: 14px; }
+  .work-history-finder { grid-template-columns: 1fr; }
+  .work-history-filter-actions,
+  .work-history-page-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .work-history-filter-actions button,
+  .work-history-page-actions button { width: 100%; }
+  .work-history-pagination { align-items: stretch; flex-direction: column; }
   .work-detail { width: 100vw; }
   .work-detail-header,
   .work-detail-content { padding-inline: 14px; }

@@ -95,8 +95,8 @@ pub(super) async fn send_work_history(
         vec![],
         BoardRead::History {
             before: request.before.clone(),
-            query: None,
-            completed_before: None,
+            query: request.query.clone(),
+            completed_before: request.completed_before,
             limit: 50,
         },
     )

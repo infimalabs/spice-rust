@@ -92,7 +92,7 @@ pub(super) fn render(
         .flat_map(|(_, clusters)| clusters)
         .map(|cluster| cluster.tasks.len())
         .sum::<usize>();
-    let history = history_tasks(work, scope);
+    let history = history_tasks(work);
     html! {
         <div
             class="work-board"
@@ -119,74 +119,164 @@ pub(super) fn render(
                     })}
                 </div>
             }
-            <details
-                class="work-history"
-                open={*history_controls.open}
-                ontoggle={history_controls.toggle.clone()}
-            >
-                <summary>
-                    <span>{"History"}</span>
-                    <span class="work-history-count">
-                        {history_count(history_state)}
-                    </span>
-                </summary>
-                if *history_controls.open {
-                    if history_state.is_some_and(WorkHistoryState::loading) {
-                        <p class="work-board-state" role="status">{"Loading history…"}</p>
-                    }
-                    if let Some(issue) = history_state.and_then(WorkHistoryState::issue) {
-                        <div class="work-history-actions">
-                            <p class="form-refusal" role="alert">{issue}</p>
-                            <button type="button" onclick={history_controls.load.clone()}>{"Retry"}</button>
+            {render_history_archive(history, history_state, history_controls, &cards)}
+        </div>
+    }
+}
+
+fn render_history_archive(
+    history: Vec<&WorkTask<'_>>,
+    state: Option<&WorkHistoryState>,
+    controls: &WorkHistoryControls,
+    cards: &Cards<'_>,
+) -> Html {
+    html! {
+        <details
+            class="work-history"
+            open={*controls.open}
+            ontoggle={controls.toggle.clone()}
+        >
+            <summary>
+                <span>{"History"}</span>
+                <span class="work-history-count">{history_count(state)}</span>
+            </summary>
+            if *controls.open {
+                <div class="work-history-finder" role="search" aria-label="Find terminal tasks">
+                    <label>
+                        <span>{"Search"}</span>
+                        <input
+                            type="search"
+                            maxlength={wire::intent::TASK_HISTORY_QUERY_BYTES_MAX.to_string()}
+                            placeholder="Handle, title, project, or description"
+                            value={(*controls.query).clone()}
+                            oninput={state_from_input(controls.query.clone())}
+                        />
+                    </label>
+                    <label>
+                        <span>{"Completed by"}</span>
+                        <input
+                            type="date"
+                            value={(*controls.cutoff).clone()}
+                            oninput={state_from_input(controls.cutoff.clone())}
+                        />
+                    </label>
+                    <div class="work-history-filter-actions">
+                        <button type="button" onclick={controls.apply.clone()}>{"Apply"}</button>
+                        <button type="button" onclick={controls.clear.clone()}>{"Clear"}</button>
+                    </div>
+                </div>
+                if let Some(issue) = controls.validation.as_ref() {
+                    <p class="form-refusal work-history-filter-issue" role="alert">{issue}</p>
+                }
+                if state.is_some_and(WorkHistoryState::loading) {
+                    <p class="work-board-state" role="status">{"Loading history page…"}</p>
+                }
+                if let Some(issue) = state.and_then(WorkHistoryState::issue) {
+                    <div class="work-history-actions">
+                        <p class="form-refusal" role="alert">{issue}</p>
+                        <button type="button" onclick={controls.retry.clone()}>{"Retry"}</button>
+                    </div>
+                }
+                if history.is_empty() && state.and_then(WorkHistoryState::total) == Some(0) {
+                    <div class="empty">
+                        {if state.is_some_and(WorkHistoryState::filtered) {
+                            "No history matches these filters."
+                        } else {
+                            "No completed or deleted tasks in this scope."
+                        }}
+                    </div>
+                } else if !history.is_empty() {
+                    {render_history(history, cards)}
+                }
+                if let Some(state) = state.filter(|state| state.total().is_some()) {
+                    <div class="work-history-pagination">
+                        <div class="work-history-range" role="status">
+                            <strong>{history_count(Some(state))}</strong>
+                            <span>{history_page_position(state)}</span>
                         </div>
-                    }
-                    if history.is_empty()
-                        && history_state.and_then(WorkHistoryState::total) == Some(0)
-                    {
-                        <div class="empty">{"No completed or deleted tasks in this scope."}</div>
-                    } else if history.is_empty()
-                        && history_state.is_some_and(|state| state.loaded() > 0)
-                    {
-                        <div class="empty">
-                            {format!(
-                                "No history in this scope among {} loaded tasks.",
-                                history_state.map_or(0, WorkHistoryState::loaded),
-                            )}
-                        </div>
-                    } else if !history.is_empty() {
-                        <div class="work-history-list">
-                            {for history.into_iter().map(|task| render_card(task, &cards))}
-                        </div>
-                    }
-                    if history_state.is_some_and(|state| {
-                        state.next().is_some() && !state.loading() && state.issue().is_none()
-                    }) {
-                        <div class="work-history-actions">
-                            <button type="button" onclick={history_controls.load.clone()}>
-                                {"Load more"}
+                        <div class="work-history-page-actions" aria-label="History pages">
+                            <button
+                                type="button"
+                                disabled={state.loading() || !state.has_newer()}
+                                onclick={controls.newer.clone()}
+                            >
+                                {"Newer"}
+                            </button>
+                            <button
+                                type="button"
+                                disabled={state.loading() || !state.has_older()}
+                                onclick={controls.older.clone()}
+                            >
+                                {"Older"}
                             </button>
                         </div>
-                    } else if history_state.is_some_and(|state| {
-                        state.exhausted() && state.total().is_some_and(|total| total > 0)
-                    }) {
-                        <p class="work-board-state" role="status">
-                            {format!(
-                                "All {} history tasks loaded.",
-                                history_state.map_or(0, WorkHistoryState::loaded),
-                            )}
-                        </p>
-                    }
+                    </div>
                 }
-            </details>
-        </div>
+            }
+        </details>
     }
 }
 
 fn history_count(state: Option<&WorkHistoryState>) -> String {
     state.and_then(WorkHistoryState::total).map_or_else(
         || "Not loaded".to_owned(),
-        |total| format!("{} / {total}", state.map_or(0, WorkHistoryState::loaded)),
+        |total| {
+            format!(
+                "{}–{} of {total}",
+                state.map_or(0, WorkHistoryState::first_result),
+                state.map_or(0, WorkHistoryState::last_result),
+            )
+        },
     )
+}
+
+fn history_page_position(state: &WorkHistoryState) -> &'static str {
+    match (state.has_newer(), state.has_older()) {
+        (false, false) => "Newest and oldest page",
+        (false, true) => "Newest page",
+        (true, false) => "Oldest page",
+        (true, true) => "Between newest and oldest",
+    }
+}
+fn render_history(history: Vec<&WorkTask<'_>>, cards: &Cards<'_>) -> Html {
+    let mut groups: Vec<(String, Vec<&WorkTask<'_>>)> = Vec::new();
+    for task in history {
+        let date = history_date(task);
+        if let Some((current, tasks)) = groups.last_mut()
+            && *current == date
+        {
+            tasks.push(task);
+        } else {
+            groups.push((date, vec![task]));
+        }
+    }
+    html! {
+        <div class="work-history-groups">
+            {for groups.into_iter().map(|(date, tasks)| html! {
+                <section key={date.clone()} class="work-history-date">
+                    <h3>{date}</h3>
+                    <div class="work-history-list">
+                        {for tasks.into_iter().map(|task| render_card(task, cards))}
+                    </div>
+                </section>
+            })}
+        </div>
+    }
+}
+
+fn history_date(task: &WorkTask<'_>) -> String {
+    task.row()
+        .workflow
+        .body
+        .completion
+        .map(|instant| {
+            let mut instant = instant.to_string();
+            if let Some(separator) = instant.find('T') {
+                instant.truncate(separator);
+            }
+            instant
+        })
+        .unwrap_or_else(|| "Completion date unavailable".to_owned())
 }
 
 fn render_arrangement(state: &UseStateHandle<WorkArrangement>) -> Html {
@@ -478,12 +568,11 @@ fn terminal_summary(status: &str, completion: Option<&str>) -> String {
     )
 }
 
-fn history_tasks<'a>(work: &'a WorkProjection<'a>, scope: &WorkScope) -> Vec<&'a WorkTask<'a>> {
+fn history_tasks<'a>(work: &'a WorkProjection<'a>) -> Vec<&'a WorkTask<'a>> {
     let mut tasks = work
         .tasks()
         .iter()
         .filter(|task| task.availability() == WorkAvailability::Terminal)
-        .filter(|task| work.in_scope(task, scope))
         .collect::<Vec<_>>();
     tasks.sort_by(history_order);
     tasks

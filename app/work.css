@@ -341,6 +341,79 @@
   gap: 10px;
   padding: 12px;
 }
+.work-history-finder {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1fr) minmax(10rem, .45fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--panel) 94%, var(--control));
+}
+
+.work-history-finder label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: .68rem;
+  font-weight: 700;
+}
+
+.work-history-finder input {
+  width: 100%;
+  min-width: 0;
+}
+
+.work-history-filter-actions,
+.work-history-page-actions {
+  display: flex;
+  gap: 7px;
+}
+
+.work-history-filter-issue { margin: 10px 12px 0; }
+
+.work-history-groups {
+  display: grid;
+  gap: 2px;
+}
+
+.work-history-date {
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.work-history-date:last-child { border-bottom: 0; }
+
+.work-history-date h3 {
+  margin: 0;
+  padding: 10px 12px 0;
+  color: var(--muted);
+  font-size: .72rem;
+  font-weight: 750;
+  letter-spacing: .03em;
+}
+
+.work-history-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-top: 1px solid var(--line);
+}
+
+.work-history-range {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: .7rem;
+}
+
+.work-history-range strong {
+  color: var(--ink);
+  font-size: .76rem;
+}
 
 /* Cards never animate or expose a drag cursor: board updates replace their
    stable keyed position without implying an operator mutation. */
