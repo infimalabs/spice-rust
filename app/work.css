@@ -737,7 +737,7 @@
   padding: 9px 10px;
   text-align: left;
 }
-.work-map-fact { border: var(--canvas-edge-soft); border-radius: 6px; background: var(--panel); }
+.work-map-fact { border: var(--canvas-edge-soft); border-radius: var(--canvas-radius-element); background: var(--panel); }
 .work-map-task span,
 .work-map-fact span { color: var(--accent); font-size: .62rem; text-transform: uppercase; }
 .work-map-task strong,
