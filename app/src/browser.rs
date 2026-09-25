@@ -556,7 +556,7 @@ struct CanvasAppState {
     sender: SenderHandle,
     composer_drag: watchband::PrimaryComposerDragState,
     work_detail: task_detail::Controls,
-    task_context: message_task_inspector::Context,
+    task_inspector: message_task_inspector::Controls,
     work_history: work_history::Controls,
     work_map: UseStateHandle<view::WorkMapState>,
     speech_status: UseStateHandle<SpeechStatus>,
@@ -614,7 +614,7 @@ impl CanvasAppState {
             },
             work.as_ref(),
         );
-        message_task_inspector::provide(self.task_context, canvas)
+        message_task_inspector::provide(self.task_inspector, canvas)
     }
 }
 
@@ -644,7 +644,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     };
     let composer_drag = use_composer_drag(&surface);
     let work_detail = task_detail::use_controls(sender.clone(), surface.clone());
-    let task_context =
+    let task_inspector =
         message_task_inspector::use_controls(&surface, &work_detail, &properties.navigate);
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
     let work_map = use_state(view::WorkMapState::default);
@@ -683,7 +683,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
             sender,
             composer_drag,
             work_detail,
-            task_context,
+            task_inspector,
             work_history,
             work_map,
             speech_status,
