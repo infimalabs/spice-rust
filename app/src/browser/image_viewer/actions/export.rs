@@ -16,8 +16,32 @@ fn clipboard() -> Result<(JsValue, js_sys::Function, js_sys::Function), JsValue>
     Ok((clipboard, write, constructor))
 }
 
-pub(super) fn clipboard_available() -> bool {
-    clipboard().is_ok()
+/// Why this page cannot put an image on the clipboard, or `None` when it can.
+///
+/// Browsers expose `navigator.clipboard` and `ClipboardItem` only to secure
+/// contexts, so a Canvas opened over plain http by a LAN address loses copy
+/// even though the same resident on `localhost` keeps it.
+pub(super) fn copy_refusal() -> Option<String> {
+    if clipboard().is_ok() {
+        return None;
+    }
+    const UNSUPPORTED: &str =
+        "This browser cannot put images on the clipboard; Download still works.";
+    let Some(window) = web_sys::window() else {
+        return Some(UNSUPPORTED.to_owned());
+    };
+    let secure = js_sys::Reflect::get(&window, &JsValue::from_str("isSecureContext"))
+        .ok()
+        .and_then(|value| value.as_bool())
+        .unwrap_or(true);
+    Some(if secure {
+        UNSUPPORTED.to_owned()
+    } else {
+        let origin = window.location().origin().unwrap_or_default();
+        format!(
+            "Image copy needs a secure page, and {origin} is plain http. Browsers allow it on https or localhost; Download still works."
+        )
+    })
 }
 
 pub(super) fn readable(source: &str) -> bool {
