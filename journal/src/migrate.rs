@@ -9,6 +9,7 @@ use crate::SCHEMA_VERSION;
 mod claim_index;
 mod creation_context;
 mod fact_bounds;
+mod generation_index;
 mod identity_stamp;
 mod lane_predicates;
 mod release_notes;
@@ -630,6 +631,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (25, MigrationStep::Rust(team::migrate)),
     (26, MigrationStep::Rust(crate::historical_receipts::migrate)),
     (27, MigrationStep::Rust(migrate_schema_27)),
+    (28, MigrationStep::Rust(generation_index::migrate)),
 ];
 
 /// Schema 27 to 28: task generations and claim acknowledgements.
@@ -919,6 +921,13 @@ CREATE INDEX task_heads_head_seq ON task_heads(head_seq);
 CREATE INDEX workflow_heads_head_seq ON workflow_heads(head_seq);
 CREATE INDEX workflow_heads_revised_seq ON workflow_heads(revised_seq)
     WHERE revised_seq IS NOT NULL;
+CREATE TABLE task_generations (
+    stamp TEXT NOT NULL REFERENCES task_heads(stamp),
+    generation INTEGER NOT NULL CHECK (generation > 0),
+    seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
+    baseline INTEGER NOT NULL DEFAULT 0 CHECK (baseline IN (0, 1)),
+    PRIMARY KEY (stamp, generation)
+) STRICT, WITHOUT ROWID;
 CREATE TABLE claim_heads (
     stamp TEXT PRIMARY KEY REFERENCES task_heads(stamp),
     head_seq INTEGER NOT NULL REFERENCES fact_envelopes(seq),
@@ -1010,8 +1019,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 28, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 29, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 28;
+PRAGMA user_version = 29;
 "#;

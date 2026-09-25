@@ -1,7 +1,7 @@
-//! The task generation the journal settles at every commit, and the claim
-//! acknowledgement settled beside it.
+//! The task generation the journal settles at every commit, the claim
+//! acknowledgement settled beside it, and the index of every advance.
 
-use super::claim_index::add_claimed_task;
+use super::claim_index::{add_claimed_task, query_plan};
 use super::*;
 
 use crate::{FactCause, JournalWrite};
@@ -20,7 +20,7 @@ fn mutations_advance_once_per_transaction_and_only_the_holder_keeps_pace() {
     let transition = workflow(&journal, &task).position();
     assert_eq!(settled(&journal, &task), (0, 0));
 
-    note(&mut journal, &holder, &task, 1);
+    let first = note(&mut journal, &holder, &task, 1);
     assert_eq!(
         settled(&journal, &task),
         (1, 1),
@@ -45,7 +45,7 @@ fn mutations_advance_once_per_transaction_and_only_the_holder_keeps_pace() {
         "an in-place revision is a change a position-following reader sees"
     );
 
-    note(&mut journal, &holder, &task, 1);
+    let third = note(&mut journal, &holder, &task, 1);
     assert_eq!(
         settled(&journal, &task),
         (3, 1),
@@ -62,12 +62,106 @@ fn mutations_advance_once_per_transaction_and_only_the_holder_keeps_pace() {
         transition,
         "no mutation here moved the workflow transition"
     );
+    let recorded = [(1, first.last()), (2, applied.last()), (3, third.last())];
+    assert_eq!(advances(&journal, &task, 0, 8), recorded);
+    assert_eq!(
+        advances(&journal, &task, 1, 1),
+        recorded[1..2],
+        "the read resumes past a generation and honors its bound"
+    );
+    let plan = query_plan(
+        &journal,
+        "SELECT generation, seq FROM task_generations \
+         WHERE stamp = 'x' AND generation > 0 ORDER BY generation LIMIT 8",
+    );
+    assert!(
+        plan.contains("SEARCH task_generations USING PRIMARY KEY") && !plan.contains("SCAN"),
+        "one task's advances are a key range, not a scan: {plan}"
+    );
 
     let before = heads(&journal, &task);
     drop(journal);
     let journal = Journal::open(&path).expect("generation authority reopens");
     assert_eq!(heads(&journal, &task), before);
+    assert_eq!(advances(&journal, &task, 0, 8), recorded);
     journal.verify().expect("generation authority verifies");
+}
+
+#[test]
+fn verification_names_an_index_that_disagrees_with_its_task() {
+    for (corruption, subject) in [
+        (
+            "DELETE FROM task_generations WHERE generation = 1",
+            "task_generations:{task}",
+        ),
+        (
+            "DELETE FROM task_generations WHERE generation = 2",
+            "task_generations:{task}",
+        ),
+        (
+            "UPDATE task_generations SET seq = (SELECT min(seq) FROM fact_envelopes) \
+             WHERE generation = 2",
+            "task_generations:{task}:2",
+        ),
+    ] {
+        let mut journal = authority_fixture();
+        let task = add_claimed_task(&mut journal, 1, Actor::Lane(uuid(HOLDER)));
+        note(&mut journal, &Actor::Operator, &task, 1);
+        note(&mut journal, &Actor::Operator, &task, 1);
+        journal.verify().expect("an intact index verifies");
+        journal
+            .connection
+            .execute_batch(corruption)
+            .expect("corrupt the index");
+        let Err(crate::VerifyError::Violations(violations)) = journal.verify() else {
+            panic!("verification accepted {corruption}");
+        };
+        let subject = subject.replace("{task}", task.as_str());
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.subject == subject),
+            "{corruption} was not named at {subject}: {violations:?}"
+        );
+    }
+}
+
+#[test]
+fn a_schema_twenty_eight_advance_gains_one_baseline_row() {
+    let scratch = Scratch::new();
+    let path = scratch.path().join("generation-index-migration.sqlite3");
+    let mut journal = authority_file_fixture(&path);
+    let task = add_claimed_task(&mut journal, 1, Actor::Lane(uuid(HOLDER)));
+    note(&mut journal, &Actor::Operator, &task, 1);
+    let latest = note(&mut journal, &Actor::Operator, &task, 1);
+    journal
+        .connection
+        .execute_batch(
+            "DROP TABLE task_generations;
+             UPDATE journal_schema SET version = 28 WHERE singleton = 1;
+             PRAGMA user_version = 28;",
+        )
+        .expect("downgrade the fixture to schema 28");
+    let stored = rows(&journal.connection);
+    drop(journal);
+
+    let mut journal = Journal::open(&path).expect("schema 28 authority migrates");
+    assert_eq!(
+        rows(&journal.connection),
+        stored,
+        "no head or fact is rewritten"
+    );
+    assert_eq!(advances(&journal, &task, 0, 8), [(2, latest.last())]);
+    journal.verify().expect("a baseline run verifies");
+
+    let next = note(&mut journal, &Actor::Operator, &task, 1);
+    assert_eq!(
+        advances(&journal, &task, 0, 8),
+        [(2, latest.last()), (3, next.last())]
+    );
+    journal
+        .verify()
+        .expect("an advance past the baseline verifies");
 }
 
 #[test]
@@ -79,7 +173,8 @@ fn a_schema_twenty_seven_authority_opens_at_generation_zero_unchanged() {
     journal
         .connection
         .execute_batch(
-            "DROP INDEX workflow_heads_revised_seq;
+            "DROP TABLE task_generations;
+             DROP INDEX workflow_heads_revised_seq;
              ALTER TABLE workflow_heads DROP COLUMN revised_seq;
              UPDATE journal_schema SET version = 27 WHERE singleton = 1;
              PRAGMA user_version = 27;",
@@ -99,10 +194,22 @@ fn a_schema_twenty_seven_authority_opens_at_generation_zero_unchanged() {
         (0, 0),
         "no retained claim starts stale"
     );
+    assert!(advances(&journal, &task, 0, 8).is_empty());
     journal.verify().expect("migrated authority verifies");
 
-    note(&mut journal, &Actor::Operator, &task, 1);
+    let applied = note(&mut journal, &Actor::Operator, &task, 1);
     assert_eq!(settled(&journal, &task), (1, 0));
+    assert_eq!(advances(&journal, &task, 0, 8), [(1, applied.last())]);
+}
+
+/// One task's recorded advances past `after`, at most `limit`.
+fn advances(journal: &Journal, task: &TaskStamp, after: u64, limit: usize) -> Vec<(u64, Seq)> {
+    journal
+        .read(|read| read.task_generations_after(task, after, limit))
+        .expect("generation index reads")
+        .into_iter()
+        .map(|advance| (advance.generation, advance.position))
+        .collect()
 }
 
 /// Commit `count` notes on `task` from `actor` in one transaction.

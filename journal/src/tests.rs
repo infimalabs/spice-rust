@@ -1408,6 +1408,7 @@ fn expected_tables() -> BTreeSet<String> {
         "steering_heads",
         "steering_index",
         "steering_misses",
+        "task_generations",
         "task_heads",
         "thread_index",
         "transcript_source_heads",

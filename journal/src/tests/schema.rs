@@ -703,6 +703,7 @@ fn schema_one_authority(path: &Path) {
             "DELETE FROM lease_heads;
              DELETE FROM claim_heads;
              DROP TABLE transcript_source_heads;
+             DROP TABLE task_generations;
              UPDATE journal_schema SET version = 1 WHERE singleton = 1;
              PRAGMA user_version = 1;",
         )
@@ -764,6 +765,11 @@ fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
         after.remove("transcript_source_heads"),
         Some(Vec::new()),
         "the step creates the new table empty; a schema-1 authority has no head to carry"
+    );
+    assert_eq!(
+        after.remove("task_generations"),
+        Some(Vec::new()),
+        "a schema-1 authority never advanced a generation, so the index starts empty"
     );
     for table in [
         "steering_heads",
