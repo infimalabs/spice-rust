@@ -192,7 +192,11 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
                     aria-label="Close task quick view"
                     title="Close task quick view"
                     onclick={properties.close.clone()}
-                >{"×"}</button>
+                >
+                    <svg class="message-task-inspector-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M7 7 17 17M17 7 7 17"></path>
+                    </svg>
+                </button>
             </header>
             <div
                 ref={properties.root.clone()}
@@ -211,7 +215,9 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
                     title="Open task in Work"
                     onclick={open_work}
                 >
-                    {"↗"}
+                    <svg class="message-task-inspector-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                        <path d="M8 16 16 8M9 8h7v7"></path>
+                    </svg>
                 </button>
             </footer>
         </section>
