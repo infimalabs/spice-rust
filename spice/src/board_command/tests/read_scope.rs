@@ -25,72 +25,98 @@ fn append_terminal_tasks(bus: &Bus, count: usize) -> std::collections::BTreeSet<
         .parse()
         .expect("history fixture origin");
     let at = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
-    let phase: wire::Phase = "todo".parse().expect("fixture phase");
-    let flow = vec![phase.clone()];
     let creation = body::TaskCreationContext::legacy_unavailable();
     let mut write = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
-    let mut tasks = std::collections::BTreeSet::new();
-    for index in 0..count {
-        let micros = 100_000_000_000_i64
-            .checked_add(i64::try_from(index).expect("fixture count fits task stamp"))
-            .expect("fixture task stamp stays bounded");
-        let task = TaskStamp::for_micros(micros).expect("fixture task stamp");
-        let title = format!("Terminal history {index}");
-        let added = write
-            .fact(
-                body::TaskAdded {
-                    task: task.clone(),
-                    title: title.clone(),
+    let tasks = (0..count)
+        .map(|index| {
+            let micros = 100_000_000_000_i64
+                .checked_add(i64::try_from(index).expect("fixture count fits task stamp"))
+                .expect("fixture task stamp stays bounded");
+            push_terminal_task(
+                &mut write,
+                &origin,
+                &creation,
+                TerminalTaskFixture {
+                    micros,
+                    title: format!("Terminal history {index}"),
                     description: None,
-                    acceptance: Vec::new(),
-                    requirements: wire::EnvironmentRequirements::default(),
                     project: "board.test".to_owned(),
-                    tags: Vec::new(),
-                    depends: Vec::new(),
-                    flow: flow.clone(),
-                    phase: phase.clone(),
-                    revision: 1,
-                    creation: creation.clone(),
+                    completion: at,
                 },
-                FactCause::Root,
             )
-            .expect("terminal fixture fact builds");
-        let statement_task = task.clone();
-        let statement_origin = origin.clone();
-        let statement_creation = creation.clone();
-        write.task_head(added, move |position| TaskHead {
-            born: statement_task,
-            queue_origin: position,
-            title,
-            description: None,
-            acceptance: Vec::new(),
-            requirements: wire::EnvironmentRequirements::default(),
-            project: "board.test".to_owned(),
-            tags: Vec::new(),
-            dependencies: Vec::new(),
-            provenance: statement_origin,
-            creation: statement_creation,
-            revision: position,
-        });
-        let workflow_task = task.clone();
-        let workflow_flow = flow.clone();
-        let workflow_phase = phase.clone();
-        write.workflow_head(workflow_task, added, move |_| WorkflowHead {
-            flow: workflow_flow,
-            phase: workflow_phase,
-            status: "completed".to_owned(),
-            review: "clean".to_owned(),
-            assignment: None,
-            deferral: None,
-            completion: Some(at),
-        });
-        tasks.insert(task);
-    }
+        })
+        .collect();
     assert!(matches!(
         bus.commit(write).expect("history fixture reaches writer"),
         CommitOutcome::Committed(_)
     ));
     tasks
+}
+
+struct TerminalTaskFixture {
+    micros: i64,
+    title: String,
+    description: Option<String>,
+    project: String,
+    completion: Instant,
+}
+
+fn push_terminal_task(
+    write: &mut JournalWrite,
+    origin: &wire::Origin,
+    creation: &body::TaskCreationContext,
+    fixture: TerminalTaskFixture,
+) -> TaskStamp {
+    let task = TaskStamp::for_micros(fixture.micros).expect("fixture task stamp");
+    let phase: wire::Phase = "todo".parse().expect("fixture phase");
+    let flow = vec![phase.clone()];
+    let added = write
+        .fact(
+            body::TaskAdded {
+                task: task.clone(),
+                title: fixture.title.clone(),
+                description: fixture.description.clone(),
+                acceptance: Vec::new(),
+                requirements: wire::EnvironmentRequirements::default(),
+                project: fixture.project.clone(),
+                tags: Vec::new(),
+                depends: Vec::new(),
+                flow: flow.clone(),
+                phase: phase.clone(),
+                revision: 1,
+                creation: creation.clone(),
+            },
+            FactCause::Root,
+        )
+        .expect("terminal fixture fact builds");
+    let statement_task = task.clone();
+    let statement_origin = origin.clone();
+    let statement_creation = creation.clone();
+    write.task_head(added, move |position| TaskHead {
+        born: statement_task,
+        queue_origin: position,
+        title: fixture.title,
+        description: fixture.description,
+        acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
+        project: fixture.project,
+        tags: Vec::new(),
+        dependencies: Vec::new(),
+        provenance: statement_origin,
+        creation: statement_creation,
+        revision: position,
+    });
+    let workflow_task = task.clone();
+    write.workflow_head(workflow_task, added, move |_| WorkflowHead {
+        flow,
+        phase,
+        status: "completed".to_owned(),
+        review: "clean".to_owned(),
+        assignment: None,
+        deferral: None,
+        completion: Some(fixture.completion),
+    });
+    task
 }
 
 fn handles(answer: &BoardAnswer) -> std::collections::BTreeSet<TaskHandle> {
@@ -263,6 +289,8 @@ fn open_read_excludes_large_history_and_cursor_pages_cover_it_once() {
             Actor::Operator,
             BoardRead::History {
                 before: before.clone(),
+                query: None,
+                completed_before: None,
                 limit: PAGE_LIMIT,
             },
         );
@@ -292,6 +320,204 @@ fn open_read_excludes_large_history_and_cursor_pages_cover_it_once() {
     clean(&root, bus);
 }
 
+struct FilteredHistoryFixture {
+    first: Instant,
+    second: Instant,
+    alpha: TaskStamp,
+    project_match: TaskStamp,
+    description_match: TaskStamp,
+    title_match: TaskStamp,
+}
+
+fn append_filtered_history(bus: &Bus) -> FilteredHistoryFixture {
+    let origin: wire::Origin = "fixture:filtered-history"
+        .parse()
+        .expect("filtered history origin");
+    let first: Instant = "2030-04-12T18:44:01.000Z"
+        .parse()
+        .expect("first completion instant");
+    let second: Instant = "2030-04-12T18:44:02.000Z"
+        .parse()
+        .expect("second completion instant");
+    let third: Instant = "2030-04-12T18:44:03.000Z"
+        .parse()
+        .expect("third completion instant");
+    let creation = body::TaskCreationContext::legacy_unavailable();
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        origin.clone(),
+        third,
+        Producer::CommandDoor,
+    );
+    let alpha = push_terminal_task(
+        &mut write,
+        &origin,
+        &creation,
+        TerminalTaskFixture {
+            micros: 200_000_000_000,
+            title: "Alpha title".to_owned(),
+            description: None,
+            project: "board.alpha".to_owned(),
+            completion: first,
+        },
+    );
+    let project_match = push_terminal_task(
+        &mut write,
+        &origin,
+        &creation,
+        TerminalTaskFixture {
+            micros: 200_000_000_001,
+            title: "Project match".to_owned(),
+            description: None,
+            project: "board.needle".to_owned(),
+            completion: second,
+        },
+    );
+    let description_match = push_terminal_task(
+        &mut write,
+        &origin,
+        &creation,
+        TerminalTaskFixture {
+            micros: 200_000_000_002,
+            title: "Description match".to_owned(),
+            description: Some("Needle context".to_owned()),
+            project: "board.context".to_owned(),
+            completion: second,
+        },
+    );
+    let title_match = push_terminal_task(
+        &mut write,
+        &origin,
+        &creation,
+        TerminalTaskFixture {
+            micros: 200_000_000_003,
+            title: "UPPERCASE NEEDLE TITLE".to_owned(),
+            description: None,
+            project: "board.title".to_owned(),
+            completion: third,
+        },
+    );
+    assert!(matches!(
+        bus.commit(write).expect("filtered history reaches writer"),
+        CommitOutcome::Committed(_)
+    ));
+    FilteredHistoryFixture {
+        first,
+        second,
+        alpha,
+        project_match,
+        description_match,
+        title_match,
+    }
+}
+
+fn history_page(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    before: Option<TaskHistoryCursor>,
+    query: Option<&str>,
+    completed_before: Option<Instant>,
+    limit: u16,
+) -> BoardAnswer {
+    scoped(
+        bus,
+        epoch,
+        Actor::Operator,
+        BoardRead::History {
+            before,
+            query: query.map(str::to_owned),
+            completed_before,
+            limit,
+        },
+    )
+}
+
+#[test]
+fn history_filters_before_paging_with_case_insensitive_fields_and_inclusive_completion() {
+    let (root, bus, epoch, _seats) = fixture("filtered-board-history", 0);
+    let filtered = append_filtered_history(&bus);
+    let open = todo_task(&bus, epoch, "needle-open", "Needle open task");
+
+    let first_page = history_page(&bus, epoch, None, Some("NeEdLe"), Some(filtered.second), 1);
+    assert_eq!(
+        first_page.tasks[0].statement.body.born,
+        filtered.description_match
+    );
+    let first_metadata = first_page.history.expect("filtered first page metadata");
+    assert_eq!(first_metadata.total, 2);
+    let second_page = history_page(
+        &bus,
+        epoch,
+        first_metadata.next,
+        Some("needle"),
+        Some(filtered.second),
+        1,
+    );
+    assert_eq!(
+        second_page.tasks[0].statement.body.born,
+        filtered.project_match
+    );
+    let second_metadata = second_page.history.expect("filtered second page metadata");
+    assert_eq!(second_metadata.total, 2);
+    assert_eq!(second_metadata.next, None);
+
+    let all_matches = history_page(&bus, epoch, None, Some("needle"), None, 10);
+    assert_eq!(
+        all_matches.history.as_ref().expect("match metadata").total,
+        3
+    );
+    assert!(!handles(&all_matches).contains(&open));
+    assert!(handles(&all_matches).contains(&TaskHandle::for_project(
+        "board.title",
+        &filtered.title_match
+    )));
+
+    let handle = TaskHandle::for_project("board.alpha", &filtered.alpha)
+        .to_string()
+        .to_lowercase();
+    let handle_match = history_page(&bus, epoch, None, Some(&handle), None, 10);
+    assert_eq!(
+        handles(&handle_match),
+        [TaskHandle::for_project("board.alpha", &filtered.alpha)].into()
+    );
+
+    for (cutoff, expected) in [
+        (
+            filtered.first,
+            [filtered.alpha.clone()].into_iter().collect(),
+        ),
+        (
+            filtered.second,
+            [
+                filtered.alpha,
+                filtered.project_match,
+                filtered.description_match,
+            ]
+            .into_iter()
+            .collect(),
+        ),
+    ] {
+        let page = history_page(&bus, epoch, None, None, Some(cutoff), 10);
+        let found = page
+            .tasks
+            .iter()
+            .map(|task| task.statement.body.born.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(found, expected);
+    }
+
+    let miss = history_page(&bus, epoch, None, Some("missing"), None, 10);
+    assert!(miss.tasks.is_empty());
+    assert_eq!(miss.history.expect("miss metadata").total, 0);
+    let blank = history_page(&bus, epoch, None, Some(" \t "), None, 10);
+    assert_eq!(
+        blank.history.expect("blank query metadata").total,
+        4,
+        "blank query is the unfiltered terminal history"
+    );
+    clean(&root, bus);
+}
+
 #[test]
 fn history_bounds_empty_page_and_stale_cursor_are_explicit() {
     let (root, bus, epoch, _seats) = fixture("paged-board-history-errors", 0);
@@ -301,6 +527,8 @@ fn history_bounds_empty_page_and_stale_cursor_are_explicit() {
         Actor::Operator,
         BoardRead::History {
             before: None,
+            query: None,
+            completed_before: None,
             limit: 10,
         },
     );
@@ -322,6 +550,8 @@ fn history_bounds_empty_page_and_stale_cursor_are_explicit() {
                 epoch,
                 &BoardRead::History {
                     before: None,
+                    query: None,
+                    completed_before: None,
                     limit,
                 },
             ),
@@ -332,12 +562,32 @@ fn history_bounds_empty_page_and_stale_cursor_are_explicit() {
         workflow: Seq::new(1).expect("fixture sequence"),
         task: stamp("absent-history-cursor"),
     };
+    for query in [
+        "x".repeat(TASK_HISTORY_QUERY_BYTES_MAX.saturating_add(1)),
+        "bad\0query".to_owned(),
+    ] {
+        assert!(matches!(
+            read(
+                &bus,
+                epoch,
+                &BoardRead::History {
+                    before: None,
+                    query: Some(query),
+                    completed_before: None,
+                    limit: 10,
+                },
+            ),
+            Outcome::Refusal(refusal) if refusal.reason() == "board::history-query-invalid"
+        ));
+    }
     assert!(matches!(
         read(
             &bus,
             epoch,
             &BoardRead::History {
                 before: Some(stale),
+                query: None,
+                completed_before: None,
                 limit: 10,
             },
         ),

@@ -181,6 +181,39 @@ fn version_is_the_exact_stable_six_identity_document() {
 }
 
 #[test]
+fn board_history_filters_have_exact_optional_wire_shapes() {
+    let filtered: wire::intent::BoardRead = round_trip(
+        r#"{"scope":"history","query":"failed deploy","completed_before":"2030-04-12T18:44:09.271Z","limit":25}"#,
+    );
+    assert!(matches!(
+        filtered,
+        wire::intent::BoardRead::History {
+            before: None,
+            query: Some(query),
+            completed_before: Some(_),
+            limit: 25,
+        } if query == "failed deploy"
+    ));
+
+    let unfiltered: wire::intent::BoardRead = round_trip(r#"{"scope":"history","limit":25}"#);
+    assert!(matches!(
+        unfiltered,
+        wire::intent::BoardRead::History {
+            before: None,
+            query: None,
+            completed_before: None,
+            limit: 25,
+        }
+    ));
+    assert!(
+        wire::decode::<wire::intent::BoardRead>(
+            br#"{"scope":"history","completed_before":"not-an-instant","limit":25}"#
+        )
+        .is_err()
+    );
+}
+
+#[test]
 fn lane_purge_report_names_every_retired_path_by_lane() {
     let document = r#"{"seated":4,"purged":[{"lane":"019fe52f-10ad-7c83-9df4-511323d1b7fb","paths":["tape/019fe52f-10ad-7c83-9df4-511323d1b7fb","rtk/019fe52f-10ad-7c83-9df4-511323d1b7fb"]}]}"#;
     let report: LanePurgeReport = round_trip(document);
