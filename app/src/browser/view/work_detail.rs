@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::TaskRelationsState;
+use crate::browser::clock::Countdown;
 use crate::runtime::LaneView;
 use crate::work::{WorkProjection, WorkScope, WorkTask};
 use wire::TaskStamp;
@@ -205,8 +206,8 @@ fn render_available(
                     {assignment_fact(workflow.assignment.as_ref(), render.lanes)}
                     {fact("Priority", priority(&statement.tags))}
                     {fact("Tags", if statement.tags.is_empty() { "None".to_owned() } else { statement.tags.join(", ") })}
-                    {fact("Deferral", workflow.deferral.as_ref().map_or_else(|| "None".to_owned(), ToString::to_string))}
-                    {fact("Completion", workflow.completion.as_ref().map_or_else(|| "Open".to_owned(), ToString::to_string))}
+                    {instant_fact("Deferral", workflow.deferral.as_ref(), "None")}
+                    {instant_fact("Completion", workflow.completion.as_ref(), "Open")}
                 </dl>
                 {render_possession(row, render.lanes)}
                 {render_blockers(projected)}
@@ -243,7 +244,7 @@ fn render_available(
                                     <strong title={note.author.to_string()}>
                                         {work_board::actor_name(&note.author, render.lanes)}
                                     </strong>
-                                    <time>{note.at.to_string()}</time>
+                                    <time>{work_board::render_age(&note.at)}</time>
                                 </header>
                                 <p>{note.text.clone()}</p>
                             </li>
@@ -260,6 +261,27 @@ fn render_available(
 }
 
 fn fact(label: &'static str, value: String) -> Html {
+    html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
+}
+
+fn instant_fact(label: &'static str, instant: Option<&wire::Instant>, empty: &'static str) -> Html {
+    let value = instant.map_or_else(|| html! { empty }, work_board::render_age);
+    html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
+}
+
+fn deadline_fact(
+    label: &'static str,
+    instant: Option<&wire::Instant>,
+    empty: &'static str,
+) -> Html {
+    let value = instant.map_or_else(
+        || html! { empty },
+        |instant| {
+            let expiry = instant.get().as_millisecond();
+            let title = instant.to_string();
+            html! { <Countdown {expiry} class="relative-age" {title} /> }
+        },
+    );
     html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
 }
 
@@ -308,8 +330,8 @@ fn render_possession(row: &wire::intent::BoardTask, lanes: Option<&LaneView>) ->
                     )
                 })}
                 {fact("Claim fact", claim.map_or_else(|| "None".to_owned(), |claim| claim.position.to_string()))}
-                {fact("Lease start", lease.map_or_else(|| "None".to_owned(), |lease| lease.body.start.to_string()))}
-                {fact("Lease expiry", lease.map_or_else(|| "None".to_owned(), |lease| lease.body.expiry.to_string()))}
+                {instant_fact("Lease start", lease.map(|lease| &lease.body.start), "None")}
+                {deadline_fact("Lease expiry", lease.map(|lease| &lease.body.expiry), "None")}
             </dl>
         </div>
     }

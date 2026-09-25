@@ -277,8 +277,8 @@
 .work-card-facts dt { font-weight: 700; }
 .work-card-facts dd { min-width: 0; margin: 0; }
 .work-card-alert dd { color: var(--danger); }
-.work-card-wake dd { color: var(--warning); }
-.work-card-lease-time { color: var(--accent); }
+.work-card-wake dt { color: var(--warning); }
+.work-card-result { display: flex; align-items: baseline; gap: 4px; }
 
 .work-card-map-toggle {
   position: relative;
