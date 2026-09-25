@@ -425,6 +425,9 @@ fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
                 is_pinned.then_some("work-card--mapped"),
             )}
             data-work-availability={availability_key(availability)}
+            data-work-disposition={
+                (availability == WorkAvailability::Terminal).then(|| workflow.status.clone())
+            }
             data-work-project={statement.project.clone()}
             data-selected={is_selected.to_string()}
             data-work-claimed={task.working_claimant().is_some().to_string()}

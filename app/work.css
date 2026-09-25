@@ -5,6 +5,8 @@
   --work-blocked: var(--danger);
   --work-deferred: var(--warning);
   --work-terminal: var(--muted);
+  --work-completed: var(--accent);
+  --work-deleted: var(--danger);
 }
 
 .work-board-section,
@@ -217,6 +219,9 @@
 .work-card[data-work-availability="blocked"] { --work-card-tone: var(--work-blocked); }
 .work-card[data-work-availability="deferred"] { --work-card-tone: var(--work-deferred); }
 .work-card[data-work-availability="terminal"] { --work-card-tone: var(--work-terminal); }
+/* History keeps the terminal lane but shows how each task ended. */
+.work-card[data-work-disposition="completed"] { --work-card-tone: var(--work-completed); }
+.work-card[data-work-disposition="deleted"] { --work-card-tone: var(--work-deleted); }
 
 .work-card-heading {
   display: flex;
