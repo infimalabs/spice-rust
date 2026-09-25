@@ -6,6 +6,8 @@ pub(super) struct Inspection {
     pub card: String,
     pub handle: TaskHandle,
     pub task: TaskStamp,
+    pub open: bool,
+    pub return_focus: bool,
 }
 
 #[derive(Clone, PartialEq)]
@@ -51,7 +53,7 @@ pub(super) fn use_controls(
         context: Context {
             inspection,
             select_task: task.select.clone(),
-            close_task: task.close.clone(),
+            close_task: task.dismiss.clone(),
             navigate: navigate.clone(),
         },
         detail: DetailContext {
@@ -86,13 +88,37 @@ impl Context {
             card,
             handle,
             task: task.clone(),
+            open: true,
+            return_focus: false,
         }));
         self.select_task.emit(task);
     }
 
-    pub fn close(&self) {
-        self.inspection.set(None);
-        self.close_task.emit(());
+    pub fn close(&self, return_focus: bool) {
+        let Some(mut inspection) = (*self.inspection).clone() else {
+            return;
+        };
+        inspection.return_focus = return_focus;
+        if task_detail::reduced_motion() {
+            self.inspection.set(None);
+            self.close_task.emit(());
+            restore_task_chip_focus(&inspection);
+        } else {
+            inspection.open = false;
+            self.inspection.set(Some(inspection));
+        }
+    }
+
+    pub fn complete_close(&self, card: &str) {
+        let closing = (*self.inspection)
+            .as_ref()
+            .filter(|inspection| inspection.card == card && !inspection.open)
+            .cloned();
+        if let Some(inspection) = closing {
+            self.inspection.set(None);
+            self.close_task.emit(());
+            restore_task_chip_focus(&inspection);
+        }
     }
 
     fn open_work(&self, task: TaskStamp) {
@@ -100,6 +126,31 @@ impl Context {
         self.inspection.set(None);
         self.navigate.emit(CanvasDestination::Work);
     }
+}
+
+fn restore_task_chip_focus(inspection: &Inspection) {
+    if !inspection.return_focus {
+        return;
+    }
+    let card = inspection.card.clone();
+    let handle = inspection.handle.to_string();
+    gloo_timers::callback::Timeout::new(0, move || {
+        let Some(card) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.get_element_by_id(&card))
+        else {
+            return;
+        };
+        let selector = format!(".message-task-chip[data-task-handle=\"{handle}\"]");
+        if let Ok(Some(chip)) = card.query_selector(&selector)
+            && let Ok(chip) = chip.dyn_into::<web_sys::HtmlElement>()
+        {
+            let options = web_sys::FocusOptions::new();
+            options.set_prevent_scroll(true);
+            let _ = chip.focus_with_options(&options);
+        }
+    })
+    .forget();
 }
 
 #[derive(Properties, PartialEq)]
@@ -114,6 +165,14 @@ struct InspectorProperties {
 fn message_task_inspector(properties: &InspectorProperties) -> Html {
     let detail =
         use_context::<DetailContext>().expect("task inspector detail context must be provided");
+    let title = detail
+        .detail
+        .as_ref()
+        .and_then(TaskDetailState::answer)
+        .map_or_else(
+            || format!("Task {}", properties.inspection.handle),
+            |answer| answer.task.presentation_title.clone(),
+        );
     let retry = {
         let select = properties.context.select_task.clone();
         let task = properties.inspection.task.clone();
@@ -132,12 +191,17 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
             aria-label={format!("Task {} quick view", properties.inspection.handle)}
             data-task-stamp={properties.inspection.task.to_string()}
         >
-            <header class="message-task-inspector-header">
+            <header class="message-task-inspector-header work-detail-header">
                 <div>
-                    <span>{"Task quick view"}</span>
-                    <strong>{properties.inspection.handle.to_string()}</strong>
+                    <p class="work-detail-kicker">{"Task detail"}</p>
+                    <h2>{title}</h2>
                 </div>
-                <button type="button" aria-label="Close task quick view" onclick={properties.close.clone()}>{"Close"}</button>
+                <button
+                    type="button"
+                    class="work-detail-close"
+                    aria-label="Close task quick view"
+                    onclick={properties.close.clone()}
+                >{"Close"}</button>
             </header>
             <div class="message-task-inspector-body">
                 {render_detail(&detail, &properties.inspection, retry)}
@@ -180,18 +244,19 @@ fn render_detail(
 ) -> Html {
     match context.detail.as_ref() {
         None | Some(TaskDetailState::Loading) => html! {
-            <div class="message-task-inspector-state" role="status">
+            <div class="work-detail-loading message-task-inspector-state" role="status">
                 <span class="work-detail-spinner" aria-hidden="true"></span>
-                <p>{"Loading task details…"}</p>
+                <p>{"Loading task evidence and observations…"}</p>
             </div>
         },
         Some(TaskDetailState::Unavailable { reason, detail }) => html! {
-            <div class="message-task-inspector-state" role="alert">
-                <strong>{reason}</strong>
+            <div class="work-detail-problem message-task-inspector-state" role="alert">
+                <h3>{"Task detail unavailable"}</h3>
+                <p><code>{reason}</code></p>
                 if let Some(detail) = detail {
                     <p>{detail}</p>
                 }
-                <button type="button" onclick={retry}>{"Retry"}</button>
+                <button type="button" onclick={retry}>{"Retry detail"}</button>
             </div>
         },
         Some(TaskDetailState::Available(answer) | TaskDetailState::Refreshing(answer)) => {
@@ -209,36 +274,50 @@ fn render_available(
     let workflow = &answer.task.workflow.body;
     let note_start = answer.notes.len().saturating_sub(3);
     html! {
-        <>
-            <section class="message-task-inspector-summary">
-                <h3>{answer.task.presentation_title.clone()}</h3>
+        <div class="work-detail-content message-task-inspector-content">
+            <div class="work-detail-identity">
+                <code>{inspection.handle.to_string()}</code>
+            </div>
+            <section class="work-detail-section">
+                <h3>{"Contract"}</h3>
                 if let Some(description) = statement.description.as_ref() {
-                    <p>{description}</p>
+                    <p class="work-detail-description">{description}</p>
+                } else {
+                    <p class="muted">{"No description was recorded."}</p>
                 }
-                <dl>
+            </section>
+            <section class="work-detail-section">
+                <h3>{"State"}</h3>
+                <dl class="work-detail-facts">
                     <div><dt>{"Project"}</dt><dd>{statement.project.clone()}</dd></div>
                     <div><dt>{"Status"}</dt><dd>{workflow.status.clone()}</dd></div>
-                    <div><dt>{"Phase"}</dt><dd>{workflow.phase.to_string()}</dd></div>
+                    <div><dt>{"Current phase"}</dt><dd>{workflow.phase.to_string()}</dd></div>
                     <div><dt>{"Review"}</dt><dd>{workflow.review.clone()}</dd></div>
                 </dl>
             </section>
-            <section class="message-task-inspector-notes">
-                <h3>{format!("Recent observations ({})", answer.notes.len())}</h3>
+            <section class="work-detail-section work-detail-activity">
+                <div class="work-detail-section-heading">
+                    <h3>{"Activity"}</h3>
+                    <span>{format!("{} observations", answer.notes.len())}</span>
+                </div>
                 if answer.notes.is_empty() {
                     <p class="muted">{"No observations have been recorded."}</p>
                 } else {
-                    <ol>
+                    <ol class="work-note-list">
                         {for answer.notes[note_start..].iter().map(|note| html! {
-                            <li key={note.position.to_string()}>
-                                {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
+                            <li class="work-note-card" key={note.position.to_string()}>
+                                <header>
+                                    <span>{format!("Observation {}", note.position)}</span>
+                                    {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
+                                </header>
                                 <p>{note.text.clone()}</p>
                             </li>
                         })}
                     </ol>
                 }
+                {render_note_composer(context, inspection)}
             </section>
-            {render_note_composer(context, inspection)}
-        </>
+        </div>
     }
 }
 
@@ -262,14 +341,18 @@ fn render_note_composer(context: &DetailContext, inspection: &Inspection) -> Htm
         },
     };
     html! {
-        <form class="form message-task-inspector-note" onsubmit={context.submit_note.clone()}>
-            <label>
-                <span>{format!("Observation for {}", inspection.handle)}</span>
-                <textarea
-                    key={(*context.note_text).clone()}
-                    readonly={busy}
-                >{(*context.note_text).clone()}</textarea>
+        <form
+            class="form work-note-composer message-task-inspector-note"
+            onsubmit={context.submit_note.clone()}
+        >
+            <label for="message-task-inspector-note">
+                {format!("Observation for {}", inspection.handle)}
             </label>
+            <textarea
+                id="message-task-inspector-note"
+                key={(*context.note_text).clone()}
+                readonly={busy}
+            >{(*context.note_text).clone()}</textarea>
             <button type="submit" disabled={busy}>
                 {if busy { "Saving…" } else { "Add observation" }}
             </button>

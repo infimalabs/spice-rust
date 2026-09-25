@@ -12,6 +12,7 @@ pub(super) struct Controls {
     pub submission: NoteSubmissionHandle,
     pub select: Callback<TaskStamp>,
     pub close: Callback<()>,
+    pub dismiss: Callback<()>,
     pub submit_note: Callback<SubmitEvent>,
 }
 
@@ -46,7 +47,7 @@ pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<Surface
         complete_close.clone(),
     );
     use_present((*selected).clone(), presented.clone());
-    use_close_transition(*closing, sheet_ref.clone(), complete_close);
+    use_close_transition(*closing, sheet_ref.clone(), complete_close.clone());
     use_focus(&selected, close_ref.clone());
     use_escape_close(selected.is_some(), close.clone());
     let submit_note = note_submit_callback(
@@ -68,6 +69,7 @@ pub(super) fn use_controls(sender: SenderHandle, surface: UseStateHandle<Surface
         submission,
         select,
         close,
+        dismiss: complete_close,
         submit_note,
     }
 }
@@ -139,7 +141,7 @@ fn complete_close_callback(
     })
 }
 
-fn reduced_motion() -> bool {
+pub(super) fn reduced_motion() -> bool {
     web_sys::window()
         .and_then(|window| {
             window
