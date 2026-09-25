@@ -182,7 +182,7 @@ fn render_history_archive(
                         {if state.is_some_and(WorkHistoryState::filtered) {
                             "No history matches these filters."
                         } else {
-                            "No completed or deleted tasks in this scope."
+                            "No completed or deleted tasks."
                         }}
                     </div>
                 } else if !history.is_empty() {
