@@ -273,9 +273,11 @@ pub(super) fn render_note_composer(
             <p class="form-refusal" role="alert">{issue}</p>
         },
     };
+    let form_key = task.to_string();
     let task = task.clone();
     html! {
         <form
+            key={form_key}
             class="form work-note-composer"
             onsubmit={submit.reform(move |event| (task.clone(), event))}
         >
