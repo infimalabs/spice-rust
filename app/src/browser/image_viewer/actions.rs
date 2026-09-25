@@ -21,7 +21,7 @@ pub(super) struct ActionsProps {
 pub(super) fn actions(props: &ActionsProps) -> Html {
     let busy = use_state_eq(|| false);
     let status = use_state_eq(AttrValue::default);
-    let copy_supported = use_memo((), |()| export::clipboard_available());
+    let copy_refusal = use_memo((), |()| export::copy_refusal());
     let exportable = use_memo(props.source.clone(), |source| export::readable(source));
     let perform = use_callback(
         (
@@ -29,8 +29,23 @@ pub(super) fn actions(props: &ActionsProps) -> Html {
             props.name.clone(),
             busy.clone(),
             status.clone(),
+            copy_refusal.clone(),
+            exportable.clone(),
         ),
-        |action: Action, (source, name, busy, status)| {
+        |action: Action, (source, name, busy, status, copy_refusal, exportable)| {
+            // An unavailable action stays activatable so the operator learns
+            // why only when asking, rather than from a standing notice.
+            let refusal = if !**exportable {
+                Some("This image's origin does not allow copy or download.".to_owned())
+            } else if matches!(action, Action::Copy) {
+                (**copy_refusal).clone()
+            } else {
+                None
+            };
+            if let Some(refusal) = refusal {
+                status.set(refusal.into());
+                return;
+            }
             busy.set(true);
             status.set(
                 match action {
@@ -81,20 +96,18 @@ pub(super) fn actions(props: &ActionsProps) -> Html {
     let copy_button = use_button(copy);
     let download_button = use_button(download);
     let close_button = use_button(props.onclose.clone());
-    let message = if !status.is_empty() {
-        (*status).clone()
-    } else if !*exportable {
-        "Copy and download are unavailable for this image's origin.".into()
-    } else if !*copy_supported {
-        "Image copy is unavailable in this browser; download is still available.".into()
-    } else {
+    let message = if status.is_empty() {
         props.image_status.clone()
+    } else {
+        (*status).clone()
     };
+    let copy_unavailable = !*exportable || copy_refusal.is_some();
+    let download_unavailable = !*exportable;
     html! {
         <>
             <div class="image-lightbox-actions">
-                <button ref={copy_button} type="button" disabled={*busy || !*exportable || !*copy_supported} aria-label="Copy image" title="Copy image as PNG">{"Copy"}</button>
-                <button ref={download_button} type="button" disabled={*busy || !*exportable} aria-label="Download image" title="Download original image">{"Download"}</button>
+                <button ref={copy_button} type="button" disabled={*busy} aria-disabled={copy_unavailable.to_string()} aria-label="Copy image" title="Copy image as PNG">{"Copy"}</button>
+                <button ref={download_button} type="button" disabled={*busy} aria-disabled={download_unavailable.to_string()} aria-label="Download image" title="Download original image">{"Download"}</button>
                 <button ref={close_button} type="button" autofocus=true aria-label="Close full-size image">{"Close"}</button>
             </div>
             <p class="image-lightbox-status" role="status">{message}</p>
