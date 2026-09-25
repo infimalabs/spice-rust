@@ -6,7 +6,6 @@ use wire::{CanonicalUuid, TaskHandle, TaskStamp};
 pub(crate) enum ClientAction {
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,
-    Refresh,
     FastMode(bool),
     TaskDetail {
         task: TaskStamp,

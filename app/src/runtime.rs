@@ -672,6 +672,11 @@ impl CanvasRuntime {
 
     /// Adopt a reconnect. Returns true when a changed capability or epoch
     /// cleared the entire runtime before the new principal can render.
+    ///
+    /// Facts published while the socket was down are never streamed, and a
+    /// read in flight at the drop never answers, so every retained task read
+    /// is stale: details keep their answer while [`Self::task_detail_reads`]
+    /// are re-read, and relationship lenses re-arm the demand hook.
     pub fn reconnect(&mut self, accepted: &Admitted<Accepted>) -> bool {
         if self.accepted.scope() == accepted.scope() {
             self.accepted = accepted.clone();
@@ -681,6 +686,10 @@ impl CanvasRuntime {
             if self.work_history.active() {
                 self.evict_work_history(true);
             }
+            self.task_details.values_mut().for_each(refresh_task_detail);
+            self.task_relations
+                .retain(|_, state| refresh_task_relations(state, false));
+            self.task_relations_revision = self.task_relations_revision.saturating_add(1);
             false
         } else {
             *self = Self::new(accepted);
@@ -772,6 +781,11 @@ impl CanvasRuntime {
         self.task_details.get(task)
     }
 
+    /// Every retained task detail, each of which a reconnect must read again.
+    pub fn task_detail_reads(&self) -> impl Iterator<Item = &wire::TaskStamp> {
+        self.task_details.keys()
+    }
+
     /// Mark one selected detail as requested.
     pub fn begin_task_detail(&mut self, task: wire::TaskStamp) {
         self.task_details.insert(task, TaskDetailState::Loading);
@@ -782,17 +796,10 @@ impl CanvasRuntime {
         let Some(detail) = self.task_details.get_mut(task) else {
             return false;
         };
-        let previous = std::mem::replace(detail, TaskDetailState::Loading);
-        *detail = match previous {
-            TaskDetailState::Available(answer) | TaskDetailState::Refreshing(answer) => {
-                TaskDetailState::Refreshing(answer)
-            }
-            TaskDetailState::Loading | TaskDetailState::Unavailable { .. } => {
-                TaskDetailState::Loading
-            }
-        };
+        refresh_task_detail(detail);
         true
     }
+
     /// One exact bounded relationship read retained for this capability scope.
     #[must_use]
     pub fn task_relations(&self, key: &TaskRelationsKey) -> Option<&TaskRelationsState> {
@@ -819,27 +826,36 @@ impl CanvasRuntime {
     }
 
     /// Retain cached families while a stream-triggered replacement is requested.
+    ///
+    /// A failed read holds no geometry to keep, so it is dropped rather than
+    /// parked as loading: the demand hook then reads it again.
     #[cfg(target_arch = "wasm32")]
     pub(crate) fn invalidate_task_relations(&mut self, relations: &BTreeSet<TaskRelationKind>) {
         let mut invalidated = false;
-        for (key, state) in &mut self.task_relations {
+        self.task_relations.retain(|key, state| {
             if !relations.contains(&key.relation) {
-                continue;
+                return true;
             }
-            let previous = std::mem::replace(state, TaskRelationsState::Loading);
-            *state = match previous {
-                TaskRelationsState::Available(answer) | TaskRelationsState::Refreshing(answer) => {
-                    TaskRelationsState::Refreshing(answer)
-                }
-                TaskRelationsState::Loading | TaskRelationsState::Unavailable { .. } => {
-                    TaskRelationsState::Loading
-                }
-            };
             invalidated = true;
-        }
+            refresh_task_relations(state, true)
+        });
         if invalidated {
             self.task_relations_revision = self.task_relations_revision.saturating_add(1);
         }
+    }
+
+    /// Drop one unavailable lens so the demand hook reads it again.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn retry_task_relations(&mut self, key: &TaskRelationsKey) -> bool {
+        if !matches!(
+            self.task_relations.get(key),
+            Some(TaskRelationsState::Unavailable { .. })
+        ) {
+            return false;
+        }
+        self.task_relations.remove(key);
+        self.task_relations_revision = self.task_relations_revision.saturating_add(1);
+        true
     }
 
     /// Generation that re-arms the active demand hook after cache eviction.
@@ -1126,6 +1142,32 @@ fn task_relations_match(key: &TaskRelationsKey, answer: &TaskRelationsAnswer) ->
             .iter()
             .all(|frontier| frontier.edge.relation == key.relation)
     })
+}
+
+/// Keep a stale detail's answer on screen while its replacement is read.
+fn refresh_task_detail(detail: &mut TaskDetailState) {
+    *detail = match std::mem::replace(detail, TaskDetailState::Loading) {
+        TaskDetailState::Available(answer) | TaskDetailState::Refreshing(answer) => {
+            TaskDetailState::Refreshing(answer)
+        }
+        TaskDetailState::Loading | TaskDetailState::Unavailable { .. } => TaskDetailState::Loading,
+    };
+}
+
+/// Mark one stale lens for re-reading; false drops it for the demand hook.
+///
+/// A lens without geometry is dropped rather than parked as loading, unless
+/// its read is still in flight and will answer: a failed read would otherwise
+/// never be read again, as would one lost with a closed socket.
+fn refresh_task_relations(state: &mut TaskRelationsState, in_flight_answers: bool) -> bool {
+    match std::mem::replace(state, TaskRelationsState::Loading) {
+        TaskRelationsState::Available(answer) | TaskRelationsState::Refreshing(answer) => {
+            *state = TaskRelationsState::Refreshing(answer);
+            true
+        }
+        TaskRelationsState::Loading => in_flight_answers,
+        TaskRelationsState::Unavailable { .. } => false,
+    }
 }
 
 /// Which cached reads a batch of admitted facts has invalidated.

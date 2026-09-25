@@ -63,6 +63,25 @@ pub(super) async fn send_stale(
     Ok(())
 }
 
+/// Re-read every retained task detail after a reconnect; facts published
+/// while the socket was down were never streamed to invalidate them.
+pub(super) async fn send_task_details(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    data: &SurfaceData,
+) -> Result<(), String> {
+    let tasks: Vec<wire::TaskStamp> = data
+        .read()
+        .as_ref()
+        .map(|runtime| runtime.task_detail_reads().cloned().collect())
+        .unwrap_or_default();
+    for task in &tasks {
+        let _ = send_task_detail(principal, writer, actions, task).await?;
+    }
+    Ok(())
+}
+
 async fn send_board(
     principal: &Principal,
     writer: &mut SocketWriter,

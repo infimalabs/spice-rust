@@ -26,6 +26,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
     pub select_task: Callback<TaskStamp>,
     pub close: Callback<()>,
+    pub retry_relations: Callback<MouseEvent>,
 }
 
 pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
@@ -109,6 +110,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                         select_task: render.select_task.clone(),
                         relations: render.relations,
                         can_read_relations: render.can_read_relations,
+                        retry: render.retry_relations.clone(),
                     })}
                 </div>
             </aside>
