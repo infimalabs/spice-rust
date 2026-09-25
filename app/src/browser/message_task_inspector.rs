@@ -21,9 +21,7 @@ pub(super) struct Context {
 struct DetailContext {
     detail: Option<TaskDetailState>,
     can_note: bool,
-    note_text: UseStateHandle<String>,
-    note_notice: UseStateHandle<Notice>,
-    note_submission: UseStateHandle<NoteSubmission>,
+    note: NoteComposer,
     submit_note: Callback<(TaskStamp, SubmitEvent)>,
 }
 
@@ -48,6 +46,10 @@ pub(super) fn use_controls(
                 .and_then(|runtime| runtime.task_detail(&inspection.task))
         })
         .cloned();
+    let note = (*inspection)
+        .as_ref()
+        .map(|inspection| task.notes.shown(&inspection.task))
+        .unwrap_or_default();
     Controls {
         context: Context {
             inspection,
@@ -59,9 +61,7 @@ pub(super) fn use_controls(
             can_note: runtime
                 .as_ref()
                 .is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
-            note_text: task.note_text.clone(),
-            note_notice: task.notice.clone(),
-            note_submission: task.submission.status.clone(),
+            note,
             submit_note: task.submit_note.clone(),
         },
     }
@@ -115,28 +115,26 @@ impl Context {
         self.request_detail.emit(task);
     }
 
+    /// Begin closing the open view once; the card ends it when its layer's
+    /// slide completes, or at once when nothing animates.
     pub fn close(&self, return_focus: bool) {
-        let Some(mut inspection) = (*self.inspection).clone() else {
+        let Some(mut inspection) = (*self.inspection)
+            .clone()
+            .filter(|inspection| inspection.open)
+        else {
             return;
         };
+        inspection.open = false;
         inspection.return_focus = return_focus;
-        if task_detail::reduced_motion() {
-            self.inspection.set(None);
-            restore_task_chip_focus(&inspection);
-        } else {
-            inspection.open = false;
-            self.inspection.set(Some(inspection));
-        }
+        self.inspection.set(Some(inspection));
     }
 
     pub fn complete_close(&self, card: &str) {
         let closing = (*self.inspection)
             .as_ref()
-            .filter(|inspection| inspection.card == card && !inspection.open)
-            .cloned();
-        if let Some(inspection) = closing {
+            .is_some_and(|inspection| inspection.card == card && !inspection.open);
+        if closing {
             self.inspection.set(None);
-            restore_task_chip_focus(&inspection);
         }
     }
 
@@ -145,31 +143,6 @@ impl Context {
     fn open_work(&self, task: TaskStamp) {
         self.navigate.emit(navigation::Intent::Task(task));
     }
-}
-
-fn restore_task_chip_focus(inspection: &Inspection) {
-    if !inspection.return_focus {
-        return;
-    }
-    let card = inspection.card.clone();
-    let handle = inspection.handle.to_string();
-    gloo_timers::callback::Timeout::new(0, move || {
-        let Some(card) = web_sys::window()
-            .and_then(|window| window.document())
-            .and_then(|document| document.get_element_by_id(&card))
-        else {
-            return;
-        };
-        let selector = format!(".message-task-chip[data-task-handle=\"{handle}\"]");
-        if let Ok(Some(chip)) = card.query_selector(&selector)
-            && let Ok(chip) = chip.dyn_into::<web_sys::HtmlElement>()
-        {
-            let options = web_sys::FocusOptions::new();
-            options.set_prevent_scroll(true);
-            let _ = chip.focus_with_options(&options);
-        }
-    })
-    .forget();
 }
 
 #[derive(Properties, PartialEq)]
@@ -344,52 +317,15 @@ fn render_available(
                         })}
                     </ol>
                 }
-                {render_note_composer(context, inspection)}
+                {task_detail::render_note_composer(
+                    "message-task-inspector-note",
+                    inspection.handle.as_str(),
+                    &inspection.task,
+                    context.can_note,
+                    &context.note,
+                    &context.submit_note,
+                )}
             </section>
         </div>
-    }
-}
-
-fn render_note_composer(context: &DetailContext, inspection: &Inspection) -> Html {
-    if !context.can_note {
-        return html! {
-            <p class="work-note-capability">{"This capability can read observations but cannot append them."}</p>
-        };
-    }
-    let busy = context.note_submission.busy();
-    let status = match &*context.note_submission {
-        NoteSubmission::Idle => Html::default(),
-        NoteSubmission::Pending { task, .. } => html! {
-            <p class="work-note-pending" role="status">{format!("Saving observation for {task}…")}</p>
-        },
-        NoteSubmission::Reconciling { task, .. } => html! {
-            <p class="work-note-pending" role="status">{format!("Saved for {task}; waiting for durable activity…")}</p>
-        },
-        NoteSubmission::Failed(issue) => html! {
-            <p class="form-refusal" role="alert">{issue}</p>
-        },
-    };
-    let task = inspection.task.clone();
-    html! {
-        <form
-            class="form work-note-composer message-task-inspector-note"
-            onsubmit={context.submit_note.reform(move |event| (task.clone(), event))}
-        >
-            <label for="message-task-inspector-note">
-                {format!("Observation for {}", inspection.handle)}
-            </label>
-            <textarea
-                id="message-task-inspector-note"
-                key={(*context.note_text).clone()}
-                readonly={busy}
-            >{(*context.note_text).clone()}</textarea>
-            <button type="submit" disabled={busy}>
-                {if busy { "Saving…" } else { "Add observation" }}
-            </button>
-            if context.note_notice.is_some() {
-                <p class="form-refusal" role="alert">{context.note_notice.to_string()}</p>
-            }
-            {status}
-        </form>
     }
 }

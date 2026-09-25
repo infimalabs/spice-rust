@@ -1,5 +1,5 @@
 //! The Canvas menu disclosure: Escape, outside pointer, and outside focus
-//! close it while it is open.
+//! close it while it is open, and choosing a destination in it ends it.
 
 use wasm_bindgen::JsCast as _;
 use wasm_bindgen::prelude::*;
@@ -7,25 +7,29 @@ use yew::prelude::*;
 
 use super::overlay;
 
+/// End the menu from inside it and hand focus back to its trigger, so focus
+/// never stays on a control the closed menu no longer shows.
+pub(super) fn close(open: &UseStateHandle<bool>) {
+    open.set(false);
+    if let Some(trigger) = web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| {
+            document
+                .query_selector(".canvas-menu > summary")
+                .ok()
+                .flatten()
+        })
+        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+    {
+        let _ = trigger.focus();
+    }
+}
+
 #[hook]
 pub(super) fn use_dismissal(open: UseStateHandle<bool>) {
     let dismiss = {
         let open = open.clone();
-        Callback::from(move |()| {
-            open.set(false);
-            if let Some(trigger) = web_sys::window()
-                .and_then(|window| window.document())
-                .and_then(|document| {
-                    document
-                        .query_selector(".canvas-menu > summary")
-                        .ok()
-                        .flatten()
-                })
-                .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-            {
-                let _ = trigger.focus();
-            }
-        })
+        Callback::from(move |()| close(&open))
     };
     overlay::use_escape_owner(*open, dismiss);
     use_effect_with(*open, move |is_open| {

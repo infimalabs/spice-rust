@@ -110,6 +110,7 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
         <nav class="canvas-navigation canvas-control-rail team-mode-rail" aria-label="Canvas views">
             {for CanvasDestination::ALL.map(|destination| {
                 let navigate = render.navigate.clone();
+                let menu_open = render.menu_open.clone();
                 let selected = destination == render.destination;
                 let intent = match destination {
                     CanvasDestination::Info => navigation::Intent::Info,
@@ -123,7 +124,10 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                         type="button"
                         aria-current={selected.then_some("page")}
                         title={destination.description()}
-                        onclick={Callback::from(move |_| navigate.emit(intent.clone()))}
+                        onclick={Callback::from(move |_| {
+                            navigate.emit(intent.clone());
+                            canvas_menu::close(&menu_open);
+                        })}
                     >
                         <span class="team-mode-label">{destination.label()}</span>
                         if let Some(count) = badge {

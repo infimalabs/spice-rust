@@ -7,9 +7,7 @@ pub(super) struct Controls {
     pub closing: UseStateHandle<bool>,
     pub close_ref: NodeRef,
     pub sheet_ref: NodeRef,
-    pub note_text: UseStateHandle<String>,
-    pub notice: UseStateHandle<Notice>,
-    pub submission: NoteSubmissionHandle,
+    pub notes: NoteComposers,
     pub select: Callback<TaskStamp>,
     pub request: Callback<TaskStamp>,
     pub close: Callback<()>,
@@ -29,12 +27,9 @@ pub(super) fn use_controls(
     let closing = use_state_eq(|| false);
     let close_ref = use_node_ref();
     let sheet_ref = use_node_ref();
-    let note_text = use_state(String::new);
-    let notice = use_state(Notice::none);
-    let submission_status = use_state(NoteSubmission::default);
-    let submission = NoteSubmissionHandle {
-        state: use_mut_ref(NoteSubmission::default),
-        status: submission_status,
+    let notes = NoteComposers {
+        state: use_mut_ref(BTreeMap::new),
+        published: use_state(BTreeMap::new),
     };
     let request = request_callback(sender.clone(), surface.clone());
     let select = select_callback(
@@ -42,38 +37,30 @@ pub(super) fn use_controls(
         selected.clone(),
         presented.clone(),
         closing.clone(),
-        notice.clone(),
     );
     let complete_close =
         complete_close_callback(selected.clone(), presented.clone(), closing.clone());
-    let close = close_callback(
-        selected.clone(),
-        (*presented && mounted).then_some(closing.clone()),
-        complete_close.clone(),
-    );
+    let close = close_callback(selected.clone(), closing.clone());
     use_present(
         selected.is_some() && mounted && !*presented,
         presented.clone(),
     );
-    use_close_transition(*closing, mounted, sheet_ref.clone(), complete_close.clone());
+    overlay::use_close_transition(
+        *closing,
+        *presented && mounted && !overlay::reduced_motion(),
+        sheet_ref.clone(),
+        complete_close.clone(),
+    );
     use_focus(&selected, mounted, close_ref.clone());
     overlay::use_escape_owner(selected.is_some() && !*closing && mounted, close.clone());
-    let submit_note = note_submit_callback(
-        sender,
-        surface,
-        note_text.clone(),
-        notice.clone(),
-        submission.clone(),
-    );
+    let submit_note = note_submit_callback(sender, surface, notes.clone());
     Controls {
         selected,
         presented,
         closing,
         close_ref,
         sheet_ref,
-        note_text,
-        notice,
-        submission,
+        notes,
         select,
         request,
         close,
@@ -87,13 +74,11 @@ fn select_callback(
     selected: UseStateHandle<Option<TaskStamp>>,
     presented: UseStateHandle<bool>,
     closing: UseStateHandle<bool>,
-    note_notice: UseStateHandle<Notice>,
 ) -> Callback<TaskStamp> {
     Callback::from(move |task: TaskStamp| {
         presented.set(false);
         closing.set(false);
         selected.set(Some(task.clone()));
-        note_notice.set(Notice::none());
         request.emit(task);
     })
 }
@@ -128,20 +113,15 @@ fn request_callback(
     })
 }
 
-/// Close through the sheet transition only when a presented sheet is on
-/// screen to animate; otherwise nothing would ever finish the transition.
+/// Begin closing the selected sheet; its slide, or the absence of one to
+/// run, completes the close.
 fn close_callback(
     selected: UseStateHandle<Option<TaskStamp>>,
-    animated: Option<UseStateHandle<bool>>,
-    complete: Callback<()>,
+    closing: UseStateHandle<bool>,
 ) -> Callback<()> {
     Callback::from(move |()| {
-        if selected.is_none() {
-            return;
-        }
-        match animated.as_ref().filter(|_| !reduced_motion()) {
-            Some(closing) => closing.set(true),
-            None => complete.emit(()),
+        if selected.is_some() {
+            closing.set(true);
         }
     })
 }
@@ -156,17 +136,6 @@ fn complete_close_callback(
         closing.set(false);
         selected.set(None);
     })
-}
-
-pub(super) fn reduced_motion() -> bool {
-    web_sys::window()
-        .and_then(|window| {
-            window
-                .match_media("(prefers-reduced-motion: reduce)")
-                .ok()
-                .flatten()
-        })
-        .is_none_or(|query| query.matches())
 }
 
 /// Present the sheet one frame after a mounted layer renders it unpresented,
@@ -192,64 +161,6 @@ fn use_present(pending: bool, presented: UseStateHandle<bool>) {
         }
     });
 }
-
-/// Finish a close when the sheet's slide ends or is canceled, or at once when
-/// the layer is no longer mounted to run it.
-#[hook]
-fn use_close_transition(closing: bool, mounted: bool, sheet: NodeRef, complete: Callback<()>) {
-    use_effect_with(
-        (closing, mounted, sheet.clone(), complete),
-        move |(closing, mounted, sheet, complete)| {
-            if *closing && !*mounted {
-                complete.emit(());
-            }
-            let registration = (*closing && *mounted)
-                .then(|| {
-                    let element = sheet.cast::<web_sys::Element>()?;
-                    let target = element.clone();
-                    let complete = complete.clone();
-                    let callback =
-                        Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-                            let property = js_sys::Reflect::get(
-                                event.as_ref(),
-                                &JsValue::from_str("propertyName"),
-                            )
-                            .ok()
-                            .and_then(|value| value.as_string());
-                            let from_sheet = event
-                                .target()
-                                .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-                                .is_some_and(|element| element == target);
-                            if from_sheet && property.as_deref() == Some("transform") {
-                                complete.emit(());
-                            }
-                        });
-                    for kind in CLOSE_TRANSITION_EVENTS {
-                        element
-                            .add_event_listener_with_callback(
-                                kind,
-                                callback.as_ref().unchecked_ref(),
-                            )
-                            .ok()?;
-                    }
-                    Some((element, callback))
-                })
-                .flatten();
-            move || {
-                if let Some((element, callback)) = registration {
-                    for kind in CLOSE_TRANSITION_EVENTS {
-                        let _ = element.remove_event_listener_with_callback(
-                            kind,
-                            callback.as_ref().unchecked_ref(),
-                        );
-                    }
-                }
-            }
-        },
-    );
-}
-
-const CLOSE_TRANSITION_EVENTS: [&str; 2] = ["transitionend", "transitioncancel"];
 
 /// Focus enters the sheet once each time a selected sheet mounts, and a close
 /// returns it to the card that opened a sheet the operator saw.
@@ -303,13 +214,60 @@ pub(super) fn use_focus(
     });
 }
 
+/// The one observation composer every surface showing `task` renders, bound
+/// to that task and showing only that task's draft, refusal, and submission.
+pub(super) fn render_note_composer(
+    id: &'static str,
+    handle: &str,
+    task: &TaskStamp,
+    can_note: bool,
+    composer: &NoteComposer,
+    submit: &Callback<(TaskStamp, SubmitEvent)>,
+) -> Html {
+    if !can_note {
+        return html! {
+            <p class="work-note-capability">{"This capability can read observations but cannot append them."}</p>
+        };
+    }
+    let busy = composer.submission.busy();
+    let status = match &composer.submission {
+        NoteSubmission::Idle => Html::default(),
+        NoteSubmission::Pending { .. } => html! {
+            <p class="work-note-pending" role="status">{format!("Saving observation for {handle}…")}</p>
+        },
+        NoteSubmission::Reconciling { .. } => html! {
+            <p class="work-note-pending" role="status">{format!("Saved for {handle}; waiting for durable activity…")}</p>
+        },
+        NoteSubmission::Failed(issue) => html! {
+            <p class="form-refusal" role="alert">{issue}</p>
+        },
+    };
+    let task = task.clone();
+    html! {
+        <form
+            class="form work-note-composer"
+            onsubmit={submit.reform(move |event| (task.clone(), event))}
+        >
+            <label for={id}>{format!("Observation for {handle}")}</label>
+            <textarea
+                {id}
+                key={composer.draft.clone()}
+                readonly={busy}
+            >{composer.draft.clone()}</textarea>
+            <button type="submit" disabled={busy}>
+                {if busy { "Saving…" } else { "Add observation" }}
+            </button>
+            {view::render_notice(&composer.notice)}
+            {status}
+        </form>
+    }
+}
+
 /// Append one observation to the task named by the submitting surface.
 pub(super) fn note_submit_callback(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
-    note_text: UseStateHandle<String>,
-    note_notice: UseStateHandle<Notice>,
-    note_submission: NoteSubmissionHandle,
+    notes: NoteComposers,
 ) -> Callback<(TaskStamp, SubmitEvent)> {
     Callback::from(move |(task, event): (TaskStamp, SubmitEvent)| {
         event.prevent_default();
@@ -320,7 +278,7 @@ pub(super) fn note_submit_callback(
             .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
             .map(|textarea| textarea.value())
             .unwrap_or_default();
-        note_text.set(text.clone());
+        notes.update(&task, |composer| composer.draft.clone_from(&text));
         let (handle, after) = {
             let data = surface.read();
             let Some(detail) = data
@@ -350,11 +308,13 @@ pub(super) fn note_submit_callback(
                         after,
                     },
                 ) {
-                    note_notice.set(Notice::none());
-                    note_submission.replace(NoteSubmission::Pending { task, text, after });
+                    notes.update(&task, |composer| {
+                        composer.notice = Notice::none();
+                        composer.submission = NoteSubmission::Pending { text, after };
+                    });
                 }
             }
-            Err(refusal) => note_notice.set(refusal.into()),
+            Err(refusal) => notes.update(&task, |composer| composer.notice = refusal.into()),
         }
     })
 }

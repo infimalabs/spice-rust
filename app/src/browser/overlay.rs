@@ -109,3 +109,78 @@ pub(super) fn returnable(element: &web_sys::Element) -> bool {
             .is_some_and(|element| element.offset_width() > 0 || element.offset_height() > 0)
         && element.closest("[inert]").ok().flatten().is_none()
 }
+
+/// Whether the operator asked for reduced motion. It removes slides, never
+/// the ownership or completion of the layer that would have slid.
+pub(super) fn reduced_motion() -> bool {
+    web_sys::window()
+        .and_then(|window| {
+            window
+                .match_media("(prefers-reduced-motion: reduce)")
+                .ok()
+                .flatten()
+        })
+        .is_none_or(|query| query.matches())
+}
+
+const CLOSE_TRANSITION_EVENTS: [&str; 2] = ["transitionend", "transitioncancel"];
+
+/// Finish a closing layer when its own `transform` slide ends or is
+/// canceled, or at once when no rendered layer is left to run the slide.
+/// Completion always has an actual boundary; nothing waits on a clock.
+#[hook]
+pub(super) fn use_close_transition(
+    closing: bool,
+    rendered: bool,
+    layer: NodeRef,
+    complete: Callback<()>,
+) {
+    use_effect_with(
+        (closing, rendered, layer, complete),
+        move |(closing, rendered, layer, complete)| {
+            let element = (*closing && *rendered)
+                .then(|| layer.cast::<web_sys::Element>())
+                .flatten()
+                .filter(|element| element.is_connected());
+            if *closing && element.is_none() {
+                complete.emit(());
+            }
+            let registration = element.and_then(|element| {
+                let target = element.clone();
+                let complete = complete.clone();
+                let callback =
+                    Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+                        let property = js_sys::Reflect::get(
+                            event.as_ref(),
+                            &JsValue::from_str("propertyName"),
+                        )
+                        .ok()
+                        .and_then(|value| value.as_string());
+                        let from_layer = event
+                            .target()
+                            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+                            .is_some_and(|element| element == target);
+                        if from_layer && property.as_deref() == Some("transform") {
+                            complete.emit(());
+                        }
+                    });
+                for kind in CLOSE_TRANSITION_EVENTS {
+                    element
+                        .add_event_listener_with_callback(kind, callback.as_ref().unchecked_ref())
+                        .ok()?;
+                }
+                Some((element, callback))
+            });
+            move || {
+                if let Some((element, callback)) = registration {
+                    for kind in CLOSE_TRANSITION_EVENTS {
+                        let _ = element.remove_event_listener_with_callback(
+                            kind,
+                            callback.as_ref().unchecked_ref(),
+                        );
+                    }
+                }
+            }
+        },
+    );
+}

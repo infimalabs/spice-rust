@@ -31,7 +31,7 @@ pub(super) struct AgentControls {
 /// `alert` is an assertive live region, so an element that were always present
 /// would be re-announced empty on every keystroke; leaving it out until there
 /// is a sentence makes the announcement coincide with the refusal.
-fn render_notice(notice: &Notice) -> Html {
+pub(super) fn render_notice(notice: &Notice) -> Html {
     if !notice.is_some() {
         return Html::default();
     }
@@ -94,9 +94,7 @@ pub(super) struct CanvasRender<'a> {
     pub work_history: &'a work_history::Controls,
     pub detail_close: &'a NodeRef,
     pub detail_sheet: &'a NodeRef,
-    pub note_text: &'a UseStateHandle<String>,
-    pub note_notice: &'a UseStateHandle<Notice>,
-    pub note_submission: &'a UseStateHandle<NoteSubmission>,
+    pub notes: &'a NoteComposers,
     pub action_issue: &'a UseStateHandle<Option<String>>,
     pub speech_status: &'a UseStateHandle<SpeechStatus>,
     pub submit_note: Callback<(wire::TaskStamp, SubmitEvent)>,
@@ -423,9 +421,7 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
                 can_note,
                 close_ref: render.detail_close,
                 sheet_ref: render.detail_sheet,
-                note_text: render.note_text,
-                note_notice: render.note_notice,
-                note_submission: render.note_submission,
+                notes: render.notes,
                 submit_note: render.submit_note.clone(),
                 select_task: render.select_task.clone(),
                 close: render.close_task.clone(),

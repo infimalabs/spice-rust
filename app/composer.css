@@ -344,14 +344,14 @@
   padding: 0;
 }
 .team-surface .message-task-inspector textarea { inline-size: 100%; }
-.team-surface .message-task-inspector-note textarea {
+.team-surface .message-task-inspector .work-note-composer textarea {
   min-height: 4.5rem;
   max-height: 10rem;
   resize: vertical;
 }
-.team-surface .message-task-inspector-note button { justify-self: start; }
-.team-surface .message-task-inspector-note .form-refusal,
-.team-surface .message-task-inspector-note .work-note-pending { margin: 0; }
+.team-surface .message-task-inspector .work-note-composer button { justify-self: start; }
+.team-surface .message-task-inspector .work-note-composer .form-refusal,
+.team-surface .message-task-inspector .work-note-composer .work-note-pending { margin: 0; }
 .team-surface .message-task-inspector-state {
   align-content: center;
   inline-size: 100%;

@@ -1,16 +1,17 @@
 use super::*;
-
-const TASK_PANEL_TRANSITION_MILLIS: u32 = 180;
+use crate::browser::message_task_inspector::{Context, Inspection};
 
 pub(super) struct Card {
-    pub(super) context: Option<crate::browser::message_task_inspector::Context>,
-    pub(super) inspection: Option<crate::browser::message_task_inspector::Inspection>,
+    pub(super) context: Option<Context>,
+    pub(super) inspection: Option<Inspection>,
     pub(super) root: NodeRef,
+    /// The sliding task layer whose own transition ends a close.
+    pub(super) layer: NodeRef,
 }
 
 #[hook]
 pub(super) fn use_card(card: String) -> Card {
-    let context = use_context::<crate::browser::message_task_inspector::Context>();
+    let context = use_context::<Context>();
     let inspection = context.as_ref().and_then(|context| {
         (*context.inspection)
             .as_ref()
@@ -18,73 +19,75 @@ pub(super) fn use_card(card: String) -> Card {
             .cloned()
     });
     let root = use_node_ref();
-    use_inspector_focus(
-        &root,
-        inspection
-            .as_ref()
-            .is_some_and(|inspection| inspection.open),
+    let layer = use_node_ref();
+    let open = inspection
+        .as_ref()
+        .is_some_and(|inspection| inspection.open);
+    use_inspector_focus(&root, open);
+    let complete = {
+        let context = context.clone();
+        let card = card.clone();
+        Callback::from(move |()| {
+            if let Some(context) = &context {
+                context.complete_close(&card);
+            }
+        })
+    };
+    crate::browser::overlay::use_close_transition(
+        inspection.is_some() && !open,
+        !crate::browser::overlay::reduced_motion(),
+        layer.clone(),
+        complete,
     );
-    use_close_completion(&context, &inspection);
-    use_focus_departure(
-        &card,
-        &context,
-        inspection
-            .as_ref()
-            .is_some_and(|inspection| inspection.open),
-    );
+    use_chip_return(&inspection);
+    use_focus_departure(&card, &context, open);
     Card {
         context,
         inspection,
         root,
+        layer,
     }
 }
 
+/// Focus enters the task view once it opens. The effect runs after the view
+/// is in the document, so focus needs no deferral.
 #[hook]
 fn use_inspector_focus(root: &NodeRef, open: bool) {
     let root = root.clone();
     use_effect_with(open, move |open| {
-        if *open {
-            gloo_timers::callback::Timeout::new(0, move || {
-                if let Some(element) = root.cast::<web_sys::HtmlElement>() {
-                    focus_without_scrolling(&element);
-                }
-            })
-            .forget();
+        if *open && let Some(element) = root.cast::<web_sys::HtmlElement>() {
+            focus_without_scrolling(&element);
+        }
+    });
+}
+
+/// A view closed toward its chip returns focus to that chip once the view has
+/// ended and the card renders the chip interactive again.
+#[hook]
+fn use_chip_return(inspection: &Option<Inspection>) {
+    let last = use_mut_ref(|| None::<Inspection>);
+    use_effect_with(inspection.clone(), move |inspection| {
+        let ended = last.replace(inspection.clone());
+        if inspection.is_some() {
+            return;
+        }
+        let Some(ended) = ended.filter(|ended| ended.return_focus) else {
+            return;
+        };
+        let selector = format!(".message-task-chip[data-task-handle=\"{}\"]", ended.handle);
+        if let Some(chip) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.get_element_by_id(&ended.card))
+            .and_then(|card| card.query_selector(&selector).ok().flatten())
+            .and_then(|chip| chip.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            focus_without_scrolling(&chip);
         }
     });
 }
 
 #[hook]
-fn use_close_completion(
-    context: &Option<crate::browser::message_task_inspector::Context>,
-    inspection: &Option<crate::browser::message_task_inspector::Inspection>,
-) {
-    let dependency = (
-        context.clone(),
-        inspection
-            .as_ref()
-            .filter(|inspection| !inspection.open)
-            .map(|inspection| inspection.card.clone()),
-    );
-    use_effect_with(dependency, move |(context, closing_card)| {
-        let timeout = closing_card.as_ref().and_then(|card| {
-            let context = context.clone()?;
-            let card = card.clone();
-            Some(gloo_timers::callback::Timeout::new(
-                TASK_PANEL_TRANSITION_MILLIS,
-                move || context.complete_close(&card),
-            ))
-        });
-        move || drop(timeout)
-    });
-}
-
-#[hook]
-fn use_focus_departure(
-    card: &str,
-    context: &Option<crate::browser::message_task_inspector::Context>,
-    open: bool,
-) {
+fn use_focus_departure(card: &str, context: &Option<Context>, open: bool) {
     let context = context.clone();
     let card = card.to_owned();
     use_effect_with(open, move |open| {
@@ -136,10 +139,7 @@ fn use_focus_departure(
     });
 }
 
-pub(super) fn task_chip_click(
-    inspector: Option<crate::browser::message_task_inspector::Context>,
-    card: String,
-) -> Callback<MouseEvent> {
+pub(super) fn task_chip_click(inspector: Option<Context>, card: String) -> Callback<MouseEvent> {
     Callback::from(move |event: MouseEvent| {
         let Some(handle) = task_handle_from_target(event.target()) else {
             return;
@@ -153,7 +153,7 @@ pub(super) fn task_chip_click(
 }
 
 pub(super) fn task_chip_keydown(
-    inspector: Option<crate::browser::message_task_inspector::Context>,
+    inspector: Option<Context>,
     card: String,
 ) -> Callback<KeyboardEvent> {
     Callback::from(move |event: KeyboardEvent| {
@@ -179,9 +179,7 @@ fn task_handle_from_target(target: Option<web_sys::EventTarget>) -> Option<wire:
         .and_then(|handle| handle.parse().ok())
 }
 
-pub(super) fn close_inspector(
-    inspector: Option<crate::browser::message_task_inspector::Context>,
-) -> Callback<MouseEvent> {
+pub(super) fn close_inspector(inspector: Option<Context>) -> Callback<MouseEvent> {
     Callback::from(move |_| {
         if let Some(inspector) = inspector.as_ref() {
             inspector.close(true);

@@ -299,30 +299,29 @@ fn apply_note_response(
                 .born()
                 .map_err(|error| format!("note answer named a non-canonical task: {error}"))?;
             if answered != task {
-                handles.note_submission.replace(NoteSubmission::Failed(
-                    "The resident accepted an observation for a different task; the draft was retained."
-                        .to_owned(),
-                ));
+                handles.notes.update(&task, |composer| {
+                    composer.submission = NoteSubmission::Failed(
+                        "The resident accepted an observation for a different task; the draft was retained."
+                            .to_owned(),
+                    );
+                });
                 return Err("note answer task identity did not match its command".to_owned());
             }
-            handles.note_text.set(String::new());
-            handles.note_notice.set(Notice::none());
-            handles
-                .note_submission
-                .replace(NoteSubmission::Reconciling {
-                    task: task.clone(),
-                    text,
-                    after,
-                });
+            handles.notes.update(&task, |composer| {
+                *composer = NoteComposer {
+                    submission: NoteSubmission::Reconciling { text, after },
+                    ..NoteComposer::default()
+                };
+            });
             refresh_task_detail(runtime, &task);
             Ok(CommandApplication::task_detail(task))
         }
         outcome => {
             let issue = outcome_issue("Observation was not saved", outcome)
                 .unwrap_or_else(|| "Observation was not saved.".to_owned());
-            handles
-                .note_submission
-                .replace(NoteSubmission::Failed(issue));
+            handles.notes.update(&task, |composer| {
+                composer.submission = NoteSubmission::Failed(issue);
+            });
             Ok(CommandApplication::ordinary(false))
         }
     }
@@ -339,17 +338,9 @@ fn reconcile_note_detail(
     runtime: &mut CanvasRuntime,
     task: &wire::TaskStamp,
 ) -> CommandApplication {
-    let NoteSubmission::Reconciling {
-        task: pending_task,
-        text,
-        after,
-    } = handles.note_submission.current()
-    else {
+    let NoteSubmission::Reconciling { text, after } = handles.notes.submission(task) else {
         return CommandApplication::ordinary(false);
     };
-    if pending_task != *task {
-        return CommandApplication::ordinary(false);
-    }
     match runtime.task_detail(task) {
         Some(TaskDetailState::Available(detail) | TaskDetailState::Refreshing(detail)) => {
             let actor = runtime.principal().actor();
@@ -359,7 +350,9 @@ fn reconcile_note_detail(
                     && after.is_none_or(|position| note.position > position)
             });
             if visible {
-                handles.note_submission.replace(NoteSubmission::Idle);
+                handles.notes.update(task, |composer| {
+                    composer.submission = NoteSubmission::Idle;
+                });
                 CommandApplication::ordinary(false)
             } else {
                 refresh_task_detail(runtime, task);
@@ -375,9 +368,9 @@ fn reconcile_note_detail(
                     )
                 },
             );
-            handles
-                .note_submission
-                .replace(NoteSubmission::Failed(issue));
+            handles.notes.update(task, |composer| {
+                composer.submission = NoteSubmission::Failed(issue);
+            });
             CommandApplication::ordinary(false)
         }
         Some(TaskDetailState::Loading) | None => CommandApplication::task_detail(task.clone()),

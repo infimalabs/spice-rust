@@ -115,17 +115,16 @@ impl SubmissionHandle {
         self.status.set(status);
     }
 }
+/// The durable submission one task's observation composer is waiting on.
 #[derive(Clone, Default, PartialEq, Eq)]
 enum NoteSubmission {
     #[default]
     Idle,
     Pending {
-        task: TaskStamp,
         text: String,
         after: Option<Seq>,
     },
     Reconciling {
-        task: TaskStamp,
         text: String,
         after: Option<Seq>,
     },
@@ -137,20 +136,47 @@ impl NoteSubmission {
         matches!(self, Self::Pending { .. } | Self::Reconciling { .. })
     }
 }
-#[derive(Clone)]
-struct NoteSubmissionHandle {
-    state: Rc<RefCell<NoteSubmission>>,
-    status: UseStateHandle<NoteSubmission>,
+
+/// One task's observation composer: the draft it retains, the local refusal
+/// of that draft, and the submission it waits on. Every surface showing the
+/// task shows this composer, and no other task's.
+#[derive(Clone, Default, PartialEq, Eq)]
+struct NoteComposer {
+    draft: String,
+    notice: Notice,
+    submission: NoteSubmission,
 }
 
-impl NoteSubmissionHandle {
-    fn replace(&self, status: NoteSubmission) {
-        *self.state.borrow_mut() = status.clone();
-        self.status.set(status);
+/// Observation composers by task. The connection keeps this handle from its
+/// first render, so the shared cell is the live value and `published` is the
+/// snapshot each render reads.
+#[derive(Clone)]
+struct NoteComposers {
+    state: Rc<RefCell<BTreeMap<TaskStamp, NoteComposer>>>,
+    published: UseStateHandle<BTreeMap<TaskStamp, NoteComposer>>,
+}
+
+impl NoteComposers {
+    fn update(&self, task: &TaskStamp, change: impl FnOnce(&mut NoteComposer)) {
+        let mut state = self.state.borrow_mut();
+        let composer = state.entry(task.clone()).or_default();
+        change(composer);
+        if *composer == NoteComposer::default() {
+            state.remove(task);
+        }
+        self.published.set(state.clone());
     }
 
-    fn current(&self) -> NoteSubmission {
-        self.state.borrow().clone()
+    fn submission(&self, task: &TaskStamp) -> NoteSubmission {
+        self.state
+            .borrow()
+            .get(task)
+            .map(|composer| composer.submission.clone())
+            .unwrap_or_default()
+    }
+
+    fn shown(&self, task: &TaskStamp) -> NoteComposer {
+        self.published.get(task).cloned().unwrap_or_default()
     }
 }
 
@@ -163,9 +189,7 @@ struct SurfaceHandles {
     team_controls: UseReducerHandle<TeamControls>,
     composer_drafts: UseReducerHandle<ComposerDrafts>,
     submissions: SubmissionHandle,
-    note_text: UseStateHandle<String>,
-    note_notice: UseStateHandle<Notice>,
-    note_submission: NoteSubmissionHandle,
+    notes: NoteComposers,
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -601,9 +625,7 @@ impl CanvasAppState {
                 work_history: &self.work_history,
                 detail_close: &self.work_detail.close_ref,
                 detail_sheet: &self.work_detail.sheet_ref,
-                note_text: &self.work_detail.note_text,
-                note_notice: &self.work_detail.notice,
-                note_submission: &self.work_detail.submission.status,
+                notes: &self.work_detail.notes,
                 action_issue: &self.action_issue,
                 speech_status: &self.speech_status,
                 submit_note: self.work_detail.submit_note.clone(),
@@ -713,9 +735,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
             team_controls: state.team_controls.clone(),
             composer_drafts: state.composer_drafts.clone(),
             submissions: state.submissions.clone(),
-            note_text: state.work_detail.note_text.clone(),
-            note_notice: state.work_detail.notice.clone(),
-            note_submission: state.work_detail.submission.clone(),
+            notes: state.work_detail.notes.clone(),
         },
     );
     task_relations::use_request(
@@ -952,8 +972,7 @@ fn use_unsafe_intent_guard(unsafe_intent: bool) {
                         .and_then(|document| {
                             document
                                 .query_selector_all(
-                                    ".team-composer textarea, .work-note-composer textarea, \
-                                 .message-task-inspector-note textarea",
+                                    ".team-composer textarea, .work-note-composer textarea",
                                 )
                                 .ok()
                         })

@@ -222,22 +222,16 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
         props.order,
     );
     let inspector = task_inspector::use_card(card_key);
-    render_agent_message_card(
-        props,
-        &correspondent,
-        inspector.context.as_ref(),
-        inspector.inspection.as_ref(),
-        inspector.root,
-    )
+    render_agent_message_card(props, &correspondent, &inspector)
 }
 
 fn render_agent_message_card(
     props: &AgentMessageCardProps,
     correspondent: &view::chrome::Correspondent,
-    inspector: Option<&crate::browser::message_task_inspector::Context>,
-    inspection: Option<&crate::browser::message_task_inspector::Inspection>,
-    inspector_ref: NodeRef,
+    card_inspector: &task_inspector::Card,
 ) -> Html {
+    let inspector = card_inspector.context.as_ref();
+    let inspection = card_inspector.inspection.as_ref();
     let member = &props.member;
     let quote_lane = props.quote_lane;
     let message = &props.message;
@@ -257,7 +251,6 @@ fn render_agent_message_card(
     } = agent_message_presentation(member, message);
     let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
     let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
-    let close_inspection = task_inspector::close_inspector(inspector.cloned());
     let inspection_open = inspection.is_some_and(|inspection| inspection.open);
     html! {
         <article
@@ -331,22 +324,33 @@ fn render_agent_message_card(
                         )}
                     }
                 </div>
-                <div
-                    class="mosaic-message-task-layer"
-                    aria-hidden={(!inspection_open).to_string()}
-                    inert={(!inspection_open).then_some("true")}
-                >
-                    if let (Some(inspector), Some(inspection)) = (inspector, inspection) {
-                        {crate::browser::message_task_inspector::render(
-                            inspector,
-                            inspection,
-                            inspector_ref,
-                            close_inspection,
-                        )}
-                    }
-                </div>
+                {render_task_layer(card_inspector, inspection_open)}
             </div>
         </article>
+    }
+}
+
+/// The card's back face: the quick task view while a chip is inspected.
+fn render_task_layer(card_inspector: &task_inspector::Card, open: bool) -> Html {
+    let close = task_inspector::close_inspector(card_inspector.context.clone());
+    html! {
+        <div
+            ref={card_inspector.layer.clone()}
+            class="mosaic-message-task-layer"
+            aria-hidden={(!open).to_string()}
+            inert={(!open).then_some("true")}
+        >
+            if let (Some(inspector), Some(inspection)) =
+                (card_inspector.context.as_ref(), card_inspector.inspection.as_ref())
+            {
+                {crate::browser::message_task_inspector::render(
+                    inspector,
+                    inspection,
+                    card_inspector.root.clone(),
+                    close,
+                )}
+            }
+        </div>
     }
 }
 
