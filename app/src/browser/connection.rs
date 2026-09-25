@@ -68,7 +68,6 @@ async fn run_connection(
         let handshake = establish_connection(
             &handles.connection,
             &handles.surface,
-            &handles.speech,
             &handles.identity,
             &handles.canvas_update,
             data,
@@ -452,14 +451,12 @@ async fn send_probe(principal: &Principal, writer: &mut SocketWriter) -> Result<
 async fn establish_connection(
     connection: &UseStateHandle<Connection>,
     surface: &UseStateHandle<SurfaceData>,
-    speech: &UseStateHandle<wire::SpeechPlayback>,
     identity: &UseStateHandle<Option<CanvasIdentity>>,
     canvas_update: &UseStateHandle<Option<CanvasUpdate>>,
     data: &mut SurfaceData,
     signal: &web_sys::AbortSignal,
 ) -> Result<EstablishedConnection, String> {
-    let (session, writer, mut reader) =
-        open_socket(speech, identity, canvas_update, signal).await?;
+    let (session, writer, mut reader) = open_socket(identity, canvas_update, signal).await?;
     let (principal, hydrating) =
         admit_runtime(&session, &mut reader, connection, surface, data).await?;
     Ok(EstablishedConnection {
@@ -473,7 +470,6 @@ async fn establish_connection(
 
 /// Discover the resident endpoint and open the socket its bootstrap names.
 async fn open_socket(
-    speech: &UseStateHandle<wire::SpeechPlayback>,
     identity: &UseStateHandle<Option<CanvasIdentity>>,
     canvas_update: &UseStateHandle<Option<CanvasUpdate>>,
     signal: &web_sys::AbortSignal,
@@ -526,7 +522,6 @@ async fn open_socket(
         &generation,
         loaded_generation,
     )?));
-    speech.set(discovery.speech.clone());
     let session = Session::open(discovery.capability, discovery.epoch);
     let endpoint = discovery
         .endpoint
@@ -952,6 +947,7 @@ fn slice_is_empty<T>(value: &&[T]) -> bool {
 }
 
 pub(super) async fn request_external_speech(
+    worktree: &str,
     text: &str,
     content_type: &str,
 ) -> Result<Vec<u8>, String> {
@@ -961,6 +957,7 @@ pub(super) async fn request_external_speech(
     ))
     .json(&wire::SpeechRequest {
         text: text.to_owned(),
+        worktree: worktree.to_owned(),
     })
     .map_err(|error| format!("speech request could not be encoded: {error}"))?;
     let response = request

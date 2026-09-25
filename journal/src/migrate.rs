@@ -14,6 +14,7 @@ mod lane_predicates;
 mod release_notes;
 mod renewal_organization;
 mod residency_lineage;
+mod speech_playback;
 mod steering_identity;
 mod steering_microseconds;
 mod task_allocation;
@@ -629,6 +630,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (24, MigrationStep::Sql(MIGRATE_24_TO_25_SQL)),
     (25, MigrationStep::Rust(team::migrate)),
     (26, MigrationStep::Rust(crate::historical_receipts::migrate)),
+    (27, MigrationStep::Rust(speech_playback::migrate)),
 ];
 
 /// Schema 24 to 25: exact-project current task lookup.
@@ -966,8 +968,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 27, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 28, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 27;
+PRAGMA user_version = 28;
 "#;

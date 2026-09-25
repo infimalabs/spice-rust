@@ -313,7 +313,13 @@ fn canonical_response(row: &str, kind: &str, value: &Value) -> Result<Vec<u8>, O
     match kind {
         "board::read" => canonical_receipt::<wire::intent::BoardAnswer>(row, value),
         "lane::read" | "lane::arrange" | "lineage::configure" | "lineage::arrange" => {
-            canonical_receipt::<wire::intent::LaneAnswer>(row, value)
+            super::speech_playback::canonical_predecessor(value).map_err(|error| {
+                invalid(
+                    "command_receipts",
+                    row,
+                    &format!("migrated response is not its command-kind wire: {error}"),
+                )
+            })
         }
         "lane::renewal" => canonical_receipt::<wire::intent::LaneRenewalAnswer>(row, value),
         _ => Err(invalid(

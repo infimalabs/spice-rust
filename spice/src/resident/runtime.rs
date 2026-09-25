@@ -182,6 +182,23 @@ impl RuntimePaths {
             .map_err(|error| crate::state_failure(&error).outcome())
     }
 
+    pub(super) fn speech_for_worktree(
+        &self,
+        worktree: &str,
+    ) -> Result<canvas::SpeechConfig, String> {
+        let repository = Repository::discover(worktree).map_err(|error| error.to_string())?;
+        if repository.common_dir() != self.common
+            || repository.worktree_root() != Path::new(worktree)
+        {
+            return Err(
+                "speech worktree no longer names one current repository worktree root".to_owned(),
+            );
+        }
+        spice::config::load_repository(&repository, &[])
+            .map(|resolved| resolved.root().say().clone())
+            .map_err(|error| error.to_string())
+    }
+
     pub(super) fn clear_stale_surfaces(&self) -> CommandResult<()> {
         remove_if_present(&self.canvas)
             .map_err(|error| environment_fault("canvas::stale-discovery", &error.to_string()))?;

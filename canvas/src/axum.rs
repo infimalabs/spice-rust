@@ -257,6 +257,29 @@ impl fmt::Display for OpeningError {
 
 impl Error for OpeningError {}
 
+#[derive(Clone)]
+struct SpeechResolver(
+    Arc<dyn Fn(&str) -> Result<crate::SpeechConfig, String> + Send + Sync + 'static>,
+);
+
+impl SpeechResolver {
+    fn new(
+        resolve: impl Fn(&str) -> Result<crate::SpeechConfig, String> + Send + Sync + 'static,
+    ) -> Self {
+        Self(Arc::new(resolve))
+    }
+
+    fn resolve(&self, worktree: &str) -> Result<crate::SpeechConfig, String> {
+        (self.0)(worktree)
+    }
+}
+
+impl fmt::Debug for SpeechResolver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("SpeechResolver")
+    }
+}
+
 #[derive(Debug)]
 struct SurfaceState {
     authority: Authority,
@@ -266,7 +289,7 @@ struct SurfaceState {
     capabilities: Capabilities,
     version: wire::Version,
     app: crate::AppSource,
-    speech: crate::SpeechConfig,
+    speech: SpeechResolver,
     speech_slot: Semaphore,
     admission: Mutex<Admission>,
     admission_changed: watch::Sender<Admission>,
@@ -614,14 +637,14 @@ pub struct Server {
     state: Arc<SurfaceState>,
 }
 
-/// Identity, capabilities, app, and speech configuration for one server generation.
+/// Identity, capabilities, app, and speech resolver for one server generation.
 #[derive(Debug)]
 pub struct Generation {
     epoch: wire::CanonicalUuid,
     capabilities: Capabilities,
     version: wire::Version,
     app: crate::AppSource,
-    speech: crate::SpeechConfig,
+    speech: SpeechResolver,
 }
 
 impl Generation {
@@ -634,16 +657,26 @@ impl Generation {
         app: crate::AppSource,
         speech: crate::SpeechConfig,
     ) -> Self {
+        let fallback = speech.clone();
         Self {
             epoch,
             capabilities,
             version,
             app,
-            speech,
+            speech: SpeechResolver::new(move |_| Ok(fallback.clone())),
         }
     }
-}
 
+    /// Resolve executable speech configuration from each request's admitted worktree.
+    #[must_use]
+    pub fn with_speech_resolver(
+        mut self,
+        resolve: impl Fn(&str) -> Result<crate::SpeechConfig, String> + Send + Sync + 'static,
+    ) -> Self {
+        self.speech = SpeechResolver::new(resolve);
+        self
+    }
+}
 impl Server {
     /// Bind an ephemeral IPv4 loopback port with one resolved lane app.
     pub async fn bind(generation: Generation) -> Result<(Self, Control), std::io::Error> {
@@ -912,8 +945,16 @@ async fn speech(
             "speech text must be nonempty and at most 32768 bytes",
         );
     }
-    if state.speech.backend() != crate::SpeechBackend::External || state.speech.command().is_none()
-    {
+    let speech = match state.speech.resolve(&request.worktree) {
+        Ok(speech) => speech,
+        Err(error) => {
+            return speech_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                format!("speech configuration is unavailable: {error}"),
+            );
+        }
+    };
+    if speech.backend() != crate::SpeechBackend::External || speech.command().is_none() {
         return speech_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "external speech backend is unavailable",
@@ -922,11 +963,11 @@ async fn speech(
     let Ok(_permit) = state.speech_slot.try_acquire() else {
         return speech_error(StatusCode::TOO_MANY_REQUESTS, "speech renderer is busy");
     };
-    let bytes = match render_external_speech(&state.speech, request.text.as_bytes()).await {
+    let bytes = match render_external_speech(&speech, request.text.as_bytes()).await {
         Ok(bytes) => bytes,
         Err(error) => return speech_error(error.status(), error.message()),
     };
-    let Ok(content_type) = HeaderValue::from_str(state.speech.content_type()) else {
+    let Ok(content_type) = HeaderValue::from_str(speech.content_type()) else {
         return speech_error(
             StatusCode::INTERNAL_SERVER_ERROR,
             "speech media type became unavailable",
@@ -1041,8 +1082,8 @@ impl SpeechRenderError {
     }
 }
 
-fn speech_error(status: StatusCode, message: &'static str) -> Response {
-    let mut response = (status, message).into_response();
+fn speech_error(status: StatusCode, message: impl Into<String>) -> Response {
+    let mut response = (status, message.into()).into_response();
     response
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));

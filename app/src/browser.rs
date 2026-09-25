@@ -156,7 +156,6 @@ impl NoteSubmissionHandle {
 struct SurfaceHandles {
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
-    speech: UseStateHandle<wire::SpeechPlayback>,
     identity: UseStateHandle<Option<CanvasIdentity>>,
     canvas_update: UseStateHandle<Option<CanvasUpdate>>,
     team_controls: UseReducerHandle<TeamControls>,
@@ -215,7 +214,6 @@ struct AgentSpeechControls {
 struct SpeechRuntime {
     queue: Rc<RefCell<SpeechQueue>>,
     controller: Rc<RefCell<crate::speech::Controller>>,
-    speech: UseStateHandle<wire::SpeechPlayback>,
     status: UseStateHandle<SpeechStatus>,
     message: UseStateHandle<Option<String>>,
 }
@@ -240,19 +238,19 @@ impl SpeechRuntime {
         let generation = self.controller.borrow_mut().begin();
         self.message.set(entry.message_key().map(str::to_owned));
         self.status.set(SpeechStatus::Idle);
-        match &*self.speech {
+        match entry.playback().clone() {
             wire::SpeechPlayback::Disabled {} => self.finish(entry.id(), None),
             wire::SpeechPlayback::System {
                 voice,
                 words_per_minute,
-            } => self.start_system(entry, generation, voice, *words_per_minute),
+            } => self.start_system(entry, generation, &voice, words_per_minute),
             wire::SpeechPlayback::External {
                 content_type,
                 available,
                 ..
             } => {
-                if *available {
-                    self.start_external(entry, generation, content_type.clone());
+                if available {
+                    self.start_external(entry, generation, content_type);
                 } else {
                     self.finish(
                         entry.id(),
@@ -356,7 +354,8 @@ impl SpeechRuntime {
     fn start_external(&self, entry: SpeechEntry, generation: u64, content_type: String) {
         let runtime = self.clone();
         spawn_local(async move {
-            let rendered = request_external_speech(entry.text(), &content_type).await;
+            let rendered =
+                request_external_speech(entry.worktree(), entry.text(), &content_type).await;
             if !runtime.is_current(entry.id(), generation) {
                 return;
             }
@@ -537,8 +536,90 @@ struct CanvasAppProperties {
     navigate: Callback<CanvasDestination>,
 }
 
-#[function_component(CanvasApp)]
-fn canvas_app(properties: &CanvasAppProperties) -> Html {
+struct CanvasAppState {
+    connection: UseStateHandle<Connection>,
+    surface: UseStateHandle<SurfaceData>,
+    canvas_menu_open: UseStateHandle<bool>,
+    axis: UseStateHandle<Axis>,
+    mosaic: UseStateHandle<bool>,
+    navigate: Callback<CanvasDestination>,
+    work_scope: UseStateHandle<WorkScope>,
+    work_scope_notice: UseStateHandle<Option<String>>,
+    work_arrangement: UseStateHandle<WorkArrangement>,
+    identity: UseStateHandle<Option<CanvasIdentity>>,
+    canvas_update: UseStateHandle<Option<CanvasUpdate>>,
+    team_controls: UseReducerHandle<TeamControls>,
+    team_fleet: NodeRef,
+    composer_drafts: UseReducerHandle<ComposerDrafts>,
+    submissions: SubmissionHandle,
+    action_issue: UseStateHandle<Option<String>>,
+    sender: SenderHandle,
+    composer_drag: watchband::PrimaryComposerDragState,
+    work_detail: task_detail::Controls,
+    task_context: message_task_inspector::Context,
+    work_history: work_history::Controls,
+    work_map: UseStateHandle<view::WorkMapState>,
+    speech_status: UseStateHandle<SpeechStatus>,
+    agents: view::AgentControls,
+    unsafe_intent: bool,
+}
+
+impl CanvasAppState {
+    fn render(self) -> Html {
+        let surface_view = self.surface.read();
+        let work = project_work(surface_view.as_ref());
+        let refresh = refresh_callback(
+            self.sender.clone(),
+            self.axis.clone(),
+            self.work_detail.selected.clone(),
+            self.work_map.clone(),
+        );
+        let canvas = render_canvas(
+            CanvasRender {
+                connection: &self.connection,
+                surface: &self.surface,
+                axis: &self.axis,
+                mosaic: &self.mosaic,
+                navigate: &self.navigate,
+                canvas_menu_open: &self.canvas_menu_open,
+                work_scope: &self.work_scope,
+                work_scope_notice: &self.work_scope_notice,
+                work_arrangement: &self.work_arrangement,
+                identity: &self.identity,
+                canvas_update: &self.canvas_update,
+                team_controls: &self.team_controls,
+                composer_drafts: &self.composer_drafts,
+                submissions: &self.submissions,
+                composer_drag: &self.composer_drag,
+                team_fleet: &self.team_fleet,
+                unsafe_intent: self.unsafe_intent,
+                sender: &self.sender,
+                agents: &self.agents,
+                selected_task: &self.work_detail.selected,
+                detail_presented: *self.work_detail.presented,
+                detail_closing: *self.work_detail.closing,
+                work_map: &self.work_map,
+                work_history: &self.work_history,
+                detail_close: &self.work_detail.close_ref,
+                detail_sheet: &self.work_detail.sheet_ref,
+                note_text: &self.work_detail.note_text,
+                note_notice: &self.work_detail.notice,
+                note_submission: &self.work_detail.submission.status,
+                action_issue: &self.action_issue,
+                speech_status: &self.speech_status,
+                submit_note: self.work_detail.submit_note.clone(),
+                select_task: self.work_detail.select.clone(),
+                close_task: self.work_detail.close.clone(),
+                refresh,
+            },
+            work.as_ref(),
+        );
+        message_task_inspector::provide(self.task_context, canvas)
+    }
+}
+
+#[hook]
+fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, SpeechRuntime) {
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
     let canvas_menu_open = use_state(|| false);
@@ -567,14 +648,11 @@ fn canvas_app(properties: &CanvasAppProperties) -> Html {
         message_task_inspector::use_controls(&surface, &work_detail, &properties.navigate);
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
     let work_map = use_state(view::WorkMapState::default);
-    let speech = use_state(|| wire::SpeechPlayback::Disabled {});
     let speech_status = use_state(SpeechStatus::default);
     let speech_message = use_state(|| None::<String>);
-    let speech_controller = use_mut_ref(crate::speech::Controller::default);
     let speech_runtime = SpeechRuntime {
         queue: use_mut_ref(SpeechQueue::default),
-        controller: speech_controller,
-        speech: speech.clone(),
+        controller: use_mut_ref(crate::speech::Controller::default),
         status: speech_status.clone(),
         message: speech_message.clone(),
     };
@@ -584,81 +662,84 @@ fn canvas_app(properties: &CanvasAppProperties) -> Html {
     let agent_speech = use_agent_speech_controls(speech_ref, narration_cursors, speech_message);
     let agents = use_agent_controls(sender.clone(), surface.clone(), agent_speech);
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
-    use_surface_connection(
-        sender.clone(),
-        SurfaceHandles {
-            connection: connection.clone(),
-            surface: surface.clone(),
-            speech: speech.clone(),
-            identity: identity.clone(),
-            canvas_update: canvas_update.clone(),
-            team_controls: team_controls.clone(),
-            composer_drafts: composer_drafts.clone(),
-            submissions: submissions.clone(),
-            note_text: work_detail.note_text.clone(),
-            note_notice: work_detail.notice.clone(),
-            note_submission: work_detail.submission.clone(),
-        },
-    );
-    task_relations::use_request(&sender, &surface, &work_detail.selected, &work_map);
-    use_team_speech_abandonment(&surface, speech_runtime.clone());
-    use_speech_reset(speech.clone(), speech_runtime.clone());
-    use_page_hide_speech_stop(speech_runtime.clone());
-    use_mosaic_root_scroll(*mosaic);
-    use_canvas_menu_dismissal(canvas_menu_open.clone());
-    watchband::use_command_modifier_preview();
-    watchband::use_team_fleet_right_edge(team_fleet.clone(), teamed_lane_count(&surface));
-    let surface_view = surface.read();
-    let work = project_work(surface_view.as_ref());
-    use_work_scope_reconciliation(work.as_ref(), work_scope.clone(), work_scope_notice.clone());
-
-    let refresh = refresh_callback(
-        sender.clone(),
-        axis.clone(),
-        work_detail.selected.clone(),
-        work_map.clone(),
-    );
-    let canvas = render_canvas(
-        CanvasRender {
-            connection: &connection,
-            surface: &surface,
-            axis: &axis,
-            mosaic: &mosaic,
-            navigate: &properties.navigate,
-            canvas_menu_open: &canvas_menu_open,
-            work_scope: &work_scope,
-            work_scope_notice: &work_scope_notice,
-            work_arrangement: &work_arrangement,
-            identity: &identity,
-            canvas_update: &canvas_update,
-            team_controls: &team_controls,
-            composer_drafts: &composer_drafts,
-            submissions: &submissions,
-            composer_drag: &composer_drag,
-            team_fleet: &team_fleet,
+    (
+        CanvasAppState {
+            connection,
+            surface,
+            canvas_menu_open,
+            axis,
+            mosaic,
+            navigate: properties.navigate.clone(),
+            work_scope,
+            work_scope_notice,
+            work_arrangement,
+            identity,
+            canvas_update,
+            team_controls,
+            team_fleet,
+            composer_drafts,
+            submissions,
+            action_issue,
+            sender,
+            composer_drag,
+            work_detail,
+            task_context,
+            work_history,
+            work_map,
+            speech_status,
+            agents,
             unsafe_intent,
-            sender: &sender,
-            agents: &agents,
-            selected_task: &work_detail.selected,
-            detail_presented: *work_detail.presented,
-            detail_closing: *work_detail.closing,
-            work_map: &work_map,
-            work_history: &work_history,
-            detail_close: &work_detail.close_ref,
-            detail_sheet: &work_detail.sheet_ref,
-            note_text: &work_detail.note_text,
-            note_notice: &work_detail.notice,
-            note_submission: &work_detail.submission.status,
-            action_issue: &action_issue,
-            speech_status: &speech_status,
-            submit_note: work_detail.submit_note.clone(),
-            select_task: work_detail.select.clone(),
-            close_task: work_detail.close.clone(),
-            refresh,
         },
-        work.as_ref(),
+        speech_runtime,
+    )
+}
+
+#[hook]
+fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime) {
+    use_surface_connection(
+        state.sender.clone(),
+        SurfaceHandles {
+            connection: state.connection.clone(),
+            surface: state.surface.clone(),
+            identity: state.identity.clone(),
+            canvas_update: state.canvas_update.clone(),
+            team_controls: state.team_controls.clone(),
+            composer_drafts: state.composer_drafts.clone(),
+            submissions: state.submissions.clone(),
+            note_text: state.work_detail.note_text.clone(),
+            note_notice: state.work_detail.notice.clone(),
+            note_submission: state.work_detail.submission.clone(),
+        },
     );
-    message_task_inspector::provide(task_context, canvas)
+    task_relations::use_request(
+        &state.sender,
+        &state.surface,
+        &state.work_detail.selected,
+        &state.work_map,
+    );
+    use_team_speech_abandonment(&state.surface, speech_runtime.clone());
+    use_page_hide_speech_stop(speech_runtime);
+    use_mosaic_root_scroll(*state.mosaic);
+    use_canvas_menu_dismissal(state.canvas_menu_open.clone());
+    watchband::use_command_modifier_preview();
+    watchband::use_team_fleet_right_edge(
+        state.team_fleet.clone(),
+        teamed_lane_count(&state.surface),
+    );
+    let surface_view = state.surface.read();
+    let work = project_work(surface_view.as_ref());
+    use_work_scope_reconciliation(
+        work.as_ref(),
+        state.work_scope.clone(),
+        state.work_scope_notice.clone(),
+    );
+}
+
+#[function_component(CanvasApp)]
+fn canvas_app(properties: &CanvasAppProperties) -> Html {
+    let (state, speech_runtime) = use_canvas_app_state(properties);
+    use_canvas_app_effects(&state, speech_runtime);
+    state.render()
 }
 
 fn project_work(runtime: Option<&CanvasRuntime>) -> Option<WorkProjection<'_>> {
@@ -823,14 +904,6 @@ fn use_surface_connection(sender: SenderHandle, handles: SurfaceHandles) {
             active.set(false);
             sender.queue.borrow_mut().take();
         }
-    });
-}
-
-#[hook]
-fn use_speech_reset(speech: UseStateHandle<wire::SpeechPlayback>, speech_runtime: SpeechRuntime) {
-    let effective = (*speech).clone();
-    use_effect_with(effective, move |_| {
-        speech_runtime.stop();
     });
 }
 
@@ -1156,7 +1229,13 @@ fn narration_callback(
                 TeamSpeech::Narrate => line.narration,
             };
             if let Some(text) = text {
-                speak.emit(SpeechRequest::narration(batch.team.clone(), line.key, text));
+                speak.emit(SpeechRequest::narration(
+                    line.worktree,
+                    line.playback,
+                    batch.team.clone(),
+                    line.key,
+                    text,
+                ));
             }
         }
     })

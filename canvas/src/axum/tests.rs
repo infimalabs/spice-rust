@@ -1204,21 +1204,26 @@ fn external_speech(command: &[&str]) -> crate::SpeechConfig {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn speech_endpoint_executes_only_the_server_owned_argv_contract() {
+async fn speech_endpoint_uses_the_request_worktree_server_owned_argv_contract() {
     let app = TestApp::new();
-    let (server, _control) = Server::bind(Generation::new(
+    let generation = Generation::new(
         epoch(),
         Capabilities::default(),
         app.version(),
         app.source(),
-        external_speech(&["/bin/cat"]),
-    ))
-    .await
-    .expect("binds");
+        crate::SpeechConfig::default(),
+    )
+    .with_speech_resolver(|worktree| {
+        (worktree == "/worktrees/speech")
+            .then(|| external_speech(&["/bin/cat"]))
+            .ok_or_else(|| "unknown worktree".to_owned())
+    });
+    let (server, _control) = Server::bind(generation).await.expect("binds");
     let address = server.local_addr().expect("local address");
     let task = tokio::spawn(server.up());
     let body = wire::encode(&wire::SpeechRequest {
         text: "spoken exactly; $(not a shell)".to_owned(),
+        worktree: "/worktrees/speech".to_owned(),
     })
     .expect("request encodes");
     let response = speech_request(
@@ -1270,6 +1275,7 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
         let task = tokio::spawn(server.up());
         let body = wire::encode(&wire::SpeechRequest {
             text: "bounded failure".to_owned(),
+            worktree: "/worktrees/speech".to_owned(),
         })
         .expect("request encodes");
         let response = speech_request(
@@ -1311,7 +1317,7 @@ async fn speech_endpoint_bounds_disabled_malformed_and_unavailable_backends() {
         address,
         &address.to_string(),
         "https://attacker.example",
-        br#"{"text":"valid"}"#,
+        br#"{"text":"valid","worktree":"/worktrees/speech"}"#,
     )
     .await;
     assert!(cross_origin.starts_with(b"HTTP/1.1 403 Forbidden\r\n"));

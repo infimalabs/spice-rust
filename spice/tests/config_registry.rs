@@ -740,6 +740,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "vendor.codex.effort",
             "vendor.omp.model",
             "vendor.omp.effort",
+            "say.voice",
         ]
     );
 
@@ -763,7 +764,6 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
             "canvas.pack.rows",
             "say.backend",
             "say.command",
-            "say.voice",
             "say.content_type",
             "say.words_per_minute",
             "proof.container",

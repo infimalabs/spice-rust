@@ -120,7 +120,7 @@ pub const CONFIG_KEY_DECLARATIONS: &[ConfigKeyDeclaration] = &[
     ConfigKeyDeclaration::new("canvas.pack.rows", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("say.backend", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("say.command", LOCAL),
-    ConfigKeyDeclaration::new("say.voice", TRACKED_LOCAL),
+    ConfigKeyDeclaration::new("say.voice", TRACKED_WORKTREE),
     ConfigKeyDeclaration::new("say.content_type", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("say.words_per_minute", TRACKED_LOCAL),
     ConfigKeyDeclaration::new("proof.image", TRACKED),

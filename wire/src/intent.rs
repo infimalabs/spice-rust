@@ -877,6 +877,8 @@ pub struct LaneAnswerRow {
     pub name: Option<String>,
     /// Canonical worktree bound to the lane.
     pub worktree: String,
+    /// Effective browser-safe speech contract resolved from this member's worktree.
+    pub speech: crate::SpeechPlayback,
     /// Closed lane-life spelling governing re-seating.
     pub life: String,
     /// Vendor selected for occupants of this lane.

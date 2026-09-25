@@ -37,6 +37,7 @@ pub(super) fn answer(
         seats.activity(lane)
     })?;
     for row in &mut answer.lanes {
+        row.speech = worktree_speech(paths, &row.worktree);
         row.jobs = terminal::unheard(&terminal::Jobs::for_lane(paths, row.lane));
     }
     Ok(answer)
@@ -72,6 +73,7 @@ fn answer_at(
                 team: row.team,
                 name: row.name.clone(),
                 worktree: row.worktree.clone(),
+                speech: wire::SpeechPlayback::Disabled {},
                 life: row.life.clone(),
                 vendor: row.vendor.clone(),
                 model: row
@@ -131,6 +133,13 @@ fn answer_at(
         renewals: head.renewals.clone(),
         refresh_after_millis,
     })
+}
+
+fn worktree_speech(paths: &RuntimePaths, worktree: &str) -> wire::SpeechPlayback {
+    paths
+        .speech_for_worktree(worktree)
+        .map(|speech| speech.playback())
+        .unwrap_or(wire::SpeechPlayback::Disabled {})
 }
 
 /// Admit one client-observed topology authority and derive its successor.

@@ -1192,6 +1192,7 @@ mod tests {
             lane: id(suffix),
             name: None,
             worktree: format!("/work/lane-{suffix}"),
+            speech: wire::SpeechPlayback::Disabled {},
             life: "steer".to_owned(),
             vendor: "omp".parse().expect("fixture vendor is canonical"),
             model: None,

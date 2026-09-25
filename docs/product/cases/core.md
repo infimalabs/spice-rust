@@ -155,6 +155,7 @@
 | Situation | Expected | Ref |
 | --- | --- | --- |
 | Two messages arrive together | one voice at a time | [At most one audio element sounds at a time](../invariants/lifecycle.md#surface-at-most-one-audio-element-sounds-at-a-time) |
+| Two agents in one speaking team use different worktree voices | their utterances use those voices sequentially through the one global queue | [At most one audio element sounds at a time](../invariants/lifecycle.md#surface-at-most-one-audio-element-sounds-at-a-time) |
 | Operator stops speech | immediate, global, idempotent | [At most one audio element sounds at a time](../invariants/lifecycle.md#surface-at-most-one-audio-element-sounds-at-a-time) |
 | Lane opened with old history | nothing older than the open auto-plays | [Nothing older than the moment the operator opened a lane auto-plays](../invariants/lifecycle.md#surface-nothing-older-than-the-moment-the-operator-opened-a-lane-auto-plays) |
 | Speech backend is missing or reports failure | `Speech unavailable` is exposed; stream unaffected | [Speech is best-effort](../invariants/lifecycle.md#surface-speech-is-best-effort) |

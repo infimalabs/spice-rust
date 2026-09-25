@@ -137,7 +137,13 @@ fn migrate_receipts(connection: &Connection) -> Result<(), OpenError> {
                     canonical_receipt::<wire::intent::BoardAnswer>(&command, &response)
                 }
                 "lane::read" | "lane::arrange" | "lineage::configure" | "lineage::arrange" => {
-                    canonical_receipt::<wire::intent::LaneAnswer>(&command, &response)
+                    super::speech_playback::canonical_predecessor(&response).map_err(|error| {
+                        invalid(
+                            "command_receipts",
+                            &command,
+                            &format!("migrated response is not its command-kind wire: {error}"),
+                        )
+                    })
                 }
                 _ => Err(invalid(
                     "command_receipts",
