@@ -71,9 +71,8 @@ pub(super) fn render_member_presence(status: crate::runtime::LaneStatus) -> Html
 pub(super) struct CanvasRender<'a> {
     pub connection: &'a UseStateHandle<Connection>,
     pub surface: &'a UseStateHandle<SurfaceData>,
-    pub axis: &'a UseStateHandle<Axis>,
-    pub mosaic: &'a UseStateHandle<bool>,
-    pub navigate: &'a Callback<CanvasDestination>,
+    pub destination: CanvasDestination,
+    pub navigate: &'a Callback<navigation::Intent>,
     pub canvas_menu_open: &'a UseStateHandle<bool>,
     pub work_scope: &'a UseStateHandle<WorkScope>,
     pub work_scope_notice: &'a UseStateHandle<Option<String>>,
@@ -107,7 +106,6 @@ pub(super) struct CanvasRender<'a> {
 }
 
 pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
-    let active_axis = **render.axis;
     let surface = render.surface.read();
     let cursor = surface
         .as_ref()
@@ -120,22 +118,23 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
         .map(|lanes| lanes.topology_revision.to_string());
     html! {
         <div
-            class={classes!("shell", (**render.mosaic).then_some("shell--mosaic"))}
+            class={classes!(
+                "shell",
+                (render.destination == CanvasDestination::Chat).then_some("shell--mosaic"),
+            )}
             data-topology-revision={topology_revision}
             data-unsafe-intent={render.unsafe_intent.to_string()}
             data-submission-count={render.submissions.status.len().to_string()}
         >
             {chrome::render_command_bar(chrome::CommandBarRender {
                 connection: render.connection,
-                mosaic: render.mosaic,
+                destination: render.destination,
                 menu_open: render.canvas_menu_open,
                 navigate: render.navigate,
                 identity: render.identity,
                 canvas_update: render.canvas_update,
                 work_scope: render.work_scope,
-                work_scope_notice: render.work_scope_notice,
                 work,
-                active_axis,
                 surface: render.surface,
                 cursor: &cursor,
                 sender: render.sender,
@@ -151,17 +150,17 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
             if let SpeechStatus::Failed(issue) = &**render.speech_status {
                 <p class="form-refusal" role="alert">{issue}</p>
             }
-            {render_workspace(&render, active_axis, work)}
+            {render_workspace(&render, work)}
         </div>
     }
 }
 
 pub(super) fn render_workspace(
     render: &CanvasRender<'_>,
-    active_axis: Axis,
     work: Option<&WorkProjection<'_>>,
 ) -> Html {
-    let mosaic_active = **render.mosaic;
+    let mosaic_active = render.destination == CanvasDestination::Chat;
+    let active_axis = render.destination.axis();
     html! {
         <>
             <div
@@ -176,21 +175,21 @@ pub(super) fn render_workspace(
                     {watchband::render_team(render)}
                 </main>
             </div>
-            if !mosaic_active {
+            if let Some(active_axis) = active_axis {
                 <div key="analytics" class="workspace">
-                <header class="topbar">
-                    <div class="mobile-brand">{"Spice Canvas"}</div>
-                    <div class="topbar-actions">
-                        <button
-                            class="refresh"
-                            type="button"
-                            onclick={render.refresh.clone()}
-                        >{"Refresh"}</button>
-                    </div>
-                </header>
-                <main class="content">
-                    {render_analytics(render, active_axis, work)}
-                </main>
+                    <header class="topbar">
+                        <div class="mobile-brand">{"Spice Canvas"}</div>
+                        <div class="topbar-actions">
+                            <button
+                                class="refresh"
+                                type="button"
+                                onclick={render.refresh.clone()}
+                            >{"Refresh"}</button>
+                        </div>
+                    </header>
+                    <main class="content">
+                        {render_analytics(render, active_axis, work)}
+                    </main>
                 </div>
             }
         </>

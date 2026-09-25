@@ -540,9 +540,8 @@ struct CanvasAppState {
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
     canvas_menu_open: UseStateHandle<bool>,
-    axis: UseStateHandle<Axis>,
-    mosaic: UseStateHandle<bool>,
-    navigate: Callback<CanvasDestination>,
+    destination: CanvasDestination,
+    navigate: Callback<navigation::Intent>,
     work_scope: UseStateHandle<WorkScope>,
     work_scope_notice: UseStateHandle<Option<String>>,
     work_arrangement: UseStateHandle<WorkArrangement>,
@@ -570,7 +569,6 @@ impl CanvasAppState {
         let work = project_work(surface_view.as_ref());
         let refresh = refresh_callback(
             self.sender.clone(),
-            self.axis.clone(),
             self.work_detail.selected.clone(),
             self.work_map.clone(),
         );
@@ -578,8 +576,7 @@ impl CanvasAppState {
             CanvasRender {
                 connection: &self.connection,
                 surface: &self.surface,
-                axis: &self.axis,
-                mosaic: &self.mosaic,
+                destination: self.destination,
                 navigate: &self.navigate,
                 canvas_menu_open: &self.canvas_menu_open,
                 work_scope: &self.work_scope,
@@ -623,12 +620,16 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
     let canvas_menu_open = use_state(|| false);
-    let (axis, mosaic) = navigation::use_global_destination(properties.destination);
     let work_scope = use_state(WorkScope::default);
     let work_scope_notice = use_state(|| None::<String>);
     let work_arrangement = use_state(WorkArrangement::default);
     let identity = use_state(|| None::<CanvasIdentity>);
     let canvas_update = use_state(|| None::<CanvasUpdate>);
+    let navigate = navigation::intent_callback(
+        properties.navigate.clone(),
+        work_scope.clone(),
+        work_scope_notice.clone(),
+    );
     let team_controls = use_reducer(TeamControls::restore);
     let team_fleet = use_node_ref();
     let composer_drafts = use_reducer(ComposerDrafts::default);
@@ -644,8 +645,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     };
     let composer_drag = use_composer_drag(&surface);
     let work_detail = task_detail::use_controls(sender.clone(), surface.clone());
-    let task_inspector =
-        message_task_inspector::use_controls(&surface, &work_detail, &properties.navigate);
+    let task_inspector = message_task_inspector::use_controls(&surface, &work_detail, &navigate);
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
     let work_map = use_state(view::WorkMapState::default);
     let speech_status = use_state(SpeechStatus::default);
@@ -667,9 +667,8 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
             connection,
             surface,
             canvas_menu_open,
-            axis,
-            mosaic,
-            navigate: properties.navigate.clone(),
+            destination: properties.destination,
+            navigate,
             work_scope,
             work_scope_notice,
             work_arrangement,
@@ -719,7 +718,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
     );
     use_team_speech_abandonment(&state.surface, speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime);
-    use_mosaic_root_scroll(*state.mosaic);
+    use_mosaic_root_scroll(state.destination == CanvasDestination::Chat);
     use_canvas_menu_dismissal(state.canvas_menu_open.clone());
     watchband::use_command_modifier_preview();
     watchband::use_team_fleet_right_edge(
@@ -970,7 +969,6 @@ fn use_team_speech_abandonment(
 
 fn refresh_callback(
     sender: SenderHandle,
-    _axis: UseStateHandle<Axis>,
     selected: UseStateHandle<Option<TaskStamp>>,
     map: UseStateHandle<view::WorkMapState>,
 ) -> Callback<MouseEvent> {

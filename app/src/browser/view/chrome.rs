@@ -29,15 +29,13 @@ const TICKER_BUDGET: usize = 160;
 /// The bar of view pills, each wearing what its axis currently counts.
 pub(super) struct CommandBarRender<'a> {
     pub(super) connection: &'a UseStateHandle<Connection>,
-    pub(super) mosaic: &'a UseStateHandle<bool>,
-    pub(super) navigate: &'a Callback<CanvasDestination>,
+    pub(super) destination: CanvasDestination,
+    pub(super) navigate: &'a Callback<navigation::Intent>,
     pub(super) menu_open: &'a UseStateHandle<bool>,
     pub(super) work_scope: &'a UseStateHandle<WorkScope>,
-    pub(super) work_scope_notice: &'a UseStateHandle<Option<String>>,
     pub(super) work: Option<&'a WorkProjection<'a>>,
     pub(super) identity: &'a UseStateHandle<Option<CanvasIdentity>>,
     pub(super) canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,
-    pub(super) active_axis: Axis,
     pub(super) surface: &'a SurfaceData,
     pub(super) cursor: &'a str,
     pub(super) sender: &'a SenderHandle,
@@ -59,11 +57,8 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 <nav class="task-pill-strip" aria-label="Open task projects">
                     {for task_pills.into_iter().map(|pill| {
                         let navigate = render.navigate.clone();
-                        let work_scope = render.work_scope.clone();
-                        let work_scope_notice = render.work_scope_notice.clone();
                         let identity = pill.identity.clone();
-                        let selected = !**render.mosaic
-                            && render.active_axis == Axis::Flow
+                        let selected = render.destination == CanvasDestination::Work
                             && render.work_scope.stem() == Some(&pill.identity);
                         let key = identity.to_string();
                         let title = pill.title();
@@ -88,9 +83,9 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                                 data-active={pill.active.to_string()}
                                 data-unavailable={pill.unavailable.to_string()}
                                 onclick={Callback::from(move |_| {
-                                    work_scope.set(WorkScope::Stem(identity.clone()));
-                                    work_scope_notice.set(None);
-                                    navigate.emit(CanvasDestination::Work);
+                                    navigate.emit(navigation::Intent::Work(WorkScope::Stem(
+                                        identity.clone(),
+                                    )));
                                 })}
                             >
                                 <span>{pill.stem.clone()}</span>
@@ -115,11 +110,12 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
         <nav class="canvas-navigation canvas-control-rail team-mode-rail" aria-label="Canvas views">
             {for CanvasDestination::ALL.map(|destination| {
                 let navigate = render.navigate.clone();
-                let work_scope = render.work_scope.clone();
-                let work_scope_notice = render.work_scope_notice.clone();
-                let selected = destination.axis().map_or(**render.mosaic, |candidate| {
-                    !**render.mosaic && candidate == render.active_axis
-                });
+                let selected = destination == render.destination;
+                let intent = match destination {
+                    CanvasDestination::Info => navigation::Intent::Info,
+                    CanvasDestination::Work => navigation::Intent::Work(WorkScope::AllOpen),
+                    CanvasDestination::Chat => navigation::Intent::Chat,
+                };
                 let badge = navigation_badge(destination, runtime, render.submissions);
                 html! {
                     <button
@@ -127,13 +123,7 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                         type="button"
                         aria-current={selected.then_some("page")}
                         title={destination.description()}
-                        onclick={Callback::from(move |_| {
-                            if destination == CanvasDestination::Work {
-                                work_scope.set(WorkScope::AllOpen);
-                                work_scope_notice.set(None);
-                            }
-                            navigate.emit(destination);
-                        })}
+                        onclick={Callback::from(move |_| navigate.emit(intent.clone()))}
                     >
                         <span class="team-mode-label">{destination.label()}</span>
                         if let Some(count) = badge {
@@ -199,9 +189,7 @@ fn render_canvas_menu(
                 {render_navigation(render, runtime)}
                 <div class="canvas-menu-panel">
                     {super::team_menu::render(
-                        **render.mosaic,
-                        render.active_axis,
-                        axis_count(render.active_axis, runtime),
+                        render.destination,
                         runtime,
                         &super::team_menu::Context {
                             cursor: render.cursor,
@@ -239,7 +227,7 @@ fn waiting_directives(runtime: Option<&CanvasRuntime>, submissions: &SubmissionS
 ///
 /// Each count is the size of what that axis's own panes render, so a badge
 /// never advertises more than the pill leads to.
-fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
+pub(super) fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
     match axis {
         Axis::Flow => runtime
             .and_then(CanvasRuntime::board)
