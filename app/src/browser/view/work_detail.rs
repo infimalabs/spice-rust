@@ -1,5 +1,6 @@
 //! Contextual detail drawer for one durable Work task identity.
 
+use super::super::clock::{TaskTimePresentation, task_time};
 use super::*;
 use crate::TaskRelationsState;
 use crate::runtime::LaneView;
@@ -254,7 +255,7 @@ fn render_available(
                                     <strong title={note.author.to_string()}>
                                         {work_board::actor_name(&note.author, render.lanes)}
                                     </strong>
-                                    <time>{work_board::render_age(&note.at)}</time>
+                                    {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
                                 </header>
                                 <p>{note.text.clone()}</p>
                             </li>
@@ -275,7 +276,10 @@ fn fact(label: &'static str, value: String) -> Html {
 }
 
 fn instant_fact(label: &'static str, instant: Option<&wire::Instant>, empty: &'static str) -> Html {
-    let value = instant.map_or_else(|| html! { empty }, work_board::render_age);
+    let value = instant.map_or_else(
+        || html! { empty },
+        |instant| task_time(instant, TaskTimePresentation::DetailedElapsed),
+    );
     html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
 }
 
@@ -284,7 +288,10 @@ fn deadline_fact(
     instant: Option<&wire::Instant>,
     empty: &'static str,
 ) -> Html {
-    let value = instant.map_or_else(|| html! { empty }, work_board::render_countdown);
+    let value = instant.map_or_else(
+        || html! { empty },
+        |instant| task_time(instant, TaskTimePresentation::DetailedRemaining),
+    );
     html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
 }
 

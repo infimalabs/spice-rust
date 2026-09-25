@@ -256,6 +256,7 @@
 
 .work-card-facts dt { font-weight: 700; }
 .work-card-facts dd { min-width: 0; margin: 0; }
+.task-time { font-variant-numeric: tabular-nums; }
 .work-card-alert dd { color: var(--danger); }
 .work-card-wake dt { color: var(--warning); }
 .work-card-result { display: flex; align-items: baseline; gap: 4px; }

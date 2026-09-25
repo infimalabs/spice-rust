@@ -17,7 +17,7 @@ use crate::work::{
 };
 use wire::ClaimDisposition;
 
-use super::super::clock::{Age, Countdown};
+use super::super::clock::{TaskTimePresentation, local_date, task_time};
 use super::super::work_history::Controls as WorkHistoryControls;
 
 const OPEN_LANES: [WorkAvailability; 4] = [
@@ -290,14 +290,8 @@ fn history_date(task: &WorkTask<'_>) -> String {
         .workflow
         .body
         .completion
-        .map(|instant| {
-            let mut instant = instant.to_string();
-            if let Some(separator) = instant.find('T') {
-                instant.truncate(separator);
-            }
-            instant
-        })
-        .unwrap_or_else(|| "Completion date unavailable".to_owned())
+        .as_ref()
+        .map_or_else(|| "Completion date unavailable".to_owned(), local_date)
 }
 
 fn render_arrangement(state: &UseStateHandle<WorkArrangement>) -> Html {
@@ -485,7 +479,7 @@ fn render_card_facts(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
                 <div class="work-card-alert"><dt>{"Blocked"}</dt><dd>{blocker}</dd></div>
             }
             if let Some(wake) = wake_instant(task) {
-                <div class="work-card-wake"><dt>{"Wake"}</dt><dd>{render_countdown(wake)}</dd></div>
+                <div class="work-card-wake"><dt>{"Wake"}</dt><dd>{task_time(wake, TaskTimePresentation::CompactRemaining)}</dd></div>
             }
             if dependencies > 0 || dependents > 0 {
                 <div>
@@ -534,7 +528,7 @@ fn render_result(workflow: &wire::WorkflowHead) -> Html {
                 {workflow.status.clone()}
                 if let Some(completion) = workflow.completion.as_ref() {
                     <span aria-hidden="true">{"·"}</span>
-                    {render_age(completion)}
+                    {task_time(completion, TaskTimePresentation::CompactElapsed)}
                 }
             </dd>
         </div>
@@ -553,7 +547,7 @@ fn render_lease(task: &WorkTask<'_>) -> Html {
     html! {
         <div>
             <dt>{"Lease"}</dt>
-            <dd>{render_countdown(&lease.body.expiry)}</dd>
+            <dd>{task_time(&lease.body.expiry, TaskTimePresentation::CompactRemaining)}</dd>
         </div>
     }
 }
@@ -607,19 +601,6 @@ fn priority_label(tags: &[String]) -> Option<&str> {
             "none" => "N",
             other => other,
         })
-}
-
-pub(super) fn render_age(instant: &wire::Instant) -> Html {
-    let authored = instant.get().as_millisecond();
-    let title = instant.to_string();
-    html! { <Age {authored} class="relative-age" {title} /> }
-}
-
-/// A future instant, counting down to it with the exact instant on hover.
-pub(super) fn render_countdown(instant: &wire::Instant) -> Html {
-    let expiry = instant.get().as_millisecond();
-    let title = instant.to_string();
-    html! { <Countdown {expiry} class="relative-age" {title} /> }
 }
 
 fn history_tasks<'a>(work: &'a WorkProjection<'a>) -> Vec<&'a WorkTask<'a>> {

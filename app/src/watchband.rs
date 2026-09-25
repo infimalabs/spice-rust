@@ -874,6 +874,47 @@ fn relative_label(millis: i64) -> String {
     }
 }
 
+/// Relative task clocks remain precise through hours, then yield to the
+/// browser's localized absolute timestamp instead of rounding into days.
+#[must_use]
+pub fn task_elapsed_label(millis: i64) -> Option<String> {
+    (millis < MILLIS_PER_DAY).then(|| elapsed_label(millis))
+}
+
+/// Relative task deadlines remain precise through hours, then yield to the
+/// browser's localized absolute timestamp instead of rounding into days.
+#[must_use]
+pub fn task_remaining_label(millis: i64) -> Option<String> {
+    (millis < MILLIS_PER_DAY).then(|| remaining_label(millis))
+}
+
+/// Delay until a task age's visible relative spelling changes or becomes
+/// absolute at the 24-hour boundary.
+#[must_use]
+pub fn task_elapsed_label_deadline_millis(millis: i64) -> Option<u32> {
+    (millis < MILLIS_PER_DAY)
+        .then(|| elapsed_label_deadline_millis(millis))
+        .flatten()
+}
+
+/// Delay until a task deadline's absolute spelling becomes relative, or its
+/// visible relative spelling changes.
+#[must_use]
+pub fn task_remaining_label_deadline_millis(millis: i64) -> Option<u32> {
+    if millis >= MILLIS_PER_DAY {
+        return Some(
+            u32::try_from(
+                i128::from(millis)
+                    .saturating_sub(i128::from(MILLIS_PER_DAY))
+                    .saturating_add(1)
+                    .clamp(MIN_TIMER_DELAY_MILLIS, i128::from(u32::MAX)),
+            )
+            .expect("task deadline delay is clamped to u32"),
+        );
+    }
+    remaining_label_deadline_millis(millis)
+}
+
 /// Delay until [`elapsed_label`] can return a different spelling.
 ///
 /// Old labels use their displayed unit as the timer quantum, so restored
@@ -1133,9 +1174,11 @@ pub fn truncate(text: &str, budget: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ComposerDragSession, MAX_TEAM_VISUAL_WEIGHT, agent_message_attribution,
-        agent_message_label, lane_accent, quote_label, swap_members, team_visual_weight,
-        ticker_accessible_label, ticker_chunks, tool_media_description,
+        ComposerDragSession, MAX_TEAM_VISUAL_WEIGHT, MILLIS_PER_DAY, agent_message_attribution,
+        agent_message_label, lane_accent, quote_label, swap_members, task_elapsed_label,
+        task_elapsed_label_deadline_millis, task_remaining_label,
+        task_remaining_label_deadline_millis, team_visual_weight, ticker_accessible_label,
+        ticker_chunks, tool_media_description,
     };
 
     fn id(suffix: u8) -> wire::CanonicalUuid {
@@ -1160,6 +1203,36 @@ mod tests {
             bound: false,
             jobs: Vec::new(),
         }
+    }
+
+    #[test]
+    fn task_times_cross_from_relative_hours_to_absolute_at_one_day() {
+        assert_eq!(
+            task_elapsed_label(MILLIS_PER_DAY - 1),
+            Some("23h".to_owned())
+        );
+        assert_eq!(task_elapsed_label(MILLIS_PER_DAY), None);
+        assert_eq!(
+            task_remaining_label(MILLIS_PER_DAY - 1),
+            Some("23h".to_owned())
+        );
+        assert_eq!(task_remaining_label(MILLIS_PER_DAY), None);
+
+        assert_eq!(
+            task_elapsed_label_deadline_millis(MILLIS_PER_DAY - 1),
+            Some(1)
+        );
+        assert_eq!(task_elapsed_label_deadline_millis(MILLIS_PER_DAY), None);
+        assert_eq!(
+            task_remaining_label_deadline_millis(MILLIS_PER_DAY),
+            Some(1)
+        );
+        assert_eq!(
+            task_remaining_label_deadline_millis(MILLIS_PER_DAY + 999),
+            Some(1_000)
+        );
+        assert_eq!(task_remaining_label(-1), Some("now".to_owned()));
+        assert_eq!(task_remaining_label_deadline_millis(-1), None);
     }
 
     #[test]
