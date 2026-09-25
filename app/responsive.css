@@ -119,7 +119,7 @@
   .work-detail-tabs,
   .work-map-content { padding-inline: 14px; }
   .work-map-controls { align-items: stretch; }
-  .work-map-control-group { display: flex; width: 100%; }
+  .work-map-control-group { width: 100%; }
   .work-map-control-group button { flex: 1 1 0; }
   .work-map-depth,
   .work-map-zoom { display: grid; grid-template-columns: auto 1fr auto; }

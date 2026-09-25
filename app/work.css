@@ -614,12 +614,10 @@
   border-color: transparent;
   border-radius: var(--canvas-radius-pill);
   background: transparent;
-  font-size: .7rem;
 }
 .work-map-lenses button { padding: 6px 11px; font-size: .72rem; }
 .work-map-lenses button[aria-pressed="true"],
-.work-map-control-group button.active,
-.work-map-controls button[aria-pressed="true"] {
+.work-map-control-group button.active {
   border-color: transparent;
   background: var(--control);
   color: var(--ink);
@@ -638,7 +636,7 @@
   gap: 2px;
   padding: 3px;
 }
-.work-map-control-group button { padding: 5px 9px; }
+.work-map-control-group button { padding: 5px 9px; font-size: .7rem; }
 .work-map-depth span,
 .work-map-zoom span {
   padding-inline: 5px;
@@ -716,9 +714,8 @@
   overflow: visible;
   pointer-events: none;
 }
-.work-map-node-button { position: absolute; pointer-events: auto; }
 .work-map-node-button {
-  padding: 0;
+  position: absolute; pointer-events: auto; padding: 0;
   border: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
   border-radius: var(--canvas-radius-control);
   background: transparent;
