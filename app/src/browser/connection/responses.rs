@@ -618,11 +618,15 @@ fn restore_lane_submissions(
     restored: Vec<crate::composer_drafts::ComposerDraft>,
     issue: &str,
 ) {
+    let lane_key = lane.to_string();
+    let current =
+        crate::browser::watchband::current_composer_draft(&lane_key, &handles.composer_drafts);
     handles
         .composer_drafts
         .dispatch(ComposerAction::RestoreAll {
-            lane: lane.to_string(),
+            lane: lane_key,
             drafts: restored,
+            current,
         });
     handles.composer_drafts.dispatch(ComposerAction::SetIssue {
         lane: lane.to_string(),

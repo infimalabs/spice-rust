@@ -297,6 +297,14 @@ pub(super) fn note_submit_callback(
 ) -> Callback<SubmitEvent> {
     Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
+        let text = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            .and_then(|form| form.query_selector("textarea").ok().flatten())
+            .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+            .map(|textarea| textarea.value())
+            .unwrap_or_default();
+        note_text.set(text.clone());
         let Some(task) = (*selected).clone() else {
             return;
         };
@@ -314,7 +322,7 @@ pub(super) fn note_submit_callback(
                 detail.notes.last().map(|note| note.position),
             )
         };
-        match compose::note(handle.as_str(), &note_text) {
+        match compose::note(handle.as_str(), &text) {
             Ok(note) => {
                 let Some(id) = action_identity(&sender) else {
                     return;

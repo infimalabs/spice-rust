@@ -6,19 +6,6 @@ use yew::functional::UseReducerDispatcher;
 use super::*;
 mod task_inspector;
 
-pub(super) fn update_body(
-    lane_key: String,
-    drafts: UseReducerHandle<ComposerDrafts>,
-) -> Callback<InputEvent> {
-    Callback::from(move |event: InputEvent| {
-        let input: web_sys::HtmlTextAreaElement = event.target_unchecked_into();
-        drafts.dispatch(ComposerAction::SetBody {
-            lane: lane_key.clone(),
-            body: input.value(),
-        });
-    })
-}
-
 pub(super) fn keyboard_submit(
     lane: CanonicalUuid,
     target: Option<SubmissionTarget>,
@@ -69,6 +56,62 @@ pub(super) fn keyboard_submit(
             }
         }
     })
+}
+#[derive(Properties, PartialEq)]
+pub(super) struct ComposerTextareaProps {
+    pub(super) id: String,
+    pub(super) label: String,
+    pub(super) body: String,
+    pub(super) placeholder: String,
+    pub(super) rows: &'static str,
+    pub(super) primary_target: Option<String>,
+    pub(super) quote_identity: Option<String>,
+    pub(super) broadcast_help: Option<String>,
+    pub(super) onkeydown: Callback<KeyboardEvent>,
+    pub(super) onpaste: Callback<Event>,
+}
+
+#[function_component(ComposerTextarea)]
+pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
+    let root = use_node_ref();
+    {
+        let root = root.clone();
+        use_effect_with(properties.onkeydown.clone(), move |onkeydown| {
+            let registration = root.cast::<web_sys::HtmlTextAreaElement>().map(|textarea| {
+                let onkeydown = onkeydown.clone();
+                let callback =
+                    Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
+                        onkeydown.emit(event);
+                    });
+                textarea
+                    .add_event_listener_with_callback("keydown", callback.as_ref().unchecked_ref())
+                    .expect("composer textarea accepts its keyboard shortcut listener");
+                (textarea, callback)
+            });
+            move || {
+                if let Some((textarea, callback)) = registration {
+                    let _ = textarea.remove_event_listener_with_callback(
+                        "keydown",
+                        callback.as_ref().unchecked_ref(),
+                    );
+                }
+            }
+        });
+    }
+    html! {
+        <textarea
+            ref={root}
+            id={properties.id.clone()}
+            aria-label={properties.label.clone()}
+            data-primary-composer-target-id={properties.primary_target.clone()}
+            data-quote-draft-id={properties.quote_identity.clone()}
+            aria-keyshortcuts={properties.primary_target.as_ref().map(|_| "Control+Shift+Enter Meta+Shift+Enter")}
+            aria-describedby={properties.broadcast_help.clone()}
+            rows={properties.rows}
+            placeholder={properties.placeholder.clone()}
+            onpaste={properties.onpaste.clone()}
+        >{properties.body.clone()}</textarea>
+    }
 }
 
 pub(super) fn primary_textarea_id(lane_key: &str) -> String {
@@ -580,17 +623,6 @@ pub(super) fn render_quote_shards(
                         identity: remove_identity.clone(),
                     });
                 });
-                let update_key = lane_key.to_owned();
-                let update_drafts = drafts.clone();
-                let update_identity = quote.identity.clone();
-                let update = Callback::from(move |event: InputEvent| {
-                    let input: web_sys::HtmlTextAreaElement = event.target_unchecked_into();
-                    update_drafts.dispatch(ComposerAction::SetQuoteBody {
-                        lane: update_key.clone(),
-                        identity: update_identity.clone(),
-                        body: input.value(),
-                    });
-                });
                 let shown = watchband::quote_label(quote.preview.as_deref());
                 let textarea_id = quote_textarea_id(lane_key, &quote.identity);
                 let source_id = format!("message-{}", quote.identity);
@@ -637,17 +669,19 @@ pub(super) fn render_quote_shards(
                                 onclick={remove}
                             >{"×"}</button>
                         </header>
-                        <textarea
+                        <ComposerTextarea
+                            key={quote.body.clone()}
                             id={textarea_id}
-                            aria-label="Reply to quoted message"
-                            data-quote-draft-id={quote.identity.clone()}
-                            rows="2"
-                            value={quote.body.clone()}
+                            label="Reply to quoted message"
+                            body={quote.body.clone()}
                             placeholder={placeholder.to_owned()}
-                            oninput={update}
+                            rows="2"
+                            primary_target={None::<String>}
+                            quote_identity={Some(quote.identity.clone())}
+                            broadcast_help={None::<String>}
                             onkeydown={target_submit.clone()}
                             {onpaste}
-                        ></textarea>
+                        />
                         if let Some(issue) = &quote.issue {
                             <p class="composer-issue" role="status">{issue.clone()}</p>
                         }

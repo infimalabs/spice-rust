@@ -17,7 +17,6 @@ pub(super) fn use_card(card: String) -> Card {
     });
     let root = use_node_ref();
     use_inspector_focus(&root, inspection.is_some());
-    use_frame_guard(&inspection);
     use_focus_departure(&card, &context, inspection.is_some());
     Card {
         context,
@@ -37,35 +36,6 @@ fn use_inspector_focus(root: &NodeRef, open: bool) {
                 }
             })
             .forget();
-        }
-    });
-}
-
-#[hook]
-fn use_frame_guard(inspection: &Option<crate::browser::message_task_inspector::Inspection>) {
-    use_effect_with(inspection.clone(), move |inspection| {
-        let registration = inspection.as_ref().and_then(|inspection| {
-            crate::browser::message_task_inspector::restore_frame(inspection);
-            let document = web_sys::window()?.document()?;
-            let card = document.get_element_by_id(&inspection.card)?;
-            let plane = card.closest(".lane-mosaic-plane").ok().flatten()?;
-            let inspection = inspection.clone();
-            let callback =
-                Closure::<dyn FnMut(js_sys::Array, web_sys::MutationObserver)>::new(move |_, _| {
-                    crate::browser::message_task_inspector::restore_frame(&inspection);
-                });
-            let observer =
-                web_sys::MutationObserver::new(callback.as_ref().unchecked_ref()).ok()?;
-            let options = web_sys::MutationObserverInit::new();
-            options.set_attributes(true);
-            observer.observe_with_options(&card, &options).ok()?;
-            observer.observe_with_options(&plane, &options).ok()?;
-            Some((observer, callback))
-        });
-        move || {
-            if let Some((observer, _callback)) = registration {
-                observer.disconnect();
-            }
         }
     });
 }
@@ -126,13 +96,13 @@ pub(super) fn task_chip_click(
     card: String,
 ) -> Callback<MouseEvent> {
     Callback::from(move |event: MouseEvent| {
-        let Some((handle, scroll_top, layout)) = task_inspection_from_target(event.target()) else {
+        let Some(handle) = task_handle_from_target(event.target()) else {
             return;
         };
         event.prevent_default();
         event.stop_propagation();
         if let Some(inspector) = inspector.as_ref() {
-            inspector.inspect(card.clone(), handle, scroll_top, layout);
+            inspector.inspect(card.clone(), handle);
         }
     })
 }
@@ -145,50 +115,23 @@ pub(super) fn task_chip_keydown(
         if event.key() != "Enter" && event.key() != " " {
             return;
         }
-        let Some((handle, scroll_top, layout)) = task_inspection_from_target(event.target()) else {
+        let Some(handle) = task_handle_from_target(event.target()) else {
             return;
         };
         event.prevent_default();
         event.stop_propagation();
         if let Some(inspector) = inspector.as_ref() {
-            inspector.inspect(card.clone(), handle, scroll_top, layout);
+            inspector.inspect(card.clone(), handle);
         }
     })
 }
 
-fn task_inspection_from_target(
-    target: Option<web_sys::EventTarget>,
-) -> Option<(
-    wire::TaskHandle,
-    i32,
-    crate::browser::message_task_inspector::LayoutSnapshot,
-)> {
-    let chip = target
+fn task_handle_from_target(target: Option<web_sys::EventTarget>) -> Option<wire::TaskHandle> {
+    target
         .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .and_then(|target| target.closest(".message-task-chip").ok().flatten())?;
-    let handle = chip
+        .and_then(|target| target.closest(".message-task-chip").ok().flatten())?
         .get_attribute("data-task-handle")
-        .and_then(|handle| handle.parse().ok())?;
-    let card = chip.closest(".mosaic-message-card").ok().flatten()?;
-    let plane = chip.closest(".lane-mosaic-plane").ok().flatten()?;
-    let layout = crate::browser::message_task_inspector::LayoutSnapshot {
-        card: [
-            layout_integer(&card, "data-base")?,
-            layout_integer(&card, "data-rows")?,
-            layout_integer(&card, "data-track")?,
-            layout_integer(&card, "data-span")?,
-            layout_integer(&card, "data-measure-span")?,
-        ],
-        plane: [
-            layout_integer(&plane, "data-max-row")?,
-            layout_integer(&plane, "data-plane-rows")?,
-        ],
-    };
-    Some((handle, plane.scroll_top(), layout))
-}
-
-fn layout_integer(element: &web_sys::Element, attribute: &str) -> Option<i32> {
-    element.get_attribute(attribute)?.parse().ok()
+        .and_then(|handle| handle.parse().ok())
 }
 
 pub(super) fn close_inspector(

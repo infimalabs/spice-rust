@@ -147,19 +147,17 @@ fn render_history_archive(
                     <label>
                         <span>{"Search"}</span>
                         <input
+                            id="work-history-query"
                             type="search"
                             maxlength={wire::intent::TASK_HISTORY_QUERY_BYTES_MAX.to_string()}
                             placeholder="Handle, title, project, or description"
-                            value={(*controls.query).clone()}
-                            oninput={state_from_input(controls.query.clone())}
                         />
                     </label>
                     <label>
                         <span>{"Completed by"}</span>
                         <input
+                            id="work-history-cutoff"
                             type="date"
-                            value={(*controls.cutoff).clone()}
-                            oninput={state_from_input(controls.cutoff.clone())}
                         />
                     </label>
                     <div class="work-history-filter-actions canvas-control-rail team-mode-rail">
