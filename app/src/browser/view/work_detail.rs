@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::TaskRelationsState;
-use crate::browser::clock::Countdown;
 use crate::runtime::LaneView;
 use crate::work::{WorkProjection, WorkScope, WorkTask};
 use wire::TaskStamp;
@@ -206,7 +205,7 @@ fn render_available(
                     {assignment_fact(workflow.assignment.as_ref(), render.lanes)}
                     {priority_fact(&statement.tags)}
                     {fact("Tags", if statement.tags.is_empty() { "None".to_owned() } else { statement.tags.join(", ") })}
-                    {instant_fact("Deferral", workflow.deferral.as_ref(), "None")}
+                    {deadline_fact("Deferral", workflow.deferral.as_ref(), "None")}
                     {instant_fact("Completion", workflow.completion.as_ref(), "Open")}
                 </dl>
                 {render_possession(row, render.lanes)}
@@ -274,14 +273,7 @@ fn deadline_fact(
     instant: Option<&wire::Instant>,
     empty: &'static str,
 ) -> Html {
-    let value = instant.map_or_else(
-        || html! { empty },
-        |instant| {
-            let expiry = instant.get().as_millisecond();
-            let title = instant.to_string();
-            html! { <Countdown {expiry} class="relative-age" {title} /> }
-        },
-    );
+    let value = instant.map_or_else(|| html! { empty }, work_board::render_countdown);
     html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
 }
 

@@ -389,28 +389,12 @@ fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
     let workflow = &row.workflow.body;
     let availability = task.availability();
     let label = availability_label(availability);
-    let owner = task.owner();
     let claim_accent = claimant_accent(task, cards.lanes);
-    let owner_name = owner.map_or_else(
-        || "Unassigned".to_owned(),
-        |actor| actor_name(actor, cards.lanes),
-    );
     let priority = priority_label(&statement.tags);
     let progress = flow_progress(workflow);
-    let blocker = blocker_summary(task);
-    let wake = wake_instant(task);
-    let dependencies = task.dependencies().len();
-    let dependents = task.dependents().len();
-    let completion = workflow.completion.as_ref();
     let born = statement.born.clone();
     let is_selected = cards.selected == Some(&born);
     let is_pinned = cards.map.pinned(&born);
-    let pin_disabled = !is_pinned && cards.map.pin_limit_reached();
-    let toggle_pin = {
-        let toggle_map_root = cards.toggle_map_root.clone();
-        let born = born.clone();
-        Callback::from(move |_| toggle_map_root.emit(born.clone()))
-    };
     let open = {
         let select = cards.select.clone();
         let born = born.clone();
@@ -460,50 +444,84 @@ fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
                 <span class="tag" title="Phase in flow">{progress}</span>
                 <span class="tag work-card-project" title="Project">{statement.project.clone()}</span>
             </div>
-            <dl class="work-card-facts">
-                <div>
-                    <dt>{"Owner"}</dt>
-                    <dd title={owner.map(ToString::to_string)}>{owner_name}</dd>
-                </div>
-                {render_lease(task)}
-                if let Some(blocker) = blocker {
-                    <div class="work-card-alert"><dt>{"Blocked"}</dt><dd>{blocker}</dd></div>
-                }
-                if let Some(wake) = wake {
-                    <div class="work-card-wake"><dt>{"Wake"}</dt><dd>{render_age(wake)}</dd></div>
-                }
-                if dependencies > 0 || dependents > 0 {
-                    <div>
-                        <dt>{"Links"}</dt>
-                        <dd>{format!("{dependencies} dependencies · {dependents} dependents")}</dd>
-                    </div>
-                }
-                if availability == WorkAvailability::Terminal {
-                    <div>
-                        <dt>{"Result"}</dt>
-                        <dd class="work-card-result">
-                            {workflow.status.clone()}
-                            if let Some(completion) = completion {
-                                <span aria-hidden="true">{"·"}</span>
-                                {render_age(completion)}
-                            }
-                        </dd>
-                    </div>
-                }
-            </dl>
-            <button
-                type="button"
-                class="work-card-map-toggle"
-                aria-label={format!(
-                    "{} {} in relationship map",
-                    if is_pinned { "Remove" } else { "Pin" },
-                    statement.handle,
-                )}
-                aria-pressed={is_pinned.to_string()}
-                disabled={pin_disabled}
-                onclick={toggle_pin}
-            >{if is_pinned { "Mapped" } else { "+ Map" }}</button>
+            {render_card_facts(task, cards)}
+            {render_map_toggle(&statement.handle, &born, cards)}
         </article>
+    }
+}
+
+fn render_card_facts(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
+    let owner = task.owner();
+    let owner_name = owner.map_or_else(
+        || "Unassigned".to_owned(),
+        |actor| actor_name(actor, cards.lanes),
+    );
+    let dependencies = task.dependencies().len();
+    let dependents = task.dependents().len();
+    html! {
+        <dl class="work-card-facts">
+            <div>
+                <dt>{"Owner"}</dt>
+                <dd title={owner.map(ToString::to_string)}>{owner_name}</dd>
+            </div>
+            {render_lease(task)}
+            if let Some(blocker) = blocker_summary(task) {
+                <div class="work-card-alert"><dt>{"Blocked"}</dt><dd>{blocker}</dd></div>
+            }
+            if let Some(wake) = wake_instant(task) {
+                <div class="work-card-wake"><dt>{"Wake"}</dt><dd>{render_countdown(wake)}</dd></div>
+            }
+            if dependencies > 0 || dependents > 0 {
+                <div>
+                    <dt>{"Links"}</dt>
+                    <dd>{format!("{dependencies} dependencies · {dependents} dependents")}</dd>
+                </div>
+            }
+            if task.availability() == WorkAvailability::Terminal {
+                {render_result(&task.row().workflow.body)}
+            }
+        </dl>
+    }
+}
+
+fn render_map_toggle(
+    handle: &impl std::fmt::Display,
+    born: &wire::TaskStamp,
+    cards: &Cards<'_>,
+) -> Html {
+    let is_pinned = cards.map.pinned(born);
+    let toggle_pin = {
+        let toggle_map_root = cards.toggle_map_root.clone();
+        let born = born.clone();
+        Callback::from(move |_| toggle_map_root.emit(born.clone()))
+    };
+    html! {
+        <button
+            type="button"
+            class="work-card-map-toggle"
+            aria-label={format!(
+                "{} {handle} in relationship map",
+                if is_pinned { "Remove" } else { "Pin" },
+            )}
+            aria-pressed={is_pinned.to_string()}
+            disabled={!is_pinned && cards.map.pin_limit_reached()}
+            onclick={toggle_pin}
+        >{if is_pinned { "Mapped" } else { "+ Map" }}</button>
+    }
+}
+
+fn render_result(workflow: &wire::WorkflowHead) -> Html {
+    html! {
+        <div>
+            <dt>{"Result"}</dt>
+            <dd class="work-card-result">
+                {workflow.status.clone()}
+                if let Some(completion) = workflow.completion.as_ref() {
+                    <span aria-hidden="true">{"·"}</span>
+                    {render_age(completion)}
+                }
+            </dd>
+        </div>
     }
 }
 
@@ -516,12 +534,10 @@ fn render_lease(task: &WorkTask<'_>) -> Html {
     let Some(lease) = active.then_some(task.row().lease.as_ref()).flatten() else {
         return Html::default();
     };
-    let expiry = lease.body.expiry.get().as_millisecond();
-    let title = lease.body.expiry.to_string();
     html! {
         <div>
             <dt>{"Lease"}</dt>
-            <dd><Countdown {expiry} class="relative-age" {title} /></dd>
+            <dd>{render_countdown(&lease.body.expiry)}</dd>
         </div>
     }
 }
@@ -581,6 +597,13 @@ pub(super) fn render_age(instant: &wire::Instant) -> Html {
     let authored = instant.get().as_millisecond();
     let title = instant.to_string();
     html! { <Age {authored} class="relative-age" {title} /> }
+}
+
+/// A future instant, counting down to it with the exact instant on hover.
+pub(super) fn render_countdown(instant: &wire::Instant) -> Html {
+    let expiry = instant.get().as_millisecond();
+    let title = instant.to_string();
+    html! { <Countdown {expiry} class="relative-age" {title} /> }
 }
 
 fn history_tasks<'a>(work: &'a WorkProjection<'a>) -> Vec<&'a WorkTask<'a>> {
