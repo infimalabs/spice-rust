@@ -334,6 +334,12 @@ fn render_agent_message_card(
 
 /// The card's back face: the quick task view while a chip is inspected.
 fn render_task_layer(card_inspector: &task_inspector::Card, open: bool) -> Html {
+    let (Some(inspector), Some(inspection)) = (
+        card_inspector.context.as_ref(),
+        card_inspector.inspection.as_ref(),
+    ) else {
+        return Html::default();
+    };
     let close = task_inspector::close_inspector(card_inspector.context.clone());
     html! {
         <div
@@ -342,16 +348,12 @@ fn render_task_layer(card_inspector: &task_inspector::Card, open: bool) -> Html 
             aria-hidden={(!open).to_string()}
             inert={(!open).then_some("true")}
         >
-            if let (Some(inspector), Some(inspection)) =
-                (card_inspector.context.as_ref(), card_inspector.inspection.as_ref())
-            {
-                {crate::browser::message_task_inspector::render(
-                    inspector,
-                    inspection,
-                    card_inspector.root.clone(),
-                    close,
-                )}
-            }
+            {crate::browser::message_task_inspector::render(
+                inspector,
+                inspection,
+                card_inspector.root.clone(),
+                close,
+            )}
         </div>
     }
 }
