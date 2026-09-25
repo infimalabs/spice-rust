@@ -1210,7 +1210,8 @@ html[data-command-modifier-held="true"]
   background: color-mix(in srgb, var(--message-inline-pill-accent) 6%, transparent);
   color: var(--message-inline-pill-accent);
 }
-.team-surface .mosaic-message-card footer .card-action {
+/* The task quick view's header actions are the same controls as a card's footer actions. */
+.team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action {
   width: 32px;
   min-width: 32px;
   height: 32px;
@@ -1227,12 +1228,12 @@ html[data-command-modifier-held="true"]
   font-size: 1rem;
   font-weight: 400;
 }
-.team-surface .mosaic-message-card footer .card-action:hover,
-.team-surface .mosaic-message-card footer .card-action:focus-visible {
+.team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action:hover,
+.team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action:focus-visible {
   border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 42%, var(--line));
   color: var(--ink);
 }
-.team-surface .mosaic-message-card footer .card-action:active {
+.team-surface .mosaic-message-card :is(footer, .message-task-inspector-header) .card-action:active {
   border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
   background: color-mix(
     in srgb,
