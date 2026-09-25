@@ -303,6 +303,7 @@ fn render_agent_message_card(
             if is_boundary {
                 {render_agent_boundary(message, &footer_label)}
             } else {
+                <>
                 <div
                     class="mosaic-message-layers"
                     data-task-panel-state={if inspection_open { "open" } else { "closed" }}
@@ -323,8 +324,9 @@ fn render_agent_message_card(
                             &attribution,
                         )}
                     </div>
-                    {render_task_layer(card_inspector, inspection_open)}
                 </div>
+                {render_task_layer(card_inspector, inspection_open)}
+                </>
             }
         </article>
     }

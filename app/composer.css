@@ -246,7 +246,7 @@
   pointer-events: none;
   transform: translateX(-1.25rem);
 }
-.team-surface .mosaic-message-layers[data-task-panel-state="open"] .mosaic-message-task-layer {
+.team-surface .mosaic-message-layers[data-task-panel-state="open"] + .mosaic-message-task-layer {
   opacity: 1;
   pointer-events: auto;
   transform: translateX(0);
