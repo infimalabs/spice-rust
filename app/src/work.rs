@@ -458,6 +458,23 @@ impl<'a> WorkProjection<'a> {
         })
     }
 
+    /// The scope to open `task` under: `scope` itself when it already shows
+    /// the task, otherwise every open task, so a filter never hides the task
+    /// the operator asked to see.
+    #[must_use]
+    pub fn scope_showing(&self, task: &TaskStamp, scope: &WorkScope) -> WorkScope {
+        let shown = self
+            .tasks
+            .iter()
+            .find(|candidate| candidate.row.statement.body.born == *task)
+            .is_some_and(|candidate| self.in_scope(candidate, scope));
+        if shown {
+            scope.clone()
+        } else {
+            WorkScope::AllOpen
+        }
+    }
+
     /// The in-scope tasks of one shared board lane, top to bottom, clustered.
     ///
     /// Cards follow the chosen order. Clustering gathers each attribute's
@@ -1024,6 +1041,36 @@ mod tests {
         });
         assert!(!projection.contains_scope(&absent));
         assert_eq!(projection.scope_counts(&absent), projection.counts());
+    }
+
+    #[test]
+    fn opening_a_task_keeps_a_scope_that_shows_it_and_widens_one_that_hides_it() {
+        let public = task(1, "alpha.runtime");
+        let hidden = task(2, ".alpha.audit");
+        let public_born = public.statement.body.born.clone();
+        let hidden_born = hidden.statement.body.born.clone();
+        let board = board(vec![public, hidden]);
+        let projection = WorkProjection::from_board(&board);
+        let public_scope = WorkScope::Stem(projection.stems[0].identity.clone());
+        let hidden_scope = WorkScope::Stem(projection.stems[1].identity.clone());
+
+        assert_eq!(
+            projection.scope_showing(&public_born, &public_scope),
+            public_scope
+        );
+        assert_eq!(
+            projection.scope_showing(&hidden_born, &hidden_scope),
+            hidden_scope
+        );
+        assert_eq!(
+            projection.scope_showing(&hidden_born, &public_scope),
+            WorkScope::AllOpen
+        );
+        let absent = task(3, "alpha.runtime").statement.body.born;
+        assert_eq!(
+            projection.scope_showing(&absent, &public_scope),
+            WorkScope::AllOpen
+        );
     }
 
     #[test]

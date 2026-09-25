@@ -13,9 +13,8 @@ pub(super) struct Inspection {
 #[derive(Clone, PartialEq)]
 pub(super) struct Context {
     pub inspection: UseStateHandle<Option<Inspection>>,
-    pub select_task: Callback<TaskStamp>,
-    pub close_task: Callback<()>,
-    pub navigate: Callback<navigation::Intent>,
+    request_detail: Callback<TaskStamp>,
+    navigate: Callback<navigation::Intent>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -25,7 +24,7 @@ struct DetailContext {
     note_text: UseStateHandle<String>,
     note_notice: UseStateHandle<Notice>,
     note_submission: UseStateHandle<NoteSubmission>,
-    submit_note: Callback<SubmitEvent>,
+    submit_note: Callback<(TaskStamp, SubmitEvent)>,
 }
 
 pub(super) struct Controls {
@@ -52,8 +51,7 @@ pub(super) fn use_controls(
     Controls {
         context: Context {
             inspection,
-            select_task: task.select.clone(),
-            close_task: task.dismiss.clone(),
+            request_detail: task.request.clone(),
             navigate: navigate.clone(),
         },
         detail: DetailContext {
@@ -79,9 +77,9 @@ pub(super) fn provide(controls: Controls, canvas: Html) -> Html {
     }
 }
 
-/// The quick view belongs to Chat. It owns Escape only while Chat is visible,
-/// and leaving Chat ends it together with the task selection it drove, so no
-/// quick-view state reaches Work as an overlay the operator never opened there.
+/// The quick view belongs to Chat and reads its task without selecting it in
+/// Work. It owns Escape only while Chat is visible, and whichever way Chat
+/// leaves view, including a handoff to Work, the view ends with it.
 #[hook]
 pub(super) fn use_surface_lifetime(controls: &Controls, visible: bool) {
     let context = controls.context.clone();
@@ -98,7 +96,6 @@ pub(super) fn use_surface_lifetime(controls: &Controls, visible: bool) {
     use_effect_with(visible, move |visible| {
         if !*visible && present {
             context.inspection.set(None);
-            context.close_task.emit(());
         }
     });
 }
@@ -115,7 +112,7 @@ impl Context {
             open: true,
             return_focus: false,
         }));
-        self.select_task.emit(task);
+        self.request_detail.emit(task);
     }
 
     pub fn close(&self, return_focus: bool) {
@@ -125,7 +122,6 @@ impl Context {
         inspection.return_focus = return_focus;
         if task_detail::reduced_motion() {
             self.inspection.set(None);
-            self.close_task.emit(());
             restore_task_chip_focus(&inspection);
         } else {
             inspection.open = false;
@@ -140,15 +136,14 @@ impl Context {
             .cloned();
         if let Some(inspection) = closing {
             self.inspection.set(None);
-            self.close_task.emit(());
             restore_task_chip_focus(&inspection);
         }
     }
 
+    /// Hand this exact task to Work as one navigation. The view stays in its
+    /// card until the destination commits and Chat leaves view.
     fn open_work(&self, task: TaskStamp) {
-        self.select_task.emit(task);
-        self.inspection.set(None);
-        self.navigate.emit(navigation::Intent::SelectedWork);
+        self.navigate.emit(navigation::Intent::Task(task));
     }
 }
 
@@ -198,9 +193,9 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
             |answer| answer.task.presentation_title.clone(),
         );
     let retry = {
-        let select = properties.context.select_task.clone();
+        let request = properties.context.request_detail.clone();
         let task = properties.inspection.task.clone();
-        Callback::from(move |_| select.emit(task.clone()))
+        Callback::from(move |_| request.emit(task.clone()))
     };
     let open_work = {
         let context = properties.context.clone();
@@ -374,10 +369,11 @@ fn render_note_composer(context: &DetailContext, inspection: &Inspection) -> Htm
             <p class="form-refusal" role="alert">{issue}</p>
         },
     };
+    let task = inspection.task.clone();
     html! {
         <form
             class="form work-note-composer message-task-inspector-note"
-            onsubmit={context.submit_note.clone()}
+            onsubmit={context.submit_note.reform(move |event| (task.clone(), event))}
         >
             <label for="message-task-inspector-note">
                 {format!("Observation for {}", inspection.handle)}

@@ -5,23 +5,30 @@
 //! current history entry by construction.
 
 use gloo_history::{HashHistory, History};
+use wire::TaskStamp;
 use yew::prelude::*;
 
-use crate::CanvasDestination;
-use crate::work::WorkScope;
+use super::SurfaceData;
+use crate::work::{WorkProjection, WorkScope};
+use crate::{CanvasDestination, CanvasRuntime};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Intent {
     Info,
     Work(WorkScope),
-    SelectedWork,
+    /// Open this exact durable task in global Work, under a scope that shows it.
+    Task(TaskStamp),
     Chat,
 }
 
+/// Every state a destination names changes in the one callback that pushes
+/// it, so the first destination render already agrees with the history entry.
 pub(super) fn intent_callback(
     push: Callback<CanvasDestination>,
     work_scope: UseStateHandle<WorkScope>,
     work_scope_notice: UseStateHandle<Option<String>>,
+    select_task: Callback<TaskStamp>,
+    surface: UseStateHandle<SurfaceData>,
 ) -> Callback<Intent> {
     Callback::from(move |intent| {
         let destination = match intent {
@@ -31,7 +38,19 @@ pub(super) fn intent_callback(
                 work_scope_notice.set(None);
                 CanvasDestination::Work
             }
-            Intent::SelectedWork => CanvasDestination::Work,
+            Intent::Task(task) => {
+                let scope = surface
+                    .read()
+                    .as_ref()
+                    .and_then(CanvasRuntime::board)
+                    .map_or(WorkScope::AllOpen, |board| {
+                        WorkProjection::from_board(board).scope_showing(&task, &work_scope)
+                    });
+                work_scope.set(scope);
+                work_scope_notice.set(None);
+                select_task.emit(task);
+                CanvasDestination::Work
+            }
             Intent::Chat => CanvasDestination::Chat,
         };
         push.emit(destination);

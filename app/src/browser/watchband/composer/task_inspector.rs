@@ -96,18 +96,24 @@ fn use_focus_departure(
                 let card = card.clone();
                 let callback = Closure::<dyn FnMut(web_sys::FocusEvent)>::new(
                     move |event: web_sys::FocusEvent| {
+                        let element = observed.get_element_by_id(&card);
+                        // A card that left view ends with its surface, not with focus.
+                        if element
+                            .as_ref()
+                            .is_some_and(|card| !crate::browser::overlay::returnable(card))
+                        {
+                            return;
+                        }
                         let stayed_inside = event
                             .target()
                             .and_then(|target| target.dyn_into::<web_sys::Node>().ok())
-                            .and_then(|target| {
-                                observed
-                                    .get_element_by_id(&card)?
-                                    .query_selector(".message-task-inspector")
+                            .zip(element)
+                            .is_some_and(|(target, card)| {
+                                card.query_selector(".message-task-inspector")
                                     .ok()
                                     .flatten()
-                                    .map(|inspector| inspector.contains(Some(&target)))
-                            })
-                            .unwrap_or(false);
+                                    .is_some_and(|inspector| inspector.contains(Some(&target)))
+                            });
                         if !stayed_inside {
                             context.close(false);
                         }
