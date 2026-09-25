@@ -620,8 +620,8 @@ fn task_chip_html(task: &wire::TaskHandle) -> String {
     // these fixed attributes cannot acquire markup from authored prose.
     let handle = task.to_string();
     format!(
-        "<span class=\"message-task-chip\" data-task-handle=\"{handle}\" \
-         aria-label=\"Reported task {handle}\" title=\"{handle}\">\
+        "<span class=\"message-task-chip\" data-task-handle=\"{handle}\" role=\"button\" \
+         tabindex=\"0\" aria-label=\"Inspect task {handle}\" title=\"Inspect {handle}\">\
          <span class=\"message-task-chip-label\">{handle}</span></span>"
     )
 }
