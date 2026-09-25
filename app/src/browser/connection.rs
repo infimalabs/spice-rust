@@ -133,6 +133,7 @@ async fn pump_session(
     } = established;
     send_subscription(&principal, data, &mut writer).await?;
     send_refresh(&principal, &mut writer, actions, &handles.submissions).await?;
+    refresh::send_task_details(&principal, &mut writer, actions, data).await?;
     drain_submissions(&principal, &mut writer, actions, &handles.submissions).await?;
     actions.rearm().map_err(|error| error.to_string())?;
     let mut silence = TimeoutFuture::new(LIVENESS_PROBE_MILLIS).fuse();
@@ -652,9 +653,6 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
-        ClientAction::Refresh => send_refresh(principal, writer, actions, submissions)
-            .await
-            .map(|_| None),
         ClientAction::TaskDetail { task } => {
             refresh::send_task_detail(principal, writer, actions, task)
                 .await

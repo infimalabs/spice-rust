@@ -1,5 +1,6 @@
 use super::*;
 use app::TaskDetailState;
+use std::collections::BTreeSet;
 use wire::Actor;
 use wire::intent::{TaskDetailAnswer, TaskDetailNote};
 
@@ -174,5 +175,46 @@ fn task_fact_invalidates_only_the_affected_open_detail() {
             .cloned()
             .collect::<Vec<_>>(),
         vec![affected]
+    );
+}
+
+#[test]
+fn reconnect_rereads_every_retained_task_read() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let shown = fixture_stamp("detail-shown");
+    let pending = fixture_stamp("detail-pending");
+    let lens = app::TaskRelationsKey::new(
+        vec![shown.clone()],
+        wire::intent::TaskRelationKind::Dependency,
+        1,
+        8,
+    )
+    .expect("bounded lens");
+    runtime.apply_task_detail(
+        &shown,
+        &detail_response(&session, detail_answer("detail-shown", "before the drop")),
+    );
+    runtime.begin_task_detail(pending.clone());
+    runtime.begin_task_relations(lens.clone());
+    assert!(!runtime.task_relations_needs_request(&lens));
+
+    assert!(!runtime.reconnect(&acceptance(&session, "operator", EPOCH)));
+
+    assert!(matches!(
+        runtime.task_detail(&shown),
+        Some(TaskDetailState::Refreshing(answer)) if answer.notes[0].text == "before the drop"
+    ));
+    assert_eq!(
+        runtime
+            .task_detail_reads()
+            .cloned()
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([shown, pending]),
+    );
+    assert!(
+        runtime.task_relations_needs_request(&lens),
+        "a lens read lost with the socket is read again"
     );
 }

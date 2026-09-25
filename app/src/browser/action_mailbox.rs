@@ -276,7 +276,6 @@ struct RenewalKey {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ActionClass {
-    Refresh,
     DrainSubmissions,
     FastMode,
     Other,
@@ -395,7 +394,6 @@ impl ClientAction {
                     .saturating_add(attachment.data_url.len())
             }),
             Self::DrainSubmissions
-            | Self::Refresh
             | Self::FastMode(_)
             | Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
@@ -409,8 +407,7 @@ impl ClientAction {
     pub(super) const fn is_mutation(&self) -> bool {
         !matches!(
             self,
-            Self::Refresh
-                | Self::TaskDetail { .. }
+            Self::TaskDetail { .. }
                 | Self::TaskRelations { .. }
                 | Self::WorkHistory { .. }
                 | Self::MessageHistory { .. }
@@ -484,7 +481,7 @@ impl ActionMailbox {
         }) {
             return Ok(());
         }
-        if matches!(class, ActionClass::Refresh | ActionClass::DrainSubmissions)
+        if class == ActionClass::DrainSubmissions
             && self
                 .records
                 .iter()
@@ -878,7 +875,6 @@ impl InFlightAction {
 impl ActionClass {
     fn of(action: &ClientAction) -> Self {
         match action {
-            ClientAction::Refresh => Self::Refresh,
             ClientAction::DrainSubmissions => Self::DrainSubmissions,
             ClientAction::FastMode(_) => Self::FastMode,
             _ => Self::Other,
@@ -975,7 +971,7 @@ mod tests {
         queue.settle_topology(id(2), None, false).unwrap();
         assert!(queue.map_in_flight_topology(id(2), |_| ()).is_err());
 
-        queue.admit(ClientAction::Refresh, None).unwrap();
+        queue.admit(ClientAction::DrainSubmissions, None).unwrap();
         queue.lease().expect("ordinary action leases").restore();
         drop(queue.lease().expect("ordinary action restores").commit());
 

@@ -42,3 +42,27 @@ pub(super) fn use_request(
         }
     });
 }
+
+/// Read the selected lens again after its answer was unavailable. The demand
+/// hook above issues the read, so a retry cannot race or duplicate it.
+pub(super) fn retry_callback(
+    surface: UseStateHandle<SurfaceData>,
+    selected: UseStateHandle<Option<TaskStamp>>,
+    map: UseStateHandle<view::WorkMapState>,
+) -> Callback<MouseEvent> {
+    Callback::from(move |_| {
+        let Some(key) = selected
+            .as_ref()
+            .and_then(|selected| map.request_key(selected))
+        else {
+            return;
+        };
+        let retried = surface
+            .write()
+            .as_mut()
+            .is_some_and(|runtime| runtime.retry_task_relations(&key));
+        if retried {
+            surface.set(surface.publication());
+        }
+    })
+}

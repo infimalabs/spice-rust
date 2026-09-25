@@ -593,8 +593,8 @@ impl CanvasAppState {
     fn render(self) -> Html {
         let surface_view = self.surface.read();
         let work = project_work(surface_view.as_ref());
-        let refresh = refresh_callback(
-            self.sender.clone(),
+        let retry_relations = task_relations::retry_callback(
+            self.surface.clone(),
             self.work_detail.selected.clone(),
             self.work_map.clone(),
         );
@@ -631,7 +631,7 @@ impl CanvasAppState {
                 submit_note: self.work_detail.submit_note.clone(),
                 select_task: self.work_detail.select.clone(),
                 close_task: self.work_detail.close.clone(),
-                refresh,
+                retry_relations,
             },
             work.as_ref(),
         );
@@ -928,25 +928,6 @@ fn use_team_speech_abandonment(
         }
         *previous.borrow_mut() = Some(current.clone());
     });
-}
-
-fn refresh_callback(
-    sender: SenderHandle,
-    selected: UseStateHandle<Option<TaskStamp>>,
-    map: UseStateHandle<view::WorkMapState>,
-) -> Callback<MouseEvent> {
-    Callback::from(move |_| {
-        let _admitted = admit_action(&sender, ClientAction::Refresh);
-        if let Some(task) = (*selected).clone() {
-            let _admitted = admit_action(&sender, ClientAction::TaskDetail { task });
-        }
-        if let Some(key) = (*selected)
-            .as_ref()
-            .and_then(|selected| map.request_key(selected))
-        {
-            let _admitted = admit_action(&sender, ClientAction::TaskRelations { key });
-        }
-    })
 }
 
 #[hook]

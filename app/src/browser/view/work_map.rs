@@ -143,6 +143,8 @@ pub(super) struct WorkMapRender<'a> {
     pub select_task: Callback<TaskStamp>,
     pub relations: Option<&'a TaskRelationsState>,
     pub can_read_relations: bool,
+    /// Reads an unavailable lens again.
+    pub retry: Callback<MouseEvent>,
 }
 
 pub(super) fn toggle_root_callback(state: UseStateHandle<WorkMapState>) -> Callback<TaskStamp> {
@@ -211,7 +213,7 @@ pub(super) fn render(render: WorkMapRender<'_>) -> Html {
                         <h3>{"Relationship map unavailable"}</h3>
                         <p><code>{reason}</code></p>
                         if let Some(detail) = detail { <p>{detail}</p> }
-                        <p>{"Use Refresh to retry this exact lens request."}</p>
+                        <button type="button" onclick={render.retry.clone()}>{"Retry lens"}</button>
                     </div>
                 </div>
             };

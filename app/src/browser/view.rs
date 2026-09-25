@@ -100,7 +100,7 @@ pub(super) struct CanvasRender<'a> {
     pub submit_note: Callback<(wire::TaskStamp, SubmitEvent)>,
     pub select_task: Callback<wire::TaskStamp>,
     pub close_task: Callback<()>,
-    pub refresh: Callback<MouseEvent>,
+    pub retry_relations: Callback<MouseEvent>,
 }
 
 pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
@@ -175,16 +175,6 @@ pub(super) fn render_workspace(
             </div>
             if let Some(active_axis) = active_axis {
                 <div key="analytics" class="workspace">
-                    <header class="topbar">
-                        <div class="mobile-brand">{"Spice Canvas"}</div>
-                        <div class="topbar-actions">
-                            <button
-                                class="refresh"
-                                type="button"
-                                onclick={render.refresh.clone()}
-                            >{"Refresh"}</button>
-                        </div>
-                    </header>
                     <main class="content">
                         {render_analytics(render, active_axis, work)}
                     </main>
@@ -425,6 +415,7 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
                 submit_note: render.submit_note.clone(),
                 select_task: render.select_task.clone(),
                 close: render.close_task.clone(),
+                retry_relations: render.retry_relations.clone(),
             })}
         </div>
     }
