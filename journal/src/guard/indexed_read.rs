@@ -619,6 +619,52 @@ impl JournalRead<'_> {
         Ok(bundles)
     }
 
+    /// Up to `limit` of one task's recorded advances past `after`, in
+    /// generation order; a caller resumes from the last generation returned.
+    pub fn task_generations_after(
+        &self,
+        stamp: &wire::TaskStamp,
+        after: u64,
+        limit: usize,
+    ) -> Result<Vec<super::TaskGeneration>, GuardError> {
+        let invalid = || GuardError::Invalid("task generation read exceeds SQLite".to_owned());
+        let after = i64::try_from(after).map_err(|_| invalid())?;
+        let limit = i64::try_from(limit).map_err(|_| invalid())?;
+        read_metrics::observe_query();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT generation, seq FROM task_generations \
+                 WHERE stamp = ?1 AND generation > ?2 ORDER BY generation LIMIT ?3",
+            )
+            .map_err(GuardError::Store)?;
+        let rows = statement
+            .query_map(params![stamp.as_str(), after, limit], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(GuardError::Store)?;
+        let mut advances = Vec::new();
+        for row in rows {
+            let (generation, position) = row.map_err(GuardError::Store)?;
+            let generation = u64::try_from(generation).map_err(|_| {
+                GuardError::Invalid(format!("task {stamp} generation {generation} is negative"))
+            })?;
+            let position = u64::try_from(position)
+                .ok()
+                .and_then(wire::Seq::new)
+                .ok_or_else(|| {
+                    GuardError::Invalid(format!(
+                        "task {stamp} generation {generation} names invalid position {position}"
+                    ))
+                })?;
+            advances.push(super::TaskGeneration {
+                generation,
+                position,
+            });
+        }
+        Ok(advances)
+    }
+
     /// Current task statement head, when the birth stamp exists.
     pub fn task_head(
         &self,

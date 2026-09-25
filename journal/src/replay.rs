@@ -397,6 +397,7 @@ pub(crate) fn verify_connection_after_facts(
     after_facts();
     let threads = verify_threads(connection, &facts, &mut violations)?;
     let mut heads = verify_heads(connection, &mut violations)?;
+    verify_generations(connection, &facts, &mut violations)?;
     heads += steering::verify(connection, &facts, &mut violations)?;
     let receipts = verify_receipts(connection, &mut violations)?
         + crate::historical_receipts::verify(connection, &mut violations)?;
@@ -869,6 +870,115 @@ fn verify_claim_index(
                 ViolationClass::Head,
                 locus,
                 "claim index predicate columns disagree with claim head",
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Each task's generation index is one contiguous run ending at its workflow
+/// generation, and every row names a fact that mutated that task.
+fn verify_generations(
+    connection: &Connection,
+    facts: &BTreeMap<u64, FactRecord>,
+    violations: &mut Vec<Violation>,
+) -> Result<(), VerifyError> {
+    verify_generation_runs(connection, violations)?;
+    verify_generation_positions(connection, facts, violations)
+}
+
+/// A run starts at one, or at the single row flagged `baseline` when schema 28
+/// advanced the task before the index existed; a baseline is only ever first.
+fn verify_generation_runs(
+    connection: &Connection,
+    violations: &mut Vec<Violation>,
+) -> Result<(), VerifyError> {
+    let mut runs = connection
+        .prepare(
+            "SELECT workflow.stamp, workflow.body, count(indexed.generation), \
+                    min(indexed.generation), max(indexed.generation), \
+                    coalesce(sum(indexed.baseline), 0), \
+                    (SELECT first.baseline FROM task_generations AS first \
+                     WHERE first.stamp = workflow.stamp ORDER BY first.generation LIMIT 1) \
+             FROM workflow_heads AS workflow \
+             LEFT JOIN task_generations AS indexed ON indexed.stamp = workflow.stamp \
+             GROUP BY workflow.stamp ORDER BY workflow.stamp",
+        )
+        .map_err(VerifyError::Sqlite)?;
+    let rows = runs
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Vec<u8>>(1)?,
+                row.get::<_, i64>(2)?,
+                row.get::<_, Option<i64>>(3)?,
+                row.get::<_, Option<i64>>(4)?,
+                row.get::<_, i64>(5)?,
+                row.get::<_, Option<i64>>(6)?,
+            ))
+        })
+        .map_err(VerifyError::Sqlite)?;
+    for row in rows {
+        let (stamp, body, count, first, last, baselines, first_baseline) =
+            row.map_err(VerifyError::Sqlite)?;
+        let Ok(head) = decode_canonical::<wire::WorkflowHead>(&body) else {
+            continue;
+        };
+        let coherent = match (first, last) {
+            (Some(first), Some(last)) => {
+                let start =
+                    (first == 1 && baselines == 0) || (first_baseline == Some(1) && baselines == 1);
+                start
+                    && u64::try_from(last).is_ok_and(|last| last == head.generation)
+                    && count == last - first + 1
+            }
+            _ => head.generation == 0,
+        };
+        if !coherent {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                format!("task_generations:{stamp}"),
+                "generation index is not one contiguous run ending at the workflow generation",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn verify_generation_positions(
+    connection: &Connection,
+    facts: &BTreeMap<u64, FactRecord>,
+    violations: &mut Vec<Violation>,
+) -> Result<(), VerifyError> {
+    let mut positions = connection
+        .prepare("SELECT stamp, generation, seq FROM task_generations ORDER BY stamp, generation")
+        .map_err(VerifyError::Sqlite)?;
+    let rows = positions
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, i64>(2)?,
+            ))
+        })
+        .map_err(VerifyError::Sqlite)?;
+    for row in rows {
+        let (stamp, generation, seq) = row.map_err(VerifyError::Sqlite)?;
+        let mutated = u64::try_from(seq)
+            .ok()
+            .and_then(|seq| facts.get(&seq))
+            .and_then(|record| record.envelope.as_ref())
+            .is_some_and(|envelope| {
+                envelope
+                    .fact
+                    .mutated_task()
+                    .is_some_and(|task| task.as_str() == stamp)
+            });
+        if !mutated {
+            violations.push(Violation::new(
+                ViolationClass::Head,
+                format!("task_generations:{stamp}:{generation}"),
+                "generation index position names no fact that mutated the task",
             ));
         }
     }

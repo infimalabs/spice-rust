@@ -200,6 +200,15 @@ pub struct SelectedFactPage {
     pub horizon: Option<wire::Seq>,
 }
 
+/// One recorded task generation advance.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TaskGeneration {
+    /// Generation the advancing transaction left the task at.
+    pub generation: u64,
+    /// That transaction's last fact mutating the task.
+    pub position: wire::Seq,
+}
+
 impl<'a> JournalRead<'a> {
     fn scoped(connection: &'a Connection) -> Result<Self, GuardError> {
         let cursor = visible_cursor(connection)?;

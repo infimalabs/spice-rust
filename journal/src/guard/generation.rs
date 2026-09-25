@@ -25,6 +25,11 @@
 //! `revised_seq` records where that revision landed, so a reader following
 //! head changes by position still sees it. A holder's own acknowledgement
 //! moves in place beside that revision for the same reason.
+//!
+//! Every advance also records `(task, generation, position)` in
+//! `task_generations`, where the position is the transaction's last fact
+//! mutating that task, so claimant delivery can name each generation a claim
+//! has not acknowledged. Creation opens at zero and records nothing.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -131,7 +136,8 @@ impl Ledger {
     }
 
     /// Refuse a completion under a claim that trailed its task, then advance
-    /// every mutated task and current holder no writer rewrote.
+    /// every mutated task and current holder no writer rewrote, recording
+    /// each advance in the generation index.
     pub(super) fn finish(mut self, transaction: &Transaction<'_>) -> Result<(), CommitError> {
         for stamp in std::mem::take(&mut self.completed) {
             let (prior, _) = self.touch(transaction, &stamp)?;
@@ -146,6 +152,9 @@ impl Ledger {
         }
         for (stamp, revised) in self.mutated.clone() {
             let (prior, generation) = self.touch(transaction, &stamp)?;
+            if prior.generation.is_some() {
+                index(transaction, &stamp, generation, revised)?;
+            }
             if !self.written.contains(&(WORKFLOW, stamp.clone()))
                 && let Some(mut head) = stored::<wire::WorkflowHead>(transaction, WORKFLOW, &stamp)?
             {
@@ -219,6 +228,25 @@ fn stored<T: serde::de::DeserializeOwned>(
         .transpose()
 }
 
+/// Record where one task advance landed: the transaction's last fact
+/// mutating that task.
+fn index(
+    transaction: &Transaction<'_>,
+    stamp: &str,
+    generation: u64,
+    position: wire::Seq,
+) -> Result<(), CommitError> {
+    let generation = sqlite_int(stamp, generation)?;
+    let position = sqlite_int(stamp, position.get())?;
+    transaction
+        .execute(
+            "INSERT INTO task_generations(stamp, generation, seq) VALUES (?1, ?2, ?3)",
+            params![stamp, generation, position],
+        )
+        .map_err(sqlite_fault)?;
+    Ok(())
+}
+
 /// Advance a workflow body in place, keeping the transition position it is
 /// stored at and recording where the revision landed.
 fn revise(
@@ -227,8 +255,7 @@ fn revise(
     body: &[u8],
     revised: wire::Seq,
 ) -> Result<(), CommitError> {
-    let revised = i64::try_from(revised.get())
-        .map_err(|_| refused(stamp, "revision position exceeds SQLite integer range"))?;
+    let revised = sqlite_int(stamp, revised.get())?;
     transaction
         .execute(
             "UPDATE workflow_heads SET body = ?1, revised_seq = ?2 WHERE stamp = ?3",
@@ -236,6 +263,10 @@ fn revise(
         )
         .map_err(sqlite_fault)?;
     Ok(())
+}
+
+fn sqlite_int(stamp: &str, value: u64) -> Result<i64, CommitError> {
+    i64::try_from(value).map_err(|_| refused(stamp, "value exceeds SQLite integer range"))
 }
 
 /// Move a holder's acknowledgement in place; the workflow revision it rides

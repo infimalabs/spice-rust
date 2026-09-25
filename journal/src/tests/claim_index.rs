@@ -369,7 +369,7 @@ pub(super) fn add_claimed_task(journal: &mut Journal, offset: u64, actor: Actor)
     task
 }
 
-fn query_plan(journal: &Journal, sql: &str) -> String {
+pub(super) fn query_plan(journal: &Journal, sql: &str) -> String {
     journal
         .connection
         .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
