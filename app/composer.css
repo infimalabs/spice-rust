@@ -338,10 +338,28 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.team-surface .message-task-inspector .work-detail-close {
+/* The quick view's icon buttons are circles whose drawn glyph the grid centers. */
+.team-surface .message-task-inspector :is(.work-detail-close, .message-task-inspector-open-work) {
+  display: grid;
   flex: 0 0 2rem;
+  place-items: center;
   inline-size: 2rem;
+  min-inline-size: 2rem;
+  block-size: 2rem;
+  min-block-size: 2rem;
+  margin: 0;
   padding: 0;
+  border-radius: 50%;
+  line-height: 0;
+}
+.team-surface .message-task-inspector-icon {
+  inline-size: 1rem;
+  block-size: 1rem;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 .team-surface .message-task-inspector textarea { inline-size: 100%; }
 .team-surface .message-task-inspector .work-note-composer textarea {
@@ -368,19 +386,6 @@
   overflow: hidden;
   border-top: var(--canvas-edge-soft);
   background: color-mix(in srgb, var(--panel) 94%, transparent);
-}
-.team-surface .message-task-inspector-open-work {
-  display: grid;
-  flex: 0 0 2rem;
-  place-items: center;
-  width: 2rem;
-  min-width: 2rem;
-  height: 2rem;
-  min-height: 2rem;
-  margin-left: 0;
-  padding: 0;
-  font-size: 1.125rem;
-  line-height: 1;
 }
 @media (prefers-reduced-motion: reduce) {
   .team-surface .mosaic-message-normal,
