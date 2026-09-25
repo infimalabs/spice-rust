@@ -126,6 +126,34 @@ fn a_reclaim_retires_exactly_the_notices_it_acknowledges() {
 }
 
 #[test]
+fn expiry_does_not_retire_a_notice_its_claim_still_trails() {
+    let fixture = AdvisoryRtkFixture::new();
+    let (bus, task) = claimed_fixture(&fixture);
+    note(&bus, &task, Actor::Operator);
+    assert!(pass(&fixture, &bus, None));
+    let [notice] = notices(&fixture, &bus).try_into().expect("one notice");
+    let lapse = crate::resident::steering::SteeringDeadline {
+        directive: notice.directive,
+        key: notice.key.parse().expect("notice key"),
+        lane: fixture.lane,
+        expires: notice.expires,
+        transition: crate::resident::steering::DeadlineTransition::Lapse,
+    };
+    assert!(
+        crate::resident::steering::apply_deadline(&bus, &lapse, notice.expires)
+            .expect("the notice lapses")
+    );
+    assert!(notices(&fixture, &bus).is_empty());
+
+    assert!(pass(&fixture, &bus, None));
+    let [recovered] = notices(&fixture, &bus).try_into().expect("one notice");
+    assert_eq!(recovered.key, notice.key, "the notice keeps its identity");
+    assert_eq!(disposition(&bus, notice.directive), Disposition::Live);
+    assert!(!pass(&fixture, &bus, None));
+    finish(bus);
+}
+
+#[test]
 fn a_notice_stays_bound_to_the_claim_that_trailed() {
     let fixture = AdvisoryRtkFixture::new();
     let (bus, task) = claimed_fixture(&fixture);
