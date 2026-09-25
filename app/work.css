@@ -52,21 +52,16 @@
   gap: 6px 14px;
   margin-left: auto;
 }
-.work-arrangement-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 3px; }
-.work-arrangement-group > span {
-  margin-right: 3px;
+.work-arrangement-group { display: inline-flex; flex: none; flex-wrap: wrap; align-items: center; gap: 6px; }
+.work-arrangement-group > span[aria-hidden] {
   color: var(--muted);
   font-size: .64rem;
   font-weight: 700;
   letter-spacing: .06em;
   text-transform: uppercase;
 }
-.work-arrangement-group button { min-height: 30px; padding: 4px 9px; font-size: .7rem; white-space: nowrap; }
-.work-arrangement-group button[aria-pressed="true"] {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent);
-}
+.work-arrangement-group > .team-mode-rail { flex: none; }
+.work-arrangement-group .team-mode { white-space: nowrap; }
 
 .work-board-state {
   margin: 0 0 14px;
@@ -306,54 +301,74 @@
   color: var(--accent);
 }
 
+/* History is a subordinate section of the board, not a second panel: a rule,
+   a quiet heading, and a body that eases open and closed. */
 .work-history {
-  margin-top: 20px;
-  overflow: hidden;
-  border: var(--canvas-edge);
-  border-radius: var(--canvas-radius-frame);
-  background: var(--panel);
-  box-shadow: var(--shadow);
+  margin-top: 22px;
+  border-top: var(--canvas-edge);
+  interpolate-size: allow-keywords;
 }
+.work-history::details-content {
+  block-size: 0;
+  opacity: 0;
+  overflow: clip;
+  transition:
+    block-size var(--canvas-motion-settle) var(--canvas-ease-standard),
+    opacity var(--canvas-motion-settle) var(--canvas-ease-standard),
+    content-visibility var(--canvas-motion-settle) allow-discrete;
+}
+.work-history[open]::details-content { block-size: auto; opacity: 1; }
 
 .work-history > summary {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  min-height: 44px;
-  padding: 8px 13px;
+  gap: 8px;
+  min-height: 40px;
+  padding: 6px 0;
   cursor: pointer;
   color: var(--muted);
-  font-size: .8rem;
+  font-size: .72rem;
   font-weight: 700;
-  list-style-position: inside;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  list-style: none;
 }
-.work-history > summary:hover {
-  background: color-mix(in srgb, var(--accent) 4%, var(--panel));
-  color: var(--ink);
+.work-history > summary::-webkit-details-marker { display: none; }
+.work-history > summary::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform var(--canvas-motion-fast) var(--canvas-ease-standard);
 }
+.work-history[open] > summary::before { transform: rotate(45deg); }
+.work-history > summary:hover { color: var(--ink); }
 
 .work-history > summary:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
-.work-history[open] > summary { border-bottom: var(--canvas-edge); }
+@media (prefers-reduced-motion: reduce) {
+  .work-history::details-content,
+  .work-history > summary::before { transition: none; }
+}
 
 .work-history-list {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-  padding: 12px;
+  padding: 10px 0 14px;
 }
 .work-history-finder {
   display: grid;
   grid-template-columns: minmax(12rem, 1fr) minmax(10rem, .45fr) auto;
   gap: 10px;
   align-items: end;
-  padding: 12px;
-  border-bottom: var(--canvas-edge);
-  background: color-mix(in srgb, var(--panel) 94%, var(--control));
+  padding: 4px 0 12px;
+  border-bottom: var(--canvas-edge-soft);
 }
 
 .work-history-finder label {
@@ -370,13 +385,10 @@
   min-width: 0;
 }
 
-.work-history-filter-actions,
-.work-history-page-actions {
-  display: flex;
-  gap: 7px;
-}
+.work-history-filter-actions { align-self: end; }
+.work-history-page-actions[aria-busy="true"] > .team-mode { cursor: progress; }
 
-.work-history-filter-issue { margin: 10px 12px 0; }
+.work-history-filter-issue { margin: 10px 0 0; }
 
 .work-history-groups {
   display: grid;
@@ -385,14 +397,14 @@
 
 .work-history-date {
   min-width: 0;
-  border-bottom: var(--canvas-edge);
+  border-bottom: var(--canvas-edge-soft);
 }
 
 .work-history-date:last-child { border-bottom: 0; }
 
 .work-history-date h3 {
   margin: 0;
-  padding: 10px 12px 0;
+  padding: 10px 0 0;
   color: var(--muted);
   font-size: .72rem;
   font-weight: 750;
@@ -404,8 +416,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 12px;
-  border-top: var(--canvas-edge);
+  padding: 10px 0;
+  border-top: var(--canvas-edge-soft);
 }
 
 .work-history-range {
