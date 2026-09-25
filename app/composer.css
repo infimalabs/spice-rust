@@ -339,23 +339,8 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* The quick view's icon buttons are circles whose drawn glyph the grid centers. */
-.team-surface .message-task-inspector :is(.work-detail-close, .message-task-inspector-open-work) {
-  display: grid;
-  flex: 0 0 2rem;
-  place-items: center;
-  inline-size: 2rem;
-  min-inline-size: 2rem;
-  block-size: 2rem;
-  min-block-size: 2rem;
-  margin: 0;
-  padding: 0;
-  border-radius: 50%;
-  line-height: 0;
-}
+/* Stroked glyphs inside the header's card actions. */
 .team-surface .message-task-inspector-icon {
-  inline-size: 1rem;
-  block-size: 1rem;
   fill: none;
   stroke: currentColor;
   stroke-width: 2;
@@ -376,18 +361,6 @@
   inline-size: 100%;
   min-block-size: 100%;
   padding: 24px 12px;
-}
-.team-surface .message-task-inspector-footer {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: flex-end;
-  inline-size: 100%;
-  min-block-size: 0;
-  padding: 8px 12px;
-  overflow: hidden;
-  border-top: var(--canvas-edge-soft);
-  background: color-mix(in srgb, var(--panel) 94%, transparent);
 }
 @media (prefers-reduced-motion: reduce) {
   .team-surface .mosaic-message-normal,

@@ -186,17 +186,30 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
                     <p class="work-detail-kicker">{"Task detail"}</p>
                     <h2 title={title.clone()}>{title}</h2>
                 </div>
-                <button
-                    type="button"
-                    class="work-detail-close"
-                    aria-label="Close task quick view"
-                    title="Close task quick view"
-                    onclick={properties.close.clone()}
-                >
-                    <svg class="message-task-inspector-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                        <path d="M7 7 17 17M17 7 7 17"></path>
-                    </svg>
-                </button>
+                <span class="message-actions">
+                    <button
+                        type="button"
+                        class="card-action"
+                        aria-label="Open task in Work"
+                        title="Open task in Work"
+                        onclick={open_work}
+                    >
+                        <svg class="card-action-icon message-task-inspector-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M8 16 16 8M9 8h7v7"></path>
+                        </svg>
+                    </button>
+                    <button
+                        type="button"
+                        class="card-action"
+                        aria-label="Close task quick view"
+                        title="Close task quick view"
+                        onclick={properties.close.clone()}
+                    >
+                        <svg class="card-action-icon message-task-inspector-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                            <path d="M7 7 17 17M17 7 7 17"></path>
+                        </svg>
+                    </button>
+                </span>
             </header>
             <div
                 ref={properties.root.clone()}
@@ -207,19 +220,6 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
             >
                 {render_detail(&detail, &properties.inspection, retry)}
             </div>
-            <footer class="message-task-inspector-footer">
-                <button
-                    type="button"
-                    class="message-task-inspector-open-work"
-                    aria-label="Open task in Work"
-                    title="Open task in Work"
-                    onclick={open_work}
-                >
-                    <svg class="message-task-inspector-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-                        <path d="M8 16 16 8M9 8h7v7"></path>
-                    </svg>
-                </button>
-            </footer>
         </section>
     }
 }
