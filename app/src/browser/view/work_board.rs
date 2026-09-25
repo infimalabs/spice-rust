@@ -450,7 +450,9 @@ fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
             ></button>
             <header class="work-card-heading">
                 <span class="work-card-handle">{statement.handle.to_string()}</span>
-                <span class="work-card-priority" title="Declared priority">{format!("P:{priority}")}</span>
+                if let Some(priority) = priority {
+                    <span class="work-card-priority" title="Declared priority">{format!("P:{priority}")}</span>
+                }
             </header>
             <h4>{row.presentation_title()}</h4>
             <div class="work-card-badges">
@@ -560,18 +562,17 @@ fn flow_progress(workflow: &wire::WorkflowHead) -> String {
     format!("{current}/{}", workflow.flow.len())
 }
 
-fn priority_label(tags: &[String]) -> String {
+fn priority_label(tags: &[String]) -> Option<&str> {
     tags.iter()
         .find_map(|tag| tag.strip_prefix("priority:"))
         .map(|priority| match priority {
-            "critical" => "C".to_owned(),
-            "high" => "H".to_owned(),
-            "medium" => "M".to_owned(),
-            "low" => "L".to_owned(),
-            "none" => "N".to_owned(),
-            other => other.to_owned(),
+            "critical" => "C",
+            "high" => "H",
+            "medium" => "M",
+            "low" => "L",
+            "none" => "N",
+            other => other,
         })
-        .unwrap_or_else(|| "—".to_owned())
 }
 
 fn terminal_summary(status: &str, completion: Option<&str>) -> String {
