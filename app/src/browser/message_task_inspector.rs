@@ -79,6 +79,30 @@ pub(super) fn provide(controls: Controls, canvas: Html) -> Html {
     }
 }
 
+/// The quick view belongs to Chat. It owns Escape only while Chat is visible,
+/// and leaving Chat ends it together with the task selection it drove, so no
+/// quick-view state reaches Work as an overlay the operator never opened there.
+#[hook]
+pub(super) fn use_surface_lifetime(controls: &Controls, visible: bool) {
+    let context = controls.context.clone();
+    let open = context
+        .inspection
+        .as_ref()
+        .is_some_and(|inspection| inspection.open);
+    let dismiss = {
+        let context = context.clone();
+        Callback::from(move |()| context.close(true))
+    };
+    overlay::use_escape_owner(visible && open, dismiss);
+    let present = context.inspection.is_some();
+    use_effect_with(visible, move |visible| {
+        if !*visible && present {
+            context.inspection.set(None);
+            context.close_task.emit(());
+        }
+    });
+}
+
 impl Context {
     pub fn inspect(&self, card: String, handle: TaskHandle) {
         let Ok(task) = handle.born() else {

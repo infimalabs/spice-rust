@@ -293,6 +293,12 @@ impl TeamControls {
         self.closed.contains(&team)
     }
 
+    pub(in crate::browser) fn any_menu_open(&self) -> bool {
+        self.teams
+            .values()
+            .any(|team| team.menu_open || team.import_open || team.arrangement_open)
+    }
+
     fn set_mode(&mut self, team: Option<CanonicalUuid>, mode: TeamMode) {
         if let Some(team) = team {
             self.teams.entry(team).or_default().mode = mode;

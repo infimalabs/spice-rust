@@ -96,10 +96,9 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_>) -> H
         can_arrange: false,
     };
     let dismiss = team_menu_dismissal(render.team_controls);
-    let escape = team_menu_escape(render.team_controls);
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
-            tabindex="0" aria-label="Agent teams" onclick={dismiss} onkeydown={escape}>
+            tabindex="0" aria-label="Agent teams" onclick={dismiss}>
             <section class="team-surface" data-team-weight="1">
                 {render_empty_toolbar(
                     mode,
@@ -133,10 +132,9 @@ pub(super) fn render_populated_fleet(
     render: &FleetRender<'_>,
 ) -> Html {
     let dismiss = team_menu_dismissal(render.team_controls);
-    let escape = team_menu_escape(render.team_controls);
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
-            tabindex="0" aria-label="Agent teams" onclick={dismiss} onkeydown={escape}>
+            tabindex="0" aria-label="Agent teams" onclick={dismiss}>
             // Every team keeps its own subtree, so a reorder, fusion, or split moves
             // composers with their drafts, focus, and open menus instead of
             // repainting a neighbour's nodes. Yew diffs a list positionally unless
@@ -252,26 +250,33 @@ fn team_menu_dismissal(controls: &UseReducerHandle<TeamControls>) -> Callback<Mo
     })
 }
 
-fn team_menu_escape(controls: &UseReducerHandle<TeamControls>) -> Callback<KeyboardEvent> {
-    let controls = controls.clone();
-    Callback::from(move |event: KeyboardEvent| {
-        if event.key() != "Escape" {
-            return;
-        }
-        if let Some(trigger) = web_sys::window()
-            .and_then(|window| window.document())
-            .and_then(|document| {
-                document
-                    .query_selector(".team-lights[data-lane-drag-handle][aria-expanded=\"true\"]")
-                    .ok()
-                    .flatten()
-            })
-            .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
-        {
-            let _ = trigger.focus();
-        }
-        controls.dispatch(TeamControlAction::CloseMenus);
-    })
+/// Open team menus own Escape only while Chat shows them.
+#[hook]
+pub(in crate::browser) fn use_team_menu_escape(
+    controls: &UseReducerHandle<TeamControls>,
+    visible: bool,
+) {
+    let dismiss = {
+        let controls = controls.clone();
+        Callback::from(move |()| {
+            if let Some(trigger) = web_sys::window()
+                .and_then(|window| window.document())
+                .and_then(|document| {
+                    document
+                        .query_selector(
+                            ".team-lights[data-lane-drag-handle][aria-expanded=\"true\"]",
+                        )
+                        .ok()
+                        .flatten()
+                })
+                .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+            {
+                let _ = trigger.focus();
+            }
+            controls.dispatch(TeamControlAction::CloseMenus);
+        })
+    };
+    crate::browser::overlay::use_escape_owner(visible && controls.any_menu_open(), dismiss);
 }
 
 /// Pick up a team from its pip stack, but only where it can be arranged.

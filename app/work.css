@@ -461,6 +461,11 @@
   opacity: 1;
   transform: translateX(0);
 }
+/* One blocker owns the veil and frost: a modal dialog above the sheet supplies both. */
+:root:has(dialog:modal) .work-detail-backdrop {
+  background: transparent;
+  backdrop-filter: none;
+}
 
 .work-detail-header {
   position: sticky;
