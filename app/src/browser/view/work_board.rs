@@ -188,32 +188,42 @@ fn render_history_archive(
                 } else if !history.is_empty() {
                     {render_history(history, cards)}
                 }
-                if let Some(state) = state.filter(|state| state.total().is_some()) {
-                    <div class="work-history-pagination">
-                        <div class="work-history-range" role="status">
-                            <strong>{history_count(Some(state))}</strong>
-                            <span>{history_page_position(state)}</span>
-                        </div>
-                        <div class="work-history-page-actions" aria-label="History pages">
-                            <button
-                                type="button"
-                                disabled={state.loading() || !state.has_newer()}
-                                onclick={controls.newer.clone()}
-                            >
-                                {"Newer"}
-                            </button>
-                            <button
-                                type="button"
-                                disabled={state.loading() || !state.has_older()}
-                                onclick={controls.older.clone()}
-                            >
-                                {"Older"}
-                            </button>
-                        </div>
-                    </div>
-                }
+                {render_history_pagination(state, controls)}
             }
         </details>
+    }
+}
+
+fn render_history_pagination(
+    state: Option<&WorkHistoryState>,
+    controls: &WorkHistoryControls,
+) -> Html {
+    let Some(state) = state.filter(|state| state.total().is_some()) else {
+        return Html::default();
+    };
+    html! {
+        <div class="work-history-pagination">
+            <div class="work-history-range" role="status">
+                <strong>{history_count(Some(state))}</strong>
+                <span>{history_page_position(state)}</span>
+            </div>
+            <div class="work-history-page-actions" aria-label="History pages">
+                <button
+                    type="button"
+                    disabled={state.loading() || !state.has_newer()}
+                    onclick={controls.newer.clone()}
+                >
+                    {"Newer"}
+                </button>
+                <button
+                    type="button"
+                    disabled={state.loading() || !state.has_older()}
+                    onclick={controls.older.clone()}
+                >
+                    {"Older"}
+                </button>
+            </div>
+        </div>
     }
 }
 
