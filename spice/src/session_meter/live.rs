@@ -375,7 +375,7 @@ const NARRATION_PAGE_ROWS: usize = 64;
 const NARRATION_PAGE_BYTES: usize = 64 * 1024;
 
 fn counts_as_authored_inbox(control: Option<&str>) -> bool {
-    !control.is_some_and(|control| control.starts_with(super::TASK_CONTRACT_CONTROL_PREFIX))
+    !control.is_some_and(|control| control.starts_with(super::TASK_GENERATION_CONTROL_PREFIX))
 }
 
 fn current_owner(

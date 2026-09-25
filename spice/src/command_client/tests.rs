@@ -746,39 +746,6 @@ fn proof_manifest_maps_to_the_current_observation_head() {
 }
 
 #[test]
-fn task_contract_notice_key_retains_the_exact_acknowledgment_directive() {
-    let directive = uuid(45);
-    let key = "1kL5y53c"
-        .parse::<steer::Key>()
-        .expect("fixture key is canonical");
-    let inbox: InboxAnswer = serde_json::from_value(serde_json::json!({
-        "epoch": uuid(46),
-        "lanes": [{
-            "lane": uuid(47),
-            "occupant": uuid(48),
-            "compaction": 1,
-            "pending": [],
-            "task_contract_notices": [{
-                "directive": directive,
-                "key": key.as_str(),
-                "task": "1kKRRsDP",
-                "edit": 44,
-                "claim": 33,
-                "text": "Task contract changed.",
-                "stage": "published",
-                "expires": "2026-08-30T10:00:00.000Z",
-            }],
-        }],
-    }))
-    .expect("task-contract inbox admits");
-
-    assert_eq!(
-        steering::acknowledgment_directive(&inbox, &key),
-        Some(directive)
-    );
-}
-
-#[test]
 fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
     let expected = [
         (&["board"][..], CommandKind::BoardRead),

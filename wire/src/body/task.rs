@@ -422,7 +422,10 @@ pub struct TaskFieldEdit {
     pub after: String,
 }
 
-/// Claim-bound delivery authority captured by one task edit.
+/// Claim-bound delivery authority an earlier build captured with a task edit.
+///
+/// Retained so journaled edits keep decoding. Claimants now learn of every
+/// task change through its generation, so no writer produces this.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskEditNotice {
@@ -445,7 +448,7 @@ pub struct TaskEdited {
     pub task: TaskStamp,
     /// Statement revision the edit produced.
     pub revision: u32,
-    /// Mandatory claimant notice authority, absent without a live claim.
+    /// Claimant notice authority recorded by an earlier build; never written.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

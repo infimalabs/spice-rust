@@ -58,10 +58,10 @@ fn settled_cross_lane_movement_remains_claim_loss() {
 }
 
 #[test]
-fn task_contract_controls_do_not_increment_the_authored_inbox_hud() {
+fn task_generation_controls_do_not_increment_the_authored_inbox_hud() {
     assert!(counts_as_authored_inbox(None));
     assert!(counts_as_authored_inbox(Some("lane-renewal-context")));
     assert!(!counts_as_authored_inbox(Some(
-        "task-contract-edit:1kKRRsDP:44:33"
+        "task-generation:1kKRRsDP:33:4"
     )));
 }

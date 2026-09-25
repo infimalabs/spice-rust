@@ -144,7 +144,7 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
 #[test]
 fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
     assert!(is_review_feedback(Some("review-feedback:1kKRRsDR:42")));
-    assert!(!is_review_feedback(Some("task-contract-edit:1kKRRsDR:42")));
+    assert!(!is_review_feedback(Some("task-generation:1kKRRsDR:42:3")));
     let source = "00000000-0000-4000-8000-000000000002"
         .parse()
         .expect("fixture source");
@@ -469,18 +469,18 @@ fn unknown_key_preserves_the_original_message_across_replay() {
 }
 
 #[test]
-fn task_contract_acknowledgment_hides_framing_and_earns_no_authored_context() {
+fn system_acknowledgment_hides_framing_and_earns_no_authored_context() {
     assert!(!presents_as_authored_steering(Some(
-        "task-contract-edit:1kKRRsDP:44:33"
+        "task-generation:1kKRRsDP:33:4"
     )));
     let key = "dRyzkGX8b"
         .parse::<steer::Key>()
-        .expect("current task-contract key parses");
+        .expect("current system key parses");
     let directives = PresentationDirectives(BTreeMap::from([(
         key,
         PresentationDirective {
             lane: lane(),
-            text: "Accepted task contract revision.".to_owned(),
+            text: "Accepted lane renewal context.".to_owned(),
             authored: false,
             taste: false,
             review: false,
@@ -516,15 +516,15 @@ fn task_contract_acknowledgment_hides_framing_and_earns_no_authored_context() {
 }
 
 #[test]
-fn task_contract_badge_reaches_canvas_without_speech_eligibility() {
+fn system_acknowledgment_badge_reaches_canvas_without_speech_eligibility() {
     let key = "dRyzkGX8b"
         .parse::<steer::Key>()
-        .expect("current task-contract key parses");
+        .expect("current system key parses");
     let directives = PresentationDirectives(BTreeMap::from([(
         key,
         PresentationDirective {
             lane: lane(),
-            text: "Accepted task contract revision.".to_owned(),
+            text: "Accepted lane renewal context.".to_owned(),
             authored: false,
             taste: false,
             review: false,
@@ -806,10 +806,10 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
 }
 
 #[test]
-fn current_task_contract_and_taste_ack_hide_one_shared_protocol_header() {
+fn current_system_and_taste_ack_hide_one_shared_protocol_header() {
     let system = "dRyzkGX8b"
         .parse::<steer::Key>()
-        .expect("current task-contract key parses");
+        .expect("current system key parses");
     let taste = "dRyzkQp1P"
         .parse::<steer::Key>()
         .expect("current taste key parses");
@@ -827,7 +827,7 @@ fn current_task_contract_and_taste_ack_hide_one_shared_protocol_header() {
             system,
             PresentationDirective {
                 lane: lane(),
-                text: "Accepted task contract revision.".to_owned(),
+                text: "Accepted lane renewal context.".to_owned(),
                 authored: false,
                 taste: false,
                 review: false,
@@ -872,7 +872,7 @@ fn current_task_contract_and_taste_ack_hide_one_shared_protocol_header() {
 fn inline_current_control_and_retained_direction_share_classification() {
     let system = "dRyzkGX8b"
         .parse::<steer::Key>()
-        .expect("current task-contract key parses");
+        .expect("current system key parses");
     let retained = "1kQwPZtK"
         .parse::<steer::Key>()
         .expect("retained direction key parses");
@@ -890,7 +890,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
             system,
             PresentationDirective {
                 lane: lane(),
-                text: "Accepted task contract revision.".to_owned(),
+                text: "Accepted lane renewal context.".to_owned(),
                 authored: false,
                 taste: false,
                 review: false,

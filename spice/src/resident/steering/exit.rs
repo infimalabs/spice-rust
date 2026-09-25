@@ -135,10 +135,12 @@ fn dispose_pending(
         }
     };
     let mut retired = false;
-    for head in pending
-        .iter()
-        .filter(|head| reading.answered(&head.body().key))
-    {
+    for head in pending.iter().filter(|head| {
+        reading.answered(&head.body().key)
+            && !super::super::lifecycle::generation_notices::is_notice(
+                head.body().control.as_deref(),
+            )
+    }) {
         let key = head.body().key.as_str();
         match dispose_head(bus, paths, epoch, lane, vendor, head) {
             Ok(disposition) => {

@@ -904,13 +904,12 @@ fn append_review_statement(
     let revision = u32::try_from(entry.statement().revision.get())
         .unwrap_or(u32::MAX)
         .saturating_add(1);
-    let notice = task_edit_notice(entry, &statement);
     let edited = write
         .fact(
             body::TaskEdited {
                 task: entry.born().clone(),
                 revision,
-                notice,
+                notice: None,
             },
             FactCause::Pending(reviewed),
         )
@@ -1360,13 +1359,12 @@ fn edit_doc_task(
     statement.acceptance = spec.acceptance;
     statement.tags = spec.tags;
     statement.dependencies = spec.dependencies;
-    let notice = task_edit_notice(existing, &statement);
     let edited = write
         .fact(
             body::TaskEdited {
                 task: existing.born().clone(),
                 revision,
-                notice,
+                notice: None,
             },
             cause,
         )

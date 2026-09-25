@@ -606,25 +606,31 @@ pub struct PendingDirective {
     pub expires: Instant,
 }
 
-/// Resident-authored task-contract revision requiring claimant acknowledgment.
+/// Resident-authored notice that a task changed after its claim last
+/// acknowledged it.
+///
+/// Only reclaiming through `generation`, the claim ending, or its replacement
+/// retires the notice; answering its key records delivery alone.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct TaskContractNotice {
-    /// Stable control identity whose disposition the acknowledgment retires.
+pub struct TaskGenerationNotice {
+    /// Stable directive identity derived from task, claim, and generation.
     pub directive: CanonicalUuid,
-    /// Human-sized key the claimant must acknowledge.
+    /// Human-sized key the claimant answers.
     pub key: String,
-    /// Durable task birth identity whose contract changed.
+    /// Durable task birth identity that changed.
     pub task: TaskStamp,
-    /// Journal position of the exact edit being acknowledged.
-    pub edit: Seq,
+    /// Current public handle the claimant reclaims.
+    pub handle: crate::TaskHandle,
+    /// Task generation the change produced.
+    pub generation: u64,
     /// Claim-opening position to which the notice remains bound.
     pub claim: Seq,
-    /// Resident-authored bounded summary of the contract change.
+    /// Resident-authored bounded summary of the change.
     pub text: String,
     /// Current presentation stage.
     pub stage: crate::body::SteeringStage,
-    /// Instant at which the acknowledgment requirement lapses.
+    /// Instant at which the notice lapses.
     pub expires: Instant,
 }
 
@@ -650,9 +656,9 @@ pub struct LaneInbox {
     pub compaction: Option<u64>,
     /// Pending directives in journal order.
     pub pending: Vec<PendingDirective>,
-    /// Pending resident-authored task-contract notices in journal order.
+    /// Pending resident-authored task generation notices in journal order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub task_contract_notices: Vec<TaskContractNotice>,
+    pub generation_notices: Vec<TaskGenerationNotice>,
     /// Current durable progress or degradation record for the lane rendering.
     #[serde(default, skip_serializing_if = "DeliveryStanding::is_unknown")]
     pub delivery: DeliveryStanding,
