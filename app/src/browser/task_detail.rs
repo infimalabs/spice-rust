@@ -51,7 +51,7 @@ pub(super) fn use_controls(
         sheet_ref.clone(),
         complete_close.clone(),
     );
-    use_focus(&selected, mounted, close_ref.clone());
+    use_focus(&selected, mounted, close_ref.clone(), sheet_ref.clone());
     overlay::use_escape_owner(selected.is_some() && !*closing && mounted, close.clone());
     let submit_note = note_submit_callback(sender, surface, notes.clone());
     Controls {
@@ -76,8 +76,13 @@ fn select_callback(
     closing: UseStateHandle<bool>,
 ) -> Callback<TaskStamp> {
     Callback::from(move |task: TaskStamp| {
-        presented.set(false);
-        closing.set(false);
+        if selected.as_ref() == Some(&task) {
+            return;
+        }
+        if selected.is_none() || *closing {
+            presented.set(false);
+            closing.set(false);
+        }
         selected.set(Some(task.clone()));
         request.emit(task);
     })
@@ -162,32 +167,58 @@ fn use_present(pending: bool, presented: UseStateHandle<bool>) {
     });
 }
 
-/// Focus enters the sheet once each time a selected sheet mounts, and a close
-/// returns it to the card that opened a sheet the operator saw.
+/// Focus enters the sheet only when it opens. Replacing the selected task in
+/// an already-open sheet focuses its active tab instead of replaying entry
+/// focus, and a close returns to the card for the last selected task.
 #[hook]
 pub(super) fn use_focus(
     selected: &UseStateHandle<Option<TaskStamp>>,
     mounted: bool,
     close: NodeRef,
+    sheet: NodeRef,
 ) {
     let last_seen = use_mut_ref(|| None::<TaskStamp>);
+    let mounted_selection = use_mut_ref(|| None::<TaskStamp>);
     {
         let last_seen = last_seen.clone();
+        let mounted_selection = mounted_selection.clone();
         use_effect_with(
             ((**selected).clone(), mounted),
             move |(selected, mounted)| {
-                let Some(task) = selected else {
-                    return;
-                };
-                *last_seen.borrow_mut() = mounted.then(|| task.clone());
-                if *mounted && let Some(button) = close.cast::<web_sys::HtmlElement>() {
-                    let options = web_sys::FocusOptions::new();
-                    options.set_prevent_scroll(true);
-                    let _ = button.focus_with_options(&options);
+                let previous = mounted_selection.borrow_mut().take();
+                if *mounted {
+                    *mounted_selection.borrow_mut() = selected.clone();
+                    if let Some(task) = selected {
+                        *last_seen.borrow_mut() = Some(task.clone());
+                    }
+                    if previous.is_some()
+                        && selected.is_some()
+                        && previous.as_ref() != selected.as_ref()
+                        && let Some(tab) = sheet
+                            .cast::<web_sys::Element>()
+                            .and_then(|sheet| {
+                                sheet
+                                    .query_selector("[role=\"tab\"][aria-selected=\"true\"]")
+                                    .ok()
+                                    .flatten()
+                            })
+                            .and_then(|tab| tab.dyn_into::<web_sys::HtmlElement>().ok())
+                    {
+                        let options = web_sys::FocusOptions::new();
+                        options.set_prevent_scroll(true);
+                        let _ = tab.focus_with_options(&options);
+                    }
                 }
             },
         );
     }
+    use_effect_with(selected.is_some() && mounted, move |active| {
+        if *active && let Some(button) = close.cast::<web_sys::HtmlElement>() {
+            let options = web_sys::FocusOptions::new();
+            options.set_prevent_scroll(true);
+            let _ = button.focus_with_options(&options);
+        }
+    });
     use_effect_with((**selected).clone(), move |selected| {
         if selected.is_some() {
             return;
