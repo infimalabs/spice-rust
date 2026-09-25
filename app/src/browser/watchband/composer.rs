@@ -300,18 +300,18 @@ fn render_agent_message_card(
             data-candidate-spans={layout.candidate_spans.clone()}
             data-measure-span={layout.measure_span.to_string()}
         >
-            <div
-                class="mosaic-message-layers"
-                data-task-panel-state={if inspection_open { "open" } else { "closed" }}
-            >
+            if is_boundary {
+                {render_agent_boundary(message, &footer_label)}
+            } else {
                 <div
-                    class="mosaic-message-normal"
-                    aria-hidden={inspection_open.to_string()}
-                    inert={inspection_open.then_some("true")}
+                    class="mosaic-message-layers"
+                    data-task-panel-state={if inspection_open { "open" } else { "closed" }}
                 >
-                    if is_boundary {
-                        {render_agent_boundary(message, &footer_label)}
-                    } else {
+                    <div
+                        class="mosaic-message-normal"
+                        aria-hidden={inspection_open.to_string()}
+                        inert={inspection_open.then_some("true")}
+                    >
                         {rendered_html}
                         {render_agent_message_media(unlinked_media, media_description.as_deref())}
                         {render_agent_message_footer(
@@ -322,10 +322,10 @@ fn render_agent_message_card(
                             &footer_label,
                             &attribution,
                         )}
-                    }
+                    </div>
+                    {render_task_layer(card_inspector, inspection_open)}
                 </div>
-                {render_task_layer(card_inspector, inspection_open)}
-            </div>
+            }
         </article>
     }
 }
