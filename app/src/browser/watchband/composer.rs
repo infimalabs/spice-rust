@@ -474,7 +474,7 @@ fn render_agent_message_footer(
     html! {
         <footer class="message-footer">
             <div class="message-footer-left">
-                <Age authored={display_millis} class="message-age" title={locus} />
+                <Age authored={display_millis} class="relative-age" title={locus} />
                 {render_agent_message_badges(message)}
             </div>
             <div class="message-footer-right">

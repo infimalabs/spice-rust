@@ -17,7 +17,7 @@ use crate::work::{
 };
 use wire::ClaimDisposition;
 
-use super::super::clock::Countdown;
+use super::super::clock::{Age, Countdown};
 use super::super::work_history::Controls as WorkHistoryControls;
 
 const OPEN_LANES: [WorkAvailability; 4] = [
@@ -398,10 +398,10 @@ fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
     let priority = priority_label(&statement.tags);
     let progress = flow_progress(workflow);
     let blocker = blocker_summary(task);
-    let wake = wake_summary(task);
+    let wake = wake_instant(task);
     let dependencies = task.dependencies().len();
     let dependents = task.dependents().len();
-    let completion = workflow.completion.as_ref().map(ToString::to_string);
+    let completion = workflow.completion.as_ref();
     let born = statement.born.clone();
     let is_selected = cards.selected == Some(&born);
     let is_pinned = cards.map.pinned(&born);
@@ -470,7 +470,7 @@ fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
                     <div class="work-card-alert"><dt>{"Blocked"}</dt><dd>{blocker}</dd></div>
                 }
                 if let Some(wake) = wake {
-                    <div class="work-card-wake"><dt>{"Wake"}</dt><dd>{wake}</dd></div>
+                    <div class="work-card-wake"><dt>{"Wake"}</dt><dd>{render_age(wake)}</dd></div>
                 }
                 if dependencies > 0 || dependents > 0 {
                     <div>
@@ -481,7 +481,13 @@ fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
                 if availability == WorkAvailability::Terminal {
                     <div>
                         <dt>{"Result"}</dt>
-                        <dd>{terminal_summary(&workflow.status, completion.as_deref())}</dd>
+                        <dd class="work-card-result">
+                            {workflow.status.clone()}
+                            if let Some(completion) = completion {
+                                <span aria-hidden="true">{"·"}</span>
+                                {render_age(completion)}
+                            }
+                        </dd>
                     </div>
                 }
             </dl>
@@ -511,10 +517,11 @@ fn render_lease(task: &WorkTask<'_>) -> Html {
         return Html::default();
     };
     let expiry = lease.body.expiry.get().as_millisecond();
+    let title = lease.body.expiry.to_string();
     html! {
         <div>
             <dt>{"Lease"}</dt>
-            <dd><Countdown {expiry} class="work-card-lease-time" /></dd>
+            <dd><Countdown {expiry} class="relative-age" {title} /></dd>
         </div>
     }
 }
@@ -540,17 +547,12 @@ fn blocker_summary(task: &WorkTask<'_>) -> Option<String> {
     }
 }
 
-fn wake_summary(task: &WorkTask<'_>) -> Option<String> {
-    (task.availability() == WorkAvailability::Deferred)
-        .then(|| {
-            task.row()
-                .workflow
-                .body
-                .deferral
-                .as_ref()
-                .map(ToString::to_string)
-        })
-        .flatten()
+fn wake_instant<'a>(task: &'a WorkTask<'_>) -> Option<&'a wire::Instant> {
+    if task.availability() == WorkAvailability::Deferred {
+        task.row().workflow.body.deferral.as_ref()
+    } else {
+        None
+    }
 }
 
 fn flow_progress(workflow: &wire::WorkflowHead) -> String {
@@ -575,11 +577,10 @@ fn priority_label(tags: &[String]) -> Option<&str> {
         })
 }
 
-fn terminal_summary(status: &str, completion: Option<&str>) -> String {
-    completion.map_or_else(
-        || status.to_owned(),
-        |instant| format!("{status} · {instant}"),
-    )
+pub(super) fn render_age(instant: &wire::Instant) -> Html {
+    let authored = instant.get().as_millisecond();
+    let title = instant.to_string();
+    html! { <Age {authored} class="relative-age" {title} /> }
 }
 
 fn history_tasks<'a>(work: &'a WorkProjection<'a>) -> Vec<&'a WorkTask<'a>> {
