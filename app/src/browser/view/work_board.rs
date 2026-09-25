@@ -20,9 +20,10 @@ use wire::ClaimDisposition;
 use super::super::clock::{TaskTimePresentation, local_date, task_time};
 use super::super::work_history::Controls as WorkHistoryControls;
 
+/// Board lanes in reading order: workable tasks lead, then work already held.
 const OPEN_LANES: [WorkAvailability; 4] = [
-    WorkAvailability::InFlight,
     WorkAvailability::Ready,
+    WorkAvailability::InFlight,
     WorkAvailability::Blocked,
     WorkAvailability::Deferred,
 ];
