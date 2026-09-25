@@ -1,5 +1,7 @@
 use super::*;
 
+const TASK_PANEL_TRANSITION_MILLIS: u32 = 180;
+
 pub(super) struct Card {
     pub(super) context: Option<crate::browser::message_task_inspector::Context>,
     pub(super) inspection: Option<crate::browser::message_task_inspector::Inspection>,
@@ -16,8 +18,20 @@ pub(super) fn use_card(card: String) -> Card {
             .cloned()
     });
     let root = use_node_ref();
-    use_inspector_focus(&root, inspection.is_some());
-    use_focus_departure(&card, &context, inspection.is_some());
+    use_inspector_focus(
+        &root,
+        inspection
+            .as_ref()
+            .is_some_and(|inspection| inspection.open),
+    );
+    use_close_completion(&context, &inspection);
+    use_focus_departure(
+        &card,
+        &context,
+        inspection
+            .as_ref()
+            .is_some_and(|inspection| inspection.open),
+    );
     Card {
         context,
         inspection,
@@ -37,6 +51,31 @@ fn use_inspector_focus(root: &NodeRef, open: bool) {
             })
             .forget();
         }
+    });
+}
+
+#[hook]
+fn use_close_completion(
+    context: &Option<crate::browser::message_task_inspector::Context>,
+    inspection: &Option<crate::browser::message_task_inspector::Inspection>,
+) {
+    let dependency = (
+        context.clone(),
+        inspection
+            .as_ref()
+            .filter(|inspection| !inspection.open)
+            .map(|inspection| inspection.card.clone()),
+    );
+    use_effect_with(dependency, move |(context, closing_card)| {
+        let timeout = closing_card.as_ref().and_then(|card| {
+            let context = context.clone()?;
+            let card = card.clone();
+            Some(gloo_timers::callback::Timeout::new(
+                TASK_PANEL_TRANSITION_MILLIS,
+                move || context.complete_close(&card),
+            ))
+        });
+        move || drop(timeout)
     });
 }
 
@@ -70,7 +109,7 @@ fn use_focus_departure(
                             })
                             .unwrap_or(false);
                         if !stayed_inside {
-                            context.close();
+                            context.close(false);
                         }
                     },
                 );
@@ -136,34 +175,11 @@ fn task_handle_from_target(target: Option<web_sys::EventTarget>) -> Option<wire:
 
 pub(super) fn close_inspector(
     inspector: Option<crate::browser::message_task_inspector::Context>,
-    card: String,
-    handle: Option<String>,
 ) -> Callback<MouseEvent> {
     Callback::from(move |_| {
-        let Some(inspector) = inspector.as_ref() else {
-            return;
-        };
-        inspector.close();
-        let card = card.clone();
-        let handle = handle.clone();
-        gloo_timers::callback::Timeout::new(0, move || {
-            let Some(handle) = handle else {
-                return;
-            };
-            let Some(card) = web_sys::window()
-                .and_then(|window| window.document())
-                .and_then(|document| document.get_element_by_id(&card))
-            else {
-                return;
-            };
-            let selector = format!(".message-task-chip[data-task-handle=\"{handle}\"]");
-            if let Ok(Some(chip)) = card.query_selector(&selector)
-                && let Ok(chip) = chip.dyn_into::<web_sys::HtmlElement>()
-            {
-                focus_without_scrolling(&chip);
-            }
-        })
-        .forget();
+        if let Some(inspector) = inspector.as_ref() {
+            inspector.close(true);
+        }
     })
 }
 

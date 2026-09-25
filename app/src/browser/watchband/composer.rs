@@ -253,11 +253,8 @@ fn render_agent_message_card(
     } = agent_message_presentation(member, message);
     let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
     let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
-    let close_inspection = task_inspector::close_inspector(
-        inspector.cloned(),
-        source_id.clone(),
-        inspection.map(|inspection| inspection.handle.to_string()),
-    );
+    let close_inspection = task_inspector::close_inspector(inspector.cloned());
+    let inspection_open = inspection.is_some_and(|inspection| inspection.open);
     html! {
         <article
             key={source_id.clone()}
@@ -306,30 +303,45 @@ fn render_agent_message_card(
             data-candidate-spans={layout.candidate_spans.clone()}
             data-measure-span={layout.measure_span.to_string()}
         >
-            <div class="mosaic-message-normal" hidden={inspection.is_some()}>
-                if is_boundary {
-                    {render_agent_boundary(message, &footer_label)}
-                } else {
-                    {rendered_html}
-                    {render_agent_message_media(unlinked_media, media_description.as_deref())}
-                    {render_agent_message_footer(
-                        message,
-                        &shown_text,
-                        correspondent,
-                        crate::runtime::agent_message_display_millis(message),
-                        &footer_label,
-                        &attribution,
-                    )}
-                }
+            <div
+                class="mosaic-message-layers"
+                data-task-panel-state={if inspection_open { "open" } else { "closed" }}
+            >
+                <div
+                    class="mosaic-message-normal"
+                    aria-hidden={inspection_open.to_string()}
+                    inert={inspection_open.then_some("true")}
+                >
+                    if is_boundary {
+                        {render_agent_boundary(message, &footer_label)}
+                    } else {
+                        {rendered_html}
+                        {render_agent_message_media(unlinked_media, media_description.as_deref())}
+                        {render_agent_message_footer(
+                            message,
+                            &shown_text,
+                            correspondent,
+                            crate::runtime::agent_message_display_millis(message),
+                            &footer_label,
+                            &attribution,
+                        )}
+                    }
+                </div>
+                <div
+                    class="mosaic-message-task-layer"
+                    aria-hidden={(!inspection_open).to_string()}
+                    inert={(!inspection_open).then_some("true")}
+                >
+                    if let (Some(inspector), Some(inspection)) = (inspector, inspection) {
+                        {crate::browser::message_task_inspector::render(
+                            inspector,
+                            inspection,
+                            inspector_ref,
+                            close_inspection,
+                        )}
+                    }
+                </div>
             </div>
-            if let (Some(inspector), Some(inspection)) = (inspector, inspection) {
-                {crate::browser::message_task_inspector::render(
-                    inspector,
-                    inspection,
-                    inspector_ref,
-                    close_inspection,
-                )}
-            }
         </article>
     }
 }
