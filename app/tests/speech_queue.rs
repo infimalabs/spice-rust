@@ -3,12 +3,35 @@ use app::speech_queue::{
     SpeechQueue, SpeechRequest, SuppressAutomatic,
 };
 
+fn playback(lane: &str) -> wire::SpeechPlayback {
+    wire::SpeechPlayback::System {
+        voice: format!("voice-{lane}"),
+        words_per_minute: 175,
+    }
+}
+
+fn worktree(lane: &str) -> String {
+    format!("/worktrees/{lane}")
+}
+
 fn narration(lane: &str, text: &str) -> SpeechRequest {
-    SpeechRequest::narration(lane.to_owned(), text.to_owned(), text.to_owned())
+    SpeechRequest::narration(
+        worktree(lane),
+        playback(lane),
+        lane.to_owned(),
+        text.to_owned(),
+        text.to_owned(),
+    )
 }
 
 fn manual(lane: &str, key: &str, text: &str) -> SpeechRequest {
-    SpeechRequest::message(lane.to_owned(), key.to_owned(), text.to_owned())
+    SpeechRequest::message(
+        worktree(lane),
+        playback(lane),
+        lane.to_owned(),
+        key.to_owned(),
+        text.to_owned(),
+    )
 }
 
 fn started(result: Enqueue) -> app::speech_queue::SpeechEntry {
@@ -46,12 +69,16 @@ fn one_global_head_survives_a_burst_and_each_team_keeps_one_fresh_tail() {
     assert_eq!(b.lane(), Some("team-b"));
     assert_eq!(b.message_key(), Some("fresh b"));
     assert_eq!(b.text(), "fresh b");
+    assert_eq!(b.worktree(), "/worktrees/team-b");
+    assert_eq!(b.playback(), &playback("team-b"));
     let a = match queue.finish(b.id()) {
         Advance::Start(entry) => entry,
         other => panic!("second team did not advance: {other:?}"),
     };
     assert_eq!(a.lane(), Some("team-a"));
     assert_eq!(a.text(), "fresh a");
+    assert_eq!(a.worktree(), "/worktrees/team-a");
+    assert_eq!(a.playback(), &playback("team-a"));
     assert_eq!(queue.finish(a.id()), Advance::Idle);
 }
 
@@ -166,12 +193,16 @@ fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes(
         [
             app::speech_queue::NarrationLine {
                 lane: "agent-b".to_owned(),
+                worktree: worktree("agent-b"),
+                playback: playback("agent-b"),
                 key: "b2".to_owned(),
                 narration: Some("live b".to_owned()),
                 automatic_speech: None,
             },
             app::speech_queue::NarrationLine {
                 lane: "agent-a".to_owned(),
+                worktree: worktree("agent-a"),
+                playback: playback("agent-a"),
                 key: "a2".to_owned(),
                 narration: Some("live a".to_owned()),
                 automatic_speech: Some("selected a".to_owned()),
@@ -273,6 +304,8 @@ fn cursor_storage_is_bounded_and_a_missing_cursor_rebases_without_reading_histor
 fn message(lane: &str, key: &str, text: &str) -> NarrationMessage {
     NarrationMessage {
         lane: lane.to_owned(),
+        worktree: worktree(lane),
+        playback: playback(lane),
         key: key.to_owned(),
         narration: Some(text.to_owned()),
         automatic_speech: None,

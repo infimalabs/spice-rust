@@ -316,6 +316,7 @@ mod tests {
             lane: uuid(lane),
             name: None,
             worktree: format!("worktree-{lane}"),
+            speech: wire::SpeechPlayback::Disabled {},
             life: "steer".to_owned(),
             vendor: "claude".parse().expect("the fixture spells a vendor name"),
             model: Some("sonnet".to_owned()),

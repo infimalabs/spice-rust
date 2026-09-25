@@ -287,6 +287,11 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
     "name": "Ava",
     "worktree": "/worktrees/lane-a",
+    "speech": {
+      "backend": "system",
+      "voice": "Samantha",
+      "words_per_minute": 190
+    },
     "life": "drive",
     "vendor": "claude",
     "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
@@ -298,6 +303,9 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     "lane": "018f82d4-6f59-7d06-92e3-bce9131163c6",
     "team": "018f82d4-6f59-7d06-92e3-bce9131163c6",
     "worktree": "/worktrees/lane-b",
+    "speech": {
+      "backend": "disabled"
+    },
     "life": "steer",
     "vendor": "codex",
     "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c8"],
@@ -356,6 +364,11 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
       "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
       "name": "Ava",
       "worktree": "/worktrees/lane-a",
+      "speech": {
+        "backend": "system",
+        "voice": "Samantha",
+        "words_per_minute": 190
+      },
       "life": "drive",
       "vendor": "claude",
       "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",

@@ -62,6 +62,7 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         lane: uuid(id),
         name: None,
         worktree: worktree.to_owned(),
+        speech: wire::SpeechPlayback::Disabled {},
         life: "docker".to_owned(),
         vendor: "codex".parse().expect("the fixture spells a vendor name"),
         model: Some("gpt-5.2-codex".to_owned()),

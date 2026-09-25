@@ -156,7 +156,6 @@ impl NoteSubmissionHandle {
 struct SurfaceHandles {
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
-    speech: UseStateHandle<wire::SpeechPlayback>,
     identity: UseStateHandle<Option<CanvasIdentity>>,
     canvas_update: UseStateHandle<Option<CanvasUpdate>>,
     team_controls: UseReducerHandle<TeamControls>,
@@ -215,7 +214,6 @@ struct AgentSpeechControls {
 struct SpeechRuntime {
     queue: Rc<RefCell<SpeechQueue>>,
     controller: Rc<RefCell<crate::speech::Controller>>,
-    speech: UseStateHandle<wire::SpeechPlayback>,
     status: UseStateHandle<SpeechStatus>,
     message: UseStateHandle<Option<String>>,
 }
@@ -240,19 +238,19 @@ impl SpeechRuntime {
         let generation = self.controller.borrow_mut().begin();
         self.message.set(entry.message_key().map(str::to_owned));
         self.status.set(SpeechStatus::Idle);
-        match &*self.speech {
+        match entry.playback().clone() {
             wire::SpeechPlayback::Disabled {} => self.finish(entry.id(), None),
             wire::SpeechPlayback::System {
                 voice,
                 words_per_minute,
-            } => self.start_system(entry, generation, voice, *words_per_minute),
+            } => self.start_system(entry, generation, &voice, words_per_minute),
             wire::SpeechPlayback::External {
                 content_type,
                 available,
                 ..
             } => {
-                if *available {
-                    self.start_external(entry, generation, content_type.clone());
+                if available {
+                    self.start_external(entry, generation, content_type);
                 } else {
                     self.finish(
                         entry.id(),
@@ -356,7 +354,8 @@ impl SpeechRuntime {
     fn start_external(&self, entry: SpeechEntry, generation: u64, content_type: String) {
         let runtime = self.clone();
         spawn_local(async move {
-            let rendered = request_external_speech(entry.text(), &content_type).await;
+            let rendered =
+                request_external_speech(entry.worktree(), entry.text(), &content_type).await;
             if !runtime.is_current(entry.id(), generation) {
                 return;
             }
@@ -537,10 +536,13 @@ struct CanvasAppProperties {
     navigate: Callback<CanvasDestination>,
 }
 
-struct CanvasHandles {
+struct CanvasAppState {
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
     canvas_menu_open: UseStateHandle<bool>,
+    axis: UseStateHandle<Axis>,
+    mosaic: UseStateHandle<bool>,
+    navigate: Callback<CanvasDestination>,
     work_scope: UseStateHandle<WorkScope>,
     work_scope_notice: UseStateHandle<Option<String>>,
     work_arrangement: UseStateHandle<WorkArrangement>,
@@ -552,175 +554,192 @@ struct CanvasHandles {
     submissions: SubmissionHandle,
     action_issue: UseStateHandle<Option<String>>,
     sender: SenderHandle,
+    composer_drag: watchband::PrimaryComposerDragState,
+    work_detail: task_detail::Controls,
+    task_context: message_task_inspector::Context,
+    work_history: work_history::Controls,
     work_map: UseStateHandle<view::WorkMapState>,
-    speech: UseStateHandle<wire::SpeechPlayback>,
     speech_status: UseStateHandle<SpeechStatus>,
-    speech_message: UseStateHandle<Option<String>>,
+    agents: view::AgentControls,
+    unsafe_intent: bool,
 }
 
-#[hook]
-fn use_canvas_handles() -> CanvasHandles {
-    let action_issue = use_state(|| None::<String>);
-    CanvasHandles {
-        connection: use_state(|| Connection::Starting),
-        surface: use_state(SurfaceData::default),
-        canvas_menu_open: use_state(|| false),
-        work_scope: use_state(WorkScope::default),
-        work_scope_notice: use_state(|| None::<String>),
-        work_arrangement: use_state(WorkArrangement::default),
-        identity: use_state(|| None::<CanvasIdentity>),
-        canvas_update: use_state(|| None::<CanvasUpdate>),
-        team_controls: use_reducer(TeamControls::restore),
-        team_fleet: use_node_ref(),
-        composer_drafts: use_reducer(ComposerDrafts::default),
-        submissions: SubmissionHandle {
-            queue: use_mut_ref(SubmissionQueue::default),
-            status: use_state(SubmissionStatus::default),
-        },
-        sender: SenderHandle {
-            queue: use_mut_ref(|| None::<ActionQueue>),
-            issue: action_issue.clone(),
-        },
-        action_issue,
-        work_map: use_state(view::WorkMapState::default),
-        speech: use_state(|| wire::SpeechPlayback::Disabled {}),
-        speech_status: use_state(SpeechStatus::default),
-        speech_message: use_state(|| None::<String>),
+impl CanvasAppState {
+    fn render(self) -> Html {
+        let surface_view = self.surface.read();
+        let work = project_work(surface_view.as_ref());
+        let refresh = refresh_callback(
+            self.sender.clone(),
+            self.axis.clone(),
+            self.work_detail.selected.clone(),
+            self.work_map.clone(),
+        );
+        let canvas = render_canvas(
+            CanvasRender {
+                connection: &self.connection,
+                surface: &self.surface,
+                axis: &self.axis,
+                mosaic: &self.mosaic,
+                navigate: &self.navigate,
+                canvas_menu_open: &self.canvas_menu_open,
+                work_scope: &self.work_scope,
+                work_scope_notice: &self.work_scope_notice,
+                work_arrangement: &self.work_arrangement,
+                identity: &self.identity,
+                canvas_update: &self.canvas_update,
+                team_controls: &self.team_controls,
+                composer_drafts: &self.composer_drafts,
+                submissions: &self.submissions,
+                composer_drag: &self.composer_drag,
+                team_fleet: &self.team_fleet,
+                unsafe_intent: self.unsafe_intent,
+                sender: &self.sender,
+                agents: &self.agents,
+                selected_task: &self.work_detail.selected,
+                detail_presented: *self.work_detail.presented,
+                detail_closing: *self.work_detail.closing,
+                work_map: &self.work_map,
+                work_history: &self.work_history,
+                detail_close: &self.work_detail.close_ref,
+                detail_sheet: &self.work_detail.sheet_ref,
+                note_text: &self.work_detail.note_text,
+                note_notice: &self.work_detail.notice,
+                note_submission: &self.work_detail.submission.status,
+                action_issue: &self.action_issue,
+                speech_status: &self.speech_status,
+                submit_note: self.work_detail.submit_note.clone(),
+                select_task: self.work_detail.select.clone(),
+                close_task: self.work_detail.close.clone(),
+                refresh,
+            },
+            work.as_ref(),
+        );
+        message_task_inspector::provide(self.task_context, canvas)
     }
 }
 
 #[hook]
-fn use_canvas_agents(handles: &CanvasHandles) -> (SpeechRuntime, view::AgentControls) {
+fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, SpeechRuntime) {
+    let connection = use_state(|| Connection::Starting);
+    let surface = use_state(SurfaceData::default);
+    let canvas_menu_open = use_state(|| false);
+    let (axis, mosaic) = navigation::use_global_destination(properties.destination);
+    let work_scope = use_state(WorkScope::default);
+    let work_scope_notice = use_state(|| None::<String>);
+    let work_arrangement = use_state(WorkArrangement::default);
+    let identity = use_state(|| None::<CanvasIdentity>);
+    let canvas_update = use_state(|| None::<CanvasUpdate>);
+    let team_controls = use_reducer(TeamControls::restore);
+    let team_fleet = use_node_ref();
+    let composer_drafts = use_reducer(ComposerDrafts::default);
+    let submission_status = use_state(SubmissionStatus::default);
+    let submissions = SubmissionHandle {
+        queue: use_mut_ref(SubmissionQueue::default),
+        status: submission_status.clone(),
+    };
+    let action_issue = use_state(|| None::<String>);
+    let sender = SenderHandle {
+        queue: use_mut_ref(|| None::<ActionQueue>),
+        issue: action_issue.clone(),
+    };
+    let composer_drag = use_composer_drag(&surface);
+    let work_detail = task_detail::use_controls(sender.clone(), surface.clone());
+    let task_context =
+        message_task_inspector::use_controls(&surface, &work_detail, &properties.navigate);
+    let work_history = work_history::use_controls(sender.clone(), surface.clone());
+    let work_map = use_state(view::WorkMapState::default);
+    let speech_status = use_state(SpeechStatus::default);
+    let speech_message = use_state(|| None::<String>);
     let speech_runtime = SpeechRuntime {
         queue: use_mut_ref(SpeechQueue::default),
         controller: use_mut_ref(crate::speech::Controller::default),
-        speech: handles.speech.clone(),
-        status: handles.speech_status.clone(),
-        message: handles.speech_message.clone(),
+        status: speech_status.clone(),
+        message: speech_message.clone(),
     };
     let speech_ref = use_mut_ref(|| speech_runtime.clone());
     *speech_ref.borrow_mut() = speech_runtime.clone();
     let narration_cursors = use_mut_ref(load_narration_cursors);
-    let agent_speech = use_agent_speech_controls(
-        speech_ref,
-        narration_cursors,
-        handles.speech_message.clone(),
-    );
-    let agents = use_agent_controls(
-        handles.sender.clone(),
-        handles.surface.clone(),
-        agent_speech,
-    );
-    (speech_runtime, agents)
+    let agent_speech = use_agent_speech_controls(speech_ref, narration_cursors, speech_message);
+    let agents = use_agent_controls(sender.clone(), surface.clone(), agent_speech);
+    let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
+    (
+        CanvasAppState {
+            connection,
+            surface,
+            canvas_menu_open,
+            axis,
+            mosaic,
+            navigate: properties.navigate.clone(),
+            work_scope,
+            work_scope_notice,
+            work_arrangement,
+            identity,
+            canvas_update,
+            team_controls,
+            team_fleet,
+            composer_drafts,
+            submissions,
+            action_issue,
+            sender,
+            composer_drag,
+            work_detail,
+            task_context,
+            work_history,
+            work_map,
+            speech_status,
+            agents,
+            unsafe_intent,
+        },
+        speech_runtime,
+    )
 }
 
 #[hook]
-fn use_canvas_effects(
-    handles: &CanvasHandles,
-    work_detail: &task_detail::Controls,
-    speech_runtime: &SpeechRuntime,
-    mosaic: bool,
-) {
+fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime) {
     use_surface_connection(
-        handles.sender.clone(),
+        state.sender.clone(),
         SurfaceHandles {
-            connection: handles.connection.clone(),
-            surface: handles.surface.clone(),
-            speech: handles.speech.clone(),
-            identity: handles.identity.clone(),
-            canvas_update: handles.canvas_update.clone(),
-            team_controls: handles.team_controls.clone(),
-            composer_drafts: handles.composer_drafts.clone(),
-            submissions: handles.submissions.clone(),
-            note_text: work_detail.note_text.clone(),
-            note_notice: work_detail.notice.clone(),
-            note_submission: work_detail.submission.clone(),
+            connection: state.connection.clone(),
+            surface: state.surface.clone(),
+            identity: state.identity.clone(),
+            canvas_update: state.canvas_update.clone(),
+            team_controls: state.team_controls.clone(),
+            composer_drafts: state.composer_drafts.clone(),
+            submissions: state.submissions.clone(),
+            note_text: state.work_detail.note_text.clone(),
+            note_notice: state.work_detail.notice.clone(),
+            note_submission: state.work_detail.submission.clone(),
         },
     );
     task_relations::use_request(
-        &handles.sender,
-        &handles.surface,
-        &work_detail.selected,
-        &handles.work_map,
+        &state.sender,
+        &state.surface,
+        &state.work_detail.selected,
+        &state.work_map,
     );
-    use_team_speech_abandonment(&handles.surface, speech_runtime.clone());
-    use_speech_reset(handles.speech.clone(), speech_runtime.clone());
-    use_page_hide_speech_stop(speech_runtime.clone());
-    use_mosaic_root_scroll(mosaic);
-    use_canvas_menu_dismissal(handles.canvas_menu_open.clone());
+    use_team_speech_abandonment(&state.surface, speech_runtime.clone());
+    use_page_hide_speech_stop(speech_runtime);
+    use_mosaic_root_scroll(*state.mosaic);
+    use_canvas_menu_dismissal(state.canvas_menu_open.clone());
     watchband::use_command_modifier_preview();
     watchband::use_team_fleet_right_edge(
-        handles.team_fleet.clone(),
-        teamed_lane_count(&handles.surface),
+        state.team_fleet.clone(),
+        teamed_lane_count(&state.surface),
+    );
+    let surface_view = state.surface.read();
+    let work = project_work(surface_view.as_ref());
+    use_work_scope_reconciliation(
+        work.as_ref(),
+        state.work_scope.clone(),
+        state.work_scope_notice.clone(),
     );
 }
 
 #[function_component(CanvasApp)]
 fn canvas_app(properties: &CanvasAppProperties) -> Html {
-    let handles = use_canvas_handles();
-    let (axis, mosaic) = navigation::use_global_destination(properties.destination);
-    let composer_drag = use_composer_drag(&handles.surface);
-    let work_detail = task_detail::use_controls(handles.sender.clone(), handles.surface.clone());
-    let task_context =
-        message_task_inspector::use_controls(&handles.surface, &work_detail, &properties.navigate);
-    let work_history = work_history::use_controls(handles.sender.clone(), handles.surface.clone());
-    let (speech_runtime, agents) = use_canvas_agents(&handles);
-    let unsafe_intent = use_unsafe_intent(&handles.composer_drafts, &handles.submissions.status);
-    use_canvas_effects(&handles, &work_detail, &speech_runtime, *mosaic);
-    let surface_view = handles.surface.read();
-    let work = project_work(surface_view.as_ref());
-    use_work_scope_reconciliation(
-        work.as_ref(),
-        handles.work_scope.clone(),
-        handles.work_scope_notice.clone(),
-    );
-    let refresh = refresh_callback(
-        handles.sender.clone(),
-        axis.clone(),
-        work_detail.selected.clone(),
-        handles.work_map.clone(),
-    );
-    let canvas = render_canvas(
-        CanvasRender {
-            connection: &handles.connection,
-            surface: &handles.surface,
-            axis: &axis,
-            mosaic: &mosaic,
-            navigate: &properties.navigate,
-            canvas_menu_open: &handles.canvas_menu_open,
-            work_scope: &handles.work_scope,
-            work_scope_notice: &handles.work_scope_notice,
-            work_arrangement: &handles.work_arrangement,
-            identity: &handles.identity,
-            canvas_update: &handles.canvas_update,
-            team_controls: &handles.team_controls,
-            composer_drafts: &handles.composer_drafts,
-            submissions: &handles.submissions,
-            composer_drag: &composer_drag,
-            team_fleet: &handles.team_fleet,
-            unsafe_intent,
-            sender: &handles.sender,
-            agents: &agents,
-            selected_task: &work_detail.selected,
-            detail_presented: *work_detail.presented,
-            detail_closing: *work_detail.closing,
-            work_map: &handles.work_map,
-            work_history: &work_history,
-            detail_close: &work_detail.close_ref,
-            detail_sheet: &work_detail.sheet_ref,
-            note_text: &work_detail.note_text,
-            note_notice: &work_detail.notice,
-            note_submission: &work_detail.submission.status,
-            action_issue: &handles.action_issue,
-            speech_status: &handles.speech_status,
-            submit_note: work_detail.submit_note.clone(),
-            select_task: work_detail.select.clone(),
-            close_task: work_detail.close.clone(),
-            refresh,
-        },
-        work.as_ref(),
-    );
-    message_task_inspector::provide(task_context, canvas)
+    let (state, speech_runtime) = use_canvas_app_state(properties);
+    use_canvas_app_effects(&state, speech_runtime);
+    state.render()
 }
 
 fn project_work(runtime: Option<&CanvasRuntime>) -> Option<WorkProjection<'_>> {
@@ -885,14 +904,6 @@ fn use_surface_connection(sender: SenderHandle, handles: SurfaceHandles) {
             active.set(false);
             sender.queue.borrow_mut().take();
         }
-    });
-}
-
-#[hook]
-fn use_speech_reset(speech: UseStateHandle<wire::SpeechPlayback>, speech_runtime: SpeechRuntime) {
-    let effective = (*speech).clone();
-    use_effect_with(effective, move |_| {
-        speech_runtime.stop();
     });
 }
 
@@ -1245,7 +1256,13 @@ fn narration_callback(
                 TeamSpeech::Narrate => line.narration,
             };
             if let Some(text) = text {
-                speak.emit(SpeechRequest::narration(batch.team.clone(), line.key, text));
+                speak.emit(SpeechRequest::narration(
+                    line.worktree,
+                    line.playback,
+                    batch.team.clone(),
+                    line.key,
+                    text,
+                ));
             }
         }
     })

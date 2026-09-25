@@ -8,6 +8,8 @@ pub const MAX_NARRATION_CURSORS: usize = 256;
 /// One request entering the browser-global speech arbiter.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SpeechRequest {
+    worktree: String,
+    playback: wire::SpeechPlayback,
     lane: Option<String>,
     message_key: Option<String>,
     text: String,
@@ -17,8 +19,16 @@ pub struct SpeechRequest {
 impl SpeechRequest {
     /// Operator-requested speech for one exact rendered message.
     #[must_use]
-    pub fn message(lane: String, message_key: String, text: String) -> Self {
+    pub fn message(
+        worktree: String,
+        playback: wire::SpeechPlayback,
+        lane: String,
+        message_key: String,
+        text: String,
+    ) -> Self {
         Self {
+            worktree,
+            playback,
             lane: Some(lane),
             message_key: Some(message_key),
             text,
@@ -28,8 +38,16 @@ impl SpeechRequest {
 
     /// Automatic narration from one rendered team.
     #[must_use]
-    pub fn narration(lane: String, message_key: String, text: String) -> Self {
+    pub fn narration(
+        worktree: String,
+        playback: wire::SpeechPlayback,
+        lane: String,
+        message_key: String,
+        text: String,
+    ) -> Self {
         Self {
+            worktree,
+            playback,
             lane: Some(lane),
             message_key: Some(message_key),
             text,
@@ -42,8 +60,19 @@ impl SpeechRequest {
     pub fn message_key(&self) -> Option<&str> {
         self.message_key.as_deref()
     }
-}
 
+    /// Worktree whose admitted speech configuration this request carries.
+    #[must_use]
+    pub fn worktree(&self) -> &str {
+        &self.worktree
+    }
+
+    /// Browser-safe playback contract resolved for the originating worktree.
+    #[must_use]
+    pub const fn playback(&self) -> &wire::SpeechPlayback {
+        &self.playback
+    }
+}
 /// One request admitted as either the committed head or queued tail.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SpeechEntry {
@@ -74,6 +103,18 @@ impl SpeechEntry {
     #[must_use]
     pub fn message_key(&self) -> Option<&str> {
         self.request.message_key.as_deref()
+    }
+
+    /// Worktree whose admitted speech configuration this entry carries.
+    #[must_use]
+    pub fn worktree(&self) -> &str {
+        self.request.worktree()
+    }
+
+    /// Browser-safe playback contract fixed when this entry entered the queue.
+    #[must_use]
+    pub const fn playback(&self) -> &wire::SpeechPlayback {
+        self.request.playback()
     }
 }
 
@@ -254,6 +295,10 @@ impl SpeechQueue {
 pub struct NarrationMessage {
     /// Stable agent lane that produced the message.
     pub lane: String,
+    /// Worktree whose voice this message uses.
+    pub worktree: String,
+    /// Effective speech configuration for that worktree.
+    pub playback: wire::SpeechPlayback,
     /// Stable message identity within that lane.
     pub key: String,
     /// Narrate-mode utterance: the card's edge segments.
@@ -267,6 +312,10 @@ pub struct NarrationMessage {
 pub struct NarrationLine {
     /// Stable agent lane that produced the message.
     pub lane: String,
+    /// Worktree whose voice this message uses.
+    pub worktree: String,
+    /// Effective speech configuration for that worktree.
+    pub playback: wire::SpeechPlayback,
     /// Stable rendered message identity.
     pub key: String,
     /// Narrate-mode utterance to enqueue through the global arbiter.
@@ -316,6 +365,8 @@ impl NarrationCursors {
                     && admitted.insert(message.lane.clone())
             })
             .map(|message| NarrationLine {
+                worktree: message.worktree.clone(),
+                playback: message.playback.clone(),
                 lane: message.lane.clone(),
                 key: message.key.clone(),
                 narration: message.narration.clone(),

@@ -1223,6 +1223,7 @@ mod tests {
             lane,
             name: None,
             worktree: "/work/spice-rust-h".to_owned(),
+            speech: wire::SpeechPlayback::Disabled {},
             life: "steer".to_owned(),
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,

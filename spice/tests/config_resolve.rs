@@ -96,6 +96,19 @@ fn worktree_vendor_model_and_effort_override_tracked_without_admitting_authority
     }
 }
 
+#[test]
+fn worktree_voice_overrides_the_shared_tracked_voice() {
+    let resolved = resolve(worktree_documents(
+        Some("[say]\nvoice = 'Zoe (Premium)'\n"),
+        Some("[say]\nvoice = 'Samantha'\n"),
+        None,
+    ))
+    .expect("worktree voice resolves");
+
+    assert_eq!(resolved.root().say().voice(), "Samantha");
+    assert_eq!(path_source(&resolved, "say.voice"), ConfigSource::Worktree);
+}
+
 fn path_source(resolved: &Resolved, expected: &str) -> ConfigSource {
     resolved
         .provenance()

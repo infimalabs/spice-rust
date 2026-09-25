@@ -147,6 +147,7 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
     // Same host, another site's origin: the check that survives the wildcard.
     let body = wire::encode(&wire::SpeechRequest {
         text: "spoken from somewhere else".to_owned(),
+        worktree: "/worktrees/speech".to_owned(),
     })
     .expect("request encodes");
     let foreign = speech_request_to(

@@ -34,7 +34,6 @@ pub(super) async fn bootstrap(
         capability,
         epoch: state.epoch,
         version,
-        speech: state.speech.playback(),
     };
     let Ok(bytes) = wire::encode(&discovery) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();

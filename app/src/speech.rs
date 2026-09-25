@@ -1,4 +1,4 @@
-//! Browser-owned playback for the effective resident speech contract.
+//! Browser-owned playback for each queued entry's admitted worktree speech contract.
 
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};

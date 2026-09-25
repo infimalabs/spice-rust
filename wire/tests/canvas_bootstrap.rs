@@ -11,11 +11,6 @@ const CANVAS_BOOTSTRAP: &str = r#"{
     "journal": 20,
     "canvas": 6,
     "app": "2222222222222222222222222222222222222222222222222222222222222222"
-  },
-  "speech": {
-    "backend": "system",
-    "voice": "Zoe (Premium)",
-    "words_per_minute": 175
   }
 }"#;
 
@@ -49,15 +44,8 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
     );
     assert_eq!(bootstrap.version.product.as_str(), "1.2.3");
     assert_eq!(bootstrap.version.app.as_str(), "2".repeat(64));
-    assert_eq!(
-        bootstrap.speech,
-        wire::SpeechPlayback::System {
-            voice: "Zoe (Premium)".to_owned(),
-            words_per_minute: 175,
-        }
-    );
 
-    for field in ["endpoint", "capability", "epoch", "version", "speech"] {
+    for field in ["endpoint", "capability", "epoch", "version"] {
         let mut value: serde_json::Value =
             serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
         value

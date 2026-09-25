@@ -91,11 +91,9 @@ pub struct CanvasBootstrap {
     pub epoch: CanonicalUuid,
     /// Product and build identity served at this bootstrap boundary.
     pub version: crate::reply::Version,
-    /// Browser-safe playback contract for this resident generation.
-    pub speech: SpeechPlayback,
 }
 
-/// The one browser-owned speech path selected at resident startup.
+/// Browser-safe speech path resolved for one admitted agent worktree.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case", tag = "backend", deny_unknown_fields)]
 pub enum SpeechPlayback {
@@ -125,6 +123,8 @@ pub enum SpeechPlayback {
 pub struct SpeechRequest {
     /// Rendered canvas text; executable selection remains server-owned.
     pub text: String,
+    /// Canonical originating worktree whose admitted renderer configuration applies.
+    pub worktree: String,
 }
 
 /// The first frame of every socket.

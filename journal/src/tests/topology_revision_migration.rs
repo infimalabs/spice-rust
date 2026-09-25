@@ -40,7 +40,6 @@ const RECEIPTS: &[(CommandKind, &str, u64)] = &[
 #[derive(Clone, Copy)]
 enum StoredRevision {
     Missing,
-    Current,
     Mismatched,
 }
 
@@ -102,6 +101,12 @@ fn schema_five_derives_one_revision_authority_from_topology_facts() {
             .topology_revision,
         2
     );
+    assert!(matches!(
+        response::<wire::intent::LaneAnswer>(&journal.connection, CommandKind::LaneArrange).lanes
+            [0]
+        .speech,
+        wire::SpeechPlayback::Disabled {}
+    ));
     assert_eq!(
         response::<wire::intent::LaneAnswer>(&journal.connection, CommandKind::TeamConfigure,)
             .topology_revision,
@@ -128,26 +133,6 @@ fn schema_five_derives_one_revision_authority_from_topology_facts() {
         None,
         "the migration runs exactly once"
     );
-}
-
-#[test]
-fn exact_schema_five_revisions_cross_without_an_alternate_rewrite() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-five-current-topology.sqlite3");
-    schema_five_topology_authority(&path, StoredRevision::Current);
-    let before = topology_carriers(&Connection::open(&path).expect("open exact fixture"));
-
-    let mut journal = Journal::open(&path).expect("exact topology authority migrates");
-
-    assert_eq!(
-        topology_carriers(&journal.connection),
-        before
-            .iter()
-            .map(|bytes| team_spelling(bytes))
-            .collect::<Vec<_>>()
-    );
-    admit_empty_steering_fold(&mut journal);
-    journal.verify().expect("exact migrated authority verifies");
 }
 
 #[test]
@@ -200,7 +185,6 @@ fn schema_five_topology_authority(path: &Path, stored: StoredRevision) {
 
     match stored {
         StoredRevision::Missing => remove_all_revisions(&journal.connection),
-        StoredRevision::Current => {}
         StoredRevision::Mismatched => set_head_revision(&journal.connection, 99),
     }
     drop_steering_index(&journal.connection);

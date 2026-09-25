@@ -858,8 +858,8 @@ configuration_registry! {
     fixed "say.voice" {
         kind: String,
         builtin: Some(Builtin::String(canvas::speech::DEFAULT_VOICE)),
-        layers: TRACKED_LOCAL,
-        class: MachineLocal,
+        layers: TRACKED_WORKTREE,
+        class: WorktreeLocal,
         flag: None,
     }
     fixed "say.content_type" {

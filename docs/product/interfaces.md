@@ -339,10 +339,11 @@ flowchart TD
   T["topbar manual"] --> TC["trimmed main-content inner text<br/>at most 32 KiB, no lane"]
   C["card manual"] --> CM["exact message.text<br/>with its rendered lane"]
   N["automatic narration"] --> NM["newly cursor-admitted<br/>full message text"]
-  TC --> Q["one global queue"]
+  TC --> Q["one global sequential queue"]
   CM --> Q
   NM --> Q
-  Q --> B{"configured backend"}
+  Q --> W["originating worktree's<br/>admitted speech contract"]
+  W --> B{"configured backend"}
   B --> S["browser system synthesis<br/>callback-settled"]
   B --> X["external rendering<br/>deadline-bounded"]
   S --> P["single-owner playback"]
@@ -355,6 +356,11 @@ retains its rendered lane. The topbar instead speaks the trimmed visible
 `main.content` inner text, refuses more than 32 KiB, and carries no lane.
 Automatic narration admits each newly cursor-admitted message's complete text;
 it does not reinterpret ACKs or paragraph edges.
+
+**Invariant —** Every queued card or narration entry carries the admitted speech
+contract of the agent worktree that produced it. Worktree-scoped `say.voice`
+therefore changes voices between agents without creating another playback
+owner: the one global queue remains sequential and never overlaps utterances.
 
 **Invariant —** Speech is **best-effort ear candy**. A detected failure is
 reported as nonblocking `Speech unavailable` state and never blocks the visible

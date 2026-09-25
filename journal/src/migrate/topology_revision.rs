@@ -388,7 +388,13 @@ fn canonical_response(row: &str, kind: &str, value: &Value) -> Result<Vec<u8>, O
             encode_response::<wire::intent::LaneChangeAnswer>(row, &bytes)
         }
         "lane::arrange" | "lineage::arrange" | "lineage::configure" => {
-            encode_response::<wire::intent::LaneAnswer>(row, &bytes)
+            super::speech_playback::canonical_predecessor(value).map_err(|error| {
+                invalid(
+                    "command_receipts",
+                    row,
+                    &format!("migrated response is not schema-5 reply wire: {error}"),
+                )
+            })
         }
         _ => Err(invalid(
             "command_receipts",
@@ -402,29 +408,35 @@ fn encode_response<B>(row: &str, bytes: &[u8]) -> Result<Vec<u8>, OpenError>
 where
     B: serde::de::DeserializeOwned + serde::Serialize,
 {
-    let _: wire::Response<B> = wire::decode(bytes).map_err(|error| {
+    let response: wire::Response<B> = wire::decode(bytes).map_err(|error| {
         invalid(
             "command_receipts",
             row,
             &format!("migrated response is not current reply wire: {error}"),
         )
     })?;
-    let response: wire::Response<Value> = wire::decode(bytes).map_err(|error| {
-        invalid(
-            "command_receipts",
-            row,
-            &format!("migrated response is not generic receipt wire: {error}"),
-        )
-    })?;
-    wire::encode(&response).map_err(|error| {
+    let canonical = wire::encode(&response).map_err(|error| {
         invalid(
             "command_receipts",
             row,
             &format!("migrated response cannot encode canonically: {error}"),
         )
+    })?;
+    let generic: wire::Response<Value> = wire::decode(&canonical).map_err(|error| {
+        invalid(
+            "command_receipts",
+            row,
+            &format!("typed response cannot project predecessor wire: {error}"),
+        )
+    })?;
+    wire::encode(&generic).map_err(|error| {
+        invalid(
+            "command_receipts",
+            row,
+            &format!("predecessor response cannot encode canonically: {error}"),
+        )
     })
 }
-
 fn intermediate(table: &'static str, row: &str, value: &Value) -> Result<Vec<u8>, OpenError> {
     super::team::current(value)
         .map_err(|error| invalid(table, row, &format!("migrated JSON cannot encode: {error}")))

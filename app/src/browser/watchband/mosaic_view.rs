@@ -765,10 +765,12 @@ fn use_narration(
     let messages = cards
         .iter()
         .filter_map(|card| match card {
-            ActivityCard::Agent { message, .. } => Some(message),
+            ActivityCard::Agent {
+                member, message, ..
+            } => Some((member, message)),
             ActivityCard::Lifecycle { .. } => None,
         })
-        .filter_map(|message| {
+        .filter_map(|(member, message)| {
             let narration = crate::narration::narration_utterance(message.activity, &message.text);
             let automatic_speech = message
                 .automatic_speech
@@ -776,6 +778,8 @@ fn use_narration(
                 .and_then(|speech| crate::narration::prepared_utterance(&speech.text));
             (narration.is_some() || automatic_speech.is_some()).then(|| NarrationMessage {
                 lane: message.lane.to_string(),
+                worktree: member.worktree.clone(),
+                playback: member.speech.clone(),
                 key: agent_message_source_id(message),
                 narration,
                 automatic_speech,

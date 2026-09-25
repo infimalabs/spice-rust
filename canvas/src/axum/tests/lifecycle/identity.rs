@@ -56,13 +56,6 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     assert_eq!(discovery.version, app.version());
     assert_eq!(discovery.version.canvas, wire::CanvasVersion::CURRENT);
     assert_eq!(discovery.version.app.as_str(), FIXTURE_GENERATION);
-    assert_eq!(
-        discovery.speech,
-        wire::SpeechPlayback::System {
-            voice: "Zoe (Premium)".to_owned(),
-            words_per_minute: 175,
-        }
-    );
 
     task.abort();
     assert!(task.await.expect_err("aborted server task").is_cancelled());

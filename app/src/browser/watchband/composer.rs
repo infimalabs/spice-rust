@@ -191,6 +191,8 @@ impl PartialEq for AgentMessageCardProps {
 pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
     let lane = props.lane.to_string();
     let card_key = agent_message_source_id(&props.message);
+    let worktree = props.member.worktree.clone();
+    let playback = props.member.speech.clone();
     let speech_message_key = card_key.clone();
     let speech_queue = props.speech_queue.clone();
     let response = props
@@ -202,6 +204,8 @@ pub(super) fn agent_message_card(props: &AgentMessageCardProps) -> Html {
     let speak = Callback::from(move |_: String| {
         if let Some(text) = response.clone() {
             speech_queue.emit(SpeechRequest::message(
+                worktree.clone(),
+                playback.clone(),
                 lane.clone(),
                 speech_message_key.clone(),
                 text,

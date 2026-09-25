@@ -19,7 +19,7 @@ const MAX_CONTENT_TYPE_BYTES: usize = 127;
 const MAX_COMMAND_WORDS: usize = 64;
 const MAX_COMMAND_WORD_BYTES: usize = 4_096;
 
-/// The one speech path selected for this resident generation.
+/// One speech path resolved for an admitted agent worktree.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SpeechBackend {

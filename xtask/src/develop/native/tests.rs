@@ -278,7 +278,6 @@ fn serve_bootstrap(
                 canvas: wire::CanvasVersion::CURRENT,
                 app: Digest::compute(wire::Domain::DistInventory, b"fixture app"),
             },
-            speech: wire::SpeechPlayback::Disabled {},
         };
         let body = wire::encode(&bootstrap).expect("fixture bootstrap encodes");
         let (mut stream, _) = listener.accept().expect("bootstrap connection arrives");
