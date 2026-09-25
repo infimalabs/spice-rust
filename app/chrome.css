@@ -72,7 +72,7 @@ body:has(.shell--mosaic),
   min-height: 23px;
   padding: 2px 10px;
   border: 1px solid var(--accent);
-  border-radius: 999px;
+  border-radius: var(--canvas-radius-pill);
   background: color-mix(in srgb, var(--accent) 4%, transparent);
   color: var(--accent);
   font: 500 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -82,7 +82,7 @@ body:has(.shell--mosaic),
 .task-pill.system { border-style: dashed; border-color: var(--warning); color: var(--warning); }
 .task-pill-count {
   padding: 0 5px;
-  border-radius: 999px;
+  border-radius: var(--canvas-radius-pill);
   background: var(--accent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--page) 24%, transparent);
   color: var(--page);
@@ -96,7 +96,7 @@ body:has(.shell--mosaic),
   --canvas-menu-surface: color-mix(in srgb, var(--control-surface-soft) 88%, var(--accent) 12%);
   position: relative; z-index: 2; display: inline-grid; place-items: center; width: 35px; height: 30px; padding: 0;
   border: 1px solid color-mix(in srgb, var(--canvas-menu-accent) 42%, var(--canvas-menu-surface));
-  border-radius: 999px; background: var(--canvas-menu-surface); color: color-mix(in srgb, var(--canvas-menu-accent) 76%, var(--ink));
+  border-radius: var(--canvas-radius-pill); background: var(--canvas-menu-surface); color: color-mix(in srgb, var(--canvas-menu-accent) 76%, var(--ink));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-accent) 5%, transparent);
   cursor: pointer; list-style: none;
 }
@@ -111,7 +111,7 @@ body:has(.shell--mosaic),
 .canvas-menu-flame {
   grid-area: 1 / 1; position: relative; display: inline-grid; place-items: center;
   width: 31px; min-width: 31px; height: 25px; padding: 0; overflow: hidden;
-  border-radius: 999px; background: var(--page); font-size: 0;
+  border-radius: var(--canvas-radius-pill); background: var(--page); font-size: 0;
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-accent) 12%, transparent);
 }
 .canvas-menu-pepper { grid-area: 1 / 1; position: relative; z-index: 1; font-size: 15px; line-height: 1; }
@@ -156,8 +156,8 @@ body:has(.shell--mosaic),
   padding: 5px 0 0;
   container-type: inline-size;
   overflow: hidden;
-  border: 1px solid var(--control-line-soft);
-  border-radius: 12px;
+  border: var(--canvas-control-edge);
+  border-radius: var(--canvas-radius-overlay);
   background: var(--panel);
   box-shadow: var(--shadow);
 }
@@ -210,8 +210,8 @@ body:has(.shell--mosaic),
   justify-content: space-between;
   min-height: 40px;
   padding: 0 12px;
-  border: 1px solid var(--control-line-soft);
-  border-radius: 8px;
+  border: var(--canvas-control-edge);
+  border-radius: var(--canvas-radius-inset);
   background: var(--control-surface-soft);
   font-size: .74rem;
 }
@@ -246,7 +246,7 @@ body:has(.shell--mosaic),
 .canvas-menu-global {
   gap: 8px;
   padding: 0 1px 12px;
-  border-bottom: 1px solid var(--control-line-soft);
+  border-bottom: var(--canvas-control-edge);
 }
 .canvas-fast-setting {
   width: auto;
@@ -262,7 +262,7 @@ body:has(.shell--mosaic),
   min-width: 0;
   margin-top: 1px;
   padding: 10px 3px 3px;
-  border-top: 1px solid var(--line-soft);
+  border-top: var(--canvas-edge-soft);
   color: var(--muted);
   font: .64rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
@@ -273,9 +273,6 @@ body:has(.shell--mosaic),
   flex: 0 0 auto;
   grid-template-columns: repeat(3, var(--canvas-theme-step));
   padding: 3px;
-  border: 1px solid var(--control-line-soft);
-  border-radius: 999px;
-  background: var(--control-surface-soft);
 }
 .canvas-theme-thumb {
   position: absolute;
@@ -286,7 +283,7 @@ body:has(.shell--mosaic),
   height: var(--canvas-theme-step);
   border-radius: 50%;
   background: var(--control);
-  box-shadow: inset 0 0 0 1px var(--line-soft);
+  box-shadow: var(--canvas-selection-shadow);
   pointer-events: none;
 }
 .canvas-theme-selector[data-selected-theme="system"] .canvas-theme-thumb {
@@ -384,8 +381,8 @@ body:has(.shell--mosaic),
 .canvas-menu-context {
   gap: 8px;
   padding: 10px;
-  border: 1px solid var(--control-line-soft);
-  border-radius: 9px;
+  border: var(--canvas-control-edge);
+  border-radius: var(--canvas-radius-surface);
   background: var(--control-surface-soft);
 }
 .canvas-menu-context-copy {
@@ -399,8 +396,8 @@ body:has(.shell--mosaic),
   display: grid;
   gap: 8px;
   padding: 9px;
-  border: 1px solid var(--control-line-soft);
-  border-radius: 10px;
+  border: var(--canvas-control-edge);
+  border-radius: var(--canvas-radius-frame);
   background: var(--control-surface-soft);
 }
 .canvas-team[data-drop-enabled="true"]:hover {
@@ -432,8 +429,8 @@ body:has(.shell--mosaic),
   gap: 9px;
   min-height: 58px;
   padding: 8px 10px;
-  border: 1px solid var(--control-line-soft);
-  border-radius: 8px;
+  border: var(--canvas-control-edge);
+  border-radius: var(--canvas-radius-inset);
   background: var(--control);
   cursor: grab;
 }
@@ -473,7 +470,7 @@ body:has(.shell--mosaic),
 .canvas-unassigned {
   padding: 10px;
   border: 1px dashed var(--control-line-soft);
-  border-radius: 10px;
+  border-radius: var(--canvas-radius-frame);
   background: var(--control-surface-soft);
 }
 .canvas-team-drop[data-drop-enabled="true"]:hover,
@@ -491,7 +488,7 @@ body:has(.shell--mosaic),
   min-height: 48px;
   place-items: center;
   border: 1px dashed var(--control-line-soft);
-  border-radius: 8px;
+  border-radius: var(--canvas-radius-inset);
   background: color-mix(in srgb, var(--control) 52%, transparent);
   color: var(--muted);
   font: 700 .65rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;

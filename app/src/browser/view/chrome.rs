@@ -112,7 +112,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
 /// wears the team toolbar's own rail classes and lands on the same band.
 fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
     html! {
-        <nav class="canvas-navigation team-mode-rail" aria-label="Canvas views">
+        <nav class="canvas-navigation canvas-control-rail team-mode-rail" aria-label="Canvas views">
             {for CanvasDestination::ALL.map(|destination| {
                 let navigate = render.navigate.clone();
                 let work_scope = render.work_scope.clone();

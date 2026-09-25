@@ -507,7 +507,7 @@ fn render_mode_rail(
     team_controls: &UseReducerHandle<TeamControls>,
 ) -> Html {
     html! {
-        <nav class="team-mode-rail" role="tablist" aria-label="Live team views">
+        <nav class="canvas-control-rail team-mode-rail" role="tablist" aria-label="Live team views">
             {for TeamDestination::ALL.map(|destination| {
                 let candidate = TeamMode::from_destination(destination);
                 let selected = candidate == mode;
