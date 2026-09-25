@@ -2,6 +2,7 @@
 
 use web_sys::DragEvent;
 
+use super::chrome::axis_count;
 use super::*;
 use crate::watchband;
 
@@ -17,16 +18,25 @@ pub(super) struct Context<'a> {
 }
 
 pub(super) fn render(
-    mosaic: bool,
-    active_axis: Axis,
-    axis_count: usize,
+    destination: CanvasDestination,
     runtime: Option<&CanvasRuntime>,
     context: &Context<'_>,
 ) -> Html {
-    if !mosaic {
-        return render_axis(active_axis, axis_count, runtime, context);
+    match destination {
+        CanvasDestination::Info => render_axis(
+            Axis::Topology,
+            axis_count(Axis::Topology, runtime),
+            runtime,
+            context,
+        ),
+        CanvasDestination::Work => render_axis(
+            Axis::Flow,
+            axis_count(Axis::Flow, runtime),
+            runtime,
+            context,
+        ),
+        CanvasDestination::Chat => render_chat(runtime, context),
     }
-    render_chat(runtime, context)
 }
 
 fn render_axis(

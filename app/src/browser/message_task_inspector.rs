@@ -15,7 +15,7 @@ pub(super) struct Context {
     pub inspection: UseStateHandle<Option<Inspection>>,
     pub select_task: Callback<TaskStamp>,
     pub close_task: Callback<()>,
-    pub navigate: Callback<CanvasDestination>,
+    pub navigate: Callback<navigation::Intent>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -37,7 +37,7 @@ pub(super) struct Controls {
 pub(super) fn use_controls(
     surface: &UseStateHandle<SurfaceData>,
     task: &task_detail::Controls,
-    navigate: &Callback<CanvasDestination>,
+    navigate: &Callback<navigation::Intent>,
 ) -> Controls {
     let inspection = use_state(|| None::<Inspection>);
     let runtime = surface.read();
@@ -124,7 +124,7 @@ impl Context {
     fn open_work(&self, task: TaskStamp) {
         self.select_task.emit(task);
         self.inspection.set(None);
-        self.navigate.emit(CanvasDestination::Work);
+        self.navigate.emit(navigation::Intent::SelectedWork);
     }
 }
 
