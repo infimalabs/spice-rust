@@ -203,7 +203,7 @@ fn render_available(
                     {fact("Flow", workflow.flow.iter().map(ToString::to_string).collect::<Vec<_>>().join(" → "))}
                     {fact("Review", workflow.review.clone())}
                     {assignment_fact(workflow.assignment.as_ref(), render.lanes)}
-                    {fact("Priority", priority(&statement.tags))}
+                    {priority_fact(&statement.tags)}
                     {fact("Tags", if statement.tags.is_empty() { "None".to_owned() } else { statement.tags.join(", ") })}
                     {fact("Deferral", workflow.deferral.as_ref().map_or_else(|| "None".to_owned(), ToString::to_string))}
                     {fact("Completion", workflow.completion.as_ref().map_or_else(|| "Open".to_owned(), ToString::to_string))}
@@ -285,11 +285,12 @@ fn actor_fact(
     }
 }
 
-fn priority(tags: &[String]) -> String {
+fn priority_fact(tags: &[String]) -> Html {
     tags.iter()
         .find_map(|tag| tag.strip_prefix("priority:"))
-        .unwrap_or("None")
-        .to_owned()
+        .map_or_else(Html::default, |priority| {
+            fact("Priority", priority.to_owned())
+        })
 }
 
 fn render_possession(row: &wire::intent::BoardTask, lanes: Option<&LaneView>) -> Html {
