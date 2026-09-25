@@ -182,18 +182,18 @@ fn present_node(node: &TaskRelationNode, index: usize, selected: &TaskStamp) -> 
             verdict,
             ..
         } => {
-            let author = compact_actor(author);
-            let reviewer = compact_actor(reviewer);
+            let author_label = compact_actor(author);
+            let reviewer_label = compact_actor(reviewer);
             let verdict = verdict_label(*verdict);
             Node {
                 id,
                 kind: "Completed review",
-                label: format!("{phase} · {author} → {reviewer} · {verdict}"),
+                label: format!("{phase} · {author_label} → {reviewer_label} · {verdict}"),
                 detail: format!(
                     "Phase {phase}: author {author} → reviewer {reviewer} → verdict {verdict} · fact {position}"
                 ),
                 diagram: format!(
-                    "{phase} review\n{author} → {reviewer}\n{verdict}\nfact {position}"
+                    "{phase} review\n{author_label} → {reviewer_label}\n{verdict}\nfact {position}"
                 ),
                 task: None,
                 current: false,
