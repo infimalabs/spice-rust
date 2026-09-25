@@ -247,6 +247,7 @@ fn iced_claim_write(bus: &Bus, digest: &wire::Digest, at: Instant) -> JournalWri
         epoch: epoch(),
         recovery: None,
         disposition: wire::ClaimDisposition::Active,
+        acknowledged: 0,
     });
     write.lease_head(task, won, move |_| wire::LeaseHead {
         start: at,

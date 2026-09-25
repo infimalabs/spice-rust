@@ -101,6 +101,16 @@ pub struct WorkflowHead {
         deserialize_with = "crate::optional::present"
     )]
     pub completion: Option<Instant>,
+    /// Durable task mutation generation.
+    ///
+    /// A task opens at zero, which is also the baseline every task written
+    /// before this field existed carries, so zero is stored as absence. Every
+    /// journal transaction that changes its statement, notes, deferral, or
+    /// workflow advances this exactly once; claim, lease, and notification
+    /// maintenance preserve it. The journal assigns it at commit, so a value
+    /// a writer builds into a proposed head is not authority.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub generation: u64,
 }
 
 /// Current disposition of the most recent winning claim.
@@ -142,6 +152,26 @@ pub struct ClaimHead {
     pub recovery: Option<String>,
     /// Whether the win remains active or how it ended.
     pub disposition: ClaimDisposition,
+    /// Task generation this claim has acknowledged.
+    ///
+    /// A win records the task's generation at possession, assigned by the
+    /// journal at commit. Automatic renewal and resident carry preserve it;
+    /// only an explicit reclaim advances it. Completion and review refuse
+    /// while it trails the task generation.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub acknowledged: u64,
+}
+
+const fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+impl ClaimHead {
+    /// Whether this claim trails a task mutation it has not acknowledged.
+    #[must_use]
+    pub const fn is_stale(&self, workflow: &WorkflowHead) -> bool {
+        self.acknowledged < workflow.generation
+    }
 }
 
 /// One current claim lease.

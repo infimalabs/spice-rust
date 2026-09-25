@@ -80,6 +80,7 @@ fn workflow(name: &str) -> WorkflowHead {
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     }
 }
 

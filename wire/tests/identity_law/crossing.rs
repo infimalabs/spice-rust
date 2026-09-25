@@ -396,6 +396,7 @@ fn cover_task_heads() {
                 assignment: Some(Actor::Operator),
                 deferral: Some(at("2030-04-12T18:44:09.271Z")),
                 completion: None,
+                generation: 0,
             },
             WorkflowHead {
                 flow: vec![
@@ -408,6 +409,7 @@ fn cover_task_heads() {
                 assignment: Some(Actor::Lane(first_uuid)),
                 deferral: None,
                 completion: Some(at("2030-04-12T18:44:09.272Z")),
+                generation: 0,
             },
         ],
     );
@@ -434,6 +436,7 @@ fn cover_claim_heads() {
                 epoch: first_uuid,
                 recovery: None,
                 disposition: ClaimDisposition::Active,
+                acknowledged: 0,
             },
             ClaimHead {
                 actor: Actor::Lane(first_uuid),
@@ -448,6 +451,7 @@ fn cover_claim_heads() {
                 epoch: second_uuid,
                 recovery: None,
                 disposition: ClaimDisposition::Lapsed,
+                acknowledged: 0,
             },
         ],
     );

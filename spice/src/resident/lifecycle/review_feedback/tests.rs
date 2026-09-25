@@ -395,6 +395,7 @@ fn claim_review(
         epoch,
         recovery: None,
         disposition: ClaimDisposition::Active,
+        acknowledged: 0,
     });
     write.lease_head(task.clone(), won, move |_| wire::LeaseHead {
         start: at,

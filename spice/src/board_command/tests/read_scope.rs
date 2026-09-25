@@ -115,6 +115,7 @@ fn push_terminal_task(
         assignment: None,
         deferral: None,
         completion: Some(fixture.completion),
+        generation: 0,
     });
     task
 }

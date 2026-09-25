@@ -628,6 +628,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 assignment: Some(actor("operator")),
                 deferral: Some(instant("2026-08-01T07:07:19.000Z")),
                 completion: Some(instant("2026-08-01T08:07:19.000Z")),
+                generation: 0,
             },
         },
         claim: Some(Positioned {
@@ -645,6 +646,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 epoch,
                 recovery: None,
                 disposition: ClaimDisposition::Active,
+                acknowledged: 0,
             },
         }),
         lease: Some(Positioned {

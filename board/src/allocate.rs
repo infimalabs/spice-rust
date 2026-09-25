@@ -173,6 +173,9 @@ pub fn mint(write: &mut JournalWrite, request: Mint<'_>) -> Result<PendingFact, 
         epoch,
         recovery,
         disposition: ClaimDisposition::Active,
+        // The commit settles a won claim to the generation its transaction
+        // leaves the task at, which a review assignment above advances.
+        acknowledged: 0,
     });
     write.lease_head(task, won, move |_| LeaseHead {
         start: at,

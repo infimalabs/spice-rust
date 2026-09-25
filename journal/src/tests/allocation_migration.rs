@@ -132,6 +132,7 @@ fn seed_task(journal: &mut Journal, fixture: &AllocationFixture) {
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     journal.apply(add).expect("task commits");
 }
@@ -176,6 +177,7 @@ fn seed_claim(journal: &mut Journal, fixture: &AllocationFixture) {
         epoch,
         recovery: None,
         disposition: ClaimDisposition::Active,
+        acknowledged: 0,
     });
     let lease_task = fixture.task.clone();
     claim.lease_head(lease_task, won, move |_| LeaseHead {
@@ -219,6 +221,7 @@ fn seed_free(journal: &mut Journal, fixture: &AllocationFixture) {
         epoch,
         recovery: None,
         disposition: ClaimDisposition::Freed,
+        acknowledged: 0,
     });
     journal.apply(free).expect("free commits");
 }

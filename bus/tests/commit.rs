@@ -569,6 +569,7 @@ fn append_retained_task(
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     pending
 }
@@ -682,6 +683,7 @@ fn initial_write(command_id: CanonicalUuid, observed: Arc<Mutex<Vec<ThreadId>>>)
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
 
     write

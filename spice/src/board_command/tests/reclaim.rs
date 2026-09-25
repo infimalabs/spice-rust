@@ -131,6 +131,46 @@ fn claim_next(bus: &Bus, epoch: CanonicalUuid, lane: &Actor, seat: &Seat, task: 
     ));
 }
 
+/// Explicitly reclaim `task` one second before its lease would expire.
+///
+/// The injected instant keeps the renewal deterministically extending, so a
+/// scenario acknowledging a changed task never races the lease clock.
+pub(super) fn reclaim_held(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: &Actor,
+    seat: &Seat,
+    task: &TaskHandle,
+) {
+    let held = board(bus, epoch, lane.clone());
+    let expiry = at(&held, task)
+        .lease
+        .as_ref()
+        .expect("active lease")
+        .body
+        .expiry;
+    assert_committed(reclaim_at(
+        bus,
+        epoch,
+        lane,
+        task,
+        active_witnesses(&held, task, seat),
+        fixture_instant_after(expiry, ONE_SECOND_BEFORE_EXPIRY),
+    ));
+}
+
+/// The holder's own change left `before` in place: the same claim, current,
+/// with only its acknowledgement following the task generation.
+pub(super) fn assert_holder_kept(heads: &BoardTask, before: &ClaimHead) {
+    let mut kept = before.clone();
+    kept.acknowledged = heads.workflow.body.generation;
+    assert!(
+        kept.acknowledged > before.acknowledged,
+        "the holder's change advanced the task"
+    );
+    assert_eq!(heads.claim.as_ref().map(|claim| &claim.body), Some(&kept));
+}
+
 fn active_witnesses(answer: &BoardAnswer, task: &TaskHandle, seat: &Seat) -> Vec<Witness> {
     let heads = at(answer, task);
     vec![
@@ -576,6 +616,113 @@ fn repeated_explicit_reclaims_roll_the_same_claim_past_its_original_maximum() {
         2
     );
     clean(&root, bus);
+}
+
+#[test]
+fn completion_and_review_wait_for_a_reclaim_after_an_operator_change() {
+    let (root, bus, epoch, seats) = fixture("reclaim-generation", 2);
+    let author = Actor::Lane(seats[0].lane);
+    let reviewer = Actor::Lane(seats[1].lane);
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RECLAIM-gen01",
+        "Finish only what the operator last described",
+        Some("todo,review"),
+    );
+
+    claim_next(&bus, epoch, &author, &seats[0], &task);
+    observe(&bus, epoch, &task, "the operator narrowed the scope");
+    let completion = |bus: &Bus| {
+        let held = board(bus, epoch, author.clone());
+        issue(
+            bus,
+            epoch,
+            author.clone(),
+            CommandKind::TaskDone,
+            progress_witnesses(
+                &held,
+                at(&held, &task),
+                seats[0].lane,
+                seats[0].occupant,
+                false,
+            )
+            .expect("held task has progress witnesses"),
+            &TaskDone {
+                task: task.clone(),
+                validation: "implementation and focused checks complete".to_owned(),
+                operation: Some(completion_operation()),
+            },
+        )
+    };
+    assert_stale(completion(&bus), &task);
+    reclaim_held(&bus, epoch, &author, &seats[0], &task);
+    assert_committed(completion(&bus));
+
+    claim_next(&bus, epoch, &reviewer, &seats[1], &task);
+    observe(&bus, epoch, &task, "the operator added a review concern");
+    let verdict = |bus: &Bus| {
+        let assigned = board(bus, epoch, reviewer.clone());
+        issue(
+            bus,
+            epoch,
+            reviewer.clone(),
+            CommandKind::TaskReview,
+            progress_witnesses(
+                &assigned,
+                at(&assigned, &task),
+                seats[1].lane,
+                seats[1].occupant,
+                true,
+            )
+            .expect("assigned review has exact witnesses"),
+            &TaskReview {
+                task: task.clone(),
+                finding: "clean".to_owned(),
+                note: Some("reviewed against the current statement".to_owned()),
+                then: Vec::new(),
+                followup: Vec::new(),
+            },
+        )
+    };
+    assert_stale(verdict(&bus), &task);
+    reclaim_held(&bus, epoch, &reviewer, &seats[1], &task);
+    assert_committed(verdict(&bus));
+    clean(&root, bus);
+}
+
+fn observe(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle, note: &str) {
+    let born = at(&board(bus, epoch, Actor::Operator), task)
+        .statement
+        .body
+        .born
+        .clone();
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskNote,
+        vec![Witness::Existence { task: born }],
+        &TaskNote {
+            task: task.clone(),
+            note: note.to_owned(),
+        },
+    ));
+}
+
+/// The refusal names the task and the reclaim that acknowledges it.
+fn assert_stale(outcome: Outcome<CommandAnswer>, task: &TaskHandle) {
+    let Outcome::Refusal(Refusal::Bare { diagnostic }) = outcome else {
+        panic!("a stale claim was not refused: {outcome:?}");
+    };
+    assert_eq!(
+        diagnostic.reason(),
+        "claim::generation-stale",
+        "{diagnostic:?}"
+    );
+    let detail = diagnostic.detail().expect("stale refusal guidance");
+    assert!(detail.contains(&format!("spice task reclaim {task}")));
 }
 
 pub(super) fn assert_reclaim_survives_restart(

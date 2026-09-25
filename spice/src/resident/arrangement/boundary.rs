@@ -160,6 +160,7 @@ fn seed_task(write: &mut JournalWrite, task: &wire::TaskStamp) -> journal::Pendi
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     added
 }
@@ -218,6 +219,7 @@ fn seed_active_claim(
         epoch,
         recovery: None,
         disposition: wire::ClaimDisposition::Active,
+        acknowledged: 0,
     });
     commit(bus, write).expect("fixture claim commits");
 }

@@ -1177,6 +1177,7 @@ fn attach_heads(
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     let claim_task = authority.born();
     let lane = authority.lane;
@@ -1195,6 +1196,7 @@ fn attach_heads(
         epoch,
         recovery: None,
         disposition: ClaimDisposition::Active,
+        acknowledged: 0,
     });
     let lease_task = authority.born();
     let start = authority.start;

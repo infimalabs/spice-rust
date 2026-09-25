@@ -284,6 +284,7 @@ impl Arranged {
             assignment: None,
             deferral: None,
             completion: None,
+            generation: 0,
         });
         let occupant = self
             .head()
@@ -326,6 +327,7 @@ impl Arranged {
             epoch,
             recovery: None,
             disposition: wire::ClaimDisposition::Active,
+            acknowledged: 0,
         });
         let task_for_lease = task.clone();
         write.lease_head(task_for_lease, won, move |_| wire::LeaseHead {

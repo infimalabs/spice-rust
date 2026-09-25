@@ -28,6 +28,7 @@ mod boundary;
 mod claim_index;
 mod creation_context_migration;
 mod fact_bounds;
+mod generation;
 mod historical_receipts;
 mod identity_migration;
 mod lane_compaction;
@@ -1118,6 +1119,7 @@ fn workflow_head() -> WorkflowHead {
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     }
 }
 
@@ -1135,6 +1137,7 @@ fn claim_head() -> ClaimHead {
         epoch: uuid("018f82d4-6f59-7d06-92e3-bce913116304"),
         recovery: None,
         disposition: ClaimDisposition::Active,
+        acknowledged: 0,
     }
 }
 

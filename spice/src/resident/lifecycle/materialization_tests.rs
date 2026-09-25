@@ -662,6 +662,7 @@ fn deferral_write(deferred: bool, at: Instant) -> JournalWrite {
         assignment: None,
         deferral: deferred.then_some(until),
         completion: None,
+        generation: 0,
     });
     write
 }
@@ -834,6 +835,7 @@ fn attach_task_heads_with_project(
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
 }
 

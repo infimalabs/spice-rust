@@ -66,6 +66,7 @@ fn workflow() -> WorkflowHead {
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     }
 }
 
@@ -275,6 +276,7 @@ fn the_one_claim_minter_writes_every_lifecycle_field() {
         claimed,
         cell,
         recovery,
+        acknowledged,
     } = entry.claim().expect("minting writes a claim head");
     assert_eq!(actor, &Actor::Lane(uuid(20)));
     assert_eq!(*fact, claim.seq);
@@ -286,6 +288,7 @@ fn the_one_claim_minter_writes_every_lifecycle_field() {
     assert_eq!(*occupant, uuid(21));
     assert_eq!(*epoch, uuid(22));
     assert_eq!(*disposition, ClaimDisposition::Active);
+    assert_eq!(*acknowledged, entry.workflow().generation);
 
     let LeaseHead {
         start,

@@ -218,6 +218,7 @@ pub(in crate::resident) fn seed_task_claim(
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     let claim_task = task.clone();
     let lane = durable.lane;
@@ -235,6 +236,7 @@ pub(in crate::resident) fn seed_task_claim(
         epoch: old_epoch,
         recovery: None,
         disposition: wire::ClaimDisposition::Active,
+        acknowledged: 0,
     });
     let lease_task = task.clone();
     write.lease_head(lease_task, won, move |_| wire::LeaseHead {

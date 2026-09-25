@@ -683,6 +683,7 @@ fn seed_task(journal: &mut journal::Journal, task: &wire::TaskHandle) -> DemoRes
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     Ok(journal.apply(write).map_err(commit_failure)?.last())
 }

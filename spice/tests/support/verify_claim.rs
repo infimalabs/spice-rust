@@ -164,6 +164,7 @@ fn install_task(journal: &mut Journal, now: Instant) -> TaskStamp {
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     journal
         .apply(addition)
@@ -220,6 +221,7 @@ fn install_claim(journal: &mut Journal, task: TaskStamp, authority: VerifyAuthor
         epoch,
         recovery: None,
         disposition: ClaimDisposition::Active,
+        acknowledged: 0,
     });
     claim.lease_head(task, won, move |_| LeaseHead {
         start: now,

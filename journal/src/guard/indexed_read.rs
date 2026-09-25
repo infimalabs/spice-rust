@@ -567,7 +567,8 @@ impl JournalRead<'_> {
         }))
     }
 
-    /// Task bundles whose indexed heads changed inside one committed range.
+    /// Task bundles whose indexed heads changed inside one committed range,
+    /// including workflow bodies revised in place without a transition.
     pub fn changed_task_heads(
         &self,
         first: wire::Seq,
@@ -594,6 +595,8 @@ impl JournalRead<'_> {
                 "SELECT DISTINCT stamp FROM (\
                     SELECT stamp, head_seq FROM task_heads UNION ALL \
                     SELECT stamp, head_seq FROM workflow_heads UNION ALL \
+                    SELECT stamp, revised_seq FROM workflow_heads \
+                        WHERE revised_seq IS NOT NULL UNION ALL \
                     SELECT stamp, head_seq FROM claim_heads UNION ALL \
                     SELECT stamp, head_seq FROM lease_heads\
                  ) WHERE head_seq >= ?1 AND head_seq <= ?2 ORDER BY stamp",

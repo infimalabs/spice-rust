@@ -81,10 +81,7 @@ fn ice_active_holder(
     let iced = board(bus, epoch, actor.clone());
     let iced_heads = at(&iced, &task);
     let iced_lease = iced_heads.lease.as_ref().expect("iced lease");
-    assert_eq!(
-        iced_heads.claim.as_ref().expect("retained claim").body,
-        claim
-    );
+    assert_holder_kept(iced_heads, &claim);
     assert_eq!(iced_lease.body.start, lease.body.start);
     assert_eq!(iced_lease.body.renewal, lease.body.renewal);
     assert_eq!(iced_lease.body.epoch, lease.body.epoch);
@@ -159,14 +156,7 @@ fn clear_blocker_leaves_sentinel(
     let thaw_ready_heads = at(&thaw_ready, task);
     let thaw_ready_lease = thaw_ready_heads.lease.as_ref().expect("retained lease");
     assert!(thaw_ready_heads.statement.body.requirements.is_empty());
-    assert_eq!(
-        thaw_ready_heads
-            .claim
-            .as_ref()
-            .expect("retained claim")
-            .body,
-        *claim
-    );
+    assert_holder_kept(thaw_ready_heads, claim);
     assert_eq!(thaw_ready_lease, &iced_lease);
     assert!(spice::claim_lease::is_indefinite(&thaw_ready_lease.body));
     assert_ne!(

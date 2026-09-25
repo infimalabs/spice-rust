@@ -404,6 +404,7 @@ fn seeded_at(path: Option<&Path>, residency: bool, current: &str) -> Journal {
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     if residency {
         seat_residency(&mut write, fact);
@@ -792,6 +793,7 @@ fn a_claim_without_its_lease_is_a_typed_zero_write_refusal() {
         epoch: uuid(22),
         recovery: None,
         disposition: ClaimDisposition::Active,
+        acknowledged: 0,
     });
     journal.apply(write).expect("seed malformed claim");
 

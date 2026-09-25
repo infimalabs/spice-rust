@@ -167,6 +167,7 @@ fn seed_task(fixture: &Fixture, seed: &mut JournalWrite) -> PendingFact {
         assignment: None,
         deferral: None,
         completion: None,
+        generation: 0,
     });
     added
 }
@@ -209,6 +210,7 @@ fn seed_claim(fixture: &Fixture, seed: &mut JournalWrite, added: PendingFact) {
         epoch,
         recovery: None,
         disposition: wire::ClaimDisposition::Active,
+        acknowledged: 0,
     });
     let task = fixture.task.clone();
     let at = fixture.at;

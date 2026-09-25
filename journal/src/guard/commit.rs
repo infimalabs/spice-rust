@@ -60,6 +60,7 @@ impl Journal {
         apply_heads(
             &transaction,
             write.id,
+            &write.actor,
             &write.facts,
             &write.origin,
             write.at,
@@ -578,15 +579,21 @@ fn insert_thread_index(
     Ok(())
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "every head in one transaction settles against its facts and writer"
+)]
 fn apply_heads(
     transaction: &Transaction<'_>,
     write: u64,
+    actor: &wire::Actor,
     facts: &[ProposedFact],
     origin: &wire::Origin,
     at: wire::Instant,
     heads: Vec<HeadUpdate>,
     assigned: &[wire::Seq],
 ) -> Result<(), CommitError> {
+    let mut ledger = super::generation::Ledger::new(actor, facts, assigned);
     for head in heads {
         if head.fact.write != write {
             return Err(CommitError::Refused(GuardRefusal::new(
@@ -599,7 +606,7 @@ fn apply_heads(
                 head.fact.index
             )))
         })?;
-        let row = (head.build)(seq).map_err(|detail| {
+        let mut row = (head.build)(seq).map_err(|detail| {
             CommitError::Refused(GuardRefusal::new(format!("head update refused: {detail}")))
         })?;
         let fact = &facts
@@ -656,6 +663,7 @@ fn apply_heads(
             apply_transcript_head(transaction, &row)?;
             continue;
         }
+        ledger.settle(transaction, &mut row)?;
         let statement = format!(
             "INSERT INTO {table}({key}, head_seq, body) VALUES (?1, ?2, ?3) \
              ON CONFLICT({key}) DO UPDATE SET head_seq = excluded.head_seq, body = excluded.body",
@@ -674,7 +682,7 @@ fn apply_heads(
             apply_claim_index(transaction, &row)?;
         }
     }
-    Ok(())
+    ledger.finish(transaction)
 }
 
 fn apply_transcript_head(
@@ -1062,7 +1070,7 @@ fn to_sql(seq: wire::Seq) -> Result<i64, CommitError> {
     })
 }
 
-fn sqlite_fault(error: rusqlite::Error) -> CommitError {
+pub(super) fn sqlite_fault(error: rusqlite::Error) -> CommitError {
     CommitError::Fault(CommitFault::new(error.to_string()))
 }
 
