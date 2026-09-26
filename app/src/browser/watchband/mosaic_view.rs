@@ -123,13 +123,17 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
     {
         return false;
     }
-    let left = crate::composer_markdown::render_received_with_classifications(
+    let left = crate::composer_markdown::render_received_with_quotes(
         &left.text,
         &left.classifications,
+        &left.quotes,
+        &BTreeMap::new(),
     );
-    let right = crate::composer_markdown::render_received_with_classifications(
+    let right = crate::composer_markdown::render_received_with_quotes(
         &right.text,
         &right.classifications,
+        &right.quotes,
+        &BTreeMap::new(),
     );
     crate::composer_markdown::same_measured_shape(&left, &right)
 }

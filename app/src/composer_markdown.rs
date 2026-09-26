@@ -16,6 +16,7 @@ use wire::{Media, MessageClassification, MessageClassificationKind};
 use crate::watchband;
 
 mod diagrams;
+mod quotes;
 mod taste_quotes;
 
 pub(crate) struct RenderedMarkdown {
@@ -127,9 +128,20 @@ fn shift_classification_offset(offset: u32, shift: i64) -> u32 {
 }
 
 /// Render received text using exact resident-authenticated semantic ranges.
+#[cfg(test)]
 pub(crate) fn render_received_with_classifications(
     markdown: &str,
     classifications: &[MessageClassification],
+) -> RenderedMarkdown {
+    render_received_with_quotes(markdown, classifications, &[], &BTreeMap::new())
+}
+
+/// Render received text and its resident-resolved structural quote links.
+pub(crate) fn render_received_with_quotes(
+    markdown: &str,
+    classifications: &[MessageClassification],
+    quotes: &[wire::QuotePresentation],
+    quote_tasks: &BTreeMap<String, wire::TaskHandle>,
 ) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -168,6 +180,7 @@ pub(crate) fn render_received_with_classifications(
         "every resident classification maps to one Markdown text event"
     );
     let events = coalesce_text_events(events);
+    let events = quotes::expand(events, quotes, quote_tasks);
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
     let image_only = markdown_is_image_only(&events, has_diagrams);
@@ -809,7 +822,8 @@ fn sanitize_markdown_url(url: CowStr<'_>, image: bool) -> CowStr<'_> {
     let candidate = url.trim().to_ascii_lowercase();
     let safe_scheme = candidate.starts_with("https://")
         || candidate.starts_with("http://")
-        || (!image && candidate.starts_with("mailto:"))
+        || (!image
+            && (candidate.starts_with("mailto:") || candidate.starts_with("spice://quote/v1/")))
         || (image && candidate.starts_with("data:image/"));
     let relative = !candidate.starts_with("//")
         && !candidate
