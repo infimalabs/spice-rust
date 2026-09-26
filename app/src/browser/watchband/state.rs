@@ -60,6 +60,13 @@ pub(in crate::browser) enum ComposerAction {
         drafts: Vec<ComposerDraft>,
         current: ComposerDraft,
     },
+    /// Text typed into a composer element that is being discarded.
+    KeepDetached {
+        lane: String,
+        quote: Option<String>,
+        drawn: String,
+        live: String,
+    },
 }
 
 impl Reducible for ComposerDrafts {
@@ -137,6 +144,12 @@ impl Reducible for ComposerDrafts {
                 *next.0.draft_mut(lane.clone()) = current;
                 next.0.restore_all(lane, drafts.into_iter());
             }
+            ComposerAction::KeepDetached {
+                lane,
+                quote,
+                drawn,
+                live,
+            } => next.0.keep_detached(lane, quote.as_deref(), &drawn, live),
         }
         Rc::new(next)
     }

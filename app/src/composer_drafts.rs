@@ -121,6 +121,40 @@ impl DraftStore {
         self.0.remove(target);
     }
 
+    /// Keep text typed into a composer element the page is discarding.
+    ///
+    /// Typed text lives only in its element until submission, so an element
+    /// rebuilt elsewhere, such as a lane moved into another team, redraws from
+    /// the store and would lose it. The text is kept only while the store still
+    /// holds what the element was drawn from: a draft cleared, restored, or
+    /// removed since then replaced that element on purpose.
+    pub(crate) fn keep_detached(
+        &mut self,
+        target: String,
+        quote: Option<&str>,
+        drawn: &str,
+        live: String,
+    ) {
+        if live == drawn {
+            return;
+        }
+        let draft = self.draft_mut(target);
+        let body = match quote {
+            None => &mut draft.body,
+            Some(identity) => match draft
+                .quotes
+                .iter_mut()
+                .find(|quote| quote.identity == identity)
+            {
+                Some(quote) => &mut quote.body,
+                None => return,
+            },
+        };
+        if body == drawn {
+            *body = live;
+        }
+    }
+
     pub(crate) fn is_unsafe(&self) -> bool {
         self.0.values().any(|draft| {
             !draft.body.is_empty() || !draft.quotes.is_empty() || !draft.attachments.is_empty()
@@ -712,5 +746,46 @@ mod tests {
             store.is_unsafe(),
             "an untouched quote is still authored intent"
         );
+    }
+
+    #[test]
+    fn detached_composer_text_is_kept_only_over_the_text_it_was_drawn_from() {
+        let mut store = DraftStore::default();
+        store.add_quote(
+            "agent-a".to_owned(),
+            "source".to_owned(),
+            1,
+            1_000,
+            "quoted".to_owned(),
+            None,
+        );
+        store.keep_detached("agent-a".to_owned(), None, "", "typed".to_owned());
+        store.keep_detached("agent-a".to_owned(), Some("source"), "", "reply".to_owned());
+        let kept = store.get("agent-a").expect("moved draft stays on its lane");
+        assert_eq!(kept.body, "typed");
+        assert_eq!(kept.quotes[0].body, "reply");
+
+        store.restore(
+            "agent-a".to_owned(),
+            ComposerDraft {
+                body: "refused".to_owned(),
+                ..ComposerDraft::default()
+            },
+        );
+        store.keep_detached("agent-a".to_owned(), None, "typed", "stale".to_owned());
+        assert_eq!(
+            store.get("agent-a").unwrap().body,
+            "refused\n\ntyped",
+            "an element replaced by a restore does not overwrite it"
+        );
+
+        store.remove_quote("agent-a".to_owned(), "source");
+        store.keep_detached(
+            "agent-a".to_owned(),
+            Some("source"),
+            "reply",
+            "reply and more".to_owned(),
+        );
+        assert!(store.get("agent-a").unwrap().quotes.is_empty());
     }
 }

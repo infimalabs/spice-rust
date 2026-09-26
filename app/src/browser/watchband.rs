@@ -1005,6 +1005,8 @@ fn render_composer_body(
             <ComposerTextarea
                 key={draft.body.clone()}
                 id={primary_textarea_id(lane_key)}
+                lane={lane_key.to_owned()}
+                drafts={drafts.dispatcher()}
                 label={format!("Message for agent {lane}")}
                 body={draft.body.clone()}
                 placeholder={composer_placeholder(standing, pending)}
