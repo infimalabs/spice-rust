@@ -24,6 +24,7 @@ pub(super) fn client_add(
         matches
             .get_one::<String>("requires-trust-grant")
             .map(String::as_str),
+        None,
     ) {
         Ok(requirements) => requirements,
         Err(outcome) => return outcome,

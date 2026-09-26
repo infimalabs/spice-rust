@@ -22,6 +22,29 @@ fn executable_rollback_requires_the_journal_schema_to_be_proven_unchanged() {
 }
 
 #[test]
+fn a_source_stamp_orders_only_a_commit_later_than_its_first_parent() {
+    let stamp = |log| stamp_from_committer_seconds(log);
+    let head = stamp("1790000001\n1790000000\n").expect("later commit stamps");
+    assert_eq!(
+        head,
+        TaskStamp::for_micros(1_790_000_001_000_000).expect("stamp")
+    );
+    assert_eq!(
+        stamp("1790000001\n"),
+        Ok(head),
+        "a root commit has no parent to precede"
+    );
+    for refused in [
+        "1790000000\n1790000000\n",
+        "1790000000\n1790000001\n",
+        "",
+        "HEAD\n",
+    ] {
+        assert!(stamp(refused).is_err(), "{refused:?} must not stamp");
+    }
+}
+
+#[test]
 fn no_resident_refresh_does_not_inspect_journal_schema() {
     let fixture = Fixture::new("no-resident-schema");
     let repository = fixture.repository();

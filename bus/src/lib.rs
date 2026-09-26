@@ -348,7 +348,7 @@ mod runtime {
         pub fn cursor(&self) -> Result<Option<journal::crossing::Seq>, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::Cursor { answer })
+                .send(Request::Read(JournalRead::Cursor { answer }))
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -363,7 +363,7 @@ mod runtime {
         pub fn fact_snapshot(&self) -> Result<FactSnapshot, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::Snapshot { answer })
+                .send(Request::Read(JournalRead::Snapshot { answer }))
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -427,7 +427,10 @@ mod runtime {
             }
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::SteeringPresentations { keys, answer })
+                .send(Request::Read(JournalRead::SteeringPresentations {
+                    keys,
+                    answer,
+                }))
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -445,13 +448,13 @@ mod runtime {
         ) -> Result<journal::SelectedFactPage, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::RecentOriginFacts {
+                .send(Request::Read(JournalRead::RecentOriginFacts {
                     origin,
                     kind,
                     before,
                     budget,
                     answer,
-                })
+                }))
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -479,12 +482,12 @@ mod runtime {
         ) -> Result<FactPage, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::CanvasFacts {
+                .send(Request::Read(JournalRead::CanvasFacts {
                     start,
                     horizon,
                     budget,
                     answer,
-                })
+                }))
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -500,11 +503,11 @@ mod runtime {
         ) -> Result<Option<FactPage>, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::CanvasThread {
+                .send(Request::Read(JournalRead::CanvasThread {
                     position,
                     budget,
                     answer,
-                })
+                }))
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -703,7 +706,7 @@ mod runtime {
         ) -> Result<Option<JournalHead<journal::crossing::ResidencyHead>>, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::Residency { answer })
+                .send(Request::Read(JournalRead::Residency { answer }))
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -718,10 +721,10 @@ mod runtime {
         ) -> Result<Option<JournalHead<journal::crossing::TrustHead>>, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::Trust {
+                .send(Request::Read(JournalRead::Trust {
                     digest: digest.clone(),
                     answer,
-                })
+                }))
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -741,10 +744,10 @@ mod runtime {
         ) -> Result<Vec<journal::crossing::body::LaneSourceBoundary>, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::LaneSourceBoundaries {
+                .send(Request::Read(JournalRead::LaneSourceBoundaries {
                     lanes: lanes.to_vec(),
                     answer,
-                })
+                }))
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -764,10 +767,10 @@ mod runtime {
         ) -> Result<journal::crossing::body::SourceBoundary, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::SourceBoundary {
+                .send(Request::Read(JournalRead::SourceBoundary {
                     lane: *lane,
                     answer,
-                })
+                }))
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -780,7 +783,7 @@ mod runtime {
         pub fn verify(&self) -> Result<Verification, BusVerifyError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
-                .send(Request::Verify { answer })
+                .send(Request::Read(JournalRead::Verify { answer }))
                 .map_err(|_| BusVerifyError::Bus(BusError::Closed))?;
             receiver
                 .recv()
@@ -834,12 +837,7 @@ mod runtime {
             commits: mpsc::Sender<JournalCommit>,
             ready: SyncSender<()>,
         },
-        Snapshot {
-            answer: SyncSender<Result<FactSnapshot, SnapshotError>>,
-        },
-        Cursor {
-            answer: SyncSender<Result<Option<journal::crossing::Seq>, GuardError>>,
-        },
+        Read(JournalRead),
         Tasks {
             answer: SyncSender<Result<TaskSnapshot, BusReadError>>,
         },
@@ -847,6 +845,22 @@ mod runtime {
             lane: Option<journal::crossing::CanonicalUuid>,
             start: journal::FactPageStart,
             answer: SyncSender<Result<SteeringSnapshot, BusReadError>>,
+        },
+        CanvasHeads {
+            answer: SyncSender<Result<CanvasHeads, BusReadError>>,
+        },
+        Shutdown {
+            answer: SyncSender<()>,
+        },
+    }
+
+    /// Reads answered from the journal alone, owing nothing to writer state.
+    enum JournalRead {
+        Snapshot {
+            answer: SyncSender<Result<FactSnapshot, SnapshotError>>,
+        },
+        Cursor {
+            answer: SyncSender<Result<Option<journal::crossing::Seq>, GuardError>>,
         },
         SteeringPresentations {
             keys: Vec<String>,
@@ -858,9 +872,6 @@ mod runtime {
             before: Option<journal::crossing::Seq>,
             budget: journal::FactReadBudget,
             answer: SyncSender<Result<journal::SelectedFactPage, GuardError>>,
-        },
-        CanvasHeads {
-            answer: SyncSender<Result<CanvasHeads, BusReadError>>,
         },
         CanvasFacts {
             start: journal::FactPageStart,
@@ -894,9 +905,6 @@ mod runtime {
         },
         Verify {
             answer: SyncSender<Result<Verification, VerifyError>>,
-        },
-        Shutdown {
-            answer: SyncSender<()>,
         },
     }
 
@@ -949,12 +957,7 @@ mod runtime {
                     subscribers.push(commits);
                     let _ = ready.send(());
                 }
-                Request::Snapshot { answer } => {
-                    let _ = answer.send(journal.fact_snapshot());
-                }
-                Request::Cursor { answer } => {
-                    let _ = answer.send(journal.read(|read| read.cursor()));
-                }
+                Request::Read(read) => answer_journal_read(&journal, read),
                 Request::Tasks { answer } => {
                     answer_tasks(&task_snapshot, &mut snapshot_waiters.tasks, answer);
                 }
@@ -965,59 +968,69 @@ mod runtime {
                 } => {
                     let _ = answer.send(steering_snapshot(&journal, &task_snapshot, lane, start));
                 }
-                Request::SteeringPresentations { keys, answer } => {
-                    let _ = answer.send(steering_presentations(&journal, keys));
-                }
-                Request::RecentOriginFacts {
-                    origin,
-                    kind,
-                    before,
-                    budget,
-                    answer,
-                } => {
-                    let _ =
-                        answer.send(journal.read(move |read| {
-                            read.recent_origin_facts(&origin, kind, before, budget)
-                        }));
-                }
                 Request::CanvasHeads { answer } => {
                     let _ = answer.send(canvas_heads(&task_snapshot));
-                }
-                Request::CanvasFacts {
-                    start,
-                    horizon,
-                    budget,
-                    answer,
-                } => {
-                    let _ =
-                        answer.send(journal.read(|read| read.fact_page(start, horizon, budget)));
-                }
-                Request::CanvasThread {
-                    position,
-                    budget,
-                    answer,
-                } => {
-                    let _ = answer.send(journal.read(|read| read.causal_page(position, budget)));
-                }
-                Request::Residency { answer } => {
-                    let _ = answer.send(journal.read(|read| read.residency_head()));
-                }
-                Request::Trust { digest, answer } => {
-                    let _ = answer.send(journal.read(|read| read.trust_head(&digest)));
-                }
-                Request::SourceBoundary { lane, answer } => {
-                    let _ = answer.send(journal.read(|read| read.source_boundary(&lane)));
-                }
-                Request::LaneSourceBoundaries { lanes, answer } => {
-                    let _ = answer.send(journal.read(|read| read.lane_source_boundaries(&lanes)));
-                }
-                Request::Verify { answer } => {
-                    let _ = answer.send(journal.verify());
                 }
                 Request::Shutdown { answer } => {
                     let _ = answer.send(());
                     break;
                 }
+            }
+        }
+    }
+
+    fn answer_journal_read(journal: &Journal, read: JournalRead) {
+        match read {
+            JournalRead::Snapshot { answer } => {
+                let _ = answer.send(journal.fact_snapshot());
+            }
+            JournalRead::Cursor { answer } => {
+                let _ = answer.send(journal.read(|read| read.cursor()));
+            }
+            JournalRead::SteeringPresentations { keys, answer } => {
+                let _ = answer.send(steering_presentations(journal, keys));
+            }
+            JournalRead::RecentOriginFacts {
+                origin,
+                kind,
+                before,
+                budget,
+                answer,
+            } => {
+                let _ = answer.send(
+                    journal
+                        .read(move |read| read.recent_origin_facts(&origin, kind, before, budget)),
+                );
+            }
+            JournalRead::CanvasFacts {
+                start,
+                horizon,
+                budget,
+                answer,
+            } => {
+                let _ = answer.send(journal.read(|read| read.fact_page(start, horizon, budget)));
+            }
+            JournalRead::CanvasThread {
+                position,
+                budget,
+                answer,
+            } => {
+                let _ = answer.send(journal.read(|read| read.causal_page(position, budget)));
+            }
+            JournalRead::Residency { answer } => {
+                let _ = answer.send(journal.read(|read| read.residency_head()));
+            }
+            JournalRead::Trust { digest, answer } => {
+                let _ = answer.send(journal.read(|read| read.trust_head(&digest)));
+            }
+            JournalRead::SourceBoundary { lane, answer } => {
+                let _ = answer.send(journal.read(|read| read.source_boundary(&lane)));
+            }
+            JournalRead::LaneSourceBoundaries { lanes, answer } => {
+                let _ = answer.send(journal.read(|read| read.lane_source_boundaries(&lanes)));
+            }
+            JournalRead::Verify { answer } => {
+                let _ = answer.send(journal.verify());
             }
         }
     }

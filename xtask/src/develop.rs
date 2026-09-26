@@ -86,6 +86,8 @@ pub enum RefreshError {
     Repository(spice::repository::ResolveError),
     /// `cargo build` reported failure.
     Build,
+    /// The source commit's committer instant could not order this build.
+    SourceStamp(String),
     /// The current browser app did not build and publish.
     App(crate::AppBuildError),
     /// `cargo build` succeeded without naming a `spice` executable.
@@ -144,6 +146,7 @@ impl fmt::Display for RefreshError {
         match self {
             Self::Repository(error) => write!(formatter, "repository unresolved: {error}"),
             Self::Build => write!(formatter, "cargo build failed"),
+            Self::SourceStamp(detail) => write!(formatter, "source stamp refused: {detail}"),
             Self::App(error) => write!(formatter, "canvas app build failed: {error}"),
             Self::BuildOutputSilent => {
                 write!(formatter, "cargo build named no spice executable")

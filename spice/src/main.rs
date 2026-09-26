@@ -686,13 +686,12 @@ fn run_retro(matches: &clap::ArgMatches, form: Form) -> ! {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn version_flag() -> ! {
-    let binary = match spice::version::binary_digest() {
-        Ok(binary) => binary,
+    let running = match spice::version::running() {
+        Ok(running) => running,
         Err(fault) => deliver_fault(fault, Form::Text),
     };
-    let version = spice::version::product_version(&binary);
     let error = cli::command()
-        .version(version.to_string())
+        .version(running.product.to_string())
         .try_get_matches_from(["spice", "--version"])
         .expect_err("the version action exits before command dispatch");
     error.exit()
@@ -712,8 +711,8 @@ fn version_outcome() -> Outcome<wire::Version> {
             });
         }
     };
-    let binary = match spice::version::binary_digest() {
-        Ok(binary) => binary,
+    let running = match spice::version::running() {
+        Ok(running) => running,
         Err(fault) => return Outcome::Fault(fault),
     };
     let repository = match spice::repository::Repository::discover(&start) {
@@ -753,15 +752,19 @@ fn version_outcome() -> Outcome<wire::Version> {
 
     Outcome::Reply(wire::Reply {
         position: wire::ReplyPosition::Direct {},
-        body: version_identity(binary, journal, app),
+        body: version_identity(running, journal, app),
     })
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn version_identity(binary: wire::Digest, journal: u32, app: wire::Digest) -> wire::Version {
+fn version_identity(
+    running: &spice::version::Running,
+    journal: u32,
+    app: wire::Digest,
+) -> wire::Version {
     wire::Version {
-        product: spice::version::product_version(&binary),
-        binary,
+        product: running.product.clone(),
+        binary: running.binary.clone(),
         wire: wire::WireVersion::CURRENT,
         journal,
         canvas: wire::CanvasVersion::CURRENT,

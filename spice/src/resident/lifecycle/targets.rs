@@ -19,7 +19,10 @@ pub(super) fn project_targets(
         return Ok(Vec::new());
     }
     let entries = projection.entries();
-    let environment = snapshot.environment();
+    let appliance = spice::version::running().map_err(Outcome::Fault)?;
+    let environment = snapshot
+        .environment()
+        .with_appliance(appliance.product.clone());
     let projected_residency = residency.body();
     let ready_at = projection.ready_at();
     let mut rows = projected_residency.lanes.iter().collect::<Vec<_>>();

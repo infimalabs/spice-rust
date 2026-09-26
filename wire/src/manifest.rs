@@ -1,5 +1,6 @@
 //! Distribution payloads and release evidence shared by dist and proof.
 
+use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
@@ -293,7 +294,11 @@ impl fmt::Display for ReleaseTarget {
 }
 
 /// One canonical semantic product version without a Git tag prefix.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+///
+/// Equality is textual. Order is deliberately not derived: SemVer precedence
+/// ignores build metadata, so it cannot be a total order consistent with
+/// equality. Compare with [`Self::precedence`].
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProductVersion(String);
 
 impl ProductVersion {
@@ -314,6 +319,66 @@ impl ProductVersion {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// SemVer 2.0.0 precedence: numeric core, then pre-release identifiers,
+    /// with build metadata ignored.
+    #[must_use]
+    pub fn precedence(&self, other: &Self) -> Ordering {
+        let (core, prerelease) = precedence_parts(&self.0);
+        let (other_core, other_prerelease) = precedence_parts(&other.0);
+        core.cmp(&other_core)
+            .then_with(|| match (prerelease, other_prerelease) {
+                (None, None) => Ordering::Equal,
+                (None, Some(_)) => Ordering::Greater,
+                (Some(_), None) => Ordering::Less,
+                (Some(left), Some(right)) => left.cmp(&right),
+            })
+    }
+}
+
+fn precedence_parts(version: &str) -> (Vec<Numeric<'_>>, Option<Vec<Identifier<'_>>>) {
+    let (without_build, _) = split_once_optional(version, '+');
+    let (core, prerelease) = split_once_optional(without_build, '-');
+    (
+        core.split('.').map(Numeric).collect(),
+        prerelease.map(|value| value.split('.').map(Identifier::new).collect()),
+    )
+}
+
+/// A canonical numeric identifier; no leading zero, so length orders first.
+#[derive(Clone, Copy, Eq, PartialEq)]
+struct Numeric<'a>(&'a str);
+
+impl Ord for Numeric<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0
+            .len()
+            .cmp(&other.0.len())
+            .then_with(|| self.0.cmp(other.0))
+    }
+}
+
+impl PartialOrd for Numeric<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Numeric identifiers sort below alphanumeric ones, which compare in ASCII.
+#[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd)]
+enum Identifier<'a> {
+    Numeric(Numeric<'a>),
+    Text(&'a str),
+}
+
+impl<'a> Identifier<'a> {
+    fn new(value: &'a str) -> Self {
+        if value.bytes().all(|byte| byte.is_ascii_digit()) {
+            Self::Numeric(Numeric(value))
+        } else {
+            Self::Text(value)
+        }
     }
 }
 

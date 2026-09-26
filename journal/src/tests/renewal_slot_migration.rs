@@ -277,6 +277,7 @@ fn insert_receipts(
         tasks: Vec::new(),
         history: None,
         trust: Vec::new(),
+        appliance: wire::manifest::ProductVersion::parse("0.2.0").expect("fixture appliance"),
         residency: wire::intent::Positioned {
             position: seq(6),
             body: residency.clone(),

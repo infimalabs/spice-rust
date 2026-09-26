@@ -127,6 +127,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
       }
     }
   ],
+  "appliance": "0.2.0-dev.0.dTYp0bz3B+bin.fixture",
   "residency": {
     "position": 1,
     "body": {

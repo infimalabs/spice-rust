@@ -15,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use spice::install::{self, InstallError};
 use spice::repository::Repository;
-use wire::Digest;
+use wire::{Digest, TaskStamp};
 
 /// Repository-common home for developer-refresh rollback executables.
 const WORKSPACE: &str = "develop";
@@ -27,6 +27,8 @@ const NEXT_ROLLBACK: &str = "spice.rollback.next";
 const RESIDENT_ROLLBACK: &str = "spice.resident.rollback";
 /// Staging copy used to atomically replace the serving executable authority.
 const NEXT_RESIDENT_ROLLBACK: &str = "spice.resident.rollback.next";
+/// Compile-time source stamp read by `spice::version`.
+const SOURCE_STAMP_ENV: &str = "SPICE_SOURCE_STAMP"; // env-policy: allow
 /// Maximum resident bootstrap response accepted while reconciling a restart.
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
 /// One local resident identity probe must not hold an install indefinitely.
@@ -42,7 +44,9 @@ pub(super) fn perform(
     let repository = Repository::discover(Path::new("."))?;
     writeln!(output, "building canvas app")?;
     crate::app(environment, output)?;
-    let built = build(request.release, request.symbols, output)?;
+    let stamp = source_stamp(repository.worktree_root())?;
+    writeln!(output, "source stamp {stamp}")?;
+    let built = build(request.release, request.symbols, &stamp, output)?;
     install_built(&repository, built, request, output)
 }
 
@@ -267,16 +271,61 @@ pub fn refresh_install(repository: &Repository, binary: &Path) -> Result<Digest,
     install::apply_prepared(repository, Some(binary), prepared)?;
     Ok(digest)
 }
+
+/// Order this build by its source commit's committer instant.
+fn source_stamp(root: &Path) -> Result<TaskStamp, RefreshError> {
+    let logged = Command::new("git")
+        .current_dir(root)
+        .args(["log", "-2", "--first-parent", "--format=%ct", "HEAD"])
+        .stderr(Stdio::inherit())
+        .output()?;
+    if !logged.status.success() {
+        return Err(RefreshError::SourceStamp(
+            "git log could not read HEAD's committer instants".to_owned(),
+        ));
+    }
+    stamp_from_committer_seconds(&String::from_utf8_lossy(&logged.stdout))
+        .map_err(RefreshError::SourceStamp)
+}
+
+/// Stamp HEAD from `git log -2 --first-parent --format=%ct`, refusing a
+/// commit that is not strictly later than its first parent: such a stamp
+/// would not order this build after the one before it.
+fn stamp_from_committer_seconds(log: &str) -> Result<TaskStamp, String> {
+    let mut instants = log.lines().map(|line| {
+        line.parse::<i64>()
+            .map_err(|_| format!("committer instant is not decimal seconds: {line:?}"))
+    });
+    let head = instants
+        .next()
+        .ok_or_else(|| "HEAD has no committer instant".to_owned())??;
+    if let Some(parent) = instants.next().transpose()?
+        && head <= parent
+    {
+        return Err(format!(
+            "HEAD committer instant {head}s is not later than its first parent's {parent}s"
+        ));
+    }
+    head.checked_mul(1_000_000)
+        .ok_or_else(|| format!("committer instant {head}s overflows microseconds"))
+        .and_then(|micros| TaskStamp::for_micros(micros).map_err(|error| error.to_string()))
+}
+
 /// Build `spice` and answer the executable Cargo reported for it.
 ///
 /// `symbols` overrides the profile's own strip setting so the linked
 /// executable keeps its debug information long enough for
 /// [`generate_worktree_symbols`] to capture it, then strips the executable
 /// back down to its ordinary installed shape once the dSYM is retained.
-fn build(release: bool, symbols: bool, output: &mut impl Write) -> Result<PathBuf, RefreshError> {
+fn build(
+    release: bool,
+    symbols: bool,
+    stamp: &TaskStamp,
+    output: &mut impl Write,
+) -> Result<PathBuf, RefreshError> {
     writeln!(output, "building spice profile={}", build_profile(release))?;
     let mut command = Command::new("cargo");
-    command.args([
+    command.env(SOURCE_STAMP_ENV, stamp.as_str()).args([
         "build",
         "--locked",
         "--package",

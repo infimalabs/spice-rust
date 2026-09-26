@@ -74,11 +74,10 @@ fn acquire(root: &Path) -> Result<AcquiredPackage, Error> {
     members.sort_by(|left, right| left.path().cmp(right.path()));
     let admitted =
         proof::admit_package_tree(&members).map_err(|error| Error::input(error.to_string()))?;
-    let candidate = admitted.document().product_version.as_str();
+    let candidate = &admitted.document().product_version;
     let current = dist::current_product_version()
         .expect("the compiled distribution product version is canonical");
-    let current = current.as_str();
-    if !newer(candidate, current) {
+    if candidate.precedence(&current).is_le() {
         return Err(Error::input(format!(
             "package version {candidate} is not newer than installed appliance version {current}"
         )));
@@ -122,86 +121,6 @@ impl AcquiredPackage {
             .iter()
             .find(|member| member.path() == path)
             .ok_or_else(|| Error::input(format!("verified package omits staged member {path}")))
-    }
-}
-
-fn newer(candidate: &str, current: &str) -> bool {
-    let (candidate_core, candidate_prerelease) = version_parts(candidate);
-    let (current_core, current_prerelease) = version_parts(current);
-    candidate_core
-        .cmp(&current_core)
-        .then_with(|| match (candidate_prerelease, current_prerelease) {
-            (None, None) => std::cmp::Ordering::Equal,
-            (None, Some(_)) => std::cmp::Ordering::Greater,
-            (Some(_), None) => std::cmp::Ordering::Less,
-            (Some(candidate), Some(current)) => candidate.cmp(&current),
-        })
-        .is_gt()
-}
-
-fn version_parts(version: &str) -> (Vec<Number<'_>>, Option<Vec<Identifier<'_>>>) {
-    let without_build = version
-        .split_once('+')
-        .map_or(version, |(version, _)| version);
-    let (core, prerelease) = without_build
-        .split_once('-')
-        .map_or((without_build, None), |(core, prerelease)| {
-            (core, Some(prerelease))
-        });
-    (
-        core.split('.').map(Number).collect(),
-        prerelease.map(|value| value.split('.').map(Identifier::new).collect()),
-    )
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-struct Number<'a>(&'a str);
-
-impl Ord for Number<'_> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0
-            .len()
-            .cmp(&other.0.len())
-            .then_with(|| self.0.cmp(other.0))
-    }
-}
-
-impl PartialOrd for Number<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum Identifier<'a> {
-    Numeric(Number<'a>),
-    Text(&'a str),
-}
-
-impl<'a> Identifier<'a> {
-    fn new(value: &'a str) -> Self {
-        if value.bytes().all(|byte| byte.is_ascii_digit()) {
-            Self::Numeric(Number(value))
-        } else {
-            Self::Text(value)
-        }
-    }
-}
-
-impl Ord for Identifier<'_> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match (self, other) {
-            (Self::Numeric(left), Self::Numeric(right)) => left.cmp(right),
-            (Self::Numeric(_), Self::Text(_)) => std::cmp::Ordering::Less,
-            (Self::Text(_), Self::Numeric(_)) => std::cmp::Ordering::Greater,
-            (Self::Text(left), Self::Text(right)) => left.cmp(right),
-        }
-    }
-}
-
-impl PartialOrd for Identifier<'_> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
     }
 }
 
@@ -519,32 +438,6 @@ mod tests {
             "install --apply=abc123 --json\n"
         );
         fs::remove_dir_all(&root).expect("delegate fixture root removes");
-    }
-
-    #[test]
-    fn package_version_must_advance_semantic_precedence() {
-        for (candidate, current) in [
-            ("1.2.4", "1.2.3"),
-            ("1.10.0", "1.9.9"),
-            ("2.0.0", "2.0.0-rc.1"),
-            ("2.0.0-rc.10", "2.0.0-rc.2"),
-        ] {
-            assert!(
-                newer(candidate, current),
-                "{candidate} must advance {current}"
-            );
-        }
-        for (candidate, current) in [
-            ("1.2.3", "1.2.3"),
-            ("1.2.3+new", "1.2.3+old"),
-            ("1.9.9", "1.10.0"),
-            ("2.0.0-rc.1", "2.0.0"),
-        ] {
-            assert!(
-                !newer(candidate, current),
-                "{candidate} must not advance {current}"
-            );
-        }
     }
 
     #[test]

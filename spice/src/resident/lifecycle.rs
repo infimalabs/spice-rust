@@ -855,7 +855,10 @@ fn selected_ready(
 ) -> CommandResult<Option<SelectedReady>> {
     let recent_cell =
         board::recent_claim_cell(entries, snapshot.facts().latest_claim(actor), actor);
-    let environment = snapshot.environment();
+    let appliance = spice::version::running().map_err(Outcome::Fault)?;
+    let environment = snapshot
+        .environment()
+        .with_appliance(appliance.product.clone());
     let Some(selected) = board::select(
         entries,
         actor,

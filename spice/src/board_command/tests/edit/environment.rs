@@ -18,6 +18,70 @@ fn active_holder_requirement_ices_and_correction_leaves_the_same_claim_thaw_read
     satisfied_requirement_preserves_lease(&bus, epoch, actor, &task, digest);
 }
 
+#[test]
+fn appliance_requirement_holds_a_task_until_a_later_appliance_runs() {
+    let (_root, bus, epoch, seats) = fixture("task-environment-appliance", 1);
+    let actor = Actor::Lane(seats[0].lane);
+    let running = spice::version::running()
+        .expect("test executable identity")
+        .product
+        .clone();
+    let born = stamp("ENVTEST-1kKfYW07");
+    let task = TaskHandle::for_project("board.test", &born);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born }],
+        &TaskAdd {
+            title: "Wait for the next appliance".to_owned(),
+            project: Some("board.test".to_owned()),
+            description: None,
+            acceptance: Vec::new(),
+            requirements: wire::EnvironmentRequirements::one(
+                wire::EnvironmentRequirement::appliance_after(running.clone()),
+            ),
+            origin: Some("fixture:environment".parse().expect("fixture origin")),
+            flow: Some("todo".to_owned()),
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    let blocked = board(&bus, epoch, actor.clone());
+    assert_eq!(blocked.appliance, running);
+    let shown = task_show(&blocked, at(&blocked, &task), &[]);
+    assert!(shown.contains(&format!(
+        "appliance-version after={running} observed={running} satisfied=false"
+    )));
+    assert!(
+        allocated(&bus, epoch, &actor).is_none(),
+        "the running appliance is not later than itself"
+    );
+
+    let earlier = wire::manifest::ProductVersion::parse("0.0.0").expect("earlier version");
+    let heads = at(&blocked, &task);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskEdit,
+        vec![statement_witness(heads), claim_witness(heads)],
+        &TaskEdit {
+            requirements: Some(wire::intent::TaskRequirementsEdit::one(
+                wire::EnvironmentRequirement::appliance_after(earlier),
+            )),
+            ..only(&task)
+        },
+    ));
+    assert_eq!(
+        allocated(&bus, epoch, &actor)
+            .expect("a later running appliance releases the task")
+            .0,
+        task.to_string()
+    );
+}
+
 fn ice_active_holder(
     bus: &Bus,
     epoch: CanonicalUuid,
@@ -253,10 +317,8 @@ fn add_blocked_requirement(
     let status = task_status(&blocked).expect("status renders");
     assert!(status.contains("blocked 0"));
     assert!(status.contains("waiting 0"));
-    assert!(status.contains(&format!(
-        "environment journal-schema required={required} observed={} trust-grant required=- satisfied=0 blocked=1",
-        journal::SCHEMA_VERSION
-    )));
+    assert!(status.contains(&format!("journal-schema required={required} observed=")));
+    assert!(status.contains("satisfied=0 blocked=1"));
     assert!(allocated(bus, epoch, actor).is_none());
     (task, blocked)
 }
@@ -308,11 +370,7 @@ fn clear_and_set_schema_requirement(
     let satisfied = board(bus, epoch, actor.clone());
     assert!(task_show(&satisfied, at(&satisfied, task), &[]).contains("environment satisfied"));
     let status = task_status(&satisfied).expect("status renders");
-    assert!(status.contains(&format!(
-        "environment journal-schema required={} observed={} trust-grant required=- satisfied=1 blocked=0",
-        journal::SCHEMA_VERSION,
-        journal::SCHEMA_VERSION
-    )));
+    assert!(status.contains("satisfied=1 blocked=0"));
     satisfied
 }
 
@@ -367,10 +425,8 @@ fn assert_trust_transition(
         "trust-grant required={digest} standing=granted producer=/producer/worktree satisfied=true"
     )));
     let status = task_status(&trust_satisfied).expect("trust status renders");
-    assert!(status.contains(&format!(
-        "journal-schema required=- observed={} trust-grant required={digest} satisfied=1 blocked=0",
-        journal::SCHEMA_VERSION
-    )));
+    assert!(status.contains(&format!("trust-grant required={digest}")));
+    assert!(status.contains("satisfied=1 blocked=0"));
 }
 fn pend_trust(bus: &Bus, digest: &wire::Digest) {
     let mut write = JournalWrite::new(

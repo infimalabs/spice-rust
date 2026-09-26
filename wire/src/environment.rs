@@ -20,11 +20,17 @@ pub enum EnvironmentFact {
     JournalSchema,
     /// Exact executable-configuration digest with a current bound grant.
     TrustGrant,
+    /// Product version of the running resident appliance.
+    ApplianceVersion,
 }
 
 impl EnvironmentFact {
     /// Every environmental fact, in canonical collection order.
-    pub const ALL: &[Self] = &[Self::JournalSchema, Self::TrustGrant];
+    pub const ALL: &[Self] = &[
+        Self::JournalSchema,
+        Self::TrustGrant,
+        Self::ApplianceVersion,
+    ];
 
     /// Stable wire spelling of this fact.
     #[must_use]
@@ -32,6 +38,7 @@ impl EnvironmentFact {
         match self {
             Self::JournalSchema => "journal-schema",
             Self::TrustGrant => "trust-grant",
+            Self::ApplianceVersion => "appliance-version",
         }
     }
 }
@@ -60,6 +67,14 @@ pub enum EnvironmentRequirement {
         /// Exact configuration digest whose bound grant is required.
         value: crate::Digest,
     },
+    /// Require a running appliance whose SemVer precedence exceeds `value`.
+    ///
+    /// Build metadata never counts, so restarting the same build, or any
+    /// build of the same nominal version, does not satisfy it.
+    ApplianceVersion {
+        /// Exclusive lower bound on the running appliance's nominal version.
+        value: crate::manifest::ProductVersion,
+    },
 }
 
 impl EnvironmentRequirement {
@@ -81,12 +96,19 @@ impl EnvironmentRequirement {
         Self::TrustGrant { value }
     }
 
+    /// Construct a requirement for an appliance strictly later than `value`.
+    #[must_use]
+    pub const fn appliance_after(value: crate::manifest::ProductVersion) -> Self {
+        Self::ApplianceVersion { value }
+    }
+
     /// Fact this requirement constrains.
     #[must_use]
     pub const fn fact(&self) -> EnvironmentFact {
         match self {
             Self::JournalSchema { .. } => EnvironmentFact::JournalSchema,
             Self::TrustGrant { .. } => EnvironmentFact::TrustGrant,
+            Self::ApplianceVersion { .. } => EnvironmentFact::ApplianceVersion,
         }
     }
 
@@ -115,6 +137,10 @@ impl EnvironmentRequirement {
                         .as_ref()
                         .is_some_and(|worktree| !worktree.is_empty())
             }
+            (
+                Self::ApplianceVersion { value: required },
+                EnvironmentObservation::ApplianceVersion { value: observed },
+            ) => observed.precedence(required).is_gt(),
             _ => false,
         }
     }
@@ -143,6 +169,7 @@ impl std::error::Error for EnvironmentValueError {}
 pub struct Environment {
     journal_schema: Option<NonZeroU32>,
     trust: BTreeMap<crate::Digest, crate::TrustHead>,
+    appliance: Option<crate::manifest::ProductVersion>,
 }
 
 impl Environment {
@@ -150,6 +177,7 @@ impl Environment {
     pub const EMPTY: Self = Self {
         journal_schema: None,
         trust: BTreeMap::new(),
+        appliance: None,
     };
 
     /// Observe one finalized journal schema.
@@ -162,6 +190,7 @@ impl Environment {
             Some(value) => Ok(Self {
                 journal_schema: Some(value),
                 trust: BTreeMap::new(),
+                appliance: None,
             }),
             None => Err(EnvironmentValueError),
         }
@@ -172,6 +201,13 @@ impl Environment {
     pub fn with_trust_heads(mut self, heads: impl IntoIterator<Item = crate::TrustHead>) -> Self {
         self.trust
             .extend(heads.into_iter().map(|head| (head.digest.clone(), head)));
+        self
+    }
+
+    /// Add the running resident appliance's product version.
+    #[must_use]
+    pub fn with_appliance(mut self, version: crate::manifest::ProductVersion) -> Self {
+        self.appliance = Some(version);
         self
     }
 
@@ -189,6 +225,10 @@ impl Environment {
                         worktree: head.worktree.clone(),
                     })
             }
+            EnvironmentRequirement::ApplianceVersion { .. } => self
+                .appliance
+                .clone()
+                .map(|value| EnvironmentObservation::ApplianceVersion { value }),
         }
     }
 }
@@ -212,6 +252,11 @@ pub enum EnvironmentObservation {
         /// Worktree that produced the executable configuration, when bound.
         worktree: Option<String>,
     },
+    /// Product version of the running resident appliance.
+    ApplianceVersion {
+        /// Observed nominal version, with its build metadata.
+        value: crate::manifest::ProductVersion,
+    },
 }
 
 impl EnvironmentObservation {
@@ -233,6 +278,7 @@ impl EnvironmentObservation {
         match self {
             Self::JournalSchema { .. } => EnvironmentFact::JournalSchema,
             Self::TrustGrant { .. } => EnvironmentFact::TrustGrant,
+            Self::ApplianceVersion { .. } => EnvironmentFact::ApplianceVersion,
         }
     }
 }

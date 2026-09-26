@@ -547,6 +547,7 @@ fn insert_legacy_board_receipt(connection: &Connection) {
         )],
         history: None,
         trust: Vec::new(),
+        appliance: wire::manifest::ProductVersion::parse("0.2.0").expect("fixture appliance"),
         residency: wire::intent::Positioned {
             position: Seq::new(2).expect("residency position"),
             body: residency_head(),

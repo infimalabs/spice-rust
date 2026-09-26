@@ -16,13 +16,13 @@ pub(crate) fn canvas_version(
     app: &canvas::AppSource,
     journal: u32,
 ) -> CommandResult<wire::Version> {
-    let binary = spice::version::binary_digest().map_err(Outcome::Fault)?;
+    let running = spice::version::running().map_err(Outcome::Fault)?;
     let generation = app.current_generation().map_err(|error| {
         environment_fault("canvas::app-generation-unavailable", &error.to_string())
     })?;
     Ok(wire::Version {
-        product: spice::version::product_version(&binary),
-        binary,
+        product: running.product.clone(),
+        binary: running.binary.clone(),
         wire: wire::WireVersion::CURRENT,
         journal,
         canvas: wire::CanvasVersion::CURRENT,

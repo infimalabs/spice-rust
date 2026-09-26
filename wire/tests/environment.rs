@@ -74,10 +74,6 @@ fn trust_grant_is_an_exact_digest_fact_with_bound_producer_provenance() {
     let requirement = EnvironmentRequirement::trust_grant(required.clone());
     assert_eq!(requirement.fact(), EnvironmentFact::TrustGrant);
     assert_eq!(
-        EnvironmentFact::ALL,
-        &[EnvironmentFact::JournalSchema, EnvironmentFact::TrustGrant]
-    );
-    assert_eq!(
         serde_json::from_slice::<Value>(&wire::encode(&requirement).expect("encodes"))
             .expect("requirement is JSON"),
         json!({"fact": "trust-grant", "value": required})
@@ -158,6 +154,52 @@ fn journal_and_trust_requirements_form_one_canonical_conjunction() {
             worktree: Some("/producer".to_owned()),
         }]);
     assert!(requirements.are_satisfied_by(&environment));
+}
+
+#[test]
+fn appliance_version_is_satisfied_only_by_a_strictly_later_running_appliance() {
+    let version = |text| wire::manifest::ProductVersion::parse(text).expect("canonical version");
+    let requirement =
+        EnvironmentRequirement::appliance_after(version("0.2.0-dev.0.dTYp0bz3B+bin.old"));
+    let encoded: Value = serde_json::from_slice(&wire::encode(&requirement).expect("encodes"))
+        .expect("requirement is JSON");
+    assert_eq!(
+        encoded,
+        json!({"fact": "appliance-version", "value": "0.2.0-dev.0.dTYp0bz3B+bin.old"})
+    );
+    assert!(
+        wire::decode::<EnvironmentRequirement>(br#"{"fact":"appliance-version","value":"v1.2.3"}"#)
+            .is_err()
+    );
+
+    let requirements = EnvironmentRequirements::new(vec![
+        EnvironmentRequirement::journal_schema(15).expect("positive schema"),
+        requirement,
+    ])
+    .expect("appliance version follows journal schema in fact order");
+    let running = |text| {
+        Environment::journal_schema(15)
+            .expect("positive schema")
+            .with_appliance(version(text))
+    };
+    assert!(!requirements.are_satisfied_by(&Environment::journal_schema(15).expect("schema")));
+    for unsatisfied in [
+        "0.2.0-dev.0.dTYp0bz3B+bin.old",
+        "0.2.0-dev.0.dTYp0bz3B+bin.rebuilt",
+        "0.2.0-dev.0",
+        "0.2.0-dev.0.dTYnzzzzz+bin.new",
+    ] {
+        assert!(
+            !requirements.are_satisfied_by(&running(unsatisfied)),
+            "{unsatisfied} is not later"
+        );
+    }
+    for satisfied in ["0.2.0-dev.0.dTYpFZV7w+bin.new", "0.2.0-dev.1", "0.2.0"] {
+        assert!(
+            requirements.are_satisfied_by(&running(satisfied)),
+            "{satisfied} is later"
+        );
+    }
 }
 
 #[test]

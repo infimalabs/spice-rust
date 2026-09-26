@@ -393,7 +393,10 @@ fn automatic_claim_authority(
     let snapshot = decision
         .or(current.as_ref())
         .expect("automatic claim authority has a supplied or current snapshot");
-    let environment = snapshot.environment();
+    let appliance = spice::version::running().map_err(Outcome::Fault)?;
+    let environment = snapshot
+        .environment()
+        .with_appliance(appliance.product.clone());
     let mut authority = None;
     for heads in snapshot.tasks() {
         let Some(claim) = heads.claim() else { continue };
