@@ -166,7 +166,7 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     })
     .expect("operator send admits");
     send_direction(&bus, epoch, &send_command, &send);
-    let inbox = read_inbox(&bus, epoch, lane, test_uuid(31));
+    let inbox = read_inbox(&bus, &paths, epoch, lane, test_uuid(31));
     let rendered =
         steer::inbox::render_pending(&steer::Key::for_identity(lane), &inbox.lanes[0].pending);
     assert!(
@@ -243,6 +243,7 @@ fn send_direction(
 
 fn read_inbox(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     lane: CanonicalUuid,
     command_id: CanonicalUuid,
@@ -262,7 +263,7 @@ fn read_inbox(
         epoch,
     })
     .expect("operator inbox admits");
-    let Outcome::Reply(reply) = steering::inbox(bus, epoch, &command, &request) else {
+    let Outcome::Reply(reply) = steering::inbox(bus, paths, epoch, &command, &request) else {
         panic!("inbox reads durable authority");
     };
     let CommandAnswer::Inbox(inbox) = reply.body else {
@@ -278,7 +279,7 @@ fn assert_media_replays(
 ) {
     let bus = Bus::start(journal::Journal::open(&paths.journal).expect("journal reopens"))
         .expect("replacement bus starts");
-    let inbox = read_inbox(&bus, epoch, lane, test_uuid(32));
+    let inbox = read_inbox(&bus, paths, epoch, lane, test_uuid(32));
     assert_eq!(inbox.lanes.len(), 1);
     assert_eq!(inbox.lanes[0].pending.len(), 1);
     assert_eq!(

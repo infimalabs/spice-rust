@@ -232,9 +232,9 @@ impl<'a> Surface<'a> {
     fn dispatch_steering(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
         let mut effects = CommandEffects::default();
         let outcome = match (command.kind(), command.body()) {
-            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => {
-                Some(steering::inbox(self.bus, self.epoch, command, inbox))
-            }
+            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => Some(steering::inbox(
+                self.bus, self.paths, self.epoch, command, inbox,
+            )),
             (CommandKind::SteerSend, Intent::SteerSend(send)) => Some(steering::send(
                 self.bus,
                 self.epoch,
