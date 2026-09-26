@@ -1,5 +1,5 @@
 use super::*;
-use crate::browser::message_task_inspector::{Context, Inspection};
+use crate::browser::message_task_inspector::{Context, Inspection, return_target};
 
 pub(super) struct Card {
     pub(super) context: Option<Context>,
@@ -74,12 +74,8 @@ fn use_chip_return(inspection: &Option<Inspection>) {
         let Some(ended) = ended.filter(|ended| ended.return_focus) else {
             return;
         };
-        let selector = format!(".message-task-chip[data-task-handle=\"{}\"]", ended.handle);
-        if let Some(chip) = web_sys::window()
-            .and_then(|window| window.document())
-            .and_then(|document| document.get_element_by_id(&ended.card))
-            .and_then(|card| card.query_selector(&selector).ok().flatten())
-            .and_then(|chip| chip.dyn_into::<web_sys::HtmlElement>().ok())
+        if let Some(chip) =
+            return_target(&ended).and_then(|chip| chip.dyn_into::<web_sys::HtmlElement>().ok())
         {
             focus_without_scrolling(&chip);
         }

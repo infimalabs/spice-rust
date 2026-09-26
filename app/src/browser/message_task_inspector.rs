@@ -14,6 +14,7 @@ pub(super) struct Inspection {
 pub(super) struct Context {
     pub inspection: UseStateHandle<Option<Inspection>>,
     request_detail: Callback<TaskStamp>,
+    return_focus_to: Callback<web_sys::Element>,
     navigate: Callback<navigation::Intent>,
     quote_tasks: Rc<BTreeMap<String, TaskHandle>>,
 }
@@ -60,6 +61,7 @@ pub(super) fn use_controls(
         context: Context {
             inspection,
             request_detail: task.request.clone(),
+            return_focus_to: task.return_focus_to.clone(),
             navigate: navigate.clone(),
             quote_tasks: Rc::new(quote_tasks),
         },
@@ -160,9 +162,24 @@ impl Context {
 
     /// Replace the card-local quick view with the shared task detail layer.
     fn open_detail(&self, task: TaskStamp) {
+        let return_target = (*self.inspection).as_ref().and_then(return_target);
         self.inspection.set(None);
         self.navigate.emit(navigation::Intent::Task(task));
+        if let Some(return_target) = return_target {
+            self.return_focus_to.emit(return_target);
+        }
     }
+}
+
+pub(super) fn return_target(inspection: &Inspection) -> Option<web_sys::Element> {
+    let selector = format!(
+        ".message-task-chip[data-task-handle=\"{}\"]",
+        inspection.handle
+    );
+    web_sys::window()
+        .and_then(|window| window.document())
+        .and_then(|document| document.get_element_by_id(&inspection.card))
+        .and_then(|card| card.query_selector(&selector).ok().flatten())
 }
 
 #[derive(Properties, PartialEq)]
