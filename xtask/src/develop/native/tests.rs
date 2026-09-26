@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime};
 use gate::test_support::gix;
 
 use super::*;
+mod multi_worktree;
 
 #[test]
 fn executable_rollback_requires_the_journal_schema_to_be_proven_unchanged() {
@@ -371,6 +372,16 @@ fn no_resident_publication_then_restart_uses_the_retained_predecessor_authority(
         )
         .as_bytes(),
     );
+    let successor_binary = executable_digest(&successor).expect("successor hashes");
+    let server = serve_bootstraps(
+        listener,
+        discovery,
+        vec![
+            predecessor_binary.clone(),
+            predecessor_binary,
+            successor_binary.clone(),
+        ],
+    );
     let no_resident = RefreshRequest {
         restart: false,
         ..RefreshRequest::default()
@@ -382,13 +393,6 @@ fn no_resident_publication_then_restart_uses_the_retained_predecessor_authority(
     assert!(
         !stopped.exists(),
         "no-resident publication stopped its predecessor"
-    );
-    let successor_binary =
-        executable_digest(&install::installed_binary(&repository)).expect("successor hashes");
-    let server = serve_bootstraps(
-        listener,
-        discovery,
-        vec![predecessor_binary, successor_binary.clone()],
     );
     let request = RefreshRequest {
         restart: true,
@@ -419,11 +423,9 @@ fn rollback_promotion_failure_restores_the_predecessor_resident() {
     let discovery_path = state.canvas().to_path_buf();
     let saved_discovery = fixture.0.join("saved-discovery");
     let restored = fixture.0.join("predecessor-restored");
-    let stable_rollback = repository.worktree_root().join(WORKSPACE).join(ROLLBACK);
-    let retained_resident = repository
-        .worktree_root()
-        .join(WORKSPACE)
-        .join(RESIDENT_ROLLBACK);
+    let common = workspace(&repository).expect("common refresh workspace exists");
+    let stable_rollback = common.join(ROLLBACK);
+    let retained_resident = common.join(RESIDENT_ROLLBACK);
     let listener = TcpListener::bind("127.0.0.1:0").expect("bootstrap listener binds");
     let address = listener.local_addr().expect("bootstrap address reads");
     let endpoint = format!("http://{address}");
@@ -456,6 +458,11 @@ fn rollback_promotion_failure_restores_the_predecessor_resident() {
     let predecessor_binary =
         executable_digest(&install::installed_binary(&repository)).expect("predecessor hashes");
     let successor = fixture.binary("spice-successor", b"successor executable\n");
+    let server = serve_bootstraps(
+        listener,
+        discovery,
+        vec![predecessor_binary.clone(), predecessor_binary.clone()],
+    );
     let no_resident = RefreshRequest {
         restart: false,
         ..RefreshRequest::default()
@@ -465,7 +472,6 @@ fn rollback_promotion_failure_restores_the_predecessor_resident() {
         .expect("no-resident publication installs successor");
     let installed = install::installed_binary(&repository);
     let successor_bytes = fs::read(&installed).expect("successor reads");
-    let server = serve_bootstrap(listener, discovery, predecessor_binary.clone());
     let request = RefreshRequest {
         restart: true,
         ..RefreshRequest::default()

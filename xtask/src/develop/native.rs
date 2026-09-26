@@ -17,14 +17,16 @@ use spice::install::{self, InstallError};
 use spice::repository::Repository;
 use wire::Digest;
 
-/// Worktree-relative home for the rollback executable and resident log.
-const WORKSPACE: &str = "target/spice-develop";
+/// Repository-common home for developer-refresh rollback executables.
+const WORKSPACE: &str = "develop";
 /// Executable parked before a refresh so a failure can restore it.
 const ROLLBACK: &str = "spice.rollback";
 /// Staged predecessor while the stable rollback remains shutdown authority.
 const NEXT_ROLLBACK: &str = "spice.rollback.next";
-/// Stable copy of the serving predecessor retained through successor readiness.
+/// Serving executable retained across no-resident publications.
 const RESIDENT_ROLLBACK: &str = "spice.resident.rollback";
+/// Staging copy used to atomically replace the serving executable authority.
+const NEXT_RESIDENT_ROLLBACK: &str = "spice.resident.rollback.next";
 /// Maximum resident bootstrap response accepted while reconciling a restart.
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
 /// One local resident identity probe must not hold an install indefinitely.
@@ -57,10 +59,11 @@ fn install_built(
     let published = read_endpoint(repository);
     let endpoint = requested_endpoint(request, published.as_deref());
 
-    // Resolve and preserve the running generation before changing the stable
-    // rollback. A no-resident publication leaves that predecessor serving while
-    // `installed` already names its successor.
-    let authority = if request.restart && published.is_some() {
+    // Resolve and preserve the running generation before changing either the
+    // installed executable or the transaction rollback. No-resident
+    // publications can span worktrees and generations while one predecessor
+    // keeps serving, so its command authority has a separate common slot.
+    let authority = if published.is_some() {
         Some(resident_stop_executable(repository, &installed)?)
     } else {
         None
@@ -68,37 +71,33 @@ fn install_built(
     let retained_authority = authority
         .as_deref()
         .filter(|executable| *executable != installed);
-    let resident_rollback = retained_authority
-        .map(|authority| park_as(repository, authority, RESIDENT_ROLLBACK))
+    let resident_rollback = authority
+        .as_deref()
+        .map(|authority| retain_resident_authority(repository, authority))
         .transpose()?
         .flatten();
-    let mut rollback = if retained_authority.is_some() {
+    let mut rollback = if request.restart && retained_authority.is_some() {
         park_as(repository, &installed, NEXT_ROLLBACK)?
     } else {
         park(repository, &installed)?
     };
 
-    if let Some(authority) = authority.as_deref() {
+    if let (true, Some(authority)) = (request.restart, authority.as_deref()) {
         let stopping = Instant::now();
         if let Err(error) = stop(repository, authority, output) {
-            if retained_authority.is_some() {
-                if let Some(rollback) = &rollback {
-                    let _ = fs::remove_file(rollback);
-                }
-                if let Some(resident) = &resident_rollback {
-                    let _ = fs::remove_file(resident);
-                }
+            if let (true, Some(rollback)) = (retained_authority.is_some(), &rollback) {
+                let _ = fs::remove_file(rollback);
             }
             return Err(error);
         }
         let _ = writeln!(output, "resident stopped in {:.1?}", stopping.elapsed());
     }
 
-    if retained_authority.is_some() {
+    if request.restart && retained_authority.is_some() {
         let staged = rollback
             .take()
             .expect("an installed successor was staged beside its live predecessor");
-        let stable = repository.worktree_root().join(WORKSPACE).join(ROLLBACK);
+        let stable = workspace(repository)?.join(ROLLBACK);
         if let Err(error) = fs::rename(&staged, &stable) {
             let unwind = Rollback {
                 installed: &installed,
@@ -153,7 +152,7 @@ fn install_built(
                 ));
             }
         };
-    if let Some(resident) = resident_rollback {
+    if let (true, Some(resident)) = (request.restart, resident_rollback) {
         let _ = fs::remove_file(resident);
     }
     Ok(RefreshReport {
@@ -479,6 +478,22 @@ fn park_as(
     Ok(Some(rollback))
 }
 
+/// Preserve the serving executable without risking the prior complete authority.
+fn retain_resident_authority(
+    repository: &Repository,
+    authority: &Path,
+) -> Result<Option<PathBuf>, RefreshError> {
+    let retained = workspace(repository)?.join(RESIDENT_ROLLBACK);
+    if authority == retained {
+        return Ok(Some(retained));
+    }
+    let Some(staged) = park_as(repository, authority, NEXT_RESIDENT_ROLLBACK)? else {
+        return Ok(None);
+    };
+    fs::rename(staged, &retained)?;
+    Ok(Some(retained))
+}
+
 /// Exact receipt and executable state immediately before one refresh attempt.
 #[derive(Debug, Eq, PartialEq)]
 struct InstallSnapshot {
@@ -622,9 +637,10 @@ fn restore_resident(repository: &Repository, rollback: &Rollback<'_>, output: &m
     }
 }
 
-/// Create and answer the worktree-local scratch directory this command owns.
+/// Create and answer the repository-common scratch directory for refreshes.
 fn workspace(repository: &Repository) -> Result<PathBuf, RefreshError> {
-    let workspace = repository.worktree_root().join(WORKSPACE);
+    let state = repository.admit_state().map_err(InstallError::from)?;
+    let workspace = state.runtime().join(WORKSPACE);
     fs::create_dir_all(&workspace)?;
     Ok(workspace)
 }
@@ -671,27 +687,36 @@ fn endpoint_parts(endpoint: &str) -> Option<(String, u16)> {
 
 /// Executable whose command principal can authenticate the resident now live.
 ///
-/// A preceding `--no-resident` refresh leaves the serving executable in the
-/// rollback slot while the installed path already contains its successor. The
-/// bootstrap digest chooses between those two known generations. A different
-/// authenticated generation is foreign to this transaction and is refused
-/// before either executable is replaced.
+/// No-resident refreshes retain the serving executable separately from each
+/// publication's transaction rollback. The bootstrap digest chooses among the
+/// installed generation, that serving authority, and the immediate rollback.
+/// A different authenticated generation is foreign to this transaction and is
+/// refused before any executable is replaced.
 fn resident_stop_executable(
     repository: &Repository,
     installed: &Path,
 ) -> Result<PathBuf, RefreshError> {
+    let common = workspace(repository)?;
+    let retained = common.join(RESIDENT_ROLLBACK);
     let Some((_, version)) = running_resident_version(repository) else {
-        // Remote authenticated Canvas surfaces cannot answer the local
-        // bootstrap probe. Retain the existing behavior there: `down` remains
-        // the authority check and reports an exact principal refusal.
-        return Ok(installed.to_path_buf());
+        // A transient or remote endpoint cannot identify the resident. Keep any
+        // authority already proven by an earlier publication; otherwise `down`
+        // remains the exact principal check for the installed executable.
+        return Ok(if retained.is_file() {
+            retained
+        } else {
+            installed.to_path_buf()
+        });
     };
     if executable_digest(installed)? == version.binary {
         return Ok(installed.to_path_buf());
     }
-    let rollback = repository.worktree_root().join(WORKSPACE).join(ROLLBACK);
-    if rollback.is_file() && executable_digest(&rollback)? == version.binary {
-        return Ok(rollback);
+    let workspace = common;
+    for candidate in [RESIDENT_ROLLBACK, ROLLBACK] {
+        let executable = workspace.join(candidate);
+        if executable.is_file() && executable_digest(&executable)? == version.binary {
+            return Ok(executable);
+        }
     }
     Err(RefreshError::ResidentStopRefused(format!(
         "resident::foreign-generation binary {} matches neither the installed nor retained predecessor executable",
