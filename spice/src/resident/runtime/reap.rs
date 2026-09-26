@@ -217,12 +217,19 @@ pub(in crate::resident) fn present_closed_transcripts(
     message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    for (lane, occupant) in seats.take_vacated() {
+    let vacated = seats.take_vacated();
+    if vacated.is_empty() {
+        return Ok(());
+    }
+    let generation = message_publisher
+        .batch()
+        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+    for (lane, occupant) in vacated {
         let surfaces = CaptureSurfaces::new(
             command_surface.paths,
             &command_surface.config.taste,
             &command_surface.config.steering,
-            message_publisher,
+            &generation,
         )
         .without_narration();
         let recognition = taste_judge.as_deref_mut().map_or(
@@ -240,5 +247,8 @@ pub(in crate::resident) fn present_closed_transcripts(
         );
         super::deferral::defer_store_fault(presented, diagnostic, "closing transcript sweep")?;
     }
-    Ok(())
+    generation
+        .commit()
+        .map(drop)
+        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))
 }

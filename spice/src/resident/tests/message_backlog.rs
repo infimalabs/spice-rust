@@ -34,18 +34,32 @@ fn canvas_steering_recovery_chunks_keys_at_the_bus_batch_ceiling() {
     bus.shutdown().expect("message bus stops");
 }
 
+fn history_cursors(generation: &wire::TranscriptGeneration) -> Vec<wire::MessageHistoryCursor> {
+    generation
+        .frontiers
+        .iter()
+        .filter(|frontier| frontier.state == wire::TranscriptLaneState::Truncated)
+        .map(|frontier| wire::MessageHistoryCursor {
+            generation: generation.generation,
+            lane: frontier.lane,
+            before: frontier.before,
+        })
+        .collect()
+}
+
 fn complete_message_history(
     source: &canvas::stream::Source,
     accepted: &wire::Accepted,
     epoch: wire::CanonicalUuid,
     lane: wire::CanonicalUuid,
-    initial: &[wire::AgentMessage],
+    initial: &wire::TranscriptGeneration,
 ) -> Vec<wire::AgentMessage> {
-    let mut window = initial.to_vec();
-    let mut before = Some(window[0].locus);
-    let mut more = true;
+    let mut window = initial.messages.clone();
+    let mut cursor = history_cursors(initial)
+        .into_iter()
+        .find(|cursor| cursor.lane == lane);
     let mut page = 0_u8;
-    while more {
+    while let Some(requested) = cursor {
         let frame = source
             .message_history(
                 accepted,
@@ -53,23 +67,16 @@ fn complete_message_history(
                     v: wire::WireVersion::CURRENT,
                     id: test_uuid(70 + page),
                     epoch,
-                    lane,
-                    before,
+                    frontiers: vec![requested],
                 },
             )
             .expect("older compaction history reads");
-        let wire::StreamFrame::MessageHistory {
-            messages,
-            more: page_more,
-            ..
-        } = frame
-        else {
+        let wire::StreamFrame::MessageHistory { generation, .. } = frame else {
             panic!("expected message history page")
         };
-        assert!(messages.len() <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
-        before = Some(messages[0].locus);
-        more = page_more;
-        window.splice(0..0, messages);
+        assert!(generation.messages.len() <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
+        cursor = history_cursors(&generation).into_iter().next();
+        window.splice(0..0, generation.messages);
         page += 1;
     }
     let activities = window
@@ -82,10 +89,16 @@ fn complete_message_history(
     window
 }
 
-fn assert_bootstrap(more: &[wire::MessageHistoryCursor], lane: wire::CanonicalUuid) {
+fn assert_bootstrap(generation: &wire::TranscriptGeneration, lane: wire::CanonicalUuid) {
     assert_eq!(
-        more.iter().find(|cursor| cursor.lane == lane).copied(),
-        Some(wire::MessageHistoryCursor { lane, before: None }),
+        history_cursors(generation)
+            .into_iter()
+            .find(|cursor| cursor.lane == lane),
+        Some(wire::MessageHistoryCursor {
+            generation: generation.generation,
+            lane,
+            before: None,
+        }),
     );
 }
 
@@ -159,14 +172,12 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
             .begin(&accepted, &request)
             .expect("Canvas subscription begins");
         let wire::StreamFrame::Messages {
-            limit,
-            messages,
-            more,
-            ..
+            limit, generation, ..
         } = &frames[0]
         else {
             panic!("expected message snapshot")
         };
+        let messages = &generation.messages;
         assert_eq!(*limit, 256, "a missing sibling tape is not zero capacity");
         assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].lane, lane);
@@ -188,7 +199,7 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
         assert_eq!(messages[1].text, "Context compacted");
         assert!(messages[1].authored_synthetic);
         assert_eq!(messages[1].observed.as_ref(), Some(&observed));
-        assert_bootstrap(more, empty_lane);
+        assert_bootstrap(generation, empty_lane);
         drop(source);
     }
 
@@ -274,22 +285,20 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
             .begin(&accepted, &request)
             .expect("Canvas subscription begins");
         let wire::StreamFrame::Messages {
-            limit,
-            messages,
-            more,
-            ..
+            limit, generation, ..
         } = &frames[0]
         else {
             panic!("expected message snapshot")
         };
+        let messages = &generation.messages;
         assert_eq!(*limit as usize, canvas::stream::MESSAGE_CAPACITY);
         assert_eq!(
             messages.len(),
             wire::MESSAGE_FLOOR,
             "one fixed startup window fills the whole initial page"
         );
-        assert_bootstrap(more, empty_lane);
-        let window = complete_message_history(&source, &accepted, epoch, lane, messages);
+        assert_bootstrap(generation, empty_lane);
+        let window = complete_message_history(&source, &accepted, epoch, lane, generation);
         assert_eq!(window.len(), 220);
         assert_eq!(window[0].activity, wire::AgentActivityKind::Compaction);
         assert_eq!(window[0].text, "Context compacted");
@@ -367,9 +376,10 @@ fn an_older_history_page_carries_the_durable_observation_of_its_own_window() {
             },
         )
         .expect("Canvas subscription begins");
-    let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
+    let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };
+    let messages = &generation.messages;
     assert_eq!(
         messages
             .last()
@@ -384,6 +394,7 @@ fn an_older_history_page_carries_the_durable_observation_of_its_own_window() {
         &source,
         &accepted,
         lane,
+        generation.generation,
         messages
             .first()
             .expect("the startup window published cards"),
@@ -439,6 +450,7 @@ fn oldest_observed_card(
     source: &canvas::stream::Source,
     accepted: &wire::Accepted,
     lane: wire::CanonicalUuid,
+    generation: u64,
     newest: &wire::AgentMessage,
 ) -> wire::AgentMessage {
     let mut before = newest.locus;
@@ -451,26 +463,33 @@ fn oldest_observed_card(
                     v: wire::WireVersion::CURRENT,
                     id: test_uuid(90 + page),
                     epoch: accepted.epoch,
-                    lane,
-                    before: Some(before),
+                    frontiers: vec![wire::MessageHistoryCursor {
+                        generation,
+                        lane,
+                        before: Some(before),
+                    }],
                 },
             )
             .expect("older history reads");
-        let wire::StreamFrame::MessageHistory { messages, more, .. } = frame else {
+        let wire::StreamFrame::MessageHistory {
+            generation: interval,
+            ..
+        } = frame
+        else {
             panic!("expected message history page")
         };
-        if let Some(first) = messages.first() {
+        if let Some(first) = interval.messages.first() {
             before = first.locus;
             oldest = first.clone();
         }
-        for message in &messages {
+        for message in &interval.messages {
             assert!(
                 message.observed.is_some(),
                 "an older page served {} without its observation",
                 message.text.chars().take(24).collect::<String>(),
             );
         }
-        if !more {
+        if interval.frontiers[0].state == wire::TranscriptLaneState::Complete {
             break;
         }
     }
@@ -549,9 +568,10 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
     let (_, frames) = source
         .begin(&accepted, &request)
         .expect("Canvas subscription begins");
-    let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
+    let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };
+    let messages = &generation.messages;
     assert_eq!(
         messages
             .iter()
@@ -625,39 +645,50 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
             },
         )
         .expect("Canvas subscription begins");
-    let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
+    let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };
-    let before = Some(messages[0].locus);
-    let history_page = |id, before| {
+    let first = history_cursors(generation)
+        .into_iter()
+        .find(|cursor| cursor.lane == lane)
+        .expect("the lane advertises older history");
+    let history_page = |id, cursor| {
         source.message_history(
             &accepted,
             &wire::StreamRequest::MessageHistory {
                 v: wire::WireVersion::CURRENT,
                 id: test_uuid(id),
                 epoch,
-                lane,
-                before,
+                frontiers: vec![cursor],
             },
         )
     };
 
     fs::remove_dir_all(&tape_path).expect("old tape source is removed");
-    let cached = history_page(71, before)
-        .expect("retained history does not reread a missing durable source");
-    let wire::StreamFrame::MessageHistory { messages, more, .. } = cached else {
+    let cached =
+        history_page(71, first).expect("retained history does not reread a missing durable source");
+    let wire::StreamFrame::MessageHistory {
+        generation: interval,
+        ..
+    } = cached
+    else {
         panic!("expected retained look-behind page");
     };
     assert_eq!(
-        messages
+        interval
+            .messages
             .iter()
             .map(|message| message.text.as_str())
             .collect::<Vec<_>>(),
         ["message 54"],
     );
-    assert!(more, "the cached page preserves the durable frontier");
-    let before = Some(messages[0].locus);
-    let error = history_page(69, before).expect_err("a missing authenticated source is refused");
+    assert_eq!(
+        interval.frontiers[0].state,
+        wire::TranscriptLaneState::Truncated,
+        "the cached page preserves the durable frontier",
+    );
+    let next = history_cursors(&interval)[0];
+    let error = history_page(69, next).expect_err("a missing authenticated source is refused");
     assert!(
         format!("{error:?}").contains("transcript source disappeared"),
         "source disappearance remains explicit: {error:?}",
@@ -668,7 +699,7 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
         .tee(history.as_bytes())
         .expect("replacement history is captured");
 
-    let error = history_page(70, before).expect_err("a stale source cursor is refused");
+    let error = history_page(70, next).expect_err("a stale source cursor is refused");
     assert!(
         format!("{error:?}").contains("transcript source changed"),
         "replacement diagnosis preserves the source mismatch: {error:?}",
@@ -872,9 +903,10 @@ fn assert_mixed_acknowledgement_message(
     let (_, frames) = source
         .begin(&accepted, &request)
         .expect("Canvas subscription begins");
-    let wire::StreamFrame::Messages { messages, .. } = &frames[0] else {
+    let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };
+    let messages = &generation.messages;
     assert_eq!(messages.len(), 1, "one event remains one card");
     assert_eq!(messages[0].text, expected);
     assert!(!messages[0].text.contains("ACK 1kQwPZtK"));

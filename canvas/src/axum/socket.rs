@@ -113,7 +113,7 @@ struct ActiveSession {
     retired: CancellationToken,
     subscription: Option<crate::stream::Subscription>,
     broadcasts: Option<bus::BroadcastSubscriber>,
-    messages: Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
+    messages: Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
     commands: PendingCommands,
     lead: Lead,
 }
@@ -380,7 +380,7 @@ pub(super) enum Event {
     Closed(Result<(), tokio::sync::watch::error::RecvError>),
     Retired,
     Journal(Result<bus::JournalCommit, tokio::sync::broadcast::error::RecvError>),
-    Message(Result<Box<wire::AgentMessage>, tokio::sync::broadcast::error::RecvError>),
+    Message(Result<Box<wire::TranscriptGeneration>, tokio::sync::broadcast::error::RecvError>),
     Inbound(Option<Result<Message, ::axum::Error>>),
     Command(Option<CommandCompletion>),
     Continuation,
@@ -438,7 +438,7 @@ pub(super) async fn next_event(
     socket: &mut impl Inbound,
     signals: SessionSignals<'_>,
     broadcasts: &mut Option<bus::BroadcastSubscriber>,
-    messages: &mut Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
+    messages: &mut Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
     commands: &mut PendingCommands,
     readiness: SessionReadiness,
 ) -> Event {
@@ -512,10 +512,10 @@ async fn recv_journal(
         .await
 }
 
-/// Read one agent message from the enabled transcript broadcast.
+/// Read one atomic transcript generation from the enabled broadcast.
 async fn recv_message(
-    messages: &mut Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
-) -> Result<Box<wire::AgentMessage>, tokio::sync::broadcast::error::RecvError> {
+    messages: &mut Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
+) -> Result<Box<wire::TranscriptGeneration>, tokio::sync::broadcast::error::RecvError> {
     messages
         .as_mut()
         .expect("enabled branch has a message broadcast")
@@ -530,7 +530,7 @@ async fn route_message_broadcast(
     accepted: &wire::Accepted,
     capability: wire::CanonicalUuid,
     subscription: &crate::stream::Subscription,
-    notice: Result<Box<wire::AgentMessage>, tokio::sync::broadcast::error::RecvError>,
+    notice: Result<Box<wire::TranscriptGeneration>, tokio::sync::broadcast::error::RecvError>,
 ) -> SessionFlow {
     if !state.capabilities.matches(capability, &accepted.actor) {
         send_replaced(socket, state.epoch, Some(subscription.id())).await;

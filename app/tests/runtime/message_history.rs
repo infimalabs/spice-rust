@@ -21,39 +21,76 @@ fn agent_message(
 }
 
 fn message_snapshot(messages: Vec<serde_json::Value>, more: &[&str]) -> Vec<u8> {
-    let cursors = more
+    message_snapshot_at(1, messages, more)
+}
+
+fn message_snapshot_at(
+    generation: u64,
+    messages: Vec<serde_json::Value>,
+    more: &[&str],
+) -> Vec<u8> {
+    let lanes = messages
         .iter()
+        .filter_map(|message| message["lane"].as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let frontiers = lanes
+        .into_iter()
         .map(|lane| {
-            let before = messages
-                .iter()
-                .filter(|message| message["lane"] == **lane)
-                .min_by_key(|message| message["locus"]["offset"].as_u64())
-                .map(|message| message["locus"].clone());
-            serde_json::json!({"lane": lane, "before": before})
+            let truncated = more.contains(&lane);
+            let mut frontier = serde_json::json!({
+                "lane": lane,
+                "state": if truncated { "truncated" } else { "complete" },
+            });
+            if truncated
+                && let Some(before) = messages
+                    .iter()
+                    .filter(|message| message["lane"] == lane)
+                    .min_by_key(|message| message["locus"]["offset"].as_u64())
+                    .map(|message| message["locus"].clone())
+            {
+                frontier["before"] = before;
+            }
+            frontier
         })
-        .collect::<Vec<_>>();
-    serde_json::to_vec(&serde_json::json!({
-        "stream": "messages",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "limit": 256,
-        "messages": messages,
-        "more": cursors,
-    }))
-    .expect("message snapshot serializes")
+        .collect();
+    message_snapshot_frame(generation, 256, messages, frontiers)
 }
 
 fn history_page(lane: &str, before: u64, messages: Vec<serde_json::Value>, more: bool) -> Vec<u8> {
+    history_page_at(1, lane, before, messages, more)
+}
+
+fn history_page_at(
+    generation: u64,
+    lane: &str,
+    before: u64,
+    messages: Vec<serde_json::Value>,
+    more: bool,
+) -> Vec<u8> {
+    let requested = serde_json::json!({
+        "generation": generation,
+        "lane": lane,
+        "before": {"member": 1, "offset": before, "length": 20, "event": 0},
+    });
+    let next = messages
+        .iter()
+        .min_by_key(|message| message["locus"]["offset"].as_u64())
+        .map(|message| message["locus"].clone())
+        .or_else(|| more.then(|| requested["before"].clone()));
+    let mut frontier = serde_json::json!({
+        "lane": lane,
+        "state": if more { "truncated" } else { "complete" },
+    });
+    if let Some(next) = next {
+        frontier["before"] = next;
+    }
     serde_json::to_vec(&serde_json::json!({
         "stream": "message-history",
         "v": 1,
         "id": REQUEST,
         "epoch": EPOCH,
-        "lane": lane,
-        "before": {"member": 1, "offset": before, "length": 20, "event": 0},
-        "more": more,
-        "messages": messages,
+        "requested": [requested],
+        "generation": transcript_generation(generation, messages, vec![frontier]),
     }))
     .expect("message history serializes")
 }
@@ -132,19 +169,7 @@ fn older_member_history_merges_without_replacing_the_live_activity_head() {
         "authored": "2030-04-12T18:44:10.271Z",
         "text": "newest visible activity",
     });
-    let snapshot = serde_json::to_vec(&serde_json::json!({
-        "stream": "messages",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "limit": 256,
-        "messages": [newest],
-        "more": [{
-            "lane": LANE,
-            "before": {"member": 1, "offset": 100, "length": 20, "event": 0},
-        }],
-    }))
-    .expect("message snapshot serializes");
+    let snapshot = message_snapshot(vec![newest], &[LANE]);
     assert!(
         runtime
             .apply_stream_frame(&admitted_stream(&session, &snapshot))
@@ -152,23 +177,18 @@ fn older_member_history_merges_without_replacing_the_live_activity_head() {
     );
     assert!(runtime.message_history_target(uuid(LANE)).is_some());
 
-    let history = serde_json::to_vec(&serde_json::json!({
-        "stream": "message-history",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "lane": LANE,
-        "before": {"member": 1, "offset": 100, "length": 20, "event": 0},
-        "more": false,
-        "messages": [{
+    let history = history_page(
+        LANE,
+        100,
+        vec![serde_json::json!({
             "lane": LANE,
             "author": LANE_CAPABILITY,
             "locus": {"member": 1, "offset": 50, "length": 20, "event": 0},
             "authored": "2030-04-12T18:44:09.271Z",
             "text": "older retained history",
-        }],
-    }))
-    .expect("message history serializes");
+        })],
+        false,
+    );
     assert!(
         runtime
             .apply_stream_frame(&admitted_stream(&session, &history))
@@ -258,7 +278,23 @@ fn interleave_live_work_and_member_pages(runtime: &mut CanvasRuntime, session: &
     assert_eq!(target_offset(runtime, THIRD_LANE), Some(250));
     assert_eq!(target_offset(runtime, LANE), Some(100));
 
-    let live = message_frame_at(LANE, LANE_CAPABILITY, 150, 0, T14, None, "first live");
+    let live = message_generation_frame(
+        2,
+        vec![agent_message(LANE, 150, T14, "first live", None)],
+        vec![
+            serde_json::json!({
+                "lane": LANE,
+                "state": "truncated",
+                "before": {"member": 1, "offset": 100, "length": 20, "event": 0},
+            }),
+            serde_json::json!({"lane": SECOND_LANE, "state": "complete"}),
+            serde_json::json!({
+                "lane": THIRD_LANE,
+                "state": "truncated",
+                "before": {"member": 1, "offset": 250, "length": 20, "event": 0},
+            }),
+        ],
+    );
     assert!(apply(runtime, session, &live));
     assert_eq!(
         runtime.newest_lane_activity(uuid(LANE)).unwrap().detail(),
@@ -266,7 +302,8 @@ fn interleave_live_work_and_member_pages(runtime: &mut CanvasRuntime, session: &
     );
     assert_eq!(target_offset(runtime, THIRD_LANE), Some(250));
 
-    let stale = history_page(
+    let stale = history_page_at(
+        2,
         THIRD_LANE,
         300,
         vec![agent_message(THIRD_LANE, 260, T08, "stale response", None)],
@@ -281,7 +318,8 @@ fn interleave_live_work_and_member_pages(runtime: &mut CanvasRuntime, session: &
             .all(|message| message.text != "stale response")
     );
 
-    let first_page = history_page(
+    let first_page = history_page_at(
+        2,
         LANE,
         100,
         vec![agent_message(LANE, 50, T08, "first exhausted", None)],
@@ -291,7 +329,8 @@ fn interleave_live_work_and_member_pages(runtime: &mut CanvasRuntime, session: &
     assert_eq!(target_offset(runtime, LANE), None);
     assert_eq!(target_offset(runtime, THIRD_LANE), Some(250));
 
-    let final_third_page = history_page(
+    let final_third_page = history_page_at(
+        2,
         THIRD_LANE,
         250,
         vec![agent_message(THIRD_LANE, 225, T07, "third frontier", None)],
@@ -307,7 +346,8 @@ fn reconnect_and_replay_overlap(
     accepted: &app::Admitted<wire::Accepted>,
 ) {
     assert!(!runtime.reconnect(accepted));
-    let reconnect = message_snapshot(
+    let reconnect = message_snapshot_at(
+        2,
         vec![
             agent_message(LANE, 175, T15, "first reconnected head", None),
             agent_message(
@@ -335,7 +375,8 @@ fn reconnect_and_replay_overlap(
         );
     }
 
-    let overlap = history_page(
+    let overlap = history_page_at(
+        2,
         THIRD_LANE,
         350,
         vec![agent_message(THIRD_LANE, 300, T13, "third head", None)],

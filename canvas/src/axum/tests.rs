@@ -760,16 +760,16 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
     let initial = stream_frame(&mut socket).await;
     assert!(matches!(
         initial,
-        wire::StreamFrame::Messages { limit: 256, ref messages, .. }
-            if messages == &[first, second]
+        wire::StreamFrame::Messages { limit: 256, ref generation, .. }
+            if generation.messages == [first, second]
     ));
 
     let third = agent_message(0xe8, 70, "third author");
     assert!(publisher.publish(third.clone()).expect("third publishes"));
     assert!(matches!(
         stream_frame(&mut socket).await,
-        wire::StreamFrame::Message { id, message, .. }
-            if id == subscription && message == third
+        wire::StreamFrame::MessageGeneration { id, generation, .. }
+            if id == subscription && generation.messages == [third]
     ));
 
     shutdown.send(()).expect("shutdown signals");
@@ -803,9 +803,9 @@ impl super::socket::Inbound for ReadyInbound {
 /// Every external source a session can serve, each one ready before any is read.
 fn every_source_ready() -> (
     bus::Bus,
-    tokio::sync::broadcast::Sender<wire::AgentMessage>,
+    tokio::sync::broadcast::Sender<wire::TranscriptGeneration>,
     Option<bus::BroadcastSubscriber>,
-    Option<tokio::sync::broadcast::Receiver<wire::AgentMessage>>,
+    Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
 ) {
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
@@ -816,7 +816,12 @@ fn every_source_ready() -> (
     let (publisher, transcript) = tokio::sync::broadcast::channel(16);
     for offset in 0..8 {
         publisher
-            .send(agent_message(0xe9, offset, "ready message"))
+            .send(wire::TranscriptGeneration {
+                generation: offset + 1,
+                horizon: seq(1),
+                messages: vec![agent_message(0xe9, offset, "ready message")],
+                frontiers: Vec::new(),
+            })
             .expect("the retained receiver holds the channel open");
     }
     (bus, publisher, Some(broadcasts), Some(transcript))

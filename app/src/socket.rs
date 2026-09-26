@@ -310,7 +310,7 @@ impl Session {
             | StreamFrame::Trust { v, epoch, .. }
             | StreamFrame::Messages { v, epoch, .. }
             | StreamFrame::MessageHistory { v, epoch, .. }
-            | StreamFrame::Message { v, epoch, .. }
+            | StreamFrame::MessageGeneration { v, epoch, .. }
             | StreamFrame::Refusal { v, epoch, .. }
             | StreamFrame::Fault { v, epoch, .. }
             | StreamFrame::Pong { v, epoch, .. } => (*v, *epoch),

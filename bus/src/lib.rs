@@ -129,7 +129,7 @@ mod runtime {
         pending: journal::SteeringPage,
     }
 
-    /// Cursor and trust heads observed inside one immutable authority snapshot.
+    /// Cursor, trust, and residency heads observed inside one immutable authority snapshot.
     ///
     /// Fact pages are read separately through bounded primary-key ranges at
     /// this cursor, so opening Canvas never materializes the complete stream.
@@ -137,6 +137,7 @@ mod runtime {
     pub struct CanvasHeads {
         cursor: Option<journal::crossing::Seq>,
         trust: Arc<[JournalHead<journal::crossing::TrustHead>]>,
+        residency: Option<JournalHead<journal::crossing::ResidencyHead>>,
     }
 
     /// One exact steering head with the immutable facts that created and most
@@ -209,6 +210,12 @@ mod runtime {
         #[must_use]
         pub fn trust(&self) -> &[JournalHead<journal::crossing::TrustHead>] {
             &self.trust
+        }
+
+        /// Current resident and lane authority at the same durable barrier.
+        #[must_use]
+        pub const fn residency(&self) -> Option<&JournalHead<journal::crossing::ResidencyHead>> {
+            self.residency.as_ref()
         }
     }
 
@@ -1160,6 +1167,7 @@ mod runtime {
         current_task_snapshot(state).map(|snapshot| CanvasHeads {
             cursor: snapshot.cursor,
             trust: snapshot.trust.clone(),
+            residency: snapshot.residency.clone(),
         })
     }
 

@@ -47,7 +47,7 @@ const HISTORY_DURATION: Duration = Duration::from_secs(5);
 #[cfg(test)]
 pub(super) use backlog::restore_agent_messages;
 pub(super) use backlog::{BacklogReader, restore_agent_messages_indexed};
-pub(super) use live::LiveMessages;
+pub(super) use live::{LiveMessageWakes, LiveMessages, Wake};
 pub(super) use session_compaction::SessionCompactions;
 pub(super) use tool_preview::CallPreviews;
 
@@ -234,6 +234,22 @@ pub(super) enum TasteRecognition<'a> {
 }
 
 impl AgentMessagePublisher for canvas::stream::MessagePublisher {
+    fn publish(
+        &self,
+        message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        Self::publish(self, message)
+    }
+
+    fn revise_final(
+        &self,
+        message: wire::AgentMessage,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        Self::revise_final(self, message)
+    }
+}
+
+impl AgentMessagePublisher for canvas::stream::MessageBatch {
     fn publish(
         &self,
         message: wire::AgentMessage,

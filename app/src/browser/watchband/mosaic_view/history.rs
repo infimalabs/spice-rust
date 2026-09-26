@@ -15,8 +15,15 @@ impl HistorySender {
         Self(sender)
     }
 
-    fn request(&self, lane: CanonicalUuid, before: Option<wire::MessageLocus>) -> bool {
-        admit_action(&self.0, ClientAction::MessageHistory { lane, before })
+    fn request(&self, cursor: wire::MessageHistoryCursor) -> bool {
+        admit_action(
+            &self.0,
+            ClientAction::MessageHistory {
+                generation: cursor.generation,
+                lane: cursor.lane,
+                before: cursor.before,
+            },
+        )
     }
 }
 
@@ -28,8 +35,7 @@ impl PartialEq for HistorySender {
 
 #[derive(Clone, PartialEq)]
 struct HistoryTarget {
-    lane: CanonicalUuid,
-    before: Option<wire::MessageLocus>,
+    cursor: wire::MessageHistoryCursor,
     eager: bool,
     key: String,
     request_key: String,
@@ -37,19 +43,19 @@ struct HistoryTarget {
 
 fn history_targets(
     cards: &[ActivityCard],
-    targets: &BTreeMap<CanonicalUuid, (Option<wire::MessageLocus>, u64)>,
+    targets: &BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     revision: u64,
 ) -> Vec<HistoryTarget> {
     targets
         .iter()
-        .filter_map(|(lane, (before, completion))| {
+        .filter_map(|(lane, (cursor, completion))| {
             let lane_cards = cards
                 .iter()
                 .filter(|card| {
                     matches!(card, ActivityCard::Agent { message, .. } if message.lane == *lane)
                 })
                 .count();
-            let key = before.and_then(|before| {
+            let key = cursor.before.and_then(|before| {
                 cards.iter().find_map(|card| match card {
                     ActivityCard::Agent { message, .. }
                         if message.lane == *lane && message.locus == before =>
@@ -60,14 +66,13 @@ fn history_targets(
                     ActivityCard::Lifecycle { .. } => None,
                 })
             });
-            if before.is_some() && key.is_none() {
+            if cursor.before.is_some() && key.is_none() {
                 return None;
             }
             let key = key.unwrap_or_else(|| format!("history-bootstrap-{lane}"));
             Some(HistoryTarget {
-                lane: *lane,
-                before: *before,
-                eager: before.is_none() || lane_cards < EAGER_HISTORY_CARD_TARGET,
+                cursor: *cursor,
+                eager: cursor.before.is_none() || lane_cards < EAGER_HISTORY_CARD_TARGET,
                 request_key: format!("{revision}:{completion}:{key}"),
                 key,
             })
@@ -79,7 +84,7 @@ fn rotation_start(targets: &[HistoryTarget], last: Option<CanonicalUuid>) -> usi
     last.and_then(|last| {
         targets
             .iter()
-            .position(|target| target.lane == last)
+            .position(|target| target.cursor.lane == last)
             .map(|index| (index + 1) % targets.len())
     })
     .unwrap_or(0)
@@ -89,7 +94,7 @@ fn rotation_start(targets: &[HistoryTarget], last: Option<CanonicalUuid>) -> usi
 pub(super) fn use_history_paging(
     host: NodeRef,
     cards: &[ActivityCard],
-    targets: &BTreeMap<CanonicalUuid, (Option<wire::MessageLocus>, u64)>,
+    targets: &BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     revision: u64,
     request: HistorySender,
 ) {
@@ -144,8 +149,8 @@ pub(super) fn use_history_paging(
                     {
                         continue;
                     }
-                    if observed_request.request(target.lane, target.before) {
-                        *observed_last_admitted.borrow_mut() = Some(target.lane);
+                    if observed_request.request(target.cursor) {
+                        *observed_last_admitted.borrow_mut() = Some(target.cursor.lane);
                     } else {
                         observed_requested.borrow_mut().remove(&target.request_key);
                     }

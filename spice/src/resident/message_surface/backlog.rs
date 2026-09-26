@@ -275,6 +275,10 @@ fn restore_agent_messages_with(
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     reader.startup_work = StartupWork::default();
+    let generation = publisher
+        .batch()
+        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
+    let mut available = Vec::new();
     for row in &residency.lanes {
         // A row naming no installed vendor reads nothing below, but it is
         // admitted against the widest allowance rather than a dialect nobody
@@ -285,18 +289,35 @@ fn restore_agent_messages_with(
             break;
         }
         reader.startup_work.begin_lane();
-        if let Some(work) = restore_lane(bus, paths, row, publisher, reader, diagnostic)? {
+        available.push(row.lane);
+        if let Some(work) = restore_lane(bus, paths, row, &generation, reader, diagnostic)? {
             reader.startup_work.add(work);
         }
     }
+    let current = residency
+        .lanes
+        .iter()
+        .map(|row| row.lane)
+        .collect::<Vec<_>>();
+    publisher
+        .set_lane_availability(current, available.iter().copied())
+        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
     let history = Arc::new(DurableHistory::new(bus, paths, residency, reader));
-    let history_open = history.lanes.keys().copied().collect::<Vec<_>>();
+    let history_open = history
+        .lanes
+        .keys()
+        .filter(|lane| available.contains(lane))
+        .copied()
+        .collect::<Vec<_>>();
     publisher
         .set_history_provider(history)
         .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
     publisher
         .set_history_open(history_open)
         .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
+    generation
+        .commit()
+        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
     publisher
         .bound_initial_history()
         .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;

@@ -1,98 +1,55 @@
-//! Disposable presentation of durable tape, independent of authority mutation.
+//! Event-loop-owned presentation of durable tape after compaction reconciliation.
 //!
-//! Notices are wake-ups. The same decoder and projector serve this read-only
-//! path and journal catch-up; their shared position makes overlapping delivery
-//! idempotent without losing records whose individual notices never arrived.
+//! Capture callbacks only enqueue wake identities. The resident loop drains one
+//! cohort, reconciles session compactions, and then publishes every projected
+//! message as one transcript generation.
 
-use std::sync::{Arc, mpsc};
-use std::thread::{self, JoinHandle};
+use std::sync::Arc;
 
 use super::*;
 
-type Wake = (CanonicalUuid, CanonicalUuid);
+pub(in crate::resident) type Wake = (CanonicalUuid, CanonicalUuid);
 
 #[derive(Clone)]
 pub(in crate::resident) struct LiveMessages {
-    worker: Arc<Worker>,
+    wake: tokio::sync::mpsc::UnboundedSender<Wake>,
     state: Arc<Mutex<MessageState>>,
 }
 
-struct Worker {
-    wake: Option<mpsc::Sender<Wake>>,
-    thread: Option<JoinHandle<()>>,
-}
-
-impl Drop for Worker {
-    fn drop(&mut self) {
-        self.wake.take();
-        if let Some(thread) = self.thread.take()
-            && thread.join().is_err()
-        {
-            eprintln!("canvas live message worker panicked");
-        }
-    }
+pub(in crate::resident) struct LiveMessageWakes {
+    wakes: tokio::sync::mpsc::UnboundedReceiver<Wake>,
+    reader: LiveReader,
 }
 
 struct LiveReader {
     journal: journal::JournalReader,
     paths: RuntimePaths,
     epoch: CanonicalUuid,
-    publisher: canvas::stream::MessagePublisher,
 }
 
 impl LiveMessages {
     pub(in crate::resident) fn new(
         paths: &RuntimePaths,
         epoch: CanonicalUuid,
-        publisher: canvas::stream::MessagePublisher,
         state: MessageState,
-    ) -> CommandResult<Self> {
+    ) -> CommandResult<(Self, LiveMessageWakes)> {
         let journal = journal::JournalReader::open(&paths.journal).map_err(|error| {
             store_fault("canvas::message-reader-unavailable", &error.to_string())
         })?;
-        let reader = LiveReader {
-            journal,
-            paths: paths.clone(),
-            epoch,
-            publisher,
+        let (wake, wakes) = tokio::sync::mpsc::unbounded_channel();
+        let messages = Self {
+            wake,
+            state: Arc::new(Mutex::new(state)),
         };
-        let state = Arc::new(Mutex::new(state));
-        let presentation = Arc::clone(&state);
-        let (wake, records) = mpsc::channel();
-        let thread = thread::Builder::new()
-            .name("spice-live-messages".to_owned())
-            .spawn(move || {
-                while let Ok(first) = records.recv() {
-                    let mut batch = vec![first];
-                    let mut seen = BTreeSet::from([first]);
-                    for record in records
-                        .try_iter()
-                        .take(super::super::capture::NOTICE_BATCH - 1)
-                    {
-                        if seen.insert(record) {
-                            batch.push(record);
-                        }
-                    }
-                    for (lane, occupant) in batch {
-                        if let Err(error) = reader.present(lane, occupant, &presentation) {
-                            eprintln!("canvas live message unavailable: {error:?}");
-                        }
-                    }
-                }
-            })
-            .map_err(|error| {
-                super::super::environment_fault(
-                    "canvas::message-worker-unavailable",
-                    &error.to_string(),
-                )
-            })?;
-        Ok(Self {
-            worker: Arc::new(Worker {
-                wake: Some(wake),
-                thread: Some(thread),
-            }),
-            state,
-        })
+        let wakes = LiveMessageWakes {
+            wakes,
+            reader: LiveReader {
+                journal,
+                paths: paths.clone(),
+                epoch,
+            },
+        };
+        Ok((messages, wakes))
     }
 
     pub(in crate::resident) fn state(&self) -> &Mutex<MessageState> {
@@ -117,12 +74,36 @@ impl LiveMessages {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
     ) -> CommandResult<()> {
-        self.worker
-            .wake
-            .as_ref()
-            .expect("the live owner retains its sender")
+        self.wake
             .send((lane, occupant))
             .map_err(|error| store_fault("canvas::message-worker-unavailable", &error.to_string()))
+    }
+}
+
+impl LiveMessageWakes {
+    pub(in crate::resident) async fn recv(&mut self) -> Option<Vec<Wake>> {
+        let first = self.wakes.recv().await?;
+        let mut wakes = vec![first];
+        let mut seen = BTreeSet::from([first]);
+        while wakes.len() < super::super::capture::NOTICE_BATCH {
+            let Ok(wake) = self.wakes.try_recv() else {
+                break;
+            };
+            if seen.insert(wake) {
+                wakes.push(wake);
+            }
+        }
+        Some(wakes)
+    }
+
+    pub(in crate::resident) fn present(
+        &self,
+        lane: CanonicalUuid,
+        occupant: CanonicalUuid,
+        state: &Mutex<MessageState>,
+        publisher: &impl AgentMessagePublisher,
+    ) -> CommandResult<()> {
+        self.reader.present(lane, occupant, state, publisher)
     }
 }
 
@@ -132,6 +113,7 @@ impl LiveReader {
         lane: CanonicalUuid,
         occupant: CanonicalUuid,
         state: &Mutex<MessageState>,
+        publisher: &impl AgentMessagePublisher,
     ) -> CommandResult<()> {
         let head = self
             .journal
@@ -220,7 +202,7 @@ impl LiveReader {
             {
                 let directives = self.directives(&record)?;
                 publish_agent_messages_in(
-                    &self.publisher,
+                    publisher,
                     &record,
                     &mut state,
                     directives.as_ref(),

@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use bus::{CanvasHeads, JournalCommit};
 use wire::{
-    AgentMessage, Packed, Refusal, Seq, StreamCursor, StreamFact, StreamFrame, StreamRequest,
-    ViewSubject, WireVersion,
+    Packed, Refusal, Seq, StreamCursor, StreamFact, StreamFrame, StreamRequest, ViewSubject,
+    WireVersion,
 };
 
 use super::policy::{
@@ -224,15 +224,15 @@ impl Subscription {
         })
     }
 
-    /// Project one live transcript activity for subscriptions that asked for it.
+    /// Project one live transcript generation for subscriptions that asked for it.
     #[must_use]
-    pub fn message(&self, message: AgentMessage) -> Option<StreamFrame> {
+    pub fn message(&self, generation: wire::TranscriptGeneration) -> Option<StreamFrame> {
         (self.is_live() && self.subjects.contains(&ViewSubject::Messages)).then_some(
-            StreamFrame::Message {
+            StreamFrame::MessageGeneration {
                 v: WireVersion::CURRENT,
                 id: self.id,
                 epoch: self.epoch,
-                message,
+                generation,
             },
         )
     }

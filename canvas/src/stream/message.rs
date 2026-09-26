@@ -1,8 +1,9 @@
 //! Generation-owned retention and publication of captured transcript activity.
 
-use std::collections::{BTreeSet, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::error::Error;
 use std::fmt;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use wire::{AgentMessage, Fault, FaultClass};
@@ -12,13 +13,8 @@ use super::Failure;
 /// Newest visible transcript cards retained per lane for a reconnecting Canvas.
 pub const MESSAGE_CAPACITY: usize = 256;
 
-/// Older visible cards returned for one member-local history request.
+/// Maximum visible cards returned across one coordinated history interval.
 pub const MESSAGE_HISTORY_PAGE_LIMIT: usize = 50;
-
-pub(super) struct MessageSnapshot {
-    pub(super) messages: Vec<AgentMessage>,
-    pub(super) more: Vec<wire::MessageHistoryCursor>,
-}
 
 /// One source-backed page immediately preceding a retained message.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -43,13 +39,31 @@ pub trait MessageHistoryProvider: fmt::Debug + Send + Sync {
     ) -> Result<Option<MessageHistoryPage>, String>;
 }
 
+type HistoryAnchorMap = HashMap<(u64, wire::CanonicalUuid, wire::MessageLocus), AgentMessage>;
+
+struct HistoryRead {
+    generation: u64,
+    lane_limit: usize,
+    retained: VecDeque<AgentMessage>,
+    frontiers: BTreeMap<wire::CanonicalUuid, wire::TranscriptLaneFrontier>,
+    provider: Option<Arc<dyn MessageHistoryProvider>>,
+    open_lanes: HashSet<wire::CanonicalUuid>,
+}
+
+struct HistoryLaneRead {
+    messages: Vec<AgentMessage>,
+    frontier: wire::TranscriptLaneFrontier,
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct MessageFeed {
     retained: Arc<Mutex<VecDeque<AgentMessage>>>,
     history: Arc<Mutex<Option<Arc<dyn MessageHistoryProvider>>>>,
     history_open: Arc<Mutex<HashSet<wire::CanonicalUuid>>>,
-    history_closed: Arc<Mutex<HashSet<wire::CanonicalUuid>>>,
-    pub(super) updates: tokio::sync::broadcast::Sender<AgentMessage>,
+    history_anchors: Arc<Mutex<HistoryAnchorMap>>,
+    lanes: Arc<Mutex<BTreeMap<wire::CanonicalUuid, bool>>>,
+    generation: Arc<AtomicU64>,
+    pub(super) updates: tokio::sync::broadcast::Sender<wire::TranscriptGeneration>,
     capacity: usize,
 }
 
@@ -60,41 +74,43 @@ impl MessageFeed {
             retained: Arc::new(Mutex::new(VecDeque::new())),
             history: Arc::new(Mutex::new(None)),
             history_open: Arc::new(Mutex::new(HashSet::new())),
-            history_closed: Arc::new(Mutex::new(HashSet::new())),
+            history_anchors: Arc::new(Mutex::new(HashMap::new())),
+            lanes: Arc::new(Mutex::new(BTreeMap::new())),
+            generation: Arc::new(AtomicU64::new(0)),
             updates,
             capacity: MESSAGE_CAPACITY,
         }
     }
 
-    pub(super) fn initial_snapshot(&self) -> Result<MessageSnapshot, MessagePublishError> {
+    pub(super) fn current_generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    pub(super) fn initial_snapshot(
+        &self,
+        horizon: wire::Seq,
+        current_lanes: impl IntoIterator<Item = wire::CanonicalUuid>,
+        authoritative_lanes: bool,
+    ) -> Result<wire::TranscriptGeneration, MessagePublishError> {
+        self.synchronize_lanes(current_lanes, authoritative_lanes)?;
         let retained = self
             .retained
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?;
-        let mut lanes = retained
-            .iter()
-            .filter(|message| visible_message(message))
-            .map(|message| message.lane)
-            .collect::<BTreeSet<_>>();
+        let frontiers = self.frontiers(&retained, None)?;
         let mut selected = HashSet::new();
-        let mut more = Vec::new();
-        let history_open = self
-            .history_open
-            .lock()
-            .map_err(|_| MessagePublishError::Unavailable)?;
-        lanes.extend(history_open.iter().copied());
-        for lane in lanes {
+        for frontier in &frontiers {
+            if frontier.state == wire::TranscriptLaneState::Unavailable {
+                continue;
+            }
             let visible = retained
                 .iter()
-                .filter(|message| message.lane == lane && visible_message(message))
+                .filter(|message| message.lane == frontier.lane && visible_message(message))
                 .collect::<Vec<_>>();
-            let start = message_floor_start(&visible);
-            if start > 0 || history_open.contains(&lane) {
-                more.push(wire::MessageHistoryCursor {
-                    lane,
-                    before: visible.get(start).map(|message| message.locus),
-                });
-            }
+            let start = frontier
+                .before
+                .and_then(|before| visible.iter().position(|message| message.locus == before))
+                .unwrap_or(0);
             selected.extend(
                 visible[start..]
                     .iter()
@@ -108,169 +124,296 @@ impl MessageFeed {
             })
             .cloned()
             .collect();
-        Ok(MessageSnapshot { messages, more })
+        Ok(wire::TranscriptGeneration {
+            generation: self.generation.load(Ordering::Acquire),
+            horizon,
+            messages,
+            frontiers,
+        })
     }
 
     pub(super) fn history(
         &self,
-        lane: wire::CanonicalUuid,
-        before: Option<wire::MessageLocus>,
-    ) -> Result<Option<MessageHistoryPage>, MessagePublishError> {
+        requested: &[wire::MessageHistoryCursor],
+        horizon: wire::Seq,
+    ) -> Result<wire::TranscriptGeneration, MessagePublishError> {
+        let read = self.prepare_history(requested)?;
+        let mut messages = Vec::new();
+        let mut frontiers = Vec::with_capacity(requested.len());
+        for cursor in requested {
+            let lane = self.read_history_lane(&read, cursor)?;
+            messages.extend(lane.messages);
+            frontiers.push(lane.frontier);
+        }
+        messages.sort_by_key(AgentMessage::chronology_key);
+        if messages
+            .windows(2)
+            .any(|pair| pair[0].lane == pair[1].lane && pair[0].locus == pair[1].locus)
+        {
+            return Err(MessagePublishError::InvalidHistory);
+        }
+        if read.generation != self.generation.load(Ordering::Acquire) {
+            return Err(MessagePublishError::StaleGeneration);
+        }
+        Ok(wire::TranscriptGeneration {
+            generation: read.generation,
+            horizon,
+            messages,
+            frontiers,
+        })
+    }
+
+    fn prepare_history(
+        &self,
+        requested: &[wire::MessageHistoryCursor],
+    ) -> Result<HistoryRead, MessagePublishError> {
+        if requested.is_empty() || requested.len() > MESSAGE_HISTORY_PAGE_LIMIT {
+            return Err(MessagePublishError::InvalidHistoryCursor);
+        }
+        let generation = requested[0].generation;
+        if requested
+            .iter()
+            .any(|cursor| cursor.generation != generation)
+            || generation != self.generation.load(Ordering::Acquire)
+        {
+            return Err(MessagePublishError::StaleGeneration);
+        }
+        let lanes = requested
+            .iter()
+            .map(|cursor| cursor.lane)
+            .collect::<BTreeSet<_>>();
+        if lanes.len() != requested.len() {
+            return Err(MessagePublishError::InvalidHistoryCursor);
+        }
         let retained = self
             .retained
             .lock()
-            .map_err(|_| MessagePublishError::Unavailable)?;
-        let visible = retained
-            .iter()
-            .filter(|message| message.lane == lane && visible_message(message))
-            .collect::<Vec<_>>();
-        let before_message = match self.history_boundary(lane, before, &visible)? {
-            HistoryBoundary::Unknown => return Ok(None),
-            HistoryBoundary::Bootstrap => None,
-            HistoryBoundary::Message(index) => Some((*visible[index]).clone()),
-        };
-        let history = self
+            .map_err(|_| MessagePublishError::Unavailable)?
+            .clone();
+        let frontiers = self
+            .frontiers(&retained, Some(&lanes))?
+            .into_iter()
+            .map(|frontier| (frontier.lane, frontier))
+            .collect();
+        let provider = self
             .history
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?
             .clone();
-        let Some(history) = history else {
-            return before.map_or(Ok(None), |before| retained_history(&retained, lane, before));
-        };
-        let source_closed = self
-            .history_closed
-            .lock()
-            .map_err(|_| MessagePublishError::Unavailable)?
-            .contains(&lane);
-        let remaining = self.capacity.saturating_sub(visible.len());
-        if remaining == 0 {
-            self.history_closed
-                .lock()
-                .map_err(|_| MessagePublishError::Unavailable)?
-                .insert(lane);
-            self.history_open
-                .lock()
-                .map_err(|_| MessagePublishError::Unavailable)?
-                .remove(&lane);
-        }
-        // Source closure limits new durable reads, not another reader's cursor
-        // through messages this generation already retains.
-        if let Some(before) = before
-            && let Some(mut page) = retained_history(&retained, lane, before)?
-            && !page.messages.is_empty()
-        {
-            page.more |= !source_closed && remaining > 0;
-            return Ok(Some(page));
-        }
-        if source_closed || remaining == 0 {
-            return Ok(Some(MessageHistoryPage {
-                messages: Vec::new(),
-                more: false,
-            }));
-        }
-        let limit = remaining.min(MESSAGE_HISTORY_PAGE_LIMIT);
-        drop(retained);
-        if let Some(mut page) = history
-            .history(lane, before_message.as_ref(), limit)
-            .map_err(MessagePublishError::History)?
-        {
-            self.retain_history_page(lane, before_message.as_ref(), &mut page)?;
-            if page.messages.len() >= remaining || !page.more {
-                page.more = false;
-                self.history_closed
-                    .lock()
-                    .map_err(|_| MessagePublishError::Unavailable)?
-                    .insert(lane);
-                self.history_open
-                    .lock()
-                    .map_err(|_| MessagePublishError::Unavailable)?
-                    .remove(&lane);
-            }
-            return Ok(Some(page));
-        }
-        let retained = self
-            .retained
-            .lock()
-            .map_err(|_| MessagePublishError::Unavailable)?;
-        before.map_or(Ok(None), |before| retained_history(&retained, lane, before))
-    }
-
-    fn history_boundary(
-        &self,
-        lane: wire::CanonicalUuid,
-        before: Option<wire::MessageLocus>,
-        visible: &[&AgentMessage],
-    ) -> Result<HistoryBoundary, MessagePublishError> {
-        if let Some(before) = before {
-            return Ok(visible
-                .iter()
-                .position(|message| message.locus == before)
-                .map_or(HistoryBoundary::Unknown, HistoryBoundary::Message));
-        }
-        let open = self
+        let open_lanes = self
             .history_open
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?
-            .contains(&lane);
-        Ok(if open {
-            HistoryBoundary::Bootstrap
-        } else {
-            HistoryBoundary::Unknown
+            .clone();
+        Ok(HistoryRead {
+            generation,
+            lane_limit: MESSAGE_HISTORY_PAGE_LIMIT / requested.len(),
+            retained,
+            frontiers,
+            provider,
+            open_lanes,
         })
     }
 
-    fn retain_history_page(
+    fn read_history_lane(
         &self,
-        lane: wire::CanonicalUuid,
-        before: Option<&AgentMessage>,
-        page: &mut MessageHistoryPage,
+        read: &HistoryRead,
+        cursor: &wire::MessageHistoryCursor,
+    ) -> Result<HistoryLaneRead, MessagePublishError> {
+        let frontier = read
+            .frontiers
+            .get(&cursor.lane)
+            .ok_or(MessagePublishError::InvalidHistoryCursor)?;
+        if frontier.state != wire::TranscriptLaneState::Truncated {
+            return Err(MessagePublishError::StaleGeneration);
+        }
+        if cursor.before.is_none() && frontier.before.is_some() {
+            return Err(MessagePublishError::StaleGeneration);
+        }
+        let retained_before = cursor.before.and_then(|locus| {
+            read.retained
+                .iter()
+                .find(|message| message.lane == cursor.lane && message.locus == locus)
+                .cloned()
+        });
+        let before = self.resolve_history_before(read, cursor, retained_before.as_ref())?;
+        let mut page = retained_history_page(
+            &read.retained,
+            cursor.lane,
+            retained_before.as_ref(),
+            read.lane_limit,
+            read.open_lanes.contains(&cursor.lane),
+        )
+        .map(Ok)
+        .unwrap_or_else(|| source_history_page(read, cursor.lane, before.as_ref()))?;
+        reconcile_history_page(&read.retained, &mut page);
+        if page.messages.len() > read.lane_limit {
+            return Err(MessagePublishError::InvalidHistory);
+        }
+        validate_history_page(cursor.lane, before.as_ref(), &page)?;
+        let next = page.messages.first().map(|message| message.locus);
+        let frontier = wire::TranscriptLaneFrontier {
+            lane: cursor.lane,
+            state: if page.more {
+                wire::TranscriptLaneState::Truncated
+            } else {
+                wire::TranscriptLaneState::Complete
+            },
+            before: page.more.then_some(next.or(cursor.before)).flatten(),
+        };
+        if page.more
+            && let Some(anchor) = page.messages.first()
+        {
+            self.history_anchors
+                .lock()
+                .map_err(|_| MessagePublishError::Unavailable)?
+                .insert((read.generation, cursor.lane, anchor.locus), anchor.clone());
+        }
+        Ok(HistoryLaneRead {
+            messages: page.messages,
+            frontier,
+        })
+    }
+
+    fn resolve_history_before(
+        &self,
+        read: &HistoryRead,
+        cursor: &wire::MessageHistoryCursor,
+        retained: Option<&AgentMessage>,
+    ) -> Result<Option<AgentMessage>, MessagePublishError> {
+        let Some(locus) = cursor.before else {
+            return Ok(None);
+        };
+        if let Some(retained) = retained {
+            return Ok(Some(retained.clone()));
+        }
+        self.history_anchors
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?
+            .get(&(read.generation, cursor.lane, locus))
+            .cloned()
+            .ok_or(MessagePublishError::InvalidHistoryCursor)
+            .map(Some)
+    }
+
+    fn synchronize_lanes(
+        &self,
+        current_lanes: impl IntoIterator<Item = wire::CanonicalUuid>,
+        authoritative: bool,
     ) -> Result<(), MessagePublishError> {
-        let mut retained = self
-            .retained
+        let current = current_lanes.into_iter().collect::<BTreeSet<_>>();
+        let mut lanes = self
+            .lanes
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?;
-        for message in &mut page.messages {
-            if let Some(current) = retained
-                .iter()
-                .find(|current| current.lane == message.lane && current.locus == message.locus)
-            {
-                *message = current.clone();
+        if authoritative {
+            lanes.retain(|lane, _| current.contains(lane));
+            for lane in current {
+                lanes.entry(lane).or_insert(false);
             }
-        }
-        validate_history_page(lane, before, page)?;
-        for message in &page.messages {
-            retain_message(&mut retained, message.clone(), self.capacity)?;
         }
         Ok(())
     }
+
+    fn frontiers(
+        &self,
+        retained: &VecDeque<AgentMessage>,
+        selected: Option<&BTreeSet<wire::CanonicalUuid>>,
+    ) -> Result<Vec<wire::TranscriptLaneFrontier>, MessagePublishError> {
+        let lanes = self
+            .lanes
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let history_open = self
+            .history_open
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let mut frontiers = Vec::new();
+        for (&lane, &available) in lanes.iter() {
+            if selected.is_some_and(|selected| !selected.contains(&lane)) {
+                continue;
+            }
+            if !available {
+                frontiers.push(wire::TranscriptLaneFrontier {
+                    lane,
+                    state: wire::TranscriptLaneState::Unavailable,
+                    before: None,
+                });
+                continue;
+            }
+            let visible = retained
+                .iter()
+                .filter(|message| message.lane == lane && visible_message(message))
+                .collect::<Vec<_>>();
+            let start = message_floor_start(&visible);
+            let truncated = start > 0 || history_open.contains(&lane);
+            frontiers.push(wire::TranscriptLaneFrontier {
+                lane,
+                state: if truncated {
+                    wire::TranscriptLaneState::Truncated
+                } else {
+                    wire::TranscriptLaneState::Complete
+                },
+                before: truncated
+                    .then(|| visible.get(start).map(|message| message.locus))
+                    .flatten(),
+            });
+        }
+        Ok(frontiers)
+    }
 }
 
-enum HistoryBoundary {
-    Unknown,
-    Bootstrap,
-    Message(usize),
-}
-
-fn retained_history(
+fn retained_history_page(
     retained: &VecDeque<AgentMessage>,
     lane: wire::CanonicalUuid,
-    before: wire::MessageLocus,
-) -> Result<Option<MessageHistoryPage>, MessagePublishError> {
+    before: Option<&AgentMessage>,
+    limit: usize,
+    source_open: bool,
+) -> Option<MessageHistoryPage> {
+    let before = before?;
     let visible = retained
         .iter()
         .filter(|message| message.lane == lane && visible_message(message))
         .collect::<Vec<_>>();
-    let Some(end) = visible.iter().position(|message| message.locus == before) else {
-        return Ok(None);
-    };
-    let start = end.saturating_sub(MESSAGE_HISTORY_PAGE_LIMIT);
-    Ok(Some(MessageHistoryPage {
+    let end = visible
+        .iter()
+        .position(|message| message.locus == before.locus)?;
+    let start = end.saturating_sub(limit);
+    (start < end).then(|| MessageHistoryPage {
         messages: visible[start..end]
             .iter()
             .map(|message| (*message).clone())
             .collect(),
-        more: start > 0,
-    }))
+        more: start > 0 || source_open,
+    })
+}
+
+fn source_history_page(
+    read: &HistoryRead,
+    lane: wire::CanonicalUuid,
+    before: Option<&AgentMessage>,
+) -> Result<MessageHistoryPage, MessagePublishError> {
+    let Some(provider) = &read.provider else {
+        return Ok(MessageHistoryPage {
+            messages: Vec::new(),
+            more: false,
+        });
+    };
+    provider
+        .history(lane, before, read.lane_limit)
+        .map_err(MessagePublishError::History)?
+        .ok_or(MessagePublishError::InvalidHistoryCursor)
+}
+
+fn reconcile_history_page(retained: &VecDeque<AgentMessage>, page: &mut MessageHistoryPage) {
+    for message in &mut page.messages {
+        if let Some(current) = retained
+            .iter()
+            .find(|current| current.lane == message.lane && current.locus == message.locus)
+        {
+            *message = current.clone();
+        }
+    }
 }
 
 fn validate_history_page(
@@ -298,6 +441,33 @@ fn validate_history_page(
 #[derive(Clone, Debug)]
 pub struct MessagePublisher {
     pub(super) feed: MessageFeed,
+    pub(super) bus: bus::BusReader,
+}
+
+/// One staged transcript cohort committed and broadcast atomically.
+#[derive(Debug)]
+pub struct MessageBatch {
+    publisher: MessagePublisher,
+    base_generation: u64,
+    state: Mutex<MessageBatchState>,
+}
+
+#[derive(Debug)]
+struct MessageBatchState {
+    retained: VecDeque<AgentMessage>,
+    mutations: Vec<MessageMutation>,
+}
+
+#[derive(Clone, Debug)]
+enum MessageMutation {
+    Publish(AgentMessage),
+    ReviseFinal(AgentMessage),
+    RevisePresentation {
+        lane: wire::CanonicalUuid,
+        locus: wire::MessageLocus,
+        text: String,
+        badges: wire::AgentMessageBadges,
+    },
 }
 
 impl MessagePublisher {
@@ -306,11 +476,6 @@ impl MessagePublisher {
         &self,
         provider: Arc<dyn MessageHistoryProvider>,
     ) -> Result<(), MessagePublishError> {
-        self.feed
-            .history_closed
-            .lock()
-            .map_err(|_| MessagePublishError::Unavailable)?
-            .clear();
         *self
             .feed
             .history
@@ -325,17 +490,58 @@ impl MessagePublisher {
         lanes: impl IntoIterator<Item = wire::CanonicalUuid>,
     ) -> Result<(), MessagePublishError> {
         let lanes = lanes.into_iter().collect::<HashSet<_>>();
-        self.feed
-            .history_closed
+        let mut known = self
+            .feed
+            .lanes
             .lock()
-            .map_err(|_| MessagePublishError::Unavailable)?
-            .retain(|lane| !lanes.contains(lane));
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        for lane in &lanes {
+            known.entry(*lane).or_insert(true);
+        }
         *self
             .feed
             .history_open
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)? = lanes;
         Ok(())
+    }
+
+    /// Declare which current lanes startup hydrated within its bounded allowance.
+    pub fn set_lane_availability(
+        &self,
+        current: impl IntoIterator<Item = wire::CanonicalUuid>,
+        available: impl IntoIterator<Item = wire::CanonicalUuid>,
+    ) -> Result<(), MessagePublishError> {
+        let current = current.into_iter().collect::<BTreeSet<_>>();
+        let available = available.into_iter().collect::<BTreeSet<_>>();
+        let mut lanes = self
+            .feed
+            .lanes
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        *lanes = current
+            .into_iter()
+            .map(|lane| (lane, available.contains(&lane)))
+            .collect();
+        Ok(())
+    }
+
+    /// Begin one atomic transcript publication cohort.
+    pub fn batch(&self) -> Result<MessageBatch, MessagePublishError> {
+        let retained = self
+            .feed
+            .retained
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?
+            .clone();
+        Ok(MessageBatch {
+            publisher: self.clone(),
+            base_generation: self.feed.generation.load(Ordering::Acquire),
+            state: Mutex::new(MessageBatchState {
+                retained,
+                mutations: Vec::new(),
+            }),
+        })
     }
 
     /// Keep only one initial page plus a look-behind card in each lane.
@@ -356,56 +562,26 @@ impl MessagePublisher {
     }
 
     /// Retain and broadcast one transcript activity exactly once.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error when retained state is unavailable or one durable
-    /// transcript identity is reused for different content, or when an
-    /// upstream emitter presents media outside the canonical decoding law.
     pub fn publish(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
-        wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
-        let mut retained = self
-            .feed
-            .retained
-            .lock()
-            .map_err(|_| MessagePublishError::Unavailable)?;
-        let inserted = retain_message(&mut retained, message.clone(), self.feed.capacity)?;
-        if !inserted {
-            return Ok(false);
+        let batch = self.batch()?;
+        let changed = batch.publish(message)?;
+        if changed {
+            batch.commit()?;
         }
-        drop(retained);
-        let _ = self.feed.updates.send(message);
-        Ok(true)
+        Ok(changed)
     }
 
     /// Replace one retained prose message with its terminal presentation.
-    ///
-    /// The durable locus remains immutable. The only admitted revision raises
-    /// `final_answer` from false to true and may replace the derived automatic
-    /// speech instruction; every authored field and payload byte must match.
     pub fn revise_final(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
-        wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
-        let mut retained = self
-            .feed
-            .retained
-            .lock()
-            .map_err(|_| MessagePublishError::Unavailable)?;
-        let revised = revise_final_message(&mut retained, &message)?;
-        if !revised {
-            return Ok(false);
+        let batch = self.batch()?;
+        let changed = batch.revise_final(message)?;
+        if changed {
+            batch.commit()?;
         }
-        drop(retained);
-        let _ = self.feed.updates.send(message);
-        Ok(true)
+        Ok(changed)
     }
 
     /// Present one retained prose message again from later journal evidence.
-    ///
-    /// The durable locus remains immutable. A card that spoke an
-    /// acknowledgement before the journal retired its key is presented again
-    /// once the retirement lands, so only `text` and `badges` move; the final
-    /// state and speech the card already earned stay. A card retention no
-    /// longer holds, or one already presented this way, answers false.
     pub fn revise_presentation(
         &self,
         lane: wire::CanonicalUuid,
@@ -413,18 +589,212 @@ impl MessagePublisher {
         text: String,
         badges: wire::AgentMessageBadges,
     ) -> Result<bool, MessagePublishError> {
+        let batch = self.batch()?;
+        let changed = batch.revise_presentation(lane, locus, text, badges)?;
+        if changed {
+            batch.commit()?;
+        }
+        Ok(changed)
+    }
+}
+
+impl MessageBatch {
+    /// Stage one new durable activity.
+    pub fn publish(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
+        wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let changed = retain_message(
+            &mut state.retained,
+            message.clone(),
+            self.publisher.feed.capacity,
+        )?;
+        if changed {
+            state.mutations.push(MessageMutation::Publish(message));
+        }
+        Ok(changed)
+    }
+
+    /// Stage the one admitted final-answer revision.
+    pub fn revise_final(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
+        wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let changed = revise_final_message(&mut state.retained, &message)?;
+        if changed {
+            state.mutations.push(MessageMutation::ReviseFinal(message));
+        }
+        Ok(changed)
+    }
+
+    /// Stage one journal-backed presentation revision.
+    pub fn revise_presentation(
+        &self,
+        lane: wire::CanonicalUuid,
+        locus: wire::MessageLocus,
+        text: String,
+        badges: wire::AgentMessageBadges,
+    ) -> Result<bool, MessagePublishError> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let Some(_) =
+            revise_presented_message(&mut state.retained, lane, locus, text.clone(), badges)?
+        else {
+            return Ok(false);
+        };
+        state.mutations.push(MessageMutation::RevisePresentation {
+            lane,
+            locus,
+            text,
+            badges,
+        });
+        Ok(true)
+    }
+
+    /// Commit every staged insertion and revision as one generation.
+    pub fn commit(self) -> Result<bool, MessagePublishError> {
+        let state = self
+            .state
+            .into_inner()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        if state.mutations.is_empty() {
+            return Ok(false);
+        }
         let mut retained = self
+            .publisher
             .feed
             .retained
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?;
-        let Some(revised) = revise_presented_message(&mut retained, lane, locus, text, badges)?
-        else {
+        let heads = self
+            .publisher
+            .bus
+            .canvas_heads()
+            .map_err(|error| MessagePublishError::DurableHorizon(error.to_string()))?;
+        let horizon = heads.cursor().ok_or_else(|| {
+            MessagePublishError::DurableHorizon("journal has no cursor".to_owned())
+        })?;
+        let residency = heads.residency();
+        let current_lanes = residency
+            .into_iter()
+            .flat_map(|head| head.body().lanes.iter().map(|row| row.lane))
+            .collect::<Vec<_>>();
+        let authoritative_lanes = residency.is_some();
+        self.publisher
+            .feed
+            .synchronize_lanes(current_lanes, authoritative_lanes)?;
+        {
+            let mut lanes = self
+                .publisher
+                .feed
+                .lanes
+                .lock()
+                .map_err(|_| MessagePublishError::Unavailable)?;
+            for mutation in &state.mutations {
+                let lane = mutation.lane();
+                if !authoritative_lanes || lanes.contains_key(&lane) {
+                    lanes.insert(lane, true);
+                }
+            }
+        }
+        let (mut next, keys) =
+            if self.publisher.feed.generation.load(Ordering::Acquire) == self.base_generation {
+                (
+                    state.retained,
+                    state
+                        .mutations
+                        .iter()
+                        .map(MessageMutation::key)
+                        .collect::<HashSet<_>>(),
+                )
+            } else {
+                let mut replayed = retained.clone();
+                let mut keys = HashSet::new();
+                for mutation in &state.mutations {
+                    if mutation.apply(&mut replayed, self.publisher.feed.capacity)? {
+                        keys.insert(mutation.key());
+                    }
+                }
+                (replayed, keys)
+            };
+        let messages = next
+            .iter()
+            .filter(|message| keys.contains(&(message.lane, message.locus)))
+            .cloned()
+            .collect::<Vec<_>>();
+        if messages.is_empty() {
             return Ok(false);
-        };
+        }
+        let frontiers = self.publisher.feed.frontiers(&next, None)?;
+        let mut history_anchors = self
+            .publisher
+            .feed
+            .history_anchors
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let generation = self
+            .publisher
+            .feed
+            .generation
+            .load(Ordering::Acquire)
+            .checked_add(1)
+            .ok_or(MessagePublishError::Unavailable)?;
+        std::mem::swap(&mut *retained, &mut next);
+        history_anchors.clear();
+        self.publisher
+            .feed
+            .generation
+            .store(generation, Ordering::Release);
+        drop(history_anchors);
         drop(retained);
-        let _ = self.feed.updates.send(revised);
+        let generation = wire::TranscriptGeneration {
+            generation,
+            horizon,
+            messages,
+            frontiers,
+        };
+        let _ = self.publisher.feed.updates.send(generation);
         Ok(true)
+    }
+}
+
+impl MessageMutation {
+    fn lane(&self) -> wire::CanonicalUuid {
+        match self {
+            Self::Publish(message) | Self::ReviseFinal(message) => message.lane,
+            Self::RevisePresentation { lane, .. } => *lane,
+        }
+    }
+
+    fn key(&self) -> (wire::CanonicalUuid, wire::MessageLocus) {
+        match self {
+            Self::Publish(message) | Self::ReviseFinal(message) => (message.lane, message.locus),
+            Self::RevisePresentation { lane, locus, .. } => (*lane, *locus),
+        }
+    }
+
+    fn apply(
+        &self,
+        retained: &mut VecDeque<AgentMessage>,
+        capacity: usize,
+    ) -> Result<bool, MessagePublishError> {
+        match self {
+            Self::Publish(message) => retain_message(retained, message.clone(), capacity),
+            Self::ReviseFinal(message) => revise_final_message(retained, message),
+            Self::RevisePresentation {
+                lane,
+                locus,
+                text,
+                badges,
+            } => revise_presented_message(retained, *lane, *locus, text.clone(), *badges)
+                .map(|revised| revised.is_some()),
+        }
     }
 }
 
@@ -569,12 +939,18 @@ fn trim_visible_lane(
 pub enum MessagePublishError {
     /// Typed media failed the shared count, size, type, or byte admission law.
     InvalidMedia(wire::MediaError),
-    /// Retained message state could not be acquired.
+    /// Transcript publication state could not be acquired or advanced.
     Unavailable,
     /// One tape event identity was reused for different content.
     IdentityConflict,
     /// A durable history reader returned an invalid page shape.
     InvalidHistory,
+    /// A history cursor does not name one current truncated lane edge.
+    InvalidHistoryCursor,
+    /// A history cursor names an older transcript generation.
+    StaleGeneration,
+    /// The durable journal frontier could not be captured for publication.
+    DurableHorizon(String),
     /// The durable history source could not answer a page.
     History(String),
 }
@@ -590,6 +966,18 @@ impl fmt::Display for MessagePublishError {
                 formatter.write_str("a transcript event identity named different message content")
             }
             Self::InvalidHistory => formatter.write_str("a transcript history page was invalid"),
+            Self::InvalidHistoryCursor => {
+                formatter.write_str("the transcript history cursor is invalid")
+            }
+            Self::StaleGeneration => {
+                formatter.write_str("the transcript history generation is stale")
+            }
+            Self::DurableHorizon(detail) => {
+                write!(
+                    formatter,
+                    "transcript durable horizon is unavailable: {detail}"
+                )
+            }
             Self::History(detail) => {
                 write!(formatter, "transcript history is unavailable: {detail}")
             }

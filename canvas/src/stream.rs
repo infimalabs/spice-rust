@@ -7,9 +7,11 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use bus::{BusReader, CanvasHeads};
+#[cfg(test)]
+use wire::AgentMessage;
 use wire::{
-    Accepted, AgentMessage, Fault, FaultClass, OperatorDirection, Packed, Seq, StreamFrame,
-    StreamRequest, ViewSubject, WireVersion,
+    Accepted, Fault, FaultClass, OperatorDirection, Packed, Seq, StreamFrame, StreamRequest,
+    ViewSubject, WireVersion,
 };
 
 mod budget;
@@ -20,8 +22,8 @@ mod subscription;
 mod tests;
 
 pub use message::{
-    MESSAGE_CAPACITY, MESSAGE_HISTORY_PAGE_LIMIT, MessageHistoryPage, MessageHistoryProvider,
-    MessagePublishError, MessagePublisher,
+    MESSAGE_CAPACITY, MESSAGE_HISTORY_PAGE_LIMIT, MessageBatch, MessageHistoryPage,
+    MessageHistoryProvider, MessagePublishError, MessagePublisher,
 };
 use message::{MessageFeed, message_snapshot_fault};
 pub use policy::Failure;
@@ -74,7 +76,9 @@ impl Source {
 
     /// Reader for live agent-authored transcript activities.
     #[must_use]
-    pub fn subscribe_messages(&self) -> tokio::sync::broadcast::Receiver<AgentMessage> {
+    pub fn subscribe_messages(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<wire::TranscriptGeneration> {
         self.messages.updates.subscribe()
     }
 
@@ -83,6 +87,7 @@ impl Source {
     pub fn message_publisher(&self) -> MessagePublisher {
         MessagePublisher {
             feed: self.messages.clone(),
+            bus: self.bus.clone(),
         }
     }
 
@@ -112,7 +117,30 @@ impl Source {
             )));
         }
         let subjects = admit_subjects(&accepted.actor, subjects)?;
-        let heads = self.heads()?;
+        let wants_messages = subjects.contains(&ViewSubject::Messages);
+        let (heads, mut message_generation) = loop {
+            let observed_generation = self.messages.current_generation();
+            let heads = self.heads()?;
+            if !wants_messages {
+                break (heads, None);
+            }
+            let horizon = required_horizon(&heads)?;
+            let authoritative_lanes = heads.residency().is_some();
+            let current_lanes = heads
+                .residency()
+                .into_iter()
+                .flat_map(|head| head.body().lanes.iter().map(|row| row.lane))
+                .collect::<Vec<_>>();
+            let generation = self
+                .messages
+                .initial_snapshot(horizon, current_lanes, authoritative_lanes)
+                .map_err(message_snapshot_fault)?;
+            if generation.generation == observed_generation
+                && self.messages.current_generation() == observed_generation
+            {
+                break (heads, Some(generation));
+            }
+        };
         let horizon = required_horizon(&heads)?;
         let after_seq = after.map(|cursor| cursor.seq);
         if after_seq.is_some_and(|cursor| cursor > horizon) {
@@ -149,18 +177,16 @@ impl Source {
                     directions: self.directions()?,
                 },
                 ViewSubject::Messages => {
-                    let snapshot = self
-                        .messages
-                        .initial_snapshot()
-                        .map_err(message_snapshot_fault)?;
+                    let generation = message_generation
+                        .take()
+                        .expect("message subjects prepare one stable transcript snapshot");
                     StreamFrame::Messages {
                         v: WireVersion::CURRENT,
                         id: *id,
                         epoch: self.epoch,
                         limit: u32::try_from(MESSAGE_CAPACITY)
                             .expect("the fixed message capacity fits in the wire field"),
-                        messages: snapshot.messages,
-                        more: snapshot.more,
+                        generation,
                     }
                 }
                 ViewSubject::Facts | ViewSubject::Trust => {
@@ -205,41 +231,42 @@ impl Source {
         })
     }
 
-    /// Answer one member-local retained transcript history request.
+    /// Answer one coordinated retained transcript history request.
     pub fn message_history(
         &self,
         accepted: &Accepted,
         request: &StreamRequest,
     ) -> Result<StreamFrame, Failure> {
         request.admit(self.epoch).map_err(Failure::admission)?;
-        let StreamRequest::MessageHistory {
-            id, lane, before, ..
-        } = request
-        else {
+        let StreamRequest::MessageHistory { id, frontiers, .. } = request else {
             return Err(Failure::Refusal(refusal(
                 "stream::message-history-required",
                 "send one message-history request",
             )));
         };
         admit_subject(&accepted.actor, ViewSubject::Messages)?;
-        let page = self
-            .messages
-            .history(*lane, *before)
-            .map_err(message_snapshot_fault)?
-            .ok_or_else(|| {
-                Failure::Refusal(refusal(
-                    "stream::message-cursor-unknown",
-                    "the lane does not retain the requested oldest message",
-                ))
-            })?;
+        let heads = self.heads()?;
+        let horizon = required_horizon(&heads)?;
+        let generation =
+            self.messages
+                .history(frontiers, horizon)
+                .map_err(|error| match error {
+                    MessagePublishError::StaleGeneration => Failure::Refusal(refusal(
+                        "stream::message-generation-stale",
+                        "the transcript generation changed before history was admitted",
+                    )),
+                    MessagePublishError::InvalidHistoryCursor => Failure::Refusal(refusal(
+                        "stream::message-cursor-unknown",
+                        "the requested lane frontier is not current",
+                    )),
+                    error => message_snapshot_fault(error),
+                })?;
         Ok(StreamFrame::MessageHistory {
             v: WireVersion::CURRENT,
             id: *id,
+            requested: frontiers.clone(),
             epoch: self.epoch,
-            lane: *lane,
-            before: *before,
-            more: page.more,
-            messages: page.messages,
+            generation,
         })
     }
 

@@ -42,7 +42,8 @@ fn a_closing_seat_presents_every_record_its_occupant_left_behind() {
     let message_state = std::sync::Mutex::new(MessageState::default());
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
-    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
+    let generation = publisher.batch().expect("closing generation begins");
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &generation);
 
     drop(seats.vacate(lane));
     for (closed_lane, closed_occupant) in seats.take_vacated() {
@@ -57,8 +58,18 @@ fn a_closing_seat_presents_every_record_its_occupant_left_behind() {
         )
         .expect("the closing sweep presents");
     }
+    assert!(generation.commit().expect("closing generation commits"));
 
-    let presented = std::iter::from_fn(|| updates.try_recv().ok())
+    let generation = updates
+        .try_recv()
+        .expect("one closing generation publishes");
+    assert!(
+        updates.try_recv().is_err(),
+        "the closing sweep published a partial second generation",
+    );
+    let presented = generation
+        .messages
+        .into_iter()
         .map(|message| ((message.locus.member, message.locus.offset), message.text))
         .collect::<Vec<_>>();
     assert_eq!(
