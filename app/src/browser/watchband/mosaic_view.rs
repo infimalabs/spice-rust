@@ -21,10 +21,6 @@ pub(super) enum ActivityCard {
         quote_lane: CanonicalUuid,
         message: Rc<wire::AgentMessage>,
     },
-    Operator {
-        accent: usize,
-        message: crate::runtime::OperatorMessage,
-    },
     Lifecycle {
         accent: usize,
         member: crate::runtime::LaneMember,
@@ -57,16 +53,6 @@ impl PartialEq for ActivityCard {
                     && (Rc::ptr_eq(left_message, right_message) || left_message == right_message)
             }
             (
-                Self::Operator {
-                    accent: left_accent,
-                    message: left_message,
-                },
-                Self::Operator {
-                    accent: right_accent,
-                    message: right_message,
-                },
-            ) => left_accent == right_accent && left_message == right_message,
-            (
                 Self::Lifecycle {
                     accent: left_accent,
                     member: left_member,
@@ -93,7 +79,6 @@ enum ActivityFingerprint {
         worktree: String,
         message: Rc<wire::AgentMessage>,
     },
-    Operator(crate::runtime::OperatorMessage),
     Lifecycle(crate::runtime::LaneLifecycleBoundary),
 }
 
@@ -113,9 +98,6 @@ impl PartialEq for ActivityFingerprint {
                 left_worktree == right_worktree
                     && (Rc::ptr_eq(left_message, right_message)
                         || same_measured_agent_content(left_message, right_message))
-            }
-            (Self::Operator(left), Self::Operator(right)) => {
-                same_measured_operator_content(left, right)
             }
             (Self::Lifecycle(left), Self::Lifecycle(right)) => left == right,
             _ => false,
@@ -156,41 +138,10 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
     crate::composer_markdown::same_measured_shape(&left, &right)
 }
 
-fn same_measured_operator_content(
-    left: &crate::runtime::OperatorMessage,
-    right: &crate::runtime::OperatorMessage,
-) -> bool {
-    if left.authored() != right.authored()
-        || left.directive() != right.directive()
-        || left.key() != right.key()
-        || left.lane() != right.lane()
-        || left.text() != right.text()
-        || left.attachments() != right.attachments()
-    {
-        return false;
-    }
-    let left = crate::composer_markdown::render_received_with_quotes(
-        left.text(),
-        &[],
-        left.quotes(),
-        &BTreeMap::new(),
-    );
-    let right = crate::composer_markdown::render_received_with_quotes(
-        right.text(),
-        &[],
-        right.quotes(),
-        &BTreeMap::new(),
-    );
-    crate::composer_markdown::same_measured_shape(&left, &right)
-}
-
 impl ActivityCard {
     fn key(&self) -> String {
         match self {
             Self::Agent { message, .. } => agent_message_source_id(message),
-            Self::Operator { message, .. } => {
-                format!("operator-direction-{}", message.directive())
-            }
             Self::Lifecycle { boundary, .. } => {
                 format!("lane-lifecycle-{}", boundary.seq())
             }
@@ -213,18 +164,9 @@ impl ActivityCard {
                 let (millis, lane, member, offset, length, event) = message.chronology_key();
                 (millis, 0, lane, member, offset, length, event)
             }
-            Self::Operator { message, .. } => (
-                message.authored().get().as_millisecond(),
-                1,
-                message.lane(),
-                0,
-                0,
-                0,
-                0,
-            ),
             Self::Lifecycle { boundary, .. } => (
                 boundary.observed().get().as_millisecond(),
-                2,
+                1,
                 boundary.lane(),
                 0,
                 0,
@@ -242,7 +184,6 @@ impl ActivityCard {
                 worktree: member.worktree.clone(),
                 message: Rc::clone(message),
             },
-            Self::Operator { message, .. } => ActivityFingerprint::Operator(message.clone()),
             Self::Lifecycle { boundary, .. } => ActivityFingerprint::Lifecycle(boundary.clone()),
         }
     }
@@ -253,7 +194,6 @@ impl ActivityCard {
                 crate::mosaic::TRACK_COUNT
             }
             Self::Agent { .. } => geometry.base_span,
-            Self::Operator { .. } => geometry.base_span,
             Self::Lifecycle { .. } => crate::mosaic::TRACK_COUNT,
         }
     }
@@ -835,7 +775,7 @@ fn use_narration(
             ActivityCard::Agent {
                 member, message, ..
             } => Some((member, message)),
-            ActivityCard::Operator { .. } | ActivityCard::Lifecycle { .. } => None,
+            ActivityCard::Lifecycle { .. } => None,
         })
         .filter_map(|(member, message)| {
             let narration = crate::narration::narration_utterance(message.activity, &message.text);
@@ -1217,14 +1157,6 @@ fn render_activity_cards(
                         speaking={properties.speech_message.as_deref() == Some(key.as_str())}
                         lane={properties.lane}
                         order={quote_order}
-                        {layout}
-                    />
-                },
-                ActivityCard::Operator { accent, message } => html! {
-                    <OperatorMessageCard
-                        key={key}
-                        accent={*accent}
-                        message={message.clone()}
                         {layout}
                     />
                 },

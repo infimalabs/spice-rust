@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use wire::intent::{
-    BoardAnswer, BoardTask, DirectiveAnswer, GlobalSettingsAnswer, InboxAnswer, LaneAnswer,
-    LaneLiveness, TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT,
+    BoardAnswer, BoardTask, GlobalSettingsAnswer, InboxAnswer, LaneAnswer, LaneLiveness,
+    TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT,
     TaskDetailAnswer, TaskRelationKind, TaskRelationNodeRef, TaskRelations, TaskRelationsAnswer,
     VendorCatalogAnswer,
 };
@@ -30,7 +30,7 @@ mod stream;
 mod work_history;
 #[cfg(target_arch = "wasm32")]
 pub(crate) use publication::CanvasSurface;
-pub use stream::{OperatorMessage, StreamApplication, StreamDirective, StreamTerminal};
+pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
 pub use work_history::{WorkHistoryRequest, WorkHistoryState, work_history_completion_cutoff};
 
 /// Whether a topology mutation response leaves Canvas owing an authoritative read.
@@ -624,7 +624,6 @@ pub struct CanvasRuntime {
     vendors: ScopedValue<VendorCatalogAnswer>,
     settings_position: Option<Seq>,
     message_cards: message_cards::MessageCards,
-    operator_messages: Vec<OperatorMessage>,
     /// Exact lane-local frontier each independently paged member can extend.
     message_history: BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
     /// Last transcript generation admitted atomically.
@@ -660,7 +659,6 @@ impl CanvasRuntime {
             vendors: ScopedValue::new(accepted),
             settings_position: None,
             message_cards: message_cards::MessageCards::default(),
-            operator_messages: Vec::new(),
             message_history: BTreeMap::new(),
             message_generation: None,
             message_history_completions: BTreeMap::new(),
@@ -922,12 +920,6 @@ impl CanvasRuntime {
         &self.lifecycle_boundaries
     }
 
-    /// Durable operator-authored direction retained in command acceptance order.
-    #[must_use]
-    pub fn operator_messages(&self) -> &[OperatorMessage] {
-        &self.operator_messages
-    }
-
     /// Newest retained agent-authored transcript messages in creation order.
     #[must_use]
     pub fn messages(&self) -> &[Rc<AgentMessage>] {
@@ -1079,34 +1071,6 @@ impl CanvasRuntime {
         self.apply_response(admitted, |runtime, answer| {
             runtime.vendors.replace(admitted.scope(), answer.clone());
         });
-    }
-
-    /// Retain one accepted operator submission and its steering receipt atomically.
-    pub fn apply_steer_submission(
-        &mut self,
-        admitted: &Admitted<Response<DirectiveAnswer>>,
-        lane: CanonicalUuid,
-        text: String,
-        attachments: Vec<wire::Media>,
-    ) {
-        if admitted.scope() == self.accepted.scope()
-            && let Outcome::Reply(reply) = &admitted.get().outcome
-            && reply.body.disposition == wire::Disposition::Live
-        {
-            self.retain_operator_message(
-                OperatorMessage {
-                    authored: reply.body.authored,
-                    directive: reply.body.directive,
-                    key: reply.body.key.clone(),
-                    lane,
-                    text,
-                    attachments,
-                    quote_target: None,
-                    quotes: Vec::new(),
-                },
-                false,
-            );
-        }
     }
 
     fn apply_response<T>(

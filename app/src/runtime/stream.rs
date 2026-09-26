@@ -5,63 +5,7 @@ use super::*;
 #[cfg(test)]
 use super::message_cards::trim_agent_message_lane;
 
-const OPERATOR_MESSAGE_LIMIT: usize = 256;
 const LIFECYCLE_BOUNDARY_LIMIT: usize = 256;
-
-/// One operator-authored direction projected from durable steering authority.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OperatorMessage {
-    pub(crate) authored: wire::Instant,
-    pub(crate) directive: CanonicalUuid,
-    pub(crate) key: String,
-    pub(crate) lane: CanonicalUuid,
-    pub(crate) text: String,
-    pub(crate) attachments: Vec<wire::Media>,
-    pub(crate) quote_target: Option<wire::QuoteTarget>,
-    pub(crate) quotes: Vec<wire::QuotePresentation>,
-}
-
-impl OperatorMessage {
-    #[must_use]
-    pub const fn authored(&self) -> &wire::Instant {
-        &self.authored
-    }
-
-    #[must_use]
-    pub const fn directive(&self) -> CanonicalUuid {
-        self.directive
-    }
-
-    #[must_use]
-    pub fn key(&self) -> &str {
-        &self.key
-    }
-
-    #[must_use]
-    pub const fn lane(&self) -> CanonicalUuid {
-        self.lane
-    }
-
-    #[must_use]
-    pub fn text(&self) -> &str {
-        &self.text
-    }
-
-    #[must_use]
-    pub fn attachments(&self) -> &[wire::Media] {
-        &self.attachments
-    }
-
-    #[must_use]
-    pub const fn quote_target(&self) -> Option<&wire::QuoteTarget> {
-        self.quote_target.as_ref()
-    }
-
-    #[must_use]
-    pub fn quotes(&self) -> &[wire::QuotePresentation] {
-        &self.quotes
-    }
-}
 
 /// A terminal stream boundary that remains distinct from command outcomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -137,12 +81,9 @@ impl CanvasRuntime {
         let epoch = self.principal.epoch();
         match admitted.get() {
             StreamFrame::Facts { packed, .. } => self.apply_fact_page(packed, epoch),
-            StreamFrame::Directions {
-                limit, directions, ..
-            } => self.apply_direction_snapshot(*limit as usize, directions),
-            StreamFrame::Trust { .. } | StreamFrame::Thread { .. } => {
-                StreamApplication::new(Vec::new(), false)
-            }
+            StreamFrame::Directions { .. }
+            | StreamFrame::Trust { .. }
+            | StreamFrame::Thread { .. } => StreamApplication::new(Vec::new(), false),
             StreamFrame::Messages {
                 limit, generation, ..
             } => self.apply_message_snapshot(*limit as usize, generation),
@@ -152,16 +93,12 @@ impl CanvasRuntime {
                 ..
             } => self.apply_message_history(requested, generation),
             StreamFrame::Fact { fact, .. } => {
-                let operator_changed = self.observe_operator_rows(std::slice::from_ref(fact));
                 let settings_changed = self.observe_settings_rows(std::slice::from_ref(fact));
                 if self
                     .resume
                     .is_some_and(|resume| resume.epoch == epoch && resume.seq >= fact.seq())
                 {
-                    return StreamApplication::new(
-                        Vec::new(),
-                        operator_changed || settings_changed,
-                    );
+                    return StreamApplication::new(Vec::new(), settings_changed);
                 }
                 self.observe_lifecycle_boundary(fact);
                 self.resume = Some(StreamCursor {
@@ -203,37 +140,11 @@ impl CanvasRuntime {
         }
     }
 
-    fn apply_direction_snapshot(
-        &mut self,
-        limit: usize,
-        directions: &[wire::OperatorDirection],
-    ) -> StreamApplication {
-        let before = self.operator_messages.clone();
-        for direction in directions {
-            self.retain_operator_message(
-                OperatorMessage {
-                    authored: direction.authored,
-                    directive: direction.directive,
-                    key: direction.key.clone(),
-                    lane: direction.lane,
-                    text: direction.text.clone(),
-                    attachments: direction.attachments.clone(),
-                    quote_target: Some(direction.quote_target.clone()),
-                    quotes: direction.quotes.clone(),
-                },
-                true,
-            );
-        }
-        trim_operator_messages(&mut self.operator_messages, limit);
-        StreamApplication::new(Vec::new(), self.operator_messages != before)
-    }
-
     fn apply_fact_page(
         &mut self,
         packed: &Packed<wire::StreamFact>,
         epoch: CanonicalUuid,
     ) -> StreamApplication {
-        let operator_changed = self.observe_operator_rows(&packed.rows);
         let settings_changed = self.observe_settings_rows(&packed.rows);
         let page_cursor = packed
             .overflow
@@ -245,7 +156,7 @@ impl CanvasRuntime {
         {
             return StreamApplication::new(
                 continuation(ViewSubject::Facts, epoch, packed),
-                operator_changed || settings_changed,
+                settings_changed,
             );
         }
         for row in &packed.rows {
@@ -360,30 +271,6 @@ impl CanvasRuntime {
             let discard = self.lifecycle_boundaries.len() - LIFECYCLE_BOUNDARY_LIMIT;
             self.lifecycle_boundaries.drain(..discard);
         }
-    }
-
-    fn observe_operator_rows(&mut self, rows: &[wire::StreamFact]) -> bool {
-        let mut changed = false;
-        for row in rows {
-            if row.actor() == &Actor::Operator
-                && let Some(sent) = row.read::<wire::body::SteerSent>()
-            {
-                changed |= self.retain_operator_message(
-                    OperatorMessage {
-                        authored: *row.at(),
-                        directive: sent.directive,
-                        key: sent.key,
-                        lane: sent.lane,
-                        text: sent.text,
-                        attachments: sent.attachments,
-                        quote_target: None,
-                        quotes: Vec::new(),
-                    },
-                    false,
-                );
-            }
-        }
-        changed
     }
 
     fn observe_messages(&mut self, messages: &[AgentMessage]) -> bool {
@@ -510,31 +397,6 @@ impl CanvasRuntime {
         StreamApplication::new(Vec::new(), changed)
     }
 
-    pub(crate) fn retain_operator_message(
-        &mut self,
-        message: OperatorMessage,
-        presentation_authoritative: bool,
-    ) -> bool {
-        if let Some(existing) = self
-            .operator_messages
-            .iter_mut()
-            .find(|existing| existing.directive == message.directive)
-        {
-            if !presentation_authoritative {
-                return false;
-            }
-            let changed =
-                existing.quote_target != message.quote_target || existing.quotes != message.quotes;
-            existing.quote_target = message.quote_target;
-            existing.quotes = message.quotes;
-            return changed;
-        }
-        let lane = message.lane;
-        self.operator_messages.push(message);
-        trim_operator_lane(&mut self.operator_messages, lane, OPERATOR_MESSAGE_LIMIT);
-        true
-    }
-
     fn apply_activity_snapshot(&mut self, limit: usize, incoming: &[AgentMessage]) -> bool {
         let mut activities = Vec::<&AgentMessage>::new();
         for message in incoming {
@@ -600,34 +462,6 @@ fn message_history_frontiers(
             )
         })
         .collect()
-}
-
-fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {
-    let lanes = messages
-        .iter()
-        .map(|message| message.lane)
-        .collect::<BTreeSet<_>>();
-    for lane in lanes {
-        trim_operator_lane(messages, lane, limit);
-    }
-}
-
-fn trim_operator_lane(messages: &mut Vec<OperatorMessage>, lane: CanonicalUuid, limit: usize) {
-    while messages
-        .iter()
-        .filter(|message| message.lane == lane)
-        .count()
-        > limit
-    {
-        let oldest = messages
-            .iter()
-            .enumerate()
-            .filter(|(_, message)| message.lane == lane)
-            .min_by_key(|(_, message)| message.authored.get().as_millisecond())
-            .map(|(index, _)| index)
-            .expect("a lane above its bound has an oldest operator message");
-        messages.remove(oldest);
-    }
 }
 
 /// Keep the first bounded rows for one lane without evicting sibling-lane history.

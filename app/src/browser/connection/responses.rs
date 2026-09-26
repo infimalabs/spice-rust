@@ -276,7 +276,7 @@ fn apply_command_response(
             CommandApplication::ordinary(true)
         }
         PendingKind::SteerSubmission { lane } => CommandApplication::ordinary(
-            apply_submission_response(session, handles, runtime, id, lane, bytes)?,
+            apply_submission_response(session, handles, id, lane, bytes)?,
         ),
         PendingKind::Note { task, text, after } => {
             apply_note_response(session, handles, runtime, task, text, after, bytes)?
@@ -537,20 +537,21 @@ fn apply_inbox_response(
 fn apply_submission_response(
     session: &Session,
     handles: &SurfaceHandles,
-    runtime: &mut CanvasRuntime,
     id: CanonicalUuid,
     lane: CanonicalUuid,
     bytes: &[u8],
 ) -> Result<bool, String> {
     let admitted: crate::Admitted<Response<wire::intent::DirectiveAnswer>> =
         admit_response(session, bytes)?;
-    let accepted = match &admitted.get().outcome {
-        wire::Outcome::Reply(reply) => handles.submissions.queue.borrow_mut().accept(
-            id,
-            reply.body.directive,
-            reply.body.key.clone(),
-            reply.body.disposition,
-        )?,
+    match &admitted.get().outcome {
+        wire::Outcome::Reply(reply) => {
+            let _ = handles.submissions.queue.borrow_mut().accept(
+                id,
+                reply.body.directive,
+                reply.body.key.clone(),
+                reply.body.disposition,
+            )?;
+        }
         wire::Outcome::Refusal(_) | wire::Outcome::Fault(_) => {
             let restore_lane = handles.submissions.queue.borrow().restore_lane(id)?;
             let restored = handles.submissions.queue.borrow_mut().refuse(id)?;
@@ -562,18 +563,9 @@ fn apply_submission_response(
             let issue = outcome_issue(&action, &admitted.get().outcome)
                 .expect("the refused or faulted steering outcome has an issue");
             restore_submissions(handles, restored, &issue);
-            None
         }
-    };
-    handles.submissions.publish();
-    if let Some(payload) = accepted {
-        runtime.apply_steer_submission(
-            &admitted,
-            lane,
-            payload.message.clone(),
-            payload.attachments.clone(),
-        );
     }
+    handles.submissions.publish();
     Ok(true)
 }
 

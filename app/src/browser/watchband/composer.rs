@@ -291,12 +291,6 @@ fn render_agent_message_card(
     let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
     let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
     let inspection_open = inspection.is_some_and(|inspection| inspection.open);
-    let directive_actions = render_directive_quote_actions(
-        message,
-        quote_lane,
-        &props.quote_dispatcher,
-        layout.measurement_index,
-    );
     html! {
         <article
             key={source_id.clone()}
@@ -367,109 +361,12 @@ fn render_agent_message_card(
                             crate::runtime::agent_message_display_millis(message),
                             &footer_label,
                             &attribution,
-                            directive_actions,
                         )}
                     </div>
                 </div>
                 {render_task_layer(card_inspector, inspection_open)}
                 </>
             }
-        </article>
-    }
-}
-
-#[derive(Properties, PartialEq)]
-pub(super) struct OperatorMessageCardProps {
-    pub(super) accent: usize,
-    pub(super) message: crate::runtime::OperatorMessage,
-    pub(super) layout: CardLayout,
-}
-
-#[function_component(OperatorMessageCard)]
-pub(super) fn operator_message_card(props: &OperatorMessageCardProps) -> Html {
-    let source_id = format!("operator-direction-{}", props.message.directive());
-    let inspector = task_inspector::use_card(source_id.clone());
-    let empty_quote_tasks = BTreeMap::new();
-    let quote_tasks = inspector
-        .context
-        .as_ref()
-        .map_or(&empty_quote_tasks, |context| context.quote_tasks());
-    let (shown_text, classifications) = crate::composer_markdown::expand_media_payloads(
-        props.message.text(),
-        props.message.attachments(),
-        &[],
-    )
-    .expect("operator direction media passed admission before browser rendering");
-    let rendered = crate::composer_markdown::render_received_with_quotes(
-        &shown_text,
-        &classifications,
-        props.message.quotes(),
-        quote_tasks,
-    );
-    let unlinked_media = props
-        .message
-        .attachments()
-        .iter()
-        .filter(|media| {
-            !media
-                .is_embedded_in(&shown_text)
-                .expect("operator direction media passed admission before browser rendering")
-        })
-        .collect::<Vec<_>>();
-    let task_click = task_inspector::task_chip_click(inspector.context.clone(), source_id.clone());
-    let task_keydown =
-        task_inspector::task_chip_keydown(inspector.context.clone(), source_id.clone());
-    let layout = &props.layout;
-    html! {
-        <article
-            id={source_id.clone()}
-            class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
-            aria-label="Operator direction"
-            data-card-kind="operator-direction"
-            data-message-role="operator"
-            data-mosaic-card-key={source_id}
-            data-accent={props.accent.to_string()}
-            data-accent-slot={props.accent.to_string()}
-            data-state={layout.lifecycle.as_str()}
-            data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
-            data-track={layout.track.to_string()}
-            data-span={layout.span.to_string()}
-            data-base={layout.base.to_string()}
-            data-row={layout.row.to_string()}
-            data-rows={layout.rows.to_string()}
-            data-creation-index={layout.measurement_index.to_string()}
-            data-mosaic-measure-index={layout.measurement_index.to_string()}
-            data-measurement-reads={layout.measurement_reads.to_string()}
-            data-measured-spans={layout.measured_spans.clone()}
-            data-measured-widths={layout.measured_widths.clone()}
-            data-measured-heights={layout.measured_heights.clone()}
-            data-candidate-spans={layout.candidate_spans.clone()}
-            data-measure-span={layout.measure_span.to_string()}
-            onclick={task_click}
-            onkeydown={task_keydown}
-        >
-            <super::super::mermaid::MarkdownBody
-                html={AttrValue::from(rendered.html)}
-                sources={Rc::new(rendered.diagrams.into_iter().map(AttrValue::from).collect::<Vec<_>>())}
-                final_answer={false}
-            />
-            {render_agent_message_media(unlinked_media, None)}
-            <footer class="message-footer">
-                <div class="message-footer-left">
-                    <Age
-                        authored={props.message.authored().get().as_millisecond()}
-                        class="relative-age"
-                        title={format!("directive {}", props.message.key())}
-                    />
-                </div>
-                <div class="message-footer-right">
-                    <span class="message-footer-identity">
-                        <strong class="message-agent-name">
-                            <span class="message-agent-label">{"Operator"}</span>
-                        </strong>
-                    </span>
-                </div>
-            </footer>
         </article>
     }
 }
@@ -718,46 +615,6 @@ fn render_agent_message_media(
     }
 }
 
-fn render_directive_quote_actions(
-    message: &wire::AgentMessage,
-    quote_lane: CanonicalUuid,
-    dispatcher: &UseReducerDispatcher<ComposerDrafts>,
-    order: usize,
-) -> Html {
-    let lane = quote_lane.to_string();
-    let display_millis = crate::runtime::agent_message_display_millis(message);
-    let order = u64::try_from(order).expect("Mosaic creation index fits quote ordering");
-    html! {
-        {for message.directive_contexts.iter().map(|context| {
-            let target = context.quote_target.clone();
-            let identity = target.to_string();
-            let focus_identity = identity.clone();
-            let focus_lane = lane.clone();
-            let action_lane = lane.clone();
-            let dispatcher = dispatcher.clone();
-            html! {
-                <button
-                    class="card-action card-action--quote message-directive-quote"
-                    type="button"
-                    title="Quote this directive"
-                    aria-label="Quote this directive"
-                    data-quote-target={identity}
-                    onclick={Callback::from(move |_| {
-                        dispatcher.dispatch(ComposerAction::AddQuote {
-                            lane: action_lane.clone(),
-                            target: target.clone(),
-                            order,
-                            display_millis,
-                            preview: "Directive quote".to_owned(),
-                        });
-                        focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
-                    })}
-                ><span class="card-action-icon" aria-hidden="true">{"❝"}</span></button>
-            }
-        })}
-    }
-}
-
 fn render_agent_message_footer(
     message: &wire::AgentMessage,
     shown_text: &str,
@@ -765,7 +622,6 @@ fn render_agent_message_footer(
     display_millis: i64,
     producer_label: &str,
     attribution: &str,
-    directive_actions: Html,
 ) -> Html {
     let locus = format!(
         "tape {}:{}+{}#{}",
@@ -799,7 +655,6 @@ fn render_agent_message_footer(
                 if has_actions {
                     {view::chrome::render_card_actions(shown_text, correspondent)}
                 }
-                {directive_actions}
             </div>
         </footer>
     }
