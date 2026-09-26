@@ -110,12 +110,13 @@ fn use_focus_departure(card: &str, context: &Option<Context>, open: bool) {
                         let stayed_inside = event
                             .target()
                             .and_then(|target| target.dyn_into::<web_sys::Node>().ok())
-                            .zip(element)
-                            .is_some_and(|(target, card)| {
+                            .zip(element.and_then(|card| {
                                 card.query_selector(".message-task-inspector")
                                     .ok()
                                     .flatten()
-                                    .is_some_and(|inspector| inspector.contains(Some(&target)))
+                            }))
+                            .is_some_and(|(target, inspector)| {
+                                crate::browser::overlay::owns_focus(&inspector, &target)
                             });
                         if !stayed_inside {
                             context.close(false);

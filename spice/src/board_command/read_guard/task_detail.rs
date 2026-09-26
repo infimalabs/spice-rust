@@ -23,7 +23,7 @@ pub(in crate::board_command) fn read_task_detail(
         allocation,
         None,
         Some(&selected),
-        true,
+        false,
     ) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -39,8 +39,8 @@ pub(in crate::board_command) fn read_task_detail(
         Ok(media) => media,
         Err(outcome) => return outcome,
     };
-    let notes = snapshot
-        .facts
+    let notes = observed
+        .facts()
         .iter()
         .filter_map(|envelope| {
             let noted = envelope.fact.read::<body::TaskNoted>()?;
@@ -48,7 +48,7 @@ pub(in crate::board_command) fn read_task_detail(
                 position: envelope.seq,
                 at: envelope.at,
                 author: envelope.actor.clone(),
-                text: noted.note,
+                text: noted.note.clone(),
             })
         })
         .collect();

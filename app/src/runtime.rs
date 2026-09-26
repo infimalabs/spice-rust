@@ -576,9 +576,9 @@ pub enum TaskDetailState {
     /// A request is queued or in flight without prior admitted detail.
     Loading,
     /// Current task evidence and its ordered durable notes.
-    Available(Box<TaskDetailAnswer>),
+    Available(Rc<TaskDetailAnswer>),
     /// Last admitted evidence retained while a changed task is refreshed.
-    Refreshing(Box<TaskDetailAnswer>),
+    Refreshing(Rc<TaskDetailAnswer>),
     /// The resident refused or could not serve the selected task.
     Unavailable {
         /// Stable resident reason.
@@ -953,7 +953,7 @@ impl CanvasRuntime {
         }
         let state = match &admitted.get().outcome {
             Outcome::Reply(reply) if reply.body.task.statement.body.born == *task => {
-                TaskDetailState::Available(Box::new(reply.body.clone()))
+                TaskDetailState::Available(Rc::new(reply.body.clone()))
             }
             Outcome::Reply(_) => TaskDetailState::Unavailable {
                 reason: "task::detail-identity-mismatch".to_owned(),
