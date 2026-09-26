@@ -32,13 +32,66 @@ pub(super) enum WorkDetailMode {
     Map,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum WorkMapLens {
+    #[default]
+    Dependency,
+    Origin,
+    Review,
+    Lifecycle,
+}
+
+impl WorkMapLens {
+    const fn relation(self) -> TaskRelationKind {
+        match self {
+            Self::Dependency => TaskRelationKind::Dependency,
+            Self::Origin => TaskRelationKind::Origin,
+            Self::Review => TaskRelationKind::Review,
+            Self::Lifecycle => TaskRelationKind::Lifecycle,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Dependency => "Dependencies",
+            Self::Origin => "Lineage",
+            Self::Review => "Reviews",
+            Self::Lifecycle => "Lifecycle",
+        }
+    }
+
+    const fn key(self) -> &'static str {
+        match self {
+            Self::Dependency => "dependency",
+            Self::Origin => "origin",
+            Self::Review => "review",
+            Self::Lifecycle => "lifecycle",
+        }
+    }
+
+    const fn context(self) -> &'static str {
+        match self {
+            Self::Dependency => {
+                "Dependency edges point from each dependent task to the prerequisite it requires."
+            }
+            Self::Origin => {
+                "Task ancestry includes siblings reached through their shared task parent; non-task ACK and origin identities remain exact."
+            }
+            Self::Review => "Completed handoffs preserve phase author → reviewer → verdict order.",
+            Self::Lifecycle => {
+                "Historical task transitions remain ordered by durable fact position."
+            }
+        }
+    }
+}
+
 /// Browser-owned map controls. Durable task stamps and exact request parameters
 /// intentionally outlive any one board projection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(in crate::browser) struct WorkMapState {
     mode: WorkDetailMode,
     pinned: Vec<TaskStamp>,
-    lens: TaskRelationKind,
+    lens: WorkMapLens,
     direction: WorkRelationshipDirection,
     depth: u8,
     max_nodes: u16,
@@ -52,7 +105,7 @@ impl Default for WorkMapState {
         Self {
             mode: WorkDetailMode::Details,
             pinned: Vec::new(),
-            lens: TaskRelationKind::Dependency,
+            lens: WorkMapLens::Dependency,
             direction: WorkRelationshipDirection::Both,
             depth: DEFAULT_DEPTH,
             max_nodes: DEFAULT_NODES,
@@ -85,8 +138,13 @@ impl WorkMapState {
     }
 
     pub(in crate::browser) fn relations_key(&self, selected: &TaskStamp) -> TaskRelationsKey {
-        TaskRelationsKey::new(self.roots(selected), self.lens, self.depth, self.max_nodes)
-            .expect("Work map controls stay inside typed relationship limits")
+        TaskRelationsKey::new(
+            self.roots(selected),
+            self.lens.relation(),
+            self.depth,
+            self.max_nodes,
+        )
+        .expect("Work map controls stay inside typed relationship limits")
     }
 
     pub(in crate::browser) fn request_key(&self, selected: &TaskStamp) -> Option<TaskRelationsKey> {
@@ -200,7 +258,7 @@ pub(super) fn render(render: WorkMapRender<'_>) -> Html {
                     {controls}
                     <div class="work-detail-loading" role="status">
                         <span class="work-detail-spinner" aria-hidden="true"></span>
-                        <p>{format!("Loading the {} lens…", lens::lens_label(render.state.lens))}</p>
+                        <p>{format!("Loading the {} lens…", render.state.lens.label())}</p>
                     </div>
                 </div>
             };
@@ -223,7 +281,7 @@ pub(super) fn render(render: WorkMapRender<'_>) -> Html {
     };
     let Some(presentation) = lens::project(
         answer,
-        render.state.lens,
+        render.state.lens.relation(),
         render.state.direction,
         render.selected,
     ) else {
@@ -260,24 +318,24 @@ pub(super) fn render(render: WorkMapRender<'_>) -> Html {
         <div
             class="work-map-content"
             data-work-map-roots={answer.roots.len().to_string()}
-            data-work-map-lens={lens_key(render.state.lens)}
+            data-work-map-lens={render.state.lens.key()}
             data-work-map-snapshot={answer.snapshot.to_string()}
         >
             {controls}
             <p class="work-map-empty" role="status" hidden={!refreshing}>
                 {"Refreshing relationships without replacing this map."}
             </p>
-            {lens_context(render.state.lens)}
+            <p class="work-map-context">{render.state.lens.context()}</p>
             if related == 0 {
                 <p class="work-map-empty" role="status">
-                    {format!("No {} relationships are visible at the current depth.", lens::lens_label(render.state.lens).to_lowercase())}
+                    {format!("No {} relationships are visible at the current depth.", render.state.lens.label().to_lowercase())}
                 </p>
             }
             <section class="work-map-diagram" aria-labelledby="work-map-diagram-title">
                 <div class="work-map-heading">
                     <div>
                         <p class="work-detail-kicker">{"Bounded typed read"}</p>
-                        <h3 id="work-map-diagram-title">{format!("{} map", lens::lens_label(render.state.lens))}</h3>
+                        <h3 id="work-map-diagram-title">{format!("{} map", render.state.lens.label())}</h3>
                     </div>
                     <span>{format!("{} nodes · {} edges · snapshot {}", presentation.nodes.len(), presentation.edges.len(), answer.snapshot)}</span>
                 </div>
@@ -321,13 +379,12 @@ fn render_controls(state: &UseStateHandle<WorkMapState>, selected: &TaskStamp) -
         <>
             <div class="work-map-primary-controls">
                 <section class="work-map-lenses canvas-control-rail" aria-label="Relationship lens">
-                    {lens_button(state, TaskRelationKind::Dependency)}
-                    {lens_button(state, TaskRelationKind::Origin)}
-                    {lens_button(state, TaskRelationKind::Review)}
-                    {lens_button(state, TaskRelationKind::Lifecycle)}
-                    {lens_button(state, TaskRelationKind::Claim)}
+                    {lens_button(state, WorkMapLens::Dependency)}
+                    {lens_button(state, WorkMapLens::Origin)}
+                    {lens_button(state, WorkMapLens::Review)}
+                    {lens_button(state, WorkMapLens::Lifecycle)}
                 </section>
-                if state.lens == TaskRelationKind::Dependency {
+                if state.lens == WorkMapLens::Dependency {
                     <div class="work-map-control-group work-map-direction canvas-control-rail" aria-label="Dependency direction">
                         {direction_button(state, WorkRelationshipDirection::Prerequisites, "Prerequisites")}
                         {direction_button(state, WorkRelationshipDirection::Both, "Both")}
@@ -354,11 +411,11 @@ fn render_controls(state: &UseStateHandle<WorkMapState>, selected: &TaskStamp) -
     }
 }
 
-fn lens_button(state: &UseStateHandle<WorkMapState>, relation: TaskRelationKind) -> Html {
-    let active = state.lens == relation;
+fn lens_button(state: &UseStateHandle<WorkMapState>, lens: WorkMapLens) -> Html {
+    let active = state.lens == lens;
     let change = {
         let state = state.clone();
-        Callback::from(move |_| update(&state, |next| next.lens = relation))
+        Callback::from(move |_| update(&state, |next| next.lens = lens))
     };
     html! {
         <button
@@ -366,7 +423,7 @@ fn lens_button(state: &UseStateHandle<WorkMapState>, relation: TaskRelationKind)
             aria-pressed={active.to_string()}
             class={active.then_some("active")}
             onclick={change}
-        >{lens::lens_label(relation)}</button>
+        >{lens.label()}</button>
     }
 }
 
@@ -531,27 +588,6 @@ fn render_truncation(
     }
 }
 
-fn lens_context(relation: TaskRelationKind) -> Html {
-    let text = match relation {
-        TaskRelationKind::Origin => {
-            "Task ancestry includes siblings reached through their shared task parent; non-task ACK and origin identities remain exact."
-        }
-        TaskRelationKind::Review => {
-            "Completed handoffs preserve phase author → reviewer → verdict order."
-        }
-        TaskRelationKind::Lifecycle => {
-            "Historical task transitions remain ordered by durable fact position."
-        }
-        TaskRelationKind::Claim => {
-            "Ownership shows current active possession only; historical task transitions remain in Lifecycle."
-        }
-        TaskRelationKind::Dependency => {
-            "Dependency edges point from each dependent task to the prerequisite it requires."
-        }
-    };
-    html! { <p class="work-map-context">{text}</p> }
-}
-
 fn reference_label(reference: &TaskRelationNodeRef) -> String {
     match reference {
         TaskRelationNodeRef::Task { task } => format!("task {task}"),
@@ -565,16 +601,6 @@ fn reference_label(reference: &TaskRelationNodeRef) -> String {
         TaskRelationNodeRef::Claim { task, position } => {
             format!("task {task} claim fact {position}")
         }
-    }
-}
-
-const fn lens_key(relation: TaskRelationKind) -> &'static str {
-    match relation {
-        TaskRelationKind::Origin => "origin",
-        TaskRelationKind::Dependency => "dependency",
-        TaskRelationKind::Review => "review",
-        TaskRelationKind::Lifecycle => "lifecycle",
-        TaskRelationKind::Claim => "ownership",
     }
 }
 

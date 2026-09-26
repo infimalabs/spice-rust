@@ -311,16 +311,6 @@ pub(super) const fn edge_label(relation: TaskRelationKind) -> &'static str {
     }
 }
 
-pub(super) const fn lens_label(relation: TaskRelationKind) -> &'static str {
-    match relation {
-        TaskRelationKind::Origin => "Lineage",
-        TaskRelationKind::Dependency => "Dependencies",
-        TaskRelationKind::Review => "Reviews",
-        TaskRelationKind::Lifecycle => "Lifecycle",
-        TaskRelationKind::Claim => "Ownership",
-    }
-}
-
 fn verdict_label(verdict: Verdict) -> &'static str {
     match verdict {
         Verdict::Clean => "clean",
