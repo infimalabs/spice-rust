@@ -1094,12 +1094,17 @@ impl CanvasRuntime {
             && reply.body.disposition == wire::Disposition::Live
         {
             self.retain_operator_message(
-                reply.body.authored,
-                reply.body.directive,
-                reply.body.key.clone(),
-                lane,
-                text,
-                attachments,
+                OperatorMessage {
+                    authored: reply.body.authored,
+                    directive: reply.body.directive,
+                    key: reply.body.key.clone(),
+                    lane,
+                    text,
+                    attachments,
+                    quote_target: None,
+                    quotes: Vec::new(),
+                },
+                false,
             );
         }
     }

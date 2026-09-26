@@ -17,6 +17,8 @@ pub struct OperatorMessage {
     pub(crate) lane: CanonicalUuid,
     pub(crate) text: String,
     pub(crate) attachments: Vec<wire::Media>,
+    pub(crate) quote_target: Option<wire::QuoteTarget>,
+    pub(crate) quotes: Vec<wire::QuotePresentation>,
 }
 
 impl OperatorMessage {
@@ -48,6 +50,16 @@ impl OperatorMessage {
     #[must_use]
     pub fn attachments(&self) -> &[wire::Media] {
         &self.attachments
+    }
+
+    #[must_use]
+    pub const fn quote_target(&self) -> Option<&wire::QuoteTarget> {
+        self.quote_target.as_ref()
+    }
+
+    #[must_use]
+    pub fn quotes(&self) -> &[wire::QuotePresentation] {
+        &self.quotes
     }
 }
 
@@ -199,12 +211,17 @@ impl CanvasRuntime {
         let before = self.operator_messages.clone();
         for direction in directions {
             self.retain_operator_message(
-                direction.authored,
-                direction.directive,
-                direction.key.clone(),
-                direction.lane,
-                direction.text.clone(),
-                direction.attachments.clone(),
+                OperatorMessage {
+                    authored: direction.authored,
+                    directive: direction.directive,
+                    key: direction.key.clone(),
+                    lane: direction.lane,
+                    text: direction.text.clone(),
+                    attachments: direction.attachments.clone(),
+                    quote_target: Some(direction.quote_target.clone()),
+                    quotes: direction.quotes.clone(),
+                },
+                true,
             );
         }
         trim_operator_messages(&mut self.operator_messages, limit);
@@ -352,12 +369,17 @@ impl CanvasRuntime {
                 && let Some(sent) = row.read::<wire::body::SteerSent>()
             {
                 changed |= self.retain_operator_message(
-                    *row.at(),
-                    sent.directive,
-                    sent.key,
-                    sent.lane,
-                    sent.text,
-                    sent.attachments,
+                    OperatorMessage {
+                        authored: *row.at(),
+                        directive: sent.directive,
+                        key: sent.key,
+                        lane: sent.lane,
+                        text: sent.text,
+                        attachments: sent.attachments,
+                        quote_target: None,
+                        quotes: Vec::new(),
+                    },
+                    false,
                 );
             }
         }
@@ -490,27 +512,22 @@ impl CanvasRuntime {
 
     pub(crate) fn retain_operator_message(
         &mut self,
-        authored: wire::Instant,
-        directive: CanonicalUuid,
-        key: String,
-        lane: CanonicalUuid,
-        text: String,
-        attachments: Vec<wire::Media>,
+        message: OperatorMessage,
+        presentation_authoritative: bool,
     ) -> bool {
-        let message = OperatorMessage {
-            authored,
-            directive,
-            key,
-            lane,
-            text,
-            attachments,
-        };
-        if self
+        if let Some(existing) = self
             .operator_messages
-            .iter()
-            .any(|existing| existing.directive == message.directive)
+            .iter_mut()
+            .find(|existing| existing.directive == message.directive)
         {
-            return false;
+            if !presentation_authoritative {
+                return false;
+            }
+            let changed =
+                existing.quote_target != message.quote_target || existing.quotes != message.quotes;
+            existing.quote_target = message.quote_target;
+            existing.quotes = message.quotes;
+            return changed;
         }
         let lane = message.lane;
         self.operator_messages.push(message);
