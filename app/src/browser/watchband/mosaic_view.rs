@@ -158,16 +158,13 @@ impl ActivityCard {
         }
     }
 
-    /// Total display chronology for one team, shared by the packed plane and
-    /// the narration cursor reading its live suffix.
+    /// Total display chronology for one team. Callers reverse this ascending
+    /// key once to obtain the newest-first plane and narration sequence.
     ///
     /// Equal-time ties break on the canonical numeric locus, never on the
-    /// rendered identity: that identity formats the locus as text, so inside
-    /// one display millisecond a newer record with a longer offset ("2102")
-    /// sorts before older ones ("938"). Every consumer of this order then
-    /// reads that arrival as history -- the plane renders it mid-list, and
-    /// the narration cursor, which admits only the suffix after its remembered
-    /// key, drops it without ever speaking it.
+    /// rendered identity. A greater source offset is therefore deterministically
+    /// newer within one display millisecond. Older history merged after a live
+    /// cursor remains behind that cursor and is never narrated as new activity.
     pub(super) fn chronology_key(&self) -> (i64, u8, CanonicalUuid, u64, u64, u64, u32) {
         match self {
             Self::Agent { message, .. } => {
@@ -816,7 +813,7 @@ fn use_narration(
             mode: *speech,
             messages: messages.clone(),
         });
-        narration_cursor.set(messages.last().map(|message| message.key.clone()));
+        narration_cursor.set(messages.first().map(|message| message.key.clone()));
     });
 }
 
@@ -1093,9 +1090,10 @@ fn use_persistent_plane(
             if *inspection_active {
                 return;
             }
-            let Some(measured) = measured_activity(cards, measurements, *width) else {
+            let Some(mut measured) = measured_activity(cards, measurements, *width) else {
                 return;
             };
+            measured.reverse();
             let next = committed.as_ref().map_or_else(
                 || crate::mosaic_plane::PersistentLanePlane::new(*width, &measured),
                 |plane| plane.reconcile(*width, &measured),
@@ -1113,30 +1111,15 @@ fn render_activity_cards(
     geometry: &crate::mosaic::Geometry,
     plane: Option<&crate::mosaic_plane::PersistentLanePlane<String>>,
 ) -> Html {
-    let cards_by_key = properties
-        .cards
-        .iter()
-        .map(|activity| (activity.key(), activity))
-        .collect::<BTreeMap<_, _>>();
     let placements = plane
         .into_iter()
         .flat_map(crate::mosaic_plane::PersistentLanePlane::cards)
         .map(|entry| (entry.key.as_str(), entry))
         .collect::<BTreeMap<_, _>>();
     let measurement_index = MeasurementIndex::new(measurements);
-    let mut ordered = plane
-        .into_iter()
-        .flat_map(|plane| plane.cards())
-        .filter_map(|entry| cards_by_key.get(&entry.key).copied())
-        .collect::<Vec<_>>();
-    let unknown = properties
+    properties
         .cards
         .iter()
-        .filter(|activity| !placements.contains_key(activity.key().as_str()))
-        .collect::<Vec<_>>();
-    ordered.extend(unknown);
-    ordered
-        .into_iter()
         .enumerate()
         .map(|(order, activity)| {
             let key = activity.key();
@@ -1150,8 +1133,13 @@ fn render_activity_cards(
                 }
                 _ => CardLayout::measuring(order, activity.base_span(geometry)),
             };
-            let quote_order = u64::try_from(layout.measurement_index)
-                .expect("Mosaic creation index fits the quote ordering field");
+            let quote_order = if layout.committed {
+                u64::try_from(layout.measurement_index)
+                    .expect("Mosaic creation index fits the quote ordering field")
+            } else {
+                u64::MAX
+                    - u64::try_from(order).expect("Mosaic card count fits the quote ordering field")
+            };
             match activity {
                 ActivityCard::Agent {
                     accent,

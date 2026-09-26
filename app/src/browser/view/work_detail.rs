@@ -269,7 +269,7 @@ fn render_activity(
                 <p class="muted">{"No observations have been recorded."}</p>
             } else {
                 <ol class="work-note-list">
-                    {for answer.notes.iter().map(|note| html! {
+                    {for answer.notes.iter().rev().map(|note| html! {
                         <li class="work-note-card" key={note.position.to_string()} data-note-position={note.position.to_string()}>
                             <header>
                                 <strong title={note.author.to_string()}>

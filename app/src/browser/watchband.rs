@@ -1,5 +1,6 @@
 //! Predecessor-style lane composer rendered inside the Lanes surface.
 
+use std::cmp::Reverse;
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{DragEvent, HtmlInputElement, PointerEvent};
@@ -302,7 +303,7 @@ fn broadcast_targets(
         .collect()
 }
 
-/// Every stable assistant-authored record the team can render in total chronology.
+/// Every stable assistant-authored record the team can render, newest first.
 /// Observation time is the primary display order. The admitted lane and source
 /// locus break equal-time ties without parsing a rendered DOM identity. The
 /// persistent plane uses this complete order to distinguish edge additions
@@ -347,7 +348,7 @@ fn activity_cards(
                 })
             }),
     );
-    cards.sort_by_key(ActivityCard::chronology_key);
+    cards.sort_by_key(|card| Reverse(card.chronology_key()));
     cards
 }
 

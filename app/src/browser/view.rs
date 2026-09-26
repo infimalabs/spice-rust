@@ -17,7 +17,7 @@ pub(super) struct AgentControls {
     pub(super) submit_seat: Callback<SubmitEvent>,
     /// Admit manual speech to the one browser-global playback queue.
     pub(super) speak: Callback<SpeechRequest>,
-    /// Advance durable narration cursors and admit their live suffix.
+    /// Advance durable narration cursors and admit their live prefix.
     pub(super) narrate: Callback<NarrationBatch>,
     /// Stop and discard automatic speech while preserving explicit playback.
     pub(super) suppress_automatic_speech: Callback<()>,
