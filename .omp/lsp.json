@@ -1,0 +1,16 @@
+{
+  "servers": {
+    "rust-analyzer": {
+      "settings": {
+        "rust-analyzer": {
+          "cargo": {
+            "extraArgs": ["--locked"]
+          },
+          "check": {
+            "extraArgs": ["--locked"]
+          }
+        }
+      }
+    }
+  }
+}

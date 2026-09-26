@@ -61,6 +61,11 @@ stems = [
 project_min_depth = 2
 project_max_depth = 3
 
+[vendor.omp]
+# OMP lanes merge `.omp/lsp.json` into its built-in workspace server
+# definitions; each lane keeps the selected server in its supervised process.
+lsp = true
+
 [judge]
 # Adjudicate maxim trigger candidates before they become lane direction.
 enabled = true
