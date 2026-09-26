@@ -362,31 +362,27 @@ fn use_layout_properties(
     width: i32,
     keys: Vec<String>,
     plane: Option<crate::mosaic_plane::PersistentLanePlane<String>>,
-    suspended: bool,
 ) {
-    use_effect_with(
-        (host, width, keys, plane, suspended),
-        move |(host, width, _, _, suspended)| {
-            if *suspended || *width < MIN_MEASURABLE_WIDTH_PX {
-                return;
-            }
-            let host = host
-                .cast::<web_sys::HtmlElement>()
-                .expect("a rendered Mosaic plane is an HTML element");
-            copy_layout_properties(&host, &PLANE_LAYOUT_PROPERTIES);
-            let cards = host
-                .query_selector_all(".mosaic-message-card")
-                .expect("the fixed Mosaic card selector is valid");
-            for index in 0..cards.length() {
-                let card = cards
-                    .item(index)
-                    .expect("the Mosaic card list retains every indexed node")
-                    .dyn_into::<web_sys::HtmlElement>()
-                    .expect("a Mosaic card is an HTML element");
-                copy_layout_properties(&card, &CARD_LAYOUT_PROPERTIES);
-            }
-        },
-    );
+    use_effect_with((host, width, keys, plane), move |(host, width, _, _)| {
+        if *width < MIN_MEASURABLE_WIDTH_PX {
+            return;
+        }
+        let host = host
+            .cast::<web_sys::HtmlElement>()
+            .expect("a rendered Mosaic plane is an HTML element");
+        copy_layout_properties(&host, &PLANE_LAYOUT_PROPERTIES);
+        let cards = host
+            .query_selector_all(".mosaic-message-card")
+            .expect("the fixed Mosaic card selector is valid");
+        for index in 0..cards.length() {
+            let card = cards
+                .item(index)
+                .expect("the Mosaic card list retains every indexed node")
+                .dyn_into::<web_sys::HtmlElement>()
+                .expect("a Mosaic card is an HTML element");
+            copy_layout_properties(&card, &CARD_LAYOUT_PROPERTIES);
+        }
+    });
 }
 
 struct MeasurementIndex<'a> {
@@ -572,40 +568,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let inspection_active = use_context::<crate::browser::message_task_inspector::Context>()
         .is_some_and(|context| context.inspection.is_some());
     let committed = use_state_eq(|| None::<crate::mosaic_plane::PersistentLanePlane<String>>);
-    let displayed = use_state_eq(|| None::<crate::mosaic_plane::PersistentLanePlane<String>>);
-    let inspection_was_active = use_mut_ref(|| false);
-    {
-        let displayed = displayed.clone();
-        let inspection_was_active = inspection_was_active.clone();
-        use_effect_with(
-            ((*committed).clone(), inspection_active),
-            move |(plane, inspection_active)| {
-                if *inspection_active {
-                    *inspection_was_active.borrow_mut() = true;
-                    // A plane with nothing displayed has nothing to protect: its
-                    // first lattice becomes the one the quick view holds still.
-                    if displayed.is_none() && plane.is_some() {
-                        displayed.set(plane.clone());
-                    }
-                    return;
-                }
-                if std::mem::take(&mut *inspection_was_active.borrow_mut()) {
-                    return;
-                }
-                if displayed.as_ref() != plane.as_ref() {
-                    displayed.set(plane.clone());
-                }
-            },
-        );
-    }
-    let rendered_plane = if displayed.is_some() {
-        (*displayed).clone()
-    } else {
-        (*committed).clone()
-    };
-    // The quick view freezes only a lattice already on screen; a plane still
-    // measuring its first lattice would otherwise stay hidden until it closed.
-    let frozen = inspection_active && displayed.is_some();
+    let rendered_plane = (*committed).clone();
     // Edges exist only in a settled layout: a plane measuring its first lattice
     // shows a placeholder extent that reads as a trailing edge, so it offers no
     // paging targets until the lattice commits and the edge means something.
@@ -633,7 +596,6 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         measurement_width,
         card_keys,
         rendered_plane.clone(),
-        frozen,
     );
     let committed_spans = committed_spans(rendered_plane.as_ref());
     let measurements = use_state_eq(Vec::<ActivityMeasurement>::new);
@@ -651,7 +613,6 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         measurement_width,
         properties.cards.clone(),
         (*measurements).clone(),
-        frozen,
     );
     use_narration(
         properties.lane,
@@ -668,7 +629,12 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(geometry_width));
     let max_row = committed_plane.map(crate::mosaic_plane::PersistentLanePlane::max_row);
     let composer = composer_collapse::use_composer_collapse(host.clone());
-    use_plane_scroll(host.clone(), rendered_plane.clone(), composer, frozen);
+    use_plane_scroll(
+        host.clone(),
+        rendered_plane.clone(),
+        composer,
+        inspection_active,
+    );
     MosaicPlaneView {
         properties,
         measurement_width,
@@ -692,7 +658,7 @@ fn use_plane_scroll(
     host: NodeRef,
     plane: Option<crate::mosaic_plane::PersistentLanePlane<String>>,
     composer: composer_collapse::ComposerCollapse,
-    suspended: bool,
+    viewport_held: bool,
 ) {
     let anchor = use_mut_ref(|| None::<ScrollAnchor>);
     {
@@ -720,34 +686,37 @@ fn use_plane_scroll(
             }
         });
     }
-    use_effect_with((host, plane, suspended), move |(host, plane, suspended)| {
-        if *suspended {
-            return;
-        }
-        let Some(scroller) = host.cast::<web_sys::Element>() else {
-            return;
-        };
-        if plane.is_none()
-            || !crate::mosaic::pane_is_scrolled(f64::from(scroller.scroll_top()), None)
-        {
-            *anchor.borrow_mut() = None;
-            return;
-        }
-        if let Some(previous) = anchor.borrow().clone()
-            && let Some(current_offset) = scroll_anchor_offset(&scroller, &previous.key)
-        {
-            let delta = current_offset - previous.offset;
-            if delta.abs() >= 0.5 {
-                // The correction keeps cards visually still, so the composer
-                // fused to them must not move either.
-                composer.correct_scroll(
-                    &scroller,
-                    (f64::from(scroller.scroll_top()) + delta).round() as i32,
-                );
+    use_effect_with(
+        (host, plane, viewport_held),
+        move |(host, plane, viewport_held)| {
+            if *viewport_held {
+                return;
             }
-        }
-        *anchor.borrow_mut() = visible_scroll_anchor(&scroller);
-    });
+            let Some(scroller) = host.cast::<web_sys::Element>() else {
+                return;
+            };
+            if plane.is_none()
+                || !crate::mosaic::pane_is_scrolled(f64::from(scroller.scroll_top()), None)
+            {
+                *anchor.borrow_mut() = None;
+                return;
+            }
+            if let Some(previous) = anchor.borrow().clone()
+                && let Some(current_offset) = scroll_anchor_offset(&scroller, &previous.key)
+            {
+                let delta = current_offset - previous.offset;
+                if delta.abs() >= 0.5 {
+                    // The correction keeps cards visually still, so the composer
+                    // fused to them must not move either.
+                    composer.correct_scroll(
+                        &scroller,
+                        (f64::from(scroller.scroll_top()) + delta).round() as i32,
+                    );
+                }
+            }
+            *anchor.borrow_mut() = visible_scroll_anchor(&scroller);
+        },
+    );
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1107,14 +1076,10 @@ fn use_persistent_plane(
     width: i32,
     cards: Vec<ActivityCard>,
     measurements: Vec<ActivityMeasurement>,
-    suspended: bool,
 ) {
     use_effect_with(
-        (width, cards, measurements, suspended),
-        move |(width, cards, measurements, suspended)| {
-            if *suspended {
-                return;
-            }
+        (width, cards, measurements),
+        move |(width, cards, measurements)| {
             let Some(mut measured) = measured_activity(cards, measurements, *width) else {
                 return;
             };
