@@ -117,6 +117,9 @@ impl PartialEq for ActivityFingerprint {
 /// new measured content would transiently rewrite the live card's measurement
 /// attributes and could move its packed-plane placement.
 fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMessage) -> bool {
+    if crate::runtime::same_compaction_card(left, right) {
+        return true;
+    }
     if left.lane != right.lane
         || left.author != right.author
         || left.locus != right.locus

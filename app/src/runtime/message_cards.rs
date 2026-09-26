@@ -385,12 +385,27 @@ mod tests {
             id: "cmp_03f3".to_owned(),
             preserved: true,
         });
+
         let mut unpaired = message(2, AgentActivityKind::Compaction);
         unpaired.text = announced.text.clone();
         unpaired.boundary = Some(wire::MessageBoundary {
             id: "cmp_9999".to_owned(),
             preserved: false,
         });
+        assert_eq!(
+            agent_message_card_identity(&announced),
+            agent_message_card_identity(&preserved),
+            "both representations of one compaction retain one rendered node",
+        );
+        assert!(
+            same_compaction_card(&announced, &preserved),
+            "the preserved record reuses the announcement measurement",
+        );
+        assert_ne!(
+            agent_message_card_identity(&announced),
+            agent_message_card_identity(&unpaired),
+            "unrelated compactions remain independently keyed",
+        );
 
         let mut live = MessageCards::default();
         live.snapshot(10, &[announced.clone(), unpaired.clone()]);

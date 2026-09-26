@@ -518,6 +518,51 @@ impl LaneActivity {
 pub(crate) fn agent_message_display_millis(message: &wire::AgentMessage) -> i64 {
     message.display_millis()
 }
+/// Stable browser identity for one visible agent card.
+///
+/// A compaction reaches Canvas first as a live announcement and later as the
+/// vendor's preserved record. Those representations have different source
+/// loci but one vendor boundary identity, so they must reconcile through one
+/// DOM and Mosaic key rather than remove and reinsert the divider.
+#[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn agent_message_card_identity(message: &wire::AgentMessage) -> String {
+    let Some(boundary) = message
+        .boundary
+        .as_ref()
+        .filter(|_| message.activity == AgentActivityKind::Compaction)
+    else {
+        return format!(
+            "agent-{}-{}-{}-{}-{}",
+            message.lane,
+            message.locus.member,
+            message.locus.offset,
+            message.locus.length,
+            message.locus.event,
+        );
+    };
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut identity = format!("agent-{}-compaction-", message.lane);
+    identity.reserve(boundary.id.len().saturating_mul(2));
+    for byte in boundary.id.bytes() {
+        identity.push(char::from(HEX[usize::from(byte >> 4)]));
+        identity.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    identity
+}
+
+/// Whether two wire records are representations of one visible compaction.
+#[cfg(any(target_arch = "wasm32", test))]
+#[must_use]
+pub(crate) fn same_compaction_card(left: &wire::AgentMessage, right: &wire::AgentMessage) -> bool {
+    left.activity == AgentActivityKind::Compaction
+        && right.activity == AgentActivityKind::Compaction
+        && left.lane == right.lane
+        && left
+            .boundary
+            .as_ref()
+            .zip(right.boundary.as_ref())
+            .is_some_and(|(left, right)| left.id == right.id)
+}
 
 /// Durable identity used to ignore a repeated live activity without moving it
 /// back to the front of the status chronology.

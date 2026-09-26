@@ -159,19 +159,11 @@ fn quote_textarea_id(lane_key: &str, identity: &str) -> String {
     format!("composer-quote-{lane_key}-{identity}")
 }
 
-fn agent_message_quote_identity(message: &wire::AgentMessage) -> String {
-    format!(
-        "agent-{}-{}-{}-{}-{}",
-        message.lane,
-        message.locus.member,
-        message.locus.offset,
-        message.locus.length,
-        message.locus.event,
-    )
-}
-
 pub(super) fn agent_message_source_id(message: &wire::AgentMessage) -> String {
-    format!("message-{}", agent_message_quote_identity(message))
+    format!(
+        "message-{}",
+        crate::runtime::agent_message_card_identity(message)
+    )
 }
 
 pub(super) fn focus_after_render(id: String) {
