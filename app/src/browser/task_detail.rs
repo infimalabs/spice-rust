@@ -7,6 +7,8 @@ pub(super) struct Controls {
     pub closing: UseStateHandle<bool>,
     pub close_ref: NodeRef,
     pub sheet_ref: NodeRef,
+    /// Override the captured launch control with a stable surviving element.
+    pub return_focus_to: Callback<web_sys::Element>,
     pub notes: NoteComposers,
     pub select: Callback<TaskStamp>,
     pub request: Callback<TaskStamp>,
@@ -23,6 +25,7 @@ pub(super) fn use_controls(
     mounted: bool,
 ) -> Controls {
     let selected = use_state(|| None::<TaskStamp>);
+    let return_focus = use_mut_ref(|| None::<web_sys::Element>);
     let presented = use_state_eq(|| false);
     let closing = use_state_eq(|| false);
     let close_ref = use_node_ref();
@@ -37,6 +40,7 @@ pub(super) fn use_controls(
         selected.clone(),
         presented.clone(),
         closing.clone(),
+        return_focus.clone(),
     );
     let complete_close =
         complete_close_callback(selected.clone(), presented.clone(), closing.clone());
@@ -51,14 +55,25 @@ pub(super) fn use_controls(
         sheet_ref.clone(),
         complete_close.clone(),
     );
-    use_focus(&selected, mounted, close_ref.clone(), sheet_ref.clone());
+    use_focus(
+        &selected,
+        mounted,
+        close_ref.clone(),
+        sheet_ref.clone(),
+        return_focus.clone(),
+    );
     overlay::use_escape_owner(selected.is_some() && !*closing && mounted, close.clone());
+    let return_focus_to = {
+        let return_focus = return_focus.clone();
+        Callback::from(move |target| *return_focus.borrow_mut() = Some(target))
+    };
     let submit_note = note_submit_callback(sender, surface, notes.clone());
     Controls {
         selected,
         presented,
         closing,
         close_ref,
+        return_focus_to,
         sheet_ref,
         notes,
         select,
@@ -74,10 +89,14 @@ fn select_callback(
     selected: UseStateHandle<Option<TaskStamp>>,
     presented: UseStateHandle<bool>,
     closing: UseStateHandle<bool>,
+    return_focus: Rc<RefCell<Option<web_sys::Element>>>,
 ) -> Callback<TaskStamp> {
     Callback::from(move |task: TaskStamp| {
         if selected.as_ref() == Some(&task) {
             return;
+        }
+        if selected.is_none() {
+            *return_focus.borrow_mut() = active_focus_target();
         }
         if selected.is_none() || *closing {
             presented.set(false);
@@ -86,6 +105,17 @@ fn select_callback(
         selected.set(Some(task.clone()));
         request.emit(task);
     })
+}
+
+fn active_focus_target() -> Option<web_sys::Element> {
+    web_sys::window()?
+        .document()?
+        .active_element()
+        .filter(|element| {
+            element
+                .dyn_ref::<web_sys::HtmlElement>()
+                .is_some_and(|element| element.tab_index() >= 0)
+        })
 }
 
 /// Read one task's detail unless an admitted answer is already held; every
@@ -176,6 +206,7 @@ pub(super) fn use_focus(
     mounted: bool,
     close: NodeRef,
     sheet: NodeRef,
+    return_focus: Rc<RefCell<Option<web_sys::Element>>>,
 ) {
     let last_seen = use_mut_ref(|| None::<TaskStamp>);
     let mounted_selection = use_mut_ref(|| None::<TaskStamp>);
@@ -224,16 +255,23 @@ pub(super) fn use_focus(
             return;
         }
         let target = last_seen.borrow_mut().take();
-        let focused = target
-            .as_ref()
-            .and_then(|task| {
-                let document = web_sys::window()?.document()?;
-                let selector = format!(".work-card-open[data-task-stamp=\"{task}\"]");
-                document.query_selector(&selector).ok().flatten()
-            })
+        let focused = return_focus
+            .borrow_mut()
+            .take()
             .filter(overlay::returnable)
             .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
             .is_some_and(|element| element.focus().is_ok());
+        let focused = focused
+            || target
+                .as_ref()
+                .and_then(|task| {
+                    let document = web_sys::window()?.document()?;
+                    let selector = format!(".work-card-open[data-task-stamp=\"{task}\"]");
+                    document.query_selector(&selector).ok().flatten()
+                })
+                .filter(overlay::returnable)
+                .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok())
+                .is_some_and(|element| element.focus().is_ok());
         if !focused
             && target.is_some()
             && let Some(document) = web_sys::window().and_then(|window| window.document())
