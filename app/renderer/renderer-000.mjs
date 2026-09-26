@@ -15,7 +15,7 @@ const nodeIdPattern = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 const encoder = new TextEncoder();
 const secure = [
   'secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'maxEdges',
-  'theme', 'themeVariables', 'themeCSS', 'fontFamily', 'altFontFamily',
+  'theme', 'themeVariables', 'themeCSS', 'look', 'fontFamily', 'altFontFamily',
   'fontSize', 'htmlLabels', 'dompurifyConfig', 'suppressErrorRendering',
   'legacyMathML', 'forceLegacyMathML', 'deterministicIds',
   'deterministicIDSeed', 'arrowMarkerAbsolute',
@@ -123,6 +123,7 @@ addEventListener('message', async event => {
       securityLevel: 'strict',
       htmlLabels: true,
       theme: theme === 'dark' ? 'dark' : 'default',
+      look: 'classic',
       fontFamily: 'Arial, sans-serif',
       maxTextSize: sourceLimit,
       maxEdges: 500,
