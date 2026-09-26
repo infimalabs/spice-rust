@@ -494,6 +494,7 @@ pub(super) fn lane_capability(lane: &wire::LaneResidency) -> CommandResult<Canon
 
 pub(super) fn inbox(
     bus: &Bus,
+    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     request: &wire::intent::SteerInbox,
@@ -520,6 +521,8 @@ pub(super) fn inbox(
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
+    let reader = bus.reader();
+    let resolver = spice::quote::Resolver::from_tape(&paths.tape, &reader);
     let mut lanes = Vec::new();
     for lane in &snapshot.residency.body().lanes {
         if selected.is_some_and(|selected| selected != lane.lane) {
@@ -540,13 +543,20 @@ pub(super) fn inbox(
             }
             None => None,
         };
-        let (pending, generation_notices) =
+        let (mut pending, mut generation_notices) =
             match pending_presentations(&snapshot.ledger, lane.lane, snapshot.authority.tasks()) {
                 Ok(presentations) => presentations,
                 Err(error) => {
                     return typed_store_fault("task-generation::control-invalid", &error);
                 }
             };
+        for directive in &mut pending {
+            directive.text = resolver.expand(&directive.text);
+            directive.preview = directive_preview(&directive.text);
+        }
+        for notice in &mut generation_notices {
+            notice.text = resolver.expand(&notice.text);
+        }
         lanes.push(LaneInbox {
             lane: lane.lane,
             occupant: lane.occupant,

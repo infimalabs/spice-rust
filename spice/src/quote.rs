@@ -97,9 +97,15 @@ pub struct Resolver<'a> {
 impl<'a> Resolver<'a> {
     /// Bind quote reads to one admitted repository state and bus snapshot source.
     #[must_use]
-    pub const fn new(paths: &'a StatePaths, bus: &'a BusReader) -> Self {
+    pub fn new(paths: &'a StatePaths, bus: &'a BusReader) -> Self {
+        Self::from_tape(paths.tape(), bus)
+    }
+
+    /// Bind quote reads to an already admitted resident tape root.
+    #[must_use]
+    pub const fn from_tape(tape: &'a Path, bus: &'a BusReader) -> Self {
         Self {
-            store: ResidentStore { paths, bus },
+            store: ResidentStore { tape, bus },
         }
     }
 
@@ -110,6 +116,16 @@ impl<'a> Resolver<'a> {
     #[must_use]
     pub fn resolve(&self, target: &str, depth: u8) -> QuoteResolution {
         resolve_with(&self.store, target, depth)
+    }
+
+    /// Replace every structural quote link with authenticated source text.
+    ///
+    /// Nested links are followed through the shared depth bound. A refusal is
+    /// rendered explicitly in place, so delivery never silently omits source
+    /// text and never asks the recipient to resolve authority itself.
+    #[must_use]
+    pub fn expand(&self, source: &str) -> String {
+        expand_with(&self.store, source, 0)
     }
 }
 
@@ -138,7 +154,7 @@ trait QuoteStore {
 }
 
 struct ResidentStore<'a> {
-    paths: &'a StatePaths,
+    tape: &'a Path,
     bus: &'a BusReader,
 }
 
@@ -167,12 +183,7 @@ impl QuoteStore for ResidentStore<'_> {
             .vendor(row.vendor.as_str())
             .map(|vendor| vendor.dialect())
             .ok_or(SourceError::Unknown)?;
-        let root = self
-            .paths
-            .tape()
-            .join(lane.to_string())
-            .join(row.vendor.as_str());
-        resolve_tape(&root, source, locus, dialect, lane, occupant)
+        resolve_tape(self.tape, source, locus, dialect, lane, occupant)
     }
 
     fn steering(&self, key: &str) -> Result<SourceQuote, SourceError> {
@@ -230,6 +241,46 @@ fn resolve_with(store: &impl QuoteStore, target: &str, depth: u8) -> QuoteResolu
         author: resolved.author,
         disposition: resolved.disposition,
     })
+}
+
+fn expand_with(store: &impl QuoteStore, source: &str, depth: u8) -> String {
+    let message = QuoteMessage::parse(source);
+    if message.quotes().is_empty() {
+        return source.to_owned();
+    }
+    let mut expanded = String::with_capacity(source.len());
+    let mut cursor = 0;
+    for quote in message.quotes() {
+        expanded.push_str(&source[cursor..quote.range.start]);
+        match resolve_with(store, &quote.target, depth) {
+            QuoteResolution::Resolved(resolved) => {
+                expanded.push_str(&expand_with(store, &resolved.text, depth + 1));
+            }
+            QuoteResolution::Unavailable { target, reason } => {
+                render_unavailable(&mut expanded, &target, reason);
+            }
+        }
+        cursor = quote.range.end;
+    }
+    expanded.push_str(&source[cursor..]);
+    expanded
+}
+
+fn render_unavailable(rendered: &mut String, target: &str, reason: QuoteUnavailable) {
+    use std::fmt::Write as _;
+
+    let reason = match reason {
+        QuoteUnavailable::Malformed => "malformed",
+        QuoteUnavailable::Unknown => "unknown",
+        QuoteUnavailable::Unreadable => "unreadable",
+        QuoteUnavailable::DigestMismatch => "digest-mismatch",
+        QuoteUnavailable::DepthExceeded => "depth-exceeded",
+    };
+    write!(
+        rendered,
+        "[quote unavailable: reason={reason} source={target:?}]"
+    )
+    .expect("writing to a String cannot fail");
 }
 
 fn unavailable(target: &str, reason: QuoteUnavailable) -> QuoteResolution {
@@ -513,5 +564,76 @@ mod tests {
             resolve_with(&store, &spelling, QUOTE_DEPTH_LIMIT),
             unavailable(&spelling, QuoteUnavailable::DepthExceeded)
         );
+    }
+    #[test]
+    fn delivery_expands_nested_quotes_and_names_unavailable_sources() {
+        let mut store = MemoryStore::default();
+        let inner_text = "the authenticated inner words";
+        let inner = steering_target("dTVLR0qL0", inner_text);
+        store.steering.insert(
+            "dTVLR0qL0".to_owned(),
+            SourceQuote {
+                text: inner_text.to_owned(),
+                author: QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                },
+                disposition: Some(wire::Disposition::Live),
+            },
+        );
+        let outer_text = format!("before {} after", inner.markdown());
+        let outer = steering_target("dTVLR0qL1", &outer_text);
+        store.steering.insert(
+            "dTVLR0qL1".to_owned(),
+            SourceQuote {
+                text: outer_text,
+                author: QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                },
+                disposition: Some(wire::Disposition::Live),
+            },
+        );
+        let missing = steering_target("dTVLR0qL2", "missing");
+        let source = format!("say {} then {}", outer.markdown(), missing.markdown());
+
+        assert_eq!(
+            expand_with(&store, &source, 0),
+            format!(
+                "say before {inner_text} after then \
+                 [quote unavailable: reason=unknown source={:?}]",
+                missing.to_string(),
+            )
+        );
+    }
+
+    #[test]
+    fn delivery_depth_limit_leaves_one_explicit_source_stub() {
+        let mut store = MemoryStore::default();
+        let mut returned_text = "terminal text".to_owned();
+        let mut outer = None;
+        for index in 0..9 {
+            let key = format!("0000000{index}");
+            let target = steering_target(&key, &returned_text);
+            store.steering.insert(
+                key,
+                SourceQuote {
+                    text: returned_text,
+                    author: QuoteAuthor::Directive {
+                        actor: wire::Actor::Operator,
+                    },
+                    disposition: Some(wire::Disposition::Live),
+                },
+            );
+            returned_text = target.markdown();
+            outer = Some(target);
+        }
+
+        let expanded = expand_with(
+            &store,
+            &outer.expect("chain has an outer target").markdown(),
+            0,
+        );
+        assert!(!expanded.contains("[quote]("), "{expanded}");
+        assert!(expanded.contains("[quote unavailable: reason=depth-exceeded source="));
+        assert_eq!(expanded.lines().count(), 1);
     }
 }
