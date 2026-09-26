@@ -127,3 +127,23 @@ fn ambiguous_generation_refuses_before_rewriting_any_declaration() {
     ));
     assert_eq!(stored(&connection, 2), before);
 }
+
+#[test]
+fn overlapping_generations_refuse_before_rewriting_any_declaration() {
+    let connection = fixture();
+    insert(&connection, 1, ingestion(6, 0, 20));
+    insert(&connection, 2, declaration());
+    insert(&connection, 3, ingestion(7, 0, 30));
+    let before = stored(&connection, 2);
+
+    assert!(matches!(
+        migrate(&connection),
+        Err(OpenError::Migration(MigrationError::StoredContent {
+            from: 30,
+            to: 31,
+            table: "fact_envelopes",
+            ..
+        }))
+    ));
+    assert_eq!(stored(&connection, 2), before);
+}
