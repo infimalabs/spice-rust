@@ -57,6 +57,7 @@ pub mod manifest;
 pub mod media;
 mod optional;
 pub mod packed;
+pub mod quote;
 pub mod reply;
 /// Steering-specific bodies that sit outside the core body module's shape boundary.
 pub mod steering;
@@ -95,6 +96,10 @@ pub use hello::{
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
 pub use media::{AgentMediaReference, Media, MediaError};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
+pub use quote::{
+    QUOTE_DEPTH_LIMIT, QuoteAuthor, QuoteResolution, QuoteTarget, QuoteTargetError,
+    QuoteUnavailable, ResolvedQuote,
+};
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,
     JournalRestore, JournalVerification, LanePurge, LanePurgeReport, Outcome, ProofEvidence,

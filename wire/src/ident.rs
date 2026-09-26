@@ -184,6 +184,8 @@ pub enum Domain {
     TasteBag,
     /// Exact decoded bytes of one admitted browsable media block.
     MediaContent,
+    /// Exact UTF-8 text authenticated by one transcript quote target.
+    QuoteText,
 }
 
 impl Domain {
@@ -219,7 +221,8 @@ impl Domain {
             | Self::DistReleasePlan
             | Self::TasteProse
             | Self::TasteBag
-            | Self::MediaContent => self.product_tag(),
+            | Self::MediaContent
+            | Self::QuoteText => self.product_tag(),
             Self::ProofBattery
             | Self::ProofReplayV3
             | Self::ProofReceiptV3
@@ -282,6 +285,7 @@ impl Domain {
             Self::TasteProse => "spice.taste.prose.v1",
             Self::TasteBag => "spice.taste.bag.v1",
             Self::MediaContent => "spice.media.content.v1",
+            Self::QuoteText => "spice.quote.text.v1",
             _ => panic!("digest-domain tag partition is closed"),
         }
     }

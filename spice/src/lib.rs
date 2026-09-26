@@ -28,6 +28,8 @@ pub mod install;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod journal_schema;
 pub mod placeholder;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod quote;
 pub mod repository;
 pub mod resident_lock;
 #[cfg(not(target_arch = "wasm32"))]
