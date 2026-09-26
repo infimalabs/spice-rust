@@ -126,19 +126,47 @@ impl Tape {
     /// Refuses a mismatched or out-of-range locus and returns an I/O failure
     /// when neither the observed storage nor its sealed successor can be read.
     pub fn read_extent(&self, locus: Locus, extent: Extent) -> Result<Vec<u8>, Error> {
+        self.read_extent_bounded(locus, extent, u64::MAX)
+    }
+
+    /// Read an observed range with a ceiling on plaintext read or decompressed.
+    ///
+    /// Sealed members require decompression from their beginning. Their full
+    /// length must fit the allowance, including when an active member seals
+    /// after observation. An understated extent cannot bypass the decoder cap.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Refusal::MemberReadLimit`] when the read cannot fit the allowance, or
+    /// the same range and storage failures as [`Self::read_extent`].
+    pub fn read_extent_bounded(
+        &self,
+        locus: Locus,
+        extent: Extent,
+        max_bytes: u64,
+    ) -> Result<Vec<u8>, Error> {
         if locus.member != extent.member {
             return Err(unknown(locus));
         }
         validate(locus, extent.length)?;
-        if extent.sealed {
-            return self
-                .read_sealed(locus.member)
-                .and_then(|plaintext| slice(locus, &plaintext));
+        let limit = || {
+            Error::Refused(Refusal::MemberReadLimit {
+                member: locus.member,
+                limit: max_bytes,
+            })
+        };
+        if locus.length > max_bytes {
+            return Err(limit());
         }
-        if let Some(bytes) = self.read_active(locus)? {
+        if !extent.sealed
+            && let Some(bytes) = self.read_active(locus)?
+        {
             return Ok(bytes);
         }
-        self.read_sealed(locus.member)
+        if extent.length > max_bytes {
+            return Err(limit());
+        }
+        self.read_sealed_bounded(locus.member, max_bytes)
             .and_then(|plaintext| slice(locus, &plaintext))
     }
 
@@ -170,15 +198,25 @@ impl Tape {
 
     /// Decompress one sealed member back to its captured plaintext.
     fn read_sealed(&self, member: u64) -> Result<Vec<u8>, Error> {
+        self.read_sealed_bounded(member, u64::MAX)
+    }
+
+    fn read_sealed_bounded(&self, member: u64, max_bytes: u64) -> Result<Vec<u8>, Error> {
         let path = self.sealed_path(member);
         let file =
             File::open(&path).map_err(|error| Error::io(Operation::ReadSealed, &path, error))?;
 
         let mut plaintext = Vec::new();
         GzDecoder::new(file)
+            .take(max_bytes.saturating_add(1))
             .read_to_end(&mut plaintext)
             .map_err(|error| Error::io(Operation::ReadSealed, path, error))?;
-
+        if plaintext.len() as u64 > max_bytes {
+            return Err(Error::Refused(Refusal::MemberReadLimit {
+                member,
+                limit: max_bytes,
+            }));
+        }
         Ok(plaintext)
     }
 }

@@ -29,6 +29,34 @@ const RECORD_FIXTURE_COUNT: usize = 3;
 const PENDING_WINDOW_BYTES: u64 = 4;
 const MULTI_MEMBER_WINDOW_RECORDS: usize = 7;
 
+#[test]
+fn a_sealed_tail_cannot_hide_whole_member_decompression_behind_a_small_window() {
+    let scratch = Scratch::new("sealed-tail-work");
+    let tape = Tape::open(scratch.path()).unwrap();
+    tape.tee(&line(PROSE).repeat(4096)).unwrap();
+    tape.seal().unwrap();
+    let error = scan_tail(
+        scratch.path(),
+        Dialect::Codex,
+        TailBudget::new(
+            SMALL_WINDOW_BYTES,
+            TEST_SOURCE_LIMIT,
+            TEST_RECORD_LIMIT,
+            TEST_PASS_LIMIT,
+            TEST_DURATION,
+        )
+        .unwrap(),
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        ScanError::WorkLimit {
+            dimension: "source bytes",
+            ..
+        }
+    ));
+    scratch.remove();
+}
 fn tail_budget(window_bytes: u64) -> TailBudget {
     TailBudget::new(
         window_bytes,

@@ -1,6 +1,7 @@
 //! Durable transcript record decoding for acknowledgment evidence.
 
 use super::*;
+use std::time::{Duration, Instant as Clock};
 
 #[cfg(test)]
 mod tests;
@@ -125,92 +126,126 @@ fn quoted_line(text: &str) -> String {
     quoted
 }
 
-/// Find the latest placed assistant answer to `token`, newest record first.
-///
-/// A later quotation or buried mention cannot erase an answer already spoken.
-/// If no placed answer exists, preserve the newest miss for the refusal.
-///
-/// A requested `disposition` must match the marker the transcript carries;
-/// `None` accepts whichever terminal marker the transcript shows, which is
-/// how the exit sweep reads an answer nobody has yet claimed on the command
-/// line.
-pub(super) fn transcript_recognition(
-    paths: &RuntimePaths,
-    lane: CanonicalUuid,
-    vendor: &wire::Name,
-    token: &str,
-    disposition: Option<Disposition>,
-    standing: &impl steer::Standing,
-) -> Result<TranscriptRecognition, Outcome<CommandAnswer>> {
-    let repair = header_repair(vendor);
-    let path = paths.tape.join(lane.to_string()).join(vendor.as_str());
-    match fs::metadata(&path) {
-        Ok(metadata) if metadata.is_dir() => {}
-        Ok(_) => {
-            return Err(typed_store_fault(
-                "steer::transcript-tape-invalid",
-                &format!("{} is not a tape directory", path.display()),
-            ));
+/// One recent window, shared by every pending key in a lane's recovery sweep.
+/// Work limits include boundary discovery, decoding, and evidence matching.
+const SEARCH_WINDOW_BYTES: u64 = 1024 * 1024;
+const SEARCH_SOURCE_BYTES: u64 = 2 * 1024 * 1024;
+const SEARCH_RECORDS: usize = 4096;
+const SEARCH_PASSES: usize = 256;
+const SEARCH_DURATION: Duration = Duration::from_secs(1);
+
+pub(super) struct TranscriptEvidence {
+    tail: listen::TailScan,
+    source: CanonicalUuid,
+    deadline: Clock,
+    repair: &'static str,
+}
+
+impl TranscriptEvidence {
+    pub(super) fn read(
+        paths: &RuntimePaths,
+        lane: CanonicalUuid,
+        vendor: &wire::Name,
+        token: &str,
+    ) -> Result<Self, Outcome<CommandAnswer>> {
+        let repair = header_repair(vendor);
+        let deadline = Clock::now() + SEARCH_DURATION;
+        let path = paths.tape.join(lane.to_string()).join(vendor.as_str());
+        match fs::metadata(&path) {
+            Ok(metadata) if metadata.is_dir() => {}
+            Ok(_) => {
+                return Err(typed_store_fault(
+                    "steer::transcript-tape-invalid",
+                    &format!("{} is not a tape directory", path.display()),
+                ));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(evidence_refusal(
+                    token,
+                    "the lane has no durable transcript tape",
+                    repair,
+                ));
+            }
+            Err(error) => {
+                return Err(typed_store_fault(
+                    "steer::transcript-tape-unreadable",
+                    &error.to_string(),
+                ));
+            }
         }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Err(evidence_refusal(
-                token,
-                "the lane has no durable transcript tape",
-                repair,
-            ));
-        }
-        Err(error) => {
-            return Err(typed_store_fault(
-                "steer::transcript-tape-unreadable",
-                &error.to_string(),
-            ));
-        }
+        let registry = spice::extension::registry().map_err(|error| {
+            typed_protocol_fault("steer::extension-registry-invalid", &error.to_string())
+        })?;
+        let dialect = registry
+            .vendor(vendor.as_str())
+            .ok_or_else(|| {
+                typed_protocol_fault("steer::transcript-vendor-invalid", vendor.as_str())
+            })?
+            .dialect();
+        let budget = listen::TailBudget::new(
+            SEARCH_WINDOW_BYTES,
+            SEARCH_SOURCE_BYTES,
+            SEARCH_RECORDS,
+            SEARCH_PASSES,
+            SEARCH_DURATION,
+        )
+        .expect("steering evidence allowances are positive");
+        let tail = listen::scan_tail(&path, dialect, budget).map_err(|error| match error {
+            listen::ScanError::WorkLimit { .. }
+            | listen::ScanError::Tape {
+                source: tape::Error::Refused(tape::Refusal::MemberReadLimit { .. }),
+                ..
+            } => search_limited(token, &error.to_string(), repair),
+            _ => typed_store_fault("steer::transcript-tape-unreadable", &error.to_string()),
+        })?;
+        let source = tail
+            .scan
+            .checkpoint
+            .source
+            .as_str()
+            .parse::<CanonicalUuid>()
+            .map_err(|error| {
+                typed_protocol_fault("steer::transcript-source-invalid", &error.to_string())
+            })?;
+        Ok(Self {
+            tail,
+            source,
+            deadline,
+            repair,
+        })
     }
-    let tape = tape::Tape::open_existing(&path).map_err(|error| {
-        typed_store_fault("steer::transcript-tape-unreadable", &error.to_string())
-    })?;
-    let source = tape
-        .source_id()
-        .map_err(|error| {
-            typed_store_fault("steer::transcript-tape-unreadable", &error.to_string())
-        })?
-        .as_str()
-        .parse::<CanonicalUuid>()
-        .map_err(|error| {
-            typed_protocol_fault("steer::transcript-source-invalid", &error.to_string())
-        })?;
-    let extents = tape.extents().map_err(|error| {
-        typed_store_fault("steer::transcript-tape-unreadable", &error.to_string())
-    })?;
-    let mut newest = NewestMessage::default();
-    let mut latest_miss = None;
-    for extent in extents.into_iter().rev() {
-        let whole = tape::Locus::new(extent.member, 0, extent.length);
-        let bytes = tape.read(whole).map_err(|error| {
-            typed_store_fault("steer::transcript-tape-unreadable", &error.to_string())
-        })?;
-        for (start, end) in record_ranges(&bytes).into_iter().rev() {
-            let offset = u64::try_from(start).map_err(|error| {
-                typed_protocol_fault("steer::transcript-locus-invalid", &error.to_string())
-            })?;
-            let length = u64::try_from(end - start).map_err(|error| {
-                typed_protocol_fault("steer::transcript-locus-invalid", &error.to_string())
-            })?;
-            let record_locus = tape::Locus::new(extent.member, offset, length);
-            if let Some(recognition) = scan_record(
-                &bytes[start..end],
-                record_locus,
-                token,
-                disposition,
-                standing,
-                &mut newest,
-            )? {
+
+    pub(super) fn exhausted(&self) -> bool {
+        Clock::now() >= self.deadline
+    }
+
+    /// Search newest records and events first; a later citation does not erase
+    /// an older placed answer within the admitted window.
+    pub(super) fn recognize(
+        &self,
+        token: &str,
+        disposition: Option<Disposition>,
+        standing: &impl steer::Standing,
+    ) -> Result<TranscriptRecognition, Outcome<CommandAnswer>> {
+        let mut newest = NewestMessage::default();
+        let mut latest_miss = None;
+        for record in self.tail.scan.records.iter().rev() {
+            if self.exhausted() {
+                return Err(search_limited(
+                    token,
+                    "the evidence search reached its time limit",
+                    self.repair,
+                ));
+            }
+            if let Some(recognition) =
+                scan_record(record, token, disposition, standing, &mut newest)?
+            {
                 let recognition = TranscriptRecognition {
                     locus: TranscriptLocus {
-                        source: Some(source),
-                        member: extent.member,
-                        offset,
-                        length,
+                        source: Some(self.source),
+                        member: record.locus.member,
+                        offset: record.locus.offset,
+                        length: record.locus.length,
                         event: recognition.event,
                         line: recognition.line,
                         column: recognition.column,
@@ -223,8 +258,36 @@ pub(super) fn transcript_recognition(
                 latest_miss.get_or_insert(recognition);
             }
         }
+        if self.tail.start.next > listen::Position::start() {
+            return Err(search_limited(
+                token,
+                "no placed answer in the bounded recent transcript window",
+                self.repair,
+            ));
+        }
+        latest_miss.ok_or_else(|| newest.evidence_absent(token, self.repair))
     }
-    latest_miss.ok_or_else(|| newest.evidence_absent(token, repair))
+}
+
+fn search_limited(token: &str, detail: &str, repair: &str) -> Outcome<CommandAnswer> {
+    refusal(
+        "steer::transcript-search-limited",
+        Some("a placed answer within the bounded recent transcript".to_owned()),
+        Some(token.to_owned()),
+        &format!("{detail}; the directive remains pending; {repair}"),
+    )
+}
+
+/// Search a bounded recent transcript window, newest evidence first.
+pub(super) fn transcript_recognition(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    vendor: &wire::Name,
+    token: &str,
+    disposition: Option<Disposition>,
+    standing: &impl steer::Standing,
+) -> Result<TranscriptRecognition, Outcome<CommandAnswer>> {
+    TranscriptEvidence::read(paths, lane, vendor, token)?.recognize(token, disposition, standing)
 }
 
 struct RecordRecognition {
@@ -235,60 +298,55 @@ struct RecordRecognition {
 }
 
 fn scan_record(
-    bytes: &[u8],
-    locus: tape::Locus,
+    record: &listen::Record,
     token: &str,
     disposition: Option<Disposition>,
     standing: &impl steer::Standing,
     newest: &mut NewestMessage,
 ) -> Result<Option<RecordRecognition>, Outcome<CommandAnswer>> {
-    let registry = spice::extension::registry().map_err(|error| {
-        typed_protocol_fault("steer::extension-registry-invalid", &error.to_string())
-    })?;
+    let listen::RecordPayload::Events(events) = &record.payload else {
+        return Ok(None);
+    };
     let mut latest_miss = None;
-    for vendor in registry.vendors() {
-        let decoded = vendor.decode(bytes, locus).map_err(|error| {
-            typed_protocol_fault("steer::transcript-locus-invalid", &error.to_string())
-        })?;
-        for (event_index, event) in decoded.events().iter().enumerate().rev() {
-            newest.observe(event, locus);
-            let listen::Event::Prose(prose) = event else {
-                continue;
-            };
-            // Only the occupant answers for the lane. Operator input reaches
-            // the same tape as user records, and a continuation summary or a
-            // restated inbox spells the header without anyone having said it.
-            if prose.role != listen::ProseRole::Assistant {
-                continue;
-            }
-            let Some(recognition) = steer::decisive(&prose.text, token, standing) else {
-                continue;
-            };
-            if let ScanOutcome::Retired {
-                disposition: observed,
-                ..
-            } = &recognition.outcome
-                && let Some(requested) = disposition
-                && *observed != requested
-            {
-                return Err(refusal(
-                    "steer::transcript-disposition-mismatch",
-                    Some(format!("{requested:?}").to_lowercase()),
-                    Some(format!("{observed:?}").to_lowercase()),
-                    "make the ack command disposition match the latest transcript marker",
-                ));
-            }
-            let recognition = RecordRecognition {
-                event: checked_locus_part(event_index)?,
-                line: checked_locus_part(recognition.locus.line)?,
-                column: checked_locus_part(recognition.locus.column)?,
-                outcome: recognition.outcome,
-            };
-            if matches!(recognition.outcome, ScanOutcome::Retired { .. }) {
-                return Ok(Some(recognition));
-            }
-            latest_miss.get_or_insert(recognition);
+    for (event_index, sourced) in events.iter().enumerate().rev() {
+        let event = &sourced.event;
+        newest.observe(event, record.locus);
+        let listen::Event::Prose(prose) = event else {
+            continue;
+        };
+        // Only the occupant answers for the lane. Operator input reaches
+        // the same tape as user records, and a continuation summary or a
+        // restated inbox spells the header without anyone having said it.
+        if prose.role != listen::ProseRole::Assistant {
+            continue;
         }
+        let Some(recognition) = steer::decisive(&prose.text, token, standing) else {
+            continue;
+        };
+        if let ScanOutcome::Retired {
+            disposition: observed,
+            ..
+        } = &recognition.outcome
+            && let Some(requested) = disposition
+            && *observed != requested
+        {
+            return Err(refusal(
+                "steer::transcript-disposition-mismatch",
+                Some(format!("{requested:?}").to_lowercase()),
+                Some(format!("{observed:?}").to_lowercase()),
+                "make the ack command disposition match the latest transcript marker",
+            ));
+        }
+        let recognition = RecordRecognition {
+            event: checked_locus_part(event_index)?,
+            line: checked_locus_part(recognition.locus.line)?,
+            column: checked_locus_part(recognition.locus.column)?,
+            outcome: recognition.outcome,
+        };
+        if matches!(recognition.outcome, ScanOutcome::Retired { .. }) {
+            return Ok(Some(recognition));
+        }
+        latest_miss.get_or_insert(recognition);
     }
     Ok(latest_miss)
 }
@@ -297,19 +355,4 @@ fn checked_locus_part(part: usize) -> Result<u32, Outcome<CommandAnswer>> {
     u32::try_from(part).map_err(|error| {
         typed_protocol_fault("steer::transcript-locus-invalid", &error.to_string())
     })
-}
-
-fn record_ranges(bytes: &[u8]) -> Vec<(usize, usize)> {
-    let mut ranges = Vec::new();
-    let mut start = 0;
-    for (index, byte) in bytes.iter().enumerate() {
-        if *byte == b'\n' {
-            ranges.push((start, index + 1));
-            start = index + 1;
-        }
-    }
-    if start < bytes.len() {
-        ranges.push((start, bytes.len()));
-    }
-    ranges
 }

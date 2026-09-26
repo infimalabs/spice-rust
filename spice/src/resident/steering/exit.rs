@@ -3,6 +3,7 @@
 use std::collections::BTreeSet;
 use std::io;
 
+use super::transcript::TranscriptEvidence;
 use super::*;
 use crate::resident::ingest_vendor;
 
@@ -48,7 +49,15 @@ pub(in crate::resident) fn dispose_at_startup(
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let residency = current_residency(bus, epoch)?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     for row in &residency.body().lanes {
+        if std::time::Instant::now() >= deadline {
+            let _ = writeln!(
+                diagnostic,
+                "steering recovery reached its startup time limit; remaining directives stay pending"
+            );
+            break;
+        }
         let interjected = ingest_vendor(&row.vendor)
             .is_some_and(|vendor| vendor.steering() == vendor::SteeringChannel::Interjection);
         if interjected {
@@ -89,7 +98,7 @@ pub(in crate::resident) fn dispose_heard(
 
 /// When a transcript is read for its answers, and which keys it is read for.
 enum Reading<'a> {
-    /// The whole transcript, once the occupant has ended.
+    /// Recent transcript evidence, once the occupant has ended.
     AtExit,
     /// Recovered transcript evidence, independent of accounting progress.
     AtStartup,
@@ -134,15 +143,40 @@ fn dispose_pending(
             return;
         }
     };
+    let mut pending = pending
+        .iter()
+        .filter(|head| {
+            reading.answered(&head.body().key)
+                && !super::super::lifecycle::generation_notices::is_notice(
+                    head.body().control.as_deref(),
+                )
+        })
+        .peekable();
+    let Some(first) = pending.peek() else {
+        return;
+    };
+    let evidence = match TranscriptEvidence::read(paths, lane, vendor, &first.body().key) {
+        Ok(evidence) => evidence,
+        Err(outcome) => {
+            let _ = writeln!(
+                diagnostic,
+                "lane {lane} steering left pending {moment}: {}",
+                failure_line(&outcome)
+            );
+            return;
+        }
+    };
     let mut retired = false;
-    for head in pending.iter().filter(|head| {
-        reading.answered(&head.body().key)
-            && !super::super::lifecycle::generation_notices::is_notice(
-                head.body().control.as_deref(),
-            )
-    }) {
+    for head in pending {
+        if evidence.exhausted() {
+            let _ = writeln!(
+                diagnostic,
+                "lane {lane} steering search reached its time limit {moment}; remaining directives stay pending"
+            );
+            break;
+        }
         let key = head.body().key.as_str();
-        match dispose_head(bus, paths, epoch, lane, vendor, head) {
+        match dispose_head(bus, epoch, lane, head, &evidence) {
             Ok(disposition) => {
                 retired = true;
                 let _ = writeln!(
@@ -169,18 +203,17 @@ fn dispose_pending(
 /// Journal the disposition the transcript carries for one live directive.
 fn dispose_head(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     lane: CanonicalUuid,
-    vendor: &wire::Name,
     head: &journal::JournalHead<wire::SteeringHead>,
+    evidence: &TranscriptEvidence,
 ) -> Result<Disposition, Outcome<CommandAnswer>> {
     let token = head.body().key.as_str();
     let parsed = token
         .parse::<steer::Key>()
         .map_err(|error| typed_protocol_fault("steer::key-invalid", &error.to_string()))?;
     let standing = IndexedStanding::new(Some(parsed), Some(head));
-    let recognition = transcript_recognition(paths, lane, vendor, token, None, &standing)?;
+    let recognition = evidence.recognize(token, None, &standing)?;
     let (key, disposition) = match recognition.outcome {
         ScanOutcome::Retired { key, disposition } => (key, disposition),
         ScanOutcome::Missed { token, miss } => {

@@ -110,9 +110,10 @@ pub struct TailScan {
 ///
 /// Its start retreats toward the nearest preceding newline only while the
 /// allowance retains bytes and passes, so the scanner never interprets a record
-/// suffix as independent vendor evidence. The bytes that retreat crosses are
-/// paid for once: the window reads them again, and pays only from the byte
-/// it was asked for. The end checkpoint remains before an unterminated tail,
+/// suffix as independent vendor evidence. For active members, the bytes that
+/// retreat crosses are paid for once: the window reads them again, and pays
+/// only from the byte it was asked for. Each sealed read pays for decompression
+/// of the whole member. The end checkpoint remains before an unterminated tail,
 /// so a later forward scan cannot miss the suffix that completes it.
 ///
 /// # Errors
@@ -416,14 +417,18 @@ fn scan_window(
         let extent_end = end
             .filter(|end| end.member == extent.member)
             .map_or(extent.length, |end| end.offset.min(extent.length));
-        let unpaid = window.unpaid(extent, start, extent_end);
+        let unpaid = if extent.sealed && start < extent_end {
+            extent.length
+        } else {
+            window.unpaid(extent, start, extent_end)
+        };
         if unpaid > 0 {
             tracker.read(unpaid)?;
         }
         let scanned = {
             let mut admit_record = || tracker.record();
             scan_extent(
-                tape,
+                |locus, extent| bounded_read(tape, locus, extent),
                 dialect,
                 source,
                 extent,
@@ -517,10 +522,8 @@ fn preceding_boundary(
         while end > 0 {
             let start = end.saturating_sub(BOUNDARY_CHUNK_BYTES);
             let length = end - start;
-            tracker.read(length)?;
-            let fragment = tape
-                .read_extent(Locus::new(extent.member, start, length), extent)
-                .map_err(|source| tape_error(tape.root(), source))?;
+            tracker.read(if extent.sealed { extent.length } else { length })?;
+            let fragment = bounded_read(tape, Locus::new(extent.member, start, length), extent)?;
             tracker.check_duration()?;
             if let Some(newline) = fragment.iter().rposition(|byte| *byte == b'\n') {
                 let offset = start + newline as u64 + 1;
@@ -581,4 +584,14 @@ fn tape_error(path: &Path, source: tape::Error) -> ScanError {
         path: PathBuf::from(path),
         source,
     }
+}
+
+fn bounded_read(tape: &Tape, locus: Locus, extent: Extent) -> Result<Vec<u8>, ScanError> {
+    let maximum = if extent.sealed {
+        extent.length
+    } else {
+        locus.length
+    };
+    tape.read_extent_bounded(locus, extent, maximum)
+        .map_err(|source| tape_error(tape.root(), source))
 }

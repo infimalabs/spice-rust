@@ -20,6 +20,38 @@ use tape::{Index, Locus, Refusal, Seal, Tape};
 const VERBATIM: &[u8] = b"prose\x00\xff\xfe line\ntool call\r\n{\"partial\": ";
 
 #[test]
+fn bounded_extent_reads_pay_for_sealing_and_refuse_understated_lengths() {
+    let scratch = Scratch::new("bounded-extent");
+    let tape = Tape::open(scratch.path()).unwrap();
+    let locus = tape.tee(VERBATIM).unwrap();
+    let active = tape.extents().unwrap()[0];
+    let suffix = Locus::new(locus.member, locus.length - 1, 1);
+    assert_eq!(
+        tape.read_extent_bounded(suffix, active, 1).unwrap(),
+        &VERBATIM[VERBATIM.len() - 1..]
+    );
+    tape.seal().unwrap();
+    for extent in [active, tape.extents().unwrap()[0]] {
+        assert!(matches!(
+            tape.read_extent_bounded(suffix, extent, 1),
+            Err(tape::Error::Refused(Refusal::MemberReadLimit { .. }))
+        ));
+        assert_eq!(
+            tape.read_extent_bounded(suffix, extent, locus.length)
+                .unwrap(),
+            &VERBATIM[VERBATIM.len() - 1..]
+        );
+    }
+    let mut understated = tape.extents().unwrap()[0];
+    understated.length = 1;
+    assert!(matches!(
+        tape.read_extent_bounded(Locus::new(locus.member, 0, 1), understated, 1),
+        Err(tape::Error::Refused(Refusal::MemberReadLimit { .. }))
+    ));
+    scratch.remove();
+}
+
+#[test]
 fn one_source_identity_survives_reopen_and_member_sealing() {
     let scratch = Scratch::new("source-stable");
     let path = scratch.path().join("owned");

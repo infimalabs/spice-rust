@@ -253,7 +253,13 @@ fn scan_extents(
             break;
         }
         scan_extent(
-            tape,
+            |locus, extent| {
+                tape.read_extent(locus, extent)
+                    .map_err(|source| ScanError::Tape {
+                        path: tape.root().to_path_buf(),
+                        source,
+                    })
+            },
             dialect,
             source,
             extent,
@@ -266,7 +272,7 @@ fn scan_extents(
 }
 
 fn scan_extent(
-    tape: &Tape,
+    read: impl FnOnce(Locus, tape::Extent) -> Result<Vec<u8>, ScanError>,
     dialect: Dialect,
     source: &SourceId,
     extent: &tape::Extent,
@@ -299,12 +305,7 @@ fn scan_extent(
     }
 
     let locus = Locus::new(extent.member, start, extent_end - start);
-    let fragment = tape
-        .read_extent(locus, *extent)
-        .map_err(|error| ScanError::Tape {
-            path: tape.root().to_path_buf(),
-            source: error,
-        })?;
+    let fragment = read(locus, *extent)?;
     let mut fragment_start = 0_usize;
     for (index, byte) in fragment.iter().enumerate() {
         if *byte != b'\n' {

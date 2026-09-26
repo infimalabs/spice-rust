@@ -551,6 +551,13 @@ pub enum Refusal {
         /// Member that could not be resolved.
         member: u64,
     },
+    /// A range or its sealed member exceeds the admitted plaintext work.
+    MemberReadLimit {
+        /// Member whose read was refused.
+        member: u64,
+        /// Maximum plaintext bytes admitted for this read.
+        limit: u64,
+    },
 }
 
 impl fmt::Display for Refusal {
@@ -593,6 +600,10 @@ impl fmt::Display for Refusal {
             Self::MemberVanished { member } => write!(
                 formatter,
                 "member {member} was neither plaintext nor sealed after a full retry"
+            ),
+            Self::MemberReadLimit { member, limit } => write!(
+                formatter,
+                "reading tape member {member} exceeds the {limit}-byte plaintext limit"
             ),
         }
     }
