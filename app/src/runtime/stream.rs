@@ -436,12 +436,18 @@ impl CanvasRuntime {
             .iter()
             .map(|cursor| cursor.lane)
             .collect::<BTreeSet<_>>();
+        let response_lanes = generation
+            .frontiers
+            .iter()
+            .map(|frontier| frontier.lane)
+            .collect::<BTreeSet<_>>();
         let invalid_interval = requested_lanes.len() != requested.len()
             || generation.frontiers.len() != requested.len()
-            || generation.frontiers.iter().any(|frontier| {
-                !requested_lanes.contains(&frontier.lane)
-                    || frontier.state == wire::TranscriptLaneState::Unavailable
-            })
+            || response_lanes != requested_lanes
+            || generation
+                .frontiers
+                .iter()
+                .any(|frontier| frontier.state == wire::TranscriptLaneState::Unavailable)
             || generation
                 .messages
                 .iter()
