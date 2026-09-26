@@ -198,6 +198,7 @@ fn user(record: &Object, locus: Locus) -> Events {
                 .media;
                 if let Some(Event::Prose(prose)) = events.last_mut() {
                     prose.media.extend(media);
+                    prose.media.truncate(wire::media::MAX_MEDIA_ITEMS);
                     wire::media::validate_media(&prose.media).map_err(|_| {
                         ResidueKind::Malformed {
                             field: "message.content[].media",

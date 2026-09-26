@@ -595,3 +595,63 @@ fn briefing_counts_omp_shell_calls_and_file_edits() {
 
     scratch.remove();
 }
+
+#[test]
+fn briefing_completes_an_omp_command_with_surplus_screenshot_media() {
+    let scratch = Scratch::new("omp-surplus-media");
+    let transcript = scratch
+        .path()
+        .join("2026-09-26T20-00-00-000Z_019f0000-0000-7000-8000-000000000001.jsonl");
+    let mut result = vec![json!({"type": "text", "text": "nine screenshots retained"})];
+    result.extend(
+        (0..=wire::media::MAX_MEDIA_ITEMS)
+            .map(|_| json!({"type": "image", "data": "iVBORw0KGgo=", "mimeType": "image/png"})),
+    );
+    write_jsonl(
+        &transcript,
+        &[
+            json!({"type": "session", "version": 3, "id": "019f0000-0000-7000-8000-000000000001", "timestamp": "2026-09-26T20:00:00Z", "cwd": "/work/tree"}),
+            omp_entry(
+                "2026-09-26T20:00:01Z",
+                "u1",
+                json!({"role": "user", "content": "inspect every screenshot"}),
+            ),
+            omp_entry(
+                "2026-09-26T20:00:02Z",
+                "a1",
+                json!({"role": "assistant", "content": [{"type": "toolCall", "id": "call-nine", "name": "bash", "arguments": {"command": "capture --all"}}], "stopReason": "toolUse"}),
+            ),
+            omp_entry(
+                "2026-09-26T20:00:03Z",
+                "r1",
+                json!({"role": "toolResult", "toolCallId": "call-nine", "toolName": "bash", "content": result, "details": {"exitCode": 0}, "isError": false}),
+            ),
+            omp_entry(
+                "2026-09-26T20:00:04Z",
+                "a2",
+                json!({"role": "assistant", "content": [{"type": "text", "text": "all captures inspected"}], "stopReason": "stop"}),
+            ),
+        ],
+    );
+    let file = transcript.to_string_lossy().into_owned();
+
+    let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
+    assert_eq!(recall["residues"], json!([]));
+    assert_eq!(
+        recall["window"]["turns"][0]["dialogue"],
+        json!([
+            {"side": "user", "text": "inspect every screenshot"},
+            {"side": "assistant", "text": "all captures inspected"},
+        ])
+    );
+    let commands = reply_forms(
+        &strings(&["session", "commands", &file, "--limit", "5"]),
+        &[],
+        "commands",
+    );
+    assert_eq!(commands["rows"][0]["command"], "capture --all");
+    assert_eq!(commands["rows"][0]["status"], "completed");
+    assert_eq!(commands["rows"][0]["exit_code"], 0);
+
+    scratch.remove();
+}
