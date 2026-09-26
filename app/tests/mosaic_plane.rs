@@ -318,26 +318,17 @@ fn interleaved_hydration_replays_deterministically_across_a_compaction_epoch() {
 #[test]
 fn an_overfull_stable_epoch_falls_back_to_complete_replay() {
     let head = measured("head", candidates(12, 2));
-    let compact = boundary("compact", 1);
+    let opening = boundary("opening", 1);
+    let middle = measured("middle", candidates(6, 2));
+    let closing = boundary("closing", 1);
     let recent = measured("recent", candidates(6, 3));
-    let initial = PersistentLanePlane::new(900, &[head.clone(), compact.clone(), recent.clone()]);
-    let older = [
-        "older-a", "older-b", "older-c", "older-d", "older-e", "older-f", "older-g", "older-h",
-    ]
-    .into_iter()
-    .map(|key| measured(key, candidates(6, 2)))
-    .collect::<Vec<_>>();
-    let expanded_snapshot = older
-        .iter()
-        .cloned()
-        .chain([head.clone(), compact.clone(), recent.clone()])
-        .collect::<Vec<_>>();
-    let expanded = initial.reconcile(900, &expanded_snapshot);
-    assert_eq!(expanded.transition(), Transition::Backfill);
+    let initial = [head, opening, middle, closing, recent];
+    let plane = PersistentLanePlane::new(900, &initial);
 
-    let mut complete = expanded_snapshot;
-    complete.insert(older.len(), measured("interleaved", candidates(12, 4)));
-    let replayed = expanded.reconcile(900, &complete);
+    // The epoch between two retained boundaries outgrows the rows they leave it.
+    let mut complete = initial.to_vec();
+    complete.insert(3, measured("interleaved", candidates(12, 4)));
+    let replayed = plane.reconcile(900, &complete);
     let one_shot = PersistentLanePlane::new(900, &complete);
 
     assert_eq!(replayed.transition(), Transition::FullReplay);
@@ -345,6 +336,39 @@ fn an_overfull_stable_epoch_falls_back_to_complete_replay() {
     assert_eq!(
         (replayed.max_row(), replayed.rows()),
         (one_shot.max_row(), one_shot.rows())
+    );
+}
+
+#[test]
+fn older_history_before_a_backfilled_boundary_rests_above_it() {
+    let newest = measured("newest", candidates(6, 7));
+    let compaction = boundary("compaction", 2);
+    let backfilled = PersistentLanePlane::new(900, &[newest.clone()])
+        .reconcile(900, &[compaction.clone(), newest.clone()]);
+    assert_eq!(backfilled.transition(), Transition::Backfill);
+    let retained = backfilled.cards()[0].card.clone();
+
+    // A later page reaches past the boundary while another lane interleaves
+    // after it, so both epochs replay around the retained boundary.
+    let complete = [
+        measured("oldest", candidates(6, 8)),
+        compaction,
+        measured("interleaved", candidates(6, 3)),
+        newest,
+    ];
+    let replayed = backfilled.reconcile(900, &complete);
+
+    assert_eq!(replayed.transition(), Transition::EpochReplay);
+    let cards = replayed.cards();
+    assert_eq!(
+        (cards[1].card.base, cards[1].card.rows),
+        (retained.base, retained.rows)
+    );
+    assert!(cards[0].card.base + cards[0].card.rows <= retained.base);
+    assert!(
+        cards[2..]
+            .iter()
+            .all(|entry| entry.card.base >= retained.base + retained.rows)
     );
 }
 

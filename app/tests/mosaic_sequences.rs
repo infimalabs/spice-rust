@@ -132,7 +132,7 @@ fn a_wide_tier_never_digs_a_hole_to_take_width() {
                 continue;
             }
             wide_placements += 1;
-            let floor = mosaic::derive_row_floor(&placed[..taken], TRACK_COUNT);
+            let floor = mosaic::derive_row_floor(&placed[..taken], 0, TRACK_COUNT);
             let base_anchor = anchor(candidates[0].span, &floor);
             let wide_anchor = anchor(wide.span, &floor);
             assert!(

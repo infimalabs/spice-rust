@@ -284,10 +284,7 @@ fn replay_changed_epochs<K: Clone + Ord>(
         if segment_identity_matches(previous_epoch, desired_epoch) {
             reconciled.extend_from_slice(previous_epoch);
         } else {
-            let upper = entries
-                .get(entry_end)
-                .map(|entry| entry.card.creation_index);
-            let replayed = replay_epoch(&reconciled, desired_epoch, upper);
+            let replayed = replay_epoch(&reconciled, desired_epoch, entries.get(entry_end));
             replayed_keys.extend(replayed.iter().map(|entry| entry.key.clone()));
             reconciled.extend(replayed);
         }
@@ -316,24 +313,34 @@ fn replay_changed_epochs<K: Clone + Ord>(
 fn replay_epoch<K: Clone>(
     older: &[PlaneCard<K>],
     measured: &[MeasuredCard<K>],
-    upper: Option<usize>,
+    upper: Option<&PlaneCard<K>>,
 ) -> Vec<PlaneCard<K>> {
     if measured.is_empty() {
         return Vec::new();
     }
     let older_cards = placed_cards(older);
-    let placed = mosaic::append(&older_cards, &candidate_sets(measured), TRACK_COUNT);
+    let mut placed =
+        mosaic::append(&older_cards, &candidate_sets(measured), TRACK_COUNT).split_off(older.len());
+    // The leading epoch has no boundary beneath it: like backfill, it rests
+    // against the retained boundary above rather than the lattice origin.
+    if older.is_empty()
+        && let Some(upper) = upper
+    {
+        let (epoch_end, _) = mosaic::extent(&placed);
+        for card in &mut placed {
+            card.base += upper.card.base - epoch_end;
+        }
+    }
     let indexes = creation_indexes_between(
         older.last().map(|entry| entry.card.creation_index),
-        upper,
+        upper.map(|entry| entry.card.creation_index),
         measured.len(),
     );
     measured
         .iter()
-        .zip(placed[older.len()..].iter())
+        .zip(placed)
         .zip(indexes)
-        .map(|((item, card), creation_index)| {
-            let mut card = card.clone();
+        .map(|((item, mut card), creation_index)| {
             card.creation_index = creation_index;
             plane_card(item, &card)
         })
