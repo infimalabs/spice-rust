@@ -386,6 +386,15 @@ fn a_live_generation_keeps_a_hydrated_lane_paging_from_its_deepest_cursor() {
     assert!(apply(&mut runtime, &session, &first));
     assert_eq!(target_offset(&runtime, LANE), Some(50));
 
+    let second = history_page(
+        LANE,
+        50,
+        vec![agent_message(LANE, 40, T09, "second page", None)],
+        true,
+    );
+    assert!(apply(&mut runtime, &session, &second));
+    assert_eq!(target_offset(&runtime, LANE), Some(40));
+
     let live = message_generation_frame(
         2,
         vec![agent_message(LANE, 150, T14, "live work", None)],
@@ -398,14 +407,14 @@ fn a_live_generation_keeps_a_hydrated_lane_paging_from_its_deepest_cursor() {
     assert!(apply(&mut runtime, &session, &live));
     assert_eq!(
         target_offset(&runtime, LANE),
-        Some(50),
+        Some(40),
         "the retained edge must not replace the hydrated cursor",
     );
 
     // The page requested before the live generation is answered after it.
     let deeper = history_page(
         LANE,
-        50,
+        40,
         vec![agent_message(LANE, 25, T08, "deeper page", None)],
         true,
     );
@@ -417,7 +426,13 @@ fn a_live_generation_keeps_a_hydrated_lane_paging_from_its_deepest_cursor() {
             .iter()
             .map(|message| message.text.as_str())
             .collect::<Vec<_>>(),
-        ["deeper page", "first page", "retained head", "live work"],
+        [
+            "deeper page",
+            "second page",
+            "first page",
+            "retained head",
+            "live work",
+        ],
     );
 
     let resume = serde_json::to_vec(&serde_json::json!({
