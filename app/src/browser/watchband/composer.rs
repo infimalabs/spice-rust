@@ -60,6 +60,8 @@ pub(super) fn keyboard_submit(
 #[derive(Properties, PartialEq)]
 pub(super) struct ComposerTextareaProps {
     pub(super) id: String,
+    pub(super) lane: String,
+    pub(super) drafts: UseReducerDispatcher<ComposerDrafts>,
     pub(super) label: String,
     pub(super) body: String,
     pub(super) placeholder: String,
@@ -98,6 +100,37 @@ pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
             }
         });
     }
+    {
+        let root = root.clone();
+        let drafts = properties.drafts.clone();
+        let lane = properties.lane.clone();
+        let quote = properties.quote_identity.clone();
+        // Typed text lives in the element, not the store, until it is sent. The
+        // element is keyed by the body it is drawn from, so it writes that body
+        // once as it mounts; a value re-applied on every render would overwrite
+        // typing. A lane moved into another team is rebuilt there from the
+        // store, so the text an element leaves behind is handed back as it goes.
+        use_effect_with(properties.body.clone(), move |drawn| {
+            let textarea = root.cast::<web_sys::HtmlTextAreaElement>();
+            if let Some(textarea) = &textarea {
+                textarea.set_value(drawn);
+            }
+            let drawn = drawn.clone();
+            move || {
+                let Some(live) = textarea.map(|textarea| textarea.value()) else {
+                    return;
+                };
+                if live != drawn {
+                    drafts.dispatch(ComposerAction::KeepDetached {
+                        lane,
+                        quote,
+                        drawn,
+                        live,
+                    });
+                }
+            }
+        });
+    }
     html! {
         <textarea
             ref={root}
@@ -110,7 +143,7 @@ pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
             rows={properties.rows}
             placeholder={properties.placeholder.clone()}
             onpaste={properties.onpaste.clone()}
-        >{properties.body.clone()}</textarea>
+        ></textarea>
     }
 }
 
@@ -696,6 +729,8 @@ pub(super) fn render_quote_shards(
                         <ComposerTextarea
                             key={quote.body.clone()}
                             id={textarea_id}
+                            lane={lane_key.to_owned()}
+                            drafts={drafts.dispatcher()}
                             label="Reply to quoted message"
                             body={quote.body.clone()}
                             placeholder={placeholder.to_owned()}
