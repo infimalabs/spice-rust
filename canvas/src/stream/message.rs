@@ -264,20 +264,27 @@ impl MessageFeed {
                 None => {
                     return Ok(HistoryLaneRead {
                         messages: Vec::new(),
-                        frontier: frontier.clone(),
+                        frontier: *frontier,
                     });
                 }
             },
         };
-        let mut page = retained_history_page(
+        let page = retained_history_page(
             &read.retained,
             cursor.lane,
             retained_before.as_ref(),
             read.lane_limit,
             read.open_lanes.contains(&cursor.lane),
         )
+        .map(Some)
         .map(Ok)
         .unwrap_or_else(|| source_history_page(read, cursor.lane, before.as_ref()))?;
+        let Some(mut page) = page else {
+            return Ok(HistoryLaneRead {
+                messages: Vec::new(),
+                frontier: *frontier,
+            });
+        };
         reconcile_history_page(&read.retained, &mut page);
         if page.messages.len() > read.lane_limit {
             return Err(MessagePublishError::InvalidHistory);
@@ -435,17 +442,16 @@ fn source_history_page(
     read: &HistoryRead,
     lane: wire::CanonicalUuid,
     before: Option<&AgentMessage>,
-) -> Result<MessageHistoryPage, MessagePublishError> {
+) -> Result<Option<MessageHistoryPage>, MessagePublishError> {
     let Some(provider) = &read.provider else {
-        return Ok(MessageHistoryPage {
+        return Ok(Some(MessageHistoryPage {
             messages: Vec::new(),
             more: false,
-        });
+        }));
     };
     provider
         .history(lane, before, read.lane_limit)
-        .map_err(MessagePublishError::History)?
-        .ok_or(MessagePublishError::InvalidHistoryCursor)
+        .map_err(MessagePublishError::History)
 }
 
 fn reconcile_history_page(retained: &VecDeque<AgentMessage>, page: &mut MessageHistoryPage) {

@@ -545,6 +545,34 @@ impl MessageHistoryProvider for FixtureHistory {
     }
 }
 
+#[derive(Debug)]
+struct RebasedHistory {
+    before: wire::MessageLocus,
+    messages: Vec<AgentMessage>,
+}
+
+impl MessageHistoryProvider for RebasedHistory {
+    fn history(
+        &self,
+        lane: wire::CanonicalUuid,
+        before: Option<&AgentMessage>,
+        _limit: usize,
+    ) -> Result<Option<MessageHistoryPage>, String> {
+        if before.map(|message| message.locus) != Some(self.before) {
+            return Ok(None);
+        }
+        Ok(Some(MessageHistoryPage {
+            messages: self
+                .messages
+                .iter()
+                .filter(|message| message.lane == lane)
+                .cloned()
+                .collect(),
+            more: false,
+        }))
+    }
+}
+
 fn history_page(source: &Source, cursor: wire::MessageHistoryCursor) -> wire::TranscriptGeneration {
     let frame = source
         .message_history(
@@ -616,6 +644,27 @@ fn a_located_history_cursor_keeps_paging_across_live_publication() {
     let second = history_page(&source, deep);
     assert!(second.generation > deep.generation);
     assert_eq!(page_offsets(&second), [30, 40]);
+
+    let stale = history_cursors(&second)[0];
+    publisher
+        .set_history_provider(Arc::new(RebasedHistory {
+            before: head.locus,
+            messages: [message(0xe5, 70), message(0xe5, 80)].to_vec(),
+        }))
+        .expect("rebased history provider installs");
+    let resumed = history_page(&source, stale);
+    assert!(resumed.messages.is_empty());
+    assert_eq!(
+        resumed.frontiers[0].before,
+        Some(head.locus),
+        "a cached anchor rejected by the current source resumes at the retained edge",
+    );
+    let rebased = history_page(&source, history_cursors(&resumed)[0]);
+    assert_eq!(page_offsets(&rebased), [70, 80]);
+    assert!(
+        history_cursors(&rebased).is_empty(),
+        "the rebased source reaches its terminal boundary",
+    );
 
     let unissued = wire::MessageHistoryCursor {
         before: Some(message(0xe5, 45).locus),

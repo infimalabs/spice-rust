@@ -419,6 +419,50 @@ fn a_live_generation_keeps_a_hydrated_lane_paging_from_its_deepest_cursor() {
             .collect::<Vec<_>>(),
         ["deeper page", "first page", "retained head", "live work"],
     );
+
+    let resume = serde_json::to_vec(&serde_json::json!({
+        "stream": "message-history",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "requested": [{
+            "generation": 1,
+            "lane": LANE,
+            "before": {"member": 1, "offset": 25, "length": 20, "event": 0},
+        }],
+        "generation": transcript_generation(
+            2,
+            Vec::new(),
+            vec![serde_json::json!({
+                "lane": LANE,
+                "state": "truncated",
+                "before": {"member": 1, "offset": 100, "length": 20, "event": 0},
+            })],
+        ),
+    }))
+    .expect("resume page serializes");
+    assert!(apply(&mut runtime, &session, &resume));
+    assert_eq!(
+        target_offset(&runtime, LANE),
+        Some(100),
+        "the explicit retained edge replaces the invalidated deep cursor",
+    );
+
+    let rebased = history_page_at(
+        2,
+        LANE,
+        100,
+        vec![agent_message(LANE, 75, T09, "rebased history", None)],
+        false,
+    );
+    assert!(apply(&mut runtime, &session, &rebased));
+    assert_eq!(target_offset(&runtime, LANE), None);
+    assert!(
+        runtime
+            .messages()
+            .iter()
+            .any(|message| message.text == "rebased history")
+    );
 }
 
 fn interleave_live_work_and_member_pages(runtime: &mut CanvasRuntime, session: &Session) {
