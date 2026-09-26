@@ -162,6 +162,9 @@ impl Source {
             cursor,
             pending: BTreeMap::new(),
             barrier: Some(heads),
+            message_generation: message_generation
+                .as_ref()
+                .map(|generation| generation.generation),
             catch_up: None,
             rows: self.rows,
         };

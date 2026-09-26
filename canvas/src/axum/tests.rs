@@ -745,6 +745,12 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
         let _ = stopped.await;
     }));
     let (mut socket, _) = authenticate(address, operator(), epoch()).await;
+    let queued = agent_message(0xe8, 70, "captured before subscription admission");
+    assert!(
+        publisher
+            .publish(queued.clone())
+            .expect("queued message publishes")
+    );
     let subscription = identity(0xd0);
     send_client(
         &mut socket,
@@ -761,15 +767,19 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
     assert!(matches!(
         initial,
         wire::StreamFrame::Messages { limit: 256, ref generation, .. }
-            if generation.messages == [first, second]
+            if generation.messages == [first, second, queued]
     ));
 
-    let third = agent_message(0xe8, 70, "third author");
-    assert!(publisher.publish(third.clone()).expect("third publishes"));
+    let live = agent_message(0xe9, 100, "first live generation");
+    assert!(
+        publisher
+            .publish(live.clone())
+            .expect("live message publishes")
+    );
     assert!(matches!(
         stream_frame(&mut socket).await,
         wire::StreamFrame::MessageGeneration { id, generation, .. }
-            if id == subscription && generation.messages == [third]
+            if id == subscription && generation.messages == [live]
     ));
 
     shutdown.send(()).expect("shutdown signals");
