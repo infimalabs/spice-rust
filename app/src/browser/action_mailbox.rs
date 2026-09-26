@@ -504,7 +504,16 @@ impl ActionMailbox {
             ClientAction::MessageHistory { lane, before, .. } => Some((*lane, *before)),
             _ => None,
         };
-        if history.is_some_and(|key| self.history.contains(&key)) {
+        if let Some(key) = history.filter(|key| self.history.contains(key)) {
+            // Only the newest transcript generation can answer: a queued older
+            // request for the same frontier would be refused as stale.
+            if let Some(queued) = self
+                .records
+                .iter_mut()
+                .find(|queued| queued.history == Some(key))
+            {
+                queued.action = action;
+            }
             return Ok(());
         }
         if history.is_some() && self.history.len() >= HISTORY_RECORD_LIMIT {
@@ -1080,5 +1089,33 @@ mod tests {
             queue.settle_pending(pending),
             Some(PendingKind::TaskRelations { key }) if key == dependency
         ));
+    }
+
+    #[test]
+    fn a_newer_generation_supersedes_a_queued_history_request_for_the_same_frontier() {
+        let (queue, _wakes) = ActionQueue::new();
+        let history = |generation| ClientAction::MessageHistory {
+            generation,
+            lane: id(50),
+            before: None,
+        };
+        queue
+            .admit(history(1), None)
+            .expect("first history request");
+        queue.admit(history(2), None).expect("newer generation");
+        queue
+            .admit(history(2), None)
+            .expect("repeated current request");
+
+        let lease = queue.lease().expect("one history request leases");
+        assert!(matches!(
+            lease.action(),
+            ClientAction::MessageHistory { generation: 2, .. }
+        ));
+        drop(lease.commit());
+        assert!(
+            queue.lease().is_none(),
+            "the frontier sends one request at its newest generation"
+        );
     }
 }
