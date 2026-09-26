@@ -7,9 +7,7 @@ use journal::crossing::{AnyFact, CanonicalUuid, Envelope, FactKind, Seq, body};
 use journal::{FactReadBudget, FactSnapshot, GuardError, Journal};
 
 type Position = (u64, u64);
-type Stream = (CanonicalUuid, String, String);
 type Sessions = BTreeMap<(Position, Seq), TranscriptSession>;
-type PendingSessions = BTreeMap<Position, Vec<(Seq, TranscriptSession)>>;
 
 /// Author and worktree authenticated by a source-qualified session declaration.
 #[derive(Clone, Debug)]
@@ -22,67 +20,54 @@ pub struct TranscriptSession {
     pub worktree: PathBuf,
 }
 
-/// Disposable session lookup, with declarations awaiting their first ingestion.
+/// Disposable session lookup over source-qualified declarations.
 #[derive(Clone, Debug, Default)]
 pub struct TranscriptSessions {
     sources: BTreeMap<(CanonicalUuid, CanonicalUuid), Sessions>,
-    pending: BTreeMap<Stream, PendingSessions>,
 }
 
 #[cfg(test)]
 mod tests;
 
 impl TranscriptSessions {
-    /// Recover session bindings in journal order without rescanning ingestions.
-    #[must_use]
-    pub fn from_snapshot(snapshot: &FactSnapshot) -> Self {
+    /// Recover source-qualified session bindings in journal order.
+    ///
+    /// # Errors
+    ///
+    /// Refuses an unqualified declaration that should have crossed the schema
+    /// 30 to 31 migration before any runtime reader observed it.
+    pub fn from_snapshot(snapshot: &FactSnapshot) -> Result<Self, String> {
         let mut sessions = Self::default();
         for fact in snapshot.facts() {
-            sessions.apply(fact);
+            sessions.apply(fact)?;
         }
-        sessions
+        Ok(sessions)
     }
 
-    fn apply(&mut self, envelope: &Envelope<AnyFact>) {
-        if let Some(session) = envelope.fact.read::<body::LaneSessionDeclared>() {
-            self.pending
-                .entry((session.lane, session.vendor.to_string(), session.stream))
-                .or_default()
-                .entry((session.member, session.offset))
-                .or_default()
-                .push((
-                    envelope.seq,
-                    TranscriptSession {
-                        occupant: session.occupant,
-                        vendor: session.vendor.to_string(),
-                        worktree: session.worktree.into(),
-                    },
-                ));
-        } else if let Some(batch) = envelope.fact.read::<body::JournalIngested>() {
-            let stream = (batch.lane, batch.vendor.to_string(), batch.stream);
-            let Some(pending) = self.pending.get_mut(&stream) else {
-                return;
-            };
-            let from = (batch.from.member, batch.from.offset);
-            let to = (batch.to.member, batch.to.offset);
-            if from >= to {
-                return;
-            }
-            // Only declarations preceding this batch can bind to its source.
-            // Remove each match so a later overlapping batch cannot rebind it.
-            while let Some((&position, _)) = pending.range(from..to).next() {
-                let declarations = pending
-                    .remove(&position)
-                    .expect("observed pending position");
-                let sessions = self.sources.entry((batch.lane, batch.source)).or_default();
-                for (seq, session) in declarations {
-                    sessions.insert((position, seq), session);
-                }
-            }
-            if pending.is_empty() {
-                self.pending.remove(&stream);
-            }
-        }
+    fn apply(&mut self, envelope: &Envelope<AnyFact>) -> Result<(), String> {
+        let Some(session) = envelope.fact.read::<body::LaneSessionDeclared>() else {
+            return Ok(());
+        };
+        let source = session.source.ok_or_else(|| {
+            format!(
+                "schema 31 lane session at sequence {} has no tape generation; \
+                 use the release that owns schema 30 to migrate this authority",
+                envelope.seq
+            )
+        })?;
+        let position = (session.member, session.offset);
+        self.sources
+            .entry((session.lane, source))
+            .or_default()
+            .insert(
+                (position, envelope.seq),
+                TranscriptSession {
+                    occupant: session.occupant,
+                    vendor: session.vendor.to_string(),
+                    worktree: session.worktree.into(),
+                },
+            );
+        Ok(())
     }
 
     /// Latest session at or before one position in an exact source generation.
@@ -126,12 +111,12 @@ impl TranscriptSessionState {
         journal.read(|read| {
             while self.cursor != read.cursor()? {
                 let page = read.selected_fact_page(
-                    &[FactKind::LaneSessionDeclared, FactKind::JournalIngested],
+                    &[FactKind::LaneSessionDeclared],
                     self.cursor,
                     FactReadBudget::RETAINED,
                 )?;
                 for fact in &page.rows {
-                    self.sessions.apply(fact);
+                    self.sessions.apply(fact).map_err(GuardError::Invalid)?;
                 }
                 self.cursor = page.continuation.or(page.horizon);
             }

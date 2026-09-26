@@ -1069,6 +1069,7 @@ fn proven(fixture: &Fixture) -> ProvenOccupant {
         occupant: fixture.successor,
         group: 42,
         git: "current".into(),
+        source: fixture.new_epoch,
         session: wire::LaneSession {
             lane: fixture.lane,
             occupant: fixture.successor,

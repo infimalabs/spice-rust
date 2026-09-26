@@ -53,7 +53,7 @@ pub(super) use restart_claim::append_startup_claims;
 pub(super) use retune::retune;
 pub(super) use session::{
     DeclarationReporter, DeclarationState, DeclarationWitness, SessionProof, SessionProofError,
-    await_session, launch_resume, record_stream, resume_session, session_fact,
+    await_session, launch_resume, record_stream, resume_session, session_fact, session_source,
 };
 pub(super) use team::{arrange as arrange_teams, configure};
 
@@ -667,6 +667,7 @@ struct ProvenOccupant {
     occupant: CanonicalUuid,
     group: u32,
     session: wire::LaneSession,
+    source: CanonicalUuid,
     git: String,
     fresh_session: bool,
 }

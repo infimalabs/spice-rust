@@ -641,6 +641,7 @@ fn seed_occupied_lane(
                 launch: session.launch,
                 epoch: session.epoch,
                 stream: session.stream,
+                source: None,
                 identity: session.identity,
                 member: session.locus.member,
                 offset: session.locus.offset,

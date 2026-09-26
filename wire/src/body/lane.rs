@@ -392,6 +392,8 @@ pub struct LaneSessionDeclared {
     pub epoch: CanonicalUuid,
     /// Selected child stream carrying records.
     pub stream: String,
+    /// Durable tape generation carrying the declaration, absent on legacy facts.
+    pub source: Option<CanonicalUuid>,
     /// Exact resumable vendor identity.
     pub identity: String,
     /// Durable tape member holding the declaration.
@@ -435,6 +437,12 @@ struct LaneSessionDeclaredWire {
     rtk: Option<RtkHealth>,
     epoch: CanonicalUuid,
     stream: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    source: Option<CanonicalUuid>,
     identity: String,
     member: u64,
     offset: u64,
@@ -453,6 +461,7 @@ impl TryFrom<LaneSessionDeclaredWire> for LaneSessionDeclared {
             launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort, wire.git, wire.rtk)?,
             epoch: wire.epoch,
             stream: wire.stream,
+            source: wire.source,
             identity: wire.identity,
             member: wire.member,
             offset: wire.offset,
@@ -475,6 +484,7 @@ impl From<LaneSessionDeclared> for LaneSessionDeclaredWire {
             rtk,
             epoch: declaration.epoch,
             stream: declaration.stream,
+            source: declaration.source,
             identity: declaration.identity,
             member: declaration.member,
             offset: declaration.offset,

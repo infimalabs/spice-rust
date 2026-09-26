@@ -72,10 +72,15 @@ pub(super) fn wake(
         Ok(launch) => launch,
         Err(outcome) => return typed_outcome(outcome),
     };
+    let source = match session_source(paths, &launch.session) {
+        Ok(source) => source,
+        Err(outcome) => return typed_outcome(outcome),
+    };
     let proven = ProvenOccupant {
         occupant: launch.occupant,
         group: launch.group,
         session: launch.session,
+        source,
         git: launch.git,
         fresh_session,
     };
@@ -254,10 +259,15 @@ fn wake_automatic_with(
         Ok(launch) => launch,
         Err(outcome) => return Ok(AutomaticWake::Unstarted(outcome)),
     };
+    let source = match session_source(paths, &launch.session) {
+        Ok(source) => source,
+        Err(outcome) => return Ok(AutomaticWake::Unstarted(outcome)),
+    };
     let proven = ProvenOccupant {
         occupant: launch.occupant,
         group: launch.group,
         session: launch.session,
+        source,
         git: launch.git,
         fresh_session,
     };
@@ -639,7 +649,7 @@ fn prepare_wake_commit(
     }
     let declared = write
         .fact(
-            session_fact(&proven.session),
+            session_fact(&proven.session, proven.source),
             FactCause::Existing(observed.position()),
         )
         .map_err(|error| store_fault("lifecycle::wake-fact-invalid", &error.to_string()))?;

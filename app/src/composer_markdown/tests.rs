@@ -866,7 +866,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
 }
 
 #[test]
-fn unavailable_quote_cards_name_reason_and_target_without_changing_plain_quotes() {
+fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_prose() {
     let target = steering_target("dTVQdQfLw", "missing");
     let target_text = target.to_string();
     let unavailable = [wire::QuotePresentation::Unavailable {
@@ -887,8 +887,9 @@ fn unavailable_quote_cards_name_reason_and_target_without_changing_plain_quotes(
             .html
             .contains("data-quote-reason=\"depth-exceeded\"")
     );
-    assert!(rendered.html.contains(&target_text));
-
+    assert!(rendered.html.contains("data-quote-target=\"spice://quote/"));
+    assert!(!rendered.html.contains("<code>"));
+    assert!(!rendered.html.contains("message-quote-body"));
     let ordinary = render_received("> copied words");
     assert!(ordinary.html.contains("<blockquote>"));
     assert!(ordinary.html.contains("copied words"));

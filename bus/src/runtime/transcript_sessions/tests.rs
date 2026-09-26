@@ -27,6 +27,7 @@ fn declaration(occupant: u64, offset: u64) -> body::LaneSessionDeclared {
         launch: None,
         epoch: uuid(8),
         stream: "session".to_owned(),
+        source: Some(uuid(6)),
         identity: format!("session-{occupant}"),
         member: 0,
         offset,
@@ -34,62 +35,32 @@ fn declaration(occupant: u64, offset: u64) -> body::LaneSessionDeclared {
     }
 }
 
-fn ingestion(source: u64, from: u64, to: u64) -> body::JournalIngested {
-    body::JournalIngested {
-        lane: uuid(1),
-        vendor: "codex".parse().unwrap(),
-        stream: "session".to_owned(),
-        source: uuid(source),
-        supersedes: None,
-        from: body::TranscriptPosition {
-            member: 0,
-            offset: from,
-        },
-        to: body::TranscriptPosition {
-            member: 0,
-            offset: to,
-        },
-        usage: Vec::new(),
-        non_usage_records: 1,
-        residue_records: 0,
-    }
+#[test]
+fn source_qualified_declaration_resolves_without_a_later_ingestion() {
+    let mut journal = Journal::in_memory().unwrap();
+    let mut facts = write();
+    facts.fact(declaration(3, 10), FactCause::Root).unwrap();
+    journal.apply(facts).unwrap();
+
+    let sessions = TranscriptSessions::from_snapshot(&journal.fact_snapshot().unwrap()).unwrap();
+    assert_eq!(
+        sessions.at(uuid(1), uuid(6), 0, 10).unwrap().occupant,
+        uuid(3)
+    );
 }
 
 #[test]
-fn sessions_bind_only_to_the_first_subsequent_matching_ingestion() {
+fn unqualified_declaration_refuses_the_runtime_index() {
     let mut journal = Journal::in_memory().unwrap();
     let mut facts = write();
-    facts.fact(ingestion(9, 0, 30), FactCause::Root).unwrap();
-    facts.fact(declaration(3, 10), FactCause::Root).unwrap();
-    facts.fact(declaration(4, 20), FactCause::Root).unwrap();
-    for mismatch in 0..3 {
-        let mut batch = ingestion(9, 0, 30);
-        match mismatch {
-            0 => batch.lane = uuid(2),
-            1 => batch.vendor = "claude".parse().unwrap(),
-            _ => batch.stream = "stderr".to_owned(),
-        }
-        facts.fact(batch, FactCause::Root).unwrap();
-    }
-    facts.fact(ingestion(6, 10, 20), FactCause::Root).unwrap();
-    facts.fact(declaration(5, 10), FactCause::Root).unwrap();
-    facts.fact(ingestion(7, 0, 30), FactCause::Root).unwrap();
+    let mut declared = declaration(3, 10);
+    declared.source = None;
+    facts.fact(declared, FactCause::Root).unwrap();
     journal.apply(facts).unwrap();
-    let sessions = TranscriptSessions::from_snapshot(&journal.fact_snapshot().unwrap());
-    assert!(sessions.at(uuid(1), uuid(9), 0, 20).is_none());
-    assert!(sessions.at(uuid(1), uuid(6), 0, 9).is_none());
-    assert_eq!(
-        sessions.at(uuid(1), uuid(6), 0, 20).unwrap().occupant,
-        uuid(3)
-    );
-    assert_eq!(
-        sessions.at(uuid(1), uuid(7), 0, 10).unwrap().occupant,
-        uuid(5)
-    );
-    assert_eq!(
-        sessions.at(uuid(1), uuid(7), 0, 20).unwrap().occupant,
-        uuid(4)
-    );
+
+    let error = TranscriptSessions::from_snapshot(&journal.fact_snapshot().unwrap())
+        .expect_err("schema 31 refuses an unqualified session");
+    assert!(error.contains("release that owns schema 30"), "{error}");
 }
 
 #[test]
@@ -105,18 +76,6 @@ fn reader_sessions_advance_across_recovery_pages_and_later_commits() {
     journal.apply(facts).unwrap();
     let bus = Bus::start(journal).unwrap();
     let reader = bus.reader();
-    assert!(
-        reader
-            .transcript_session(uuid(1), uuid(6), 0, count - 1)
-            .unwrap()
-            .is_none()
-    );
-    let mut facts = write();
-    facts.fact(ingestion(6, 0, count), FactCause::Root).unwrap();
-    assert!(matches!(
-        bus.commit(facts).unwrap(),
-        CommitOutcome::Committed(_)
-    ));
     for current in [reader.clone(), bus.reader()] {
         for offset in [0, count - 1] {
             let session = current
@@ -133,7 +92,6 @@ fn reader_sessions_advance_across_recovery_pages_and_later_commits() {
     // A later declaration at the same position wins within the same source.
     let mut facts = write();
     facts.fact(declaration(5, 0), FactCause::Root).unwrap();
-    facts.fact(ingestion(6, 0, 1), FactCause::Root).unwrap();
     assert!(matches!(
         bus.commit(facts).unwrap(),
         CommitOutcome::Committed(_)
