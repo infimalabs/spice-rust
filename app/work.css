@@ -605,6 +605,12 @@
 
 .work-detail--map { width: min(64rem, calc(100vw - 3rem)); }
 .work-map-content { display: grid; gap: 14px; padding: 14px 22px 28px; }
+.work-map-primary-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
 .work-map-lenses {
   display: flex;
   flex-wrap: wrap;
@@ -641,6 +647,7 @@
   gap: 2px;
   padding: 3px;
 }
+.work-map-direction { margin-left: auto; }
 .work-map-control-group button { padding: 5px 9px; font-size: .7rem; }
 .work-map-depth span,
 .work-map-zoom span {
