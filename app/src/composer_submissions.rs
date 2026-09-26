@@ -713,12 +713,17 @@ impl SubmissionQueue {
             .collect()
     }
 
-    /// Retire by stable backend key or a read issued after acceptance.
+    /// Retire accepted predictions after one causally fresh inbox observation.
+    ///
+    /// The return value says an accepted directive was absent from that inbox.
+    /// Its pending prediction is then gone, but the lane may already have
+    /// started processing it, so the caller must refresh lane activity after
+    /// this observation rather than relying on an older concurrent lane read.
     pub(crate) fn observe_backend<'a>(
         &mut self,
         pending: impl Iterator<Item = &'a PendingDirective>,
         covered: &BTreeMap<CanonicalUuid, String>,
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         let backend = pending
             .filter(|directive| self.identities.contains_key(&directive.directive))
             .map(|directive| (directive.directive, directive.key.clone()))
@@ -741,6 +746,17 @@ impl SubmissionQueue {
                 }
             }
         }
+        let consumed = self.rows.values().flatten().any(|submission| {
+            submission
+                .stage
+                .acceptance()
+                .is_some_and(|(directive, key)| {
+                    !backend.contains_key(&directive)
+                        && covered
+                            .get(&directive)
+                            .is_some_and(|observed| observed == key)
+                })
+        });
         let retired = self
             .rows
             .values()
@@ -758,7 +774,7 @@ impl SubmissionQueue {
         for id in retired {
             self.remove(id);
         }
-        Ok(())
+        Ok(consumed)
     }
 
     pub(crate) fn status(&self) -> SubmissionStatus {
@@ -1044,13 +1060,34 @@ mod tests {
         accept(&mut queue, ID_A, "1kKey", Disposition::Live);
         assert!(queue.status().is_unsafe());
         assert_eq!(queue.accepted()[&uuid(ID_A)], "1kKey");
-        queue
-            .observe_backend([pending(ID_A, "1kKey")].iter(), &BTreeMap::new())
-            .unwrap();
+        assert!(
+            !queue
+                .observe_backend([pending(ID_A, "1kKey")].iter(), &BTreeMap::new())
+                .unwrap(),
+            "a directive still pending does not imply lane activity changed"
+        );
         assert_eq!(queue.status().len(), 1);
         assert_eq!(queue.ready()[0].id, uuid(ID_B));
 
         accept(&mut queue, ID_B, "1kDone", Disposition::Acked);
+        assert!(queue.identities.is_empty());
+    }
+
+    #[test]
+    fn a_consumed_accepted_submission_requires_newer_lane_activity() {
+        let mut queue = SubmissionQueue::default();
+        queue.enqueue(submission(ID_A, LANE_A, "start")).unwrap();
+        accept(&mut queue, ID_A, "1kStarted", Disposition::Live);
+
+        assert!(
+            queue
+                .observe_backend(
+                    std::iter::empty(),
+                    &BTreeMap::from([(uuid(ID_A), "1kStarted".to_owned())]),
+                )
+                .unwrap(),
+            "a post-acceptance inbox without the directive invalidates an older lane read"
+        );
         assert!(queue.identities.is_empty());
     }
 
