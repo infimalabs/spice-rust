@@ -26,7 +26,8 @@ mod session_compaction;
 mod sweep;
 mod tool_preview;
 use acknowledgement::{
-    ContextState, present_steering_acknowledgements_with_directives, scan_presentations,
+    ContextState, Presentation, present_steering_acknowledgements_with_directives,
+    scan_presentations,
 };
 pub(in crate::resident) use pending::settle_pending_presentations;
 #[cfg(test)]
@@ -537,7 +538,7 @@ fn present_steering_acknowledgements(
                 store_fault("canvas::message-steering-presentation-invalid", &detail)
             })?;
     Ok(PresentedMessageText {
-        text: presented,
+        text: presented.text,
         classifications,
     })
 }
@@ -806,10 +807,20 @@ impl From<ClassificationCounts> for RemainingClassifications {
     }
 }
 
+/// Classify the markers a presented message carries, one quote level at a time.
+///
+/// The first quote level is the live answer: its markers are bounded by the
+/// counts this answer's recognized keys earned. Each level below it is the
+/// history a quoted directive carried, and within a directive context the
+/// resident inserted every level repeats the same rule on its own lines: an
+/// acknowledgement, pending, or decline marker opening a line is the pill an
+/// earlier presentation showed. Those historical pills never draw on the live
+/// counts, and the same words anywhere the agent wrote them stay literal.
 fn hydrate_message_classifications(
-    text: &str,
+    presented: &Presentation,
     counts: ClassificationCounts,
 ) -> Result<Vec<wire::MessageClassification>, String> {
+    let text = presented.text.as_str();
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -821,8 +832,18 @@ fn hydrate_message_classifications(
     let mut quote_depth = 0usize;
     let mut code_block = false;
     let mut image_depth = 0usize;
+    let mut opens_line = false;
     let mut classifications = Vec::new();
     for (event, source) in Parser::new_ext(text, options).into_offset_iter() {
+        let line_start = std::mem::replace(
+            &mut opens_line,
+            matches!(
+                event,
+                MarkdownEvent::Start(Tag::Paragraph)
+                    | MarkdownEvent::SoftBreak
+                    | MarkdownEvent::HardBreak
+            ),
+        );
         match &event {
             MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
             MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
@@ -845,61 +866,25 @@ fn hydrate_message_classifications(
         let source_tail = text
             .get(source.start..)
             .ok_or_else(|| "Markdown source offset is not UTF-8 aligned".to_owned())?;
-        let kind = if quote_depth == 1
-            && take_classification(
-                source_tail,
-                wire::MessageClassificationKind::Review,
-                &mut remaining.reviews,
-            ) {
-            Some(wire::MessageClassificationKind::Review)
-        } else if quote_depth == 1
-            && take_classification(
-                source_tail,
-                wire::MessageClassificationKind::Broadcast,
-                &mut remaining.broadcasts,
-            )
-        {
-            Some(wire::MessageClassificationKind::Broadcast)
-        } else if quote_depth == 1
-            && take_classification(
-                source_tail,
-                wire::MessageClassificationKind::AcknowledgementPending,
-                &mut remaining.pending,
-            )
-        {
-            Some(wire::MessageClassificationKind::AcknowledgementPending)
-        } else if quote_depth == 1
-            && take_classification(
-                source_tail,
-                wire::MessageClassificationKind::Decline,
-                &mut remaining.declines,
-            )
-        {
-            Some(wire::MessageClassificationKind::Decline)
-        } else if quote_depth == 1
-            && take_classification(
-                source_tail,
-                wire::MessageClassificationKind::Acknowledgement,
-                &mut remaining.acknowledgements,
-            )
-        {
-            Some(wire::MessageClassificationKind::Acknowledgement)
-        } else if take_classification(
-            source_tail,
-            wire::MessageClassificationKind::Taste,
-            &mut remaining.tastes,
-        ) {
-            Some(wire::MessageClassificationKind::Taste)
+        let historical = quote_depth > 1
+            && line_start
+            && presented
+                .contexts
+                .iter()
+                .any(|context| context.contains(&source.start));
+        let kind = if historical {
+            historical_classification(source_tail)
         } else {
             None
         };
-        let Some(kind) = kind else {
+        let Some(kind) =
+            kind.or_else(|| live_classification(source_tail, quote_depth, &mut remaining))
+        else {
             continue;
         };
-        let marker = kind.marker();
         let start = source.start;
         let end = start
-            .checked_add(marker.len())
+            .checked_add(kind.marker().len())
             .ok_or_else(|| "classification end overflowed".to_owned())?;
         classifications.push(wire::MessageClassification {
             start: u32::try_from(start)
@@ -913,6 +898,43 @@ fn hydrate_message_classifications(
         return Err("hydrated message classifications are not exact and ordered".to_owned());
     }
     Ok(classifications)
+}
+
+/// A marker on the live answer's level, drawn from what the answer earned.
+/// Taste is recognized at any depth; every other kind only on the first level.
+fn live_classification(
+    source_tail: &str,
+    quote_depth: usize,
+    remaining: &mut RemainingClassifications,
+) -> Option<wire::MessageClassificationKind> {
+    use wire::MessageClassificationKind as Kind;
+    let live = [
+        (Kind::Review, &mut remaining.reviews),
+        (Kind::Broadcast, &mut remaining.broadcasts),
+        (Kind::AcknowledgementPending, &mut remaining.pending),
+        (Kind::Decline, &mut remaining.declines),
+        (Kind::Acknowledgement, &mut remaining.acknowledgements),
+    ];
+    if quote_depth == 1 {
+        for (kind, remaining) in live {
+            if take_classification(source_tail, kind, remaining) {
+                return Some(kind);
+            }
+        }
+    }
+    take_classification(source_tail, Kind::Taste, &mut remaining.tastes).then_some(Kind::Taste)
+}
+
+/// A marker an earlier presentation settled, carried in quoted history.
+fn historical_classification(source_tail: &str) -> Option<wire::MessageClassificationKind> {
+    use wire::MessageClassificationKind as Kind;
+    [
+        Kind::AcknowledgementPending,
+        Kind::Decline,
+        Kind::Acknowledgement,
+    ]
+    .into_iter()
+    .find(|kind| take_classification(source_tail, *kind, &mut 1))
 }
 
 fn take_classification(

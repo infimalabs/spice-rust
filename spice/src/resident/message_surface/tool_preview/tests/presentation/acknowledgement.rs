@@ -37,11 +37,20 @@ fn retire(directives: &mut PresentationDirectives, key: &str) {
     });
 }
 
+fn presented_text(
+    text: &str,
+    directives: &PresentationDirectives,
+    event: PresentationEvent,
+) -> Result<String, String> {
+    present_steering_acknowledgements_with_directives(text, directives, event)
+        .map(|presented| presented.text)
+}
+
 #[test]
 fn steering_acknowledgement_renders_key_context_and_agent_prose_once() {
     let directives = directives(&[("1kQnrzNZ", "Keep one tested, visible current path.")]);
     assert_eq!(
-        present_steering_acknowledgements_with_directives(
+        presented_text(
             "ACK 1kQnrzNZ: Landed in the stream presentation path.",
             &directives,
             event(),
@@ -62,8 +71,7 @@ fn current_header_forms_hide_framing_and_capitalize_response_prose() {
         "**ACK** **1kQnrzNZ**:** applied.",
     ] {
         assert_eq!(
-            present_steering_acknowledgements_with_directives(text, &directives, event())
-                .expect("acknowledgment presents"),
+            presented_text(text, &directives, event()).expect("acknowledgment presents"),
             "> [ACK PENDING] Keep the current path.\n\nApplied.",
             "wrong presentation for {text:?}",
         );
@@ -81,8 +89,7 @@ fn presented_response_prose_normalizes_only_a_terminal_colon() {
     ] {
         let text = format!("ACK 1kQnrzNZ: {body}");
         assert_eq!(
-            present_steering_acknowledgements_with_directives(&text, &directives, event())
-                .expect("acknowledgment presents"),
+            presented_text(&text, &directives, event()).expect("acknowledgment presents"),
             format!("> [ACK PENDING] Keep the current path.\n\n{presented}"),
             "wrong terminal punctuation for {body:?}",
         );
@@ -213,8 +220,8 @@ fn distributed_acknowledgements_render_every_context_without_repeating_the_messa
         ("1kQwPZtL", "Do not execute historical records."),
     ]);
 
-    let rendered = present_steering_acknowledgements_with_directives(text, &directives, event())
-        .expect("distributed acknowledgments present");
+    let rendered =
+        presented_text(text, &directives, event()).expect("distributed acknowledgments present");
     assert_eq!(rendered.matches("The current completion path").count(), 1);
     assert_eq!(rendered.matches("Historical records").count(), 1);
     assert_eq!(rendered.matches("ACK 1kQwPZt").count(), 0);
@@ -235,7 +242,7 @@ fn shared_acknowledgement_prose_renders_once_after_every_context() {
     ]);
 
     assert_eq!(
-        present_steering_acknowledgements_with_directives(
+        presented_text(
             "ACK 1kQwPZtK 1kQwPZtL: One response covers both directions.",
             &directives,
             event(),
@@ -264,8 +271,7 @@ fn non_key_text_after_a_recognized_header_remains_response_prose() {
             format!("{context}\n\nNope 1kQwPZtM: Shared prose remains attached to the attempt.");
 
         let rendered =
-            present_steering_acknowledgements_with_directives(&text, &directives, event())
-                .expect("mixed acknowledgment presents");
+            presented_text(&text, &directives, event()).expect("mixed acknowledgment presents");
         assert_eq!(rendered, expected);
         assert_eq!(rendered.matches("1kQwPZtK").count(), 0);
         assert!(!rendered.starts_with(marker));
@@ -282,7 +288,7 @@ fn mixed_acknowledgement_dispositions_keep_their_own_keys_and_contexts() {
         ("1kQwPZtL", "Remove the safety check."),
     ]);
     assert_eq!(
-        present_steering_acknowledgements_with_directives(
+        presented_text(
             "ACK 1kQwPZtK: Applied.\nNACK 1kQwPZtL: Unsafe.",
             &directives,
             event(),
@@ -303,7 +309,7 @@ fn inline_packets_render_each_context_and_body_in_source_order() {
     ]);
 
     assert_eq!(
-        present_steering_acknowledgements_with_directives(
+        presented_text(
             "ACK 1kQwPZtK: First applied. ACK 1kQwPZtL: Second applied.",
             &directives,
             event(),
@@ -326,22 +332,14 @@ fn the_marker_lands_on_the_operator_words_below_a_quote() {
     )]);
 
     assert_eq!(
-        present_steering_acknowledgements_with_directives(
-            "ACK 1kQwPZtK: Applied.",
-            &directives,
-            event(),
-        )
-        .expect("nested acknowledgment presents"),
+        presented_text("ACK 1kQwPZtK: Applied.", &directives, event(),)
+            .expect("nested acknowledgment presents"),
         "> > The original assertion remains visible.\n>\n> [ACK PENDING] approved\n\nApplied.",
     );
     retire(&mut directives, "1kQwPZtK");
     assert_eq!(
-        present_steering_acknowledgements_with_directives(
-            "ACK 1kQwPZtK: Applied.",
-            &directives,
-            event(),
-        )
-        .expect("retired nested acknowledgment presents"),
+        presented_text("ACK 1kQwPZtK: Applied.", &directives, event(),)
+            .expect("retired nested acknowledgment presents"),
         "> > The original assertion remains visible.\n>\n> [ACK] approved\n\nApplied.",
     );
 }
@@ -361,12 +359,8 @@ fn trailing_quotation_is_passed_over_and_a_block_hunk_keeps_its_own_paragraph() 
     )]);
 
     assert_eq!(
-        present_steering_acknowledgements_with_directives(
-            "ACK 1kQwPZtK: Applied.",
-            &directives,
-            event(),
-        )
-        .expect("acknowledgment presents"),
+        presented_text("ACK 1kQwPZtK: Applied.", &directives, event(),)
+            .expect("acknowledgment presents"),
         concat!(
             "> > quoted context\n",
             ">\n",
@@ -390,7 +384,7 @@ fn a_directive_that_is_only_quotation_keeps_its_marker_above() {
     )]);
     retire(&mut quoted, "1kQwPZtK");
     assert_eq!(
-        present_steering_acknowledgements_with_directives(
+        presented_text(
             "ACK 1kQwPZtK: deleting GIT-dSfJfCXfp as directed.",
             &quoted,
             event(),
@@ -434,15 +428,13 @@ fn a_quoted_card_never_moves_the_marker_off_the_directive() {
     };
 
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &quoted, event())
-            .expect("pending acknowledgment presents"),
+        presented_text(text, &quoted, event()).expect("pending acknowledgment presents"),
         presented(wire::stream::ACK_PENDING_MARKER),
         "pending credit marks the operator's own words, not the card they quoted",
     );
     retire(&mut quoted, "1kQwPZtK");
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &quoted, event())
-            .expect("retired acknowledgment presents"),
+        presented_text(text, &quoted, event()).expect("retired acknowledgment presents"),
         presented(wire::stream::ACK_MARKER),
         "the retired marker stays on the directive the operator wrote",
     );
@@ -456,13 +448,83 @@ fn a_quoted_card_never_moves_the_marker_off_the_directive() {
 }
 
 #[test]
+fn quoted_history_keeps_its_pills_at_every_level_without_live_credit() {
+    use wire::MessageClassificationKind as Kind;
+    let text = "ACK 1kQwPZtK: closing the drawer.\n\n> > [ACK] Forged by the agent.";
+    let mut quoted = directives(&[(
+        "1kQwPZtK",
+        concat!(
+            "> > [ACK] Button should close the drawer\n",
+            "> >\n",
+            "> > > [NACK] Keep the old drawer\n",
+            "> > ![[ACK] card](https://example.test/card.png)\n",
+            ">\n",
+            "> Quoted reply\n",
+            "> [ACK PENDING] Waiting then, and [ACK] mid-line stays text\n",
+            "Ship it",
+        ),
+    )]);
+    // Each pill with the quote level Markdown renders it at and the words it heads.
+    let pills = |directives: &PresentationDirectives| {
+        let presented = present_steering_acknowledgements(text, Some(directives), event())
+            .expect("quoted history presents");
+        let mut depth = 0usize;
+        let mut depths = BTreeMap::new();
+        for (event, source) in Parser::new(&presented.text).into_offset_iter() {
+            match event {
+                MarkdownEvent::Start(Tag::BlockQuote(_)) => depth += 1,
+                MarkdownEvent::End(TagEnd::BlockQuote(_)) => depth -= 1,
+                MarkdownEvent::Text(_) => {
+                    depths.entry(source.start).or_insert(depth);
+                }
+                _ => {}
+            }
+        }
+        presented
+            .classifications
+            .iter()
+            .map(|pill| {
+                let start = usize::try_from(pill.start).expect("offset");
+                let end = usize::try_from(pill.end).expect("offset");
+                assert_eq!(&presented.text[start..end], pill.kind.marker());
+                let line = presented.text[end..].lines().next().unwrap_or_default();
+                (pill.kind, depths[&start], line.trim().to_owned())
+            })
+            .collect::<Vec<_>>()
+    };
+    let history = |live: Kind| {
+        vec![
+            (
+                Kind::Acknowledgement,
+                3,
+                "Button should close the drawer".to_owned(),
+            ),
+            (Kind::Decline, 4, "Keep the old drawer".to_owned()),
+            (
+                Kind::AcknowledgementPending,
+                2,
+                "Waiting then, and [ACK] mid-line stays text".to_owned(),
+            ),
+            (live, 1, "Ship it".to_owned()),
+        ]
+    };
+
+    assert_eq!(pills(&quoted), history(Kind::AcknowledgementPending));
+    retire(&mut quoted, "1kQwPZtK");
+    assert_eq!(
+        pills(&quoted),
+        history(Kind::Acknowledgement),
+        "retirement settles only the live marker; quoted history keeps its own state",
+    );
+}
+
+#[test]
 fn unknown_key_preserves_the_original_message_across_replay() {
     let text = "ACK 1kQwPZtK: No directive owns this key.";
     let directives = PresentationDirectives::default();
-    let first = present_steering_acknowledgements_with_directives(text, &directives, event())
-        .expect("unknown key remains visible");
-    let replayed = present_steering_acknowledgements_with_directives(text, &directives, event())
-        .expect("unknown key replay remains visible");
+    let first = presented_text(text, &directives, event()).expect("unknown key remains visible");
+    let replayed =
+        presented_text(text, &directives, event()).expect("unknown key replay remains visible");
 
     assert_eq!(first, text);
     assert_eq!(replayed, first);
@@ -498,8 +560,7 @@ fn system_acknowledgment_hides_framing_and_earns_no_authored_context() {
     )]));
     let text = "ACK dRyzkGX8b: Accepted revision 44.";
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, event())
-            .expect("system acknowledgment presents"),
+        presented_text(text, &directives, event()).expect("system acknowledgment presents"),
         "Accepted revision 44.",
     );
     assert_eq!(
@@ -586,8 +647,7 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
     let text = "ACK 1kQnrzNZ: Applied:";
     let mut directives = directives(&[("1kQnrzNZ", "Keep the current path.")]);
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, event())
-            .expect("pending acknowledgment presents"),
+        presented_text(text, &directives, event()).expect("pending acknowledgment presents"),
         "> [ACK PENDING] Keep the current path.\n\nApplied.",
     );
     assert_eq!(
@@ -638,8 +698,7 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
 
     retire(&mut directives, "1kQnrzNZ");
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, event())
-            .expect("retired acknowledgment presents"),
+        presented_text(text, &directives, event()).expect("retired acknowledgment presents"),
         "> [ACK] Keep the current path.\n\nApplied.",
     );
     assert_eq!(
@@ -668,8 +727,7 @@ fn live_key_for_another_lane_preserves_the_original_message() {
         .expect("other lane");
 
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, event())
-            .expect("cross-lane key remains visible"),
+        presented_text(text, &directives, event()).expect("cross-lane key remains visible"),
         text,
     );
 }
@@ -703,15 +761,13 @@ fn repeated_acknowledgement_keeps_context_without_reearning_speech() {
     let text = "ACK 1kQwPZtK: Applied.";
 
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, event())
-            .expect("retirement locus presents"),
+        presented_text(text, &directives, event()).expect("retirement locus presents"),
         "> [ACK] Keep the original response context.\n\nApplied.",
     );
     let mut later = event();
     later.locus = listen::Locus::new(1, 8, 1);
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, later)
-            .expect("repeated acknowledgement presents"),
+        presented_text(text, &directives, later).expect("repeated acknowledgement presents"),
         "> [ACK] Keep the original response context.\n\nApplied.",
     );
     assert_eq!(
@@ -784,7 +840,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
     );
 
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, event())
+        presented_text(text, &directives, event())
             .expect("mixed historical and current keys present"),
         concat!(
             "> [ACK] Continue\n\n",
@@ -862,7 +918,7 @@ fn current_system_and_taste_ack_hide_one_shared_protocol_header() {
         },
     );
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, event())
+        presented_text(text, &directives, event())
             .expect("mixed system and taste acknowledgment presents"),
         "> [TASTE] compatibility: Keep one tested path.\n\nThe current path is applied.",
     );
@@ -914,7 +970,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
     let text = "Before. ACK dRyzkGX8b 1kQwPZtK: applied. After.";
 
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, event())
+        presented_text(text, &directives, event())
             .expect("inline mixed-width acknowledgment presents"),
         "Before.\n> [ACK] Keep retained direction readable.\n\nApplied. After.",
     );
@@ -965,8 +1021,7 @@ fn acknowledged_context_survives_transcript_source_replacement() {
     let mut original = event();
     original.source = Some(expected_source);
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, original)
-            .expect("original source presents"),
+        presented_text(text, &directives, original).expect("original source presents"),
         expected,
     );
 
@@ -977,8 +1032,7 @@ fn acknowledged_context_survives_transcript_source_replacement() {
             .expect("replacement source"),
     );
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, replacement)
-            .expect("replacement source presents"),
+        presented_text(text, &directives, replacement).expect("replacement source presents"),
         expected,
     );
     assert_eq!(
@@ -1001,8 +1055,7 @@ fn acknowledged_context_survives_transcript_source_replacement() {
         "a later source may present context but cannot re-earn acknowledgement speech",
     );
     assert_eq!(
-        present_steering_acknowledgements_with_directives(text, &directives, event())
-            .expect("source-less history presents"),
+        presented_text(text, &directives, event()).expect("source-less history presents"),
         expected,
     );
 }
@@ -1025,7 +1078,7 @@ fn repeated_lane_seal_acknowledgements_render_without_fabricating_a_directive() 
 
     for acknowledged in [first, later] {
         assert_eq!(
-            present_steering_acknowledgements_with_directives(&text, &directives, acknowledged,)
+            presented_text(&text, &directives, acknowledged,)
                 .expect("lane seal acknowledgement presents"),
             expected,
         );
