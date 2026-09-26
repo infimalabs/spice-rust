@@ -1,4 +1,4 @@
-//! Contextual detail drawer for one durable Work task identity.
+//! Contextual detail drawer for one durable Work task identity over any page.
 
 use super::super::clock::{TaskTimePresentation, task_time};
 use super::*;
@@ -72,7 +72,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                         ref={render.close_ref.clone()}
                         type="button"
                         class="work-detail-close canvas-compact-control"
-                        aria-label="Close task detail and return to Work"
+                        aria-label="Close task detail"
                         onclick={close_click}
                     >{"Close"}</button>
                 </header>

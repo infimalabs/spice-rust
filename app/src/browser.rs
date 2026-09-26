@@ -666,9 +666,10 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     let work_detail = task_detail::use_controls(
         sender.clone(),
         surface.clone(),
-        work_detail_mounted(properties.destination, &surface),
+        work_detail_mounted(&surface),
     );
     let navigate = navigation::intent_callback(
+        properties.destination,
         properties.navigate.clone(),
         work_scope.clone(),
         work_scope_notice.clone(),
@@ -772,14 +773,13 @@ fn canvas_app(properties: &CanvasAppProperties) -> Html {
     state.render()
 }
 
-/// The Work detail layer renders only on the Work destination with a board.
-fn work_detail_mounted(destination: CanvasDestination, surface: &SurfaceData) -> bool {
-    destination == CanvasDestination::Work
-        && surface
-            .read()
-            .as_ref()
-            .and_then(CanvasRuntime::board)
-            .is_some()
+/// The detail layer renders over every destination once a board is available.
+fn work_detail_mounted(surface: &SurfaceData) -> bool {
+    surface
+        .read()
+        .as_ref()
+        .and_then(CanvasRuntime::board)
+        .is_some()
 }
 
 fn project_work(runtime: Option<&CanvasRuntime>) -> Option<WorkProjection<'_>> {

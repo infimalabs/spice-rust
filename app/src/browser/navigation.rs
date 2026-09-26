@@ -16,7 +16,7 @@ use crate::{CanvasDestination, CanvasRuntime};
 pub(super) enum Intent {
     Info,
     Work(WorkScope),
-    /// Open this exact durable task in global Work, under a scope that shows it.
+    /// Open this exact durable task over the current global destination.
     Task(TaskStamp),
     Chat,
 }
@@ -24,21 +24,22 @@ pub(super) enum Intent {
 /// Every state a destination names changes in the one callback that pushes
 /// it, so the first destination render already agrees with the history entry.
 pub(super) fn intent_callback(
+    destination: CanvasDestination,
     push: Callback<CanvasDestination>,
     work_scope: UseStateHandle<WorkScope>,
     work_scope_notice: UseStateHandle<Option<String>>,
     select_task: Callback<TaskStamp>,
     surface: UseStateHandle<SurfaceData>,
 ) -> Callback<Intent> {
-    Callback::from(move |intent| {
-        let destination = match intent {
-            Intent::Info => CanvasDestination::Info,
-            Intent::Work(scope) => {
-                work_scope.set(scope);
-                work_scope_notice.set(None);
-                CanvasDestination::Work
-            }
-            Intent::Task(task) => {
+    Callback::from(move |intent| match intent {
+        Intent::Info => push.emit(CanvasDestination::Info),
+        Intent::Work(scope) => {
+            work_scope.set(scope);
+            work_scope_notice.set(None);
+            push.emit(CanvasDestination::Work);
+        }
+        Intent::Task(task) => {
+            if destination == CanvasDestination::Work {
                 let scope = surface
                     .read()
                     .as_ref()
@@ -48,12 +49,10 @@ pub(super) fn intent_callback(
                     });
                 work_scope.set(scope);
                 work_scope_notice.set(None);
-                select_task.emit(task);
-                CanvasDestination::Work
             }
-            Intent::Chat => CanvasDestination::Chat,
-        };
-        push.emit(destination);
+            select_task.emit(task);
+        }
+        Intent::Chat => push.emit(CanvasDestination::Chat),
     })
 }
 
