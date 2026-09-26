@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -36,6 +37,8 @@ pub struct PendingFact {
 }
 
 static NEXT_WRITE: AtomicU64 = AtomicU64::new(1);
+
+pub(crate) type ResidencyCache = RefCell<Option<JournalHead<wire::ResidencyHead>>>;
 
 /// Causal predecessor assigned to a proposed fact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -79,6 +82,7 @@ impl fmt::Debug for JournalGuard {
 pub struct JournalRead<'a> {
     connection: &'a Connection,
     cursor: Option<wire::Seq>,
+    residency_cache: Option<&'a ResidencyCache>,
 }
 
 /// Greatest number of live steering heads one indexed page can return.
@@ -210,9 +214,16 @@ pub struct TaskGeneration {
 }
 
 impl<'a> JournalRead<'a> {
-    fn scoped(connection: &'a Connection) -> Result<Self, GuardError> {
+    fn scoped(
+        connection: &'a Connection,
+        residency_cache: &'a ResidencyCache,
+    ) -> Result<Self, GuardError> {
         let cursor = visible_cursor(connection)?;
-        Ok(Self { connection, cursor })
+        Ok(Self {
+            connection,
+            cursor,
+            residency_cache: Some(residency_cache),
+        })
     }
 
     /// Read the canonical stream inside this guard's immutable transaction.

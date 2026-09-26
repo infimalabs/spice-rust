@@ -1,5 +1,7 @@
 use rusqlite::params;
-use wire::{LaneRenewalRecord, LaneRenewalState, RenewalIdentity};
+use wire::{Actor, LaneRenewalRecord, LaneRenewalState, Producer, RenewalIdentity, body};
+
+use crate::{FactCause, JournalWrite};
 
 use super::*;
 
@@ -45,6 +47,93 @@ fn states() -> Vec<LaneRenewalState> {
             reason: "selected vendor refused launch".to_owned(),
         },
     ]
+}
+
+#[test]
+fn unchanged_residency_reuses_one_canonical_decode_and_advancing_heads_invalidate_it() {
+    let mut journal = authority_fixture();
+
+    reset_indexed_read_metrics();
+    let initial = journal
+        .read(|read| read.residency_head())
+        .expect("initial residency reads")
+        .expect("initial residency exists");
+    assert!(indexed_read_metrics().decoded_bytes > 0);
+
+    reset_indexed_read_metrics();
+    let repeated = journal
+        .read(|read| read.residency_head())
+        .expect("unchanged residency reads")
+        .expect("unchanged residency exists");
+    assert_eq!(repeated, initial);
+    assert_eq!(
+        indexed_read_metrics(),
+        crate::guard::IndexedReadMetrics {
+            queries: 1,
+            rows: 1,
+            decoded_bytes: 0,
+        }
+    );
+
+    let mut advanced = initial.into_body();
+    advanced.topology_revision = 41;
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "resident:up".parse().expect("residency origin"),
+        instant(),
+        Producer::CommandDoor,
+    );
+    let transition = write
+        .fact(
+            body::UpDraining {
+                epoch: advanced.epoch,
+                occupants: 1,
+            },
+            FactCause::Root,
+        )
+        .expect("residency transition fact");
+    write.residency_head(transition, move |_| advanced);
+    journal.apply(write).expect("residency transition commits");
+
+    reset_indexed_read_metrics();
+    let changed = journal
+        .read(|read| read.residency_head())
+        .expect("changed residency reads")
+        .expect("changed residency exists");
+    assert_eq!(changed.position(), seq(3));
+    assert_eq!(changed.body().topology_revision, 41);
+    assert!(indexed_read_metrics().decoded_bytes > 0);
+
+    insert_fact(
+        &journal,
+        fact(
+            4,
+            Some(3),
+            FactKind::TaskPhased,
+            json!({"task": "1kKRRsDP", "phase": "review"}),
+        ),
+    );
+    journal
+        .connection
+        .execute("UPDATE cursor_head SET seq = 4 WHERE singleton = 1", [])
+        .expect("advance cursor");
+    let canonical = wire::encode(changed.body()).expect("changed residency encodes");
+    let document: serde_json::Value =
+        serde_json::from_slice(&canonical).expect("changed residency is JSON");
+    let noncanonical = serde_json::to_vec_pretty(&document).expect("pretty residency bytes encode");
+    assert_ne!(noncanonical, canonical);
+    journal
+        .connection
+        .execute(
+            "UPDATE residency_head SET head_seq = 4, body = ?1 WHERE singleton = 1",
+            [noncanonical],
+        )
+        .expect("plant changed noncanonical residency");
+
+    let error = journal
+        .read(|read| read.residency_head())
+        .expect_err("changed noncanonical residency is rejected");
+    assert!(error.to_string().contains("not stored as canonical"));
 }
 
 #[test]

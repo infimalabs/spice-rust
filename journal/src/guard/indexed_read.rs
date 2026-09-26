@@ -1014,31 +1014,64 @@ impl JournalRead<'_> {
 
     /// Current resident head, when an epoch has been seated.
     pub fn residency_head(&self) -> Result<Option<JournalHead<wire::ResidencyHead>>, GuardError> {
+        let cached_position = self
+            .residency_cache
+            .and_then(|cache| cache.borrow().as_ref().map(JournalHead::position))
+            .map(|position| {
+                i64::try_from(position.get()).map_err(|_| {
+                    GuardError::Invalid(format!(
+                        "residency head position {position} is outside the SQLite range"
+                    ))
+                })
+            })
+            .transpose()?;
         read_metrics::observe_query();
         let row = self
             .connection
             .query_row(
-                "SELECT head_seq, body FROM residency_head WHERE singleton = 1",
-                [],
-                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Vec<u8>>(1)?)),
+                "SELECT head_seq, \
+                 CASE WHEN ?1 IS NOT NULL AND head_seq = ?1 THEN NULL ELSE body END \
+                 FROM residency_head WHERE singleton = 1",
+                [cached_position],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, Option<Vec<u8>>>(1)?)),
             )
             .optional()
             .map_err(GuardError::Store)?;
-        row.map_or(Ok(None), |(position, bytes)| {
-            read_metrics::observe_row();
+        let Some((stored_position, bytes)) = row else {
+            if let Some(cache) = self.residency_cache {
+                *cache.borrow_mut() = None;
+            }
+            return Ok(None);
+        };
+        read_metrics::observe_row();
+        let position = decode_seq(stored_position).map_err(GuardError::Invalid)?;
+        let head = if let Some(bytes) = bytes {
             read_metrics::observe_decode(bytes.len());
-            let head = decode_head(position, &bytes).map_err(|error| {
+            let head = decode_head(stored_position, &bytes).map_err(|error| {
                 GuardError::Invalid(format!("residency head is invalid: {error}"))
             })?;
-            if self.cursor.is_none_or(|cursor| head.position > cursor) {
-                return Err(GuardError::Invalid(format!(
-                    "residency head position {} is beyond cursor {:?}",
-                    head.position,
-                    self.cursor.map(wire::Seq::get)
-                )));
+            if let Some(cache) = self.residency_cache {
+                *cache.borrow_mut() = Some(head.clone());
             }
-            Ok(Some(head))
-        })
+            head
+        } else {
+            self.residency_cache
+                .and_then(|cache| cache.borrow().clone())
+                .filter(|head| head.position == position)
+                .ok_or_else(|| {
+                    GuardError::Invalid(
+                        "residency head cache disagrees with its stored position".to_owned(),
+                    )
+                })?
+        };
+        if self.cursor.is_none_or(|cursor| head.position > cursor) {
+            return Err(GuardError::Invalid(format!(
+                "residency head position {} is beyond cursor {:?}",
+                head.position,
+                self.cursor.map(wire::Seq::get)
+            )));
+        }
+        Ok(Some(head))
     }
 
     fn text_head<T>(

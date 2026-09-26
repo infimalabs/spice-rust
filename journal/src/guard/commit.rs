@@ -14,7 +14,8 @@ impl Journal {
             .unchecked_transaction()
             .map_err(GuardError::Store)
             .map_err(ReadError::Journal)?;
-        let read = JournalRead::scoped(&transaction).map_err(ReadError::Journal)?;
+        let read =
+            JournalRead::scoped(&transaction, &self.residency_cache).map_err(ReadError::Journal)?;
         let answer = answer(&read).map_err(ReadError::Answer)?;
         transaction
             .commit()
@@ -350,7 +351,8 @@ impl crate::JournalReader {
             .unchecked_transaction()
             .map_err(GuardError::Store)
             .map_err(ReadError::Journal)?;
-        let read = JournalRead::scoped(&transaction).map_err(ReadError::Journal)?;
+        let read =
+            JournalRead::scoped(&transaction, &self.residency_cache).map_err(ReadError::Journal)?;
         let answer = answer(&read).map_err(ReadError::Answer)?;
         transaction
             .commit()
@@ -378,6 +380,7 @@ fn run_guards(
     let read = JournalRead {
         connection: transaction,
         cursor,
+        residency_cache: None,
     };
     for guard in guards {
         match (guard.check)(&read) {

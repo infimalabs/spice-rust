@@ -91,6 +91,7 @@ use rusqlite::{Connection, OpenFlags};
 pub struct Journal {
     connection: Connection,
     migration: Option<Migration>,
+    residency_cache: guard::ResidencyCache,
 }
 
 /// A capability-distinct, read-only view of finalized authority.
@@ -108,6 +109,7 @@ pub struct Journal {
 #[derive(Debug)]
 pub struct JournalReader {
     connection: Connection,
+    residency_cache: guard::ResidencyCache,
 }
 
 /// One consistent SQLite generation held in a private regular file.
@@ -265,6 +267,7 @@ impl Journal {
         Ok(Self {
             connection,
             migration,
+            residency_cache: Default::default(),
         })
     }
 
@@ -330,6 +333,7 @@ impl Journal {
         Ok(Self {
             connection,
             migration,
+            residency_cache: Default::default(),
         })
     }
 }
@@ -447,7 +451,10 @@ impl JournalReader {
             .pragma_update(None, "trusted_schema", false)
             .map_err(OpenError::Sqlite)?;
         migrate::inspect_version(&connection)?;
-        Ok(Self { connection })
+        Ok(Self {
+            connection,
+            residency_cache: Default::default(),
+        })
     }
 
     /// Returns the one finalized schema version this handle admitted.
