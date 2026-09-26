@@ -174,7 +174,7 @@ fn quiet_stops_active_and_queued_automatic_speech_but_preserves_manual_work() {
 }
 
 #[test]
-fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes() {
+fn narration_cursors_suppress_materialized_history_and_admit_only_live_prefixes() {
     let mut cursors = NarrationCursors::default();
     let history = vec![
         message("agent-a", "a1", "old a"),
@@ -183,10 +183,10 @@ fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes(
     assert!(cursors.observe(true, &history).is_empty());
 
     let live = vec![
-        history[0].clone(),
-        automatic_message("agent-a", "a2", "live a", "selected a"),
-        history[1].clone(),
         message("agent-b", "b2", "live b"),
+        history[1].clone(),
+        automatic_message("agent-a", "a2", "live a", "selected a"),
+        history[0].clone(),
     ];
     assert_eq!(
         cursors.observe(false, &live),
@@ -212,9 +212,9 @@ fn narration_cursors_suppress_materialized_history_and_admit_only_live_suffixes(
 
     let restored = NarrationCursors::restore(cursors.rows());
     let old_reconnect = vec![
-        live[1].clone(),
         message("agent-a", "a3", "arrived while disconnected"),
-        live[3].clone(),
+        live[2].clone(),
+        live[0].clone(),
     ];
     let mut restored = restored;
     assert!(restored.observe(true, &old_reconnect).is_empty());
@@ -233,9 +233,9 @@ fn a_two_message_narration_batch_admits_only_its_newest_message() {
     let lines = cursors.observe(
         false,
         &[
-            history,
-            message("agent-a", "a2", "older unseen"),
             message("agent-a", "a3", "newest unseen"),
+            message("agent-a", "a2", "older unseen"),
+            history,
         ],
     );
     assert_eq!(
@@ -293,8 +293,8 @@ fn cursor_storage_is_bounded_and_a_missing_cursor_rebases_without_reading_histor
             .observe(
                 false,
                 &[
-                    message("agent-1", "history-not-containing-cursor", "old"),
                     message("agent-1", "newest", "also old"),
+                    message("agent-1", "history-not-containing-cursor", "old"),
                 ],
             )
             .is_empty()

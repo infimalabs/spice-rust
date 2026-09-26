@@ -341,8 +341,8 @@ impl NarrationCursors {
         cursors
     }
 
-    /// Observe one rendered team and return only messages newer than every
-    /// known per-agent cursor. A materialization never narrates its history.
+    /// Observe one newest-first rendered team and return only messages before
+    /// every known per-agent cursor. A materialization never narrates its history.
     pub fn observe(
         &mut self,
         materialization: bool,
@@ -351,7 +351,9 @@ impl NarrationCursors {
         let unseen = self.unseen(materialization, messages);
         let mut newest = BTreeMap::<String, String>::new();
         for message in messages {
-            newest.insert(message.lane.clone(), message.key.clone());
+            newest
+                .entry(message.lane.clone())
+                .or_insert_with(|| message.key.clone());
         }
         for (lane, key) in newest {
             self.update(lane, key);
@@ -359,7 +361,6 @@ impl NarrationCursors {
         let mut admitted = BTreeSet::new();
         messages
             .iter()
-            .rev()
             .filter(|message| {
                 unseen.contains(&(message.lane.clone(), message.key.clone()))
                     && admitted.insert(message.lane.clone())
@@ -404,20 +405,19 @@ impl NarrationCursors {
         }
         let mut unseen = BTreeSet::new();
         for (lane, lane_messages) in by_lane {
-            let start = if materialization {
-                lane_messages.len()
+            let end = if materialization {
+                0
             } else {
                 self.cursor(lane)
                     .and_then(|cursor| {
                         lane_messages
                             .iter()
                             .position(|message| message.key == cursor)
-                            .map(|index| index + 1)
                     })
-                    .unwrap_or(lane_messages.len())
+                    .unwrap_or(0)
             };
             unseen.extend(
-                lane_messages[start..]
+                lane_messages[..end]
                     .iter()
                     .map(|message| (message.lane.clone(), message.key.clone())),
             );
