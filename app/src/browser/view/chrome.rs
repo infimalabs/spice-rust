@@ -326,7 +326,7 @@ pub(in crate::browser) struct Correspondent {
     pub(in crate::browser) accent: usize,
     pub(in crate::browser) speak: Callback<String>,
     pub(in crate::browser) speaking: bool,
-    pub(in crate::browser) quote: Callback<()>,
+    pub(in crate::browser) quote: Option<Callback<()>>,
 }
 
 pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Correspondent) -> Html {
@@ -375,11 +375,13 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
                     }
                 }
             }</button>
-            <button
-                class="card-action card-action--quote" type="button" title="Quote this message"
-                aria-label="Quote this message"
-                onclick={Callback::from(move |_| quote.emit(()))}
-            ><span class="card-action-icon" aria-hidden="true">{"❝"}</span></button>
+            if let Some(quote) = quote {
+                <button
+                    class="card-action card-action--quote" type="button" title="Quote this message"
+                    aria-label="Quote this message"
+                    onclick={Callback::from(move |_| quote.emit(()))}
+                ><span class="card-action-icon" aria-hidden="true">{"❝"}</span></button>
+            }
             <button
                 class="card-action card-action--copy" type="button" title="Copy this message"
                 aria-label="Copy this message"

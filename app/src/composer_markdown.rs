@@ -837,11 +837,11 @@ fn sanitize_markdown_url(url: CowStr<'_>, image: bool) -> CowStr<'_> {
     }
 }
 
-/// One quoted message and the reply the operator typed beneath it.
+/// One canonical quote target and the reply the operator typed beneath it.
 pub(crate) struct QuotedReply<'a> {
-    /// Quoted text, prefixed line by line as one Markdown block quote.
-    pub(crate) quote: &'a str,
-    /// Reply body shown under the quote, blank when the operator wrote none.
+    /// Canonical resident-supplied source target.
+    pub(crate) target: &'a str,
+    /// Reply body shown under the link, blank when the operator wrote none.
     pub(crate) body: &'a str,
     /// Attachments pasted into this quoted reply composer.
     pub(crate) attachments: &'a [Media],
@@ -857,16 +857,13 @@ pub(crate) struct QuotedReply<'a> {
 pub(crate) fn compose(body: &str, quotes: &[QuotedReply<'_>], attachments: &[Media]) -> String {
     let mut parts = Vec::new();
     for quoted in quotes {
-        let quote = block_quote(quoted.quote);
+        let link = format!("[quote]({})", quoted.target);
         let body = quoted.body.trim();
-        let part = [quote.as_str(), body]
-            .into_iter()
-            .filter(|part| !part.trim().is_empty())
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        if !part.is_empty() {
-            parts.push(part);
-        }
+        parts.push(if body.is_empty() {
+            link
+        } else {
+            format!("{link}\n\n{body}")
+        });
         parts.extend(quoted.attachments.iter().map(attachment_markdown));
     }
     let body = body.trim();
