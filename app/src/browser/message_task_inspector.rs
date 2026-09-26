@@ -54,18 +54,7 @@ pub(super) fn use_controls(
     let quote_tasks = runtime
         .as_ref()
         .and_then(|runtime| runtime.board())
-        .map(|board| {
-            board
-                .tasks
-                .iter()
-                .map(|task| {
-                    (
-                        task.statement.body.born.to_string(),
-                        task.statement.body.handle.clone(),
-                    )
-                })
-                .collect()
-        })
+        .map(|board| board.quote_tasks())
         .unwrap_or_default();
     Controls {
         context: Context {

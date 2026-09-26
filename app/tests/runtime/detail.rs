@@ -11,6 +11,7 @@ fn detail_answer(label: &str, text: &str) -> TaskDetailAnswer {
             "unused",
             "Selected task",
             "canvas.detail",
+            None,
             wire::EnvironmentRequirements::default(),
         ),
         media: Vec::new(),

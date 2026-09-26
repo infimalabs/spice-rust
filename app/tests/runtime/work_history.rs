@@ -11,6 +11,7 @@ fn terminal_history_task(
         THIRD_LANE,
         title,
         "app.history",
+        None,
         wire::EnvironmentRequirements::default(),
     );
     task.workflow.position = seq(workflow);
