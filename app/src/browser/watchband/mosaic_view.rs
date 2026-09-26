@@ -582,6 +582,11 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
             move |(plane, inspection_active)| {
                 if *inspection_active {
                     *inspection_was_active.borrow_mut() = true;
+                    // A plane with nothing displayed has nothing to protect: its
+                    // first lattice becomes the one the quick view holds still.
+                    if displayed.is_none() && plane.is_some() {
+                        displayed.set(plane.clone());
+                    }
                     return;
                 }
                 if std::mem::take(&mut *inspection_was_active.borrow_mut()) {
@@ -598,6 +603,9 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     } else {
         (*committed).clone()
     };
+    // The quick view freezes only a lattice already on screen; a plane still
+    // measuring its first lattice would otherwise stay hidden until it closed.
+    let frozen = inspection_active && displayed.is_some();
     // Edges exist only in a settled layout: a plane measuring its first lattice
     // shows a placeholder extent that reads as a trailing edge, so it offers no
     // paging targets until the lattice commits and the edge means something.
@@ -625,7 +633,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         measurement_width,
         card_keys,
         rendered_plane.clone(),
-        inspection_active,
+        frozen,
     );
     let committed_spans = committed_spans(rendered_plane.as_ref());
     let measurements = use_state_eq(Vec::<ActivityMeasurement>::new);
@@ -643,7 +651,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
         measurement_width,
         properties.cards.clone(),
         (*measurements).clone(),
-        inspection_active,
+        frozen,
     );
     use_narration(
         properties.lane,
@@ -660,12 +668,7 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(geometry_width));
     let max_row = committed_plane.map(crate::mosaic_plane::PersistentLanePlane::max_row);
     let composer = composer_collapse::use_composer_collapse(host.clone());
-    use_plane_scroll(
-        host.clone(),
-        rendered_plane.clone(),
-        composer,
-        inspection_active,
-    );
+    use_plane_scroll(host.clone(), rendered_plane.clone(), composer, frozen);
     MosaicPlaneView {
         properties,
         measurement_width,
@@ -1104,12 +1107,12 @@ fn use_persistent_plane(
     width: i32,
     cards: Vec<ActivityCard>,
     measurements: Vec<ActivityMeasurement>,
-    inspection_active: bool,
+    suspended: bool,
 ) {
     use_effect_with(
-        (width, cards, measurements, inspection_active),
-        move |(width, cards, measurements, inspection_active)| {
-            if *inspection_active {
+        (width, cards, measurements, suspended),
+        move |(width, cards, measurements, suspended)| {
+            if *suspended {
                 return;
             }
             let Some(mut measured) = measured_activity(cards, measurements, *width) else {
