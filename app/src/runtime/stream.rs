@@ -364,10 +364,12 @@ impl CanvasRuntime {
         changed
     }
 
-    fn observe_message(&mut self, message: &AgentMessage) -> bool {
-        let activity_changed = self.push_activity(LaneActivity::from_message(message));
-        let card_changed = self.message_cards.merge(std::iter::once(message));
-        activity_changed || card_changed
+    fn observe_messages(&mut self, messages: &[AgentMessage]) -> bool {
+        let mut changed = self.message_cards.merge(messages.iter());
+        for message in messages {
+            changed |= self.push_activity(LaneActivity::from_message(message));
+        }
+        changed
     }
 
     fn apply_message_snapshot(
@@ -375,6 +377,12 @@ impl CanvasRuntime {
         limit: usize,
         generation: &wire::TranscriptGeneration,
     ) -> StreamApplication {
+        if self
+            .message_generation
+            .is_some_and(|current| generation.generation < current)
+        {
+            return StreamApplication::new(vec![StreamDirective::Reconnect], false);
+        }
         let next_history = message_history_frontiers(generation.generation, &generation.frontiers);
         let history_changed = self.message_history != next_history;
         let reconnect = std::mem::take(&mut self.message_reconnect_pending);
@@ -411,10 +419,7 @@ impl CanvasRuntime {
         if generation.generation != expected {
             return StreamApplication::new(vec![StreamDirective::Reconnect], false);
         }
-        let mut changed = false;
-        for message in &generation.messages {
-            changed |= self.observe_message(message);
-        }
+        let mut changed = self.observe_messages(&generation.messages);
         let next_history = message_history_frontiers(generation.generation, &generation.frontiers);
         changed |= self.message_history != next_history;
         self.message_history = next_history;
@@ -446,6 +451,7 @@ impl CanvasRuntime {
             || requested
                 .iter()
                 .any(|cursor| self.message_history.get(&cursor.lane) != Some(cursor))
+            || !self.message_cards.admits_history(&generation.messages)
         {
             return StreamApplication::new(Vec::new(), false);
         }

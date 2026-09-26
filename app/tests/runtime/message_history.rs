@@ -207,6 +207,70 @@ fn older_member_history_merges_without_replacing_the_live_activity_head() {
     assert!(runtime.message_history_target(uuid(LANE)).is_none());
 }
 
+#[test]
+fn history_rejects_a_new_card_inside_the_retained_interval() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let snapshot = message_snapshot(
+        vec![
+            agent_message(LANE, 100, T10, "retained edge", None),
+            agent_message(LANE, 200, T12, "retained head", None),
+        ],
+        &[LANE],
+    );
+    assert!(apply(&mut runtime, &session, &snapshot));
+    assert_eq!(target_offset(&runtime, LANE), Some(100));
+
+    let incompatible = history_page(
+        LANE,
+        100,
+        vec![agent_message(LANE, 150, T11, "not an edge backfill", None)],
+        false,
+    );
+    assert!(!apply(&mut runtime, &session, &incompatible));
+    assert_eq!(target_offset(&runtime, LANE), Some(100));
+    assert_eq!(
+        runtime
+            .messages()
+            .iter()
+            .map(|message| message.text.as_str())
+            .collect::<Vec<_>>(),
+        ["retained edge", "retained head"],
+    );
+}
+
+#[test]
+fn an_older_reconnect_snapshot_cannot_roll_back_the_transcript_generation() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let current = message_snapshot_at(
+        2,
+        vec![agent_message(LANE, 200, T12, "current generation", None)],
+        &[],
+    );
+    assert!(apply(&mut runtime, &session, &current));
+
+    assert!(!runtime.reconnect(&accepted));
+    let stale = message_snapshot_at(
+        1,
+        vec![agent_message(LANE, 100, T10, "stale generation", None)],
+        &[],
+    );
+    let application = runtime.apply_stream_frame(&admitted_stream(&session, &stale));
+    assert!(!application.changed());
+    assert_eq!(application.directives(), [StreamDirective::Reconnect]);
+    assert_eq!(
+        runtime
+            .messages()
+            .iter()
+            .map(|message| message.text.as_str())
+            .collect::<Vec<_>>(),
+        ["current generation"],
+    );
+}
+
 const T07: &str = "2030-04-12T18:44:07.271Z";
 const T08: &str = "2030-04-12T18:44:08.271Z";
 const T09: &str = "2030-04-12T18:44:09.271Z";
