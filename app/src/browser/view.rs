@@ -429,40 +429,190 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
     let Some(lanes) = runtime.lanes() else {
         return empty("No agent snapshot is available.");
     };
+    let group_count = lanes.lanes.len();
+    let agent_count = lanes
+        .lanes
+        .iter()
+        .map(|team| team.members.len())
+        .sum::<usize>();
+    let occupant_count = lanes
+        .lanes
+        .iter()
+        .flat_map(|team| &team.members)
+        .filter(|member| member.occupant.is_some())
+        .count();
+    let worktree_count = lanes
+        .lanes
+        .iter()
+        .flat_map(|team| &team.members)
+        .map(|member| member.worktree.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
+    let vendor_count = lanes
+        .lanes
+        .iter()
+        .flat_map(|team| &team.members)
+        .map(|member| member.vendor.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .len();
     html! {
-        <>
-            <section class="section">
-                <div class="section-heading">
+        <section class="section info-topology-section">
+            <div class="section-heading">
+                <div>
                     <h2>{"Resident topology"}</h2>
-                    <span class="section-count">{format!("{} agents", lanes.lanes.len())}</span>
+                    <p class="info-section-copy">
+                        {"Resident groups contain independently steerable agent lanes."}
+                    </p>
                 </div>
-                if lanes.lanes.is_empty() {
-                    {empty("No agents are seated.")}
-                } else {
-                    <div class="table-wrap"><table>
-                        <thead><tr>
-                            <th>{"Agent"}</th><th>{"Standing"}</th><th>{"Occupant"}</th>
-                            <th>{"Worktree"}</th><th>{"Vendor"}</th>
-                        </tr></thead>
-                        <tbody>{for lanes.lanes.iter().flat_map(|team| {
-                            team.members.iter().map(move |member| (team, member))
-                        }).map(|(team, member)| html! {
-                            <tr>
-                                <td class="mono">{short(&team.lane.to_string())}</td>
-                                <td><span class="tag active">{member.disposition.clone()}</span></td>
-                                <td class="mono">{
-                                    member
-                                        .occupant
-                                        .map(|value| short(&value.to_string()))
-                                        .unwrap_or_else(|| "vacant".to_owned())
-                                }</td>
-                                <td class="mono">{member.worktree.clone()}</td>
-                                <td>{member.vendor.to_string()}</td>
-                            </tr>
-                        })}</tbody>
-                    </table></div>
-                }
-            </section>
-        </>
+                <span class="section-count">{
+                    format!(
+                        "{} across {}",
+                        topology_count(agent_count, "agent lane", "agent lanes"),
+                        topology_count(group_count, "group", "groups"),
+                    )
+                }</span>
+            </div>
+            <div class="info-summary" aria-label="Resident topology totals">
+                {topology_stat(group_count, "Group", "Groups")}
+                {topology_stat(agent_count, "Agent lane", "Agent lanes")}
+                {topology_stat(occupant_count, "Occupant", "Occupants")}
+                {topology_stat(worktree_count, "Worktree", "Worktrees")}
+                {topology_stat(vendor_count, "Vendor", "Vendors")}
+            </div>
+            if lanes.lanes.is_empty() {
+                {empty("No agent lanes are connected.")}
+            } else {
+                <div class="info-topology-groups">
+                    {for lanes.lanes.iter().map(render_topology_group)}
+                </div>
+            }
+        </section>
+    }
+}
+
+fn topology_count(count: usize, singular: &str, plural: &str) -> String {
+    format!("{count} {}", if count == 1 { singular } else { plural })
+}
+
+fn topology_stat(count: usize, singular: &str, plural: &str) -> Html {
+    html! {
+        <div class="info-stat">
+            <strong>{count}</strong>
+            <span>{if count == 1 { singular } else { plural }}</span>
+        </div>
+    }
+}
+
+fn render_topology_group(team: &crate::runtime::LaneRow) -> Html {
+    let identity = team.lane.to_string();
+    let host = team.host();
+    let host_label = host
+        .map(|member| {
+            crate::watchband::agent_message_label(&member.worktree, member.name.as_deref())
+        })
+        .unwrap_or("Empty");
+    let teamed = team.teamed();
+    let heading = if teamed {
+        format!("{host_label} team")
+    } else {
+        host_label.to_owned()
+    };
+    html! {
+        <article
+            class="info-topology-group"
+            data-topology-group={identity.clone()}
+            data-group-kind={if teamed { "team" } else { "independent" }}
+        >
+            <header class="info-group-heading">
+                <div>
+                    <span class="info-group-kind">
+                        {if teamed { "Team" } else { "Independent lane" }}
+                    </span>
+                    <h3>{heading}</h3>
+                    <code
+                        class="info-identity"
+                        title={identity.clone()}
+                        aria-label={format!("Group identity {identity}")}
+                        tabindex="0"
+                    >{format!("Group {}", short(&identity))}</code>
+                </div>
+                <span class="info-group-count">
+                    {topology_count(team.members.len(), "agent lane", "agent lanes")}
+                </span>
+            </header>
+            <div class="info-agent-list">
+                {for team.members.iter().map(render_topology_agent)}
+            </div>
+        </article>
+    }
+}
+
+fn render_topology_agent(member: &crate::runtime::LaneMember) -> Html {
+    let label = crate::watchband::agent_message_label(&member.worktree, member.name.as_deref());
+    let lane = member.lane.to_string();
+    let status = member.status(0);
+    let (occupant, occupant_title) = member.occupant.map_or_else(
+        || {
+            (
+                "Vacant".to_owned(),
+                "No occupant is currently seated".to_owned(),
+            )
+        },
+        |occupant| {
+            let identity = occupant.to_string();
+            (short(&identity), identity)
+        },
+    );
+    let vendor = member.model.as_ref().map_or_else(
+        || member.vendor.to_string(),
+        |model| format!("{} · {model}", member.vendor),
+    );
+    html! {
+        <section
+            class="info-agent"
+            data-agent-lane={lane.clone()}
+            data-lane-status={status.key()}
+        >
+            <header class="info-agent-heading">
+                <div>
+                    <span class="info-agent-kind">{"Agent"}</span>
+                    <h4>{label}</h4>
+                </div>
+                <span class={classes!("info-agent-standing", status.key())}>
+                    {status.label()}
+                </span>
+            </header>
+            <p class="info-agent-worktree" title={member.worktree.clone()}>
+                {member.worktree.clone()}
+            </p>
+            <dl class="info-agent-facts">
+                <div>
+                    <dt>{"Agent lane"}</dt>
+                    <dd><code
+                        class="info-identity"
+                        title={lane.clone()}
+                        aria-label={format!("Agent lane identity {lane}")}
+                        tabindex="0"
+                    >{short(&lane)}</code></dd>
+                </div>
+                <div>
+                    <dt>{"Occupant"}</dt>
+                    <dd><code
+                        class="info-identity"
+                        title={occupant_title.clone()}
+                        aria-label={format!("Occupant {occupant_title}")}
+                        tabindex="0"
+                    >{occupant}</code></dd>
+                </div>
+                <div>
+                    <dt>{"Standing"}</dt>
+                    <dd title={member.disposition.clone()}>{member.disposition.clone()}</dd>
+                </div>
+                <div>
+                    <dt>{"Vendor"}</dt>
+                    <dd title={vendor.clone()}>{vendor}</dd>
+                </div>
+            </dl>
+        </section>
     }
 }
