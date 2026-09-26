@@ -153,6 +153,10 @@ fn packed_frame(
 }
 
 fn directions_frame(text: &str) -> Vec<u8> {
+    directions_frame_with_quotes(text, Vec::new())
+}
+
+fn directions_frame_with_quotes(text: &str, quotes: Vec<wire::QuotePresentation>) -> Vec<u8> {
     let quote_target = wire::QuoteTarget::Steering {
         key: "1kQnrzNZ".to_owned(),
         digest: wire::QuoteTarget::text_digest(text),
@@ -170,6 +174,7 @@ fn directions_frame(text: &str) -> Vec<u8> {
             "lane": LANE,
             "text": text,
             "quote_target": quote_target,
+            "quotes": quotes,
         }],
     }))
     .expect("direction snapshot serializes")
@@ -670,6 +675,7 @@ fn external_operator_direction_replays_once_before_and_after_disposition() {
     let operator_text = "External direction keeps its durable identity.";
     let sent = operator_message_fact(41, "steer::sent", Some(operator_text));
     let canceled = operator_message_fact(42, "steer::canceled", None);
+
     let mut live = CanvasRuntime::new(&accepted);
 
     live.apply_stream(&admitted_stream(&session, &fact_frame(sent.clone())));
@@ -695,10 +701,16 @@ fn external_operator_direction_replays_once_before_and_after_disposition() {
     let mut reloaded = CanvasRuntime::new(&accepted);
     let snapshot = admitted_stream(&session, &directions_frame(operator_text));
     assert!(reloaded.apply_stream_frame(&snapshot).changed());
-    assert_eq!(
-        reloaded.operator_messages(),
-        messages,
-        "bootstrap replay restores the same directive-keyed operator record"
+    let replayed = &reloaded.operator_messages()[0];
+    assert_eq!(replayed.directive(), messages[0].directive());
+    assert_eq!(replayed.authored(), messages[0].authored());
+    assert_eq!(replayed.lane(), messages[0].lane());
+    assert_eq!(replayed.key(), messages[0].key());
+    assert_eq!(replayed.text(), messages[0].text());
+    assert_eq!(replayed.attachments(), messages[0].attachments());
+    assert!(
+        replayed.quote_target().is_some(),
+        "bootstrap replay retains its canonical quote identity"
     );
     assert!(
         !reloaded.apply_stream_frame(&snapshot).changed(),
@@ -720,6 +732,58 @@ fn external_operator_direction_replays_once_before_and_after_disposition() {
         "an unseen directive remains visible below an advanced chronology cursor"
     );
     assert_eq!(out_of_order.operator_messages(), messages);
+}
+#[test]
+fn authoritative_direction_snapshot_replaces_quote_disposition_without_rewriting_prose() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let quoted_text = "Authenticated direction";
+    let target = wire::QuoteTarget::Steering {
+        key: "dTVQdQfLw".to_owned(),
+        digest: wire::QuoteTarget::text_digest(quoted_text),
+    };
+    let direction_text = format!("Review {}", target.markdown());
+    let presentation = |disposition| wire::QuotePresentation::Resolved {
+        target: target.to_string(),
+        text: quoted_text.to_owned(),
+        author: wire::QuoteAuthor::Directive {
+            actor: wire::Actor::Operator,
+        },
+        disposition: Some(disposition),
+        quotes: Vec::new(),
+    };
+    let mut runtime = CanvasRuntime::new(&accepted);
+
+    let live = admitted_stream(
+        &session,
+        &directions_frame_with_quotes(&direction_text, vec![presentation(wire::Disposition::Live)]),
+    );
+    assert!(runtime.apply_stream_frame(&live).changed());
+    assert_eq!(
+        runtime.operator_messages()[0].quote_target(),
+        Some(&wire::QuoteTarget::Steering {
+            key: "1kQnrzNZ".to_owned(),
+            digest: wire::QuoteTarget::text_digest(&direction_text),
+        })
+    );
+
+    let acked = admitted_stream(
+        &session,
+        &directions_frame_with_quotes(
+            &direction_text,
+            vec![presentation(wire::Disposition::Acked)],
+        ),
+    );
+    assert!(runtime.apply_stream_frame(&acked).changed());
+    let message = &runtime.operator_messages()[0];
+    assert_eq!(message.text(), direction_text);
+    assert!(matches!(
+        message.quotes(),
+        [wire::QuotePresentation::Resolved {
+            disposition: Some(wire::Disposition::Acked),
+            ..
+        }]
+    ));
 }
 
 #[test]

@@ -371,6 +371,102 @@ fn render_agent_message_card(
     }
 }
 
+#[derive(Properties, PartialEq)]
+pub(super) struct OperatorMessageCardProps {
+    pub(super) accent: usize,
+    pub(super) message: crate::runtime::OperatorMessage,
+    pub(super) layout: CardLayout,
+}
+
+#[function_component(OperatorMessageCard)]
+pub(super) fn operator_message_card(props: &OperatorMessageCardProps) -> Html {
+    let source_id = format!("operator-direction-{}", props.message.directive());
+    let inspector = task_inspector::use_card(source_id.clone());
+    let empty_quote_tasks = BTreeMap::new();
+    let quote_tasks = inspector
+        .context
+        .as_ref()
+        .map_or(&empty_quote_tasks, |context| context.quote_tasks());
+    let (shown_text, classifications) = crate::composer_markdown::expand_media_payloads(
+        props.message.text(),
+        props.message.attachments(),
+        &[],
+    )
+    .expect("operator direction media passed admission before browser rendering");
+    let rendered = crate::composer_markdown::render_received_with_quotes(
+        &shown_text,
+        &classifications,
+        props.message.quotes(),
+        quote_tasks,
+    );
+    let unlinked_media = props
+        .message
+        .attachments()
+        .iter()
+        .filter(|media| {
+            !media
+                .is_embedded_in(&shown_text)
+                .expect("operator direction media passed admission before browser rendering")
+        })
+        .collect::<Vec<_>>();
+    let task_click = task_inspector::task_chip_click(inspector.context.clone(), source_id.clone());
+    let task_keydown =
+        task_inspector::task_chip_keydown(inspector.context.clone(), source_id.clone());
+    let layout = &props.layout;
+    html! {
+        <article
+            id={source_id.clone()}
+            class={classes!("mosaic-message-card", layout.lifecycle.as_str())}
+            aria-label="Operator direction"
+            data-card-kind="operator-direction"
+            data-message-role="operator"
+            data-mosaic-card-key={source_id}
+            data-accent={props.accent.to_string()}
+            data-accent-slot={props.accent.to_string()}
+            data-state={layout.lifecycle.as_str()}
+            data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
+            data-track={layout.track.to_string()}
+            data-span={layout.span.to_string()}
+            data-base={layout.base.to_string()}
+            data-row={layout.row.to_string()}
+            data-rows={layout.rows.to_string()}
+            data-creation-index={layout.measurement_index.to_string()}
+            data-mosaic-measure-index={layout.measurement_index.to_string()}
+            data-measurement-reads={layout.measurement_reads.to_string()}
+            data-measured-spans={layout.measured_spans.clone()}
+            data-measured-widths={layout.measured_widths.clone()}
+            data-measured-heights={layout.measured_heights.clone()}
+            data-candidate-spans={layout.candidate_spans.clone()}
+            data-measure-span={layout.measure_span.to_string()}
+            onclick={task_click}
+            onkeydown={task_keydown}
+        >
+            <super::super::mermaid::MarkdownBody
+                html={AttrValue::from(rendered.html)}
+                sources={Rc::new(rendered.diagrams.into_iter().map(AttrValue::from).collect::<Vec<_>>())}
+                final_answer={false}
+            />
+            {render_agent_message_media(unlinked_media, None)}
+            <footer class="message-footer">
+                <div class="message-footer-left">
+                    <Age
+                        authored={props.message.authored().get().as_millisecond()}
+                        class="relative-age"
+                        title={format!("directive {}", props.message.key())}
+                    />
+                </div>
+                <div class="message-footer-right">
+                    <span class="message-footer-identity">
+                        <strong class="message-agent-name">
+                            <span class="message-agent-label">{"Operator"}</span>
+                        </strong>
+                    </span>
+                </div>
+            </footer>
+        </article>
+    }
+}
+
 /// The card's back face: the quick task view while a chip is inspected.
 fn render_task_layer(card_inspector: &task_inspector::Card, open: bool) -> Html {
     let (Some(inspector), Some(inspection)) = (
