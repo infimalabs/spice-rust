@@ -218,6 +218,7 @@ fn board_task(
     _id: &str,
     title: &str,
     project: &str,
+    provenance: Option<&str>,
     requirements: wire::EnvironmentRequirements,
 ) -> wire::intent::BoardTask {
     let visibility = if project.starts_with('.') {
@@ -245,7 +246,10 @@ fn board_task(
                 project: project.to_owned(),
                 tags: Vec::new(),
                 dependencies: Vec::new(),
-                provenance: format!("task:{born}").parse().expect("fixture origin"),
+                provenance: provenance
+                    .map_or_else(|| format!("task:{born}"), str::to_owned)
+                    .parse()
+                    .expect("fixture origin"),
                 creation: wire::body::TaskCreationContext::unavailable(
                     wire::body::TaskCreationUnavailable::OperatorActor,
                 ),
@@ -299,6 +303,7 @@ fn board_response(
                 REQUEST,
                 hidden_title,
                 ".oops.correctness",
+                None,
                 wire::EnvironmentRequirements::default(),
             ),
             board_task(
@@ -306,6 +311,7 @@ fn board_response(
                 NEXT_CAPABILITY,
                 "Visible allocator work",
                 "board.visibility",
+                Some("ack:1kQwPZtK"),
                 wire::EnvironmentRequirements::one(
                     wire::EnvironmentRequirement::journal_schema(2)
                         .expect("future fixture schema is positive"),
@@ -356,6 +362,27 @@ fn admitted_board_answer(
     session
         .admit_frame(&bytes)
         .expect("board answer is admitted")
+}
+
+#[test]
+fn directive_quote_navigation_uses_the_task_acknowledgement_origin() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    runtime.apply_board(&board_response(&session, "Hidden correction"));
+    let board = runtime.board().expect("board snapshot");
+    let task = board
+        .tasks
+        .iter()
+        .find(|task| task.statement.body.project == "board.visibility")
+        .expect("public task");
+    let links = board.quote_tasks();
+
+    assert_eq!(links.get("1kQwPZtK"), Some(&task.statement.body.handle));
+    assert_eq!(
+        links.get(task.statement.body.born.as_str()),
+        Some(&task.statement.body.handle)
+    );
 }
 
 /// One admitted safe lane roster, one row per `(lane, team, occupant, bound)` tuple.

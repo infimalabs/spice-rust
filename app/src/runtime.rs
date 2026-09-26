@@ -91,6 +91,43 @@ impl BoardView {
             .requirements
             .are_satisfied_by(&self.environment)
     }
+
+    /// Resolve quoted steering keys to current task handles.
+    ///
+    /// A task's birth stamp remains an exact identity route. A unique
+    /// `ack:<key>` provenance additionally links the directive that caused the
+    /// task; repeated provenance is ambiguous and therefore exposes no route.
+    #[must_use]
+    pub fn quote_tasks(&self) -> BTreeMap<String, wire::TaskHandle> {
+        let mut tasks = self
+            .tasks
+            .iter()
+            .map(|task| {
+                (
+                    task.statement.body.born.to_string(),
+                    task.statement.body.handle.clone(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let mut origins = BTreeMap::<&str, Option<&wire::TaskHandle>>::new();
+        for task in &self.tasks {
+            let Some(key) = task.statement.body.provenance.as_str().strip_prefix("ack:") else {
+                continue;
+            };
+            origins
+                .entry(key)
+                .and_modify(|handle| *handle = None)
+                .or_insert(Some(&task.statement.body.handle));
+        }
+        for (key, handle) in origins {
+            if let Some(handle) = handle {
+                tasks
+                    .entry(key.to_owned())
+                    .or_insert_with(|| handle.clone());
+            }
+        }
+        tasks
+    }
 }
 
 /// Capability-free lane snapshot fields used by the canvas.
