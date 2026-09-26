@@ -1,4 +1,4 @@
-//! Selection, focus, and observation lifecycle for contextual Work detail.
+//! Selection, focus, and observation lifecycle for contextual task detail.
 
 use super::*;
 pub(super) struct Controls {
@@ -14,8 +14,8 @@ pub(super) struct Controls {
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
 }
 
-/// `mounted` is whether the Work surface currently renders the detail layer;
-/// only a mounted layer owns Escape, animates its close, or returns focus.
+/// `mounted` is whether the Canvas root can render the detail layer; only a
+/// mounted layer owns Escape, animates its close, or returns focus.
 #[hook]
 pub(super) fn use_controls(
     sender: SenderHandle,
@@ -68,7 +68,7 @@ pub(super) fn use_controls(
     }
 }
 
-/// Select one task for the Work sheet and make sure its detail is read.
+/// Select one task for the shared detail sheet and make sure its detail is read.
 fn select_callback(
     request: Callback<TaskStamp>,
     selected: UseStateHandle<Option<TaskStamp>>,

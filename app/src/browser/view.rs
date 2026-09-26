@@ -149,6 +149,7 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
                 <p class="form-refusal" role="alert">{issue}</p>
             }
             {render_workspace(&render, work)}
+            {render_task_detail(&render, work)}
         </div>
     }
 }
@@ -361,7 +362,6 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
     };
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    let can_note = runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskNote));
     let scoped_stem = render
         .work_scope
         .stem()
@@ -369,13 +369,6 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
     let scope_key = scoped_stem.map_or_else(|| "all".to_owned(), ToString::to_string);
     let stale = matches!(&**render.connection, Connection::Offline(_));
     let selected = (**render.selected_task).as_ref();
-    let detail = selected.and_then(|task| runtime.and_then(|runtime| runtime.task_detail(task)));
-    let relation_key = selected.map(|selected| render.work_map.relations_key(selected));
-    let relations = relation_key
-        .as_ref()
-        .and_then(|key| runtime.and_then(|runtime| runtime.task_relations(key)));
-    let can_read_relations =
-        runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskRelations));
     let toggle_map_root = work_map::toggle_root_callback(render.work_map.clone());
     html! {
         <div class="work-layout" data-work-scope={scope_key}>
@@ -396,29 +389,44 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
                     },
                 )}
             </section>
-            {work_detail::render(work_detail::WorkDetailRender {
-                work,
-                scope: render.work_scope,
-                lanes: runtime.and_then(CanvasRuntime::lanes),
-                selected,
-                presented: render.detail_presented,
-                closing: render.detail_closing,
-                map: render.work_map,
-                detail,
-                relations,
-                can_read_relations,
-                stale,
-                can_note,
-                close_ref: render.detail_close,
-                sheet_ref: render.detail_sheet,
-                notes: render.notes,
-                submit_note: render.submit_note.clone(),
-                select_task: render.select_task.clone(),
-                close: render.close_task.clone(),
-                retry_relations: render.retry_relations.clone(),
-            })}
         </div>
     }
+}
+
+fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
+    let Some(work) = work else {
+        return Html::default();
+    };
+    let surface = render.surface.read();
+    let runtime = surface.as_ref();
+    let selected = (**render.selected_task).as_ref();
+    let detail = selected.and_then(|task| runtime.and_then(|runtime| runtime.task_detail(task)));
+    let relation_key = selected.map(|selected| render.work_map.relations_key(selected));
+    let relations = relation_key
+        .as_ref()
+        .and_then(|key| runtime.and_then(|runtime| runtime.task_relations(key)));
+    work_detail::render(work_detail::WorkDetailRender {
+        work,
+        scope: render.work_scope,
+        lanes: runtime.and_then(CanvasRuntime::lanes),
+        selected,
+        presented: render.detail_presented,
+        closing: render.detail_closing,
+        map: render.work_map,
+        detail,
+        relations,
+        can_read_relations: runtime
+            .is_some_and(|runtime| runtime.offers(CommandKind::TaskRelations)),
+        stale: matches!(&**render.connection, Connection::Offline(_)),
+        can_note: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
+        close_ref: render.detail_close,
+        sheet_ref: render.detail_sheet,
+        notes: render.notes,
+        submit_note: render.submit_note.clone(),
+        select_task: render.select_task.clone(),
+        close: render.close_task.clone(),
+        retry_relations: render.retry_relations.clone(),
+    })
 }
 
 pub(super) fn render_topology(surface: &SurfaceData) -> Html {

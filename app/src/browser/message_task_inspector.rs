@@ -158,9 +158,9 @@ impl Context {
         }
     }
 
-    /// Hand this exact task to Work as one navigation. The view stays in its
-    /// card until the destination commits and Chat leaves view.
-    fn open_work(&self, task: TaskStamp) {
+    /// Replace the card-local quick view with the shared task detail layer.
+    fn open_detail(&self, task: TaskStamp) {
+        self.inspection.set(None);
         self.navigate.emit(navigation::Intent::Task(task));
     }
 }
@@ -190,10 +190,10 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
         let task = properties.inspection.task.clone();
         Callback::from(move |_| request.emit(task.clone()))
     };
-    let open_work = {
+    let open_detail = {
         let context = properties.context.clone();
         let task = properties.inspection.task.clone();
-        Callback::from(move |_| context.open_work(task.clone()))
+        Callback::from(move |_| context.open_detail(task.clone()))
     };
     html! {
         <section
@@ -210,9 +210,9 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
                     <button
                         type="button"
                         class="card-action"
-                        aria-label="Open task in Work"
-                        title="Open task in Work"
-                        onclick={open_work}
+                        aria-label="Open task detail"
+                        title="Open task detail"
+                        onclick={open_detail}
                     >
                         <svg class="card-action-icon message-task-inspector-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                             <path d="M8 16 16 8M9 8h7v7"></path>
