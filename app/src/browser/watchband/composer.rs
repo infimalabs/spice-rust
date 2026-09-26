@@ -559,13 +559,16 @@ fn agent_message_correspondent(
         let focus_lane = lane.clone();
         let dispatcher = quote_dispatcher.clone();
         let display_millis = crate::runtime::agent_message_display_millis(message);
+        let preview =
+            watchband::quote_label(watchband::first_nonquoted_prose(&message.text).as_deref())
+                .to_owned();
         Callback::from(move |()| {
             dispatcher.dispatch(ComposerAction::AddQuote {
                 lane: lane.clone(),
                 target: target.clone(),
                 order,
                 display_millis,
-                preview: "Agent quote".to_owned(),
+                preview: preview.clone(),
             });
             focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
         })
