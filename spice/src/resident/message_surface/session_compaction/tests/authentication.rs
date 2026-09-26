@@ -75,15 +75,35 @@ fn rewrite_plus_growth_before_initial_build_finishes_is_refused() {
     drop(rewritten);
     append(&transcript, b"append");
 
-    let error = advance_history_authentication(&transcript, &checkpoint, Instant::now())
-        .expect_err("rewrite plus append must fail authentication");
+    let error = (0..4)
+        .find_map(|_| {
+            advance_history_authentication(&transcript, &checkpoint, Instant::now()).err()
+        })
+        .expect("rewrite plus append must fail authentication");
 
     assert_eq!(error.kind(), io::ErrorKind::InvalidData);
-    assert!(
-        error
-            .to_string()
-            .contains("before its initial prefix authentication completed")
-    );
+}
+
+#[test]
+fn initial_authentication_advances_while_the_transcript_keeps_growing() {
+    let scratch = Scratch::new("history-auth-growing");
+    let transcript = scratch.transcript();
+    let length = HISTORY_BYTE_BUDGET * 2 + 17;
+    fs::write(&transcript, vec![b'x'; length]).expect("large prefix is written");
+    let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
+
+    for _ in 0..6 {
+        append(&transcript, b"append");
+        let step = advance_history_authentication(&transcript, &checkpoint, Instant::now())
+            .expect("append-only growth preserves authentication progress");
+        assert!(step.stamp.is_none());
+        assert!(step.work.within_limits());
+    }
+
+    let ready = advance_history_authentication(&transcript, &checkpoint, Instant::now())
+        .expect("authenticated growing prefix becomes readable");
+    assert!(ready.stamp.is_some());
+    assert_eq!(checkpoint.next(), length as u64);
 }
 
 #[test]

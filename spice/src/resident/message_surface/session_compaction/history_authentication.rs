@@ -22,6 +22,7 @@ enum HistoryAuthenticationState {
         stamp: FileStamp,
         offset: u64,
         observed: blake3::Hasher,
+        requires_verification: bool,
     },
     Ready {
         stamp: FileStamp,
@@ -87,6 +88,7 @@ pub(in crate::resident::message_surface) fn history_checkpoint(
             stamp: source,
             offset: 0,
             observed: blake3::Hasher::new(),
+            requires_verification: false,
         }
     };
     Ok(HistoryCheckpoint {
@@ -159,12 +161,14 @@ fn advance_history_authentication_state(
             stamp,
             offset,
             observed,
+            requires_verification,
         } => {
-            if current != stamp {
-                return Err(history_source_changed(
-                    "before its initial prefix authentication completed",
-                ));
-            }
+            let (stamp, requires_verification) = if current == stamp {
+                (stamp, requires_verification)
+            } else {
+                require_history_extension(stamp, current, length)?;
+                (current, true)
+            };
             hash_history_authentication_slice(
                 &mut file,
                 length,
@@ -172,6 +176,7 @@ fn advance_history_authentication_state(
                     stamp,
                     offset,
                     observed,
+                    requires_verification,
                 },
                 started,
             )
@@ -193,8 +198,8 @@ fn advance_history_authentication_state(
                 require_history_extension(stamp, current, length)?;
                 HistoryAuthenticationState::Checking {
                     stamp: current,
-                    offset: 0,
-                    observed: blake3::Hasher::new(),
+                    offset,
+                    observed,
                     expected,
                 }
             };
@@ -212,18 +217,19 @@ fn hash_history_authentication_slice(
     state: HistoryAuthenticationState,
     started: Instant,
 ) -> io::Result<(HistoryAuthenticationState, HistoryAuthenticationStep)> {
-    let (stamp, offset, mut observed, expected) = match state {
+    let (stamp, offset, mut observed, expected, requires_verification) = match state {
         HistoryAuthenticationState::Building {
             stamp,
             offset,
             observed,
-        } => (stamp, offset, observed, None),
+            requires_verification,
+        } => (stamp, offset, observed, None, requires_verification),
         HistoryAuthenticationState::Checking {
             stamp,
             offset,
             observed,
             expected,
-        } => (stamp, offset, observed, Some(expected)),
+        } => (stamp, offset, observed, Some(expected), false),
         _ => unreachable!("only pending authentication states read a slice"),
     };
     let count = length
@@ -238,7 +244,6 @@ fn hash_history_authentication_slice(
             hook();
         }
     });
-    let building = expected.is_none();
     observed.update(&bytes);
     let work = HistoryWork {
         source_bytes: count,
@@ -250,23 +255,23 @@ fn hash_history_authentication_slice(
         return Err(history_budget_exhausted(work));
     }
     let post = FileStamp::read(file)?;
-    if post != stamp {
+    let moved = post != stamp;
+    if moved {
         require_history_extension(stamp, post, length)?;
-        if building {
-            return Err(history_source_changed(
-                "during its initial prefix authentication",
-            ));
-        }
+    }
+    let stamp = if moved { post } else { stamp };
+    if moved && let Some(expected) = expected {
         return Ok((
             HistoryAuthenticationState::Checking {
                 stamp: post,
                 offset: 0,
                 observed: blake3::Hasher::new(),
-                expected: expected.expect("checked authentication has an expected digest"),
+                expected,
             },
             HistoryAuthenticationStep { stamp: None, work },
         ));
     }
+    let requires_verification = requires_verification || moved;
     let next = offset.saturating_add(count);
     if next < length {
         let state = match expected {
@@ -280,6 +285,7 @@ fn hash_history_authentication_slice(
                 stamp,
                 offset: next,
                 observed,
+                requires_verification,
             },
         };
         return Ok((state, HistoryAuthenticationStep { stamp: None, work }));
@@ -290,13 +296,20 @@ fn hash_history_authentication_slice(
             "after its authenticated prefix was rewritten",
         ));
     }
-    Ok((
+    let state = if expected.is_none() && requires_verification {
+        HistoryAuthenticationState::Checking {
+            stamp,
+            offset: 0,
+            observed: blake3::Hasher::new(),
+            expected: digest,
+        }
+    } else {
         HistoryAuthenticationState::Ready {
             stamp,
             expected: digest,
-        },
-        HistoryAuthenticationStep { stamp: None, work },
-    ))
+        }
+    };
+    Ok((state, HistoryAuthenticationStep { stamp: None, work }))
 }
 
 pub(super) fn observe_history_source_movement(
