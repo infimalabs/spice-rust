@@ -50,11 +50,15 @@ impl NewestMessage {
             return;
         }
         match event {
-            listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+            listen::Event::Prose(prose) | listen::Event::ProseEvidence(prose)
+                if prose.role == listen::ProseRole::Assistant =>
+            {
                 self.text
                     .get_or_insert_with(|| (locus, quoted_line(&prose.text)));
             }
-            listen::Event::Prose(_) => self.bound = Some(locus),
+            listen::Event::Prose(_) | listen::Event::ProseEvidence(_) => {
+                self.bound = Some(locus);
+            }
             listen::Event::Tool(tool) => match tool.moment {
                 listen::ToolMoment::Result(_) => self.bound = Some(locus),
                 listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => {
@@ -311,7 +315,7 @@ fn scan_record(
     for (event_index, sourced) in events.iter().enumerate().rev() {
         let event = &sourced.event;
         newest.observe(event, record.locus);
-        let listen::Event::Prose(prose) = event else {
+        let Some(prose) = event.prose() else {
             continue;
         };
         // Only the occupant answers for the lane. Operator input reaches

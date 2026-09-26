@@ -144,17 +144,16 @@ pub fn decode(dialect: Dialect, bytes: &[u8], locus: Locus) -> Result<Decoded, L
 ///
 /// A capture that keeps every record may leave such a record out: nothing is
 /// decoded from the partial itself, and what it carries arrives again,
-/// complete, in the frame that ends it. A record that does not parse is
-/// never restated.
+/// complete, in the frame that ends it. OMP terminal text updates are the
+/// exception: some provider adapters normalize that visible text out of the
+/// settled message, so one complete streamed revision remains as evidence.
+/// A record that does not parse is never restated.
 #[must_use]
 pub fn restated(dialect: Dialect, bytes: &[u8]) -> bool {
-    #[derive(serde::Deserialize)]
-    struct Kind {
-        #[serde(rename = "type")]
-        kind: String,
-    }
-    dialect == Dialect::Omp
-        && serde_json::from_slice::<Kind>(bytes).is_ok_and(|record| omp::restated(&record.kind))
+    let Ok(Value::Object(record)) = serde_json::from_slice(bytes) else {
+        return false;
+    };
+    dialect == Dialect::Omp && omp::restated(&record)
 }
 
 /// Decode one record using an explicit dialect or its uniquely owned envelope.

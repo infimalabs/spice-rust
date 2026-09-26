@@ -127,6 +127,7 @@ pub(super) fn closing_word(
                 }
                 listen::Event::Session(_) => LastWord::Silent,
                 listen::Event::Prose(_)
+                | listen::Event::ProseEvidence(_)
                 | listen::Event::Reasoning(_)
                 | listen::Event::Tool(_)
                 | listen::Event::Usage(_)

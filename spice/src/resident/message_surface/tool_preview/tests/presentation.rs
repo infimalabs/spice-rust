@@ -245,6 +245,29 @@ fn persisted_codex_final_and_task_complete_companion_share_one_card() {
 }
 
 #[test]
+fn omp_terminal_text_evidence_does_not_publish_a_duplicate_card() {
+    let publisher = Messages::default();
+    let mut state = MessageState::default();
+    let records = [
+        br#"{"type":"message_update","assistantMessageEvent":{"type":"text_end","content":"ACK 1kKRRsDS: revision accepted."},"message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: revision accepted."}]}}"#
+            .as_slice(),
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"settled answer"}],"stopReason":"toolUse"}}"#
+            .as_slice(),
+    ];
+    let mut offset = 0;
+    for bytes in records {
+        let record = capture_record_for(listen::Dialect::Omp, bytes, offset);
+        offset += bytes.len() as u64;
+        publish_agent_messages(&publisher, &record, &mut state, None)
+            .expect("OMP transcript record publishes");
+    }
+
+    let messages = publisher.0.lock().expect("message lock");
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].text, "settled answer");
+}
+
+#[test]
 fn claude_promotes_terminal_stop_reasons_but_not_tool_use() {
     let publisher = Messages::default();
     let mut state = MessageState::default();

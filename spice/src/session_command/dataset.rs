@@ -561,6 +561,7 @@ fn reduce_event(
     match event {
         Event::Session(_) => {}
         Event::Prose(prose) => reduce_prose(record, prose, storage, work, at)?,
+        Event::ProseEvidence(_) => {}
         Event::Reasoning(_) => {
             let index = ensure_turn(
                 storage.dataset,
