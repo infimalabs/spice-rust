@@ -590,6 +590,9 @@ fn claim_line(task: &BoardTask) -> String {
     let Some(claim) = &task.claim else {
         return "- until -".to_owned();
     };
+    if claim.body.disposition != ClaimDisposition::Active {
+        return "- until -".to_owned();
+    }
     let until = task
         .lease
         .as_ref()

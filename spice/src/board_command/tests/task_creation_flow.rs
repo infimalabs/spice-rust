@@ -116,7 +116,7 @@ fn create_and_claim_is_one_transaction_and_active_claim_refusal_is_zero_write() 
         .expect("task add --claim returns its held claim");
     assert_eq!(answer.task, handle);
     assert_eq!(held.task, handle);
-    assert_eq!(held.holder, actor);
+    assert_eq!(held.holder, Some(actor.clone()));
     assert_eq!(
         held.phase.as_ref().map(|phase| phase.name.as_str()),
         Some("todo")

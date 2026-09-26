@@ -862,6 +862,7 @@ mod tests {
             },
             claim: None,
             lease: None,
+            explicit_release: false,
             claim_context: None,
             git_context: None,
         }

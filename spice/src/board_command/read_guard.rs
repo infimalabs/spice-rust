@@ -153,6 +153,7 @@ fn project_task_rows(
         };
     let projection = TaskProjection {
         projects,
+        facts: observed.facts(),
         origin_threads: &origin_threads,
         creator_teams: &creator_teams,
         claim_contexts: &claim_contexts,
@@ -203,6 +204,7 @@ struct TaskProjection<'a> {
     creator_teams: &'a std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>>,
     claim_contexts: &'a ClaimContexts,
     git_contexts: &'a std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskGitContext>,
+    facts: &'a bus::TaskFacts,
 }
 
 impl TaskProjection<'_> {
@@ -214,6 +216,11 @@ impl TaskProjection<'_> {
         let workflow = positioned(heads.workflow());
         let claim = heads.claim().map(positioned);
         let lease = heads.lease().map(positioned);
+        let explicit_release = claim.as_ref().is_some_and(|head| {
+            self.facts
+                .at(head.position)
+                .is_some_and(|envelope| envelope.fact.kind() == wire::FactKind::ClaimFreed)
+        });
         let claim_context = current_claim_context(
             &statement.body.born,
             claim.as_ref().map(|head| &head.body),
@@ -239,7 +246,8 @@ impl TaskProjection<'_> {
                 &format!("task {handle} current heads are invalid: {error}"),
             )
         })?
-        .with_creator_team(creator_team);
+        .with_creator_team(creator_team)
+        .with_explicit_release(explicit_release);
         let visibility = entry.project().visibility().clone();
         let origin_thread = self
             .origin_threads
@@ -260,6 +268,7 @@ impl TaskProjection<'_> {
             claim,
             lease,
         )
+        .with_explicit_release(explicit_release)
         .with_context(claim_context, git_context);
         Ok((entry, task))
     }

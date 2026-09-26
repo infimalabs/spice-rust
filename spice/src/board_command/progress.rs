@@ -59,7 +59,8 @@ pub(super) fn claim_free(
         entry.lease().cloned(),
         projects,
     )
-    .expect("releasing a claim preserves a valid task entry");
+    .expect("releasing a claim preserves a valid task entry")
+    .with_explicit_release(true);
     let next = next_action(&snapshot, &post);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard(&mut write, command.expected().to_vec());
@@ -87,7 +88,7 @@ pub(super) fn claim_free(
     }
     let answer = wire::intent::ClaimAnswer {
         task: entry.handle().clone(),
-        holder: command.actor().clone(),
+        holder: None,
         expiry: None,
         warnings: Box::default(),
         creation_context: None,
@@ -151,7 +152,7 @@ pub(super) fn claim_reclaim_with_clock(
     }
     let answer = wire::intent::ClaimAnswer {
         task: entry.handle().clone(),
-        holder: command.actor().clone(),
+        holder: Some(command.actor().clone()),
         expiry: Some(Box::new(until)),
         warnings: Box::default(),
         creation_context: None,

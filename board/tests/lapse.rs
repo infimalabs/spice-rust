@@ -160,7 +160,7 @@ fn claim_opening(journal: &mut Journal, command: u8, source: body::SourceBoundar
             uuid(22),
             intent::ClaimAnswer {
                 task: task(),
-                holder: actor,
+                holder: Some(actor),
                 expiry: None,
                 warnings: Box::default(),
                 creation_context: None,
@@ -243,7 +243,7 @@ fn free(journal: &mut Journal, command: u8) {
             uuid(22),
             intent::ClaimAnswer {
                 task: task(),
-                holder: actor,
+                holder: None,
                 expiry: None,
                 warnings: Box::default(),
                 creation_context: None,
@@ -301,7 +301,7 @@ fn renew(journal: &mut Journal, command: u8, until: u8) {
             uuid(22),
             intent::ClaimAnswer {
                 task: task(),
-                holder: actor,
+                holder: Some(actor),
                 expiry: None,
                 warnings: Box::default(),
                 creation_context: None,
@@ -1171,7 +1171,7 @@ fn a_task_command_that_appends_no_fact_is_refused_instead_of_receipted() {
             uuid(22),
             intent::ClaimAnswer {
                 task: task(),
-                holder,
+                holder: Some(holder),
                 expiry: None,
                 warnings: Box::default(),
                 creation_context: None,

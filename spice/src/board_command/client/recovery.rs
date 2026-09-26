@@ -324,7 +324,7 @@ fn reconcile_client_recovery(
                         position: ReplyPosition::Committed(SeqRange { first, last }),
                         body: CommandAnswer::Claim(Box::new(wire::intent::ClaimAnswer {
                             task: task.clone(),
-                            holder: sealed.actor,
+                            holder: Some(sealed.actor),
                             expiry: None,
                             warnings: Box::default(),
                             creation_context: None,

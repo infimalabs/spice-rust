@@ -659,6 +659,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 epoch,
             },
         }),
+        explicit_release: false,
         claim_context: Some(wire::intent::TaskClaimContext {
             claimed: seq(4),
             lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
