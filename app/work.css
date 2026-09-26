@@ -488,7 +488,7 @@
   letter-spacing: .09em;
   text-transform: uppercase;
 }
-.work-detail-close { flex: none; min-height: 34px; }
+.work-detail-close { flex: none; }
 
 .work-detail-tabs {
   display: grid;
@@ -522,7 +522,7 @@
   padding-bottom: 18px;
 }
 .work-detail-identity code { color: var(--accent); font-size: .78rem; overflow-wrap: anywhere; }
-.work-detail-identity button { min-height: 32px; white-space: nowrap; }
+.work-detail-identity button { white-space: nowrap; }
 
 .work-detail-state,
 .work-detail-scope {
