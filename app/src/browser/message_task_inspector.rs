@@ -15,6 +15,7 @@ pub(super) struct Context {
     pub inspection: UseStateHandle<Option<Inspection>>,
     request_detail: Callback<TaskStamp>,
     navigate: Callback<navigation::Intent>,
+    quote_tasks: Rc<BTreeMap<String, TaskHandle>>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -50,11 +51,28 @@ pub(super) fn use_controls(
         .as_ref()
         .map(|inspection| task.notes.shown(&inspection.task))
         .unwrap_or_default();
+    let quote_tasks = runtime
+        .as_ref()
+        .and_then(|runtime| runtime.board())
+        .map(|board| {
+            board
+                .tasks
+                .iter()
+                .map(|task| {
+                    (
+                        task.statement.body.born.to_string(),
+                        task.statement.body.handle.clone(),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Controls {
         context: Context {
             inspection,
             request_detail: task.request.clone(),
             navigate: navigate.clone(),
+            quote_tasks: Rc::new(quote_tasks),
         },
         detail: DetailContext {
             detail,
@@ -113,6 +131,19 @@ impl Context {
             return_focus: false,
         }));
         self.request_detail.emit(task);
+    }
+
+    pub fn quote_tasks(&self) -> &BTreeMap<String, TaskHandle> {
+        &self.quote_tasks
+    }
+
+    pub fn open_quote_task(&self, handle: TaskHandle) {
+        let Ok(task) = handle.born() else {
+            return;
+        };
+        if self.quote_tasks.contains_key(&task.to_string()) {
+            self.navigate.emit(navigation::Intent::Task(task));
+        }
     }
 
     /// Begin closing the open view once; the card ends it when its layer's

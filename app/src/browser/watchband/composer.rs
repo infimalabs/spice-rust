@@ -269,6 +269,8 @@ fn render_agent_message_card(
 ) -> Html {
     let inspector = card_inspector.context.as_ref();
     let inspection = card_inspector.inspection.as_ref();
+    let empty_quote_tasks = BTreeMap::new();
+    let quote_tasks = inspector.map_or(&empty_quote_tasks, |context| context.quote_tasks());
     let member = &props.member;
     let quote_lane = props.quote_lane;
     let message = &props.message;
@@ -285,7 +287,7 @@ fn render_agent_message_card(
         image_only,
         card_label,
         classifications,
-    } = agent_message_presentation(member, message);
+    } = agent_message_presentation(member, message, quote_tasks);
     let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
     let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
     let inspection_open = inspection.is_some_and(|inspection| inspection.open);
@@ -445,6 +447,7 @@ impl ClassificationMetrics {
 fn agent_message_presentation<'a>(
     member: &crate::runtime::LaneMember,
     message: &'a wire::AgentMessage,
+    quote_tasks: &BTreeMap<String, wire::TaskHandle>,
 ) -> AgentMessagePresentation<'a> {
     let attribution = watchband::agent_message_attribution(
         message.author,
@@ -470,9 +473,11 @@ fn agent_message_presentation<'a>(
         &message.classifications,
     )
     .expect("message media passed admission before browser rendering");
-    let rendered_markdown = crate::composer_markdown::render_received_with_classifications(
+    let rendered_markdown = crate::composer_markdown::render_received_with_quotes(
         &shown_text,
         &shown_classifications,
+        &message.quotes,
+        quote_tasks,
     );
     let card_label = match message.activity {
         wire::AgentActivityKind::Turn => unreachable!("turn events are not message cards"),

@@ -716,3 +716,161 @@ fn every_image_preview_owns_an_explicit_initial_lifecycle() {
     let malformed = render_received("![broken](data:image/png;base64,%%%)");
     assert!(malformed.html.contains("data-mosaic-image-state=\"error\""));
 }
+
+fn steering_target(key: &str, text: &str) -> wire::QuoteTarget {
+    wire::QuoteTarget::Steering {
+        key: key.to_owned(),
+        digest: wire::QuoteTarget::text_digest(text),
+    }
+}
+
+#[test]
+fn resolved_quote_links_render_complete_nested_cards_synchronously() {
+    let inner_text = "authenticated inner direction";
+    let inner_target = steering_target("dTVQdQfLw", inner_text);
+    let outer_text = format!("before {} after", inner_target.markdown());
+    let lane = "018f82d4-6f59-7d06-92e3-bce9131163e6"
+        .parse()
+        .expect("fixture lane is canonical");
+    let source = "018f82d4-6f59-7d06-92e3-bce9131163e7"
+        .parse()
+        .expect("fixture source is canonical");
+    let outer_target = wire::QuoteTarget::Tape {
+        lane,
+        source,
+        locus: wire::MessageLocus {
+            member: 1,
+            offset: 24,
+            length: 80,
+            event: 2,
+        },
+        digest: wire::QuoteTarget::text_digest(&outer_text),
+    };
+    let quotes = vec![wire::QuotePresentation::Resolved {
+        target: outer_target.to_string(),
+        text: outer_text,
+        author: wire::QuoteAuthor::Agent {
+            lane,
+            occupant: source,
+        },
+        disposition: None,
+        quotes: vec![wire::QuotePresentation::Resolved {
+            target: inner_target.to_string(),
+            text: inner_text.to_owned(),
+            author: wire::QuoteAuthor::Directive {
+                actor: wire::Actor::Operator,
+            },
+            disposition: Some(wire::Disposition::Live),
+            quotes: Vec::new(),
+        }],
+    }];
+
+    let rendered =
+        render_received_with_quotes(&outer_target.markdown(), &[], &quotes, &BTreeMap::new());
+
+    assert_eq!(
+        rendered
+            .html
+            .matches("data-quote-state=\"resolved\"")
+            .count(),
+        2
+    );
+    assert!(rendered.html.contains("data-quote-author=\"agent\""));
+    assert!(rendered.html.contains("data-quote-author=\"directive\""));
+    assert!(rendered.html.contains(inner_text));
+    assert!(rendered.html.contains("data-quote-disposition=\"live\""));
+    assert!(!rendered.html.contains("<a "));
+}
+
+#[test]
+fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
+    let cases = [
+        (wire::Disposition::Live, "live"),
+        (wire::Disposition::Acked, "acked"),
+        (wire::Disposition::Declined, "nacked"),
+        (wire::Disposition::Lapsed, "lapsed"),
+        (wire::Disposition::Canceled, "canceled"),
+        (wire::Disposition::DeadLettered, "dead-letter"),
+    ];
+    let keys = [
+        "dTVQdQfLw",
+        "dTVQdQfLx",
+        "dTVQdQfLy",
+        "dTVQdQfLz",
+        "dTVQdQfMA",
+        "dTVQdQfMB",
+    ];
+    let mut markdown = Vec::new();
+    let mut quotes = Vec::new();
+    for ((disposition, _), key) in cases.iter().zip(keys) {
+        let text = format!("direction {key}");
+        let target = steering_target(key, &text);
+        markdown.push(target.markdown());
+        quotes.push(wire::QuotePresentation::Resolved {
+            target: target.to_string(),
+            text,
+            author: wire::QuoteAuthor::Directive {
+                actor: wire::Actor::Operator,
+            },
+            disposition: Some(*disposition),
+            quotes: Vec::new(),
+        });
+    }
+    let handle: wire::TaskHandle = "QUOTE-dTVQdQfLw"
+        .parse()
+        .expect("fixture task is canonical");
+    let tasks = BTreeMap::from([("dTVQdQfLw".to_owned(), handle)]);
+    let rendered = render_received_with_quotes(&markdown.join(" "), &[], &quotes, &tasks);
+
+    for (_, key) in cases {
+        assert!(
+            rendered
+                .html
+                .contains(&format!("data-quote-disposition=\"{key}\"")),
+            "{key}: {}",
+            rendered.html
+        );
+    }
+    assert_eq!(
+        rendered
+            .html
+            .matches("class=\"message-quote-task\"")
+            .count(),
+        1
+    );
+    assert!(
+        rendered
+            .html
+            .contains("data-task-handle=\"QUOTE-dTVQdQfLw\"")
+    );
+    assert!(
+        rendered
+            .html
+            .contains("aria-label=\"Open task QUOTE-dTVQdQfLw in Work\"")
+    );
+}
+
+#[test]
+fn unavailable_quote_cards_name_reason_and_target_without_changing_plain_quotes() {
+    let target = steering_target("dTVQdQfLw", "missing");
+    let target_text = target.to_string();
+    let unavailable = [wire::QuotePresentation::Unavailable {
+        target: target_text.clone(),
+        reason: wire::QuoteUnavailable::DepthExceeded,
+    }];
+    let rendered =
+        render_received_with_quotes(&target.markdown(), &[], &unavailable, &BTreeMap::new());
+
+    assert!(rendered.html.contains("Quote unavailable: depth-exceeded"));
+    assert!(
+        rendered
+            .html
+            .contains("data-quote-reason=\"depth-exceeded\"")
+    );
+    assert!(rendered.html.contains(&target_text));
+
+    let ordinary = render_received("> copied words");
+    assert!(ordinary.html.contains("<blockquote>"));
+    assert!(ordinary.html.contains("copied words"));
+    assert!(!ordinary.html.contains("message-quote-card"));
+}

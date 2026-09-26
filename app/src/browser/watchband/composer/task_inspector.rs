@@ -142,7 +142,15 @@ fn use_focus_departure(card: &str, context: &Option<Context>, open: bool) {
 
 pub(super) fn task_chip_click(inspector: Option<Context>, card: String) -> Callback<MouseEvent> {
     Callback::from(move |event: MouseEvent| {
-        let Some(handle) = task_handle_from_target(event.target()) else {
+        if let Some(handle) = task_handle_from_target(event.target(), ".message-quote-task") {
+            event.prevent_default();
+            event.stop_propagation();
+            if let Some(inspector) = inspector.as_ref() {
+                inspector.open_quote_task(handle);
+            }
+            return;
+        }
+        let Some(handle) = task_handle_from_target(event.target(), ".message-task-chip") else {
             return;
         };
         event.prevent_default();
@@ -161,7 +169,15 @@ pub(super) fn task_chip_keydown(
         if event.key() != "Enter" && event.key() != " " {
             return;
         }
-        let Some(handle) = task_handle_from_target(event.target()) else {
+        if let Some(handle) = task_handle_from_target(event.target(), ".message-quote-task") {
+            event.prevent_default();
+            event.stop_propagation();
+            if let Some(inspector) = inspector.as_ref() {
+                inspector.open_quote_task(handle);
+            }
+            return;
+        }
+        let Some(handle) = task_handle_from_target(event.target(), ".message-task-chip") else {
             return;
         };
         event.prevent_default();
@@ -172,10 +188,13 @@ pub(super) fn task_chip_keydown(
     })
 }
 
-fn task_handle_from_target(target: Option<web_sys::EventTarget>) -> Option<wire::TaskHandle> {
+fn task_handle_from_target(
+    target: Option<web_sys::EventTarget>,
+    selector: &str,
+) -> Option<wire::TaskHandle> {
     target
         .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .and_then(|target| target.closest(".message-task-chip").ok().flatten())?
+        .and_then(|target| target.closest(selector).ok().flatten())?
         .get_attribute("data-task-handle")
         .and_then(|handle| handle.parse().ok())
 }

@@ -386,6 +386,58 @@
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
+.markdown-body .message-quote-card {
+  display: block;
+  margin: 7px 0;
+  padding: 7px 8px;
+  border: var(--canvas-edge);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 72%, var(--line));
+  border-radius: var(--canvas-radius-compact);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  color: var(--ink);
+  font-size: .8125rem;
+}
+.markdown-body .message-quote-card .message-quote-card {
+  margin-inline-start: 8px;
+  border-left-color: color-mix(in srgb, var(--accent) 88%, white);
+}
+.markdown-body .message-quote-header {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 5px;
+  color: var(--muted);
+}
+.markdown-body .message-quote-author { font-weight: 650; }
+.markdown-body .message-quote-disposition {
+  min-height: 19px;
+  min-width: 4.75rem;
+  justify-content: center;
+  padding-inline: 5px;
+  font-size: .63rem;
+}
+.markdown-body .message-quote-task {
+  margin-left: auto;
+  color: var(--accent);
+  cursor: pointer;
+  font-weight: 650;
+}
+.markdown-body .message-quote-task:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.markdown-body .message-quote-body {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.markdown-body .message-quote-body > :first-child { margin-top: 0; }
+.markdown-body .message-quote-body > :last-child { margin-bottom: 0; }
+.markdown-body .message-quote-card--unavailable {
+  border-left-color: var(--warning);
+  background: var(--warning-soft);
+}
 @container (max-width: 18rem) {
   .team-surface .message-task-inspector-content .work-detail-facts { grid-template-columns: 1fr; }
 }
