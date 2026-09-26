@@ -409,6 +409,92 @@ fn no_resident_publication_then_restart_uses_the_retained_predecessor_authority(
     );
 }
 
+/// A stable-rollback promotion fault occurs after `down`, so it must restore
+/// service through the separately retained resident authority before returning.
+#[test]
+fn rollback_promotion_failure_restores_the_predecessor_resident() {
+    let fixture = Fixture::new("rollback-promotion-failure");
+    let repository = fixture.repository();
+    let state = repository.admit_state().expect("fixture state is admitted");
+    let discovery_path = state.canvas().to_path_buf();
+    let saved_discovery = fixture.0.join("saved-discovery");
+    let restored = fixture.0.join("predecessor-restored");
+    let stable_rollback = repository.worktree_root().join(WORKSPACE).join(ROLLBACK);
+    let retained_resident = repository
+        .worktree_root()
+        .join(WORKSPACE)
+        .join(RESIDENT_ROLLBACK);
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bootstrap listener binds");
+    let address = listener.local_addr().expect("bootstrap address reads");
+    let endpoint = format!("http://{address}");
+    let discovery = fixture.publish(&endpoint);
+    fs::copy(&discovery_path, &saved_discovery).expect("discovery is retained for recovery");
+    let readiness = wire::Outcome::Reply(wire::Reply {
+        position: wire::ReplyPosition::Direct {},
+        body: wire::CanvasOpen {
+            endpoint: endpoint.clone(),
+            epoch: discovery.epoch,
+        },
+    });
+    let readiness = String::from_utf8(wire::encode(&readiness).expect("readiness encodes"))
+        .expect("readiness is UTF-8");
+    let predecessor = fixture.binary(
+        "spice-predecessor",
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = down ]; then rm -f '{}'; rm -f '{}'; mkdir '{}'; exit 0; fi\ncp '{}' '{}'\n: > '{}'\nprintf '%s\\n' '{}'\n",
+            discovery_path.display(),
+            stable_rollback.display(),
+            stable_rollback.display(),
+            saved_discovery.display(),
+            discovery_path.display(),
+            restored.display(),
+            readiness,
+        )
+        .as_bytes(),
+    );
+    refresh_install(&repository, &predecessor).expect("predecessor installs");
+    let predecessor_binary =
+        executable_digest(&install::installed_binary(&repository)).expect("predecessor hashes");
+    let successor = fixture.binary("spice-successor", b"successor executable\n");
+    let no_resident = RefreshRequest {
+        restart: false,
+        ..RefreshRequest::default()
+    };
+    let mut output = Vec::new();
+    install_built(&repository, successor.clone(), &no_resident, &mut output)
+        .expect("no-resident publication installs successor");
+    let installed = install::installed_binary(&repository);
+    let successor_bytes = fs::read(&installed).expect("successor reads");
+    let server = serve_bootstrap(listener, discovery, predecessor_binary.clone());
+    let request = RefreshRequest {
+        restart: true,
+        ..RefreshRequest::default()
+    };
+
+    let result = install_built(&repository, successor, &request, &mut output);
+    server.join().expect("bootstrap server joins");
+
+    assert!(
+        matches!(result, Err(RefreshError::Io(_))),
+        "rollback promotion fault was not reported: {result:?}"
+    );
+    assert!(
+        restored.exists() && discovery_path.is_file(),
+        "the predecessor resident was not restored: {}",
+        String::from_utf8_lossy(&output)
+    );
+    assert_eq!(
+        fs::read(installed).expect("installed successor still reads"),
+        successor_bytes,
+        "promotion failure changed the previously runnable executable"
+    );
+    assert_eq!(
+        executable_digest(&retained_resident).expect("retained authority hashes"),
+        predecessor_binary,
+        "promotion failure lost the complete predecessor authority"
+    );
+}
+
 /// An authenticated generation outside both transaction slots is not ours.
 #[test]
 fn a_foreign_resident_is_refused_before_stop_or_install() {

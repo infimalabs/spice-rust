@@ -23,6 +23,8 @@ const WORKSPACE: &str = "target/spice-develop";
 const ROLLBACK: &str = "spice.rollback";
 /// Staged predecessor while the stable rollback remains shutdown authority.
 const NEXT_ROLLBACK: &str = "spice.rollback.next";
+/// Stable copy of the serving predecessor retained through successor readiness.
+const RESIDENT_ROLLBACK: &str = "spice.resident.rollback";
 /// Maximum resident bootstrap response accepted while reconciling a restart.
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
 /// One local resident identity probe must not hold an install indefinitely.
@@ -55,9 +57,9 @@ fn install_built(
     let published = read_endpoint(repository);
     let endpoint = requested_endpoint(request, published.as_deref());
 
-    // Resolve the running generation before touching the retained predecessor.
-    // A no-resident publication deliberately leaves that predecessor serving
-    // while `installed` already names its successor.
+    // Resolve and preserve the running generation before changing the stable
+    // rollback. A no-resident publication leaves that predecessor serving while
+    // `installed` already names its successor.
     let authority = if request.restart && published.is_some() {
         Some(resident_stop_executable(repository, &installed)?)
     } else {
@@ -66,32 +68,57 @@ fn install_built(
     let retained_authority = authority
         .as_deref()
         .filter(|executable| *executable != installed);
-    let rollback = if retained_authority.is_some() {
+    let resident_rollback = retained_authority
+        .map(|authority| park_as(repository, authority, RESIDENT_ROLLBACK))
+        .transpose()?
+        .flatten();
+    let mut rollback = if retained_authority.is_some() {
         park_as(repository, &installed, NEXT_ROLLBACK)?
     } else {
         park(repository, &installed)?
-    };
-    let unwind = Rollback {
-        installed: &installed,
-        executable: rollback.as_deref(),
-        resident_executable: retained_authority,
-        published: published.as_deref(),
-        restart: request.restart,
     };
 
     if let Some(authority) = authority.as_deref() {
         let stopping = Instant::now();
         if let Err(error) = stop(repository, authority, output) {
-            if retained_authority.is_some()
-                && let Some(rollback) = &rollback
-            {
-                let _ = fs::remove_file(rollback);
+            if retained_authority.is_some() {
+                if let Some(rollback) = &rollback {
+                    let _ = fs::remove_file(rollback);
+                }
+                if let Some(resident) = &resident_rollback {
+                    let _ = fs::remove_file(resident);
+                }
             }
             return Err(error);
         }
-        writeln!(output, "resident stopped in {:.1?}", stopping.elapsed())?;
+        let _ = writeln!(output, "resident stopped in {:.1?}", stopping.elapsed());
     }
 
+    if retained_authority.is_some() {
+        let staged = rollback
+            .take()
+            .expect("an installed successor was staged beside its live predecessor");
+        let stable = repository.worktree_root().join(WORKSPACE).join(ROLLBACK);
+        if let Err(error) = fs::rename(&staged, &stable) {
+            let unwind = Rollback {
+                installed: &installed,
+                executable: None,
+                resident_executable: resident_rollback.as_deref(),
+                published: published.as_deref(),
+                restart: request.restart,
+            };
+            restore_resident(repository, &unwind, output);
+            return Err(error.into());
+        }
+        rollback = Some(stable);
+    }
+    let unwind = Rollback {
+        installed: &installed,
+        executable: rollback.as_deref(),
+        resident_executable: resident_rollback.as_deref(),
+        published: published.as_deref(),
+        restart: request.restart,
+    };
     let installing = Instant::now();
     let digest = match refresh_install(repository, &built) {
         Ok(digest) => digest,
@@ -101,12 +128,12 @@ fn install_built(
             ));
         }
     };
-    writeln!(
+    let _ = writeln!(
         output,
         "installed {} plan={digest} in {:.1?}",
         installed.display(),
         installing.elapsed()
-    )?;
+    );
 
     let bound = (endpoint.0.as_deref(), endpoint.1);
     let endpoint =
@@ -126,11 +153,8 @@ fn install_built(
                 ));
             }
         };
-    if retained_authority.is_some()
-        && let Some(rollback) = &rollback
-    {
-        fs::copy(rollback, workspace(repository)?.join(ROLLBACK))?;
-        fs::remove_file(rollback)?;
+    if let Some(resident) = resident_rollback {
+        let _ = fs::remove_file(resident);
     }
     Ok(RefreshReport {
         built,
@@ -431,12 +455,17 @@ fn built_executable(events: &str) -> Option<PathBuf> {
         .next_back()
 }
 
-/// Copy the currently installed executable aside so a failure can restore it.
+/// Atomically replace the stable executable rollback from a complete staging copy.
 fn park(repository: &Repository, installed: &Path) -> Result<Option<PathBuf>, RefreshError> {
-    park_as(repository, installed, ROLLBACK)
+    let Some(staged) = park_as(repository, installed, NEXT_ROLLBACK)? else {
+        return Ok(None);
+    };
+    let rollback = workspace(repository)?.join(ROLLBACK);
+    fs::rename(staged, &rollback)?;
+    Ok(Some(rollback))
 }
 
-/// Park under `name`, preserving the stable predecessor when it is still live.
+/// Copy one executable under `name` without touching any stable authority path.
 fn park_as(
     repository: &Repository,
     installed: &Path,
