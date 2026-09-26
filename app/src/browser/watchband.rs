@@ -225,7 +225,7 @@ fn render_compose(
                             topology,
                             sender,
                         );
-                        let header = primary_composer_header(&cards, team, member.lane, standing);
+                        let header = primary_composer_header(runtime, team, member.lane, standing);
                         render_agent_composer(
                             team.lane,
                             member,
@@ -652,16 +652,12 @@ struct ComposerHeader {
 /// a vacant member that has never run, shows the empty header rather than the
 /// latest message another member of the team happened to produce.
 fn primary_composer_header(
-    cards: &[ActivityCard],
+    runtime: &CanvasRuntime,
     team: &crate::runtime::LaneRow,
     lane: CanonicalUuid,
     standing: &Standing,
 ) -> ComposerHeader {
-    let messages = cards.iter().filter_map(|card| match card {
-        ActivityCard::Agent { message, .. } => Some(message.as_ref()),
-        ActivityCard::Lifecycle { .. } => None,
-    });
-    watchband::latest_lane_prose(lane, messages).map_or_else(
+    runtime.latest_lane_prose(lane).map_or_else(
         || ComposerHeader {
             stream: ComposerStreamLink {
                 target: format!("team-stream-{}", team.lane),

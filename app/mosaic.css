@@ -921,7 +921,9 @@ html[data-command-modifier-held="true"]
   /* Measurement is an enhancement, not admission. A fresh hidden or narrow
      host cannot commit a lattice yet, but its admitted transcript must still
      be readable while ResizeObserver waits for a real width. Keep measuring
-     cards in ordinary grid flow until the persistent plane takes ownership. */
+     cards in ordinary grid flow until the persistent plane takes ownership.
+     A measurable host skips this phase: it measures with its cards hidden,
+     so its first visible frame is the committed lattice, never a reflow. */
   height: auto; visibility: visible; pointer-events: auto;
 }
 .lane-mosaic-plane[data-measurement-phase="base"] .lane-mosaic-track {

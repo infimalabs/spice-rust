@@ -158,6 +158,36 @@ fn hidden_turn_history_advances_to_older_prose_without_rendering_a_card() {
 }
 
 #[test]
+fn older_history_pages_never_displace_a_lanes_newest_header_prose() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let snapshot = message_snapshot(
+        vec![agent_message(LANE, 100, T10, "newest prose", None)],
+        &[LANE],
+    );
+    apply(&mut runtime, &session, &snapshot);
+    let older = history_page(
+        LANE,
+        100,
+        vec![
+            agent_message(LANE, 25, T08, "oldest prose", None),
+            agent_message(LANE, 50, T09, "older prose", None),
+        ],
+        false,
+    );
+    apply(&mut runtime, &session, &older);
+
+    let (message, prose) = runtime
+        .latest_lane_prose(uuid(LANE))
+        .expect("the lane authored prose");
+    assert_eq!(
+        (message.text.as_str(), prose.as_str()),
+        ("newest prose", "newest prose")
+    );
+}
+
+#[test]
 fn older_member_history_merges_without_replacing_the_live_activity_head() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
