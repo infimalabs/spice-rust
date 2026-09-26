@@ -1,6 +1,6 @@
 //! Member-local progressive history requests for one merged Mosaic plane.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use super::*;
 
@@ -39,18 +39,19 @@ struct HistoryRequestKey {
 #[derive(Clone, PartialEq)]
 struct HistoryTarget {
     cursor: wire::MessageHistoryCursor,
+    completion: u64,
     key: String,
     request_key: HistoryRequestKey,
 }
 
 fn history_targets(
     cards: &[ActivityCard],
-    targets: &BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
+    targets: &BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     revision: u64,
 ) -> Vec<HistoryTarget> {
     targets
         .iter()
-        .map(|(lane, cursor)| {
+        .map(|(lane, (cursor, completion))| {
             let key = cursor
                 .before
                 .and_then(|before| {
@@ -74,6 +75,7 @@ fn history_targets(
                 .unwrap_or_else(|| format!("history-bootstrap-{lane}"));
             HistoryTarget {
                 cursor: *cursor,
+                completion: *completion,
                 key,
                 request_key: HistoryRequestKey {
                     revision,
@@ -98,12 +100,12 @@ fn rotation_start(targets: &[HistoryTarget], last: Option<CanonicalUuid>) -> usi
 pub(super) fn use_history_paging(
     host: NodeRef,
     cards: &[ActivityCard],
-    targets: &BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
+    targets: &BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     revision: u64,
     request: HistorySender,
 ) {
     let targets = history_targets(cards, targets, revision);
-    let requested = use_mut_ref(HashSet::<HistoryRequestKey>::new);
+    let requested = use_mut_ref(HashMap::<HistoryRequestKey, u64>::new);
     let last_admitted = use_mut_ref(|| None::<CanonicalUuid>);
     use_effect_with((host, targets, request), move |(host, targets, request)| {
         let registration = host.cast::<web_sys::Element>().and_then(|element| {
@@ -111,13 +113,15 @@ pub(super) fn use_history_paging(
                 .iter()
                 .map(|target| target.request_key)
                 .collect::<HashSet<_>>();
-            requested.borrow_mut().retain(|key| current.contains(key));
+            requested
+                .borrow_mut()
+                .retain(|key, _| current.contains(key));
             let observed = element.clone();
             let observed_targets = targets.clone();
             let observed_requested = requested.clone();
             let observed_request = request.clone();
             let observed_last_admitted = last_admitted.clone();
-            let inspect = Rc::new(move || {
+            let inspect = Rc::new(move |fresh_demand: bool| {
                 // A plane hidden behind another destination has no viewport: its
                 // zero extent is not a trailing edge, so it pages nothing until shown.
                 if observed.client_height() == 0 {
@@ -148,7 +152,21 @@ pub(super) fn use_history_paging(
                     if !at_edge && !target_is_near {
                         continue;
                     }
-                    if !observed_requested.borrow_mut().insert(target.request_key) {
+                    let admitted = {
+                        let mut requested = observed_requested.borrow_mut();
+                        if requested
+                            .get(&target.request_key)
+                            .is_some_and(|completion| {
+                                !fresh_demand || *completion >= target.completion
+                            })
+                        {
+                            false
+                        } else {
+                            requested.insert(target.request_key, target.completion);
+                            true
+                        }
+                    };
+                    if !admitted {
                         continue;
                     }
                     if observed_request.request(target.cursor) {
@@ -158,10 +176,13 @@ pub(super) fn use_history_paging(
                     }
                 }
             });
-            inspect();
+            inspect(false);
             let on_scroll = {
                 let inspect = Rc::clone(&inspect);
-                Closure::<dyn FnMut(web_sys::Event)>::new(move |_| inspect())
+                Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+                    // A completed sparse page can retry only after fresh viewport demand.
+                    inspect(true);
+                })
             };
             element
                 .add_event_listener_with_callback("scroll", on_scroll.as_ref().unchecked_ref())
@@ -169,7 +190,7 @@ pub(super) fn use_history_paging(
             // Showing the plane again gives it a viewport without scrolling it.
             let on_resize =
                 Closure::<dyn FnMut(js_sys::Array, web_sys::ResizeObserver)>::new(move |_, _| {
-                    inspect()
+                    inspect(false);
                 });
             let resized = web_sys::ResizeObserver::new(on_resize.as_ref().unchecked_ref()).ok()?;
             resized.observe(&element);

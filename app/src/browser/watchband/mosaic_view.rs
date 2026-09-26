@@ -448,7 +448,7 @@ pub(super) struct MosaicPlaneProps {
     pub(super) narrate: Callback<NarrationBatch>,
     pub(super) speech: TeamSpeech,
     pub(super) speech_message: Option<String>,
-    pub(super) history_targets: BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
+    pub(super) history_targets: BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     pub(super) history_revision: u64,
     pub(super) history: HistorySender,
 }
