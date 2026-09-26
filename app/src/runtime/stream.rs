@@ -304,6 +304,7 @@ impl CanvasRuntime {
         let activities_changed = self.apply_activity_snapshot(limit, &generation.messages);
         self.message_history_completions
             .retain(|lane, _| next_history.contains_key(lane));
+        self.message_history_exhausted.clear();
         self.message_history = next_history;
         self.message_generation = Some(generation.generation);
         if reconnect {
@@ -333,7 +334,10 @@ impl CanvasRuntime {
             message_history_frontiers(generation.generation, &generation.frontiers);
         // A live generation only appends newer work. A lane that has admitted
         // older pages keeps paging from its deepest cursor, and an unmoved edge
-        // keeps its identity so an in-flight request is not issued again.
+        // keeps its identity so an in-flight request is not issued again. A
+        // lane whose older history ended stays ended: newer work cannot put
+        // older cards behind its retained edge.
+        next_history.retain(|lane, _| !self.message_history_exhausted.contains(lane));
         for (lane, next) in &mut next_history {
             if let Some(previous) = self.message_history.get(lane)
                 && (self.message_history_completions.contains_key(lane)
@@ -424,6 +428,7 @@ impl CanvasRuntime {
             } else {
                 self.message_history.remove(&frontier.lane);
                 self.message_history_completions.remove(&frontier.lane);
+                self.message_history_exhausted.insert(frontier.lane);
             }
             changed |= self.message_history.get(&frontier.lane).copied() != previous;
         }

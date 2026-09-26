@@ -398,6 +398,62 @@ fn a_nonadvancing_open_page_preserves_the_same_cursor() {
 }
 
 #[test]
+fn a_live_generation_cannot_reopen_an_exhausted_lane_until_a_snapshot_does() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let retained = vec![agent_message(LANE, 100, T12, "retained head", None)];
+    assert!(apply(
+        &mut runtime,
+        &session,
+        &message_snapshot(retained.clone(), &[LANE]),
+    ));
+    let last = history_page(
+        LANE,
+        100,
+        vec![agent_message(LANE, 50, T10, "oldest page", None)],
+        false,
+    );
+    assert!(apply(&mut runtime, &session, &last));
+    assert_eq!(runtime.message_history_target(uuid(LANE)), None);
+
+    let live = message_generation_frame(
+        2,
+        vec![agent_message(LANE, 150, T14, "live work", None)],
+        vec![serde_json::json!({
+            "lane": LANE,
+            "state": "truncated",
+            "before": {"member": 1, "offset": 100, "length": 20, "event": 0},
+        })],
+    );
+    assert!(apply(&mut runtime, &session, &live));
+    assert_eq!(
+        runtime.message_history_target(uuid(LANE)),
+        None,
+        "the retained edge must not restart an exhausted lane",
+    );
+
+    let replaced = message_snapshot_at(3, retained, &[LANE]);
+    assert!(apply(&mut runtime, &session, &replaced));
+    assert_eq!(target_offset(&runtime, LANE), Some(100));
+    let later = message_generation_frame(
+        4,
+        vec![agent_message(LANE, 160, T14, "later work", None)],
+        vec![serde_json::json!({
+            "lane": LANE,
+            "state": "truncated",
+            "before": {"member": 1, "offset": 100, "length": 20, "event": 0},
+        })],
+    );
+    assert!(apply(&mut runtime, &session, &later));
+    assert_eq!(
+        target_offset(&runtime, LANE),
+        Some(100),
+        "a snapshot reopens the lane for every later generation",
+    );
+}
+
+#[test]
 fn a_live_generation_keeps_a_hydrated_lane_paging_from_its_deepest_cursor() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);

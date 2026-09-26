@@ -710,6 +710,9 @@ pub struct CanvasRuntime {
     message_history: BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
     /// Admitted response completions for explicit same-cursor retries.
     message_history_completions: BTreeMap<CanonicalUuid, u64>,
+    /// Lanes whose older history ended under the current snapshot; a live
+    /// generation still reporting their retained edge cannot reopen them.
+    message_history_exhausted: BTreeSet<CanonicalUuid>,
     /// Last transcript generation admitted atomically.
     message_generation: Option<u64>,
     /// A same-scope subscription snapshot merges into retained hydrated cards.
@@ -743,6 +746,7 @@ impl CanvasRuntime {
             message_cards: message_cards::MessageCards::default(),
             message_history: BTreeMap::new(),
             message_history_completions: BTreeMap::new(),
+            message_history_exhausted: BTreeSet::new(),
             message_generation: None,
             message_reconnect_pending: false,
             message_history_revision: 0,
