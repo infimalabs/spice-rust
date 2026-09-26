@@ -770,7 +770,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         }],
     }];
 
-    let agents = BTreeMap::from([(lane, "spice-rust-k".to_owned())]);
+    let agents = BTreeMap::from([((lane, source), "spice-rust-k".to_owned())]);
     let rendered = render_received_with_quotes(
         &outer_target.markdown(),
         &[],
@@ -788,12 +788,41 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     );
     assert!(rendered.html.contains("data-quote-author=\"agent\""));
     assert!(rendered.html.contains(
-        "class=\"message-quote-author\" data-quote-author=\"agent\">Agent: spice-rust-k</span>"
+        "data-quote-history=\"available\" href=\"#/info\" \
+         aria-label=\"Open information for Agent spice-rust-k\">Agent spice-rust-k</a>"
     ));
     assert!(rendered.html.contains("data-quote-author=\"directive\""));
+    assert!(rendered.html.contains(">Operator</a>"));
     assert!(rendered.html.contains(inner_text));
     assert!(rendered.html.contains("data-quote-disposition=\"live\""));
-    assert!(!rendered.html.contains("<a "));
+    assert!(!rendered.html.contains("Agent:"));
+    assert!(!rendered.html.contains("Directive by"));
+    let outer_body = rendered
+        .html
+        .find("before ")
+        .expect("outer authenticated prose renders");
+    let outer_signoff = rendered
+        .html
+        .rfind("Agent spice-rust-k</a>")
+        .expect("outer signoff renders");
+    assert!(
+        outer_body < outer_signoff,
+        "the signoff trails authored prose"
+    );
+
+    let historical = render_received_with_quotes(
+        &outer_target.markdown(),
+        &[],
+        &quotes,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    assert!(historical.html.contains(
+        "data-quote-agent-occupant=\"018f82d4-6f59-7d06-92e3-bce9131163e7\" \
+         data-quote-history=\"unavailable\""
+    ));
+    assert!(historical.html.contains("· history unavailable"));
+    assert!(!historical.html.contains("Agent spice-rust-k"));
 }
 
 #[test]
@@ -847,6 +876,37 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         );
     }
     assert_eq!(
+        rendered.html.matches("class=\"message-ack-pill\"").count(),
+        2,
+        "ACK and NACK reuse the canonical acknowledgement pill"
+    );
+    let acknowledgement = rendered
+        .html
+        .find("data-quote-disposition=\"acked\"")
+        .expect("acknowledged state renders");
+    let acknowledged_prose = rendered
+        .html
+        .find("direction dTVQdQfLx")
+        .expect("acknowledged prose renders");
+    assert!(
+        acknowledgement < acknowledged_prose,
+        "the acknowledgement precedes its directive prose"
+    );
+    assert_eq!(
+        rendered
+            .html
+            .matches("class=\"message-quote-signoff\"")
+            .count(),
+        6
+    );
+    assert_eq!(rendered.html.matches(">Operator</a>").count(), 6);
+    assert!(!rendered.html.contains("Directive by"));
+    assert!(
+        !rendered
+            .html
+            .contains("class=\"message-quote-disposition tag")
+    );
+    assert_eq!(
         rendered
             .html
             .matches("class=\"message-quote-task\"")
@@ -882,6 +942,9 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
     );
 
     assert!(rendered.html.contains("Quote unavailable: depth-exceeded"));
+    assert!(rendered.html.contains("authorship unavailable"));
+    assert!(!rendered.html.contains("message-quote-signoff"));
+    assert!(!rendered.html.contains("<a "));
     assert!(
         rendered
             .html

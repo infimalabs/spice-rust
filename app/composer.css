@@ -401,22 +401,39 @@
   margin-inline-start: 8px;
   border-left-color: color-mix(in srgb, var(--accent) 88%, white);
 }
-.markdown-body .message-quote-header {
+.markdown-body .message-quote-signoff {
   display: flex;
-  align-items: center;
+  min-width: 0;
+  align-items: baseline;
   flex-wrap: wrap;
-  gap: 5px;
-  margin-bottom: 5px;
+  gap: 4px;
+  margin-top: 5px;
   color: var(--muted);
+  font-size: .92em;
+  line-height: 1.3;
 }
-.markdown-body .message-quote-author { font-weight: 650; }
+.markdown-body .message-quote-author {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: inherit;
+  font-weight: 500;
+  text-decoration: none;
+}
+.markdown-body a.message-quote-author:hover,
+.markdown-body a.message-quote-author:focus-visible {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.markdown-body .message-quote-history-unavailable { font-weight: 400; }
 .markdown-body .message-quote-disposition {
-  min-height: 19px;
-  min-width: 4.75rem;
-  justify-content: center;
-  padding-inline: 5px;
-  font-size: .63rem;
+  display: inline-flex;
+  margin-right: .35em;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .75em;
+  font-weight: 700;
 }
+.markdown-body .message-quote-body .message-ack-pill { margin-right: .35em; }
 .markdown-body .message-quote-task {
   margin-left: auto;
   color: var(--accent);
@@ -434,6 +451,7 @@
 }
 .markdown-body .message-quote-body > :first-child { margin-top: 0; }
 .markdown-body .message-quote-body > :last-child { margin-bottom: 0; }
+.markdown-body .message-quote-unavailable { color: var(--muted); }
 .markdown-body .message-quote-card--unavailable {
   border-left-color: var(--warning);
   background: var(--warning-soft);
