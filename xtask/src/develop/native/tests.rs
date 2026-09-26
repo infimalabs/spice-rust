@@ -54,6 +54,7 @@ fn a_committed_schema_advance_preserves_the_successor_executable() {
     let rollback = Rollback {
         installed: &installed,
         executable: Some(&parked),
+        resident_executable: None,
         published: None,
         restart: false,
     };
@@ -100,6 +101,7 @@ fn uncertain_schema_recovery_preserves_the_successor_and_names_both_causes() {
         &Rollback {
             installed: &installed,
             executable: Some(&parked),
+            resident_executable: None,
             published: None,
             restart: false,
         },
@@ -264,46 +266,197 @@ fn serve_bootstrap(
     discovery: spice::canvas::Discovery,
     binary: Digest,
 ) -> thread::JoinHandle<()> {
+    serve_bootstraps(listener, discovery, vec![binary])
+}
+
+/// Serve successive resident generations from one stable endpoint.
+fn serve_bootstraps(
+    listener: TcpListener,
+    discovery: spice::canvas::Discovery,
+    binaries: Vec<Digest>,
+) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let bootstrap = wire::CanvasBootstrap {
-            endpoint: discovery.endpoint,
-            capability: discovery.capability,
-            epoch: discovery.epoch,
-            version: wire::Version {
-                product: wire::manifest::ProductVersion::parse("0.2.0-dev.0")
-                    .expect("fixture product version"),
-                binary,
-                wire: wire::WireVersion::CURRENT,
-                journal: spice::journal_schema::CURRENT,
-                canvas: wire::CanvasVersion::CURRENT,
-                app: Digest::compute(wire::Domain::DistInventory, b"fixture app"),
-            },
-        };
-        let body = wire::encode(&bootstrap).expect("fixture bootstrap encodes");
-        let (mut stream, _) = listener.accept().expect("bootstrap connection arrives");
-        let mut request = Vec::new();
-        while !request.windows(4).any(|window| window == b"\r\n\r\n") {
-            let mut chunk = [0_u8; 256];
-            let read = stream.read(&mut chunk).expect("bootstrap request reads");
-            assert_ne!(read, 0, "bootstrap request terminates its headers");
-            request.extend_from_slice(&chunk[..read]);
-            assert!(request.len() <= 4 * 1024, "bootstrap request stays bounded");
+        for binary in binaries {
+            let bootstrap = wire::CanvasBootstrap {
+                endpoint: discovery.endpoint.clone(),
+                capability: discovery.capability,
+                epoch: discovery.epoch,
+                version: wire::Version {
+                    product: wire::manifest::ProductVersion::parse("0.2.0-dev.0")
+                        .expect("fixture product version"),
+                    binary,
+                    wire: wire::WireVersion::CURRENT,
+                    journal: spice::journal_schema::CURRENT,
+                    canvas: wire::CanvasVersion::CURRENT,
+                    app: Digest::compute(wire::Domain::DistInventory, b"fixture app"),
+                },
+            };
+            let body = wire::encode(&bootstrap).expect("fixture bootstrap encodes");
+            let (mut stream, _) = listener.accept().expect("bootstrap connection arrives");
+            let mut request = Vec::new();
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let mut chunk = [0_u8; 256];
+                let read = stream.read(&mut chunk).expect("bootstrap request reads");
+                assert_ne!(read, 0, "bootstrap request terminates its headers");
+                request.extend_from_slice(&chunk[..read]);
+                assert!(request.len() <= 4 * 1024, "bootstrap request stays bounded");
+            }
+            assert!(
+                request.starts_with(b"GET /bootstrap HTTP/1.1\r\n"),
+                "unexpected bootstrap request: {}",
+                String::from_utf8_lossy(&request)
+            );
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            )
+            .and_then(|()| stream.write_all(&body))
+            .and_then(|()| stream.flush())
+            .and_then(|()| stream.shutdown(Shutdown::Write))
+            .expect("bootstrap response writes");
         }
-        assert!(
-            request.starts_with(b"GET /bootstrap HTTP/1.1\r\n"),
-            "unexpected bootstrap request: {}",
-            String::from_utf8_lossy(&request)
-        );
-        write!(
-            stream,
-            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            body.len()
-        )
-        .and_then(|()| stream.write_all(&body))
-        .and_then(|()| stream.flush())
-        .and_then(|()| stream.shutdown(Shutdown::Write))
-        .expect("bootstrap response writes");
     })
+}
+
+/// The exact command sequence that exposed the principal mismatch.
+///
+/// The first publication leaves its predecessor resident live. The second must
+/// execute `down` through the retained predecessor, then launch the installed
+/// successor and expose that successor's digest at the same endpoint.
+#[test]
+fn no_resident_publication_then_restart_uses_the_retained_predecessor_authority() {
+    let fixture = Fixture::new("two-install-predecessor");
+    let repository = fixture.repository();
+    let state = repository.admit_state().expect("fixture state is admitted");
+    let discovery_path = state.canvas().to_path_buf();
+    let stopped = fixture.0.join("predecessor-stopped");
+    let started = fixture.0.join("successor-started");
+    let saved_discovery = fixture.0.join("saved-discovery");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bootstrap listener binds");
+    let address = listener.local_addr().expect("bootstrap address reads");
+    let endpoint = format!("http://{address}");
+
+    let predecessor = fixture.binary(
+        "spice-predecessor",
+        format!(
+            "#!/bin/sh\nif [ \"$1\" = down ]; then rm -f '{}'; : > '{}'; exit 0; fi\necho 'unexpected predecessor command' >&2\nexit 9\n",
+            discovery_path.display(),
+            stopped.display(),
+        )
+        .as_bytes(),
+    );
+    refresh_install(&repository, &predecessor).expect("predecessor installs");
+    let predecessor_binary =
+        executable_digest(&install::installed_binary(&repository)).expect("predecessor hashes");
+    let discovery = fixture.publish(&endpoint);
+    fs::copy(&discovery_path, &saved_discovery).expect("discovery is retained for successor");
+    let readiness = wire::Outcome::Reply(wire::Reply {
+        position: wire::ReplyPosition::Direct {},
+        body: wire::CanvasOpen {
+            endpoint: endpoint.clone(),
+            epoch: discovery.epoch,
+        },
+    });
+    let readiness = String::from_utf8(wire::encode(&readiness).expect("readiness encodes"))
+        .expect("readiness is UTF-8");
+    let successor = fixture.binary(
+        "spice-successor",
+        format!(
+            "#!/bin/sh\ncp '{}' '{}'\n: > '{}'\nprintf '%s\\n' '{}'\n",
+            saved_discovery.display(),
+            discovery_path.display(),
+            started.display(),
+            readiness,
+        )
+        .as_bytes(),
+    );
+    let no_resident = RefreshRequest {
+        restart: false,
+        ..RefreshRequest::default()
+    };
+    let mut output = Vec::new();
+
+    install_built(&repository, successor.clone(), &no_resident, &mut output)
+        .expect("no-resident publication installs successor");
+    assert!(
+        !stopped.exists(),
+        "no-resident publication stopped its predecessor"
+    );
+    let successor_binary =
+        executable_digest(&install::installed_binary(&repository)).expect("successor hashes");
+    let server = serve_bootstraps(
+        listener,
+        discovery,
+        vec![predecessor_binary, successor_binary.clone()],
+    );
+    let request = RefreshRequest {
+        restart: true,
+        ..RefreshRequest::default()
+    };
+
+    let report = install_built(&repository, successor, &request, &mut output)
+        .expect("second install replaces the live predecessor");
+    let (_, running) = running_resident_version(&repository).expect("successor bootstrap answers");
+    server.join().expect("bootstrap server joins");
+
+    assert!(stopped.exists(), "retained predecessor did not stop itself");
+    assert!(started.exists(), "installed successor did not launch");
+    assert_eq!(report.endpoint.as_deref(), Some(endpoint.as_str()));
+    assert_eq!(
+        running.binary, successor_binary,
+        "endpoint did not report the installed successor"
+    );
+}
+
+/// An authenticated generation outside both transaction slots is not ours.
+#[test]
+fn a_foreign_resident_is_refused_before_stop_or_install() {
+    let fixture = Fixture::new("foreign-resident");
+    let repository = fixture.repository();
+    let invoked = fixture.0.join("installed-command-invoked");
+    let installed_source = fixture.binary(
+        "spice-installed",
+        format!("#!/bin/sh\n: > '{}'\nexit 0\n", invoked.display()).as_bytes(),
+    );
+    refresh_install(&repository, &installed_source).expect("current executable installs");
+    let installed = install::installed_binary(&repository);
+    let before = fs::read(&installed).expect("installed executable reads");
+    let successor = fixture.binary("spice-foreign-successor", b"successor executable\n");
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bootstrap listener binds");
+    let address = listener.local_addr().expect("bootstrap address reads");
+    let discovery = fixture.publish(&format!("http://{address}"));
+    let foreign = Digest::compute(wire::Domain::DistArtifact, b"foreign executable");
+    let server = serve_bootstrap(listener, discovery, foreign);
+    let request = RefreshRequest {
+        restart: true,
+        ..RefreshRequest::default()
+    };
+    let mut output = Vec::new();
+    let started_at = Instant::now();
+
+    let result = install_built(&repository, successor, &request, &mut output);
+    let elapsed = started_at.elapsed();
+    server.join().expect("bootstrap server joins");
+
+    assert!(
+        matches!(&result, Err(RefreshError::ResidentStopRefused(refusal))
+            if refusal.contains("resident::foreign-generation")),
+        "foreign resident refusal was not named: {result:?}"
+    );
+    assert!(
+        !invoked.exists(),
+        "foreign resident was sent a stop command"
+    );
+    assert_eq!(
+        fs::read(installed).expect("installed executable still reads"),
+        before,
+        "foreign resident refusal replaced the installed executable"
+    );
+    assert!(
+        elapsed < BOOTSTRAP_PROBE_BOUND,
+        "foreign resident refusal waited beyond its identity probe: {elapsed:?}"
+    );
 }
 
 #[test]
@@ -765,6 +918,7 @@ fn an_untouched_install_refusal_does_not_enter_rollback() {
         &Rollback {
             installed: &installed,
             executable: Some(&parked),
+            resident_executable: None,
             published: None,
             restart: false,
         },
@@ -822,6 +976,7 @@ fn an_untouched_install_refusal_restarts_the_resident_it_stopped() {
         &Rollback {
             installed: &installed,
             executable: Some(&parked),
+            resident_executable: None,
             published: Some("http://127.0.0.1:8767"),
             restart: true,
         },
@@ -879,6 +1034,7 @@ fn a_failed_refresh_restores_the_parked_executable_and_reports_its_cause() {
         &Rollback {
             installed: &installed,
             executable: Some(&parked),
+            resident_executable: None,
             published: None,
             restart: false,
         },
@@ -900,20 +1056,38 @@ fn a_failed_refresh_restores_the_parked_executable_and_reports_its_cause() {
     );
 }
 
-/// A refresh that stopped a resident brings it back, and a resident that will
-/// not come back still does not replace the cause that forced the restore.
-///
-/// Restoring the executable alone would leave the appliance installed but
-/// unserved, which is not the state the refresh was asked to preserve.
+/// A refresh that stopped a resident restores both the prior installed bytes
+/// and the distinct command authority that had actually been serving them.
 #[test]
 fn a_failed_refresh_restarts_the_resident_it_stopped() {
     let fixture = Fixture::new("resident-restore");
     let repository = fixture.repository();
     let installed = install::installed_binary(&repository);
-    // The restored executable is what the restart is launched from, so a script
-    // that refuses to stay up is a resident that cannot come back.
-    let first = fixture.binary("spice-first", b"#!/bin/sh\nexit 3\n");
+    let first = fixture.binary("spice-first", b"first build\n");
     let second = fixture.binary("spice-second", b"second build\n");
+    let restarted = fixture.0.join("resident-restored");
+    let endpoint = "http://127.0.0.1:8767";
+    let epoch = "00000000-0000-4000-8000-000000000004"
+        .parse()
+        .expect("fixture epoch is canonical");
+    let readiness = wire::Outcome::Reply(wire::Reply {
+        position: wire::ReplyPosition::Direct {},
+        body: wire::CanvasOpen {
+            endpoint: endpoint.to_owned(),
+            epoch,
+        },
+    });
+    let readiness = String::from_utf8(wire::encode(&readiness).expect("readiness encodes"))
+        .expect("readiness is UTF-8");
+    let resident = fixture.binary(
+        "spice-serving-predecessor",
+        format!(
+            "#!/bin/sh\n: > '{}'\nprintf '%s\\n' '{}'\n",
+            restarted.display(),
+            readiness,
+        )
+        .as_bytes(),
+    );
 
     refresh_install(&repository, &first).expect("first install applies");
     let parked = park(&repository, &installed)
@@ -927,7 +1101,8 @@ fn a_failed_refresh_restarts_the_resident_it_stopped() {
         &Rollback {
             installed: &installed,
             executable: Some(&parked),
-            published: Some("http://127.0.0.1:8767"),
+            resident_executable: Some(&resident),
+            published: Some(endpoint),
             restart: true,
         },
         &mut output,
@@ -937,20 +1112,15 @@ fn a_failed_refresh_restarts_the_resident_it_stopped() {
 
     assert!(
         matches!(reported, RefreshError::ResidentUnready),
-        "the restore's own aftermath replaced the reported cause: {reported}"
+        "a successful restore replaced the reported cause: {reported}"
     );
     assert!(
-        output.contains("restarting previous resident"),
-        "a stopped resident was never restarted: {output}"
-    );
-    assert!(
-        output
-            .contains("previous resident did not come back: resident start refused: no diagnostic"),
-        "a resident that refused to come back was not reported: {output}"
+        restarted.exists() && output.contains("resident ready at"),
+        "the stopped resident authority was not restarted: {output}"
     );
     assert_eq!(
         fs::read(&installed).expect("installed executable reads"),
-        b"#!/bin/sh\nexit 3\n"
+        b"first build\n"
     );
 }
 
