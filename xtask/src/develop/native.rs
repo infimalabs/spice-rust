@@ -21,6 +21,8 @@ use wire::Digest;
 const WORKSPACE: &str = "target/spice-develop";
 /// Executable parked before a refresh so a failure can restore it.
 const ROLLBACK: &str = "spice.rollback";
+/// Staged predecessor while the stable rollback remains shutdown authority.
+const NEXT_ROLLBACK: &str = "spice.rollback.next";
 /// Maximum resident bootstrap response accepted while reconciling a restart.
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
 /// One local resident identity probe must not hold an install indefinitely.
@@ -37,35 +39,65 @@ pub(super) fn perform(
     writeln!(output, "building canvas app")?;
     crate::app(environment, output)?;
     let built = build(request.release, request.symbols, output)?;
-    let installed = install::installed_binary(&repository);
-    let rollback = park(&repository, &installed)?;
-    let before = snapshot_install(&repository, &installed)?;
-    let schema = schema_recovery_boundary(&repository, request.restart)?;
-    let published = read_endpoint(&repository);
+    install_built(&repository, built, request, output)
+}
+
+/// Publish one completed build and reconcile the resident around that cutover.
+fn install_built(
+    repository: &Repository,
+    built: PathBuf,
+    request: &RefreshRequest,
+    output: &mut impl Write,
+) -> Result<RefreshReport, RefreshError> {
+    let installed = install::installed_binary(repository);
+    let before = snapshot_install(repository, &installed)?;
+    let schema = schema_recovery_boundary(repository, request.restart)?;
+    let published = read_endpoint(repository);
     let endpoint = requested_endpoint(request, published.as_deref());
 
+    // Resolve the running generation before touching the retained predecessor.
+    // A no-resident publication deliberately leaves that predecessor serving
+    // while `installed` already names its successor.
+    let authority = if request.restart && published.is_some() {
+        Some(resident_stop_executable(repository, &installed)?)
+    } else {
+        None
+    };
+    let retained_authority = authority
+        .as_deref()
+        .filter(|executable| *executable != installed);
+    let rollback = if retained_authority.is_some() {
+        park_as(repository, &installed, NEXT_ROLLBACK)?
+    } else {
+        park(repository, &installed)?
+    };
     let unwind = Rollback {
         installed: &installed,
         executable: rollback.as_deref(),
+        resident_executable: retained_authority,
         published: published.as_deref(),
         restart: request.restart,
     };
 
-    if request.restart && published.is_some() {
+    if let Some(authority) = authority.as_deref() {
         let stopping = Instant::now();
-        stop(&repository, &installed, output)?;
+        if let Err(error) = stop(repository, authority, output) {
+            if retained_authority.is_some()
+                && let Some(rollback) = &rollback
+            {
+                let _ = fs::remove_file(rollback);
+            }
+            return Err(error);
+        }
         writeln!(output, "resident stopped in {:.1?}", stopping.elapsed())?;
     }
+
     let installing = Instant::now();
-    let digest = match refresh_install(&repository, &built) {
+    let digest = match refresh_install(repository, &built) {
         Ok(digest) => digest,
         Err(error) => {
             return Err(restore_if_changed(
-                &repository,
-                &unwind,
-                &before,
-                output,
-                error,
+                repository, &unwind, &before, output, error,
             ));
         }
     };
@@ -78,14 +110,14 @@ pub(super) fn perform(
 
     let bound = (endpoint.0.as_deref(), endpoint.1);
     let endpoint =
-        match restart_admitting_reappearance(&repository, &installed, bound, request, output) {
+        match restart_admitting_reappearance(repository, &installed, bound, request, output) {
             Ok(endpoint) => endpoint,
             Err(error) => {
                 let Some((journal, before_schema)) = &schema else {
                     return Err(error);
                 };
                 return Err(recover_start_failure(
-                    &repository,
+                    repository,
                     &unwind,
                     journal,
                     *before_schema,
@@ -94,6 +126,12 @@ pub(super) fn perform(
                 ));
             }
         };
+    if retained_authority.is_some()
+        && let Some(rollback) = &rollback
+    {
+        fs::copy(rollback, workspace(repository)?.join(ROLLBACK))?;
+        fs::remove_file(rollback)?;
+    }
     Ok(RefreshReport {
         built,
         installed,
@@ -395,10 +433,19 @@ fn built_executable(events: &str) -> Option<PathBuf> {
 
 /// Copy the currently installed executable aside so a failure can restore it.
 fn park(repository: &Repository, installed: &Path) -> Result<Option<PathBuf>, RefreshError> {
+    park_as(repository, installed, ROLLBACK)
+}
+
+/// Park under `name`, preserving the stable predecessor when it is still live.
+fn park_as(
+    repository: &Repository,
+    installed: &Path,
+    name: &str,
+) -> Result<Option<PathBuf>, RefreshError> {
     if !installed.is_file() {
         return Ok(None);
     }
-    let rollback = workspace(repository)?.join(ROLLBACK);
+    let rollback = workspace(repository)?.join(name);
     fs::copy(installed, &rollback)?;
     Ok(Some(rollback))
 }
@@ -463,6 +510,8 @@ struct Rollback<'a> {
     installed: &'a Path,
     /// Parked copy of the executable that was installed before the refresh.
     executable: Option<&'a Path>,
+    /// Retained command authority when the resident predates `installed`.
+    resident_executable: Option<&'a Path>,
     /// Endpoint the stopped resident had published, when one was running.
     published: Option<&'a str>,
     /// Whether this refresh was the kind that stops and starts a resident.
@@ -536,8 +585,9 @@ fn restore_resident(repository: &Repository, rollback: &Rollback<'_>, output: &m
         ..RefreshRequest::default()
     };
     let bound = (Some(host.as_str()), Some(port));
+    let executable = rollback.resident_executable.unwrap_or(rollback.installed);
     if let Err(error) =
-        restart_admitting_reappearance(repository, rollback.installed, bound, &request, output)
+        restart_admitting_reappearance(repository, executable, bound, &request, output)
     {
         let _ = writeln!(output, "previous resident did not come back: {error}");
     }
@@ -588,6 +638,36 @@ fn endpoint_parts(endpoint: &str) -> Option<(String, u16)> {
     let authority = authority.split('/').next()?;
     let (host, port) = authority.rsplit_once(':')?;
     Some((host.to_owned(), port.parse().ok()?))
+}
+
+/// Executable whose command principal can authenticate the resident now live.
+///
+/// A preceding `--no-resident` refresh leaves the serving executable in the
+/// rollback slot while the installed path already contains its successor. The
+/// bootstrap digest chooses between those two known generations. A different
+/// authenticated generation is foreign to this transaction and is refused
+/// before either executable is replaced.
+fn resident_stop_executable(
+    repository: &Repository,
+    installed: &Path,
+) -> Result<PathBuf, RefreshError> {
+    let Some((_, version)) = running_resident_version(repository) else {
+        // Remote authenticated Canvas surfaces cannot answer the local
+        // bootstrap probe. Retain the existing behavior there: `down` remains
+        // the authority check and reports an exact principal refusal.
+        return Ok(installed.to_path_buf());
+    };
+    if executable_digest(installed)? == version.binary {
+        return Ok(installed.to_path_buf());
+    }
+    let rollback = repository.worktree_root().join(WORKSPACE).join(ROLLBACK);
+    if rollback.is_file() && executable_digest(&rollback)? == version.binary {
+        return Ok(rollback);
+    }
+    Err(RefreshError::ResidentStopRefused(format!(
+        "resident::foreign-generation binary {} matches neither the installed nor retained predecessor executable",
+        version.binary
+    )))
 }
 
 /// Stop the running resident and wait for its discovery to withdraw.
@@ -704,7 +784,8 @@ fn restart_admitting_reappearance(
                     output,
                     "previous resident reappeared during install; stopping it and retrying"
                 )?;
-                stop(repository, installed, output)?;
+                let authority = resident_stop_executable(repository, installed)?;
+                stop(repository, &authority, output)?;
                 replaced_predecessor = true;
             }
         }
