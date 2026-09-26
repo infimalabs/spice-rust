@@ -48,18 +48,7 @@ struct HookPublication {
 struct HookLanePublication {
     lane: CanonicalUuid,
     working_state: Option<String>,
-    generation_notices: Vec<HookGenerationNotice>,
     groups: Vec<HookDirectiveGroup>,
-}
-
-struct HookGenerationNotice {
-    task: wire::TaskStamp,
-    handle: wire::TaskHandle,
-    generation: u64,
-    claim: wire::Seq,
-    stage: String,
-    text: Option<String>,
-    key: String,
 }
 
 struct HookDirectiveGroup {
@@ -79,20 +68,6 @@ struct HookContentIdentity<'a> {
     stage: wire::body::SteeringStage,
     text: &'a str,
     media: &'a [wire::AgentMediaReference],
-}
-
-#[derive(serde::Serialize)]
-struct HookGenerationIdentity<'a> {
-    lane: CanonicalUuid,
-    directive: CanonicalUuid,
-    occupant: CanonicalUuid,
-    compaction: u64,
-    task: &'a wire::TaskStamp,
-    handle: &'a wire::TaskHandle,
-    generation: u64,
-    claim: wire::Seq,
-    stage: wire::body::SteeringStage,
-    text: &'a str,
 }
 
 const HOOK_DELIVERY_LOCK: &str = "steering-delivery";
@@ -229,15 +204,10 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
         .map_err(|error| format!("inbox hook executable unavailable: {error}"))?;
     let executable = executable.to_string_lossy();
     let mut context = String::new();
-    let has_generation_notices = publication
+    if publication
         .lanes
         .iter()
-        .any(|lane| !lane.generation_notices.is_empty());
-    if has_generation_notices
-        || publication
-            .lanes
-            .iter()
-            .any(|lane| lane.working_state.is_some())
+        .any(|lane| lane.working_state.is_some())
     {
         context.push_str("Rust Spice system status.");
     }
@@ -245,9 +215,6 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
         if let Some(status) = &lane.working_state {
             context.push_str(&format!("\n\nlane={}\n{status}", lane.lane));
         }
-    }
-    if has_generation_notices {
-        render_generation_notices(publication, &executable, &mut context);
     }
     if publication.lanes.iter().any(|lane| !lane.groups.is_empty()) {
         if !context.is_empty() {
@@ -311,44 +278,6 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
     Ok(Some(document))
 }
 
-/// Render every task generation notice with the reclaim that retires it.
-fn render_generation_notices(
-    publication: &HookPublication,
-    executable: &str,
-    context: &mut String,
-) {
-    context.push_str(concat!(
-        "\n\nA task this lane holds changed after its claim last acknowledged it. ",
-        "Speak one line of visible assistant text, `ACK <key> [<key> ...]: <one clause>`, ",
-        "then run every printed reclaim command before repository work on that task ",
-        "continues. Answering a key records its delivery but never retires the notice, ",
-        "and completion and review stay refused until the reclaim. The header itself must be ",
-        "durably present as assistant text; reasoning and tool arguments are not substitutes."
-    ));
-    for lane in &publication.lanes {
-        for notice in &lane.generation_notices {
-            context.push_str(&format!(
-                "\n\nTASK GENERATION lane={} task={} handle={} generation={} claim={} key={} stage={}\n",
-                lane.lane,
-                notice.task,
-                notice.handle,
-                notice.generation,
-                notice.claim,
-                notice.key,
-                notice.stage,
-            ));
-            context.push_str(notice.text.as_deref().unwrap_or(
-                "This task generation notice was already shown in the current compaction \
-                 epoch; it stays pending until the claim reclaims the task.",
-            ));
-            context.push_str(&format!(
-                "\nreclaim: `{executable} task reclaim {}`",
-                notice.handle
-            ));
-        }
-    }
-}
-
 fn read_hook_delivery_state(path: &Path) -> Result<HookDeliveryState, String> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
@@ -400,11 +329,7 @@ fn filter_hook_lane(
     working_status: Option<&str>,
 ) -> Result<(Option<HookLanePublication>, bool), String> {
     let existing = state.lanes.iter().position(|row| row.lane == lane.lane);
-    if lane.pending.is_empty()
-        && lane.generation_notices.is_empty()
-        && working_status.is_none()
-        && existing.is_none()
-    {
+    if lane.pending.is_empty() && working_status.is_none() && existing.is_none() {
         return Ok((None, false));
     }
     let occupant = lane.occupant.ok_or_else(|| {
@@ -500,10 +425,8 @@ fn filter_hook_directives(
     let mut filtered = HookLanePublication {
         lane: lane.lane,
         working_state,
-        generation_notices: filter_generation_notices(lane, occupant, compaction, row)?,
         groups: Vec::new(),
     };
-    changed |= !filtered.generation_notices.is_empty();
     for directive in &lane.pending {
         let references =
             wire::media::agent_media_references(directive.directive, &directive.attachments)
@@ -558,10 +481,7 @@ fn filter_hook_directives(
         changed = true;
     }
     Ok((
-        (filtered.working_state.is_some()
-            || !filtered.groups.is_empty()
-            || !filtered.generation_notices.is_empty())
-        .then_some(filtered),
+        (filtered.working_state.is_some() || !filtered.groups.is_empty()).then_some(filtered),
         changed,
     ))
 }
@@ -582,67 +502,6 @@ fn rendered_content_identity(
         stage: directive.stage,
         text,
         media,
-    };
-    let encoded = wire::encode(&identity).map_err(|error| error.to_string())?;
-    Ok(blake3::hash(&encoded).to_hex().to_string())
-}
-
-/// The generation notices not yet delivered in this compaction epoch, recording
-/// each as delivered; a notice whose text was already shown renders without it.
-fn filter_generation_notices(
-    lane: &wire::intent::LaneInbox,
-    occupant: CanonicalUuid,
-    compaction: u64,
-    row: &mut LaneDeliveryState,
-) -> Result<Vec<HookGenerationNotice>, String> {
-    let mut notices = Vec::new();
-    for notice in &lane.generation_notices {
-        let identity = rendered_generation_identity(lane.lane, occupant, compaction, notice)?;
-        if row
-            .delivered_keys
-            .iter()
-            .any(|delivered| delivered.content == identity && delivered.key == notice.key)
-        {
-            continue;
-        }
-        let content_was_delivered = row.contents.contains(&identity);
-        notices.push(HookGenerationNotice {
-            task: notice.task.clone(),
-            handle: notice.handle.clone(),
-            generation: notice.generation,
-            claim: notice.claim,
-            stage: notice.stage.to_string(),
-            text: (!content_was_delivered).then(|| notice.text.clone()),
-            key: notice.key.clone(),
-        });
-        if !content_was_delivered {
-            row.contents.push(identity.clone());
-        }
-        row.delivered_keys.push(DeliveredKey {
-            content: identity,
-            key: notice.key.clone(),
-        });
-    }
-    Ok(notices)
-}
-
-fn rendered_generation_identity(
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-    compaction: u64,
-    notice: &wire::intent::TaskGenerationNotice,
-) -> Result<String, String> {
-    let identity = HookGenerationIdentity {
-        lane,
-        directive: notice.directive,
-        occupant,
-        compaction,
-        task: &notice.task,
-        handle: &notice.handle,
-        generation: notice.generation,
-        claim: notice.claim,
-        stage: notice.stage,
-        text: &notice.text,
     };
     let encoded = wire::encode(&identity).map_err(|error| error.to_string())?;
     Ok(blake3::hash(&encoded).to_hex().to_string())

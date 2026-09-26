@@ -7,9 +7,7 @@ use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite, PendingFact};
 use steer::{Miss, Outcome as ScanOutcome};
 use wire::body::TranscriptLocus;
-use wire::intent::{
-    CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective, TaskGenerationNotice,
-};
+use wire::intent::{CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective};
 use wire::{
     Actor, CanonicalUuid, Command, Disposition, Fault, FaultClass, Instant, Outcome, Producer,
     Refusal, Reply, ReplyPosition, ResidencyHead, Seq, SeqRange, Witness,
@@ -547,7 +545,7 @@ pub(super) fn inbox(
             }
             None => None,
         };
-        let (mut pending, mut generation_notices) =
+        let mut pending =
             match pending_presentations(&snapshot.ledger, lane.lane, snapshot.authority.tasks()) {
                 Ok(presentations) => presentations,
                 Err(error) => {
@@ -558,15 +556,11 @@ pub(super) fn inbox(
             directive.text = resolver.expand(&directive.text);
             directive.preview = directive_preview(&directive.text);
         }
-        for notice in &mut generation_notices {
-            notice.text = resolver.expand(&notice.text);
-        }
         lanes.push(LaneInbox {
             lane: lane.lane,
             occupant: lane.occupant,
             compaction,
             pending,
-            generation_notices,
         });
     }
     if let Some(selected) = selected
@@ -744,51 +738,31 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
     }
 }
 
-/// Split one lane's pending directives into authored direction and task
-/// generation notices, naming each notice's task by its current handle.
+/// Project every pending directive onto the one ordinary inline steering path,
+/// validating resident-authored task generation controls along the way.
 pub(super) fn pending_presentations(
     ledger: &steer::Ledger,
     lane: CanonicalUuid,
     tasks: &[journal::TaskHeads],
-) -> Result<(Vec<PendingDirective>, Vec<TaskGenerationNotice>), String> {
-    let mut pending = Vec::new();
-    let mut generation_notices = Vec::new();
-    for directive in ledger.pending(lane) {
-        match super::lifecycle::generation_notices::notice_authority(directive.control())? {
-            Some(authority) => {
-                generation_notices.push(generation_notice(directive, authority, tasks)?);
+) -> Result<Vec<PendingDirective>, String> {
+    ledger
+        .pending(lane)
+        .into_iter()
+        .map(|directive| {
+            if let Some(authority) =
+                super::lifecycle::generation_notices::notice_authority(directive.control())?
+                && tasks
+                    .binary_search_by(|heads| heads.statement().body().born.cmp(&authority.task))
+                    .is_err()
+            {
+                return Err(format!(
+                    "task-generation notice names unknown task {}",
+                    authority.task
+                ));
             }
-            None => pending.push(pending_directive(directive)),
-        }
-    }
-    Ok((pending, generation_notices))
-}
-
-fn generation_notice(
-    directive: &steer::Directive,
-    authority: super::lifecycle::generation_notices::NoticeAuthority,
-    tasks: &[journal::TaskHeads],
-) -> Result<TaskGenerationNotice, String> {
-    let statement = tasks
-        .binary_search_by(|heads| heads.statement().body().born.cmp(&authority.task))
-        .map(|index| tasks[index].statement().body())
-        .map_err(|_| {
-            format!(
-                "task-generation notice names unknown task {}",
-                authority.task
-            )
-        })?;
-    Ok(TaskGenerationNotice {
-        directive: directive.directive(),
-        key: directive.key().to_string(),
-        handle: wire::TaskHandle::for_project(&statement.project, &statement.born),
-        task: authority.task,
-        generation: authority.generation,
-        claim: authority.claim,
-        text: directive.text().to_owned(),
-        stage: directive.stage(),
-        expires: directive.expires(),
-    })
+            Ok(pending_directive(directive))
+        })
+        .collect()
 }
 
 fn live_head(

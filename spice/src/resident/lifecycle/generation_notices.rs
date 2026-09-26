@@ -3,9 +3,10 @@
 //! The journal records each transaction that changes a task after creation in
 //! its generation index. Every index row newer than an active claim's
 //! acknowledgement becomes one resident notice to the claimant lane, bound to
-//! the claim that trails it. A claimant's own changes need no filter: the
-//! journal keeps a current holder's acknowledgement current, so they never
-//! trail it.
+//! the claim that trails it. A mutation by the active holder advances its
+//! acknowledgement only while the claim was current; once the claim trails,
+//! the holder's own changes also remain unacknowledged until an explicit
+//! reclaim.
 //!
 //! Notices are derived from current state on every pass, so a publication that
 //! fails leaves the change journaled and a later pass delivers it. A notice
