@@ -258,8 +258,8 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
             "Speak one line of visible assistant text, `ACK <key> [<key> ...]: <one clause>` or ",
             "`NACK <key> [<key> ...]: <one clause>`, then retire every listed key immediately ",
             "after that line by running each printed `ack <key>` command in the same message; ",
-            "append `--decline` for a NACK. Commentary narrated beside a tool call persists ",
-            "as reasoning and is not evidence."
+            "append `--decline` for a NACK. The header itself must be durably present as ",
+            "assistant text; reasoning and tool arguments cannot supply a missing key or disposition."
         ));
     }
     for lane in &publication.lanes {
@@ -322,8 +322,8 @@ fn render_generation_notices(
         "Speak one line of visible assistant text, `ACK <key> [<key> ...]: <one clause>`, ",
         "then run every printed reclaim command before repository work on that task ",
         "continues. Answering a key records its delivery but never retires the notice, ",
-        "and completion and review stay refused until the reclaim. Commentary narrated ",
-        "beside a tool call persists as reasoning and is not evidence."
+        "and completion and review stay refused until the reclaim. The header itself must be ",
+        "durably present as assistant text; reasoning and tool arguments are not substitutes."
     ));
     for lane in &publication.lanes {
         for notice in &lane.generation_notices {
