@@ -28,6 +28,9 @@ mod runtime {
     mod task_snapshot;
     pub use task_snapshot::{TaskFacts, context_opening};
     use task_snapshot::{TaskSnapshotState, advance_task_snapshot, invalidate_task_snapshot};
+    mod transcript_sessions;
+    use transcript_sessions::TranscriptSessionState;
+    pub use transcript_sessions::{TranscriptSession, TranscriptSessions};
 
     /// One successful journal transaction, constructable only by the bus
     /// writer after durability.
@@ -317,6 +320,30 @@ mod runtime {
     }
 
     impl BusReader {
+        /// Resolve a transcript author through this writer's incremental session index.
+        pub fn transcript_session(
+            &self,
+            lane: journal::crossing::CanonicalUuid,
+            source: journal::crossing::CanonicalUuid,
+            member: u64,
+            offset: u64,
+        ) -> Result<Option<TranscriptSession>, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            self.requests
+                .send(Request::TranscriptSession {
+                    lane,
+                    source,
+                    member,
+                    offset,
+                    answer,
+                })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Read only the current durable cursor at one queued barrier.
         pub fn cursor(&self) -> Result<Option<journal::crossing::Seq>, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
@@ -789,6 +816,13 @@ mod runtime {
     }
 
     enum Request {
+        TranscriptSession {
+            lane: journal::crossing::CanonicalUuid,
+            source: journal::crossing::CanonicalUuid,
+            member: u64,
+            offset: u64,
+            answer: SyncSender<Result<Option<TranscriptSession>, GuardError>>,
+        },
         Commit {
             write: Box<JournalWrite>,
             answer: SyncSender<CommitOutcome>,
@@ -873,6 +907,7 @@ mod runtime {
     ) {
         let mut subscribers = Vec::<mpsc::Sender<JournalCommit>>::new();
         let mut task_snapshot = TaskSnapshotState::default();
+        let mut transcript_sessions = TranscriptSessionState::default();
         let mut snapshot_waiters = SnapshotWaiters::default();
         while let Some(request) = next_request(
             &journal,
@@ -881,6 +916,16 @@ mod runtime {
             &mut snapshot_waiters,
         ) {
             match request {
+                Request::TranscriptSession {
+                    lane,
+                    source,
+                    member,
+                    offset,
+                    answer,
+                } => {
+                    let _ = answer
+                        .send(transcript_sessions.lookup(&journal, lane, source, member, offset));
+                }
                 Request::Commit { write, answer } => {
                     answer_commit(
                         &mut journal,
@@ -1225,5 +1270,5 @@ pub use runtime::{
     BroadcastSubscriber, Bus, BusError, BusReadError, BusReader, BusVerifyError, CanvasHeads,
     CommitOutcome, CommitSubscriber, JournalCommit, JournalTransaction,
     MAX_STEERING_PRESENTATION_KEYS, SteeringPresentation, SteeringSnapshot, TaskFacts,
-    TaskSnapshot, context_opening,
+    TaskSnapshot, TranscriptSession, TranscriptSessions, context_opening,
 };

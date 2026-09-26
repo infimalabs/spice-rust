@@ -1,9 +1,7 @@
 //! Bounded resolution of authenticated transcript quote targets.
 
-use std::collections::BTreeMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Parser, Tag, TagEnd};
 
@@ -112,7 +110,6 @@ impl<'a> Resolver<'a> {
                 tape,
                 bus,
                 agent_presenter: None,
-                sessions: OnceLock::new(),
             },
         }
     }
@@ -129,7 +126,6 @@ impl<'a> Resolver<'a> {
                 tape,
                 bus,
                 agent_presenter: Some(agent_presenter),
-                sessions: OnceLock::new(),
             },
         }
     }
@@ -198,78 +194,15 @@ pub fn presenter(
     })
 }
 
-#[derive(Clone, Debug)]
-struct TranscriptSession {
-    member: u64,
-    offset: u64,
-    occupant: CanonicalUuid,
-    vendor: String,
-    worktree: PathBuf,
-}
-
 /// Session boundaries durably bound to transcript source generations.
 #[derive(Clone, Debug, Default)]
-pub struct TranscriptSessions(BTreeMap<(CanonicalUuid, CanonicalUuid), Vec<TranscriptSession>>);
+pub struct TranscriptSessions(bus::TranscriptSessions);
 
 impl TranscriptSessions {
     /// Reconstruct source-qualified session boundaries from durable journal facts.
     #[must_use]
     pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
-        let ingestions = snapshot
-            .facts()
-            .iter()
-            .filter_map(|envelope| {
-                envelope
-                    .fact
-                    .read::<wire::body::JournalIngested>()
-                    .map(|batch| (envelope.seq, batch))
-            })
-            .collect::<Vec<_>>();
-        let mut sources = BTreeMap::<(CanonicalUuid, CanonicalUuid), Vec<TranscriptSession>>::new();
-        for envelope in snapshot.facts() {
-            let Some(session) = envelope.fact.read::<wire::body::LaneSessionDeclared>() else {
-                continue;
-            };
-            let position = (session.member, session.offset);
-            let Some(source) = ingestions.iter().find_map(|(seq, batch)| {
-                (*seq > envelope.seq
-                    && batch.lane == session.lane
-                    && batch.vendor == session.vendor
-                    && batch.stream == session.stream
-                    && (batch.from.member, batch.from.offset) <= position
-                    && position < (batch.to.member, batch.to.offset))
-                    .then_some(batch.source)
-            }) else {
-                continue;
-            };
-            sources
-                .entry((session.lane, source))
-                .or_default()
-                .push(TranscriptSession {
-                    member: session.member,
-                    offset: session.offset,
-                    occupant: session.occupant,
-                    vendor: session.vendor.as_str().to_owned(),
-                    worktree: session.worktree.into(),
-                });
-        }
-        for sessions in sources.values_mut() {
-            sessions.sort_by_key(|session| (session.member, session.offset));
-        }
-        Self(sources)
-    }
-
-    fn at(
-        &self,
-        lane: CanonicalUuid,
-        source: CanonicalUuid,
-        locus: tape::Locus,
-    ) -> Option<&TranscriptSession> {
-        self.0
-            .get(&(lane, source))?
-            .iter()
-            .rev()
-            .find(|session| (session.member, session.offset) <= (locus.member, locus.offset))
+        Self(bus::TranscriptSessions::from_snapshot(snapshot))
     }
 
     /// Worktree bound to the session containing one source-qualified tape locus.
@@ -280,7 +213,8 @@ impl TranscriptSessions {
         source: CanonicalUuid,
         locus: tape::Locus,
     ) -> Option<&Path> {
-        self.at(lane, source, locus)
+        self.0
+            .at(lane, source, locus.member, locus.offset)
             .map(|session| session.worktree.as_path())
     }
 }
@@ -314,21 +248,6 @@ struct ResidentStore<'a> {
     tape: &'a Path,
     bus: &'a BusReader,
     agent_presenter: Option<AgentProsePresenter>,
-    sessions: OnceLock<Result<TranscriptSessions, SourceError>>,
-}
-
-impl ResidentStore<'_> {
-    fn sessions(&self) -> Result<&TranscriptSessions, SourceError> {
-        self.sessions
-            .get_or_init(|| {
-                self.bus
-                    .fact_snapshot()
-                    .map(|snapshot| TranscriptSessions::from_snapshot(&snapshot))
-                    .map_err(|_| SourceError::Unreadable)
-            })
-            .as_ref()
-            .map_err(|error| *error)
-    }
 }
 
 impl QuoteStore for ResidentStore<'_> {
@@ -340,8 +259,9 @@ impl QuoteStore for ResidentStore<'_> {
     ) -> Result<SourceQuote, SourceError> {
         let record_locus = tape::Locus::new(locus.member, locus.offset, locus.length);
         let session = self
-            .sessions()?
-            .at(lane, source, record_locus)
+            .bus
+            .transcript_session(lane, source, record_locus.member, record_locus.offset)
+            .map_err(|_| SourceError::Unreadable)?
             .ok_or(SourceError::Unknown)?;
         let dialect = crate::extension::registry()
             .map_err(|_| SourceError::Unreadable)?
