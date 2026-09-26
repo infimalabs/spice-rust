@@ -113,37 +113,43 @@ fn body_with_disposition<'a>(body: &'a str, disposition: &str) -> Cow<'a, str> {
 fn author_html(author: &QuoteAuthor, agents: &super::QuoteAgents) -> String {
     match author {
         QuoteAuthor::Agent { lane, occupant } => {
-            if let Some(label) = agents.get(&(*lane, *occupant)) {
-                let label = format!("Agent {label}");
+            if let Some(agent) = agents.get(&(*lane, *occupant)) {
+                let label = format!("Agent {}", agent.label);
                 return format!(
-                    "<a class=\"message-quote-author\" data-quote-author=\"agent\" \
+                    "<button type=\"button\" class=\"message-quote-author\" \
+                     data-quote-author=\"agent\" data-quote-agent-team=\"{}\" \
                      data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
-                     data-quote-history=\"available\" href=\"#/info\" \
-                     aria-label=\"Open information for {}\">{}</a>",
+                     data-quote-history=\"available\" \
+                     aria-label=\"Open information for {}\">{}</button>",
+                    agent.team,
                     super::escape_html_attribute(&label),
                     escape_html_text(&label),
                 );
             }
-            let label = format!(
-                "Agent {}/{}",
-                crate::watchband::short(*lane),
-                crate::watchband::short(*occupant),
-            );
-            format!(
-                "<span class=\"message-quote-author\" data-quote-author=\"agent\" \
-                 data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
-                 data-quote-history=\"unavailable\" \
-                 aria-label=\"{}; identity history unavailable\">{} \
-                 <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>",
-                super::escape_html_attribute(&label),
-                escape_html_text(&label),
-            )
+            let label = agents
+                .iter()
+                .find_map(|((candidate, _), agent)| {
+                    (*candidate == *lane).then(|| format!("Agent {}", agent.label))
+                })
+                .unwrap_or_else(|| {
+                    format!(
+                        "Agent {}/{}",
+                        crate::watchband::short(*lane),
+                        crate::watchband::short(*occupant),
+                    )
+                });
+            unavailable_agent_html(*lane, *occupant, &label)
         }
         QuoteAuthor::Directive { actor } => match actor {
-            wire::Actor::Operator => available_principal_html("Operator", "operator"),
-            wire::Actor::Spice => available_principal_html("Spice", "spice"),
+            wire::Actor::Operator => unavailable_principal_html("Operator", "operator"),
+            wire::Actor::Spice => unavailable_principal_html("Spice", "spice"),
             wire::Actor::Lane(lane) => {
-                let label = format!("Agent channel {}", crate::watchband::short(*lane));
+                let label = agents
+                    .iter()
+                    .find_map(|((candidate, _), agent)| {
+                        (*candidate == *lane).then(|| format!("Agent {}", agent.label))
+                    })
+                    .unwrap_or_else(|| format!("Agent channel {}", crate::watchband::short(*lane)));
                 format!(
                     "<span class=\"message-quote-author\" data-quote-author=\"directive\" \
                      data-quote-actor=\"lane:{lane}\" data-quote-history=\"unavailable\" \
@@ -157,11 +163,28 @@ fn author_html(author: &QuoteAuthor, agents: &super::QuoteAgents) -> String {
     }
 }
 
-fn available_principal_html(label: &str, actor: &str) -> String {
+fn unavailable_agent_html(
+    lane: wire::CanonicalUuid,
+    occupant: wire::CanonicalUuid,
+    label: &str,
+) -> String {
     format!(
-        "<a class=\"message-quote-author\" data-quote-author=\"directive\" \
-         data-quote-actor=\"{actor}\" data-quote-history=\"available\" href=\"#/info\" \
-         aria-label=\"Open information for {label}\">{label}</a>"
+        "<span class=\"message-quote-author\" data-quote-author=\"agent\" \
+         data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
+         data-quote-history=\"unavailable\" \
+         aria-label=\"{}; identity history unavailable\">{} \
+         <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>",
+        super::escape_html_attribute(label),
+        escape_html_text(label),
+    )
+}
+
+fn unavailable_principal_html(label: &str, actor: &str) -> String {
+    format!(
+        "<span class=\"message-quote-author\" data-quote-author=\"directive\" \
+         data-quote-actor=\"{actor}\" data-quote-history=\"unavailable\" \
+         aria-label=\"{label}; identity history unavailable\">{label} \
+         <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>"
     )
 }
 

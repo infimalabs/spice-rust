@@ -94,14 +94,21 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
         lanes
             .lanes
             .iter()
-            .flat_map(|team| &team.members)
-            .filter_map(|member| {
-                member.occupant.map(|occupant| {
-                    (
-                        (member.lane, occupant),
-                        watchband::agent_message_label(&member.worktree, member.name.as_deref())
-                            .to_owned(),
-                    )
+            .flat_map(|team| {
+                team.members.iter().filter_map(|member| {
+                    member.occupant.map(|occupant| {
+                        (
+                            (member.lane, occupant),
+                            crate::composer_markdown::QuoteAgent {
+                                team: team.lane,
+                                label: watchband::agent_message_label(
+                                    &member.worktree,
+                                    member.name.as_deref(),
+                                )
+                                .to_owned(),
+                            },
+                        )
+                    })
                 })
             })
             .collect::<crate::composer_markdown::QuoteAgents>(),
@@ -578,6 +585,9 @@ fn render_agent_details(
     html! {
         <article
             class="team-detail-card"
+            tabindex="-1"
+            data-agent-lane={standing.lane.to_string()}
+            data-agent-occupant={occupant.clone()}
             data-accent={standing.accent.to_string()}
             title={watchband::standing_title(standing)}
         >

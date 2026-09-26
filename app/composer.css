@@ -419,8 +419,16 @@
   font-weight: 500;
   text-decoration: none;
 }
-.markdown-body a.message-quote-author:hover,
-.markdown-body a.message-quote-author:focus-visible {
+.markdown-body button.message-quote-author {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  cursor: pointer;
+}
+.markdown-body button.message-quote-author:hover,
+.markdown-body button.message-quote-author:focus-visible {
   color: var(--ink);
   text-decoration: underline;
 }

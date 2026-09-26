@@ -138,6 +138,9 @@ pub(crate) enum TeamControlAction {
         team: Option<CanonicalUuid>,
         mode: TeamMode,
     },
+    OpenInfo {
+        team: CanonicalUuid,
+    },
     ToggleMenu {
         team: CanonicalUuid,
     },
@@ -201,6 +204,10 @@ impl Reducible for TeamControls {
         let mut next = (*self).clone();
         match action {
             TeamControlAction::SetMode { team, mode } => next.set_mode(team, mode),
+            TeamControlAction::OpenInfo { team } => {
+                next.open_team(team);
+                next.set_mode(Some(team), TeamMode::Info);
+            }
             TeamControlAction::ToggleMenu { team } => next.toggle_menu(team),
             TeamControlAction::ToggleImport { team } => next.toggle_import(team),
             TeamControlAction::ToggleArrangement { team } => {
