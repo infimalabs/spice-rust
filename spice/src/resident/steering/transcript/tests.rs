@@ -17,6 +17,10 @@ const LEADING_HEADER: &[u8] = br#"{"type":"assistant","message":{"type":"message
 "#;
 const TOOL_RESULT: &[u8] = br#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fixture_earlier","content":"ok"}]}}
 "#;
+const OMP_ACK_UPDATE: &[u8] = br#"{"type":"message_update","assistantMessageEvent":{"type":"text_end","content":"ACK 1kKRRsDS: revision accepted."},"message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: revision accepted."}]}}
+"#;
+const OMP_PARAPHRASED_END: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Acknowledging the operator direction."},{"type":"toolCall","id":"call-1","name":"shell","arguments":{"command":"echo ACK 1kKRRsDS"}}],"stopReason":"toolUse"}}
+"#;
 
 struct LiveKey;
 
@@ -49,6 +53,37 @@ fn a_leading_header_older_than_the_ack_call_is_still_recognized() {
     ));
     assert_eq!(recognition.locus.member, 1);
     assert_eq!(recognition.locus.offset, TOOL_RESULT.len() as u64);
+}
+
+#[test]
+fn omp_terminal_text_update_survives_a_header_stripped_settled_message() {
+    let fixture = Fixture::omp(&[OMP_ACK_UPDATE, OMP_PARAPHRASED_END]);
+
+    let recognition =
+        transcript_recognition(&fixture.paths, lane(), &omp_vendor(), KEY, None, &LiveKey)
+            .unwrap_or_else(|outcome| {
+                panic!("the streamed visible header is evidence: {outcome:?}")
+            });
+
+    assert!(matches!(
+        recognition.outcome,
+        ScanOutcome::Retired {
+            disposition: Disposition::Acked,
+            ..
+        }
+    ));
+    assert_eq!(recognition.locus.offset, 0);
+}
+
+#[test]
+fn omp_paraphrase_and_tool_payload_do_not_invent_acknowledgement_evidence() {
+    let fixture = Fixture::omp(&[OMP_PARAPHRASED_END]);
+
+    assert!(matches!(
+        transcript_recognition(&fixture.paths, lane(), &omp_vendor(), KEY, None, &LiveKey),
+        Err(wire::Outcome::Refusal(refusal))
+            if refusal.reason() == "steer::transcript-evidence-absent"
+    ));
 }
 
 #[test]
@@ -119,6 +154,14 @@ struct Fixture {
 
 impl Fixture {
     fn new(records: &[&[u8]]) -> Self {
+        Self::for_vendor("claude", records)
+    }
+
+    fn omp(records: &[&[u8]]) -> Self {
+        Self::for_vendor("omp", records)
+    }
+
+    fn for_vendor(vendor: &str, records: &[&[u8]]) -> Self {
         let root = std::env::temp_dir().join(format!(
             "spice-transcript-recognition-{}-{}",
             std::process::id(),
@@ -126,7 +169,7 @@ impl Fixture {
         ));
         fs::create_dir_all(&root).expect("fixture root");
         let paths = runtime_paths(&root);
-        let tape = tape::Tape::open(paths.tape.join(lane().to_string()).join("claude"))
+        let tape = tape::Tape::open(paths.tape.join(lane().to_string()).join(vendor))
             .expect("the lane tape opens");
         for record in records {
             tape.tee(record).expect("the transcript record is captured");
@@ -149,6 +192,10 @@ fn lane() -> CanonicalUuid {
 
 fn vendor() -> wire::Name {
     "claude".parse().expect("vendor name")
+}
+
+fn omp_vendor() -> wire::Name {
+    "omp".parse().expect("vendor name")
 }
 
 fn runtime_paths(root: &Path) -> RuntimePaths {

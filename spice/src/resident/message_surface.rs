@@ -368,16 +368,12 @@ fn hear_swept(
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
     let keys = steering_keys(swept.iter().flat_map(|record| {
-        record
-            .decoded
-            .events()
-            .iter()
-            .filter_map(|event| match event {
-                listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
-                    Some(prose.text.as_str())
-                }
-                _ => None,
-            })
+        record.decoded.events().iter().filter_map(|event| {
+            event
+                .prose()
+                .filter(|prose| prose.role == listen::ProseRole::Assistant)
+                .map(|prose| prose.text.as_str())
+        })
     }));
     if keys.is_empty() {
         return Ok(());

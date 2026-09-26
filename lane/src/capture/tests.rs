@@ -183,6 +183,38 @@ fn chunked_partials_are_still_restated_and_never_replayed_twice() {
 }
 
 #[test]
+fn terminal_omp_text_update_is_retained_as_non_presented_prose_evidence() {
+    let fixture = Fixture::new(listen::Dialect::Omp);
+    let evidence = br#"{"type":"message_update","assistantMessageEvent":{"type":"text_end","content":"ACK 1kQnrzNZ: Applied."},"message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kQnrzNZ: Applied."}]}}
+"#;
+    let settled = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Acknowledged the direction."},{"type":"toolCall","id":"call-1","name":"read","arguments":{"path":"Cargo.toml"}}],"stopReason":"toolUse"}}
+"#;
+
+    fixture
+        .observer
+        .receive(evidence, RecordBoundary::Complete)
+        .expect("terminal text update is captured");
+    fixture
+        .observer
+        .receive(settled, RecordBoundary::Complete)
+        .expect("settled message is captured");
+
+    let replay =
+        listen::scan(&fixture.root, listen::Dialect::Omp, None).expect("retained update replays");
+    assert_eq!(replay.records.len(), 2);
+    let listen::RecordPayload::Events(events) = &replay.records[0].payload else {
+        panic!("terminal text update became residue");
+    };
+    assert!(matches!(
+        events.as_slice(),
+        [listen::SourcedEvent {
+            event: listen::Event::ProseEvidence(prose),
+            ..
+        }] if prose.text == "ACK 1kQnrzNZ: Applied."
+    ));
+}
+
+#[test]
 fn non_omp_capture_preserves_terminal_and_truncated_boundaries() {
     let fixture = Fixture::new(listen::Dialect::Codex);
     fixture

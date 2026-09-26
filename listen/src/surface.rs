@@ -134,7 +134,7 @@ impl From<&Event> for SurfaceEvent {
             Event::Session(event) => Self::Session {
                 identity: event.identity.clone(),
             },
-            Event::Prose(event) => Self::Prose {
+            Event::Prose(event) | Event::ProseEvidence(event) => Self::Prose {
                 text: event.text.clone(),
                 phase: event.phase.clone(),
                 media: event.media.clone(),

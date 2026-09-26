@@ -56,6 +56,9 @@ pub enum Event {
     Session(SessionDeclaration),
     /// Prose attributable to an operator or assistant role.
     Prose(Prose),
+    /// Terminal streamed prose retained as evidence when the settled vendor
+    /// message may normalize it away. Consumers must not present it again.
+    ProseEvidence(Prose),
     /// Model reasoning.
     Reasoning(Reasoning),
     /// Tool activity.
@@ -74,7 +77,7 @@ impl Event {
     pub const fn kind(&self) -> EventKind {
         match self {
             Self::Session(_) => EventKind::Session,
-            Self::Prose(_) => EventKind::Prose,
+            Self::Prose(_) | Self::ProseEvidence(_) => EventKind::Prose,
             Self::Reasoning(_) => EventKind::Reasoning,
             Self::Tool(_) => EventKind::Tool,
             Self::Usage(_) => EventKind::Usage,
@@ -88,12 +91,21 @@ impl Event {
     pub const fn locus(&self) -> Locus {
         match self {
             Self::Session(event) => event.locus,
-            Self::Prose(event) => event.locus,
+            Self::Prose(event) | Self::ProseEvidence(event) => event.locus,
             Self::Reasoning(event) => event.locus,
             Self::Tool(event) => event.locus,
             Self::Usage(event) => event.locus,
             Self::Compaction(event) => event.locus,
             Self::Failure(event) => event.locus,
+        }
+    }
+
+    /// Assistant or operator prose, including a streamed evidence revision.
+    #[must_use]
+    pub const fn prose(&self) -> Option<&Prose> {
+        match self {
+            Self::Prose(prose) | Self::ProseEvidence(prose) => Some(prose),
+            _ => None,
         }
     }
 }

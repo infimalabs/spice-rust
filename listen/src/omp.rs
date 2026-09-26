@@ -38,7 +38,6 @@ const SILENT: &[&str] = &[
     "turn_start",
     "turn_end",
     "message_start",
-    "message_update",
     "tool_execution_start",
     "tool_execution_update",
     "tool_execution_end",
@@ -76,14 +75,24 @@ const SILENT: &[&str] = &[
     "ttsr_injection",
 ];
 
-/// Partials the frame that ends them restates whole: every `message_update`
-/// carries the message so far and `message_end` the finished message, every
-/// `tool_execution_update` the partial result and `tool_execution_end` the
-/// whole of it.
-const RESTATED: &[&str] = &["message_update", "tool_execution_update"];
-
-pub(crate) fn restated(kind: &str) -> bool {
-    RESTATED.contains(&kind)
+/// Partials the frame that ends them restates whole, except a terminal text
+/// update. Provider adapters may normalize tool-adjacent commentary out of the
+/// settled message, so capture keeps that one complete streamed revision as
+/// evidence. Earlier cumulative updates remain omitted to avoid quadratic tape
+/// growth. Tool execution updates are always restated by their terminal frame.
+pub(crate) fn restated(record: &Object) -> bool {
+    match record.get("type").and_then(Value::as_str) {
+        Some("tool_execution_update") => true,
+        Some("message_update") => {
+            record
+                .get("assistantMessageEvent")
+                .and_then(Value::as_object)
+                .and_then(|event| event.get("type"))
+                .and_then(Value::as_str)
+                != Some("text_end")
+        }
+        _ => false,
+    }
 }
 
 /// The turn moment one session-file message marks.
@@ -149,6 +158,7 @@ pub(crate) fn withdrawn(record: &Object) -> Option<String> {
 pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
     match string(record, "type")? {
         "message_end" | "message" => message(object(record, "message")?, locus),
+        "message_update" => message_update(record, locus),
         "response" => response(record, locus),
         "session" => Ok(vec![Event::Session(SessionDeclaration {
             identity: string(record, "id")?.to_owned(),
@@ -177,6 +187,26 @@ fn message(message: &Object, locus: Locus) -> Events {
         "custom" | "bashExecution" => Ok(Vec::new()),
         other => Err(drift(&format!("message:{other}"))),
     }
+}
+
+/// One fully streamed text block retained for evidence only.
+///
+/// The settled message remains the presentation authority. Some OMP provider
+/// adapters rewrite commentary into reasoning before that settlement, so this
+/// terminal update is the only byte-exact record of what the operator saw.
+fn message_update(record: &Object, locus: Locus) -> Events {
+    let update = object(record, "assistantMessageEvent")?;
+    if string(update, "type")? != "text_end" {
+        return Ok(Vec::new());
+    }
+    let text = string(update, "content")?.to_owned();
+    Ok(vec![Event::ProseEvidence(Prose {
+        role: ProseRole::Assistant,
+        media: media::decompose(OwnedContent::AuthoredText(&text))?.media,
+        text,
+        phase: None,
+        locus,
+    })])
 }
 
 fn user(message: &Object, locus: Locus) -> Events {
