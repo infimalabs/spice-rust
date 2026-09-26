@@ -295,6 +295,9 @@
   aspect-ratio: auto; overflow: hidden; vertical-align: top; padding: 0; border: 0;
 }
 .mermaid-render > .message-image:disabled { opacity: 1; cursor: default; }
+.mermaid-render > .message-image--openable:focus-visible {
+  outline: 2px solid var(--accent-slot, var(--accent)); outline-offset: -2px;
+}
 .mermaid-slot:empty::before {
   content: "Rendering diagram"; box-sizing: border-box; place-items: center;
   border: var(--canvas-edge); border-radius: var(--canvas-radius-control);
