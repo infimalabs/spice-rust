@@ -39,7 +39,15 @@ pub trait MessageHistoryProvider: fmt::Debug + Send + Sync {
     ) -> Result<Option<MessageHistoryPage>, String>;
 }
 
-type HistoryAnchorMap = HashMap<(u64, wire::CanonicalUuid, wire::MessageLocus), AgentMessage>;
+/// Page anchors each lane has recently issued, most recently used last.
+///
+/// An anchor names a durable locus, so it stays valid across transcript
+/// generations: a Canvas deep in a lane's history keeps paging while newer
+/// work publishes.
+type HistoryAnchorMap = HashMap<wire::CanonicalUuid, VecDeque<AgentMessage>>;
+
+/// Recently issued page anchors remembered per lane across every Canvas.
+const HISTORY_ANCHORS_PER_LANE: usize = 64;
 
 struct HistoryRead {
     generation: u64,
@@ -155,7 +163,12 @@ impl MessageFeed {
         {
             return Err(MessagePublishError::InvalidHistory);
         }
-        if read.generation != self.generation.load(Ordering::Acquire) {
+        // A bootstrap cursor names the lane's newest page, which a publication
+        // during the read can overlap. A located cursor pages strictly before
+        // an immutable durable record, so newer work cannot invalidate it.
+        if requested.iter().any(|cursor| cursor.before.is_none())
+            && read.generation != self.generation.load(Ordering::Acquire)
+        {
             return Err(MessagePublishError::StaleGeneration);
         }
         for message in &mut messages {
@@ -176,13 +189,12 @@ impl MessageFeed {
         if requested.is_empty() || requested.len() > MESSAGE_HISTORY_PAGE_LIMIT {
             return Err(MessagePublishError::InvalidHistoryCursor);
         }
-        let generation = requested[0].generation;
+        let generation = self.generation.load(Ordering::Acquire);
         if requested
             .iter()
-            .any(|cursor| cursor.generation != generation)
-            || generation != self.generation.load(Ordering::Acquire)
+            .any(|cursor| cursor.generation > generation)
         {
-            return Err(MessagePublishError::StaleGeneration);
+            return Err(MessagePublishError::InvalidHistoryCursor);
         }
         let lanes = requested
             .iter()
@@ -242,7 +254,21 @@ impl MessageFeed {
                 .find(|message| message.lane == cursor.lane && message.locus == locus)
                 .cloned()
         });
-        let before = self.resolve_history_before(read, cursor, retained_before.as_ref())?;
+        let before = match cursor.before {
+            None => None,
+            Some(_) if retained_before.is_some() => retained_before.clone(),
+            Some(locus) => match self.history_anchor(cursor.lane, locus)? {
+                Some(anchor) => Some(anchor),
+                // The anchor aged out of memory: name the lane's current edge
+                // as the explicit resume point instead of refusing the page.
+                None => {
+                    return Ok(HistoryLaneRead {
+                        messages: Vec::new(),
+                        frontier: frontier.clone(),
+                    });
+                }
+            },
+        };
         let mut page = retained_history_page(
             &read.retained,
             cursor.lane,
@@ -270,10 +296,7 @@ impl MessageFeed {
         if page.more
             && let Some(anchor) = page.messages.first()
         {
-            self.history_anchors
-                .lock()
-                .map_err(|_| MessagePublishError::Unavailable)?
-                .insert((read.generation, cursor.lane, anchor.locus), anchor.clone());
+            self.remember_history_anchor(anchor.clone())?;
         }
         Ok(HistoryLaneRead {
             messages: page.messages,
@@ -281,25 +304,39 @@ impl MessageFeed {
         })
     }
 
-    fn resolve_history_before(
+    /// Resolve one issued page anchor, marking it most recently used.
+    fn history_anchor(
         &self,
-        read: &HistoryRead,
-        cursor: &wire::MessageHistoryCursor,
-        retained: Option<&AgentMessage>,
+        lane: wire::CanonicalUuid,
+        locus: wire::MessageLocus,
     ) -> Result<Option<AgentMessage>, MessagePublishError> {
-        let Some(locus) = cursor.before else {
+        let mut anchors = self
+            .history_anchors
+            .lock()
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let Some(issued) = anchors.get_mut(&lane) else {
             return Ok(None);
         };
-        if let Some(retained) = retained {
-            return Ok(Some(retained.clone()));
-        }
-        self.history_anchors
+        let Some(index) = issued.iter().position(|anchor| anchor.locus == locus) else {
+            return Ok(None);
+        };
+        let anchor = issued.remove(index).expect("located anchor is present");
+        issued.push_back(anchor.clone());
+        Ok(Some(anchor))
+    }
+
+    fn remember_history_anchor(&self, anchor: AgentMessage) -> Result<(), MessagePublishError> {
+        let mut anchors = self
+            .history_anchors
             .lock()
-            .map_err(|_| MessagePublishError::Unavailable)?
-            .get(&(read.generation, cursor.lane, locus))
-            .cloned()
-            .ok_or(MessagePublishError::InvalidHistoryCursor)
-            .map(Some)
+            .map_err(|_| MessagePublishError::Unavailable)?;
+        let issued = anchors.entry(anchor.lane).or_default();
+        issued.retain(|known| known.locus != anchor.locus);
+        issued.push_back(anchor);
+        if issued.len() > HISTORY_ANCHORS_PER_LANE {
+            issued.pop_front();
+        }
+        Ok(())
     }
 
     fn synchronize_lanes(
@@ -762,12 +799,6 @@ impl MessageBatch {
             return Ok(false);
         }
         let frontiers = self.publisher.feed.frontiers(&next, None)?;
-        let mut history_anchors = self
-            .publisher
-            .feed
-            .history_anchors
-            .lock()
-            .map_err(|_| MessagePublishError::Unavailable)?;
         let generation = self
             .publisher
             .feed
@@ -776,12 +807,10 @@ impl MessageBatch {
             .checked_add(1)
             .ok_or(MessagePublishError::Unavailable)?;
         std::mem::swap(&mut *retained, &mut next);
-        history_anchors.clear();
         self.publisher
             .feed
             .generation
             .store(generation, Ordering::Release);
-        drop(history_anchors);
         drop(retained);
         let generation = wire::TranscriptGeneration {
             generation,
@@ -1008,7 +1037,7 @@ pub enum MessagePublishError {
     InvalidHistory,
     /// A history cursor does not name one current truncated lane edge.
     InvalidHistoryCursor,
-    /// A history cursor names an older transcript generation.
+    /// A cold-bootstrap cursor crossed a publication, or its lane is no longer truncated.
     StaleGeneration,
     /// The durable journal frontier could not be captured for publication.
     DurableHorizon(String),

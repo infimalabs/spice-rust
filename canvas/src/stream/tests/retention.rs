@@ -545,6 +545,93 @@ impl MessageHistoryProvider for FixtureHistory {
     }
 }
 
+fn history_page(source: &Source, cursor: wire::MessageHistoryCursor) -> wire::TranscriptGeneration {
+    let frame = source
+        .message_history(
+            &accepted(Actor::Operator),
+            &StreamRequest::MessageHistory {
+                v: WireVersion::CURRENT,
+                id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+                epoch: epoch(),
+                frontiers: vec![cursor],
+            },
+        )
+        .expect("older message page answers");
+    let StreamFrame::MessageHistory { generation, .. } = frame else {
+        panic!("expected older message page")
+    };
+    generation
+}
+
+fn page_offsets(generation: &wire::TranscriptGeneration) -> Vec<u64> {
+    generation
+        .messages
+        .iter()
+        .map(|message| message.locus.offset)
+        .collect()
+}
+
+#[test]
+fn a_located_history_cursor_keeps_paging_across_live_publication() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
+    let publisher = source.message_publisher();
+    let head = message(0xe5, 100);
+    publisher
+        .set_history_provider(Arc::new(FixtureHistory {
+            messages: (1..=6).map(|index| message(0xe5, index * 10)).collect(),
+            page_limit: 2,
+            reads: AtomicUsize::new(0),
+        }))
+        .expect("history provider installs");
+    publisher
+        .set_history_open([head.lane])
+        .expect("lane history opens");
+    publisher
+        .publish(head.clone())
+        .expect("retained head publishes");
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages {
+        generation: initial,
+        ..
+    } = &frames[0]
+    else {
+        panic!("expected message bootstrap")
+    };
+
+    let first = history_page(&source, history_cursors(initial)[0]);
+    assert_eq!(page_offsets(&first), [50, 60]);
+    let deep = history_cursors(&first)[0];
+    assert!(
+        publisher
+            .publish(message(0xe5, 110))
+            .expect("live work publishes")
+    );
+
+    let second = history_page(&source, deep);
+    assert!(second.generation > deep.generation);
+    assert_eq!(page_offsets(&second), [30, 40]);
+
+    let unissued = wire::MessageHistoryCursor {
+        before: Some(message(0xe5, 45).locus),
+        ..deep
+    };
+    let resumed = history_page(&source, unissued);
+    assert!(resumed.messages.is_empty());
+    assert_eq!(
+        resumed.frontiers[0].before,
+        Some(head.locus),
+        "an anchor the resident does not hold resumes at the retained edge",
+    );
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
 #[test]
 fn quote_presentations_are_complete_on_bootstrap_and_history_and_refresh_from_authority() {
     let bus = fixture(1);
