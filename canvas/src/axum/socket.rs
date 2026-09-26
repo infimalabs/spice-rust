@@ -12,6 +12,12 @@ const CAPABILITY_REPLACED_DETAIL: &str =
 
 pub(super) type PendingCommands =
     FuturesUnordered<Pin<Box<dyn Future<Output = CommandCompletion> + Send>>>;
+pub(super) type HistoryCompletion = (
+    wire::CanonicalUuid,
+    Result<wire::StreamFrame, crate::stream::Failure>,
+);
+pub(super) type PendingHistories =
+    FuturesUnordered<Pin<Box<dyn Future<Output = HistoryCompletion> + Send>>>;
 
 pub(super) async fn socket(
     State(state): State<Arc<SurfaceState>>,
@@ -115,6 +121,7 @@ struct ActiveSession {
     broadcasts: Option<bus::BroadcastSubscriber>,
     messages: Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
     commands: PendingCommands,
+    histories: PendingHistories,
     lead: Lead,
 }
 
@@ -139,6 +146,7 @@ impl ActiveSession {
             broadcasts,
             messages,
             commands: PendingCommands::new(),
+            histories: PendingHistories::new(),
             lead: Lead::Journal,
         }
     }
@@ -159,6 +167,7 @@ impl ActiveSession {
             &mut self.broadcasts,
             &mut self.messages,
             &mut self.commands,
+            &mut self.histories,
             SessionReadiness { live, continuing },
         )
         .await
@@ -221,6 +230,16 @@ impl ActiveSession {
                 )
                 .await
             }
+            Event::History(completed) => {
+                route_history_completion(
+                    socket,
+                    &self.state,
+                    &self.accepted,
+                    self.capability,
+                    completed,
+                )
+                .await
+            }
             Event::Command(completed) => {
                 route_command_completion(socket, &self.state, completed).await
             }
@@ -269,6 +288,7 @@ impl ActiveSession {
                 self.capability,
                 &bytes,
                 &mut self.subscription,
+                &mut self.histories,
             )
             .await
         } else {
@@ -276,7 +296,9 @@ impl ActiveSession {
                 socket,
                 &self.state,
                 &self.accepted,
+                self.capability,
                 &mut self.commands,
+                &mut self.histories,
                 &bytes,
             )
             .await
@@ -309,13 +331,18 @@ async fn route_inbound_command(
     socket: &mut WebSocket,
     state: &Arc<SurfaceState>,
     accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
     commands: &mut PendingCommands,
+    histories: &mut PendingHistories,
     bytes: &[u8],
 ) -> SessionFlow {
     match route_command(socket, state, accepted, bytes).await {
         CommandRoute::Flow(flow) => flow,
         CommandRoute::Pending(command) if command.dark => {
-            route_dark_command(socket, state, commands, *command).await
+            route_dark_command(
+                socket, state, accepted, capability, commands, histories, *command,
+            )
+            .await
         }
         CommandRoute::Pending(command) => {
             commands.push(Box::pin((*command).complete(Arc::clone(state))));
@@ -336,6 +363,7 @@ pub(super) enum Lead {
     Message,
     Inbound,
     Command,
+    History,
     Continuation,
 }
 
@@ -351,7 +379,8 @@ impl Lead {
             Self::Journal => Self::Message,
             Self::Message => Self::Inbound,
             Self::Inbound => Self::Command,
-            Self::Command => Self::Continuation,
+            Self::Command => Self::History,
+            Self::History => Self::Continuation,
             Self::Continuation => Self::Journal,
         };
         leading
@@ -383,6 +412,7 @@ pub(super) enum Event {
     Message(Result<Box<wire::TranscriptGeneration>, tokio::sync::broadcast::error::RecvError>),
     Inbound(Option<Result<Message, ::axum::Error>>),
     Command(Option<CommandCompletion>),
+    History(Option<HistoryCompletion>),
     Continuation,
 }
 
@@ -427,8 +457,8 @@ impl<'session> SessionSignals<'session> {
 /// without a bound, which per-connection isolation does not help: the flood and
 /// the starved requests share the connection.
 ///
-/// Rotating which of the five work sources is evaluated first bounds the wait
-/// at four iterations rather than at the journal falling quiet. No source is
+/// Rotating which of the six work sources is evaluated first bounds the wait
+/// at five iterations rather than at the journal falling quiet. No source is
 /// ever *disabled* to make room, because a disabled broadcast receiver stops
 /// draining its channel and converts a scheduling question into a lag question,
 /// changing the retained-cursor overflow behavior this rotation must leave
@@ -440,12 +470,14 @@ pub(super) async fn next_event(
     broadcasts: &mut Option<bus::BroadcastSubscriber>,
     messages: &mut Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
     commands: &mut PendingCommands,
+    histories: &mut PendingHistories,
     readiness: SessionReadiness,
 ) -> Event {
     let SessionReadiness { live, continuing } = readiness;
     let journal = broadcasts.is_some() && live;
     let transcript = messages.is_some() && live;
     let command = !commands.is_empty();
+    let history = !histories.is_empty();
     let SessionSignals { closed, retired } = signals;
     match lead.take() {
         Lead::Journal => tokio::select! {
@@ -456,6 +488,7 @@ pub(super) async fn next_event(
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
+            completed = histories.next(), if history => Event::History(completed),
             _ = std::future::ready(()), if continuing => Event::Continuation,
         },
         Lead::Message => tokio::select! {
@@ -465,6 +498,7 @@ pub(super) async fn next_event(
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
+            completed = histories.next(), if history => Event::History(completed),
             _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
         },
@@ -474,6 +508,7 @@ pub(super) async fn next_event(
             () = retired.cancelled() => Event::Retired,
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
+            completed = histories.next(), if history => Event::History(completed),
             _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
@@ -483,10 +518,22 @@ pub(super) async fn next_event(
             changed = closed.changed() => Event::Closed(changed),
             () = retired.cancelled() => Event::Retired,
             completed = commands.next(), if command => Event::Command(completed),
+            completed = histories.next(), if history => Event::History(completed),
             _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
+        },
+        Lead::History => tokio::select! {
+            biased;
+            changed = closed.changed() => Event::Closed(changed),
+            () = retired.cancelled() => Event::Retired,
+            completed = histories.next(), if history => Event::History(completed),
+            _ = std::future::ready(()), if continuing => Event::Continuation,
+            notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
+            notice = recv_message(messages), if transcript => Event::Message(notice),
+            message = socket.next_message() => Event::Inbound(message),
+            completed = commands.next(), if command => Event::Command(completed),
         },
         Lead::Continuation => tokio::select! {
             biased;
@@ -497,6 +544,7 @@ pub(super) async fn next_event(
             notice = recv_message(messages), if transcript => Event::Message(notice),
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
+            completed = histories.next(), if history => Event::History(completed),
         },
     }
 }
@@ -764,6 +812,7 @@ async fn route_stream(
     capability: wire::CanonicalUuid,
     bytes: &[u8],
     subscription: &mut Option<crate::stream::Subscription>,
+    histories: &mut PendingHistories,
 ) -> SessionFlow {
     if !state.capabilities.matches(capability, &accepted.actor) {
         send_replaced(
@@ -799,6 +848,14 @@ async fn route_stream(
         send_encoded(socket, &frame).await;
         return SessionFlow::Continue;
     };
+    if matches!(request, wire::StreamRequest::MessageHistory { .. }) {
+        histories.push(Box::pin(message_history_off_runtime(
+            source.clone(),
+            accepted.clone(),
+            request,
+        )));
+        return SessionFlow::Continue;
+    }
 
     let result = match &request {
         wire::StreamRequest::Subscribe { .. } => {
@@ -843,28 +900,11 @@ async fn route_stream(
         },
         wire::StreamRequest::Thread { .. } => source.thread(accepted, &request),
         wire::StreamRequest::MessageHistory { .. } => {
-            message_history_off_runtime(source, accepted, &request).await
+            unreachable!("history requests are scheduled before synchronous routing")
         }
         wire::StreamRequest::Ping { id, .. } => pong(state.epoch, &request, *id),
     };
-    if !state.capabilities.matches(capability, &accepted.actor) {
-        send_replaced(socket, state.epoch, Some(request.id())).await;
-        return SessionFlow::Close;
-    }
-    match result {
-        Ok(frame) => {
-            if send_encoded(socket, &frame).await {
-                SessionFlow::Continue
-            } else {
-                SessionFlow::Close
-            }
-        }
-        Err(failure) => {
-            let frame = failure.frame(state.epoch, Some(request.id()));
-            send_encoded(socket, &frame).await;
-            SessionFlow::Continue
-        }
-    }
+    route_stream_result(socket, state, accepted, capability, request.id(), result).await
 }
 
 /// Answer a stream-level ping once the request is admitted.
@@ -893,17 +933,15 @@ fn pong(
 /// The provider behind [`crate::stream::Source::message_history`] may chain
 /// several multi-megabyte tape windows and hold its thread for seconds. The
 /// surface runtime is one thread shared by every socket, live publication,
-/// and the resident loop, so the read leaves it and the answer returns through
-/// the join. Requests on this one socket still run one at a time.
+/// and the resident loop, so each read leaves it independently. The session
+/// keeps receiving requests while these joins race to completion.
 async fn message_history_off_runtime(
-    source: &crate::stream::Source,
-    accepted: &wire::Accepted,
-    request: &wire::StreamRequest,
-) -> Result<wire::StreamFrame, crate::stream::Failure> {
-    let source = source.clone();
-    let accepted = accepted.clone();
-    let request = request.clone();
-    tokio::task::spawn_blocking(move || source.message_history(&accepted, &request))
+    source: crate::stream::Source,
+    accepted: wire::Accepted,
+    request: wire::StreamRequest,
+) -> HistoryCompletion {
+    let id = request.id();
+    let result = tokio::task::spawn_blocking(move || source.message_history(&accepted, &request))
         .await
         .unwrap_or_else(|error| {
             Err(crate::stream::Failure::Fault(wire::Fault {
@@ -911,7 +949,49 @@ async fn message_history_off_runtime(
                 reason: "stream::message-history-abandoned".to_owned(),
                 detail: error.to_string(),
             }))
-        })
+        });
+    (id, result)
+}
+
+async fn route_history_completion(
+    socket: &mut WebSocket,
+    state: &SurfaceState,
+    accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
+    completed: Option<HistoryCompletion>,
+) -> SessionFlow {
+    let Some((id, result)) = completed else {
+        return SessionFlow::Close;
+    };
+    route_stream_result(socket, state, accepted, capability, id, result).await
+}
+
+async fn route_stream_result(
+    socket: &mut WebSocket,
+    state: &SurfaceState,
+    accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
+    id: wire::CanonicalUuid,
+    result: Result<wire::StreamFrame, crate::stream::Failure>,
+) -> SessionFlow {
+    if !state.capabilities.matches(capability, &accepted.actor) {
+        send_replaced(socket, state.epoch, Some(id)).await;
+        return SessionFlow::Close;
+    }
+    match result {
+        Ok(frame) => {
+            if send_encoded(socket, &frame).await {
+                SessionFlow::Continue
+            } else {
+                SessionFlow::Close
+            }
+        }
+        Err(failure) => {
+            let frame = failure.frame(state.epoch, Some(id));
+            send_encoded(socket, &frame).await;
+            SessionFlow::Continue
+        }
+    }
 }
 
 async fn send_replaced(
@@ -1082,14 +1162,31 @@ impl PendingCommand {
 async fn route_dark_command(
     socket: &mut WebSocket,
     state: &Arc<SurfaceState>,
+    accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
     commands: &mut PendingCommands,
+    histories: &mut PendingHistories,
     command: PendingCommand,
 ) -> SessionFlow {
-    while let Some(completed) = commands.next().await {
-        if matches!(
-            route_command_completion(socket, state, Some(completed)).await,
-            SessionFlow::Close
-        ) {
+    while !commands.is_empty() || !histories.is_empty() {
+        let command_ready = !commands.is_empty();
+        let history_ready = !histories.is_empty();
+        let flow = tokio::select! {
+            completed = commands.next(), if command_ready => {
+                route_command_completion(socket, state, completed).await
+            },
+            completed = histories.next(), if history_ready => {
+                route_history_completion(
+                    socket,
+                    state,
+                    accepted,
+                    capability,
+                    completed,
+                )
+                .await
+            },
+        };
+        if matches!(flow, SessionFlow::Close) {
             return SessionFlow::Close;
         }
     }

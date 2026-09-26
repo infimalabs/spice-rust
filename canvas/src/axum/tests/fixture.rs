@@ -24,3 +24,20 @@ pub(super) fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentM
         media: Vec::new(),
     }
 }
+
+pub(super) fn ready_histories() -> super::super::socket::PendingHistories {
+    let histories = super::super::socket::PendingHistories::new();
+    for _ in 0..8 {
+        histories.push(Box::pin(async {
+            (
+                super::identity(0xd4),
+                Ok(wire::StreamFrame::Pong {
+                    v: wire::WireVersion::CURRENT,
+                    id: super::identity(0xd4),
+                    epoch: super::epoch(),
+                }),
+            )
+        }));
+    }
+    histories
+}
