@@ -47,7 +47,7 @@ impl Write for Sink {
     }
 }
 
-struct Scratch(PathBuf);
+struct Scratch(PathBuf, Arc<Mutex<Option<Vec<u8>>>>);
 
 impl Scratch {
     fn new(name: &str) -> Self {
@@ -59,11 +59,11 @@ impl Scratch {
                 .map_or(0, |elapsed| elapsed.as_nanos())
         ));
         fs::create_dir_all(&root).expect("scratch directory");
-        Self(root)
+        Self(root, Arc::new(Mutex::new(None)))
     }
 
-    fn inbox(&self) -> PathBuf {
-        self.0.join("lane")
+    fn publish(&self, rendering: impl AsRef<[u8]>) {
+        *self.1.lock().unwrap_or_else(PoisonError::into_inner) = Some(rendering.as_ref().to_vec());
     }
 
     fn terminal(&self) -> Terminal {
@@ -80,6 +80,19 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+fn make_driver(sink: Sink, scratch: &Scratch, terminal: Option<Terminal>) -> Arc<Driver<Sink>> {
+    let source = Arc::clone(&scratch.1);
+    Driver::with_inbox_reader(
+        sink,
+        move || {
+            source
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        },
+        terminal,
+    )
 }
 
 fn decoded(bytes: &[u8]) -> Decoded {
@@ -139,25 +152,24 @@ fn steer(sequence: u64, message: &str) -> serde_json::Value {
 #[test]
 fn the_inbox_is_interjected_once_per_change_and_again_after_a_compaction() {
     let scratch = Scratch::new("changes");
-    let inbox = scratch.inbox();
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), &inbox, None);
+    let driver = make_driver(sink.clone(), &scratch, None);
     driver
         .open(b"{\"id\":\"spice-state\",\"type\":\"get_state\"}\n")
         .expect("open");
 
     // Missing, then empty: nothing to say.
     driver.deliver_inbox();
-    fs::write(&inbox, b"").expect("empty inbox");
+    scratch.publish(b"");
     driver.deliver_inbox();
     assert_eq!(driver.interjections(), 0);
 
-    fs::write(&inbox, b"<key>\ndirective=d1\nstop\n</key>\n").expect("inbox");
+    scratch.publish(b"<key>\ndirective=d1\nstop\n</key>\n");
     driver.deliver_inbox();
     driver.deliver_inbox();
     assert_eq!(driver.interjections(), 1);
 
-    fs::write(&inbox, b"<key>\ndirective=d2\ngo\n</key>\n").expect("inbox");
+    scratch.publish(b"<key>\ndirective=d2\ngo\n</key>\n");
     driver.deliver_inbox();
     assert_eq!(driver.interjections(), 2);
 
@@ -186,7 +198,7 @@ fn the_inbox_is_interjected_once_per_change_and_again_after_a_compaction() {
 fn a_prompt_nobody_can_compose_is_declined_while_notices_pass() {
     let scratch = Scratch::new("dialog");
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), None);
+    let driver = make_driver(sink.clone(), &scratch, None);
     assert!(
         driver
             .observe(&decoded(
@@ -216,7 +228,7 @@ fn a_shell_call_runs_in_the_lanes_terminal_and_answers_with_what_it_said() {
     let scratch = Scratch::new("shell");
     let sink = Sink::default();
     let terminal = scratch.terminal();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), Some(terminal));
+    let driver = make_driver(sink.clone(), &scratch, Some(terminal));
     assert!(
         driver
             .observe(&decoded(
@@ -243,7 +255,7 @@ fn a_shell_call_runs_in_the_lanes_terminal_and_answers_with_what_it_said() {
 fn a_call_the_lane_cannot_run_is_refused_at_once() {
     let scratch = Scratch::new("refused");
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), None);
+    let driver = make_driver(sink.clone(), &scratch, None);
     driver.observe(&decoded(
         br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"true"}}"#,
     ));
@@ -251,7 +263,7 @@ fn a_call_the_lane_cannot_run_is_refused_at_once() {
         br#"{"type":"host_tool_call","id":"h2","toolCallId":"call_2","toolName":"deploy","arguments":{}}"#,
     ));
     let terminal = scratch.terminal();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), Some(terminal));
+    let driver = make_driver(sink.clone(), &scratch, Some(terminal));
     driver.observe(&decoded(
         br#"{"type":"host_tool_call","id":"h3","toolCallId":"call_3","toolName":"shell","arguments":{"timeout":5}}"#,
     ));
@@ -278,7 +290,7 @@ fn a_withdrawn_call_and_a_drain_end_the_commands_they_cover() {
     let scratch = Scratch::new("withdrawn");
     let sink = Sink::default();
     let terminal = scratch.terminal();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), Some(terminal));
+    let driver = make_driver(sink.clone(), &scratch, Some(terminal));
     // `cat` on a closed stdin ends on its own; a fifo nobody opens does
     // not, so the command holds until it is ended.
     let fifo = scratch.0.join("hold");
@@ -338,7 +350,7 @@ const NEWS: &str = "<seal>\ndirective=d1 key=1kJK6N3R stage=new expires=never\n\
 fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_alone() {
     let scratch = Scratch::new("restated");
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), Some(scratch.terminal()));
+    let driver = make_driver(sink.clone(), &scratch, Some(scratch.terminal()));
     let fifo = scratch.0.join("hold");
     assert!(
         std::process::Command::new("mkfifo")
@@ -347,7 +359,7 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
             .expect("mkfifo")
             .success()
     );
-    fs::write(scratch.inbox(), NEWS).expect("inbox renders");
+    scratch.publish(NEWS);
     driver.deliver_inbox();
     driver.observe(&decoded(
         br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
@@ -356,7 +368,7 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
     // The same key said again, as a reminder is, waits for the turn and
     // points at the telling the occupant is still holding.
     let reminder = NEWS.replace("stage=new", "stage=reminded");
-    fs::write(scratch.inbox(), &reminder).expect("inbox renders");
+    scratch.publish(&reminder);
     driver.deliver_inbox();
     let pointer = format!(
         "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{}\n</seal>\n",
@@ -383,7 +395,7 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
         "</seal>\n",
         "directive=d2 key=1kJK6M0V stage=new expires=never\ngo\n</seal>\n",
     );
-    fs::write(scratch.inbox(), &more).expect("inbox renders");
+    scratch.publish(&more);
     driver.deliver_inbox();
     let told = format!(
         "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{}\n\
@@ -408,22 +420,22 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
 fn a_resend_says_whether_any_visible_reply_followed_the_telling() {
     let scratch = Scratch::new("replied");
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), None);
-    fs::write(scratch.inbox(), NEWS).expect("inbox renders");
+    let driver = make_driver(sink.clone(), &scratch, None);
+    scratch.publish(NEWS);
     driver.deliver_inbox();
 
     driver.observe(&decoded(
         br#"{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"thinking","thinking":"ACK 1kJK6N3R: planned but never written"},{"type":"toolCall","id":"c1","name":"read","arguments":{"path":"x"}}]}}"#,
     ));
     let reminder = NEWS.replace("stage=new", "stage=reminded");
-    fs::write(scratch.inbox(), &reminder).expect("inbox renders");
+    scratch.publish(&reminder);
     driver.deliver_inbox();
 
     driver.observe(&decoded(
         br#"{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"text","text":"Reading the next file."}]}}"#,
     ));
     let again = reminder.replace("expires=never", "expires=later");
-    fs::write(scratch.inbox(), &again).expect("inbox renders");
+    scratch.publish(&again);
     driver.deliver_inbox();
 
     let pointer = |header: &str, nudge: &str| format!("<seal>\n{header}\n{nudge}\n</seal>\n");
@@ -454,8 +466,8 @@ fn a_resend_says_whether_any_visible_reply_followed_the_telling() {
 fn a_compaction_spends_the_telling_again_because_the_context_lost_it() {
     let scratch = Scratch::new("compacted");
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), Some(scratch.terminal()));
-    fs::write(scratch.inbox(), NEWS).expect("inbox renders");
+    let driver = make_driver(sink.clone(), &scratch, Some(scratch.terminal()));
+    scratch.publish(NEWS);
     driver.deliver_inbox();
     driver.observe(&decoded(br#"{"type":"compaction"}"#));
     let frames = sink.answered(2);
@@ -470,7 +482,7 @@ fn a_compaction_spends_the_telling_again_because_the_context_lost_it() {
 fn an_ending_nobody_heard_reaches_the_lanes_next_occupant_once() {
     let scratch = Scratch::new("caught-up");
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), Some(scratch.terminal()));
+    let driver = make_driver(sink.clone(), &scratch, Some(scratch.terminal()));
     let fifo = scratch.0.join("hold");
     assert!(
         std::process::Command::new("mkfifo")
@@ -482,7 +494,7 @@ fn an_ending_nobody_heard_reaches_the_lanes_next_occupant_once() {
     driver.observe(&decoded(
         br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
     ));
-    fs::write(scratch.inbox(), NEWS).expect("inbox renders");
+    scratch.publish(NEWS);
     driver.deliver_inbox();
     let frames = sink.answered(2);
     let job = frames
@@ -504,7 +516,7 @@ fn an_ending_nobody_heard_reaches_the_lanes_next_occupant_once() {
 
     // The lane's next occupant hears it at its start, after the inbox.
     let later = Sink::default();
-    let successor = Driver::new(later.clone(), scratch.inbox(), Some(scratch.terminal()));
+    let successor = make_driver(later.clone(), &scratch, Some(scratch.terminal()));
     successor.catch_up();
     let frames = later.answered(2);
     assert_eq!(frames[0], steer(1, NEWS));
@@ -528,16 +540,16 @@ fn an_ending_nobody_heard_reaches_the_lanes_next_occupant_once() {
 fn steering_one_agent_backgrounds_only_that_agents_running_shell() {
     let recipient = Scratch::new("recipient-steered");
     let recipient_sink = Sink::default();
-    let recipient_driver = Driver::new(
+    let recipient_driver = make_driver(
         recipient_sink.clone(),
-        recipient.inbox(),
+        &recipient,
         Some(recipient.terminal()),
     );
     let recipient_fifo = recipient.0.join("hold");
 
     let other = Scratch::new("other-foreground");
     let other_sink = Sink::default();
-    let other_driver = Driver::new(other_sink.clone(), other.inbox(), Some(other.terminal()));
+    let other_driver = make_driver(other_sink.clone(), &other, Some(other.terminal()));
     let other_fifo = other.0.join("hold");
 
     for fifo in [&recipient_fifo, &other_fifo] {
@@ -556,7 +568,7 @@ fn steering_one_agent_backgrounds_only_that_agents_running_shell() {
         br#"{"type":"host_tool_call","id":"other","toolCallId":"call_other","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
     ));
 
-    fs::write(recipient.inbox(), NEWS).expect("recipient inbox renders");
+    recipient.publish(NEWS);
     recipient_driver.deliver_inbox();
     let recipient_frames = recipient_sink.answered(2);
     let answer = recipient_frames
@@ -608,7 +620,7 @@ fn steering_one_agent_backgrounds_only_that_agents_running_shell() {
 fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_as_steering() {
     let scratch = Scratch::new("steered");
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), Some(scratch.terminal()));
+    let driver = make_driver(sink.clone(), &scratch, Some(scratch.terminal()));
     let fifo = scratch.0.join("hold");
     assert!(
         std::process::Command::new("mkfifo")
@@ -620,7 +632,7 @@ fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_as_stee
     driver.observe(&decoded(
         br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
     ));
-    fs::write(scratch.inbox(), NEWS).expect("inbox renders");
+    scratch.publish(NEWS);
     driver.deliver_inbox();
 
     // The steer and the interrupted call's answer are written by two
@@ -694,7 +706,7 @@ fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_as_stee
 fn a_confirm_is_stated_as_one_request_and_answered_once_consent_rules() {
     let scratch = Scratch::new("confirm");
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), None);
+    let driver = make_driver(sink.clone(), &scratch, None);
     let ask = driver
         .observe(&decoded(
             br#"{"type":"extension_ui_request","id":"9","method":"confirm","title":"Deploy","message":"Deploy to prod?"}"#,
@@ -759,7 +771,7 @@ fn a_kick_names_either_the_inbox_or_one_consent_answer() {
 fn a_drain_interrupts_the_turn_and_ends_the_input() {
     let scratch = Scratch::new("abort");
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), scratch.inbox(), None);
+    let driver = make_driver(sink.clone(), &scratch, None);
     driver.abort();
     assert_eq!(
         sink.frames(),
@@ -790,12 +802,11 @@ fn a_drain_interrupts_the_turn_and_ends_the_input() {
 #[test]
 fn the_end_of_the_turn_closes_the_stream_and_later_deliveries_are_dropped() {
     let scratch = Scratch::new("closed");
-    let inbox = scratch.inbox();
     let sink = Sink::default();
-    let driver = Driver::new(sink.clone(), &inbox, None);
+    let driver = make_driver(sink.clone(), &scratch, None);
     driver.observe(&decoded(br#"{"type":"agent_end","messages":[]}"#));
 
-    fs::write(&inbox, b"<key>\ndirective=d1\nstop\n</key>\n").expect("inbox");
+    scratch.publish(b"<key>\ndirective=d1\nstop\n</key>\n");
     driver.deliver_inbox();
     assert_eq!(driver.interjections(), 1, "the attempt is counted");
     assert!(sink.frames().is_empty(), "nothing reaches a closed stream");

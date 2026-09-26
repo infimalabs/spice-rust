@@ -18,9 +18,6 @@ pub(in crate::resident) struct OccupantLaunch {
     /// Request bytes a command-driven vendor reads first, or nothing for a
     /// vendor driven entirely by its arguments.
     pub(in crate::resident) opening: Option<Vec<u8>>,
-    /// This lane's rendered steering inbox, interjected into a command-driven
-    /// vendor whenever the resident republishes it.
-    pub(in crate::resident) inbox: PathBuf,
 }
 
 pub(in crate::resident) struct OccupantLaunchRequest<'a> {
@@ -100,7 +97,7 @@ pub(in crate::resident) fn occupant_launch(
         model,
         effort,
     };
-    let (plan, rtk) = launch_plan(paths, &repository, &resolved, selection)?;
+    let (plan, rtk) = launch_plan(&repository, &resolved, selection)?;
     let model = plan.launch().model.clone();
     let effort = plan.launch().effort.as_str().to_owned();
     let record = plan
@@ -119,7 +116,6 @@ pub(in crate::resident) fn occupant_launch(
     let stream = record.stream();
     let expected = record.resume().session_id().map(str::to_owned);
     let opening = record.opening().map(<[u8]>::to_vec);
-    let inbox = steer::inbox::path(&paths.inbox_for_repository(&repository)?, lane);
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join(name.as_str()))
         .map_err(|error| store_fault("lane::capture-tape-unavailable", &error.to_string()))?;
     let (session_reply, session) = mpsc::sync_channel(4);
@@ -163,7 +159,6 @@ pub(in crate::resident) fn occupant_launch(
         },
         git,
         opening,
-        inbox,
     })
 }
 
@@ -196,7 +191,6 @@ fn launch_repository(paths: &RuntimePaths, worktree: &str) -> CommandResult<Repo
 
 /// Compose the vendor launch plan this lane's configuration admits.
 fn launch_plan(
-    paths: &RuntimePaths,
     repository: &Repository,
     resolved: &spice::config::Resolved,
     selection: Selection<'_>,
@@ -226,7 +220,6 @@ fn launch_plan(
         .as_ref()
         .map(spice::agent_wrapper::Resolved::command);
     let (environment, rtk) = launch_environment(
-        paths,
         repository,
         &executable,
         wrapper_command,
@@ -385,14 +378,12 @@ fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {
 /// for the wrapper, hook, and MCP commands. Only an absent wrapper falls back
 /// to leading `PATH` with that already-validated executable's directory.
 fn launch_environment(
-    paths: &RuntimePaths,
     repository: &Repository,
     executable: &Path,
     wrapper_command: Option<&Path>,
     rtk_executable: &str,
     lane: CanonicalUuid,
 ) -> CommandResult<(Environment, wire::body::RtkHealth)> {
-    let inbox = paths.inbox_for_repository(repository)?;
     let native_shell = crate::bootstrap_environment("SHELL").ok_or_else(|| {
         store_fault(
             "lane::native-shell-unavailable",
@@ -432,10 +423,6 @@ fn launch_environment(
             spice::install::installed_shell_hooks(repository).into_os_string(),
         ),
         (OsString::from(steer::hook::NATIVE_SHELL), native_shell),
-        (
-            OsString::from(steer::hook::INBOX),
-            steer::inbox::path(&inbox, lane).into_os_string(),
-        ),
         (
             OsString::from(steer::hook::EXECUTABLE),
             executable.as_os_str().to_owned(),

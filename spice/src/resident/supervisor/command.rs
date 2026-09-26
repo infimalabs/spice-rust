@@ -2,24 +2,20 @@
 //! steering, and the close that ends its one turn.
 //!
 //! A vendor launched over a command stream reads nothing from its arguments
-//! after start. The supervisor owns the pipe: it writes the opening request
-//! the vendor contract composed, interjects this lane's rendered steering
-//! inbox whenever the resident republishes it, answers the dialogs the agent
-//! opens, and drops the pipe once the agent's turn completes so the child
-//! drains and exits on its own. A drain interrupts the turn over the same
-//! pipe before any signal is sent. A confirm dialog becomes one consent request
-//! the resident decides; a call on the lane's shell runs in the lane's own
-//! terminal and answers with what the command said; every other dialog is
-//! declined, since nobody at the lane can compose a choice or text for it.
-//! Steering never waits on a command: direction the lane has not heard,
-//! arriving while a command runs, interrupts the call, which answers with
-//! what the command said so far while the command keeps running as a job,
-//! and the job's ending is delivered as steering of its own when it comes;
-//! an ending nobody hears through the delivery grace wakes the lane, whose
-//! next occupant receives it during startup catch-up.
-//! The resident reaches the driver through one datagram kick per inbox
-//! publication or consent answer; a lane with no command-driven occupant has
-//! nobody listening, and the kick is lost by design.
+//! after start. The supervisor owns the pipe: it writes the opening request,
+//! obtains the current authenticated steering inbox from the resident when
+//! kicked, answers dialogs, and drops the pipe once the agent's turn completes
+//! so the child drains and exits on its own. A drain interrupts the turn over
+//! the same pipe before any signal is sent. A confirm dialog becomes one
+//! consent request the resident decides; a call on the lane's shell runs in
+//! the lane's own terminal and answers with what the command said; every other
+//! dialog is declined, since nobody at the lane can compose a choice or text
+//! for it.
+//!
+//! Steering never waits on a command: unheard direction arriving while a
+//! command runs interrupts the call, which answers with what the command said
+//! so far while the command keeps running as a job. The resident reaches the
+//! driver through a datagram signal; the payload remains in journal authority.
 
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
@@ -40,9 +36,11 @@ use super::terminal::{Control, Handle, Job, Report, Run, Terminal};
 const KICK_BYTES: usize = 256;
 
 /// One child's command stream and what has already been said on it.
+type InboxReader = Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>;
+
 pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin> {
     stdin: Mutex<Option<W>>,
-    inbox: PathBuf,
+    read_inbox: InboxReader,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
     /// Keys whose telling this occupant still holds verbatim, so a resend can
@@ -77,7 +75,7 @@ pub(in crate::resident) struct Ask {
 #[derive(Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(in crate::resident) enum Kick {
-    /// The lane's steering inbox was republished.
+    /// The lane's journal-backed steering inbox changed.
     Inbox,
     /// Consent ruled on a request the occupant raised.
     Answer {
@@ -89,18 +87,36 @@ pub(in crate::resident) enum Kick {
     /// The lane is being drained: interrupt the turn and end the input.
     Abort,
 }
-
 impl<W: Write + Send + 'static> Driver<W> {
-    /// Own a child's stdin, the inbox path this lane's steering renders to,
+    /// Own a child's stdin, authenticated resident discovery, lane identity,
     /// and the terminal its commands run in.
     pub(in crate::resident) fn new(
         stdin: W,
-        inbox: impl Into<PathBuf>,
+        discovery: impl Into<PathBuf>,
+        lane: CanonicalUuid,
+        terminal: Option<Terminal>,
+    ) -> Arc<Self> {
+        let discovery = discovery.into();
+        Self::with_inbox_reader(
+            stdin,
+            move || {
+                let inbox = crate::command_client::read_lane_inbox(&discovery, lane).ok()?;
+                let lane_inbox = inbox.lanes.iter().find(|row| row.lane == lane)?;
+                let seal = steer::Key::for_identity(lane);
+                Some(steer::inbox::render_pending(&seal, &lane_inbox.pending).into_bytes())
+            },
+            terminal,
+        )
+    }
+
+    fn with_inbox_reader(
+        stdin: W,
+        read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
         Arc::new(Self {
             stdin: Mutex::new(Some(stdin)),
-            inbox: inbox.into(),
+            read_inbox: Box::new(read_inbox),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             told: Mutex::new(BTreeSet::new()),
@@ -120,10 +136,9 @@ impl<W: Write + Send + 'static> Driver<W> {
         self.write(opening)
     }
 
-    /// Interject the rendered inbox unless it is empty, missing, or exactly
-    /// what the agent already received. Every call being answered is
-    /// interrupted first, so the message is read as soon as it is written
-    /// rather than once the command ends.
+    /// Read and interject the current authenticated inbox unless it is empty
+    /// or exactly what the agent already received. Every call being answered
+    /// is interrupted before unheard direction is written.
     pub(in crate::resident) fn deliver_inbox(&self) {
         self.interject(true);
     }
@@ -152,19 +167,14 @@ impl<W: Write + Send + 'static> Driver<W> {
         let _sent = self.steer(&message);
     }
 
-    /// Interject the rendering the inbox holds now, once per rendering.
+    /// Interject the journal-backed inbox once per rendering.
     ///
     /// Direction the lane has not heard interrupts the calls in flight, so the
     /// agent sees it as early as it can; a rendering that only restates what
-    /// the lane heard, a reminder or a re-render, waits for the turn's next
-    /// boundary like any steering. After a compaction nothing is news.
-    ///
-    /// A directive this occupant was already told is resent as a pointer to
-    /// the telling it still holds rather than as the telling again: the resend
-    /// says the direction is unanswered, which the header already carries, and
-    /// the words are verbatim in the context this occupant is reading from.
+    /// the lane heard waits for the turn's next boundary. After a compaction
+    /// nothing is news.
     fn interject(&self, news: bool) {
-        let Ok(rendered) = fs::read(&self.inbox) else {
+        let Some(rendered) = (self.read_inbox)() else {
             return;
         };
         if rendered.is_empty() {
@@ -177,9 +187,8 @@ impl<W: Write + Send + 'static> Driver<W> {
         if delivered.as_deref() == Some(rendered.as_slice()) {
             return;
         }
-        let Ok(message) = std::str::from_utf8(&rendered) else {
-            return;
-        };
+        let message =
+            std::str::from_utf8(&rendered).expect("the in-memory inbox renderer produces UTF-8");
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         let unheard = steer::inbox::keys(message).any(|key| !told.contains(key));
         if news && unheard {
@@ -586,6 +595,7 @@ pub(in crate::resident) fn listen_for_kicks(
         std::thread::Builder::new()
             .name("spice-kick".to_owned())
             .spawn(move || {
+                driver.catch_up();
                 let mut kick = [0u8; KICK_BYTES];
                 while let Ok(length) = socket.recv(&mut kick) {
                     match serde_json::from_slice(&kick[..length]) {

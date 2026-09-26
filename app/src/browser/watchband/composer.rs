@@ -7,7 +7,6 @@ use super::*;
 mod drag;
 mod message_badges;
 mod task_inspector;
-
 pub(super) use drag::primary_composer_dragging;
 pub(in crate::browser) use drag::{PrimaryComposerDragState, use_primary_composer_drag_state};
 

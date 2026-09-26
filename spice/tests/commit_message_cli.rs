@@ -233,7 +233,6 @@ fn installed_hook_executes_the_current_spice_leaf_without_a_build_system() {
     let output = Command::new(&hook)
         .arg(&message)
         .current_dir(scratch.path())
-        .env_remove(steer::hook::INBOX)
         .output()
         .expect("installed hook launches");
     assert_eq!(output.status.code(), Some(0));
@@ -264,7 +263,6 @@ fn invoke_os(scratch: &Scratch, arguments: &[&OsStr]) -> Output {
 fn command() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
     command
-        .env_remove(steer::hook::INBOX)
         .env_remove("CLICOLOR")
         .env_remove("CLICOLOR_FORCE")
         .env_remove("FORCE_COLOR")

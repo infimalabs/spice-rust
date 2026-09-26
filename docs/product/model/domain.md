@@ -8,8 +8,8 @@
 An **operations console for a fleet of coding agents**. One operator supervises
 many agents, each inhabiting a real git worktree, by reading their transcripts and
 writing durable steering through one journal authority. Transcripts are evidence
-of what agents produced; the journal owns semantic facts and current heads; the
-filesystem inbox is a disposable delivery projection. Supervision, coordination,
+of what agents produced; the journal owns semantic facts, current heads, and the
+inbox read by authenticated delivery clients. Supervision, coordination,
 counsel, and repository checks preserve those authority boundaries.
 
 ### The planes
@@ -152,12 +152,12 @@ product.
 
 ```mermaid
 flowchart LR
-  JR["durable journal<br/>one authenticated writer"] --> SemanticFacts["tasks, claims, steering lifecycle,<br/>topology heads, command receipts"]
+  JR["durable journal<br/>one authenticated writer"] --> SemanticFacts["tasks, claims, steering lifecycle,<br/>current inbox heads, topology, command receipts"]
   TR["transcript tape"] --> ActivityWhatTheAgentProduced["vendor bytes and typed evidence<br/>of what the agent produced"]
-  FS["filesystem inbox"] --> PendingSteering["disposable projection of live directives"]
   RG["admitted target registry"] --> WorktreeIdentity["worktree identity"]
   LR["lifecycle authority"] --> ProcessStatus["current process status"]
   JR --> STREAM["one authenticated snapshot/resume stream"]
+  JR --> INBOX["authenticated hook, supervisor,<br/>and command inbox reads"]
 ```
 
 **Invariant —** No fact has two authorities. A consumer that needs a fact asks

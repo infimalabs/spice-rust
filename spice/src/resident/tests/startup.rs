@@ -353,15 +353,13 @@ fn resident_start_survives_an_overlapping_liveness_probe() {
 }
 
 #[test]
-fn stale_surface_cleanup_is_idempotent_and_leaves_inbox_authority() {
+fn stale_surface_cleanup_is_idempotent() {
     let root = fixture("stale-surfaces");
     fs::create_dir_all(root.join(".git")).expect("git directory");
     let paths = RuntimePaths::discover(&root).expect("paths resolve");
     fs::create_dir_all(&paths.lane_canvas).expect("lane discovery directory");
     fs::write(&paths.canvas, b"stale operator discovery").expect("operator discovery");
     fs::write(paths.lane_canvas.join("lane"), b"stale lane discovery").expect("lane discovery");
-    fs::create_dir_all(&paths.inbox).expect("inbox directory");
-    fs::write(paths.inbox.join("lane"), b"durable pending direction").expect("lane inbox");
 
     paths.clear_stale_surfaces().expect("stale surfaces clear");
     paths
@@ -370,10 +368,6 @@ fn stale_surface_cleanup_is_idempotent_and_leaves_inbox_authority() {
 
     assert!(!paths.canvas.exists());
     assert!(!paths.lane_canvas.exists());
-    assert_eq!(
-        fs::read(paths.inbox.join("lane")).expect("inbox remains"),
-        b"durable pending direction"
-    );
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 

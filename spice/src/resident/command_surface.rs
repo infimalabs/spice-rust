@@ -232,12 +232,9 @@ impl<'a> Surface<'a> {
     fn dispatch_steering(&self, command: &wire::AdmittedCommand) -> Option<CommandDispatch> {
         let mut effects = CommandEffects::default();
         let outcome = match (command.kind(), command.body()) {
-            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => Some(steering::inbox(
-                self.bus, self.paths, self.epoch, command, inbox,
-            )),
-            (CommandKind::SteerRepair, Intent::SteerRepair(repair)) => Some(steering::repair(
-                self.bus, self.paths, self.epoch, command, repair,
-            )),
+            (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => {
+                Some(steering::inbox(self.bus, self.epoch, command, inbox))
+            }
             (CommandKind::SteerSend, Intent::SteerSend(send)) => Some(steering::send(
                 self.bus,
                 self.epoch,
@@ -339,12 +336,8 @@ impl<'a> Surface<'a> {
         current_residency(self.bus, self.epoch)
     }
 
-    pub(super) fn project_inbox_once(
-        &self,
-        residency: &wire::ResidencyHead,
-        lane: CanonicalUuid,
-    ) -> super::CommandResult<steering::FoldAttempt> {
-        steering::publish_inbox_once(self.bus, self.paths, residency, lane)
+    pub(super) fn notify_inbox(&self, lane: CanonicalUuid) {
+        steering::notify_inbox(self.paths, lane);
     }
 
     pub(super) const fn epoch(&self) -> CanonicalUuid {

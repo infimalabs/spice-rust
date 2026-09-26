@@ -1,39 +1,18 @@
 use super::*;
 
-fn rendering_failure_path(
+fn restart_preserves_pending_journal_authority(
     fixture: &Fixture,
     resident: RunningResident,
     lane: wire::CanonicalUuid,
     historical_key: &str,
 ) {
-    // ST-05 + ID-10 + CON-05: the journal commit remains authoritative when
-    // its disposable inbox rendering fails, and the failure is observable.
     let lane = lane.to_string();
-    let inbox_root = fixture.runtime.join("inbox");
-    let publication_block = InboxPermissionBlock::new(inbox_root.clone());
     let sent = text_directive(&invoke(
         fixture,
-        &["steer", &lane, "remain authoritative without a rendering"],
+        &["steer", &lane, "remain authoritative across restart"],
         false,
     ));
-    assert_eq!(
-        sent.delivery.as_ref(),
-        &wire::intent::DeliveryStanding::Unknown
-    );
     let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
-    let wire::intent::DeliveryStanding::Parked {
-        source,
-        keys,
-        failure,
-        repair,
-    } = &inbox.lanes[0].delivery
-    else {
-        panic!("post-response reconciliation did not park delivery: {inbox:?}");
-    };
-    assert!(source.get() > 0);
-    assert_eq!(keys, std::slice::from_ref(&sent.key));
-    assert!(failure.contains("steer::inbox-unwritable"));
-    assert_eq!(repair, &format!("spice steer repair {lane}"));
     assert!(
         inbox.lanes[0]
             .pending
@@ -50,59 +29,10 @@ fn rendering_failure_path(
             .pending
             .iter()
             .any(|pending| pending.directive == sent.directive),
-        "restart retired the parked operator directive"
+        "restart retired the pending operator directive"
     );
-    let wire::intent::DeliveryStanding::Parked {
-        source: replayed_source,
-        keys: replayed_keys,
-        failure: replayed_failure,
-        repair: replayed_repair,
-    } = &inbox.lanes[0].delivery
-    else {
-        panic!("startup replay did not retain parked operator delivery: {inbox:?}");
-    };
-    assert!(
-        replayed_source >= source,
-        "startup replay regressed the parked source cursor"
-    );
-    assert_eq!(replayed_keys, keys);
-    assert!(
-        replayed_failure.contains("steer::inbox-unwritable"),
-        "restart changed the parked failure class: {replayed_failure}"
-    );
-    assert_eq!(replayed_repair, repair);
     let duplicate = invoke_as_lane(fixture, &lane, &["ack", historical_key], true);
     assert_refusal(&duplicate, "steer::ack-missed");
-
-    publication_block.restore();
-    let repaired = invoke(fixture, &["steer", "repair", &lane], true);
-    let Outcome::Reply(repaired): Outcome<wire::intent::DeliveryAnswer> = json_outcome(&repaired)
-    else {
-        panic!("fold repair must reply: {:?}", repaired.stderr);
-    };
-    assert_eq!(repaired.body.lane, lane.parse().expect("lane UUID"));
-    assert!(matches!(
-        repaired.body.delivery.as_ref(),
-        wire::intent::DeliveryStanding::Published { .. }
-    ));
-    let rendered = fs::read_to_string(inbox_root.join(&lane)).expect("repair republishes inbox");
-    assert!(rendered.contains(&sent.key));
-    assert_eq!(rendered.matches(&sent.key).count(), 1);
-    let repaired_again = invoke(fixture, &["steer", "repair", &lane], true);
-    let Outcome::Reply(repaired_again): Outcome<wire::intent::DeliveryAnswer> =
-        json_outcome(&repaired_again)
-    else {
-        panic!(
-            "idempotent fold repair must reply: {:?}",
-            repaired_again.stderr
-        );
-    };
-    assert_eq!(repaired_again.body.delivery, repaired.body.delivery);
-    assert_eq!(
-        fs::read_to_string(inbox_root.join(&lane)).expect("repeat repair leaves inbox readable"),
-        rendered,
-        "ID-10 repair is idempotent at an unchanged journal horizon"
-    );
     let canceled = text_directive(&invoke(
         fixture,
         &["steer", "cancel", &sent.directive.to_string()],
@@ -372,7 +302,7 @@ fn verify_authority(
 /// Lane-authenticated recognitions name the lane as actor. Origin names the
 /// chain root, not the writer: every derived steering fact cites its
 /// steer::sent as cause and repeats the origin that fact minted. The directive
-/// canceled after the restart in rendering_failure_path is what separates this
+/// canceled after the restart in restart_preserves_pending_journal_authority is what separates this
 /// from the epoch of the resident writing the link.
 fn verify_derived_attribution(snapshot: &journal::FactSnapshot, lane: wire::CanonicalUuid) {
     assert!(snapshot.facts().iter().all(|fact| {
@@ -485,14 +415,6 @@ fn resend_before_the_first_horizon_redelivers_one_unchanged_stable_directive() {
     assert_eq!(resent.key, sent.key);
     assert_eq!(resent.authored, sent.authored);
     assert_eq!(resent.disposition, sent.disposition);
-    assert_eq!(
-        sent.delivery.as_ref(),
-        &wire::intent::DeliveryStanding::Unknown
-    );
-    assert!(matches!(
-        resent.delivery.as_ref(),
-        wire::intent::DeliveryStanding::Published { .. }
-    ));
 
     let inbox = text_inbox(&invoke(&fixture, &["inbox", &lane], false));
     let pending = inbox.lanes[0]
@@ -773,7 +695,7 @@ fn steering_commands_preserve_principals_races_and_restart_state() {
     direct_input_cannot_ack(&fixture, lanes.target);
     let spoken = same_message_tool_call_cannot_ack(&fixture, lanes.target);
     let occupant_spoken = operator_record_cannot_ack(&fixture, lanes.target);
-    rendering_failure_path(&fixture, resident, lanes.target, &historical_key);
+    restart_preserves_pending_journal_authority(&fixture, resident, lanes.target, &historical_key);
     let mut expected = vec![acknowledged, declined, spoken, occupant_spoken];
     expected.extend(raced);
     verify_authority(&fixture, lanes.target, race, &expected);

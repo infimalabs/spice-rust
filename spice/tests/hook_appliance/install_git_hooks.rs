@@ -109,7 +109,6 @@ fn a_line_separator_in_the_git_common_path_refuses_without_mutation() {
     let output = Command::new(env!("CARGO_BIN_EXE_spice"))
         .args(["--json", "install"])
         .current_dir(&fixture.root)
-        .env_remove(steer::hook::INBOX)
         .output()
         .expect("launch install preview in newline path");
     assert_eq!(output.status.code(), Some(2));

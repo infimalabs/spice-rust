@@ -123,10 +123,10 @@ fn spawn_observed(
 
 #[expect(
     clippy::disallowed_methods,
-    reason = "the integration fixture preserves the launched CLI environment except for its steering inbox"
+    reason = "the integration fixture preserves the launched CLI environment except for lane identity"
 )]
 fn watch_environment() -> Result<Environment, String> {
-    Environment::new(std::env::vars_os().filter(|(name, _)| name != OsStr::new(steer::hook::INBOX)))
+    Environment::new(std::env::vars_os().filter(|(name, _)| name != OsStr::new(steer::hook::LANE)))
         .map_err(|error| error.to_string())
 }
 

@@ -77,7 +77,6 @@ fn main_and_nested_repositories_resolve_the_nearest_common_state() {
         state.rtk_history(CanonicalUuid::new(uuid::Uuid::from_u128(1))),
         common.join(".spice-rs/rtk/00000000-0000-0000-0000-000000000001/history.db")
     );
-    assert_eq!(state.inbox(), common.join(".spice-rs/inbox"));
     let retired_learnings = common.join(".spice-rs/learnings");
     assert!(
         !state
@@ -152,12 +151,6 @@ fn linked_worktree_resolves_relative_gitdir_and_commondir_with_spaces() {
             .expect("canonical linked worktree lock parent")
             .join(".spice-rs/locks")
     );
-    assert_eq!(
-        state.inbox(),
-        fs::canonicalize(&git)
-            .expect("canonical Rust inbox parent")
-            .join(".spice-rs/inbox")
-    );
     assert_common_steering_media(&repository, &common, &state);
     assert_eq!(
         proof::Layout::new(
@@ -196,11 +189,6 @@ fn linked_worktree_resolves_relative_gitdir_and_commondir_with_spaces() {
         .admit_state()
         .expect("admit absolute linked current state");
     assert_ne!(
-        state.inbox(),
-        absolute_state.inbox(),
-        "linked worktrees sharing journal authority need distinct inboxes"
-    );
-    assert_ne!(
         state.worktree_locks(),
         absolute_state.worktree_locks(),
         "linked worktrees sharing journal authority need distinct activity locks"
@@ -227,22 +215,6 @@ fn assert_common_steering_media(repository: &Repository, common: &Path, state: &
             .projections(),
         state.steering_media(),
     );
-}
-
-#[test]
-fn hook_delivery_admission_does_not_depend_on_disposable_inbox_shape() {
-    let scratch = Scratch::new();
-    let (repository, runtime) = state_case(&scratch, "parked hook inbox");
-    fs::create_dir_all(runtime.join("locks")).expect("create worktree state directories");
-    fs::write(runtime.join("inbox"), b"parked").expect("park disposable inbox");
-
-    let delivery = repository
-        .admit_steering_delivery()
-        .expect("hook delivery state admits independently");
-    assert_eq!(delivery.state(), runtime.join("steering-delivery.json"));
-    assert_eq!(delivery.lock(), runtime.join("locks/steering-delivery"));
-    assert_eq!(delivery.projections(), runtime.join("steering-media"));
-    assert!(repository.admit_state().is_err());
 }
 
 #[test]
@@ -323,7 +295,6 @@ fn state_admission_refuses_every_link_at_its_exact_component() {
         ("degraded", Path::new("degraded")),
         ("tape", Path::new("tape")),
         ("supervisors", Path::new("supervisors")),
-        ("inbox", Path::new("inbox")),
     ] {
         let (repository, runtime) = state_case(&scratch, &format!("linked-{label}"));
         let outside = scratch.join(format!("outside-{label}"));
@@ -356,7 +327,6 @@ fn state_admission_refuses_non_directory_parents_and_non_regular_leaves() {
         ("degraded", Path::new("degraded")),
         ("tape", Path::new("tape")),
         ("supervisors", Path::new("supervisors")),
-        ("inbox", Path::new("inbox")),
     ] {
         let (repository, runtime) = state_case(&scratch, &format!("file-{label}"));
         let path = state_component(&runtime, relative);

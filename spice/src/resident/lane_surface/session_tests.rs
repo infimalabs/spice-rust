@@ -62,8 +62,6 @@ fn paths(fixture: &Fixture) -> RuntimePaths {
         resident: fixture.root.join("resident"),
         canvas: fixture.root.join("canvas"),
         lane_canvas: fixture.root.join("lane-canvas"),
-        inbox: fixture.root.join("inbox"),
-        legacy_inbox: fixture.root.join("inbox"),
         degraded: fixture.root.join("degraded"),
         tape: fixture.root.join("tape"),
         supervisors: fixture.root.join("supervisors"),

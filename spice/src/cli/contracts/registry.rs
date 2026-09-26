@@ -802,14 +802,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
         Reply,
         "steer::recover"
     ),
-    operator!(
-        ["steer", "repair"],
-        "steer repair LANE",
-        Recovery => Snapshot,
-        [],
-        Reply,
-        "steer::repair"
-    ),
     row!(
         ["inbox"],
         "inbox [LANE]",

@@ -38,41 +38,6 @@ struct Fixture {
     cargo_home: PathBuf,
 }
 
-struct InboxPermissionBlock {
-    path: PathBuf,
-    original: Option<fs::Permissions>,
-}
-
-impl InboxPermissionBlock {
-    fn new(path: PathBuf) -> Self {
-        let original = fs::metadata(&path)
-            .expect("fixture inbox metadata")
-            .permissions();
-        let mut blocked = original.clone();
-        blocked.set_readonly(true);
-        fs::set_permissions(&path, blocked)
-            .expect("fixture blocks inbox publication without changing its admitted shape");
-        Self {
-            path,
-            original: Some(original),
-        }
-    }
-
-    fn restore(mut self) {
-        let original = self.original.take().expect("permission block is armed");
-        fs::set_permissions(&self.path, original)
-            .expect("fixture restores inbox publication permissions");
-    }
-}
-
-impl Drop for InboxPermissionBlock {
-    fn drop(&mut self) {
-        if let Some(original) = self.original.take() {
-            let _ = fs::set_permissions(&self.path, original);
-        }
-    }
-}
-
 impl Fixture {
     fn new() -> Self {
         let root = fixture_root::claim(&std::env::temp_dir(), "steering-process");

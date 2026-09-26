@@ -1,11 +1,10 @@
 //! Resolve the repository state namespaces owned only by this runtime.
 //!
 //! Python Spice owns `.spice`; this runtime owns `.spice-rs`. Durable authority
-//! is beneath the Git common directory, while each worktree's disposable inbox
-//! rendering is beneath that worktree's own Git directory. Equal lane, task,
-//! thread, or steering identifiers cannot make either implementation discover,
-//! consume, acknowledge, or overwrite the other's state. The install appliance
-//! remains in the already-disjoint `.spice-install` sibling.
+//! is beneath the Git common directory. Equal lane, task, thread, or steering
+//! identifiers cannot make either implementation discover, consume,
+//! acknowledge, or overwrite the other's state. The install appliance remains
+//! in the already-disjoint `.spice-install` sibling.
 //!
 //! The same rule covers the per-worktree Git shadow. Python owns
 //! `<git-dir>/agent.gitconfig`; [`crate::git_shadow`] owns
@@ -46,8 +45,7 @@
 //! Separate Python and Rust roots make ownership a path-containment invariant
 //! rather than a convention every leaf filename must preserve. Within the Rust
 //! namespace, repository authority belongs to the resident spanning linked
-//! worktrees. The disposable inbox is deliberately worktree-local so one agent
-//! shell cannot inherit another worktree's rendering.
+//! worktrees.
 //!
 //! * The **journal and all other durable runtime state** live below
 //!   `<git-common-dir>/.spice-rs`. Python's databases live below its `.spice`
@@ -57,13 +55,11 @@
 //!   `spice-rust.toml` plus common-root `.spice-rs/config.toml`; Python owns
 //!   tracked `spice.toml` and its own `.spice` configuration.
 //! * **Steering** has no worktree-content authority. Directives and their ACK or
-//!   NACK dispositions are facts in the common-root journal; `inbox/` is a
-//!   disposable rendering beneath each worktree's Git-dir `.spice-rs` root.
-//!   Hook media is projected beneath the Git-common `.spice-rs` root and
-//!   partitioned by lane, so an advertised path is stable and directly readable
-//!   without treating Git's linked-worktree administration directory as
-//!   conversational storage. A tracked `<worktree>/.spice-rs` lookalike is
-//!   ordinary repository content that neither authority surface opens.
+//!   NACK dispositions are facts in the common-root journal. Hook media is
+//!   projected beneath the Git-common `.spice-rs` root and partitioned by lane,
+//!   so an advertised path is stable and directly readable. A tracked
+//!   `<worktree>/.spice-rs` lookalike is ordinary repository content that
+//!   neither authority surface opens.
 //! * **Artifacts and dynamically named locks** remain Rust-only because their
 //!   parents are below the common exclusive `.spice-rs` root.
 //!   `artifacts/tasks/<BIRTH-STAMP>/` uses the board's sole task identity;
@@ -71,8 +67,7 @@
 //! * **Installed hooks, skills, and binaries** stay in the already-disjoint
 //!   `.spice-install` appliance. The install receipt remains runtime state at
 //!   the [`StatePaths::install_record`] path below `.spice-rs`.
-//! * **Per-worktree process surfaces** are disposable or reconstructible: the
-//!   Rust inbox and Git shadow. The shadows share an anchor, not a writable file:
+//! * The **per-worktree Git shadow** is disposable and reconstructible.
 //!   [`crate::git_shadow`] writes `<git-dir>/spice-rs-agent.gitconfig`; Python
 //!   writes `<git-dir>/agent.gitconfig`. `tests/git_shadow.rs` uses a linked
 //!   worktree to pin the per-worktree anchor, the Rust shadow bytes, and the
@@ -127,7 +122,6 @@ pub struct StatePaths {
     install_record: PathBuf,
     local_configuration: PathBuf,
     lane_canvas: PathBuf,
-    inbox: PathBuf,
     install_rollback_blobs: PathBuf,
 }
 
@@ -181,7 +175,6 @@ impl StatePaths {
             install_record: runtime.join("install.json"),
             local_configuration: runtime.join("config.toml"),
             lane_canvas: runtime.join("canvas-lanes"),
-            inbox: worktree_runtime.join("inbox"),
             steering_delivery: worktree_runtime.join("steering-delivery.json"),
             steering_delivery_lock: worktree_locks.join("steering-delivery"),
             steering_media: runtime.join("steering-media"),
@@ -338,23 +331,11 @@ impl StatePaths {
         &self.lane_canvas
     }
 
-    /// Parent of steering inboxes for lanes bound to this worktree.
-    ///
-    /// Python's inbox is beneath its `.spice` root; this one is beneath the
-    /// Rust-only `.spice-rs` root in the worktree's own Git directory rather
-    /// than the Git-common authority root.
-    #[must_use]
-    pub fn inbox(&self) -> &Path {
-        &self.inbox
-    }
-
     /// Directories whose shape this runtime admits before it does any work.
     ///
     /// Admission is narrower than ownership on purpose. A path belongs here
-    /// only if a wrong shape at startup should stop the runtime, so the
-    /// directories the resident creates and clears as it runs are deliberately
-    /// absent. The worktree state root and inbox are exceptions because a link
-    /// or wrong-shaped parent there would redirect repository-delivered prose.
+    /// only if a wrong shape at startup should stop the runtime, so directories
+    /// the resident creates and clears as it runs are deliberately absent.
     fn admitted_directories(&self) -> Vec<&Path> {
         let mut paths = vec![
             self.runtime(),
@@ -372,7 +353,6 @@ impl StatePaths {
         for path in [
             self.worktree_runtime(),
             self.worktree_locks(),
-            self.inbox(),
             self.steering_media(),
         ] {
             if !paths.contains(&path) {
@@ -575,10 +555,8 @@ impl Repository {
 
     /// Admit only the state components needed to contact the current resident.
     ///
-    /// Steering is the repair surface for a malformed disposable inbox, so it
-    /// cannot require that inbox to be well-shaped before it reaches the
-    /// resident. The common runtime, resident possession, operator discovery,
-    /// and per-lane discovery parent remain independently shape-checked.
+    /// The common runtime, resident possession, operator discovery, and
+    /// per-lane discovery parent are independently shape-checked.
     ///
     /// # Errors
     ///
@@ -598,10 +576,6 @@ impl Repository {
     }
 
     /// Admit only the state components needed to suppress duplicate hook output.
-    ///
-    /// This deliberately excludes the disposable inbox: a parked inbox is a
-    /// steering repair concern and cannot prevent the authenticated resident
-    /// answer from reaching the agent hook.
     ///
     /// # Errors
     ///
@@ -627,57 +601,13 @@ impl Repository {
         })
     }
 
-    /// Admit resident startup state while retaining a blocked inbox for repair.
-    ///
-    /// Every authority component keeps the full state-shape contract. The
-    /// disposable inbox alone may be a real non-directory entry so startup can
-    /// replay its parked delivery and serve `steer repair`; a symbolic link is
-    /// still forbidden because it could redirect prose outside the worktree.
+    /// Admit the complete resident state surface.
     ///
     /// # Errors
     ///
-    /// Returns the exact malformed or unavailable authority component, or a
-    /// symbolic-link inbox.
+    /// Returns the exact malformed or unavailable authority component.
     pub fn admit_resident_state(&self) -> Result<StatePaths, StateError> {
-        let paths = StatePaths::new(
-            self.common.join(STATE_DIRECTORY),
-            self.git.join(STATE_DIRECTORY),
-        );
-        for path in paths
-            .admitted_directories()
-            .into_iter()
-            .filter(|path| *path != paths.inbox())
-        {
-            admit(path, StateShape::Directory)?;
-        }
-        admit_unlinked(paths.inbox())?;
-        for path in paths.admitted_files() {
-            admit(path, StateShape::RegularFile)?;
-        }
-        Ok(paths)
-    }
-
-    /// Admit the worktree-local inbox delivery path without requiring it to
-    /// already be a directory.
-    ///
-    /// A real file at this path is a delivery failure that steering records as
-    /// parked and `steer repair` can remove. A linked path could redirect
-    /// operator prose outside repository authority and therefore still
-    /// refuses before publication.
-    ///
-    /// # Errors
-    ///
-    /// Returns an unavailable or malformed state-root error, or refuses a
-    /// symbolic-link inbox.
-    pub fn admit_inbox_delivery(&self) -> Result<PathBuf, StateError> {
-        let paths = StatePaths::new(
-            self.common.join(STATE_DIRECTORY),
-            self.git.join(STATE_DIRECTORY),
-        );
-        admit(paths.worktree_runtime(), StateShape::Directory)?;
-        let inbox = paths.inbox();
-        admit_unlinked(inbox)?;
-        Ok(inbox.to_path_buf())
+        self.admit_state()
     }
 }
 
@@ -706,17 +636,6 @@ fn admit(path: &Path, expected: StateShape) -> Result<(), StateError> {
             path: path.to_path_buf(),
         }),
         StateShape::Directory | StateShape::RegularFile => Ok(()),
-    }
-}
-
-fn admit_unlinked(path: &Path) -> Result<(), StateError> {
-    match fs::symlink_metadata(path) {
-        Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(source) => Err(StateError::filesystem(path, source)),
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(StateError::Linked {
-            path: path.to_path_buf(),
-        }),
-        Ok(_) => Ok(()),
     }
 }
 

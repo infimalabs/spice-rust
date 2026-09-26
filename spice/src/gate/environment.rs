@@ -16,10 +16,9 @@ pub(super) const AGENT_RUNTIME_PREFIXES: [&[u8]; 2] = [
     b"CODEX_",       // env-policy: allow
 ];
 
-const OPERATIONAL_ROUTING: [&str; 10] = [
+const OPERATIONAL_ROUTING: [&str; 9] = [
     wire::SpiceVariable::AgentVendor.as_str(),
     wire::SpiceVariable::Hooks.as_str(),
-    wire::SpiceVariable::Inbox.as_str(),
     wire::SpiceVariable::Lane.as_str(),
     wire::SpiceVariable::NativeShell.as_str(),
     wire::SpiceVariable::PreCommitPaths.as_str(),

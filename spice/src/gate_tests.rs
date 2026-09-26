@@ -172,7 +172,6 @@ fn compiler_child_receives_semantic_inputs_but_no_operational_routing() {
     let routing = [
         wire::SpiceVariable::AgentVendor,
         wire::SpiceVariable::Hooks,
-        wire::SpiceVariable::Inbox,
         wire::SpiceVariable::Lane,
         wire::SpiceVariable::NativeShell,
         wire::SpiceVariable::PreCommitPaths,

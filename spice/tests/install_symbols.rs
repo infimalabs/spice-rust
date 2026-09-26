@@ -185,7 +185,6 @@ fn the_command_replies_with_the_verification_and_refuses_an_unusable_sample() {
             .arg("--json")
             .args(arguments)
             .current_dir(scratch.path())
-            .env_remove(steer::hook::INBOX)
             .output()
             .expect("spice install symbols launches");
         // Replies speak on stdout; refusals and faults speak on stderr.

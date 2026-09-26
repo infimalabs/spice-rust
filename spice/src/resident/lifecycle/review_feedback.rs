@@ -80,13 +80,7 @@ pub(super) fn reconcile(
             )?;
             match commit(bus, proposal) {
                 Ok(_) => {
-                    let residency = current_residency(bus, epoch)?;
-                    super::super::steering::publish_inbox(
-                        bus,
-                        paths,
-                        residency.body(),
-                        feedback.lane,
-                    )?;
+                    super::super::steering::notify_inbox(paths, feedback.lane);
                     changed = true;
                 }
                 Err(Outcome::Refusal(refusal)) if refusal.reason() == "resident::head-moved" => {}

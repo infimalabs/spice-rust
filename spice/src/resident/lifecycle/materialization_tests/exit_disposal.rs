@@ -11,7 +11,7 @@ use super::reaped_seat::{fact_kinds, fixture_root, occupied_seed_at, residency_r
 use super::*;
 use crate::resident::supervisor::test_support::record_exited_for_tests;
 use crate::resident::supervisor::{Adoption, adopt};
-use crate::resident::{RuntimePaths, lane_surface, steering};
+use crate::resident::{RuntimePaths, lane_surface};
 
 /// The key `operator_direction_write` addresses to the fixture lane.
 const DIRECTION_KEY: &str = "1kKRRsDS";
@@ -38,8 +38,8 @@ fn a_turn_ending_ack_in_the_final_transcript_retires_the_key_when_the_exit_is_ac
     let fixture = ExitFixture::new("acked", &[NARRATION, TURN_ENDING_ACK]);
     let before = fact_kinds(&fixture.bus);
     assert!(
-        fixture.inbox().contains(DIRECTION_KEY),
-        "the direction is delivered before the occupant ends"
+        fixture.pending_direction(),
+        "the direction is pending before the occupant ends"
     );
     let mut diagnostic = Vec::new();
 
@@ -71,8 +71,8 @@ fn a_turn_ending_ack_in_the_final_transcript_retires_the_key_when_the_exit_is_ac
         )
     );
     assert!(
-        !fixture.inbox().contains(DIRECTION_KEY),
-        "the lane inbox is refolded to match the journal"
+        !fixture.pending_direction(),
+        "the journal records the occupant's disposition"
     );
     assert!(
         !fixture.projection().has_operator_steering(lane()),
@@ -132,8 +132,8 @@ fn a_key_the_final_transcript_does_not_answer_stays_pending_and_still_wakes_a_su
         )
     );
     assert!(
-        fixture.inbox().contains(DIRECTION_KEY),
-        "the delivered inbox still carries the unanswered direction"
+        fixture.pending_direction(),
+        "the unanswered direction remains pending"
     );
     let projection = fixture.projection();
     let snapshot = fixture.bus.task_snapshot().expect("vacant snapshot reads");
@@ -182,8 +182,8 @@ fn a_header_spelled_only_inside_the_final_tool_call_is_not_evidence_and_leaves_t
         )
     );
     assert!(
-        fixture.inbox().contains(DIRECTION_KEY),
-        "the delivered inbox still carries the direction the tool input alone named"
+        fixture.pending_direction(),
+        "the direction named only in tool input remains pending"
     );
     fixture.finish();
 }
@@ -214,8 +214,8 @@ fn a_header_in_an_operator_record_is_not_the_occupant_answering_and_leaves_the_k
         )
     );
     assert!(
-        fixture.inbox().contains(DIRECTION_KEY),
-        "the delivered inbox still carries the direction only the operator record named"
+        fixture.pending_direction(),
+        "the direction named only by the operator remains pending"
     );
     fixture.finish();
 }
@@ -245,12 +245,6 @@ impl ExitFixture {
             bus.commit(operator_direction_write())
                 .expect("operator direction commits"),
         );
-        let residency = bus
-            .residency_head()
-            .expect("residency reads")
-            .expect("residency exists");
-        steering::publish_inbox(&bus, &paths, residency.body(), lane())
-            .expect("the direction is delivered to the lane inbox");
         record_exited_for_tests(&paths, lane(), occupant, session(&root, occupant))
             .expect("the supervisor exit record writes");
         let tape = tape::Tape::open(paths.tape.join(lane().to_string()).join("claude"))
@@ -344,9 +338,12 @@ impl ExitFixture {
             .expect("the cited record reads")
     }
 
-    fn inbox(&self) -> String {
-        fs::read_to_string(steer::inbox::path(&self.paths.inbox, lane()))
-            .expect("the lane inbox reads")
+    fn pending_direction(&self) -> bool {
+        steer::Ledger::from_snapshot(&self.bus.fact_snapshot().expect("snapshot reads"))
+            .expect("steering authority replays")
+            .pending(lane())
+            .iter()
+            .any(|directive| directive.key().as_str() == DIRECTION_KEY)
     }
 
     fn projection(&self) -> Projection {

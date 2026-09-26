@@ -315,7 +315,7 @@ strictly read-only and says so.
 | reads per target | FIFO chain | two reads must apply in request order |
 | reads across targets | parallel | independent lanes must not block each other |
 | team mutations | optimistic, revision-checked | clients re-pull on loss |
-| inbox projection publication | short-lived lock | atomically replace the disposable projection |
+| lane inbox notifications | bounded resident delivery queue | mutations commit first; each notice prompts a fresh authenticated journal read |
 
 **Invariant —** A slow read on one lane must never block a heartbeat, a send, or
 a sibling lane. Interactive paths and bulk paths never share a queue.

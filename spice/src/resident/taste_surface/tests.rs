@@ -8,11 +8,10 @@ use std::time::Duration;
 use super::*;
 use crate::resident::write;
 use steer::Standing as _;
-use wire::intent::DeliveryStanding;
 use wire::{Disposition, ResidentState};
 
-#[path = "tests/fold.rs"]
-mod fold;
+#[path = "tests/recognition.rs"]
+mod recognition;
 #[path = "tests/recovered_compaction.rs"]
 mod recovered_compaction;
 
@@ -359,11 +358,6 @@ fn two_tastes_in_one_prose_record_commit_two_ordinary_directives() {
             "[TASTE] Keep one current path."
         ]
     );
-    let inbox = steer::inbox::path(&fixture.paths.inbox, fixture.lane);
-    let rendered = fs::read_to_string(&inbox)
-        .unwrap_or_else(|error| panic!("post-commit inbox {} renders: {error}", inbox.display()));
-    assert!(rendered.contains("[TASTE] Wait for the terminal event."));
-    assert!(rendered.contains("[TASTE] Keep one current path."));
     fixture.finish();
 }
 

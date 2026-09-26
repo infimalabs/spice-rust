@@ -118,7 +118,6 @@ fn operator_submission_response(
                 key: "1kQnrzNZ".to_owned(),
                 authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
                 disposition: wire::Disposition::Live,
-                delivery: Box::new(wire::intent::DeliveryStanding::Unknown),
             },
         }),
     );

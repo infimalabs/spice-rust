@@ -1,7 +1,4 @@
 //! Steering command transitions and transcript-backed disposition.
-//!
-//! Every transition in this module addresses the original directive. Delivery
-//! repair remains a fold concern and never mints a replacement identity.
 
 use super::*;
 
@@ -107,7 +104,6 @@ pub(in crate::resident) fn send(
         key: key.to_string(),
         authored: at,
         disposition: Disposition::Live,
-        delivery: Box::new(DeliveryStanding::Unknown),
     };
     if let Err(error) =
         proposal.command_result(typed_command(command, send.clone()), epoch, answer.clone())
@@ -223,7 +219,6 @@ pub(in crate::resident) fn cancel(
         key: directive.body().key.clone(),
         authored: directive.body().published,
         disposition: Disposition::Canceled,
-        delivery: Box::new(DeliveryStanding::Unknown),
     };
     if let Err(error) = proposal.command_result(
         typed_command(command, cancel.clone()),
@@ -232,10 +227,6 @@ pub(in crate::resident) fn cancel(
     ) {
         return typed_store_fault("steer::receipt-invalid", &error.to_string());
     }
-    let _residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
-    };
     finish(bus, directive.body().lane, proposal, answer, effects)
 }
 
@@ -256,10 +247,6 @@ pub(in crate::resident) fn resend(
             "submit resend through the current operator discovery",
         );
     }
-    let residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
-    };
     let (position, indexed) = match directive_head(bus, resend.directive) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -290,10 +277,9 @@ pub(in crate::resident) fn resend(
         key: directive.body().key.clone(),
         authored: published,
         disposition: Disposition::Live,
-        delivery: Box::new(DeliveryStanding::Unknown),
     };
     if stages.is_empty() {
-        return resend_snapshot(bus, paths, residency.body(), &directive, position, answer);
+        return resend_snapshot(paths, &directive, position, answer);
     }
     commit_resend(
         bus, epoch, command, resend, &directive, at, stages, answer, effects,
@@ -301,33 +287,12 @@ pub(in crate::resident) fn resend(
 }
 
 fn resend_snapshot(
-    bus: &Bus,
     paths: &RuntimePaths,
-    residency: &ResidencyHead,
     directive: &journal::JournalHead<wire::SteeringHead>,
     position: Seq,
-    mut answer: DirectiveAnswer,
+    answer: DirectiveAnswer,
 ) -> Outcome<CommandAnswer> {
-    let selected = match residency
-        .lanes
-        .iter()
-        .find(|row| row.lane == directive.body().lane)
-    {
-        Some(selected) => selected,
-        None => {
-            return typed_store_fault(
-                "steer::lane-missing-after-commit",
-                &format!(
-                    "lane {} disappeared while publishing its inbox",
-                    directive.body().lane
-                ),
-            );
-        }
-    };
-    answer.delivery = match fold_lane_inbox(bus, paths, selected) {
-        Ok(delivery) => Box::new(delivery),
-        Err(outcome) => return typed_outcome(outcome),
-    };
+    notify_inbox(paths, directive.body().lane);
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(position),
         body: CommandAnswer::Directive(answer),
@@ -402,10 +367,6 @@ pub(in crate::resident) fn recover(
             "submit recovery through the current operator discovery",
         );
     }
-    let _residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
-    };
     let (_, indexed) = match directive_head(bus, recover.directive) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
@@ -495,7 +456,6 @@ pub(in crate::resident) fn recover(
         key: key.to_string(),
         authored: directive.body().published,
         disposition: Disposition::Live,
-        delivery: Box::new(DeliveryStanding::Unknown),
     };
     if let Err(error) = proposal.command_result(
         typed_command(command, recover.clone()),
@@ -666,7 +626,6 @@ fn record_disposition(
         key: key.to_string(),
         authored: directive.body().published,
         disposition,
-        delivery: Box::new(DeliveryStanding::Unknown),
     };
     if let Err(error) = proposal.command_result(
         typed_command(command, dispose.clone()),

@@ -43,8 +43,8 @@ use wire::Disposition;
 extern crate journal;
 
 fn reach(path: &Path) -> Disposition {
-    let _ = crate::inbox::path(path);
-    let _ = fold::Inventory::new();
+    let _ = crate::ledger::read(path);
+    let _ = external::Inventory::new();
     Disposition::Live
 }
 ";
@@ -55,8 +55,8 @@ fn reach(path: &Path) -> Disposition {
             "breach.rs imports std::io::* through a glob".to_owned(),
             "breach.rs imports wire, which is not std".to_owned(),
             "breach.rs declares extern crate journal".to_owned(),
-            "breach.rs names crate::inbox::path, rooted outside std".to_owned(),
-            "breach.rs names fold::Inventory::new, rooted outside std".to_owned(),
+            "breach.rs names crate::ledger::read, rooted outside std".to_owned(),
+            "breach.rs names external::Inventory::new, rooted outside std".to_owned(),
         ]
     );
 }

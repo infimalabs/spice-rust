@@ -100,8 +100,6 @@ fn runtime_paths(root: &Path) -> RuntimePaths {
         resident: root.join("resident"),
         canvas: root.join("canvas"),
         lane_canvas: root.join("lane-canvas"),
-        inbox: root.join("inbox"),
-        legacy_inbox: root.join("legacy-inbox"),
         degraded: root.join("degraded"),
         tape: root.join("tape"),
         supervisors: root.join("supervisors"),

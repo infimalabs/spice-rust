@@ -89,8 +89,6 @@ pub enum CommandKind {
     SteerSend,
     /// Read pending direction visible to the authenticated principal.
     SteerInbox,
-    /// Rebuild one lane's inbox fold from current journal authority.
-    SteerRepair,
     /// Re-deliver one live directive and catch up any due presentation stages.
     SteerResend,
     /// Restore one lapsed directive without changing its identity.
@@ -408,12 +406,6 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
-    /// Operator-owned repair of a disposable rendering from durable authority.
-    pub const REPAIR: Self = Self {
-        required: &[],
-        optional: &[],
-        authority: Authority::Operator,
-    };
     /// Exact live directive disposition for a time-derived re-presentation.
     pub const RESEND: Self = Self {
         required: &[WitnessKind::Directive],
@@ -590,7 +582,6 @@ impl CommandKind {
         Self::DocApply,
         Self::SteerSend,
         Self::SteerInbox,
-        Self::SteerRepair,
         Self::SteerResend,
         Self::SteerRecover,
         Self::SteerDispose,
@@ -654,7 +645,6 @@ impl CommandKind {
             | Self::DocApply
             | Self::SteerSend
             | Self::SteerInbox
-            | Self::SteerRepair
             | Self::SteerResend
             | Self::SteerRecover
             | Self::SteerDispose
@@ -722,7 +712,6 @@ impl CommandKind {
             Self::DocApply => "doc::apply",
             Self::SteerSend => "steer::send",
             Self::SteerInbox => "steer::inbox",
-            Self::SteerRepair => "steer::repair",
             Self::SteerResend => "steer::resend",
             Self::SteerRecover => "steer::recover",
             Self::SteerDispose => "steer::dispose",
@@ -906,7 +895,6 @@ impl CommandKind {
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
             Self::SteerInbox => Law::READ,
-            Self::SteerRepair => Law::REPAIR,
             Self::SteerResend => Law::RESEND,
             Self::SteerRecover => Law::RECOVER,
             Self::SteerDispose => Law::DISPOSE,

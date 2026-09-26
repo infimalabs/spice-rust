@@ -1,13 +1,4 @@
-//! What the steering loop does against a real filesystem.
-//!
-//! The scan and the reducer are pure and prove themselves inline. Everything
-//! here is the part that touches disk: a rendering published whole, a wrapper
-//! that reads it and hands the command through anyway, and interception that
-//! either matches the build that installed it or says which stage did not.
-//!
-//! These are the paths a lane's hearing actually runs through, so they are
-//! exercised through the same calls the door makes rather than through their
-//! parts.
+//! Steering rendering, command handoff, and hook installation boundaries.
 
 use std::fs;
 use std::io;
@@ -32,20 +23,11 @@ const SEAL: &str = "1kJK6N3R";
 
 /// A lane's rendering carries its own pending direction, sealed, and nobody
 /// else's.
-///
-/// The seal is what lets a lane tell spice's direction from prose that merely
-/// looks like it, so a rendering that lost its seal would be indistinguishable
-/// from anything else that reached the same file.
 #[test]
 fn a_rendering_carries_one_lane_sealed() {
-    let scratch = Scratch::new("rendering");
-    let inbox_root = scratch.path().join("inbox");
     let ledger = ledger();
     let lane = lane(LANE);
-
-    inbox::publish(&inbox_root, lane, &seal(), &ledger.pending(lane)).expect("rendering publishes");
-
-    let rendered = fs::read_to_string(inbox::path(&inbox_root, lane)).expect("rendering readable");
+    let rendered = inbox::render(&seal(), &ledger.pending(lane));
     assert_eq!(
         rendered,
         format!(
@@ -61,7 +43,6 @@ feed the board
             directive("1kJK7Sqy"),
         )
     );
-    scratch.remove();
 }
 
 #[test]
@@ -110,63 +91,6 @@ fn typed_media_reaches_the_lane_once_with_its_directive_identity() {
     }
 }
 
-/// A lane owed nothing is rendered empty rather than sealed around nothing, and
-/// the wrapper reports that there was nothing to hear.
-///
-/// An empty seal would read as direction the lane could not make out, which is
-/// a different thing from silence.
-#[test]
-fn nothing_pending_renders_empty_and_the_wrapper_stays_quiet() {
-    let scratch = Scratch::new("quiet");
-    let inbox_root = scratch.path().join("inbox");
-    let lane = lane(OTHER);
-
-    inbox::publish(&inbox_root, lane, &seal(), &[]).expect("empty rendering publishes");
-
-    let rendering = inbox::path(&inbox_root, lane);
-    assert_eq!(fs::read_to_string(&rendering).expect("readable"), "");
-
-    let mut heard = Vec::new();
-    assert!(!run::emit(&rendering, &mut heard).expect("emit reads"));
-    assert!(heard.is_empty());
-    scratch.remove();
-}
-
-/// The wrapper writes exactly what was rendered and reports that it did.
-#[test]
-fn the_wrapper_writes_what_was_rendered() {
-    let scratch = Scratch::new("emit");
-    let inbox_root = scratch.path().join("inbox");
-    let ledger = ledger();
-    let lane = lane(LANE);
-
-    inbox::publish(&inbox_root, lane, &seal(), &ledger.pending(lane)).expect("rendering publishes");
-
-    let rendering = inbox::path(&inbox_root, lane);
-    let mut heard = Vec::new();
-    assert!(run::emit(&rendering, &mut heard).expect("emit reads"));
-    assert_eq!(heard, fs::read(&rendering).expect("rendering readable"));
-    scratch.remove();
-}
-
-/// An absent rendering is ordinary, not a failure.
-///
-/// The rendering is disposable and disposition lives in the journal, so a
-/// wrapper that treated absence as an error would refuse to run commands over a
-/// file nobody promised would be there.
-#[test]
-fn an_absent_rendering_is_ordinary() {
-    let scratch = Scratch::new("absent");
-    let mut heard = Vec::new();
-
-    assert!(
-        !run::emit(&scratch.path().join("never-written"), &mut heard)
-            .expect("absence is not an error")
-    );
-    assert!(heard.is_empty());
-    scratch.remove();
-}
-
 /// The wrapper hands the command through and reports what it did, rather than
 /// standing in for it.
 #[cfg(unix)]
@@ -177,25 +101,6 @@ fn the_wrapper_hands_the_command_through() {
     let status = run::hand(OsStr::new("/bin/sh"), ["-c", "exit 3"]).expect("command spawns");
 
     assert_eq!(status.code(), Some(3));
-}
-
-/// A rendering is replaced whole, so a second publication leaves no trace of
-/// the first — including when the first was longer.
-#[test]
-fn publishing_replaces_the_rendering_whole() {
-    let scratch = Scratch::new("replace");
-    let inbox_root = scratch.path().join("inbox");
-    let ledger = ledger();
-    let lane = lane(LANE);
-
-    inbox::publish(&inbox_root, lane, &seal(), &ledger.pending(lane)).expect("first publishes");
-    inbox::publish(&inbox_root, lane, &seal(), &[]).expect("second publishes");
-
-    assert_eq!(
-        fs::read_to_string(inbox::path(&inbox_root, lane)).expect("rendering readable"),
-        ""
-    );
-    scratch.remove();
 }
 
 /// Installation places every stage with the bytes this build carries, runnable,

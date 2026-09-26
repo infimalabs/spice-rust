@@ -290,7 +290,6 @@ mod tests {
         command
             .env(steer::hook::BASH_ENV, "/fixture/bash-env")
             .env(steer::hook::ZDOTDIR, "/fixture/zdotdir")
-            .env(steer::hook::INBOX, "/fixture/live-inbox")
             .env(vendor::CODEX.thread_id_environment(), "fixture-codex")
             .env(vendor::CLAUDE.thread_id_environment(), "fixture-claude");
         isolate_developer_environment(&mut command);
@@ -300,7 +299,6 @@ mod tests {
             [
                 steer::hook::BASH_ENV,
                 steer::hook::ZDOTDIR,
-                steer::hook::INBOX,
                 vendor::CODEX.thread_id_environment(),
                 vendor::CLAUDE.thread_id_environment(),
                 vendor::OMP.thread_id_environment(),
@@ -315,12 +313,7 @@ mod tests {
             );
         }
 
-        command.env(steer::hook::INBOX, "/fixture/owned-inbox");
         command.env(vendor::CODEX.thread_id_environment(), "owned-codex");
-        assert!(command.get_envs().any(|(name, value)| {
-            name == steer::hook::INBOX
-                && value == Some(std::ffi::OsStr::new("/fixture/owned-inbox"))
-        }));
         assert!(command.get_envs().any(|(name, value)| {
             name == vendor::CODEX.thread_id_environment()
                 && value == Some(std::ffi::OsStr::new("owned-codex"))

@@ -102,8 +102,6 @@ pub(crate) enum SelectedCommand<'a> {
     SteerRecover { directive: CanonicalUuid },
     /// The authenticated principal reads visible pending direction.
     SteerInbox { lane: Option<CanonicalUuid> },
-    /// The operator rebuilds one lane's disposable inbox fold.
-    SteerRepair { lane: CanonicalUuid },
     /// The authenticated lane retires one live key.
     SteerAck {
         key: &'a steer::Key,
@@ -370,6 +368,12 @@ fn read_inbox(
         Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
         Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
     }
+}
+pub(crate) fn read_lane_inbox(
+    operator_discovery: &Path,
+    lane: CanonicalUuid,
+) -> Result<InboxAnswer, Outcome<CommandAnswer>> {
+    read_inbox(operator_discovery, Connection::Lane(lane), None).map(|snapshot| snapshot.answer)
 }
 
 /// Acquire one authenticated session across a resident publication handoff.

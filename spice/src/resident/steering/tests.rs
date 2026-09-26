@@ -28,36 +28,6 @@ fn steering_key_clock_mints_current_microseconds_and_advances_one_collision() {
 }
 
 #[test]
-fn successful_forward_publication_removes_only_the_obsolete_rendering() {
-    let scratch = std::env::temp_dir().join(format!(
-        "spice-inbox-forward-cleanup-{}",
-        std::process::id()
-    ));
-    let legacy = scratch.join("common");
-    let current = scratch.join("worktree");
-    let lane: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce913116302"
-        .parse()
-        .expect("fixture lane");
-    std::fs::create_dir_all(&legacy).expect("create legacy inbox");
-    std::fs::create_dir_all(&current).expect("create current inbox");
-    std::fs::write(steer::inbox::path(&legacy, lane), b"obsolete")
-        .expect("seed obsolete rendering");
-    std::fs::write(steer::inbox::path(&current, lane), b"current").expect("seed current rendering");
-
-    super::remove_legacy_inbox(&legacy, &current, lane);
-
-    assert!(!steer::inbox::path(&legacy, lane).exists());
-    assert_eq!(
-        std::fs::read(steer::inbox::path(&current, lane)).expect("read current rendering"),
-        b"current"
-    );
-
-    super::remove_legacy_inbox(&current, &current, lane);
-    assert!(steer::inbox::path(&current, lane).exists());
-    std::fs::remove_dir_all(&scratch).expect("clean fixture");
-}
-
-#[test]
 fn elapsed_time_from_publication_selects_each_named_stage_at_its_exact_horizon() {
     let published: wire::Instant = "2026-08-01T06:00:00.000Z"
         .parse()
@@ -196,7 +166,7 @@ fn startup_replay_repairs_lagging_predicate_corruption() {
             .facts()
             .len(),
         facts,
-        "fold repair must not append immutable history"
+        "index replay must not append immutable history"
     );
 }
 

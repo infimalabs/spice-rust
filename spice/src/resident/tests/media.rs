@@ -98,7 +98,7 @@ fn direct_steer_send_refuses_unjournalable_content_before_mutation() {
                 .contains(&maximum.to_string()),
             "operator refusal must name the violated byte bound"
         );
-        assert!(effects.inbox_projection.is_none());
+        assert!(effects.inbox_delivery.is_none());
         let after = bus.fact_snapshot().expect("journal reads after refusal");
         assert_eq!(after.horizon(), before.horizon());
         assert_eq!(after.facts(), before.facts());
@@ -165,12 +165,10 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
         epoch,
     })
     .expect("operator send admits");
-    send_and_project(&bus, &paths, epoch, &send_command, &send);
-    let inbox = paths
-        .inbox_for_worktree(&worktree)
-        .expect("fixture worktree inbox resolves");
-    let rendered = fs::read_to_string(steer::inbox::path(&inbox, lane))
-        .expect("canonical lane inbox is published");
+    send_direction(&bus, epoch, &send_command, &send);
+    let inbox = read_inbox(&bus, epoch, lane, test_uuid(31));
+    let rendered =
+        steer::inbox::render_pending(&steer::Key::for_identity(lane), &inbox.lanes[0].pending);
     assert!(
         rendered.contains(&format!("directive={}", send_command.id())),
         "lane delivery lost directive causality: {rendered}",
@@ -184,7 +182,7 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     assert_eq!(
         rendered.matches(&media.data_url).count(),
         0,
-        "typed direct-send authority bytes stay out of disposable lane prose",
+        "authenticated lane prose excludes authority bytes",
     );
     let snapshot = bus.fact_snapshot().expect("sent authority reads");
     let sent = snapshot
@@ -219,9 +217,8 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     fs::remove_dir_all(root).expect("fixture cleanup");
 }
 
-fn send_and_project(
+fn send_direction(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     send: &wire::intent::SteerSend,
@@ -237,18 +234,42 @@ fn send_and_project(
             &mut effects,
         ),
         Outcome::Reply(Reply {
-            body: CommandAnswer::Directive(answer),
+            body: CommandAnswer::Directive(_),
             ..
-        }) if matches!(*answer.delivery, wire::intent::DeliveryStanding::Unknown)
+        })
     ));
-    let projected = effects
-        .inbox_projection
-        .expect("durable send schedules its lane projection");
-    let residency = current_residency(bus, epoch).expect("current residency reads");
-    steering::publish_inbox(bus, paths, residency.body(), projected)
-        .expect("post-receipt projection publishes the inbox");
+    assert_eq!(effects.inbox_delivery, Some(send.lane));
 }
 
+fn read_inbox(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    command_id: CanonicalUuid,
+) -> wire::intent::InboxAnswer {
+    let request = wire::intent::SteerInbox { lane: Some(lane) };
+    let command = Command {
+        v: wire::WireVersion::CURRENT,
+        id: command_id,
+        epoch,
+        kind: CommandKind::SteerInbox,
+        expected: Vec::new(),
+        body: serde_json::to_value(&request).expect("inbox request encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    })
+    .expect("operator inbox admits");
+    let Outcome::Reply(reply) = steering::inbox(bus, epoch, &command, &request) else {
+        panic!("inbox reads durable authority");
+    };
+    let CommandAnswer::Inbox(inbox) = reply.body else {
+        panic!("inbox read returns the inbox answer");
+    };
+    inbox
+}
 fn assert_media_replays(
     paths: &RuntimePaths,
     epoch: CanonicalUuid,
@@ -257,28 +278,7 @@ fn assert_media_replays(
 ) {
     let bus = Bus::start(journal::Journal::open(&paths.journal).expect("journal reopens"))
         .expect("replacement bus starts");
-    let inbox_request = wire::intent::SteerInbox { lane: Some(lane) };
-    let inbox_command = Command {
-        v: wire::WireVersion::CURRENT,
-        id: test_uuid(31),
-        epoch,
-        kind: CommandKind::SteerInbox,
-        expected: Vec::new(),
-        body: serde_json::to_value(&inbox_request).expect("inbox request encodes"),
-    }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Operator,
-        epoch,
-    })
-    .expect("operator inbox admits");
-    let Outcome::Reply(reply) = steering::inbox(&bus, paths, epoch, &inbox_command, &inbox_request)
-    else {
-        panic!("restarted inbox reads durable authority");
-    };
-    let CommandAnswer::Inbox(inbox) = reply.body else {
-        panic!("inbox read returns the inbox answer");
-    };
+    let inbox = read_inbox(&bus, epoch, lane, test_uuid(32));
     assert_eq!(inbox.lanes.len(), 1);
     assert_eq!(inbox.lanes[0].pending.len(), 1);
     assert_eq!(
