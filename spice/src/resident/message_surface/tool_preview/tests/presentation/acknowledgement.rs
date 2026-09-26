@@ -361,6 +361,30 @@ fn the_marker_lands_on_the_operator_words_below_a_quote() {
 }
 
 #[test]
+fn the_marker_lands_on_the_operator_words_below_a_quote_card() {
+    let card = quote_target("dTVLR0qL0", "The quoted agent words.").markdown();
+    for (directive, context) in [
+        (
+            format!("{card}\n\nWhat is this about?"),
+            format!("> {card}\n>\n> [ACK] What is this about?"),
+        ),
+        (
+            format!("{card}\nWhat is this about?"),
+            format!("> {card}\n>\n> [ACK] What is this about?"),
+        ),
+    ] {
+        let mut directives = directives(&[("1kQwPZtK", &directive)]);
+        retire(&mut directives, "1kQwPZtK");
+        assert_eq!(
+            presented_text("ACK 1kQwPZtK: Applied.", &directives, event())
+                .expect("retired acknowledgment presents"),
+            format!("{context}\n\nApplied."),
+            "{directive:?}",
+        );
+    }
+}
+
+#[test]
 fn trailing_quotation_is_passed_over_and_a_block_hunk_keeps_its_own_paragraph() {
     let directives = directives(&[(
         "1kQwPZtK",
