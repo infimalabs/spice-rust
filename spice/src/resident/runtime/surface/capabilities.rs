@@ -1,0 +1,21 @@
+use super::*;
+
+pub(super) fn build(
+    operator: CanonicalUuid,
+    residency: &ResidencyHead,
+) -> CommandResult<canvas::axum::Capabilities> {
+    let capabilities = canvas::axum::Capabilities::default();
+    capabilities
+        .insert(operator, Actor::Operator)
+        .map_err(|error| environment_fault("canvas::capability-invalid", &error.to_string()))?;
+    for lane in &residency.lanes {
+        for capability in &lane.capabilities {
+            capabilities
+                .insert(*capability, Actor::Lane(lane.lane))
+                .map_err(|error| {
+                    environment_fault("canvas::capability-invalid", &error.to_string())
+                })?;
+        }
+    }
+    Ok(capabilities)
+}
