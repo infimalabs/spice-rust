@@ -79,7 +79,9 @@ fn history_targets(
             HistoryTarget {
                 cursor: *cursor,
                 eager: cursor.before.is_none() || lane_cards < EAGER_HISTORY_CARD_TARGET,
-                request_key: format!("{revision}:{completion}:{key}"),
+                // A newer transcript generation refuses requests for the old one,
+                // so each generation re-arms the lane's frontier.
+                request_key: format!("{revision}:{completion}:{}:{key}", cursor.generation),
                 key,
             }
         })
