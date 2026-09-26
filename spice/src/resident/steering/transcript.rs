@@ -10,20 +10,21 @@ pub(super) struct TranscriptRecognition {
     pub(super) outcome: ScanOutcome,
 }
 
-/// The repair when the lane wrote text that does not lead with the header,
-/// wrote no text at all, or has no tape to read.
-const HEADER_REPAIR: &str =
-    "emit an ACK or NACK header as the first line of assistant text before invoking ack";
+/// Repair when the lane wrote no leading header as durable assistant text.
+const COMMAND_HEADER_REPAIR: &str = "emit an ACK or NACK header as the first line of visible assistant text, ensure that line \
+     is durably present on the transcript, then invoke ack";
 
-/// The repair when the newest assistant message persisted as reasoning.
-///
-/// Under the Claude harness a header the model narrates beside a tool call
-/// streams as a thinking block from its first byte and is written to the tape
-/// as reasoning that paraphrases the prose without the header, so the lane is
-/// told the one shape that is witnessed as text.
-const NARRATED_REPAIR: &str = "speak the header as one short line of visible assistant text, \
-     `ACK <key>: <one clause>`, immediately before the ack command; prose narrated beside \
-     a tool call persists as reasoning and is never evidence";
+/// OMP retires interjected steering from prose itself, without an ack command.
+const INTERJECTED_HEADER_REPAIR: &str = "send the ACK or NACK header as the first line of visible assistant text and let that \
+     message land; the durable assistant text must name the key and disposition";
+
+fn header_repair(vendor: &wire::Name) -> &'static str {
+    if vendor.as_str() == "omp" {
+        INTERJECTED_HEADER_REPAIR
+    } else {
+        COMMAND_HEADER_REPAIR
+    }
+}
 
 /// Characters of the newest assistant text the refusal quotes back.
 const QUOTED_LINE: usize = 80;
@@ -69,7 +70,7 @@ impl NewestMessage {
         }
     }
 
-    fn evidence_absent(self, token: &str) -> Outcome<CommandAnswer> {
+    fn evidence_absent(self, token: &str, repair: &str) -> Outcome<CommandAnswer> {
         if let Some((locus, line)) = self.text {
             return evidence_refusal(
                 token,
@@ -77,7 +78,7 @@ impl NewestMessage {
                     "the newest assistant text (member {} offset {}) does not carry the header: \"{line}\"",
                     locus.member, locus.offset
                 ),
-                HEADER_REPAIR,
+                repair,
             );
         }
         if let Some(locus) = self.reasoning {
@@ -87,7 +88,7 @@ impl NewestMessage {
                     "the newest assistant message (member {} offset {}) persisted as reasoning with no text record",
                     locus.member, locus.offset
                 ),
-                NARRATED_REPAIR,
+                repair,
             );
         }
         if let Some(locus) = self.tool {
@@ -97,7 +98,7 @@ impl NewestMessage {
                     "the newest assistant message (member {} offset {}) is a tool call with no text record",
                     locus.member, locus.offset
                 ),
-                HEADER_REPAIR,
+                repair,
             );
         }
         if let Some(locus) = self.bound {
@@ -107,10 +108,10 @@ impl NewestMessage {
                     "no assistant text newer than the operator record (member {} offset {})",
                     locus.member, locus.offset
                 ),
-                HEADER_REPAIR,
+                repair,
             );
         }
-        evidence_refusal(token, "no assistant text on the tape", HEADER_REPAIR)
+        evidence_refusal(token, "no assistant text on the tape", repair)
     }
 }
 
@@ -141,6 +142,7 @@ pub(super) fn transcript_recognition(
     disposition: Option<Disposition>,
     standing: &impl steer::Standing,
 ) -> Result<TranscriptRecognition, Outcome<CommandAnswer>> {
+    let repair = header_repair(vendor);
     let path = paths.tape.join(lane.to_string()).join(vendor.as_str());
     match fs::metadata(&path) {
         Ok(metadata) if metadata.is_dir() => {}
@@ -154,7 +156,7 @@ pub(super) fn transcript_recognition(
             return Err(evidence_refusal(
                 token,
                 "the lane has no durable transcript tape",
-                HEADER_REPAIR,
+                repair,
             ));
         }
         Err(error) => {
@@ -222,7 +224,7 @@ pub(super) fn transcript_recognition(
             }
         }
     }
-    latest_miss.ok_or_else(|| newest.evidence_absent(token))
+    latest_miss.ok_or_else(|| newest.evidence_absent(token, repair))
 }
 
 struct RecordRecognition {
