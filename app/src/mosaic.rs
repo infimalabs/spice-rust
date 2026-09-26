@@ -283,10 +283,13 @@ fn clamp_span(span: usize, tracks: usize) -> usize {
 }
 
 /// Derive the skyline from a placed card set.
+///
+/// A track no card covers rests at `origin`, the top of the plane the cards
+/// belong to: row zero until backfill carries a plane above it.
 #[must_use]
-pub fn derive_row_floor(cards: &[Card], track_count: usize) -> Vec<i32> {
+pub fn derive_row_floor(cards: &[Card], origin: i32, track_count: usize) -> Vec<i32> {
     let tracks = normalize_tracks(track_count);
-    let mut floor = vec![0; tracks];
+    let mut floor = vec![origin; tracks];
     for card in cards {
         let top = card.base + card.rows;
         let end = card.track.saturating_add(card.span).min(tracks);
@@ -401,7 +404,7 @@ pub fn append(cards: &[Card], candidate_sets: &[Vec<Candidate>], track_count: us
     }
     let tracks = normalize_tracks(track_count);
     let mut appended = cards.to_vec();
-    let mut floor = derive_row_floor(cards, tracks);
+    let mut floor = derive_row_floor(cards, extent(cards).1, tracks);
     let first_index = cards
         .iter()
         .map(|card| card.creation_index)
@@ -559,7 +562,7 @@ pub fn replay_liquid(cards: &[Card], track_count: usize, freeze_depth: usize) ->
         .filter(|card| card.lifecycle == Lifecycle::Frozen)
         .cloned()
         .collect();
-    let mut floor = derive_row_floor(&frozen, track_count);
+    let mut floor = derive_row_floor(&frozen, extent(cards).1, track_count);
     let mut ordered: Vec<_> = cards
         .iter()
         .filter(|card| card.lifecycle == Lifecycle::Liquid)

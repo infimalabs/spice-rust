@@ -251,6 +251,21 @@ fn an_empty_append_preserves_every_existing_lifecycle() {
 }
 
 #[test]
+fn append_rests_on_the_skyline_of_a_backfilled_plane() {
+    // Backfill carries older cards above row zero; a card appended after them
+    // rests on their skyline rather than leaving a gap down to the origin.
+    let backfilled = vec![card(0, 0, 12, -6, 3), card(1, 0, 6, -3, 2)];
+
+    let appended = append(&backfilled, &[candidates(6, 4)], TRACK_COUNT);
+
+    assert_eq!(
+        (appended[2].track, appended[2].base),
+        (6, -3),
+        "an uncovered track rests on the boundary above it"
+    );
+}
+
+#[test]
 fn one_reverse_coverage_pass_matches_strict_later_card_depth() {
     let mut cards = vec![
         card(4, 0, 3, 0, 2),
