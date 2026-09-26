@@ -40,7 +40,8 @@ pub const MESSAGE_FLOOR: usize = 25;
 
 use crate::{
     Actor, AnyFact, Body, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name,
-    Origin, Packed, Refusal, RefusalDiagnostic, Seq, TaskStamp, TrustHead, WireVersion,
+    Origin, Packed, QuotePresentation, QuoteTarget, Refusal, RefusalDiagnostic, Seq, TaskStamp,
+    TrustHead, WireVersion,
 };
 
 /// Stable source position of one decoded event in a lane transcript tape.
@@ -185,6 +186,44 @@ impl MessageClassification {
         };
         text.get(start..end) == Some(self.kind.marker())
     }
+}
+/// One resident-authenticated directive context embedded in an agent card.
+///
+/// The range identifies the exact rendered context the quote action belongs to;
+/// the target authenticates the original journal text independently of marker
+/// presentation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MessageDirective {
+    /// Inclusive UTF-8 byte offset where the rendered directive begins.
+    pub start: u32,
+    /// Exclusive UTF-8 byte offset immediately after the rendered directive.
+    pub end: u32,
+    /// Canonical steering target supplied by the resident.
+    pub quote_target: QuoteTarget,
+}
+
+impl MessageDirective {
+    /// Whether this context names a non-empty UTF-8 range and a steering target.
+    #[must_use]
+    pub fn is_valid_for(&self, text: &str) -> bool {
+        let (Ok(start), Ok(end)) = (usize::try_from(self.start), usize::try_from(self.end)) else {
+            return false;
+        };
+        start < end
+            && text.get(start..end).is_some()
+            && matches!(&self.quote_target, QuoteTarget::Steering { .. })
+    }
+}
+/// Whether directive contexts are exact, ordered, and non-overlapping.
+#[must_use]
+pub fn valid_message_directives(text: &str, directives: &[MessageDirective]) -> bool {
+    directives
+        .iter()
+        .all(|directive| directive.is_valid_for(text))
+        && directives
+            .windows(2)
+            .all(|pair| pair[0].end <= pair[1].start)
 }
 
 /// Semantic presentation authenticated by the resident for one exact marker.
@@ -422,6 +461,22 @@ pub struct AgentMessage {
     /// protocol metadata.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub classifications: Vec<MessageClassification>,
+    /// Canonical target for quoting this card.
+    ///
+    /// Only durable assistant prose is quoteable. Presence and boundary rows
+    /// omit this field because they do not resolve as transcript prose.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub quote_target: Option<QuoteTarget>,
+    /// Resident-authenticated directive contexts embedded in this card.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub directive_contexts: Vec<MessageDirective>,
+    /// Recursively resolved fixed-label quote links found in [`Self::text`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quotes: Vec<QuotePresentation>,
     /// Optional resident-classified automatic Speak delivery.
     ///
     /// Its absence is the compatibility spelling and means this activity must
@@ -541,6 +596,9 @@ mod message_retention_tests {
             final_answer: false,
             text: "fixture".to_owned(),
             classifications: Vec::new(),
+            quote_target: None,
+            directive_contexts: Vec::new(),
+            quotes: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
@@ -689,6 +747,11 @@ pub struct OperatorDirection {
     pub lane: CanonicalUuid,
     /// Operator-authored prose.
     pub text: String,
+    /// Canonical target for quoting this directive.
+    pub quote_target: QuoteTarget,
+    /// Recursively resolved fixed-label quote links found in [`Self::text`].
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub quotes: Vec<QuotePresentation>,
     /// Admitted media carried by the direction.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<crate::Media>,

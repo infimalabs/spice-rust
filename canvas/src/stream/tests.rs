@@ -28,6 +28,10 @@ fn epoch() -> wire::CanonicalUuid {
     uuid("018f82d4-6f59-7d06-92e3-bce9131163c3")
 }
 
+fn presenter() -> QuotePresenter {
+    QuotePresenter::new(|_| Vec::new())
+}
+
 fn message(lane: u8, offset: u64) -> AgentMessage {
     AgentMessage {
         lane: uuid(&format!("018f82d4-6f59-7d06-92e3-bce9131163{lane:02x}")),
@@ -45,6 +49,9 @@ fn message(lane: u8, offset: u64) -> AgentMessage {
         final_answer: false,
         text: format!("lane {lane:02x} message {offset}"),
         classifications: Vec::new(),
+        quote_target: None,
+        directive_contexts: Vec::new(),
+        quotes: Vec::new(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
@@ -283,7 +290,7 @@ fn fact_sequences(delivery: &LiveDelivery) -> Vec<Seq> {
 #[test]
 fn packed_subscription_continues_exactly_then_becomes_live() {
     let bus = fixture(5);
-    let source = Source::new(bus.reader(), epoch(), 2);
+    let source = Source::new(bus.reader(), epoch(), 2, presenter());
     let (mut subscription, frames) = source
         .begin(
             &accepted(Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"))),
@@ -347,7 +354,7 @@ fn packed_subscription_continues_exactly_then_becomes_live() {
 #[test]
 fn fresh_operator_fact_subscription_begins_live_without_history() {
     let bus = fixture(5);
-    let source = Source::new(bus.reader(), epoch(), 2);
+    let source = Source::new(bus.reader(), epoch(), 2, presenter());
     let (subscription, frames) = source
         .begin(
             &accepted(Actor::Operator),
@@ -369,7 +376,15 @@ fn fresh_operator_direction_snapshot_restores_retired_identity() {
     let bus = fixture(1);
     let current = commit_operator_direction(&bus);
     cancel_operator_direction(&bus, &current);
-    let source = Source::new(bus.reader(), epoch(), 2);
+    let nested = wire::QuotePresentation::Unavailable {
+        target: "spice://quote/v1/steering/unavailable".to_owned(),
+        reason: wire::QuoteUnavailable::Unknown,
+    };
+    let direction_presenter = QuotePresenter::new({
+        let nested = nested.clone();
+        move |_| vec![nested.clone()]
+    });
+    let source = Source::new(bus.reader(), epoch(), 2, direction_presenter);
     let (subscription, frames) = source
         .begin(
             &accepted(Actor::Operator),
@@ -391,6 +406,14 @@ fn fresh_operator_direction_snapshot_restores_retired_identity() {
     assert_eq!(direction.key, current.key);
     assert_eq!(direction.lane, current.lane);
     assert_eq!(direction.text, current.text);
+    assert_eq!(
+        direction.quote_target,
+        wire::QuoteTarget::Steering {
+            key: current.key.clone(),
+            digest: wire::QuoteTarget::text_digest(&current.text),
+        }
+    );
+    assert_eq!(direction.quotes, [nested]);
     assert!(subscription.is_live());
     drop(source);
     bus.shutdown().expect("bus shuts down");
@@ -399,7 +422,7 @@ fn fresh_operator_direction_snapshot_restores_retired_identity() {
 #[test]
 fn reconnect_is_strictly_after_the_admitted_fact_cursor() {
     let bus = fixture(5);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let (subscription, frames) = source
         .begin(
             &accepted(Actor::Lane(uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"))),
@@ -423,7 +446,7 @@ fn reconnect_is_strictly_after_the_admitted_fact_cursor() {
 #[test]
 fn operator_reconnect_begins_live_instead_of_draining_missed_history() {
     let bus = fixture(5);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let (subscription, frames) = source
         .begin(
             &accepted(Actor::Operator),
@@ -443,7 +466,7 @@ fn operator_reconnect_begins_live_instead_of_draining_missed_history() {
 #[tokio::test(flavor = "current_thread")]
 async fn durable_broadcast_drives_later_updates_without_refresh() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -478,7 +501,7 @@ async fn durable_broadcast_drives_later_updates_without_refresh() {
 #[tokio::test(flavor = "current_thread")]
 async fn transcript_ingestion_advances_live_cursor_without_crossing_canvas() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -509,7 +532,7 @@ async fn transcript_ingestion_advances_live_cursor_without_crossing_canvas() {
 #[tokio::test(flavor = "current_thread")]
 async fn one_large_commit_delivers_one_indexed_fact_quantum_per_turn() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 3);
+    let source = Source::new(bus.reader(), epoch(), 3, presenter());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -574,7 +597,7 @@ async fn one_large_commit_delivers_one_indexed_fact_quantum_per_turn() {
 #[tokio::test(flavor = "current_thread")]
 async fn queued_commits_coalesce_to_the_newest_barrier_without_duplicates() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 2);
+    let source = Source::new(bus.reader(), epoch(), 2, presenter());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -636,7 +659,7 @@ async fn queued_commits_coalesce_to_the_newest_barrier_without_duplicates() {
 #[tokio::test(flavor = "current_thread")]
 async fn broadcast_lag_during_catch_up_resumes_after_the_last_admitted_quantum() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 3);
+    let source = Source::new(bus.reader(), epoch(), 3, presenter());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -681,7 +704,7 @@ async fn broadcast_lag_during_catch_up_resumes_after_the_last_admitted_quantum()
 #[tokio::test(flavor = "current_thread")]
 async fn live_trust_overflow_retains_its_snapshot_for_exact_continuation() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 2);
+    let source = Source::new(bus.reader(), epoch(), 2, presenter());
     let mut broadcasts = source.subscribe();
     let (mut subscription, _) = source
         .begin(
@@ -744,7 +767,7 @@ async fn live_trust_overflow_retains_its_snapshot_for_exact_continuation() {
 #[test]
 fn lane_principal_never_admits_operator_only_subjects() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
     for subject in [
         ViewSubject::Directions,
@@ -771,7 +794,7 @@ fn lane_principal_never_admits_operator_only_subjects() {
 #[test]
 fn thread_request_walks_one_indexed_barrier_and_names_continuation() {
     let bus = fixture(5);
-    let source = Source::new(bus.reader(), epoch(), 2);
+    let source = Source::new(bus.reader(), epoch(), 2, presenter());
     let request = StreamRequest::Thread {
         v: WireVersion::CURRENT,
         id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c4"),

@@ -135,7 +135,7 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
     let observed = observations[0].at;
 
     for generation in 0..2 {
-        let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+        let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
         let publisher = source.message_publisher();
         let bus_reader = bus.reader();
         let mut reader = message_surface::BacklogReader::indexed();
@@ -248,7 +248,7 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
 
     let mut generation_windows = Vec::new();
     for generation in 0..2 {
-        let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+        let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
         let publisher = source.message_publisher();
         let snapshot = bus.fact_snapshot().expect("durable message times load");
         let mut reader = message_surface::BacklogReader::from_snapshot(&snapshot)
@@ -338,7 +338,7 @@ fn an_older_history_page_carries_the_durable_observation_of_its_own_window() {
 
     let (oldest_observed, newest_observed) = deep_backlog_instants(&bus, &paths, &tape, lane);
 
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let bus_reader = bus.reader();
     let mut reader = message_surface::BacklogReader::indexed();
@@ -529,7 +529,7 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
     let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
         .expect("the backlog tape opens");
     tape.tee(CODEX_PROSE).expect("initial prose is captured");
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let residency = current_residency(&bus, epoch).expect("residency reads");
     let mut reader = message_surface::BacklogReader::default();
@@ -613,7 +613,7 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
         .expect("durable history is captured");
     drop(tape);
 
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let residency = current_residency(&bus, epoch).expect("residency reads");
     let mut reader = message_surface::BacklogReader::default();
@@ -757,7 +757,7 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
         "Unsafe."
     );
 
-    let live = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let live = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = live.message_publisher();
     let steering = message_surface::steering_ledger(&bus, &record)
         .expect("live steering context reads")
@@ -862,7 +862,7 @@ fn restore_mixed_acknowledgement_message(
     expected: &str,
     marker: &str,
 ) {
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let bus_reader = bus.reader();
     let mut reader = message_surface::BacklogReader::indexed();

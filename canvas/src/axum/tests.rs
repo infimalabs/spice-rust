@@ -10,10 +10,13 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 
 use super::*;
 use crate::APP;
+use crate::stream::{QuotePresenter, Source};
 
+mod fixture;
 mod identity;
 mod message_history;
 
+use fixture::agent_message;
 use identity::{TestApp, app_version, bind_test_server};
 
 type ClientSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -87,35 +90,16 @@ fn commit_stream(bus: &bus::Bus, note: &str, trust: bool) -> bus::JournalCommit 
     }
 }
 
-fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentMessage {
-    wire::AgentMessage {
-        lane: identity(0xe5),
-        author: identity(author),
-        locus: wire::MessageLocus {
-            member: 3,
-            offset,
-            length: 24,
-            event: 0,
-        },
-        authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
-        authored_synthetic: false,
-        observed: None,
-        activity: wire::AgentActivityKind::Prose,
-        final_answer: false,
-        text: text.to_owned(),
-        classifications: Vec::new(),
-        automatic_speech: None,
-        unavailable_tool_terminals: Vec::new(),
-        boundary: None,
-        media: Vec::new(),
-    }
-}
-
 #[test]
 fn canvas_message_ingress_refuses_invalid_media_without_retaining_or_broadcasting_it() {
     let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
         .expect("bus starts");
-    let source = crate::stream::Source::new(bus.reader(), epoch(), 8);
+    let source = Source::new(
+        bus.reader(),
+        epoch(),
+        8,
+        QuotePresenter::new(|_| Vec::new()),
+    );
     let publisher = source.message_publisher();
     let mut updates = source.subscribe_messages();
     let mut invalid = agent_message(0xe6, 10, "forged capture");
@@ -470,7 +454,7 @@ async fn authenticated_socket_streams_bounded_bus_pages_updates_resume_and_typed
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind_streaming(
+    let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
         bus.reader(),
@@ -541,7 +525,7 @@ async fn a_liveness_probe_is_answered_per_probe_and_still_admits_its_generation(
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind_streaming(
+    let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
         bus.reader(),
@@ -619,7 +603,7 @@ async fn a_held_recall_does_not_block_a_probe_or_sibling_recall_on_one_socket() 
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) = Server::bind_streaming(
+    let (server, mut control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
         bus.reader(),
@@ -723,7 +707,7 @@ async fn authenticated_socket_reads_and_pushes_agent_messages_with_each_author()
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind_streaming(
+    let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
         bus.reader(),
@@ -973,7 +957,7 @@ async fn capability_replacement_faults_the_live_stream_without_disclosure() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind_streaming(
+    let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities.clone()),
         bus.reader(),
@@ -1024,7 +1008,7 @@ async fn blocked_command_delivery_turns_broadcast_lag_into_resumable_overflow() 
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, mut control) = Server::bind_streaming(
+    let (server, mut control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
         bus.reader(),

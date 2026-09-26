@@ -834,6 +834,26 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
                 end: 5,
                 kind: MessageClassificationKind::Acknowledgement,
             }],
+            quote_target: Some(wire::QuoteTarget::Tape {
+                lane: first_id,
+                source: second_id,
+                locus: MessageLocus {
+                    member: 1,
+                    offset: 2,
+                    length: 3,
+                    event: 4,
+                },
+                digest: wire::QuoteTarget::text_digest("[ACK] settled"),
+            }),
+            directive_contexts: vec![wire::MessageDirective {
+                start: 0,
+                end: 5,
+                quote_target: wire::QuoteTarget::Steering {
+                    key: "amberfern".to_owned(),
+                    digest: wire::QuoteTarget::text_digest("settled directive"),
+                },
+            }],
+            quotes: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
@@ -855,6 +875,9 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             final_answer: false,
             text: "Bash".to_owned(),
             classifications: Vec::new(),
+            quote_target: None,
+            directive_contexts: Vec::new(),
+            quotes: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
@@ -876,6 +899,9 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             final_answer: false,
             text: "Context compacted".to_owned(),
             classifications: Vec::new(),
+            quote_target: None,
+            directive_contexts: Vec::new(),
+            quotes: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
             boundary: None,
@@ -894,6 +920,11 @@ fn cover_operator_directions(first_id: CanonicalUuid, second_id: CanonicalUuid) 
                 key: "amber-fern".to_owned(),
                 lane: second_id,
                 text: "hold the indexed line".to_owned(),
+                quote_target: wire::QuoteTarget::Steering {
+                    key: "amberfern".to_owned(),
+                    digest: wire::QuoteTarget::text_digest("hold the indexed line"),
+                },
+                quotes: Vec::new(),
                 attachments: Vec::new(),
             },
             OperatorDirection {
@@ -902,6 +933,14 @@ fn cover_operator_directions(first_id: CanonicalUuid, second_id: CanonicalUuid) 
                 key: "silver-ash".to_owned(),
                 lane: first_id,
                 text: "resume after acknowledgement".to_owned(),
+                quote_target: wire::QuoteTarget::Steering {
+                    key: "silverash".to_owned(),
+                    digest: wire::QuoteTarget::text_digest("resume after acknowledgement"),
+                },
+                quotes: vec![wire::QuotePresentation::Unavailable {
+                    target: "spice://quote/v1/unknown".to_owned(),
+                    reason: wire::QuoteUnavailable::Malformed,
+                }],
                 attachments: vec![
                     wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
                         .expect("fixture media"),
@@ -987,6 +1026,9 @@ fn stream_data_samples(
         final_answer: false,
         text: "older retained prose".to_owned(),
         classifications: Vec::new(),
+        quote_target: None,
+        directive_contexts: Vec::new(),
+        quotes: Vec::new(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
         boundary: None,

@@ -699,13 +699,31 @@ impl Server {
         generation: Generation,
         bus: bus::BusReader,
         rows: usize,
+        presenter: crate::stream::QuotePresenter,
     ) -> Result<(Self, Control), std::io::Error> {
         let epoch = generation.epoch;
         Self::bind_with_capacity(
             binding,
             generation,
-            Some(crate::stream::Source::new(bus, epoch, rows)),
+            Some(crate::stream::Source::new(bus, epoch, rows, presenter)),
             64,
+        )
+        .await
+    }
+
+    #[cfg(test)]
+    async fn bind_test_streaming(
+        binding: Binding,
+        generation: Generation,
+        bus: bus::BusReader,
+        rows: usize,
+    ) -> Result<(Self, Control), std::io::Error> {
+        Self::bind_streaming(
+            binding,
+            generation,
+            bus,
+            rows,
+            crate::stream::QuotePresenter::new(|_| Vec::new()),
         )
         .await
     }

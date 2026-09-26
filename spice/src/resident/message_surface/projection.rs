@@ -1,4 +1,6 @@
 use super::*;
+#[cfg(test)]
+pub(in crate::resident) const TEST_TAPE_SOURCE: &str = "018f82d4-6f59-7d06-92e3-bce9131163e6";
 
 #[cfg(test)]
 pub(in crate::resident) fn publish_agent_messages(
@@ -7,7 +9,19 @@ pub(in crate::resident) fn publish_agent_messages(
     state: &mut MessageState,
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<()> {
-    publish_agent_messages_in(publisher, record, state, steering, None, None, None)
+    publish_agent_messages_in(
+        publisher,
+        record,
+        state,
+        steering,
+        None,
+        Some(
+            TEST_TAPE_SOURCE
+                .parse()
+                .expect("fixture tape source is canonical"),
+        ),
+        None,
+    )
 }
 
 pub(super) fn publish_agent_messages_in(
@@ -228,6 +242,9 @@ fn publish_turn_boundary(
             final_answer: false,
             text: "New turn".to_owned(),
             classifications: Vec::new(),
+            quote_target: None,
+            directive_contexts: Vec::new(),
+            quotes: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
@@ -276,100 +293,70 @@ pub(super) fn publish_agent_event(
     Ok(())
 }
 
+struct ProjectedEvent {
+    activity: AgentActivityKind,
+    final_answer: bool,
+    locus: listen::Locus,
+    text: String,
+    classifications: Vec<wire::MessageClassification>,
+    directive_contexts: Vec<wire::MessageDirective>,
+    automatic_speech: Option<wire::AutomaticSpeech>,
+    media: Vec<wire::Media>,
+}
+
 fn project_agent_event(
     event: AgentEvent<'_>,
     previews: &mut CallPreviews,
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<Option<ProjectedMessage>> {
+    let Some(projected) = project_event_body(&event, previews, steering)? else {
+        return Ok(None);
+    };
     let AgentEvent {
         lane,
         author,
         source,
-        worktree,
         ordinal,
         decoded,
         authored,
         observed,
         observations,
         unavailable_tool_terminals,
+        ..
     } = event;
+    let ProjectedEvent {
+        activity,
+        final_answer,
+        locus,
+        text,
+        classifications,
+        directive_contexts,
+        automatic_speech,
+        media,
+    } = projected;
     let presentation_event = |locus| PresentationEvent {
         lane,
         source: source.or_else(|| observations.source(lane, locus)),
         locus,
         ordinal,
     };
-    let (activity, final_answer, locus, text, classifications, automatic_speech, media) =
-        match decoded {
-            listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
-                let (presented, automatic_speech) =
-                    project_prose_presentation(prose, steering, presentation_event(prose.locus))?;
-                (
-                    AgentActivityKind::Prose,
-                    prose.phase.as_deref() == Some("final_answer"),
-                    prose.locus,
-                    presented.text,
-                    presented.classifications,
-                    automatic_speech,
-                    prose.media.clone(),
-                )
-            }
-            listen::Event::Tool(tool) => {
-                let activity = tool_preview::activity_in(lane, tool, previews, worktree);
-                let media = tool_message_media(tool);
-                let text = tool_preview::message_text(tool, activity, &media);
-                (
-                    AgentActivityKind::Tool,
-                    false,
-                    tool.locus,
-                    text,
-                    Vec::new(),
-                    None,
-                    media,
-                )
-            }
-            listen::Event::Reasoning(listen::Reasoning {
-                content: listen::ReasoningContent::Plain(parts),
-                locus,
-            }) => (
-                AgentActivityKind::Reasoning,
-                false,
-                *locus,
-                reasoning_preview(parts),
-                Vec::new(),
-                None,
-                Vec::new(),
-            ),
-            listen::Event::Compaction(compaction) => (
-                AgentActivityKind::Compaction,
-                false,
-                compaction.locus,
-                compaction
-                    .summary
-                    .clone()
-                    .filter(|summary| !summary.trim().is_empty())
-                    .unwrap_or_else(|| "Context compacted".to_owned()),
-                Vec::new(),
-                None,
-                Vec::new(),
-            ),
-            _ => return Ok(None),
-        };
     let (authored, authored_synthetic) = parse_agent_message_authored(authored, locus, ordinal)?;
     let observed = authored_synthetic
         .then(|| observed.or_else(|| observations.at(lane, locus)))
         .flatten();
     wire::media::validate_media(&media)
         .map_err(|error| store_fault("canvas::message-media-invalid", &error.to_string()))?;
+    let locus = wire::MessageLocus {
+        member: locus.member,
+        offset: locus.offset,
+        length: locus.length,
+        event: ordinal,
+    };
+    let quote_target = agent_quote_target(decoded, lane, source, locus)?;
     let published = wire::AgentMessage {
         lane,
         author,
-        locus: wire::MessageLocus {
-            member: locus.member,
-            offset: locus.offset,
-            length: locus.length,
-            event: ordinal,
-        },
+        locus,
         authored,
         authored_synthetic,
         observed,
@@ -377,6 +364,9 @@ fn project_agent_event(
         final_answer,
         text,
         classifications,
+        quote_target,
+        directive_contexts,
+        quotes: Vec::new(),
         automatic_speech,
         unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
         boundary: event_boundary(decoded),
@@ -389,6 +379,107 @@ fn project_agent_event(
         published,
         terminal,
         pending,
+    }))
+}
+
+fn project_event_body(
+    event: &AgentEvent<'_>,
+    previews: &mut CallPreviews,
+    steering: Option<&PresentationDirectives>,
+) -> CommandResult<Option<ProjectedEvent>> {
+    let projected = match event.decoded {
+        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+            let presentation_event = PresentationEvent {
+                lane: event.lane,
+                source: event
+                    .source
+                    .or_else(|| event.observations.source(event.lane, prose.locus)),
+                locus: prose.locus,
+                ordinal: event.ordinal,
+            };
+            let (presented, automatic_speech) =
+                project_prose_presentation(prose, steering, presentation_event)?;
+            ProjectedEvent {
+                activity: AgentActivityKind::Prose,
+                final_answer: prose.phase.as_deref() == Some("final_answer"),
+                locus: prose.locus,
+                text: presented.text,
+                classifications: presented.classifications,
+                directive_contexts: presented.directive_contexts,
+                automatic_speech,
+                media: prose.media.clone(),
+            }
+        }
+        listen::Event::Tool(tool) => {
+            let activity = tool_preview::activity_in(event.lane, tool, previews, event.worktree);
+            let media = tool_message_media(tool);
+            let text = tool_preview::message_text(tool, activity, &media);
+            ProjectedEvent {
+                activity: AgentActivityKind::Tool,
+                final_answer: false,
+                locus: tool.locus,
+                text,
+                classifications: Vec::new(),
+                directive_contexts: Vec::new(),
+                automatic_speech: None,
+                media,
+            }
+        }
+        listen::Event::Reasoning(listen::Reasoning {
+            content: listen::ReasoningContent::Plain(parts),
+            locus,
+        }) => ProjectedEvent {
+            activity: AgentActivityKind::Reasoning,
+            final_answer: false,
+            locus: *locus,
+            text: reasoning_preview(parts),
+            classifications: Vec::new(),
+            directive_contexts: Vec::new(),
+            automatic_speech: None,
+            media: Vec::new(),
+        },
+        listen::Event::Compaction(compaction) => ProjectedEvent {
+            activity: AgentActivityKind::Compaction,
+            final_answer: false,
+            locus: compaction.locus,
+            text: compaction
+                .summary
+                .clone()
+                .filter(|summary| !summary.trim().is_empty())
+                .unwrap_or_else(|| "Context compacted".to_owned()),
+            classifications: Vec::new(),
+            directive_contexts: Vec::new(),
+            automatic_speech: None,
+            media: Vec::new(),
+        },
+        _ => return Ok(None),
+    };
+    Ok(Some(projected))
+}
+
+fn agent_quote_target(
+    decoded: &listen::Event,
+    lane: CanonicalUuid,
+    source: Option<CanonicalUuid>,
+    locus: wire::MessageLocus,
+) -> CommandResult<Option<wire::QuoteTarget>> {
+    let listen::Event::Prose(prose) = decoded else {
+        return Ok(None);
+    };
+    if prose.role != listen::ProseRole::Assistant {
+        return Ok(None);
+    }
+    let source = source.ok_or_else(|| {
+        store_fault(
+            "canvas::message-source-unavailable",
+            "quoteable agent prose has no durable tape source",
+        )
+    })?;
+    Ok(Some(wire::QuoteTarget::Tape {
+        lane,
+        source,
+        locus,
+        digest: wire::QuoteTarget::text_digest(&prose.text),
     }))
 }
 fn project_prose_presentation(

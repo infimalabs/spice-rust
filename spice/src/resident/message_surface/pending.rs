@@ -85,6 +85,7 @@ pub(in crate::resident) trait PresentationPublisher {
         locus: wire::MessageLocus,
         text: String,
         classifications: Vec<wire::MessageClassification>,
+        directive_contexts: Vec<wire::MessageDirective>,
     ) -> Result<bool, canvas::stream::MessagePublishError>;
 }
 
@@ -95,8 +96,9 @@ impl PresentationPublisher for canvas::stream::MessagePublisher {
         locus: wire::MessageLocus,
         text: String,
         classifications: Vec<wire::MessageClassification>,
+        directive_contexts: Vec<wire::MessageDirective>,
     ) -> Result<bool, canvas::stream::MessagePublishError> {
-        Self::revise_presentation(self, lane, locus, text, classifications)
+        Self::revise_presentation(self, lane, locus, text, classifications, directive_contexts)
     }
 }
 
@@ -107,8 +109,9 @@ impl PresentationPublisher for canvas::stream::MessageBatch {
         locus: wire::MessageLocus,
         text: String,
         classifications: Vec<wire::MessageClassification>,
+        directive_contexts: Vec<wire::MessageDirective>,
     ) -> Result<bool, canvas::stream::MessagePublishError> {
-        Self::revise_presentation(self, lane, locus, text, classifications)
+        Self::revise_presentation(self, lane, locus, text, classifications, directive_contexts)
     }
 }
 
@@ -184,6 +187,7 @@ fn present_again(
             card.locus,
             presented.text.clone(),
             presented.classifications.clone(),
+            presented.directive_contexts.clone(),
         )
         .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
     if let Some(prose) = state.prose.get_mut(&card.lane)
@@ -194,8 +198,13 @@ fn present_again(
             .published
             .classifications
             .clone_from(&presented.classifications);
+        prose
+            .published
+            .directive_contexts
+            .clone_from(&presented.directive_contexts);
         prose.terminal.text = presented.text;
         prose.terminal.classifications = presented.classifications;
+        prose.terminal.directive_contexts = presented.directive_contexts;
     }
     Ok(())
 }

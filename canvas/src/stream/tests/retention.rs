@@ -1,6 +1,6 @@
 use super::*;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 const HISTORY_LENGTH: u64 = 300;
 const QUIET_HISTORY_LENGTH: u64 = 40;
@@ -79,7 +79,7 @@ fn complete_lane_history(
 #[test]
 fn one_batch_publishes_one_sorted_generation_with_every_lane_frontier() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     let first_lane = message(0xe5, 1).lane;
     let second_lane = message(0xe6, 1).lane;
@@ -139,7 +139,7 @@ fn one_batch_publishes_one_sorted_generation_with_every_lane_frontier() {
 #[test]
 fn terminal_revision_replaces_one_retained_message_and_broadcasts_the_change() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     let ordinary = message(0xe5, 7);
     publisher
@@ -197,7 +197,7 @@ fn terminal_revision_replaces_one_retained_message_and_broadcasts_the_change() {
 fn a_preserved_compaction_replaces_the_announcement_in_either_arrival_order() {
     for announcement_first in [true, false] {
         let bus = fixture(1);
-        let source = Source::new(bus.reader(), epoch(), 10);
+        let source = Source::new(bus.reader(), epoch(), 10, presenter());
         let publisher = source.message_publisher();
         let mut announced = message(0xe5, 7);
         announced.activity = wire::AgentActivityKind::Compaction;
@@ -258,7 +258,7 @@ fn a_preserved_compaction_replaces_the_announcement_in_either_arrival_order() {
 #[test]
 fn presentation_revision_moves_only_text_and_classifications_and_keeps_the_final_state() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     let mut spoken = message(0xe5, 7);
     spoken.text = "> [ACK PENDING] Keep the current path.\n\nApplied.".to_owned();
@@ -291,7 +291,8 @@ fn presentation_revision_moves_only_text_and_classifications_and_keeps_the_final
                 spoken.lane,
                 spoken.locus,
                 retired_text.clone(),
-                retired_classifications.clone()
+                retired_classifications.clone(),
+                Vec::new(),
             )
             .expect("retired presentation publishes")
     );
@@ -312,7 +313,8 @@ fn presentation_revision_moves_only_text_and_classifications_and_keeps_the_final
                 spoken.lane,
                 spoken.locus,
                 retired_text.clone(),
-                retired_classifications.clone()
+                retired_classifications.clone(),
+                Vec::new(),
             )
             .expect("identical presentation deduplicates")
     );
@@ -323,7 +325,8 @@ fn presentation_revision_moves_only_text_and_classifications_and_keeps_the_final
                 absent.lane,
                 absent.locus,
                 retired_text,
-                retired_classifications
+                retired_classifications,
+                Vec::new(),
             )
             .expect("a card retention does not hold is not revised")
     );
@@ -346,7 +349,7 @@ fn presentation_revision_moves_only_text_and_classifications_and_keeps_the_final
 #[test]
 fn retained_message_capacity_is_independent_for_each_lane() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     for lane in [0xe5, 0xe6] {
         for offset in 0..MESSAGE_CAPACITY {
@@ -407,7 +410,7 @@ fn retained_message_capacity_is_independent_for_each_lane() {
 #[test]
 fn retained_message_capacity_starts_at_the_oldest_complete_compaction_window() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     let busy_lane = message(0xe5, 0).lane;
     let quiet_lane = message(0xe6, 0).lane;
@@ -467,7 +470,7 @@ fn retained_message_capacity_starts_at_the_oldest_complete_compaction_window() {
 #[test]
 fn late_session_boundaries_are_inserted_before_retention_selects_its_floor() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     for offset in 0..HISTORY_LENGTH {
         if matches!(offset, FIRST_RETAINED_BOUNDARY | SECOND_RETAINED_BOUNDARY) {
@@ -543,9 +546,127 @@ impl MessageHistoryProvider for FixtureHistory {
 }
 
 #[test]
+fn quote_presentations_are_complete_on_bootstrap_and_history_and_refresh_from_authority() {
+    let bus = fixture(1);
+    let disposition = Arc::new(Mutex::new(wire::Disposition::Live));
+    let quoted_text = "quoted direction";
+    let target = wire::QuoteTarget::Steering {
+        key: "1kQnrzNZ".to_owned(),
+        digest: wire::QuoteTarget::text_digest(quoted_text),
+    };
+    let target_spelling = target.to_string();
+    let quote_presenter = QuotePresenter::new({
+        let disposition = disposition.clone();
+        let target_spelling = target_spelling.clone();
+        move |_| {
+            vec![wire::QuotePresentation::Resolved {
+                target: target_spelling.clone(),
+                text: quoted_text.to_owned(),
+                author: wire::QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                },
+                disposition: Some(*disposition.lock().expect("disposition lock")),
+                quotes: Vec::new(),
+            }]
+        }
+    });
+    let source = Source::new(bus.reader(), epoch(), 10, quote_presenter);
+    let publisher = source.message_publisher();
+    let mut older = message(0xe5, 5);
+    older.text = target.markdown();
+    let mut retained = message(0xe5, 10);
+    retained.text = target.markdown();
+    let lane = retained.lane;
+    publisher
+        .set_history_provider(Arc::new(FixtureHistory {
+            messages: vec![older],
+            page_limit: usize::MAX,
+            reads: AtomicUsize::new(0),
+        }))
+        .expect("history provider installs");
+    publisher
+        .set_history_open([lane])
+        .expect("lane history opens");
+    publisher
+        .publish(retained)
+        .expect("retained card publishes");
+
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages {
+        generation: initial,
+        ..
+    } = &frames[0]
+    else {
+        panic!("expected message bootstrap")
+    };
+    assert!(matches!(
+        initial.messages[0].quotes.as_slice(),
+        [wire::QuotePresentation::Resolved {
+            disposition: Some(wire::Disposition::Live),
+            ..
+        }]
+    ));
+
+    *disposition.lock().expect("disposition lock") = wire::Disposition::Acked;
+    let history = source
+        .message_history(
+            &accepted(Actor::Operator),
+            &StreamRequest::MessageHistory {
+                v: WireVersion::CURRENT,
+                id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+                epoch: epoch(),
+                frontiers: history_cursors(initial),
+            },
+        )
+        .expect("message history answers");
+    let StreamFrame::MessageHistory {
+        generation: history,
+        ..
+    } = history
+    else {
+        panic!("expected message history")
+    };
+    assert!(matches!(
+        history.messages[0].quotes.as_slice(),
+        [wire::QuotePresentation::Resolved {
+            disposition: Some(wire::Disposition::Acked),
+            ..
+        }]
+    ));
+
+    let (_, refreshed) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc6, vec![ViewSubject::Messages], None),
+        )
+        .expect("message refresh begins");
+    let StreamFrame::Messages {
+        generation: refreshed,
+        ..
+    } = &refreshed[0]
+    else {
+        panic!("expected refreshed message snapshot")
+    };
+    assert!(matches!(
+        refreshed.messages[0].quotes.as_slice(),
+        [wire::QuotePresentation::Resolved {
+            disposition: Some(wire::Disposition::Acked),
+            ..
+        }]
+    ));
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[test]
 fn coordinated_history_returns_one_bounded_globally_sorted_lane_interval() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     let lanes = [message(0xe5, 0).lane, message(0xe6, 0).lane];
     let history = Arc::new(FixtureHistory {
@@ -627,7 +748,7 @@ fn coordinated_history_returns_one_bounded_globally_sorted_lane_interval() {
 #[test]
 fn cold_readers_page_a_full_cache_without_reading_the_provider() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     let history = Arc::new(FixtureHistory {
         messages: Vec::new(),
@@ -671,7 +792,7 @@ fn cold_readers_page_a_full_cache_without_reading_the_provider() {
 #[test]
 fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     let lane = message(0xe5, 0).lane;
     let startup = (0..80)
@@ -763,7 +884,7 @@ fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
 #[test]
 fn short_provider_pages_continue_until_source_complete_with_bounded_reads() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     let lane = message(0xe5, 0).lane;
     let durable = (0..HISTORY_LENGTH)
@@ -820,7 +941,7 @@ fn short_provider_pages_continue_until_source_complete_with_bounded_reads() {
 #[test]
 fn explicit_history_hint_bootstraps_a_lane_without_an_initial_card() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     let lane = message(0xe5, 0).lane;
     let durable = (0..20)
@@ -881,7 +1002,7 @@ fn explicit_history_hint_bootstraps_a_lane_without_an_initial_card() {
 #[test]
 fn cold_history_keeps_its_floor_across_a_compaction_inside_the_initial_window() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     for offset in 0..40 {
         let mut activity = message(0xe6, offset);
@@ -931,7 +1052,7 @@ fn cold_history_keeps_its_floor_across_a_compaction_inside_the_initial_window() 
 #[test]
 fn retained_tool_status_does_not_consume_visible_lane_capacity() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     for offset in 0..MESSAGE_CAPACITY {
         publisher
@@ -992,7 +1113,7 @@ fn retained_tool_status_does_not_consume_visible_lane_capacity() {
 #[test]
 fn interleaved_markers_do_not_spend_an_agents_message_floor() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     for offset in 0..60 {
         let mut card = message(0xe5, offset);
@@ -1035,7 +1156,7 @@ fn interleaved_markers_do_not_spend_an_agents_message_floor() {
 #[test]
 fn a_fresh_compaction_does_not_evict_an_agents_message_floor() {
     let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
+    let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let publisher = source.message_publisher();
     for offset in 0..40 {
         publisher

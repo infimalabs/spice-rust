@@ -31,7 +31,7 @@ async fn authenticated_socket_pages_member_history_before_the_initial_window() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind_streaming(
+    let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
         bus.reader(),
@@ -305,7 +305,7 @@ async fn held_history_read_leaves_the_runtime_serving_other_sockets() {
     capabilities
         .insert(operator(), wire::Actor::Operator)
         .expect("operator capability");
-    let (server, _control) = Server::bind_streaming(
+    let (server, _control) = Server::bind_test_streaming(
         Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
         generation(&app, capabilities),
         bus.reader(),
