@@ -184,6 +184,7 @@ fn empty_directions_frame() -> Vec<u8> {
 }
 
 fn message_frame(
+    generation: u64,
     lane: &str,
     author: &str,
     offset: u64,
@@ -192,10 +193,8 @@ fn message_frame(
     text: &str,
 ) -> Vec<u8> {
     message_frame_at(
-        lane,
-        author,
-        offset,
-        event,
+        generation,
+        (lane, author, offset, event),
         "2030-04-12T18:44:09.271Z",
         activity,
         text,
@@ -203,10 +202,8 @@ fn message_frame(
 }
 
 fn message_frame_at(
-    lane: &str,
-    author: &str,
-    offset: u64,
-    event: u64,
+    generation: u64,
+    (lane, author, offset, event): (&str, &str, u64, u64),
     authored: &str,
     activity: Option<&str>,
     text: &str,
@@ -221,14 +218,63 @@ fn message_frame_at(
     if let Some(activity) = activity {
         message["activity"] = serde_json::json!(activity);
     }
+    message_generation_frame(
+        generation,
+        vec![message],
+        vec![serde_json::json!({"lane": lane, "state": "complete"})],
+    )
+}
+
+fn transcript_generation(
+    generation: u64,
+    messages: Vec<serde_json::Value>,
+    frontiers: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "generation": generation,
+        "horizon": 1,
+        "messages": messages,
+        "frontiers": frontiers,
+    })
+}
+
+fn message_generation_frame(
+    generation: u64,
+    messages: Vec<serde_json::Value>,
+    frontiers: Vec<serde_json::Value>,
+) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
-        "stream": "message",
+        "stream": "message-generation",
         "v": 1,
         "id": REQUEST,
         "epoch": EPOCH,
-        "message": message,
+        "generation": transcript_generation(generation, messages, frontiers),
     }))
-    .expect("message frame serializes")
+    .expect("message generation serializes")
+}
+
+fn message_snapshot_frame(
+    generation: u64,
+    limit: usize,
+    messages: Vec<serde_json::Value>,
+    frontiers: Vec<serde_json::Value>,
+) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "stream": "messages",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "limit": limit,
+        "generation": transcript_generation(generation, messages, frontiers),
+    }))
+    .expect("message snapshot serializes")
+}
+
+fn initialize_messages(runtime: &mut CanvasRuntime, session: &Session) {
+    runtime.apply_stream(&admitted_stream(
+        session,
+        &message_snapshot_frame(0, 256, Vec::new(), Vec::new()),
+    ));
 }
 
 fn admitted_stream(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame> {
@@ -525,6 +571,7 @@ fn operator_direction_and_agent_response_retain_separate_source_identity() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
+    initialize_messages(&mut runtime, &session);
     let operator_text = "Keep the operator role from first render.";
     let submission = operator_submission_response(&session);
 
@@ -580,10 +627,8 @@ fn operator_direction_and_agent_response_retain_separate_source_identity() {
     runtime.apply_stream(&admitted_stream(
         &session,
         &message_frame_at(
-            LANE,
-            LANE_CAPABILITY,
-            80,
-            0,
+            1,
+            (LANE, LANE_CAPABILITY, 80, 0),
             "2030-04-12T18:44:10.271Z",
             None,
             "Agent acknowledgement remains its own record.",
@@ -746,15 +791,15 @@ fn lane_floor_snapshot() -> (Vec<serde_json::Value>, serde_json::Value, Vec<u8>)
     });
     let mut incoming = busy.clone();
     incoming.push(second.clone());
-    let snapshot = serde_json::to_vec(&serde_json::json!({
-        "stream": "messages",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "limit": wire::MESSAGE_FLOOR,
-        "messages": incoming,
-    }))
-    .expect("message snapshot serializes");
+    let snapshot = message_snapshot_frame(
+        1,
+        wire::MESSAGE_FLOOR,
+        incoming,
+        vec![
+            serde_json::json!({"lane": LANE, "state": "complete"}),
+            serde_json::json!({"lane": SECOND_LANE, "state": "complete"}),
+        ],
+    );
     (busy, second, snapshot)
 }
 
@@ -796,14 +841,14 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
         "snapshot replay restores prose cards"
     );
 
-    let duplicate = serde_json::to_vec(&serde_json::json!({
-        "stream": "message",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "message": second,
-    }))
-    .expect("duplicate message serializes");
+    let duplicate = message_generation_frame(
+        2,
+        vec![second],
+        vec![
+            serde_json::json!({"lane": LANE, "state": "complete"}),
+            serde_json::json!({"lane": SECOND_LANE, "state": "complete"}),
+        ],
+    );
     assert!(
         !runtime
             .apply_stream_frame(&admitted_stream(&session, &duplicate))
@@ -812,20 +857,20 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
     );
     assert_eq!(runtime.messages().len(), wire::MESSAGE_FLOOR + 1);
 
-    let newest = serde_json::to_vec(&serde_json::json!({
-        "stream": "message",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "message": {
+    let newest = message_generation_frame(
+        3,
+        vec![serde_json::json!({
             "lane": LANE,
             "author": THIRD_LANE,
             "locus": {"member": 1, "offset": 50, "length": 20, "event": 0},
             "authored": "2030-04-12T18:44:11.271Z",
             "text": "third author",
-        },
-    }))
-    .expect("live message serializes");
+        })],
+        vec![
+            serde_json::json!({"lane": LANE, "state": "complete"}),
+            serde_json::json!({"lane": SECOND_LANE, "state": "complete"}),
+        ],
+    );
     runtime.apply_stream(&admitted_stream(&session, &newest));
     let retained = runtime.messages();
     assert_eq!(
@@ -866,18 +911,11 @@ fn paired_tool_capture_becomes_one_media_card_while_distinct_tape_events_stay_di
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
-    let snapshot = serde_json::to_vec(&serde_json::json!({
-        "stream": "messages",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "limit": 8,
-        "messages": [],
-    }))
-    .expect("message snapshot serializes");
+    let snapshot = message_snapshot_frame(0, 8, Vec::new(), Vec::new());
     runtime.apply_stream(&admitted_stream(&session, &snapshot));
 
     let call = message_frame(
+        1,
         LANE,
         LANE_CAPABILITY,
         60,
@@ -896,33 +934,33 @@ fn paired_tool_capture_becomes_one_media_card_while_distinct_tape_events_stay_di
         "content_type": "image/png",
         "data_url": "data:image/png;base64,iVBORw0KGgo=",
     });
-    let result = serde_json::to_vec(&serde_json::json!({
-        "stream": "message",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "message": {
-            "lane": LANE,
-            "author": LANE_CAPABILITY,
-            "locus": {"member": 1, "offset": 80, "length": 20, "event": 1},
-            "authored": "2030-04-12T18:44:09.271Z",
-            "activity": "tool",
-            "text": "view_image: capture.png succeeded",
-            "media": [media.clone()],
-        },
-    }))
-    .expect("tool result frame serializes");
+    let result_message = serde_json::json!({
+        "lane": LANE,
+        "author": LANE_CAPABILITY,
+        "locus": {"member": 1, "offset": 80, "length": 20, "event": 1},
+        "authored": "2030-04-12T18:44:09.271Z",
+        "activity": "tool",
+        "text": "view_image: capture.png succeeded",
+        "media": [media.clone()],
+    });
+    let result = message_generation_frame(
+        2,
+        vec![result_message.clone()],
+        vec![serde_json::json!({"lane": LANE, "state": "complete"})],
+    );
     runtime.apply_stream(&admitted_stream(&session, &result));
-    runtime.apply_stream(&admitted_stream(&session, &result));
+    let replay = message_generation_frame(
+        3,
+        vec![result_message],
+        vec![serde_json::json!({"lane": LANE, "state": "complete"})],
+    );
+    runtime.apply_stream(&admitted_stream(&session, &replay));
     assert_eq!(runtime.messages().len(), 1, "one tape event is idempotent");
     assert_eq!(runtime.messages()[0].media.len(), 1);
 
-    let distinct = serde_json::to_vec(&serde_json::json!({
-        "stream": "message",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "message": {
+    let distinct = message_generation_frame(
+        4,
+        vec![serde_json::json!({
             "lane": LANE,
             "author": LANE_CAPABILITY,
             "locus": {"member": 1, "offset": 120, "length": 20, "event": 1},
@@ -930,9 +968,9 @@ fn paired_tool_capture_becomes_one_media_card_while_distinct_tape_events_stay_di
             "activity": "tool",
             "text": "view_image: capture.png succeeded",
             "media": [media],
-        },
-    }))
-    .expect("distinct tool result frame serializes");
+        })],
+        vec![serde_json::json!({"lane": LANE, "state": "complete"})],
+    );
     runtime.apply_stream(&admitted_stream(&session, &distinct));
     assert_eq!(
         runtime.messages().len(),
@@ -980,12 +1018,11 @@ fn team_runtime_with_activity_and_receipts() -> CanvasRuntime {
         .admit_frame(&lanes)
         .expect("lane response is admitted");
     runtime.apply_lanes(&admitted_lanes);
+    initialize_messages(&mut runtime, &session);
 
     let tool = message_frame_at(
-        LANE,
-        LANE_CAPABILITY,
-        60,
-        0,
+        1,
+        (LANE, LANE_CAPABILITY, 60, 0),
         "2030-04-12T18:44:09.271Z",
         Some("tool"),
         "Bash",
@@ -1009,10 +1046,8 @@ fn team_runtime_with_activity_and_receipts() -> CanvasRuntime {
     );
 
     let prose = message_frame_at(
-        SECOND_LANE,
-        SECRET_LANE_CAPABILITY,
-        70,
-        0,
+        2,
+        (SECOND_LANE, SECRET_LANE_CAPABILITY, 70, 0),
         "2030-04-12T18:44:10.271Z",
         None,
         "newer team member prose",
@@ -1020,10 +1055,8 @@ fn team_runtime_with_activity_and_receipts() -> CanvasRuntime {
     runtime.apply_stream(&admitted_stream(&session, &prose));
 
     let other_tool = message_frame_at(
-        THIRD_LANE,
-        THIRD_LANE,
-        80,
-        0,
+        3,
+        (THIRD_LANE, THIRD_LANE, 80, 0),
         "2030-04-12T18:44:11.271Z",
         Some("tool"),
         "Read",
@@ -1071,22 +1104,20 @@ fn synthetic_agent_activity_retains_provenance_and_gains_a_display_time() {
         .admit_frame(&lanes)
         .expect("lane response is admitted");
     runtime.apply_lanes(&admitted_lanes);
+    initialize_messages(&mut runtime, &session);
 
-    let synthetic = serde_json::to_vec(&serde_json::json!({
-        "stream": "message",
-        "v": 1,
-        "id": REQUEST,
-        "epoch": EPOCH,
-        "message": {
+    let synthetic = message_generation_frame(
+        1,
+        vec![serde_json::json!({
             "lane": LANE,
             "author": LANE_CAPABILITY,
             "locus": {"member": 1, "offset": 60, "length": 20, "event": 0},
             "authored": "2000-01-01T00:00:00.087Z",
             "authored_synthetic": true,
             "text": "historical prose without a vendor timestamp",
-        },
-    }))
-    .expect("synthetic activity fixture serializes");
+        })],
+        vec![serde_json::json!({"lane": LANE, "state": "complete"})],
+    );
     runtime.apply_stream(&admitted_stream(&session, &synthetic));
 
     let activity = runtime
@@ -1124,9 +1155,11 @@ fn redelivered_older_activity_does_not_displace_newer_lane_activity() {
         .admit_frame(&lanes)
         .expect("lane response is admitted");
     runtime.apply_lanes(&admitted_lanes);
+    initialize_messages(&mut runtime, &session);
 
-    let older_tool = message_frame(LANE, LANE_CAPABILITY, 60, 0, Some("tool"), "Bash");
+    let older_tool = message_frame(1, LANE, LANE_CAPABILITY, 60, 0, Some("tool"), "Bash");
     let newer_prose = message_frame(
+        2,
         LANE,
         LANE_CAPABILITY,
         90,
@@ -1134,7 +1167,8 @@ fn redelivered_older_activity_does_not_displace_newer_lane_activity() {
         None,
         "the newest thing this agent did",
     );
-    for frame in [&older_tool, &newer_prose, &older_tool] {
+    let older_replay = message_frame(3, LANE, LANE_CAPABILITY, 60, 0, Some("tool"), "Bash");
+    for frame in [&older_tool, &newer_prose, &older_replay] {
         runtime.apply_stream(&admitted_stream(&session, frame));
     }
 
@@ -1168,8 +1202,10 @@ fn team_ticker_prose_leads_with_the_first_authored_line_after_borrowed_quotes() 
         .admit_frame(&lanes)
         .expect("lane response is admitted");
     runtime.apply_lanes(&admitted_lanes);
+    initialize_messages(&mut runtime, &session);
 
     let quoted_reply = message_frame(
+        1,
         LANE,
         LANE_CAPABILITY,
         60,
@@ -1216,6 +1252,7 @@ fn team_ticker_prose_leads_with_the_first_authored_line_after_borrowed_quotes() 
     );
 
     let entirely_quoted = message_frame(
+        2,
         LANE,
         LANE_CAPABILITY,
         90,
@@ -1236,6 +1273,7 @@ fn team_ticker_prose_leads_with_the_first_authored_line_after_borrowed_quotes() 
     assert_eq!(format!("{prefix}: {detail}"), "Jeff: quoted message");
 
     let tool = message_frame(
+        3,
         LANE,
         LANE_CAPABILITY,
         120,

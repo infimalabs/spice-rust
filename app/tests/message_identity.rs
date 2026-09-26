@@ -21,32 +21,63 @@ fn admitted(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame> {
         .expect("stream frame is admitted")
 }
 
-fn snapshot(messages: Vec<serde_json::Value>) -> Vec<u8> {
-    snapshot_with_more(messages, Vec::new())
+fn complete_frontiers(messages: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    let mut lanes = Vec::new();
+    for message in messages {
+        let lane = message["lane"].clone();
+        if !lanes.contains(&lane) {
+            lanes.push(lane);
+        }
+    }
+    lanes
+        .into_iter()
+        .map(|lane| serde_json::json!({"lane": lane, "state": "complete"}))
+        .collect()
 }
 
-fn snapshot_with_more(messages: Vec<serde_json::Value>, more: Vec<serde_json::Value>) -> Vec<u8> {
+fn generation(
+    id: u64,
+    messages: Vec<serde_json::Value>,
+    frontiers: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    serde_json::json!({
+        "generation": id,
+        "horizon": 1,
+        "messages": messages,
+        "frontiers": frontiers,
+    })
+}
+
+fn snapshot(messages: Vec<serde_json::Value>) -> Vec<u8> {
+    let frontiers = complete_frontiers(&messages);
+    snapshot_with_frontiers(messages, frontiers)
+}
+
+fn snapshot_with_frontiers(
+    messages: Vec<serde_json::Value>,
+    frontiers: Vec<serde_json::Value>,
+) -> Vec<u8> {
     serde_json::to_vec(&serde_json::json!({
         "stream": "messages",
         "v": 1,
         "id": REQUEST,
         "epoch": EPOCH,
         "limit": 8,
-        "messages": messages,
-        "more": more,
+        "generation": generation(1, messages, frontiers),
     }))
     .expect("message snapshot serializes")
 }
 
-fn live(message: serde_json::Value) -> Vec<u8> {
+fn live(id: u64, message: serde_json::Value) -> Vec<u8> {
+    let frontiers = complete_frontiers(std::slice::from_ref(&message));
     serde_json::to_vec(&serde_json::json!({
-        "stream": "message",
+        "stream": "message-generation",
         "v": 1,
         "id": REQUEST,
         "epoch": EPOCH,
-        "message": message,
+        "generation": generation(id, vec![message], frontiers),
     }))
-    .expect("live message serializes")
+    .expect("live message generation serializes")
 }
 
 fn card_bytes(runtime: &CanvasRuntime) -> Vec<u8> {
@@ -56,6 +87,63 @@ fn card_bytes(runtime: &CanvasRuntime) -> Vec<u8> {
         .map(|message| message.as_ref())
         .collect::<Vec<_>>();
     serde_json::to_vec(&messages).expect("cards serialize")
+}
+
+struct MixedMessages {
+    older: serde_json::Value,
+    boundary: serde_json::Value,
+    media: serde_json::Value,
+    command: serde_json::Value,
+    second_provider: serde_json::Value,
+}
+
+fn mixed_messages() -> MixedMessages {
+    MixedMessages {
+        older: serde_json::json!({
+            "lane": LANE,
+            "author": LANE_CAPABILITY,
+            "locus": {"member": 1, "offset": 10, "length": 20, "event": 0},
+            "authored": "2030-04-12T18:44:09.271Z",
+            "text": "older prose",
+        }),
+        boundary: serde_json::json!({
+            "lane": LANE,
+            "author": LANE_CAPABILITY,
+            "locus": {"member": 1, "offset": 30, "length": 20, "event": 0},
+            "authored": "2030-04-12T18:44:10.271Z",
+            "activity": "compaction",
+            "text": "Compacted",
+            "unavailable_tool_terminals": ["Bash"],
+        }),
+        media: serde_json::json!({
+            "lane": LANE,
+            "author": LANE_CAPABILITY,
+            "locus": {"member": 1, "offset": 50, "length": 20, "event": 1},
+            "authored": "2030-04-12T18:44:11.271Z",
+            "activity": "tool",
+            "text": "view_image: capture.png succeeded",
+            "media": [{
+                "name": "capture.png",
+                "content_type": "image/png",
+                "data_url": "data:image/png;base64,iVBORw0KGgo=",
+            }],
+        }),
+        command: serde_json::json!({
+            "lane": LANE,
+            "author": LANE_CAPABILITY,
+            "locus": {"member": 1, "offset": 50, "length": 20, "event": 0},
+            "authored": "2030-04-12T18:44:10.771Z",
+            "activity": "tool",
+            "text": "view_image: capture.png",
+        }),
+        second_provider: serde_json::json!({
+            "lane": SECOND_LANE,
+            "author": SECRET_LANE_CAPABILITY,
+            "locus": {"member": 1, "offset": 15, "length": 20, "event": 0},
+            "authored": "2030-04-12T18:44:12.271Z",
+            "text": "second provider prose",
+        }),
+    }
 }
 
 #[test]
@@ -80,13 +168,15 @@ fn revised_message_snapshot_preserves_unchanged_allocation_identity() {
         "text": "second author",
     });
     let bounded_snapshot = |first, second| {
+        let messages = vec![first, second];
+        let frontiers = complete_frontiers(&messages);
         serde_json::to_vec(&serde_json::json!({
             "stream": "messages",
             "v": 1,
             "id": REQUEST,
             "epoch": EPOCH,
             "limit": 1,
-            "messages": [first, second],
+            "generation": generation(1, messages, frontiers),
         }))
         .expect("message snapshot serializes")
     };
@@ -101,7 +191,7 @@ fn revised_message_snapshot_preserves_unchanged_allocation_identity() {
     revised_second["text"] = serde_json::json!("second author revised");
     assert!(
         runtime
-            .apply_stream_frame(&admitted(&session, &live(revised_second.clone())))
+            .apply_stream_frame(&admitted(&session, &live(2, revised_second.clone())))
             .changed(),
         "a live content revision invalidates the owning card"
     );
@@ -110,7 +200,7 @@ fn revised_message_snapshot_preserves_unchanged_allocation_identity() {
     let retained_revision = Rc::clone(&runtime.messages()[1]);
     assert!(
         !runtime
-            .apply_stream_frame(&admitted(&session, &live(revised_second)))
+            .apply_stream_frame(&admitted(&session, &live(3, revised_second)))
             .changed(),
         "replaying the revision is idempotent"
     );
@@ -146,7 +236,7 @@ fn final_answer_revision_invalidates_the_ordinary_card() {
     final_answer["final_answer"] = serde_json::json!(true);
     assert!(
         runtime
-            .apply_stream_frame(&admitted(&session, &live(final_answer.clone())))
+            .apply_stream_frame(&admitted(&session, &live(2, final_answer.clone())))
             .changed(),
         "a final-answer revision invalidates the formerly ordinary card"
     );
@@ -156,7 +246,7 @@ fn final_answer_revision_invalidates_the_ordinary_card() {
 
     assert!(
         !runtime
-            .apply_stream_frame(&admitted(&session, &live(final_answer)))
+            .apply_stream_frame(&admitted(&session, &live(3, final_answer)))
             .changed(),
         "replaying the final-answer revision is idempotent"
     );
@@ -169,50 +259,13 @@ fn mixed_cards_reduce_identically_across_snapshot_history_and_replay() {
     let accepted = session
         .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
         .expect("acceptance is admitted");
-    let older = serde_json::json!({
-        "lane": LANE,
-        "author": LANE_CAPABILITY,
-        "locus": {"member": 1, "offset": 10, "length": 20, "event": 0},
-        "authored": "2030-04-12T18:44:09.271Z",
-        "text": "older prose",
-    });
-    let boundary = serde_json::json!({
-        "lane": LANE,
-        "author": LANE_CAPABILITY,
-        "locus": {"member": 1, "offset": 30, "length": 20, "event": 0},
-        "authored": "2030-04-12T18:44:10.271Z",
-        "activity": "compaction",
-        "text": "Compacted",
-        "unavailable_tool_terminals": ["Bash"],
-    });
-    let media = serde_json::json!({
-        "lane": LANE,
-        "author": LANE_CAPABILITY,
-        "locus": {"member": 1, "offset": 50, "length": 20, "event": 1},
-        "authored": "2030-04-12T18:44:11.271Z",
-        "activity": "tool",
-        "text": "view_image: capture.png succeeded",
-        "media": [{
-            "name": "capture.png",
-            "content_type": "image/png",
-            "data_url": "data:image/png;base64,iVBORw0KGgo=",
-        }],
-    });
-    let command = serde_json::json!({
-        "lane": LANE,
-        "author": LANE_CAPABILITY,
-        "locus": {"member": 1, "offset": 50, "length": 20, "event": 0},
-        "authored": "2030-04-12T18:44:10.771Z",
-        "activity": "tool",
-        "text": "view_image: capture.png",
-    });
-    let second_provider = serde_json::json!({
-        "lane": SECOND_LANE,
-        "author": SECRET_LANE_CAPABILITY,
-        "locus": {"member": 1, "offset": 15, "length": 20, "event": 0},
-        "authored": "2030-04-12T18:44:12.271Z",
-        "text": "second provider prose",
-    });
+    let MixedMessages {
+        older,
+        boundary,
+        media,
+        command,
+        second_provider,
+    } = mixed_messages();
 
     let mut one_shot = CanvasRuntime::new(&accepted);
     one_shot.apply_stream(&admitted(
@@ -229,24 +282,38 @@ fn mixed_cards_reduce_identically_across_snapshot_history_and_replay() {
     let mut staged = CanvasRuntime::new(&accepted);
     staged.apply_stream(&admitted(
         &session,
-        &snapshot_with_more(
+        &snapshot_with_frontiers(
             vec![second_provider.clone(), media.clone(), command.clone()],
-            vec![serde_json::json!({
-                "lane": LANE,
-                "before": {"member": 1, "offset": 50, "length": 20, "event": 1},
-            })],
+            vec![
+                serde_json::json!({
+                    "lane": LANE,
+                    "state": "truncated",
+                    "before": {"member": 1, "offset": 50, "length": 20, "event": 1},
+                }),
+                serde_json::json!({
+                    "lane": SECOND_LANE,
+                    "state": "complete",
+                }),
+            ],
         ),
     ));
     let retained_media = Rc::clone(&staged.messages()[0]);
+    let requested = serde_json::json!({
+        "generation": 1,
+        "lane": LANE,
+        "before": {"member": 1, "offset": 50, "length": 20, "event": 1},
+    });
     let history = serde_json::to_vec(&serde_json::json!({
         "stream": "message-history",
         "v": 1,
         "id": REQUEST,
         "epoch": EPOCH,
-        "lane": LANE,
-        "before": {"member": 1, "offset": 50, "length": 20, "event": 1},
-        "more": false,
-        "messages": [boundary, older],
+        "requested": [requested],
+        "generation": generation(
+            1,
+            vec![older, boundary],
+            vec![serde_json::json!({"lane": LANE, "state": "complete"})],
+        ),
     }))
     .expect("message history serializes");
     staged.apply_stream(&admitted(&session, &history));
@@ -256,19 +323,19 @@ fn mixed_cards_reduce_identically_across_snapshot_history_and_replay() {
     );
     assert!(
         !staged
-            .apply_stream_frame(&admitted(&session, &live(command)))
+            .apply_stream_frame(&admitted(&session, &live(2, command)))
             .changed(),
         "replayed tool commands remain activity rather than merging into media cards"
     );
     assert!(
         !staged
-            .apply_stream_frame(&admitted(&session, &live(media)))
+            .apply_stream_frame(&admitted(&session, &live(3, media)))
             .changed(),
         "replayed media does not duplicate or invalidate its card"
     );
     assert!(
         !staged
-            .apply_stream_frame(&admitted(&session, &live(second_provider)))
+            .apply_stream_frame(&admitted(&session, &live(4, second_provider)))
             .changed(),
         "replayed prose does not duplicate or invalidate its card"
     );

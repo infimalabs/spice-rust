@@ -59,13 +59,11 @@ pub struct MessageLocus {
 }
 
 /// One independently pageable lane-local transcript frontier.
-///
-/// An absent `before` names the newest durable page for a lane whose cold
-/// snapshot retained no visible card. Once a page yields a card, subsequent
-/// requests carry that card's exact locus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageHistoryCursor {
+    /// Transcript generation whose retained edge owns this cursor.
+    pub generation: u64,
     /// Independently paged member lane.
     pub lane: CanonicalUuid,
     /// Oldest card already admitted, or `None` for a cold bootstrap.
@@ -75,6 +73,49 @@ pub struct MessageHistoryCursor {
         deserialize_with = "crate::optional::present"
     )]
     pub before: Option<MessageLocus>,
+}
+
+/// Availability of one lane at a transcript generation frontier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum TranscriptLaneState {
+    /// Every durable card through the shared horizon is present.
+    Complete,
+    /// Older durable cards remain behind this lane's cursor.
+    Truncated,
+    /// The bounded source walk could not hydrate this lane.
+    Unavailable,
+}
+
+/// Exact state of one current lane in a transcript generation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptLaneFrontier {
+    /// Current member lane.
+    pub lane: CanonicalUuid,
+    /// Hydration state through the generation's shared horizon.
+    pub state: TranscriptLaneState,
+    /// Oldest admitted card when [`TranscriptLaneState::Truncated`].
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub before: Option<MessageLocus>,
+}
+
+/// One atomic transcript publication through a shared durable horizon.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TranscriptGeneration {
+    /// Monotonic identity inside the resident epoch.
+    pub generation: u64,
+    /// Durable journal frontier observed after this cohort was reconciled.
+    pub horizon: Seq,
+    /// Changed or snapshotted cards in total display chronology.
+    pub messages: Vec<AgentMessage>,
+    /// Explicit state for every lane covered by this publication.
+    pub frontiers: Vec<TranscriptLaneFrontier>,
 }
 
 /// Visible kind of one agent-authored transcript activity.
@@ -668,7 +709,7 @@ pub enum StreamRequest {
         /// First causal position for this page.
         cursor: StreamCursor,
     },
-    /// Fetch the retained page immediately older than one lane-local message.
+    /// Fetch one coordinated interval behind explicit lane frontiers.
     MessageHistory {
         /// Current wire version.
         v: WireVersion,
@@ -676,16 +717,8 @@ pub enum StreamRequest {
         id: CanonicalUuid,
         /// Resident generation being addressed.
         epoch: CanonicalUuid,
-        /// Independently paged member lane.
-        lane: CanonicalUuid,
-        /// Oldest message this browser has already admitted, or absent when
-        /// bootstrapping a lane with no cold-snapshot card.
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "crate::optional::present"
-        )]
-        before: Option<MessageLocus>,
+        /// Non-empty, duplicate-free lane frontiers from one transcript generation.
+        frontiers: Vec<MessageHistoryCursor>,
     },
     /// Ask the resident to prove it is still reading this socket.
     ///
@@ -1060,28 +1093,18 @@ pub enum StreamFrame {
         epoch: CanonicalUuid,
         /// Maximum number of newest visible cards retained for each lane by this generation.
         limit: u32,
-        messages: Vec<AgentMessage>,
-        /// Independently pageable member-local history frontiers.
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        more: Vec<MessageHistoryCursor>,
+        /// Atomic snapshot and explicit current-lane frontiers.
+        generation: TranscriptGeneration,
     },
-    /// One lane-local retained history page merged behind the current snapshot.
+    /// One coordinated retained-history interval.
     MessageHistory {
         v: WireVersion,
         id: CanonicalUuid,
         epoch: CanonicalUuid,
-        lane: CanonicalUuid,
-        /// Cursor this page was requested immediately before; absent for a
-        /// newest-page bootstrap.
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "crate::optional::present"
-        )]
-        before: Option<MessageLocus>,
-        /// Whether another older page remains after this one.
-        more: bool,
-        messages: Vec<AgentMessage>,
+        /// Exact frontiers this interval extends.
+        requested: Vec<MessageHistoryCursor>,
+        /// Atomic globally ordered interval and next requested-lane frontiers.
+        generation: TranscriptGeneration,
     },
     /// One causal thread page.
     Thread {
@@ -1097,12 +1120,12 @@ pub enum StreamFrame {
         epoch: CanonicalUuid,
         fact: StreamFact,
     },
-    /// One later agent-authored transcript activity.
-    Message {
+    /// One later atomic transcript cohort.
+    MessageGeneration {
         v: WireVersion,
         id: CanonicalUuid,
         epoch: CanonicalUuid,
-        message: AgentMessage,
+        generation: TranscriptGeneration,
     },
     /// The resident read a [`StreamRequest::Ping`] and answered on that socket.
     ///

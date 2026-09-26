@@ -260,13 +260,10 @@ fn render_compose(
 fn history_target(
     runtime: &CanvasRuntime,
     lane: CanonicalUuid,
-) -> Option<(CanonicalUuid, (Option<wire::MessageLocus>, u64))> {
-    runtime.message_history_target(lane).map(|cursor| {
-        (
-            lane,
-            (cursor.before, runtime.message_history_completion(lane)),
-        )
-    })
+) -> Option<(CanonicalUuid, (wire::MessageHistoryCursor, u64))> {
+    runtime
+        .message_history_target(lane)
+        .map(|cursor| (lane, (cursor, runtime.message_history_completion(lane))))
 }
 
 fn broadcast_targets(
@@ -377,7 +374,7 @@ fn render_activity(
 
 struct HistoryPaging<'a> {
     sender: &'a SenderHandle,
-    targets: BTreeMap<CanonicalUuid, (Option<wire::MessageLocus>, u64)>,
+    targets: BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
     revision: u64,
 }
 

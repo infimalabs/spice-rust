@@ -8,6 +8,19 @@ fn message_offsets(messages: &[wire::AgentMessage]) -> Vec<u64> {
         .collect()
 }
 
+fn history_cursors(generation: &wire::TranscriptGeneration) -> Vec<wire::MessageHistoryCursor> {
+    generation
+        .frontiers
+        .iter()
+        .filter(|frontier| frontier.state == wire::TranscriptLaneState::Truncated)
+        .map(|frontier| wire::MessageHistoryCursor {
+            generation: generation.generation,
+            lane: frontier.lane,
+            before: frontier.before,
+        })
+        .collect()
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn authenticated_socket_pages_member_history_before_the_initial_window() {
     let app = TestApp::new();
@@ -54,20 +67,21 @@ async fn authenticated_socket_pages_member_history_before_the_initial_window() {
     )
     .await;
     let initial = stream_frame(&mut socket).await;
-    let wire::StreamFrame::Messages { messages, more, .. } = initial else {
+    let wire::StreamFrame::Messages { generation, .. } = initial else {
         panic!("expected bounded message snapshot")
     };
+    let mut cursor = history_cursors(&generation)
+        .into_iter()
+        .next()
+        .expect("lane advertises older history");
+    assert_eq!(cursor.lane, identity(0xe5));
+    assert_eq!(cursor.before, Some(generation.messages[0].locus));
     assert_eq!(
-        more,
-        [wire::MessageHistoryCursor {
-            lane: identity(0xe5),
-            before: Some(messages[0].locus),
-        }]
+        message_offsets(&generation.messages),
+        (55..80).collect::<Vec<_>>()
     );
-    assert_eq!(message_offsets(&messages), (55..80).collect::<Vec<_>>());
 
-    let mut before = Some(messages[0].locus);
-    let mut recovered = messages;
+    let mut recovered = generation.messages;
     for (request, expected, has_more) in
         [(identity(0xd1), 5..55, true), (identity(0xd2), 0..5, false)]
     {
@@ -77,30 +91,30 @@ async fn authenticated_socket_pages_member_history_before_the_initial_window() {
                 v: wire::WireVersion::CURRENT,
                 id: request,
                 epoch: epoch(),
-                lane: identity(0xe5),
-                before,
+                frontiers: vec![cursor],
             },
         )
         .await;
         let page = stream_frame(&mut socket).await;
         let wire::StreamFrame::MessageHistory {
             id,
-            lane,
-            before: answered_before,
-            more,
-            messages,
+            requested,
+            generation,
             ..
         } = page
         else {
             panic!("expected member history page")
         };
         assert_eq!(id, request);
-        assert_eq!(lane, identity(0xe5));
-        assert_eq!(answered_before, before);
-        assert_eq!(more, has_more);
-        assert_eq!(message_offsets(&messages), expected.collect::<Vec<_>>());
-        before = Some(messages[0].locus);
-        recovered.splice(0..0, messages);
+        assert_eq!(requested, [cursor]);
+        assert_eq!(
+            message_offsets(&generation.messages),
+            expected.collect::<Vec<_>>()
+        );
+        let next = generation.frontiers[0];
+        assert_eq!(next.state == wire::TranscriptLaneState::Truncated, has_more);
+        cursor.before = next.before;
+        recovered.splice(0..0, generation.messages);
     }
     assert_eq!(
         message_offsets(&recovered),
@@ -200,22 +214,25 @@ async fn subscribe_messages(
         },
     )
     .await;
-    let wire::StreamFrame::Messages { more, .. } = stream_frame(&mut socket).await else {
+    let wire::StreamFrame::Messages { generation, .. } = stream_frame(&mut socket).await else {
         panic!("expected bounded message snapshot")
     };
-    (socket, more)
+    (socket, history_cursors(&generation))
 }
 
 /// Ask for the newest history page of the open lane.
-async fn request_history(socket: &mut ClientSocket, id: wire::CanonicalUuid) {
+async fn request_history(
+    socket: &mut ClientSocket,
+    id: wire::CanonicalUuid,
+    cursor: wire::MessageHistoryCursor,
+) {
     send_client(
         socket,
         &wire::StreamRequest::MessageHistory {
             v: wire::WireVersion::CURRENT,
             id,
             epoch: epoch(),
-            lane: identity(0xe5),
-            before: None,
+            frontiers: vec![cursor],
         },
     )
     .await;
@@ -248,38 +265,33 @@ async fn assert_served_during_hold(
             .publish(live.clone())
             .expect("live message publishes")
     );
-    assert!(matches!(
-        stream_frame(watcher).await,
-        wire::StreamFrame::Message { id, message, .. }
-            if id == watch && message == *live
-    ));
+    let wire::StreamFrame::MessageGeneration { id, generation, .. } = stream_frame(watcher).await
+    else {
+        panic!("expected live transcript generation")
+    };
+    assert_eq!(id, watch);
+    assert_eq!(generation.messages.as_slice(), std::slice::from_ref(live));
 }
 
-/// The held page reaches the reader unchanged, then the card published meanwhile.
-async fn assert_held_page_answered(reader: &mut ClientSocket, live: &wire::AgentMessage) {
-    let wire::StreamFrame::MessageHistory {
-        id,
-        lane,
-        before,
-        more,
-        messages,
-        ..
-    } = stream_frame(reader).await
-    else {
-        panic!("expected the held history page")
-    };
-    assert_eq!(id, identity(0xd1));
-    assert_eq!(lane, identity(0xe5));
-    assert_eq!(before, None);
-    assert!(!more);
-    assert_eq!(message_offsets(&messages), [5]);
+/// The held cursor is refused after the live generation crosses its boundary.
+async fn assert_held_page_refused(reader: &mut ClientSocket, live: &wire::AgentMessage) {
+    let frames = [stream_frame(reader).await, stream_frame(reader).await];
     assert!(
-        matches!(
-            stream_frame(reader).await,
-            wire::StreamFrame::Message { id, message, .. }
-                if id == identity(0xd0) && message == *live
-        ),
-        "the live card published during the read follows the answered page",
+        frames.iter().any(|frame| matches!(
+            frame,
+            wire::StreamFrame::Refusal { id, refusal, .. }
+                if *id == identity(0xd1)
+                    && refusal.reason() == "stream::message-generation-stale"
+        )),
+        "the held history cursor is refused at the crossed generation",
+    );
+    assert!(
+        frames.iter().any(|frame| matches!(
+            frame,
+            wire::StreamFrame::MessageGeneration { id, generation, .. }
+                if *id == identity(0xd0) && generation.messages == [live.clone()]
+        )),
+        "the concurrent live generation remains independently deliverable",
     );
 }
 
@@ -317,16 +329,14 @@ async fn held_history_read_leaves_the_runtime_serving_other_sockets() {
         let _ = stopped.await;
     }));
 
-    // The reader asks for the lane bootstrap page and its provider is held.
     let (mut reader, more) = subscribe_messages(address, identity(0xd0)).await;
-    assert_eq!(
-        more,
-        [wire::MessageHistoryCursor {
-            lane: identity(0xe5),
-            before: None,
-        }]
-    );
-    request_history(&mut reader, identity(0xd1)).await;
+    let cursor = more
+        .first()
+        .copied()
+        .expect("open lane advertises its bootstrap frontier");
+    assert_eq!(cursor.lane, identity(0xe5));
+    assert_eq!(cursor.before, None);
+    request_history(&mut reader, identity(0xd1), cursor).await;
     timeout(ASSERTION_DEADLINE, entered)
         .await
         .expect("provider is entered before the deadline")
@@ -337,9 +347,9 @@ async fn held_history_read_leaves_the_runtime_serving_other_sockets() {
     let live = agent_message(0xe7, 90, "published while the read is held");
     assert_served_during_hold(&mut watcher, identity(0xd2), &publisher, &live).await;
 
-    // Releasing the latch lets the held page reach the reader unchanged.
+    // Releasing the latch makes the crossed history generation refuse strictly.
     provider.release();
-    assert_held_page_answered(&mut reader, &live).await;
+    assert_held_page_refused(&mut reader, &live).await;
 
     shutdown.send(()).expect("shutdown signals");
     for socket in [&mut reader, &mut watcher] {

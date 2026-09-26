@@ -106,8 +106,9 @@ pub use reply::{
 pub use stream::{
     AgentActivityKind, AgentMessage, AgentMessageBadges, AutomaticSpeech, AutomaticSpeechKind,
     MESSAGE_FLOOR, MessageBoundary, MessageHistoryCursor, MessageLocus, OperatorDirection,
-    StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest, TrustView,
-    ViewSubject, superseded_boundaries,
+    StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest,
+    TranscriptGeneration, TranscriptLaneFrontier, TranscriptLaneState, TrustView, ViewSubject,
+    superseded_boundaries,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,

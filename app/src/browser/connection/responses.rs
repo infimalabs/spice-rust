@@ -34,8 +34,10 @@ fn handle_stream_frame(
             .ok_or_else(|| "stream frame arrived before runtime acceptance".to_owned())?;
         let application = runtime.apply_stream_frame(&admitted);
         let changed = application.changed();
-        if changed && let wire::StreamFrame::Message { message, .. } = admitted.get() {
-            stale.invalidate_quiet_lane(runtime.lanes(), message.lane);
+        if changed && let wire::StreamFrame::MessageGeneration { generation, .. } = admitted.get() {
+            for message in &generation.messages {
+                stale.invalidate_quiet_lane(runtime.lanes(), message.lane);
+            }
         }
         stale.retain_task_details(|task| changed && runtime.invalidate_task_detail(task));
         stale.resolve_task_relations(runtime, changed);

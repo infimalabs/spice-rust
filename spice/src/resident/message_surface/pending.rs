@@ -78,12 +78,46 @@ impl PendingPresentations {
     }
 }
 
+pub(in crate::resident) trait PresentationPublisher {
+    fn revise_presentation(
+        &self,
+        lane: CanonicalUuid,
+        locus: wire::MessageLocus,
+        text: String,
+        badges: wire::AgentMessageBadges,
+    ) -> Result<bool, canvas::stream::MessagePublishError>;
+}
+
+impl PresentationPublisher for canvas::stream::MessagePublisher {
+    fn revise_presentation(
+        &self,
+        lane: CanonicalUuid,
+        locus: wire::MessageLocus,
+        text: String,
+        badges: wire::AgentMessageBadges,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        Self::revise_presentation(self, lane, locus, text, badges)
+    }
+}
+
+impl PresentationPublisher for canvas::stream::MessageBatch {
+    fn revise_presentation(
+        &self,
+        lane: CanonicalUuid,
+        locus: wire::MessageLocus,
+        text: String,
+        badges: wire::AgentMessageBadges,
+    ) -> Result<bool, canvas::stream::MessagePublishError> {
+        Self::revise_presentation(self, lane, locus, text, badges)
+    }
+}
+
 /// Present again every retained card whose spoken acknowledgement the journal
 /// has since retired, so the card follows the steer::acked fact rather than
 /// the prose that anticipated it.
 pub(in crate::resident) fn settle_pending_presentations(
     bus: &Bus,
-    publisher: &canvas::stream::MessagePublisher,
+    publisher: &impl PresentationPublisher,
     state: &Mutex<MessageState>,
 ) -> CommandResult<()> {
     // Detach exactly this batch before crossing the writer queue. New cards
@@ -105,7 +139,7 @@ pub(in crate::resident) fn settle_pending_presentations(
 }
 
 fn settle_with_directives(
-    publisher: &canvas::stream::MessagePublisher,
+    publisher: &impl PresentationPublisher,
     state: &mut MessageState,
     directives: &PresentationDirectives,
 ) -> CommandResult<()> {
@@ -134,7 +168,7 @@ fn settle_with_directives(
 /// The prose state the turn end revises to final follows the same text and
 /// badges, so the terminal revision still names the card retention holds.
 fn present_again(
-    publisher: &canvas::stream::MessagePublisher,
+    publisher: &impl PresentationPublisher,
     state: &mut MessageState,
     card: &PendingPresentation,
     directives: &PresentationDirectives,

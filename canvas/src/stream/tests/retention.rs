@@ -7,6 +7,19 @@ const QUIET_HISTORY_LENGTH: u64 = 40;
 const FIRST_RETAINED_BOUNDARY: u64 = 80;
 const SECOND_RETAINED_BOUNDARY: u64 = 220;
 
+fn history_cursors(generation: &wire::TranscriptGeneration) -> Vec<wire::MessageHistoryCursor> {
+    generation
+        .frontiers
+        .iter()
+        .filter(|frontier| frontier.state == wire::TranscriptLaneState::Truncated)
+        .map(|frontier| wire::MessageHistoryCursor {
+            generation: generation.generation,
+            lane: frontier.lane,
+            before: frontier.before,
+        })
+        .collect()
+}
+
 fn complete_lane_history(
     source: &Source,
     lane: wire::CanonicalUuid,
@@ -18,43 +31,109 @@ fn complete_lane_history(
         .filter(|message| message.lane == lane)
         .cloned()
         .collect::<Vec<_>>();
-    let mut before = advertised_more
+    let mut cursor = advertised_more
         .iter()
         .find(|cursor| cursor.lane == lane)
-        .map(|cursor| cursor.before);
-    let mut more = before.is_some();
-    while more {
-        let requested_before = before.expect("paged lane has a frontier");
+        .copied();
+    while let Some(requested) = cursor {
         let request = StreamRequest::MessageHistory {
             v: WireVersion::CURRENT,
             id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
             epoch: epoch(),
-            lane,
-            before: requested_before,
+            frontiers: vec![requested],
         };
         let frame = source
             .message_history(&accepted(Actor::Operator), &request)
             .expect("older message page answers");
         let StreamFrame::MessageHistory {
-            lane: answered,
-            before: answered_before,
-            messages: older,
-            more: page_more,
+            requested: answered,
+            generation,
             ..
         } = frame
         else {
             panic!("expected older message page")
         };
-        assert_eq!(answered, lane);
-        assert_eq!(answered_before, requested_before);
-        assert!(older.iter().all(|message| message.lane == lane));
-        if let Some(oldest) = older.first() {
-            before = Some(Some(oldest.locus));
-        }
-        messages.splice(0..0, older);
-        more = page_more;
+        assert_eq!(answered, [requested]);
+        assert!(
+            generation
+                .messages
+                .iter()
+                .all(|message| message.lane == lane)
+        );
+        messages.splice(0..0, generation.messages);
+        cursor = generation
+            .frontiers
+            .iter()
+            .find(|frontier| {
+                frontier.lane == lane && frontier.state == wire::TranscriptLaneState::Truncated
+            })
+            .map(|frontier| wire::MessageHistoryCursor {
+                generation: generation.generation,
+                lane,
+                before: frontier.before,
+            });
     }
     messages
+}
+
+#[test]
+fn one_batch_publishes_one_sorted_generation_with_every_lane_frontier() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    let first_lane = message(0xe5, 1).lane;
+    let second_lane = message(0xe6, 1).lane;
+    let unavailable_lane = message(0xe7, 1).lane;
+    publisher
+        .set_lane_availability(
+            [first_lane, second_lane, unavailable_lane],
+            [first_lane, second_lane],
+        )
+        .expect("startup availability records");
+    let mut updates = source.subscribe_messages();
+
+    let second = message(0xe6, 2);
+    let mut first = message(0xe5, 1);
+    first.final_answer = true;
+    let batch = publisher.batch().expect("batch begins");
+    batch.publish(second.clone()).expect("later message stages");
+    batch
+        .publish(message(0xe5, 1))
+        .expect("earlier message stages");
+    batch
+        .revise_final(first.clone())
+        .expect("terminal revision stages");
+    assert!(batch.commit().expect("batch commits"));
+
+    let generation = updates.try_recv().expect("one generation broadcasts");
+    assert_eq!(generation.generation, 1);
+    assert_eq!(generation.messages, [first, second]);
+    assert!(
+        generation
+            .messages
+            .windows(2)
+            .all(|pair| pair[0].chronology_key() < pair[1].chronology_key())
+    );
+    assert_eq!(
+        generation
+            .frontiers
+            .iter()
+            .map(|frontier| (frontier.lane, frontier.state))
+            .collect::<Vec<_>>(),
+        [
+            (first_lane, wire::TranscriptLaneState::Complete),
+            (second_lane, wire::TranscriptLaneState::Complete),
+            (unavailable_lane, wire::TranscriptLaneState::Unavailable),
+        ],
+    );
+    assert_eq!(
+        updates.try_recv(),
+        Err(tokio::sync::broadcast::error::TryRecvError::Empty),
+        "the cohort has no partial publication",
+    );
+
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
 }
 
 #[test]
@@ -79,10 +158,8 @@ fn terminal_revision_replaces_one_retained_message_and_broadcasts_the_change() {
             .revise_final(terminal.clone())
             .expect("terminal revision publishes")
     );
-    assert_eq!(
-        updates.try_recv().expect("terminal revision broadcasts"),
-        terminal
-    );
+    let generation = updates.try_recv().expect("terminal revision broadcasts");
+    assert_eq!(generation.messages, [terminal.clone()]);
     assert!(
         !publisher
             .revise_final(terminal.clone())
@@ -95,10 +172,10 @@ fn terminal_revision_replaces_one_retained_message_and_broadcasts_the_change() {
             &request(0xc4, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
-    assert_eq!(messages, &[terminal.clone()]);
+    assert_eq!(generation.messages, [terminal.clone()]);
 
     let mut conflicting = terminal;
     conflicting.text = "different authored prose".to_owned();
@@ -165,12 +242,12 @@ fn a_preserved_compaction_replaces_the_announcement_in_either_arrival_order() {
                 &request(0xc4, vec![ViewSubject::Messages], None),
             )
             .expect("message subscription begins");
-        let StreamFrame::Messages { messages, .. } = &frames[0] else {
+        let StreamFrame::Messages { generation, .. } = &frames[0] else {
             panic!("expected retained message snapshot")
         };
         assert_eq!(
-            messages,
-            &[preserved],
+            generation.messages,
+            [preserved],
             "one compaction is one boundary, and it is the vendor's own record",
         );
         drop(source);
@@ -219,9 +296,10 @@ fn presentation_revision_moves_only_text_and_badges_and_keeps_the_final_state() 
     let mut expected = terminal;
     expected.text = retired_text.clone();
     expected.badges = retired_badges;
+    let generation = updates.try_recv().expect("retired presentation broadcasts");
     assert_eq!(
-        updates.try_recv().expect("retired presentation broadcasts"),
-        expected,
+        generation.messages,
+        [expected.clone()],
         "the final state the card earned survives its re-presentation"
     );
     assert!(
@@ -248,10 +326,10 @@ fn presentation_revision_moves_only_text_and_badges_and_keeps_the_final_state() 
             &request(0xc4, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
-    assert_eq!(messages, &[expected]);
+    assert_eq!(generation.messages, [expected]);
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
@@ -282,14 +360,13 @@ fn retained_message_capacity_is_independent_for_each_lane() {
         )
         .expect("message subscription begins");
     let StreamFrame::Messages {
-        limit,
-        messages,
-        more,
-        ..
+        limit, generation, ..
     } = &frames[0]
     else {
         panic!("expected retained message snapshot")
     };
+    let messages = &generation.messages;
+    let more = history_cursors(generation);
     assert_eq!(*limit as usize, MESSAGE_CAPACITY);
     assert_eq!(messages.len(), wire::MESSAGE_FLOOR * 2);
     assert_eq!(more.len(), 2);
@@ -303,7 +380,7 @@ fn retained_message_capacity_is_independent_for_each_lane() {
             25
         );
         assert_eq!(
-            complete_lane_history(&source, lane, messages, more).len(),
+            complete_lane_history(&source, lane, messages, &more).len(),
             256
         );
     }
@@ -348,16 +425,15 @@ fn retained_message_capacity_starts_at_the_oldest_complete_compaction_window() {
         )
         .expect("message subscription begins");
     let StreamFrame::Messages {
-        limit,
-        messages,
-        more,
-        ..
+        limit, generation, ..
     } = &frames[0]
     else {
         panic!("expected retained message snapshot")
     };
+    let messages = &generation.messages;
+    let more = history_cursors(generation);
     assert_eq!(*limit as usize, MESSAGE_CAPACITY);
-    let busy = complete_lane_history(&source, busy_lane, messages, more);
+    let busy = complete_lane_history(&source, busy_lane, messages, &more);
     assert_eq!(busy.len(), 220);
     assert_eq!(busy[0].locus.offset, FIRST_RETAINED_BOUNDARY);
     assert_eq!(busy[0].activity, wire::AgentActivityKind::Compaction);
@@ -368,7 +444,7 @@ fn retained_message_capacity_starts_at_the_oldest_complete_compaction_window() {
         HISTORY_LENGTH - 1
     );
     assert_eq!(
-        complete_lane_history(&source, quiet_lane, messages, more)
+        complete_lane_history(&source, quiet_lane, messages, &more)
             .iter()
             .map(|message| message.locus.offset)
             .collect::<Vec<_>>(),
@@ -406,10 +482,12 @@ fn late_session_boundaries_are_inserted_before_retention_selects_its_floor() {
             &request(0xc4, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
-    let retained = complete_lane_history(&source, message(0xe5, 0).lane, messages, more);
+    let more = history_cursors(generation);
+    let retained =
+        complete_lane_history(&source, message(0xe5, 0).lane, &generation.messages, &more);
     assert_eq!(retained[0].locus.offset, FIRST_RETAINED_BOUNDARY);
     assert_eq!(retained[0].activity, wire::AgentActivityKind::Compaction);
     assert_eq!(retained[140].locus.offset, SECOND_RETAINED_BOUNDARY);
@@ -456,6 +534,88 @@ impl MessageHistoryProvider for FixtureHistory {
 }
 
 #[test]
+fn coordinated_history_returns_one_bounded_globally_sorted_lane_interval() {
+    let bus = fixture(1);
+    let source = Source::new(bus.reader(), epoch(), 10);
+    let publisher = source.message_publisher();
+    let lanes = [message(0xe5, 0).lane, message(0xe6, 0).lane];
+    let history = Arc::new(FixtureHistory {
+        messages: [0xe5, 0xe6]
+            .into_iter()
+            .flat_map(|lane| (0..30).map(move |offset| message(lane, offset)))
+            .collect(),
+        page_limit: usize::MAX,
+        reads: AtomicUsize::new(0),
+    });
+    publisher
+        .set_history_provider(history.clone())
+        .expect("history provider installs");
+    publisher
+        .set_history_open(lanes)
+        .expect("both lane histories open");
+    let (_, frames) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Messages], None),
+        )
+        .expect("message subscription begins");
+    let StreamFrame::Messages {
+        generation: initial,
+        ..
+    } = &frames[0]
+    else {
+        panic!("expected retained message snapshot")
+    };
+    let requested = history_cursors(initial);
+    assert_eq!(requested.len(), 2);
+
+    let frame = source
+        .message_history(
+            &accepted(Actor::Operator),
+            &StreamRequest::MessageHistory {
+                v: WireVersion::CURRENT,
+                id: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
+                epoch: epoch(),
+                frontiers: requested.clone(),
+            },
+        )
+        .expect("coordinated history answers");
+    let StreamFrame::MessageHistory {
+        requested: answered,
+        generation,
+        ..
+    } = frame
+    else {
+        panic!("expected coordinated history interval")
+    };
+    assert_eq!(answered, requested);
+    assert_eq!(generation.messages.len(), MESSAGE_HISTORY_PAGE_LIMIT);
+    assert!(
+        generation
+            .messages
+            .windows(2)
+            .all(|pair| pair[0].chronology_key() < pair[1].chronology_key())
+    );
+    for lane in lanes {
+        assert_eq!(
+            generation
+                .messages
+                .iter()
+                .filter(|message| message.lane == lane)
+                .count(),
+            MESSAGE_HISTORY_PAGE_LIMIT / lanes.len(),
+        );
+    }
+    assert!(generation.frontiers.iter().all(|frontier| {
+        frontier.state == wire::TranscriptLaneState::Truncated && frontier.before.is_some()
+    }));
+    assert_eq!(history.reads.load(Ordering::Relaxed), lanes.len());
+
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[test]
 fn cold_readers_page_a_full_cache_without_reading_the_provider() {
     let bus = fixture(1);
     let source = Source::new(bus.reader(), epoch(), 10);
@@ -478,11 +638,13 @@ fn cold_readers_page_a_full_cache_without_reading_the_provider() {
                 &request(reader, vec![ViewSubject::Messages], None),
             )
             .unwrap();
-        let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+        let StreamFrame::Messages { generation, .. } = &frames[0] else {
             panic!("expected initial messages");
         };
+        let more = history_cursors(generation);
         for lane in [0xe5, 0xe6] {
-            let restored = complete_lane_history(&source, message(lane, 0).lane, messages, more);
+            let restored =
+                complete_lane_history(&source, message(lane, 0).lane, &generation.messages, &more);
             assert_eq!(
                 restored
                     .iter()
@@ -522,6 +684,9 @@ fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
         .set_history_provider(history.clone())
         .expect("durable history provider installs");
     publisher
+        .set_history_open([lane])
+        .expect("durable history is advertised");
+    publisher
         .bound_initial_history()
         .expect("startup history is bounded");
     let mut updates = source.subscribe_messages();
@@ -532,20 +697,23 @@ fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
             &request(0xc4, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
+    let messages = &generation.messages;
+    let more = history_cursors(generation);
     assert_eq!(messages.len(), wire::MESSAGE_FLOOR);
     assert_eq!(messages[0].locus.offset, 55);
     assert_eq!(
         more,
         &[wire::MessageHistoryCursor {
+            generation: generation.generation,
             lane,
             before: Some(messages[0].locus),
         }]
     );
 
-    let restored = complete_lane_history(&source, lane, messages, more);
+    let restored = complete_lane_history(&source, lane, messages, &more);
     assert_eq!(
         restored
             .iter()
@@ -565,25 +733,26 @@ fn cold_history_keeps_one_page_and_loads_older_pages_without_live_updates() {
             &request(0xc5, vec![ViewSubject::Messages], None),
         )
         .expect("new reader subscribes after source exhaustion");
-    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected new reader snapshot");
     };
+    let more = history_cursors(generation);
     assert_eq!(
-        complete_lane_history(&source, lane, messages, more),
+        complete_lane_history(&source, lane, &generation.messages, &more),
         restored,
         "each reader traverses the same retained history, including current presentation",
     );
     assert_eq!(
         history.reads.load(Ordering::Relaxed),
-        2,
-        "a new reader does not reopen the exhausted provider",
+        4,
+        "each generation-bound reader walks its own source interval",
     );
     drop(source);
     bus.shutdown().expect("bus shuts down");
 }
 
 #[test]
-fn short_provider_pages_continue_until_the_actual_lane_capacity_is_reached() {
+fn short_provider_pages_continue_until_source_complete_with_bounded_reads() {
     let bus = fixture(1);
     let source = Source::new(bus.reader(), epoch(), 10);
     let publisher = source.message_publisher();
@@ -605,6 +774,9 @@ fn short_provider_pages_continue_until_the_actual_lane_capacity_is_reached() {
         .set_history_provider(history.clone())
         .expect("durable history provider installs");
     publisher
+        .set_history_open([lane])
+        .expect("durable history is advertised");
+    publisher
         .bound_initial_history()
         .expect("startup history is bounded");
 
@@ -614,21 +786,22 @@ fn short_provider_pages_continue_until_the_actual_lane_capacity_is_reached() {
             &request(0xc4, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
-    let restored = complete_lane_history(&source, lane, messages, more);
+    let more = history_cursors(generation);
+    let restored = complete_lane_history(&source, lane, &generation.messages, &more);
     assert_eq!(
         restored
             .iter()
             .map(|message| message.locus.offset)
             .collect::<Vec<_>>(),
-        (HISTORY_LENGTH - MESSAGE_CAPACITY as u64..HISTORY_LENGTH).collect::<Vec<_>>(),
+        (0..HISTORY_LENGTH).collect::<Vec<_>>(),
     );
     assert_eq!(
         history.reads.load(Ordering::Relaxed),
-        14,
-        "a short read with remaining capacity keeps the durable cursor open",
+        17,
+        "each bounded short read advances one generation-scoped source cursor",
     );
 
     drop(source);
@@ -662,13 +835,22 @@ fn explicit_history_hint_bootstraps_a_lane_without_an_initial_card() {
             &request(0xc4, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
+    let messages = &generation.messages;
+    let more = history_cursors(generation);
     assert!(messages.is_empty());
-    assert_eq!(more, &[wire::MessageHistoryCursor { lane, before: None }]);
+    assert_eq!(
+        more,
+        [wire::MessageHistoryCursor {
+            generation: generation.generation,
+            lane,
+            before: None,
+        }]
+    );
 
-    let restored = complete_lane_history(&source, lane, messages, more);
+    let restored = complete_lane_history(&source, lane, messages, &more);
     assert_eq!(
         restored
             .iter()
@@ -711,9 +893,11 @@ fn cold_history_keeps_its_floor_across_a_compaction_inside_the_initial_window() 
             &request(0xc5, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
+    let messages = &generation.messages;
+    let more = history_cursors(generation);
     assert_eq!(
         messages
             .iter()
@@ -730,77 +914,6 @@ fn cold_history_keeps_its_floor_across_a_compaction_inside_the_initial_window() 
         wire::MESSAGE_FLOOR,
     );
     assert!(more.is_empty());
-
-    drop(source);
-    bus.shutdown().expect("bus shuts down");
-}
-
-#[test]
-fn a_full_page_that_exhausts_capacity_closes_after_compaction_trimming() {
-    let bus = fixture(1);
-    let source = Source::new(bus.reader(), epoch(), 10);
-    let publisher = source.message_publisher();
-    let lane = message(0xe5, 0).lane;
-    let mut durable = (0..300)
-        .map(|offset| message(0xe5, offset))
-        .collect::<Vec<_>>();
-    durable[80].activity = wire::AgentActivityKind::Compaction;
-    for activity in &durable[244..] {
-        publisher
-            .publish(activity.clone())
-            .expect("retained history publishes");
-    }
-    let history = Arc::new(FixtureHistory {
-        messages: durable,
-        page_limit: usize::MAX,
-        reads: AtomicUsize::new(0),
-    });
-    publisher
-        .set_history_provider(history.clone())
-        .expect("durable history provider installs");
-    let mut before = message(0xe5, 244).locus;
-    for page_number in 1..=4 {
-        let page = publisher
-            .feed
-            .history(lane, Some(before))
-            .expect("older message page reads")
-            .expect("retained cursor is known");
-        assert_eq!(page.messages.len(), MESSAGE_HISTORY_PAGE_LIMIT);
-        assert_eq!(page.more, page_number < 4);
-        before = page.messages[0].locus;
-    }
-    assert_eq!(
-        history.reads.load(Ordering::Relaxed),
-        4,
-        "four full pages exhaust the cumulative 256-card budget",
-    );
-    let (_, frames) = source
-        .begin(
-            &accepted(Actor::Operator),
-            &request(0xc5, vec![ViewSubject::Messages], None),
-        )
-        .expect("new reader subscribes after capacity closure");
-    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
-        panic!("expected new reader snapshot");
-    };
-    let restored = complete_lane_history(&source, lane, messages, more);
-    assert_eq!(
-        restored
-            .iter()
-            .map(|message| message.locus.offset)
-            .collect::<Vec<_>>(),
-        (80..300).collect::<Vec<_>>(),
-        "compaction trimming does not make retained pages inaccessible",
-    );
-    let oldest = restored.first().unwrap().locus;
-    let page = publisher.feed.history(lane, Some(oldest)).unwrap().unwrap();
-    assert!(page.messages.is_empty());
-    assert!(!page.more);
-    assert_eq!(
-        history.reads.load(Ordering::Relaxed),
-        4,
-        "space freed by compaction does not reopen the source budget",
-    );
 
     drop(source);
     bus.shutdown().expect("bus shuts down");
@@ -834,9 +947,11 @@ fn retained_tool_status_does_not_consume_visible_lane_capacity() {
             &request(0xc4, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, more, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
+    let messages = &generation.messages;
+    let more = history_cursors(generation);
     assert_eq!(
         messages
             .iter()
@@ -887,9 +1002,10 @@ fn interleaved_markers_do_not_spend_an_agents_message_floor() {
             &request(0xc4, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
+    let messages = &generation.messages;
     assert_eq!(
         messages
             .iter()
@@ -932,9 +1048,10 @@ fn a_fresh_compaction_does_not_evict_an_agents_message_floor() {
             &request(0xc4, vec![ViewSubject::Messages], None),
         )
         .expect("message subscription begins");
-    let StreamFrame::Messages { messages, .. } = &frames[0] else {
+    let StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected retained message snapshot")
     };
+    let messages = &generation.messages;
     assert_eq!(
         messages
             .iter()

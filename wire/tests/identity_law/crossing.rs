@@ -113,10 +113,12 @@ fn cover_history_cursors() {
         "MessageHistoryCursor",
         &[
             MessageHistoryCursor {
+                generation: 1,
                 lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d1"),
                 before: None,
             },
             MessageHistoryCursor {
+                generation: 2,
                 lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163d2"),
                 before: Some(MessageLocus {
                     member: 1,
@@ -951,13 +953,16 @@ fn stream_request_samples(
             v: WireVersion::CURRENT,
             id: first_id,
             epoch,
-            lane: second_id,
-            before: Some(MessageLocus {
-                member: 1,
-                offset: 2,
-                length: 3,
-                event: 4,
-            }),
+            frontiers: vec![MessageHistoryCursor {
+                generation: 7,
+                lane: second_id,
+                before: Some(MessageLocus {
+                    member: 1,
+                    offset: 2,
+                    length: 3,
+                    event: 4,
+                }),
+            }],
         },
     ]
 }
@@ -1014,15 +1019,31 @@ fn stream_data_samples(
             v: WireVersion::CURRENT,
             id: first_id,
             epoch,
-            lane: second_id,
-            before: Some(MessageLocus {
-                member: 5,
-                offset: 6,
-                length: 7,
-                event: 8,
-            }),
-            more: true,
-            messages: vec![history_message],
+            requested: vec![MessageHistoryCursor {
+                generation: 7,
+                lane: second_id,
+                before: Some(MessageLocus {
+                    member: 5,
+                    offset: 6,
+                    length: 7,
+                    event: 8,
+                }),
+            }],
+            generation: wire::TranscriptGeneration {
+                generation: 7,
+                horizon: seq(20),
+                messages: vec![history_message],
+                frontiers: vec![wire::TranscriptLaneFrontier {
+                    lane: second_id,
+                    state: wire::TranscriptLaneState::Truncated,
+                    before: Some(MessageLocus {
+                        member: 5,
+                        offset: 4,
+                        length: 3,
+                        event: 2,
+                    }),
+                }],
+            },
         },
         StreamFrame::Fact {
             v: WireVersion::CURRENT,

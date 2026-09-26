@@ -627,6 +627,8 @@ pub struct CanvasRuntime {
     operator_messages: Vec<OperatorMessage>,
     /// Exact lane-local frontier each independently paged member can extend.
     message_history: BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
+    /// Last transcript generation admitted atomically.
+    message_generation: Option<u64>,
     /// Admitted response completions that re-arm each member-local frontier.
     message_history_completions: BTreeMap<CanonicalUuid, u64>,
     /// A same-scope subscription snapshot merges into retained hydrated cards.
@@ -660,6 +662,7 @@ impl CanvasRuntime {
             message_cards: message_cards::MessageCards::default(),
             operator_messages: Vec::new(),
             message_history: BTreeMap::new(),
+            message_generation: None,
             message_history_completions: BTreeMap::new(),
             message_reconnect_pending: false,
             message_history_revision: 0,

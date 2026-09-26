@@ -132,18 +132,13 @@ impl CanvasRuntime {
                 StreamApplication::new(Vec::new(), false)
             }
             StreamFrame::Messages {
-                limit,
-                messages,
-                more,
-                ..
-            } => self.apply_message_snapshot(*limit as usize, messages, more),
+                limit, generation, ..
+            } => self.apply_message_snapshot(*limit as usize, generation),
             StreamFrame::MessageHistory {
-                lane,
-                before,
-                more,
-                messages,
+                requested,
+                generation,
                 ..
-            } => self.apply_message_history(*lane, *before, messages, *more),
+            } => self.apply_message_history(requested, generation),
             StreamFrame::Fact { fact, .. } => {
                 let operator_changed = self.observe_operator_rows(std::slice::from_ref(fact));
                 let settings_changed = self.observe_settings_rows(std::slice::from_ref(fact));
@@ -163,9 +158,8 @@ impl CanvasRuntime {
                 });
                 StreamApplication::new(Vec::new(), true)
             }
-            StreamFrame::Message { message, .. } => {
-                let changed = self.observe_message(message);
-                StreamApplication::new(Vec::new(), changed)
+            StreamFrame::MessageGeneration { generation, .. } => {
+                self.apply_live_message_generation(generation)
             }
             // Proof the socket answered, and nothing else. It reports no state,
             // so applying it changes none.
@@ -379,21 +373,22 @@ impl CanvasRuntime {
     fn apply_message_snapshot(
         &mut self,
         limit: usize,
-        messages: &[AgentMessage],
-        more: &[wire::MessageHistoryCursor],
+        generation: &wire::TranscriptGeneration,
     ) -> StreamApplication {
-        let next_history = message_history_frontiers(more);
+        let next_history = message_history_frontiers(generation.generation, &generation.frontiers);
         let history_changed = self.message_history != next_history;
         let reconnect = std::mem::take(&mut self.message_reconnect_pending);
         let cards_changed = if reconnect {
-            self.message_cards.reconnect_snapshot(limit, messages)
+            self.message_cards
+                .reconnect_snapshot(limit, &generation.messages)
         } else {
-            self.message_cards.snapshot(limit, messages)
+            self.message_cards.snapshot(limit, &generation.messages)
         };
-        let activities_changed = self.apply_activity_snapshot(limit, messages);
+        let activities_changed = self.apply_activity_snapshot(limit, &generation.messages);
         self.message_history_completions
             .retain(|lane, _| next_history.contains_key(lane));
         self.message_history = next_history;
+        self.message_generation = Some(generation.generation);
         if reconnect {
             self.message_history_revision = self.message_history_revision.saturating_add(1);
         }
@@ -403,45 +398,82 @@ impl CanvasRuntime {
         )
     }
 
+    fn apply_live_message_generation(
+        &mut self,
+        generation: &wire::TranscriptGeneration,
+    ) -> StreamApplication {
+        let Some(expected) = self
+            .message_generation
+            .and_then(|current| current.checked_add(1))
+        else {
+            return StreamApplication::new(vec![StreamDirective::Reconnect], false);
+        };
+        if generation.generation != expected {
+            return StreamApplication::new(vec![StreamDirective::Reconnect], false);
+        }
+        let mut changed = false;
+        for message in &generation.messages {
+            changed |= self.observe_message(message);
+        }
+        let next_history = message_history_frontiers(generation.generation, &generation.frontiers);
+        changed |= self.message_history != next_history;
+        self.message_history = next_history;
+        self.message_generation = Some(generation.generation);
+        StreamApplication::new(Vec::new(), changed)
+    }
+
     fn apply_message_history(
         &mut self,
-        lane: CanonicalUuid,
-        before: Option<MessageLocus>,
-        messages: &[AgentMessage],
-        more: bool,
+        requested: &[wire::MessageHistoryCursor],
+        generation: &wire::TranscriptGeneration,
     ) -> StreamApplication {
-        if self.message_history.get(&lane).map(|cursor| cursor.before) != Some(before) {
+        let requested_lanes = requested
+            .iter()
+            .map(|cursor| cursor.lane)
+            .collect::<BTreeSet<_>>();
+        let invalid_interval = requested_lanes.len() != requested.len()
+            || generation.frontiers.len() != requested.len()
+            || generation.frontiers.iter().any(|frontier| {
+                !requested_lanes.contains(&frontier.lane)
+                    || frontier.state == wire::TranscriptLaneState::Unavailable
+            })
+            || generation
+                .messages
+                .iter()
+                .any(|message| !requested_lanes.contains(&message.lane));
+        if invalid_interval
+            || self.message_generation != Some(generation.generation)
+            || requested
+                .iter()
+                .any(|cursor| self.message_history.get(&cursor.lane) != Some(cursor))
+        {
             return StreamApplication::new(Vec::new(), false);
         }
-        let changed = self
-            .message_cards
-            .merge(messages.iter().filter(|message| message.lane == lane));
-        // Source history advances across records the card projection omits.
-        let next = messages
-            .iter()
-            .filter(|message| message.lane == lane)
-            .min_by_key(|message| message.chronology_key())
-            .map(|message| message.locus)
-            .filter(|next| Some(*next) != before);
-        let previous = self.message_history.get(&lane).copied();
-        if more {
-            self.message_history.insert(
-                lane,
-                wire::MessageHistoryCursor {
-                    lane,
-                    before: next.or(before),
-                },
-            );
-            let completion = self.message_history_completions.entry(lane).or_default();
-            *completion = completion.saturating_add(1);
-        } else {
-            self.message_history.remove(&lane);
-            self.message_history_completions.remove(&lane);
+        let mut changed = self.message_cards.merge(generation.messages.iter());
+        for frontier in &generation.frontiers {
+            let previous = self.message_history.get(&frontier.lane).copied();
+            if frontier.state == wire::TranscriptLaneState::Truncated {
+                self.message_history.insert(
+                    frontier.lane,
+                    wire::MessageHistoryCursor {
+                        generation: generation.generation,
+                        lane: frontier.lane,
+                        before: frontier.before,
+                    },
+                );
+                let completion = self
+                    .message_history_completions
+                    .entry(frontier.lane)
+                    .or_default();
+                *completion = completion.saturating_add(1);
+                changed = true;
+            } else {
+                self.message_history.remove(&frontier.lane);
+                self.message_history_completions.remove(&frontier.lane);
+            }
+            changed |= self.message_history.get(&frontier.lane).copied() != previous;
         }
-        StreamApplication::new(
-            Vec::new(),
-            changed || more || self.message_history.get(&lane).copied() != previous,
-        )
+        StreamApplication::new(Vec::new(), changed)
     }
 
     pub(crate) fn retain_operator_message(
@@ -522,9 +554,23 @@ impl CanvasRuntime {
 }
 
 fn message_history_frontiers(
-    more: &[wire::MessageHistoryCursor],
+    generation: u64,
+    frontiers: &[wire::TranscriptLaneFrontier],
 ) -> BTreeMap<CanonicalUuid, wire::MessageHistoryCursor> {
-    more.iter().map(|cursor| (cursor.lane, *cursor)).collect()
+    frontiers
+        .iter()
+        .filter(|frontier| frontier.state == wire::TranscriptLaneState::Truncated)
+        .map(|frontier| {
+            (
+                frontier.lane,
+                wire::MessageHistoryCursor {
+                    generation,
+                    lane: frontier.lane,
+                    before: frontier.before,
+                },
+            )
+        })
+        .collect()
 }
 
 fn trim_operator_messages(messages: &mut Vec<OperatorMessage>, limit: usize) {

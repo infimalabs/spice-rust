@@ -45,7 +45,8 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
     let message_state = std::sync::Mutex::new(MessageState::default());
     let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");
     let steering = steer::Config::default();
-    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
+    let generation = publisher.batch().expect("wake generation begins");
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &generation);
 
     accept_capture_record(
         &bus,
@@ -58,7 +59,15 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
     )
     .expect("the surviving notice is accepted");
 
-    let presented = std::iter::from_fn(|| updates.try_recv().ok())
+    assert!(generation.commit().expect("wake generation commits"));
+    let generation = updates.try_recv().expect("one wake generation publishes");
+    assert!(
+        updates.try_recv().is_err(),
+        "the wake sweep published a partial second generation",
+    );
+    let presented = generation
+        .messages
+        .into_iter()
         .map(|message| {
             (
                 (message.locus.member, message.locus.offset),
@@ -92,6 +101,7 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
 
     // A notice that arrives after its bytes were accounted (the startup overlap)
     // still crosses, and the retained locus refuses the repeat presentation.
+    let surfaces = CaptureSurfaces::new(&paths, &tastes, &steering, &publisher);
     accept_capture_record(
         &bus,
         epoch,

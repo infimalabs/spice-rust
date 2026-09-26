@@ -501,7 +501,7 @@ impl ActionMailbox {
             return Ok(());
         }
         let history = match &action {
-            ClientAction::MessageHistory { lane, before } => Some((*lane, *before)),
+            ClientAction::MessageHistory { lane, before, .. } => Some((*lane, *before)),
             _ => None,
         };
         if history.is_some_and(|key| self.history.contains(&key)) {

@@ -254,12 +254,8 @@ pub(super) async fn run_surface(
         return stop_surface(publication, shutdown, server_task).await;
     };
     let _ = progress.write_all(&message_startup.diagnostic);
-    let message_state = message_surface::LiveMessages::new(
-        paths,
-        epoch,
-        message_publisher.clone(),
-        message_startup.reader.into_state(),
-    )?;
+    let (message_state, message_wakes) =
+        message_surface::LiveMessages::new(paths, epoch, message_startup.reader.into_state())?;
     supervisor_reports.enable_live(message_state.clone())?;
     channels.enable_live(message_state.clone())?;
     let session_compactions =
@@ -275,6 +271,7 @@ pub(super) async fn run_surface(
         server_task,
         message_publisher,
         message_state,
+        message_wakes,
         session_compactions,
         taste_submitter,
         taste_completions,
@@ -512,6 +509,7 @@ async fn drive_surface(
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: canvas::stream::MessagePublisher,
     message_state: message_surface::LiveMessages,
+    mut message_wakes: message_surface::LiveMessageWakes,
     mut session_compactions: message_surface::SessionCompactions,
     mut taste_submitter: Option<&mut taste_surface::AdjudicationSubmitter>,
     mut taste_completions: Option<&mut taste_surface::AdjudicationCompletions>,
@@ -538,7 +536,7 @@ async fn drive_surface(
             biased;
             report = supervisor_reports.recv() => accept_supervisor_reports(
                 bus, epoch, seats, command_surface, &message_publisher,
-                taste_submitter.as_deref_mut(), &mut lifecycle,
+                taste_submitter.as_deref_mut(), &mut lifecycle, &mut session_compactions,
                 supervisor_reports.batch(report), message_state.state(), diagnostic,
             )?,
             () = narration::wait(narration_deadline) => {
@@ -573,6 +571,10 @@ async fn drive_surface(
                 bus, epoch, seats, command_surface, &message_publisher,
                 taste_submitter.as_deref_mut(), &mut session_compactions, record,
                 message_state.state(), diagnostic,
+            )?,
+            wakes = message_wakes.recv() => accept_message_wakes(
+                bus, epoch, &message_publisher, &message_wakes, wakes,
+                &mut session_compactions, message_state.state(), diagnostic,
             )?,
             completed = receive_judgment(&mut taste_completions) => accept_judgment(
                 bus, epoch, command_surface, taste_submitter.as_deref_mut(), completed?,
@@ -697,17 +699,39 @@ fn accept_supervisor_reports(
     message_publisher: &canvas::stream::MessagePublisher,
     mut taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     lifecycle: &mut lifecycle::Runtime,
+    session_compactions: &mut message_surface::SessionCompactions,
     reports: Vec<io::Result<super::supervisor::Notice>>,
     message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
+    let batch = begin_message_batch(message_publisher)?;
     for report in reports {
+        if let Ok(notice) = &report
+            && let Some((lane, occupant)) = message_notice_identity(notice)
+        {
+            let residency = current_residency(bus, epoch)?;
+            if residency
+                .body()
+                .lanes
+                .iter()
+                .any(|row| row.lane == lane && row.occupant == Some(occupant))
+            {
+                session_compactions.synchronize(
+                    bus,
+                    epoch,
+                    (residency.body(), lane),
+                    &batch,
+                    message_state,
+                    diagnostic,
+                )?;
+            }
+        }
         accept_supervisor_report(
             bus,
             epoch,
             seats,
             command_surface,
-            message_publisher,
+            &batch,
             taste_judge.as_deref_mut(),
             lifecycle,
             report,
@@ -715,7 +739,7 @@ fn accept_supervisor_reports(
             diagnostic,
         )?;
     }
-    Ok(())
+    commit_message_batch(batch)
 }
 
 /// Fold one captured record into its session's compaction state, then present it.
@@ -735,13 +759,14 @@ fn accept_record_turn(
     message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
+    let batch = begin_message_batch(message_publisher)?;
     if let Some(lane) = record.as_ref().map(|record| record.lane) {
         let residency = current_residency(bus, epoch)?;
         session_compactions.synchronize(
             bus,
             epoch,
             (residency.body(), lane),
-            message_publisher,
+            &batch,
             message_state,
             diagnostic,
         )?;
@@ -751,12 +776,71 @@ fn accept_record_turn(
         epoch,
         seats,
         command_surface,
-        message_publisher,
+        &batch,
         taste_judge,
         record,
         message_state,
         diagnostic,
-    )
+    )?;
+    commit_message_batch(batch)
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one wake cohort crosses the compaction, tape, publication, and diagnostic surfaces"
+)]
+fn accept_message_wakes(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    message_publisher: &canvas::stream::MessagePublisher,
+    wakes: &message_surface::LiveMessageWakes,
+    cohort: Option<Vec<message_surface::Wake>>,
+    session_compactions: &mut message_surface::SessionCompactions,
+    message_state: &std::sync::Mutex<message_surface::MessageState>,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    let cohort = cohort.ok_or_else(|| {
+        environment_fault(
+            "canvas::message-worker-unavailable",
+            "live message wake channel closed",
+        )
+    })?;
+    let batch = begin_message_batch(message_publisher)?;
+    for (lane, occupant) in cohort {
+        let residency = current_residency(bus, epoch)?;
+        let current = residency
+            .body()
+            .lanes
+            .iter()
+            .any(|row| row.lane == lane && row.occupant == Some(occupant));
+        if !current {
+            continue;
+        }
+        session_compactions.synchronize(
+            bus,
+            epoch,
+            (residency.body(), lane),
+            &batch,
+            message_state,
+            diagnostic,
+        )?;
+        if let Err(error) = wakes.present(lane, occupant, message_state, &batch) {
+            let _ = writeln!(diagnostic, "canvas live message unavailable: {error:?}");
+        }
+    }
+    commit_message_batch(batch)
+}
+
+fn message_notice_identity(
+    notice: &super::supervisor::Notice,
+) -> Option<(CanonicalUuid, CanonicalUuid)> {
+    use super::supervisor::Notice;
+    match notice {
+        Notice::Record { lane, occupant, .. }
+        | Notice::Exited { lane, occupant }
+        | Notice::Failed { lane, occupant, .. } => Some((*lane, *occupant)),
+        Notice::Asked { .. } => None,
+    }
 }
 
 /// Consume one fired timer, then reconcile the lifecycle it may have moved.
@@ -799,12 +883,12 @@ fn accept_timer_turn(
     clippy::too_many_arguments,
     reason = "one supervisor notice crosses the same live capture surfaces as an in-process record"
 )]
-fn accept_supervisor_report(
+fn accept_supervisor_report<P: message_surface::AgentMessagePublisher>(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
-    message_publisher: &canvas::stream::MessagePublisher,
+    message_publisher: &P,
     taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     lifecycle: &mut lifecycle::Runtime,
     report: io::Result<super::supervisor::Notice>,
@@ -955,12 +1039,12 @@ async fn stop_surface(
     clippy::too_many_arguments,
     reason = "one capture record crosses all resident-owned fold surfaces"
 )]
-fn accept_record(
+fn accept_record<P: message_surface::AgentMessagePublisher>(
     bus: &Bus,
     epoch: CanonicalUuid,
     seats: &mut Seats,
     command_surface: &command_surface::Surface<'_>,
-    message_publisher: &canvas::stream::MessagePublisher,
+    message_publisher: &P,
     taste_judge: Option<&mut taste_surface::AdjudicationSubmitter>,
     record: Option<lane::capture::CaptureRecord>,
     message_state: &std::sync::Mutex<message_surface::MessageState>,
@@ -1000,6 +1084,21 @@ fn accept_record(
             message_surface::CaptureViews::new(message_state, diagnostic),
         )
     }
+}
+
+fn begin_message_batch(
+    publisher: &canvas::stream::MessagePublisher,
+) -> CommandResult<canvas::stream::MessageBatch> {
+    publisher
+        .batch()
+        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))
+}
+
+fn commit_message_batch(batch: canvas::stream::MessageBatch) -> CommandResult<()> {
+    batch
+        .commit()
+        .map(drop)
+        .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))
 }
 
 fn accept_failure(
@@ -1164,7 +1263,12 @@ fn settle_spoken_acknowledgements(
     message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<()> {
-    match message_surface::settle_pending_presentations(bus, message_publisher, message_state) {
+    let settled = (|| {
+        let batch = begin_message_batch(message_publisher)?;
+        message_surface::settle_pending_presentations(bus, &batch, message_state)?;
+        commit_message_batch(batch)
+    })();
+    match settled {
         Ok(()) => Ok(()),
         Err(Outcome::Fault(fault)) => {
             let _ = writeln!(

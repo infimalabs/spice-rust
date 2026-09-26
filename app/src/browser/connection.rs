@@ -671,11 +671,13 @@ async fn dispatch_action(
         ClientAction::FastMode(fast_mode) => send_fast_mode(principal, writer, actions, *fast_mode)
             .await
             .map(Some),
-        ClientAction::MessageHistory { lane, before } => {
-            send_message_history(principal, writer, *lane, *before)
-                .await
-                .map(|_| None)
-        }
+        ClientAction::MessageHistory {
+            generation,
+            lane,
+            before,
+        } => send_message_history(principal, writer, *generation, *lane, *before)
+            .await
+            .map(|_| None),
         ClientAction::Seat { .. }
         | ClientAction::RenewLane { .. }
         | ClientAction::ArrangeTeams { .. }
@@ -751,6 +753,7 @@ async fn send_fast_mode(
 async fn send_message_history(
     principal: &Principal,
     writer: &mut SocketWriter,
+    generation: u64,
     lane: CanonicalUuid,
     before: Option<wire::MessageLocus>,
 ) -> Result<(), String> {
@@ -760,8 +763,11 @@ async fn send_message_history(
             v: WireVersion::CURRENT,
             id: random_uuid()?,
             epoch: principal.epoch(),
-            lane,
-            before,
+            frontiers: vec![wire::MessageHistoryCursor {
+                generation,
+                lane,
+                before,
+            }],
         },
     )
     .await
