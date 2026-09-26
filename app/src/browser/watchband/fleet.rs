@@ -236,6 +236,13 @@ pub(super) fn render_populated_fleet(
 fn team_menu_dismissal(controls: &UseReducerHandle<TeamControls>) -> Callback<MouseEvent> {
     let controls = controls.clone();
     Callback::from(move |event: MouseEvent| {
+        if let Some((team, lane, occupant)) = quoted_agent_info_target(&event) {
+            event.prevent_default();
+            event.stop_propagation();
+            controls.dispatch(TeamControlAction::OpenInfo { team });
+            focus_agent_info(lane, occupant);
+            return;
+        }
         let inside_control = event
             .target()
             .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
@@ -250,6 +257,54 @@ fn team_menu_dismissal(controls: &UseReducerHandle<TeamControls>) -> Callback<Mo
             controls.dispatch(TeamControlAction::CloseMenus);
         }
     })
+}
+
+fn quoted_agent_info_target(
+    event: &MouseEvent,
+) -> Option<(CanonicalUuid, CanonicalUuid, CanonicalUuid)> {
+    let signoff = event
+        .target()?
+        .dyn_into::<web_sys::Element>()
+        .ok()?
+        .closest(
+            "button.message-quote-author[data-quote-history=\"available\"]\
+             [data-quote-agent-team][data-quote-agent-lane][data-quote-agent-occupant]",
+        )
+        .ok()??;
+    Some((
+        signoff
+            .get_attribute("data-quote-agent-team")?
+            .parse()
+            .ok()?,
+        signoff
+            .get_attribute("data-quote-agent-lane")?
+            .parse()
+            .ok()?,
+        signoff
+            .get_attribute("data-quote-agent-occupant")?
+            .parse()
+            .ok()?,
+    ))
+}
+
+fn focus_agent_info(lane: CanonicalUuid, occupant: CanonicalUuid) {
+    spawn_local(async move {
+        TimeoutFuture::new(0).await;
+        let selector = format!(
+            ".team-detail-card[data-agent-lane=\"{lane}\"]\
+             [data-agent-occupant=\"{occupant}\"]"
+        );
+        let Some(card) = web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.query_selector(&selector).ok().flatten())
+        else {
+            return;
+        };
+        card.scroll_into_view();
+        if let Ok(card) = card.dyn_into::<web_sys::HtmlElement>() {
+            let _ = card.focus();
+        }
+    });
 }
 
 /// Open team menus own Escape only while Chat shows them.

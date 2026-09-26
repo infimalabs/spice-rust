@@ -25,7 +25,13 @@ pub(crate) struct RenderedMarkdown {
     pub(crate) diagrams: Vec<String>,
 }
 
-pub(crate) type QuoteAgents = BTreeMap<(wire::CanonicalUuid, wire::CanonicalUuid), String>;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QuoteAgent {
+    pub(crate) team: wire::CanonicalUuid,
+    pub(crate) label: String,
+}
+
+pub(crate) type QuoteAgents = BTreeMap<(wire::CanonicalUuid, wire::CanonicalUuid), QuoteAgent>;
 
 /// Render received text through the one sanitized Markdown path used by cards.
 #[cfg(test)]

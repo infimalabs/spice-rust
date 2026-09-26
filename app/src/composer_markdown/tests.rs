@@ -770,7 +770,14 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         }],
     }];
 
-    let agents = BTreeMap::from([((lane, source), "spice-rust-k".to_owned())]);
+    let team: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e8".parse().unwrap();
+    let agents = BTreeMap::from([(
+        (lane, source),
+        QuoteAgent {
+            team,
+            label: "spice-rust-k".to_owned(),
+        },
+    )]);
     let rendered = render_received_with_quotes(
         &outer_target.markdown(),
         &[],
@@ -787,12 +794,22 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         2
     );
     assert!(rendered.html.contains("data-quote-author=\"agent\""));
-    assert!(rendered.html.contains(
-        "data-quote-history=\"available\" href=\"#/info\" \
-         aria-label=\"Open information for Agent spice-rust-k\">Agent spice-rust-k</a>"
-    ));
+    assert!(rendered.html.contains(&format!(
+        "data-quote-agent-team=\"{team}\" \
+         data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{source}\" \
+         data-quote-history=\"available\" \
+         aria-label=\"Open information for Agent spice-rust-k\">Agent spice-rust-k</button>"
+    )));
     assert!(rendered.html.contains("data-quote-author=\"directive\""));
-    assert!(rendered.html.contains(">Operator</a>"));
+    assert!(
+        rendered
+            .html
+            .contains("data-quote-actor=\"operator\" data-quote-history=\"unavailable\"")
+    );
+    assert!(rendered.html.contains(
+        ">Operator \
+         <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>"
+    ));
     assert!(rendered.html.contains(inner_text));
     assert!(rendered.html.contains("data-quote-disposition=\"live\""));
     assert!(!rendered.html.contains("Agent:"));
@@ -803,26 +820,34 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         .expect("outer authenticated prose renders");
     let outer_signoff = rendered
         .html
-        .rfind("Agent spice-rust-k</a>")
+        .rfind("Agent spice-rust-k</button>")
         .expect("outer signoff renders");
     assert!(
         outer_body < outer_signoff,
         "the signoff trails authored prose"
     );
 
+    let successor: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e9".parse().unwrap();
+    let historical_agents = BTreeMap::from([(
+        (lane, successor),
+        QuoteAgent {
+            team,
+            label: "spice-rust-k".to_owned(),
+        },
+    )]);
     let historical = render_received_with_quotes(
         &outer_target.markdown(),
         &[],
         &quotes,
-        &BTreeMap::new(),
+        &historical_agents,
         &BTreeMap::new(),
     );
     assert!(historical.html.contains(
         "data-quote-agent-occupant=\"018f82d4-6f59-7d06-92e3-bce9131163e7\" \
          data-quote-history=\"unavailable\""
     ));
-    assert!(historical.html.contains("· history unavailable"));
-    assert!(!historical.html.contains("Agent spice-rust-k"));
+    assert!(historical.html.contains("Agent spice-rust-k"));
+    assert!(!historical.html.contains("data-quote-agent-team="));
 }
 
 #[test]
@@ -899,7 +924,13 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
             .count(),
         6
     );
-    assert_eq!(rendered.html.matches(">Operator</a>").count(), 6);
+    assert_eq!(
+        rendered
+            .html
+            .matches("data-quote-actor=\"operator\" data-quote-history=\"unavailable\"")
+            .count(),
+        6
+    );
     assert!(!rendered.html.contains("Directive by"));
     assert!(
         !rendered
