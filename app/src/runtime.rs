@@ -961,6 +961,14 @@ impl CanvasRuntime {
         self.message_cards.entries()
     }
 
+    /// Newest prose `lane` authored among the retained messages, with the line
+    /// its composer header shows. Reads the creation-ordered store, so history
+    /// pages merged behind the head never displace it.
+    #[must_use]
+    pub fn latest_lane_prose(&self, lane: CanonicalUuid) -> Option<(&AgentMessage, String)> {
+        crate::watchband::latest_lane_prose(lane, self.messages().iter().map(Rc::as_ref))
+    }
+
     pub fn apply_board(&mut self, admitted: &Admitted<Response<BoardAnswer>>) {
         self.apply_response(admitted, |runtime, answer| {
             runtime

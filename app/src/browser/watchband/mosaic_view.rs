@@ -472,11 +472,7 @@ impl MosaicPlaneView<'_> {
             &self.geometry,
             self.plane,
         );
-        let measurement_phase = if self.plane.is_some() {
-            "ready"
-        } else {
-            "base"
-        };
+        let measurement_phase = measurement_phase(self.plane.is_some(), self.measurement_width);
         let plane_rows = self.plane.map_or(1, |plane| plane.rows());
         let pending = self
             .properties
@@ -538,6 +534,22 @@ impl MosaicPlaneView<'_> {
     }
 }
 
+/// Where a plane stands between admission and its first committed lattice.
+///
+/// `base` is the readable fallback for a host that cannot be measured yet: its
+/// cards stay in ordinary flow. A measurable host is `measuring` until its
+/// lattice commits, and its cards stay hidden meanwhile, so the first frame a
+/// reader sees is the committed layout rather than a flow that then reflows.
+fn measurement_phase(committed: bool, width: i32) -> &'static str {
+    if committed {
+        "ready"
+    } else if width >= MIN_MEASURABLE_WIDTH_PX {
+        "measuring"
+    } else {
+        "base"
+    }
+}
+
 fn committed_spans(
     plane: Option<&crate::mosaic_plane::PersistentLanePlane<String>>,
 ) -> Vec<(String, usize)> {
@@ -559,13 +571,6 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     let measurement_width = width.round() as i32;
     let inspection_active = use_context::<crate::browser::message_task_inspector::Context>()
         .is_some_and(|context| context.inspection.is_some());
-    use_history_paging(
-        host.clone(),
-        &properties.cards,
-        &properties.history_targets,
-        properties.history_revision,
-        properties.history.clone(),
-    );
     let committed = use_state_eq(|| None::<crate::mosaic_plane::PersistentLanePlane<String>>);
     let displayed = use_state_eq(|| None::<crate::mosaic_plane::PersistentLanePlane<String>>);
     let inspection_was_active = use_mut_ref(|| false);
@@ -593,6 +598,23 @@ pub(super) fn mosaic_plane(properties: &MosaicPlaneProps) -> Html {
     } else {
         (*committed).clone()
     };
+    // Edges exist only in a settled layout: a plane measuring its first lattice
+    // shows a placeholder extent that reads as a trailing edge, so it offers no
+    // paging targets until the lattice commits and the edge means something.
+    let unsettled = BTreeMap::new();
+    let paging_targets =
+        if measurement_phase(rendered_plane.is_some(), measurement_width) == "measuring" {
+            &unsettled
+        } else {
+            &properties.history_targets
+        };
+    use_history_paging(
+        host.clone(),
+        &properties.cards,
+        paging_targets,
+        properties.history_revision,
+        properties.history.clone(),
+    );
     let card_keys = properties
         .cards
         .iter()
