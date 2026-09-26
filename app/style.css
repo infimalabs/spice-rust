@@ -77,14 +77,16 @@ button, input, select, textarea { font: inherit; letter-spacing: 0; }
 
 button, select, input, textarea {
   border: var(--canvas-control-edge);
-  border-radius: var(--canvas-radius-control);
   background: var(--control);
   color: var(--ink);
 }
 
+select, input, textarea { border-radius: var(--canvas-radius-control); }
+
 .canvas-control-rail { border: var(--canvas-control-edge); border-radius: var(--canvas-radius-pill); background: var(--control-surface-soft); }
 
 button {
+  border-radius: var(--canvas-radius-pill);
   min-height: 36px;
   padding: 0 12px;
   cursor: pointer;
