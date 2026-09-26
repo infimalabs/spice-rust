@@ -2,6 +2,8 @@
 mod capabilities;
 mod input;
 
+use std::sync::Arc;
+
 use super::*;
 
 struct StartedSurface<'a> {
@@ -257,10 +259,7 @@ pub(super) async fn run_surface(
         return stop_surface(publication, shutdown, server_task).await;
     };
     let _ = progress.write_all(&message_startup.diagnostic);
-    let (message_state, message_wakes) =
-        message_surface::LiveMessages::new(paths, epoch, message_startup.reader.into_state())?;
-    supervisor_reports.enable_live(message_state.clone())?;
-    channels.enable_live(message_state.clone())?;
+    let message_state = Arc::new(std::sync::Mutex::new(message_startup.reader.into_state()));
     let session_compactions =
         message_surface::SessionCompactions::new(crate::session_environment());
     drive_surface(
@@ -274,7 +273,6 @@ pub(super) async fn run_surface(
         server_task,
         message_publisher,
         message_state,
-        message_wakes,
         session_compactions,
         taste_submitter,
         taste_completions,
@@ -491,8 +489,7 @@ async fn drive_surface(
     shutdown: oneshot::Sender<()>,
     mut server_task: tokio::task::JoinHandle<Result<(), io::Error>>,
     message_publisher: canvas::stream::MessagePublisher,
-    message_state: message_surface::LiveMessages,
-    mut message_wakes: message_surface::LiveMessageWakes,
+    message_state: Arc<std::sync::Mutex<message_surface::MessageState>>,
     mut session_compactions: message_surface::SessionCompactions,
     mut taste_submitter: Option<&mut taste_surface::AdjudicationSubmitter>,
     mut taste_completions: Option<&mut taste_surface::AdjudicationCompletions>,
@@ -509,14 +506,14 @@ async fn drive_surface(
 ) -> CommandResult<()> {
     let mut input_lead = input::Lead::Supervisor;
     loop {
-        let narration_deadline = message_surface::lock_state(message_state.state())?
+        let narration_deadline = message_surface::lock_state(message_state.as_ref())?
             .narration
             .next_deadline();
         tokio::select! {
             // Every reconciliation sweep asks the supervisor door itself, so
             // selecting another ready source first cannot lose an ending.
-            // Keep the outer selection fair, and rotate the two sources that
-            // can remain ready continuously.
+            // Rotate the three inputs that can remain ready continuously.
+            // Record turns own both durable accounting and Canvas publication.
             input = input::next(
                 &mut input_lead,
                 supervisor_reports.recv(),
@@ -525,11 +522,12 @@ async fn drive_surface(
                     &inbox_deliveries,
                     lifecycle_reconciliation.control_enabled(),
                 ),
+                records.recv(),
             ) => match input {
                 input::Input::Supervisor(report) => accept_supervisor_reports(
                     bus, epoch, seats, command_surface, &message_publisher,
                     taste_submitter.as_deref_mut(), &mut lifecycle, &mut session_compactions,
-                    supervisor_reports.batch(report), message_state.state(), diagnostic,
+                    supervisor_reports.batch(report), message_state.as_ref(), diagnostic,
                 )?,
                 input::Input::Control((turn, request)) => match turn {
                     ControlDeliveryTurn::Control => {
@@ -549,24 +547,20 @@ async fn drive_surface(
                         deliver_owed_inbox(command_surface, &mut inbox_deliveries).await?;
                     }
                 },
+                input::Input::Record(record) => accept_record_turn(
+                    bus, epoch, seats, command_surface, &message_publisher,
+                    taste_submitter.as_deref_mut(), &mut session_compactions, record,
+                    message_state.as_ref(), diagnostic,
+                )?,
             },
             () = narration::wait(narration_deadline) => {
-                let steps = message_surface::lock_state(message_state.state())?
+                let steps = message_surface::lock_state(message_state.as_ref())?
                     .narration
                     .due(std::time::Instant::now(), |lane, occupant| {
                         seats.activity(lane).is_some_and(|activity| activity.occupant() == occupant)
                     });
                 narration::record(bus, command_surface.paths, epoch, steps, diagnostic)?;
             },
-            record = records.recv() => accept_record_turn(
-                bus, epoch, seats, command_surface, &message_publisher,
-                taste_submitter.as_deref_mut(), &mut session_compactions, record,
-                message_state.state(), diagnostic,
-            )?,
-            wakes = message_wakes.recv() => accept_message_wakes(
-                bus, epoch, &message_publisher, &message_wakes, wakes,
-                &mut session_compactions, message_state.state(), diagnostic,
-            )?,
             completed = receive_judgment(&mut taste_completions) => accept_judgment(
                 bus, epoch, command_surface, taste_submitter.as_deref_mut(), completed?,
             )?,
@@ -584,7 +578,7 @@ async fn drive_surface(
             )?,
             committed = timer_commits.recv() => accept_commit_turn(
                 bus, seats, command_surface, &message_publisher, &mut lifecycle,
-                &mut supervisor_reports, message_state.state(), diagnostic, &mut timers,
+                &mut supervisor_reports, message_state.as_ref(), diagnostic, &mut timers,
                 &mut lifecycle_reconciliation, committed,
             )?,
             ending = &mut server_task => return Err(server_outcome(ending)),
@@ -596,7 +590,7 @@ async fn drive_surface(
             command_surface,
             &message_publisher,
             taste_submitter.as_deref_mut(),
-            message_state.state(),
+            message_state.as_ref(),
             diagnostic,
         )?;
     }
@@ -773,52 +767,6 @@ fn accept_record_turn(
         message_state,
         diagnostic,
     )?;
-    commit_message_batch(batch)
-}
-
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one wake cohort crosses the compaction, tape, publication, and diagnostic surfaces"
-)]
-fn accept_message_wakes(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    message_publisher: &canvas::stream::MessagePublisher,
-    wakes: &message_surface::LiveMessageWakes,
-    cohort: Option<Vec<message_surface::Wake>>,
-    session_compactions: &mut message_surface::SessionCompactions,
-    message_state: &std::sync::Mutex<message_surface::MessageState>,
-    diagnostic: &mut dyn io::Write,
-) -> CommandResult<()> {
-    let cohort = cohort.ok_or_else(|| {
-        environment_fault(
-            "canvas::message-worker-unavailable",
-            "live message wake channel closed",
-        )
-    })?;
-    let batch = begin_message_batch(message_publisher)?;
-    for (lane, occupant) in cohort {
-        let residency = current_residency(bus, epoch)?;
-        let current = residency
-            .body()
-            .lanes
-            .iter()
-            .any(|row| row.lane == lane && row.occupant == Some(occupant));
-        if !current {
-            continue;
-        }
-        session_compactions.synchronize(
-            bus,
-            epoch,
-            (residency.body(), lane),
-            &batch,
-            message_state,
-            diagnostic,
-        )?;
-        if let Err(error) = wakes.present(lane, occupant, message_state, &batch) {
-            let _ = writeln!(diagnostic, "canvas live message unavailable: {error:?}");
-        }
-    }
     commit_message_batch(batch)
 }
 
