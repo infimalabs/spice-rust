@@ -263,6 +263,7 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                 <strong>{"Add agent"}</strong>
                 <button
                     type="button"
+                    class="canvas-compact-control"
                     onclick={Callback::from(move |_| {
                         close.dispatch(TeamControlAction::ToggleImport { team: identity });
                     })}
