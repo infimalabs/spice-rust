@@ -665,8 +665,6 @@ pub struct CanvasRuntime {
     message_history: BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
     /// Last transcript generation admitted atomically.
     message_generation: Option<u64>,
-    /// Admitted response completions that re-arm each member-local frontier.
-    message_history_completions: BTreeMap<CanonicalUuid, u64>,
     /// A same-scope subscription snapshot merges into retained hydrated cards.
     message_reconnect_pending: bool,
     /// Re-arms member-local paging after a same-scope subscription refresh.
@@ -698,7 +696,6 @@ impl CanvasRuntime {
             message_cards: message_cards::MessageCards::default(),
             message_history: BTreeMap::new(),
             message_generation: None,
-            message_history_completions: BTreeMap::new(),
             message_reconnect_pending: false,
             message_history_revision: 0,
             resume: None,
@@ -789,16 +786,6 @@ impl CanvasRuntime {
         lane: CanonicalUuid,
     ) -> Option<wire::MessageHistoryCursor> {
         self.message_history.get(&lane).copied()
-    }
-
-    /// Admitted completion generation for one member-local history request.
-    #[cfg(target_arch = "wasm32")]
-    #[must_use]
-    pub(crate) fn message_history_completion(&self, lane: CanonicalUuid) -> u64 {
-        self.message_history_completions
-            .get(&lane)
-            .copied()
-            .unwrap_or(0)
     }
 
     /// Subscription generation owning the current member-local frontiers.

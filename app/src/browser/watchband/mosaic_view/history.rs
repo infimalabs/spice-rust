@@ -4,9 +4,6 @@ use std::collections::HashSet;
 
 use super::*;
 
-/// Cold advertised lanes hydrate this many visible cards before geometry gates paging.
-const EAGER_HISTORY_CARD_TARGET: usize = 25;
-
 #[derive(Clone)]
 pub(in crate::browser::watchband) struct HistorySender(SenderHandle);
 
@@ -33,28 +30,27 @@ impl PartialEq for HistorySender {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct HistoryRequestKey {
+    revision: u64,
+    cursor: wire::MessageHistoryCursor,
+}
+
 #[derive(Clone, PartialEq)]
 struct HistoryTarget {
     cursor: wire::MessageHistoryCursor,
-    eager: bool,
     key: String,
-    request_key: String,
+    request_key: HistoryRequestKey,
 }
 
 fn history_targets(
     cards: &[ActivityCard],
-    targets: &BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
+    targets: &BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
     revision: u64,
 ) -> Vec<HistoryTarget> {
     targets
         .iter()
-        .map(|(lane, (cursor, completion))| {
-            let lane_cards = cards
-                .iter()
-                .filter(|card| {
-                    matches!(card, ActivityCard::Agent { message, .. } if message.lane == *lane)
-                })
-                .count();
+        .map(|(lane, cursor)| {
             let key = cursor
                 .before
                 .and_then(|before| {
@@ -78,11 +74,11 @@ fn history_targets(
                 .unwrap_or_else(|| format!("history-bootstrap-{lane}"));
             HistoryTarget {
                 cursor: *cursor,
-                eager: cursor.before.is_none() || lane_cards < EAGER_HISTORY_CARD_TARGET,
-                // A newer transcript generation refuses requests for the old one,
-                // so each generation re-arms the lane's frontier.
-                request_key: format!("{revision}:{completion}:{}:{key}", cursor.generation),
                 key,
+                request_key: HistoryRequestKey {
+                    revision,
+                    cursor: *cursor,
+                },
             }
         })
         .collect()
@@ -102,18 +98,18 @@ fn rotation_start(targets: &[HistoryTarget], last: Option<CanonicalUuid>) -> usi
 pub(super) fn use_history_paging(
     host: NodeRef,
     cards: &[ActivityCard],
-    targets: &BTreeMap<CanonicalUuid, (wire::MessageHistoryCursor, u64)>,
+    targets: &BTreeMap<CanonicalUuid, wire::MessageHistoryCursor>,
     revision: u64,
     request: HistorySender,
 ) {
     let targets = history_targets(cards, targets, revision);
-    let requested = use_mut_ref(HashSet::<String>::new);
+    let requested = use_mut_ref(HashSet::<HistoryRequestKey>::new);
     let last_admitted = use_mut_ref(|| None::<CanonicalUuid>);
     use_effect_with((host, targets, request), move |(host, targets, request)| {
         let registration = host.cast::<web_sys::Element>().and_then(|element| {
             let current = targets
                 .iter()
-                .map(|target| target.request_key.clone())
+                .map(|target| target.request_key)
                 .collect::<HashSet<_>>();
             requested.borrow_mut().retain(|key| current.contains(key));
             let observed = element.clone();
@@ -147,14 +143,12 @@ pub(super) fn use_history_paging(
                             bounds.top() <= viewport.bottom() + 400.0
                                 && bounds.bottom() >= viewport.top() - 400.0
                         });
-                    // Page visible cursors and those buried above a deeper sibling column.
-                    if !target.eager && !at_edge && !target_is_near {
+                    // Page only when this lane's frontier is visible or the merged
+                    // plane is near its trailing edge.
+                    if !at_edge && !target_is_near {
                         continue;
                     }
-                    if !observed_requested
-                        .borrow_mut()
-                        .insert(target.request_key.clone())
-                    {
+                    if !observed_requested.borrow_mut().insert(target.request_key) {
                         continue;
                     }
                     if observed_request.request(target.cursor) {
