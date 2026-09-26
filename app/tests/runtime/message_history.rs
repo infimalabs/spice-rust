@@ -348,7 +348,7 @@ fn coordinated_history_rejects_duplicate_response_frontiers_before_mutation() {
 }
 
 #[test]
-fn empty_open_pages_rearm_only_the_completed_lane_at_the_same_cursor() {
+fn a_nonadvancing_open_page_does_not_rearm_the_same_cursor() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
     let mut runtime = CanvasRuntime::new(&accepted);
@@ -356,19 +356,14 @@ fn empty_open_pages_rearm_only_the_completed_lane_at_the_same_cursor() {
 
     let empty = history_page(LANE, 100, Vec::new(), true);
     assert!(
-        apply(&mut runtime, &session, &empty),
-        "an admitted empty completion republishes the paging surface",
+        !apply(&mut runtime, &session, &empty),
+        "an open page that advances neither cards nor cursor cannot rearm itself",
     );
     assert_eq!(target_offset(&runtime, LANE), Some(100));
     assert_eq!(target_offset(&runtime, THIRD_LANE), Some(300));
 
-    assert!(apply(&mut runtime, &session, &empty));
+    assert!(!apply(&mut runtime, &session, &empty));
     assert_eq!(target_offset(&runtime, LANE), Some(100));
-    assert_eq!(target_offset(&runtime, THIRD_LANE), Some(300));
-
-    let exhausted = history_page(LANE, 100, Vec::new(), false);
-    assert!(apply(&mut runtime, &session, &exhausted));
-    assert_eq!(target_offset(&runtime, LANE), None);
     assert_eq!(target_offset(&runtime, THIRD_LANE), Some(300));
 }
 

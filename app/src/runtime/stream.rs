@@ -302,8 +302,6 @@ impl CanvasRuntime {
             self.message_cards.snapshot(limit, &generation.messages)
         };
         let activities_changed = self.apply_activity_snapshot(limit, &generation.messages);
-        self.message_history_completions
-            .retain(|lane, _| next_history.contains_key(lane));
         self.message_history = next_history;
         self.message_generation = Some(generation.generation);
         if reconnect {
@@ -382,15 +380,8 @@ impl CanvasRuntime {
                         before: frontier.before,
                     },
                 );
-                let completion = self
-                    .message_history_completions
-                    .entry(frontier.lane)
-                    .or_default();
-                *completion = completion.saturating_add(1);
-                changed = true;
             } else {
                 self.message_history.remove(&frontier.lane);
-                self.message_history_completions.remove(&frontier.lane);
             }
             changed |= self.message_history.get(&frontier.lane).copied() != previous;
         }
