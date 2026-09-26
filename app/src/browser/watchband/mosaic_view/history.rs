@@ -64,8 +64,9 @@ fn history_targets(
                         ActivityCard::Agent { .. } | ActivityCard::Lifecycle { .. } => None,
                     })
                 })
+                // Cards are newest first; the lane's oldest card borders its history.
                 .or_else(|| {
-                    cards.iter().find_map(|card| match card {
+                    cards.iter().rev().find_map(|card| match card {
                         ActivityCard::Agent { message, .. } if message.lane == *lane => {
                             Some(card.key())
                         }
