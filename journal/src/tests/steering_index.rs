@@ -178,51 +178,6 @@ fn stale_indexed_admission_loses_the_race_without_mutation() {
 }
 
 #[test]
-fn operator_snapshot_retains_retired_directions_and_bounds_each_lane() {
-    let mut journal = Journal::in_memory().expect("steering journal");
-    journal
-        .apply(send_write(uuid(TARGET), TARGET_KEY))
-        .expect("first publication applies");
-    let first = journal
-        .read(|read| read.steering_key(TARGET_KEY))
-        .expect("first head reads")
-        .expect("first head exists");
-    journal
-        .apply(cancel_write(&first))
-        .expect("first direction retires");
-
-    let newer = uuid("018f82d4-6f59-7d06-92e3-bce913116398");
-    journal
-        .apply(send_write(newer, "1kJK6N4R"))
-        .expect("newer publication applies");
-
-    assert!(
-        journal
-            .read(|read| read.operator_steering(0))
-            .expect("empty bound reads")
-            .is_empty()
-    );
-    let newest = journal
-        .read(|read| read.operator_steering(1))
-        .expect("bounded snapshot reads");
-    assert_eq!(newest.len(), 1);
-    assert_eq!(newest[0].body().directive, newer);
-
-    let retained = journal
-        .read(|read| read.operator_steering(2))
-        .expect("retained snapshot reads");
-    assert_eq!(
-        retained
-            .iter()
-            .map(|head| head.body().directive)
-            .collect::<Vec<_>>(),
-        [uuid(TARGET), newer]
-    );
-    assert_eq!(retained[0].body().disposition, Disposition::Canceled);
-    assert_eq!(retained[1].body().disposition, Disposition::Live);
-}
-
-#[test]
 fn indexed_read_work_is_constant_as_retired_history_grows() {
     let mut journal = Journal::in_memory().expect("steering journal");
     journal

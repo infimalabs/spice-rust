@@ -32,8 +32,8 @@ pub struct CanvasVersion(pub u32);
 impl CanvasVersion {
     /// The one Canvas protocol this build speaks.
     ///
-    /// Version 7 requires an explicit scope on board reads.
-    pub const CURRENT: Self = Self(7);
+    /// Version 8 retires the operator-direction stream subject.
+    pub const CURRENT: Self = Self(8);
 
     /// True when this is the Canvas protocol this build speaks.
     #[must_use]

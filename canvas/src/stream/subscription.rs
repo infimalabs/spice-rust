@@ -331,12 +331,6 @@ impl Subscription {
                     "message snapshots never carry a journal continuation",
                 )));
             }
-            ViewSubject::Directions => {
-                return Err(Failure::Refusal(refusal(
-                    "stream::direction-continuation-invalid",
-                    "direction snapshots never carry a journal continuation",
-                )));
-            }
         };
         Ok(frame)
     }

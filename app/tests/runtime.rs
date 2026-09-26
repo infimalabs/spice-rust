@@ -523,11 +523,7 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
     let operator = CanvasRuntime::new(&operator);
     assert_eq!(
         operator.subjects(),
-        vec![
-            ViewSubject::Facts,
-            ViewSubject::Directions,
-            ViewSubject::Messages,
-        ]
+        vec![ViewSubject::Facts, ViewSubject::Messages]
     );
     assert!(operator.offers(CommandKind::ConsentDecide));
 
