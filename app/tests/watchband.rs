@@ -658,6 +658,23 @@ fn composer_prose_skips_blank_and_borrowed_lines_at_any_quote_depth() {
 }
 
 #[test]
+fn composer_prose_skips_structural_quote_links() {
+    let target = wire::QuoteTarget::Steering {
+        key: "dTW6dyT56".to_owned(),
+        digest: wire::QuoteTarget::text_digest("quoted operator message"),
+    };
+    let message = format!(
+        "{}\n\n> copied fallback context\n\n  **authored reply**  ",
+        target.markdown(),
+    );
+
+    assert_eq!(
+        first_nonquoted_prose(&message).as_deref(),
+        Some("**authored reply**"),
+    );
+}
+
+#[test]
 fn an_entirely_quoted_message_has_no_composer_prose() {
     assert_eq!(
         first_nonquoted_prose("> borrowed\n> > borrowed deeper\n  > borrowed after whitespace"),
