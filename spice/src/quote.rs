@@ -1,6 +1,9 @@
 //! Bounded resolution of authenticated transcript quote targets.
 
+use std::ops::Range;
 use std::path::Path;
+
+use pulldown_cmark::{CowStr, Event as MarkdownEvent, Parser, Tag, TagEnd};
 
 use bus::BusReader;
 use wire::{
@@ -9,6 +12,82 @@ use wire::{
 };
 
 use crate::repository::StatePaths;
+
+/// One fixed-label Markdown quote link and its exact source range.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct MessageQuote {
+    /// Bytes occupied by the complete link in the original message.
+    pub range: Range<usize>,
+    /// Destination spelling supplied to [`Resolver::resolve`].
+    pub target: String,
+}
+
+/// Losslessly parsed message text with its structural quote links.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuoteMessage<'a> {
+    source: &'a str,
+    quotes: Vec<MessageQuote>,
+}
+
+impl<'a> QuoteMessage<'a> {
+    /// Recognize ordinary Markdown links whose complete visible label is `quote`.
+    ///
+    /// Messages without the quote URI authority bypass Markdown parsing and
+    /// allocate nothing. Parsing never normalizes the source bytes.
+    #[must_use]
+    pub fn parse(source: &'a str) -> Self {
+        if !source.contains("spice://quote/") {
+            return Self {
+                source,
+                quotes: Vec::new(),
+            };
+        }
+        let mut quotes = Vec::new();
+        let mut open: Option<(usize, CowStr<'a>, bool)> = None;
+        for (event, range) in Parser::new(source).into_offset_iter() {
+            match event {
+                MarkdownEvent::Start(Tag::Link { dest_url, .. }) => {
+                    open = Some((range.start, dest_url, false));
+                }
+                MarkdownEvent::Text(label) if open.is_some() => {
+                    let Some((_, _, admitted)) = open.as_mut() else {
+                        unreachable!("the match guard observed an open link");
+                    };
+                    if !*admitted && label.as_ref() == "quote" {
+                        *admitted = true;
+                    } else {
+                        open = None;
+                    }
+                }
+                MarkdownEvent::End(TagEnd::Link) => {
+                    if let Some((start, target, true)) = open.take()
+                        && target.starts_with("spice://quote/")
+                    {
+                        quotes.push(MessageQuote {
+                            range: start..range.end,
+                            target: target.to_string(),
+                        });
+                    }
+                }
+                _ if open.is_some() => open = None,
+                _ => {}
+            }
+        }
+        Self { source, quotes }
+    }
+
+    /// Exact original Markdown, unchanged by structural recognition.
+    #[must_use]
+    pub const fn render(&self) -> &'a str {
+        self.source
+    }
+
+    /// Quote links in message order.
+    #[must_use]
+    pub fn quotes(&self) -> &[MessageQuote] {
+        &self.quotes
+    }
+}
 
 /// Resolver over the repository's durable tape and journal authority.
 pub struct Resolver<'a> {
@@ -272,6 +351,32 @@ mod tests {
             key: key.to_owned(),
             digest: QuoteTarget::text_digest(text),
         }
+    }
+
+    #[test]
+    fn message_parse_render_preserves_text_without_a_quote_uri_byte_for_byte() {
+        let source = "  prose\\r\\n[ordinary](https://example.test/a%20b) and `spice://other/v1`  ";
+        let parsed = QuoteMessage::parse(source);
+
+        assert!(parsed.quotes().is_empty());
+        assert_eq!(parsed.render().as_bytes(), source.as_bytes());
+    }
+
+    #[test]
+    fn message_parser_names_only_structural_fixed_label_quote_links() {
+        let target = steering_target("dTVLR0qL0", "operator text");
+        let link = target.markdown();
+        let source = format!("before {link} after `[quote]({target})`");
+        let parsed = QuoteMessage::parse(&source);
+
+        assert_eq!(
+            parsed.quotes(),
+            &[MessageQuote {
+                range: 7..7 + link.len(),
+                target: target.to_string(),
+            }]
+        );
+        assert_eq!(parsed.render(), source);
     }
 
     #[test]
