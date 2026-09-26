@@ -3,7 +3,7 @@ use crate::resident::CommandEffects;
 use crate::resident::lane_surface::{AdvisoryRtkFixture, seed_task_claim};
 use bus::CommitOutcome;
 use journal::{Journal, JournalWrite};
-use wire::intent::{CommandAnswer, TaskGenerationNotice};
+use wire::intent::{CommandAnswer, PendingDirective};
 use wire::{Command, CommandKind, Disposition, LaneResidency, Origin, Producer, ResidentState};
 
 #[test]
@@ -37,12 +37,12 @@ fn a_control_is_the_whole_notice_identity() {
 }
 
 #[test]
-fn every_foreign_change_since_the_acknowledgement_publishes_one_reclaim_notice() {
+fn a_current_holder_acknowledges_its_own_change_but_a_trailing_holder_does_not() {
     let fixture = AdvisoryRtkFixture::new();
     let (bus, task) = claimed_fixture(&fixture);
     note(&bus, &task, Actor::Lane(fixture.lane));
     note(&bus, &task, Actor::Operator);
-    note(&bus, &task, Actor::Spice);
+    note(&bus, &task, Actor::Lane(fixture.lane));
     let before = bus.task_snapshot().expect("noted snapshot reads").tasks()[0].clone();
 
     let cursor = bus.cursor().expect("cursor reads");
@@ -59,19 +59,20 @@ fn every_foreign_change_since_the_acknowledgement_publishes_one_reclaim_notice()
     assert_eq!(
         notices
             .iter()
-            .map(|notice| notice.generation)
+            .map(|notice| authority(notice).generation)
             .collect::<Vec<_>>(),
         [2, 3],
-        "the claimant's own change at generation 1 kept its claim current"
+        "the claimant's current change at generation 1 was acknowledged, but its trailing change was not"
     );
     let handle = TaskHandle::for_project("task.claim", &task);
     for notice in &notices {
-        assert_eq!(notice.task, task);
-        assert_eq!(notice.handle, handle);
+        let authority = authority(notice);
+        assert_eq!(authority.task, task);
         assert_eq!(
-            notice.claim,
+            authority.claim,
             before.claim().expect("claim head").body().claimed
         );
+        assert!(notice.text.contains(&handle.to_string()));
         assert!(
             notice
                 .text
@@ -79,6 +80,10 @@ fn every_foreign_change_since_the_acknowledgement_publishes_one_reclaim_notice()
         );
     }
     assert!(notices[0].text.contains("by operator"));
+    assert!(notices[1].text.contains("by lane:"));
+    let rendered = steer::inbox::render_pending(&steer::Key::for_identity(fixture.lane), &notices);
+    assert!(rendered.contains(&format!("spice task reclaim {handle}")));
+    assert!(notices.iter().all(|notice| rendered.contains(&notice.key)));
     let after = bus.task_snapshot().expect("post-notice snapshot reads");
     assert_eq!(after.tasks()[0].claim(), before.claim());
     assert_eq!(after.tasks()[0].lease(), before.lease());
@@ -102,7 +107,7 @@ fn a_reclaim_retires_exactly_the_notices_it_acknowledges() {
     assert_eq!(
         notices(&fixture, &bus)
             .iter()
-            .map(|notice| notice.generation)
+            .map(|notice| authority(notice).generation)
             .collect::<Vec<_>>(),
         [3],
         "the reclaim acknowledged generation 2; the later change is new"
@@ -214,18 +219,20 @@ fn pass(fixture: &AdvisoryRtkFixture, bus: &Bus, cursor: Option<Seq>) -> bool {
     .expect("generation notices reconcile")
 }
 
-fn notices(fixture: &AdvisoryRtkFixture, bus: &Bus) -> Vec<TaskGenerationNotice> {
+fn notices(fixture: &AdvisoryRtkFixture, bus: &Bus) -> Vec<PendingDirective> {
     let facts = bus.fact_snapshot().expect("steering facts read");
     let ledger = steer::Ledger::from_snapshot(&facts).expect("steering facts replay");
     let snapshot = bus.task_snapshot().expect("snapshot reads");
-    let (authored, notices) =
+    let notices =
         crate::resident::steering::pending_presentations(&ledger, fixture.lane, snapshot.tasks())
-            .expect("pending presentation partitions");
-    assert!(
-        authored.is_empty(),
-        "no notice presents as authored steering"
-    );
+            .expect("pending presentations");
     notices
+}
+
+fn authority(notice: &PendingDirective) -> NoticeAuthority {
+    notice_authority(notice.control.as_deref())
+        .expect("notice control admits")
+        .expect("pending direction is a generation notice")
 }
 
 fn disposition(bus: &Bus, directive: CanonicalUuid) -> Disposition {

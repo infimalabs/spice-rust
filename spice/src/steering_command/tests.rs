@@ -243,64 +243,23 @@ fn sequential_duplicate_content_publishes_each_new_key_without_replaying_text() 
 }
 
 #[test]
-fn task_generation_notice_is_a_system_hud_notice_naming_the_reclaim() {
+fn task_generation_notice_is_ordinary_inline_steering_naming_the_reclaim() {
     let scratch = HookScratch::new();
     let answer = generation_answer();
     let CommandAnswer::Inbox(inbox) = &answer else {
         panic!("fixture answer is an inbox");
     };
-    assert!(inbox.lanes[0].pending.is_empty());
-    assert_eq!(inbox.lanes[0].generation_notices.len(), 1);
+    assert_eq!(inbox.lanes[0].pending.len(), 1);
 
-    let document = deliver(&scratch, &answer).expect("generation HUD publishes");
+    let document = deliver(&scratch, &answer).expect("generation direction publishes");
     let context = additional_context(&document);
-    assert!(context.starts_with("Rust Spice system status."));
-    assert!(
-        context.contains(&format!(
-            "TASK GENERATION lane={LANE} task=1kKRRsDP handle=SPICE-1kKRRsDP generation=4 \
-             claim=33 key={KEY}"
-        )),
-        "{context}"
-    );
+    assert!(context.starts_with("Rust Spice steering is pending."));
+    assert!(context.contains(KEY));
     assert!(context.contains("Task SPICE-1kKRRsDP changed"));
     assert!(context.contains("task reclaim SPICE-1kKRRsDP`"));
-    assert!(
-        !context.contains("ack 1kL5y53c"),
-        "answering the key is not the action that retires a notice"
-    );
-    assert!(!context.contains("Rust Spice steering is pending"));
+    assert!(context.contains("ack 1kL5y53c"));
+    assert!(!context.contains("TASK GENERATION"));
     assert_eq!(deliver(&scratch, &answer), None);
-}
-
-#[test]
-fn generation_status_and_authored_direction_share_one_hook_document_without_conflation() {
-    let scratch = HookScratch::new();
-    let CommandAnswer::Inbox(mut mixed) = generation_answer() else {
-        panic!("generation fixture is an inbox");
-    };
-    let CommandAnswer::Inbox(authored) = inbox_answer(
-        OCCUPANT,
-        1,
-        &[("1kFirst1", "published", "Inspect the authored request.")],
-    ) else {
-        panic!("authored fixture is an inbox");
-    };
-    mixed.lanes[0].pending = authored.lanes[0].pending.clone();
-
-    let document =
-        deliver(&scratch, &CommandAnswer::Inbox(mixed)).expect("mixed hook status publishes once");
-    let context = additional_context(&document);
-    let system = context
-        .find("Rust Spice system status.")
-        .expect("system HUD");
-    let steering = context
-        .find("Rust Spice steering is pending.")
-        .expect("authored steering section");
-    assert!(system < steering);
-    assert!(context.contains("TASK GENERATION"));
-    assert!(context.contains("Inspect the authored request."));
-    assert!(context.contains("task reclaim SPICE-1kKRRsDP`"));
-    assert!(context.contains("ack 1kFirst1"));
 }
 
 #[test]
@@ -776,15 +735,12 @@ fn generation_answer() -> CommandAnswer {
             "lane": LANE,
             "occupant": OCCUPANT,
             "compaction": 1,
-            "pending": [],
-            "generation_notices": [{
+            "pending": [{
                 "directive": DIRECTIVE,
                 "key": KEY,
-                "task": "1kKRRsDP",
-                "handle": "SPICE-1kKRRsDP",
-                "generation": 4,
-                "claim": 33,
-                "text": "Task SPICE-1kKRRsDP changed after this claim last acknowledged it.",
+                "text": "Task SPICE-1kKRRsDP changed after this claim last acknowledged it. Run `spice task reclaim SPICE-1kKRRsDP` to take the current task before continuing. Answering this key does not retire the notice.",
+                "control": "task-generation:1kKRRsDP:33:4",
+                "authored": "2026-08-30T09:00:00.000Z",
                 "stage": "published",
                 "expires": "2026-08-30T10:00:00.000Z",
             }],
