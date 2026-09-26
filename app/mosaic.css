@@ -318,8 +318,9 @@
 }
 .mermaid-source-toggle {
   position: absolute; top: 5px; right: 5px; z-index: 2;
-  min-width: 28px; height: 26px; padding: 2px 5px;
-  border: var(--canvas-edge); border-radius: 4px;
+  display: grid; place-items: center;
+  width: 36px; min-width: 36px; height: 36px; min-height: 36px; padding: 0;
+  border: var(--canvas-edge); border-radius: 50%;
   background: var(--panel); color: var(--text);
   font: 600 .72rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   cursor: pointer;
@@ -332,7 +333,7 @@
   position: absolute; inset: 0; z-index: 1;
   overflow: auto; overscroll-behavior: contain;
   border: var(--canvas-edge); border-radius: var(--canvas-radius-control);
-  background: var(--panel); padding: 32px 8px 8px;
+  background: var(--panel); padding: 44px 8px 8px;
 }
 .mermaid-render[data-source-visible="true"] > .message-image { visibility: hidden; }
 .mermaid-source-body[hidden] { display: none; }
