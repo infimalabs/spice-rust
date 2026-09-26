@@ -770,8 +770,14 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         }],
     }];
 
-    let rendered =
-        render_received_with_quotes(&outer_target.markdown(), &[], &quotes, &BTreeMap::new());
+    let agents = BTreeMap::from([(lane, "spice-rust-k".to_owned())]);
+    let rendered = render_received_with_quotes(
+        &outer_target.markdown(),
+        &[],
+        &quotes,
+        &agents,
+        &BTreeMap::new(),
+    );
 
     assert_eq!(
         rendered
@@ -781,6 +787,9 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         2
     );
     assert!(rendered.html.contains("data-quote-author=\"agent\""));
+    assert!(rendered.html.contains(
+        "class=\"message-quote-author\" data-quote-author=\"agent\">Agent: spice-rust-k</span>"
+    ));
     assert!(rendered.html.contains("data-quote-author=\"directive\""));
     assert!(rendered.html.contains(inner_text));
     assert!(rendered.html.contains("data-quote-disposition=\"live\""));
@@ -825,7 +834,8 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         .parse()
         .expect("fixture task is canonical");
     let tasks = BTreeMap::from([("dTVQdQfLw".to_owned(), handle)]);
-    let rendered = render_received_with_quotes(&markdown.join(" "), &[], &quotes, &tasks);
+    let rendered =
+        render_received_with_quotes(&markdown.join(" "), &[], &quotes, &BTreeMap::new(), &tasks);
 
     for (_, key) in cases {
         assert!(
@@ -863,8 +873,13 @@ fn unavailable_quote_cards_name_reason_and_target_without_changing_plain_quotes(
         target: target_text.clone(),
         reason: wire::QuoteUnavailable::DepthExceeded,
     }];
-    let rendered =
-        render_received_with_quotes(&target.markdown(), &[], &unavailable, &BTreeMap::new());
+    let rendered = render_received_with_quotes(
+        &target.markdown(),
+        &[],
+        &unavailable,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
 
     assert!(rendered.html.contains("Quote unavailable: depth-exceeded"));
     assert!(

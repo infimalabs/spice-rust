@@ -194,6 +194,7 @@ pub(super) fn focus_after_render(id: String) {
 pub(super) struct AgentMessageCardProps {
     pub(super) accent: usize,
     pub(super) member: crate::runtime::LaneMember,
+    pub(super) quote_agents: Rc<BTreeMap<CanonicalUuid, String>>,
     pub(super) quote_lane: CanonicalUuid,
     pub(super) message: Rc<wire::AgentMessage>,
     pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
@@ -211,6 +212,7 @@ impl PartialEq for AgentMessageCardProps {
             && self.member.lane == other.member.lane
             && self.member.name == other.member.name
             && self.member.worktree == other.member.worktree
+            && self.quote_agents == other.quote_agents
             && self.quote_lane == other.quote_lane
             && (Rc::ptr_eq(&self.message, &other.message) || self.message == other.message)
             && self.quote_dispatcher == other.quote_dispatcher
@@ -287,7 +289,7 @@ fn render_agent_message_card(
         image_only,
         card_label,
         classifications,
-    } = agent_message_presentation(member, message, quote_tasks);
+    } = agent_message_presentation(member, message, &props.quote_agents, quote_tasks);
     let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
     let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
     let inspection_open = inspection.is_some_and(|inspection| inspection.open);
@@ -447,6 +449,7 @@ impl ClassificationMetrics {
 fn agent_message_presentation<'a>(
     member: &crate::runtime::LaneMember,
     message: &'a wire::AgentMessage,
+    quote_agents: &BTreeMap<CanonicalUuid, String>,
     quote_tasks: &BTreeMap<String, wire::TaskHandle>,
 ) -> AgentMessagePresentation<'a> {
     let attribution = watchband::agent_message_attribution(
@@ -477,6 +480,7 @@ fn agent_message_presentation<'a>(
         &shown_text,
         &shown_classifications,
         &message.quotes,
+        quote_agents,
         quote_tasks,
     );
     let card_label = match message.activity {

@@ -3,11 +3,12 @@
 use std::collections::BTreeMap;
 
 use pulldown_cmark::{Event as MarkdownEvent, Tag, TagEnd};
-use wire::{Disposition, QuoteAuthor, QuotePresentation, QuoteTarget, TaskHandle};
+use wire::{CanonicalUuid, Disposition, QuoteAuthor, QuotePresentation, QuoteTarget, TaskHandle};
 
 pub(super) fn expand<'a>(
     events: Vec<MarkdownEvent<'a>>,
     presentations: &[QuotePresentation],
+    agents: &BTreeMap<CanonicalUuid, String>,
     tasks: &BTreeMap<String, TaskHandle>,
 ) -> Vec<MarkdownEvent<'a>> {
     if presentations.is_empty() {
@@ -30,7 +31,9 @@ pub(super) fn expand<'a>(
             event += 1;
             continue;
         };
-        expanded.push(MarkdownEvent::InlineHtml(render(node, tasks).into()));
+        expanded.push(MarkdownEvent::InlineHtml(
+            render(node, agents, tasks).into(),
+        ));
         event += 3;
         presentation += 1;
     }
@@ -58,7 +61,11 @@ fn presentation_target(presentation: &QuotePresentation) -> &str {
     }
 }
 
-fn render(presentation: &QuotePresentation, tasks: &BTreeMap<String, TaskHandle>) -> String {
+fn render(
+    presentation: &QuotePresentation,
+    agents: &BTreeMap<CanonicalUuid, String>,
+    tasks: &BTreeMap<String, TaskHandle>,
+) -> String {
     match presentation {
         QuotePresentation::Resolved {
             target,
@@ -67,13 +74,13 @@ fn render(presentation: &QuotePresentation, tasks: &BTreeMap<String, TaskHandle>
             disposition,
             quotes,
         } => {
-            let body = super::render_received_with_quotes(text, &[], quotes, tasks);
+            let body = super::render_received_with_quotes(text, &[], quotes, agents, tasks);
             format!(
                 "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
                  data-quote-target=\"{}\"><span class=\"message-quote-header\">{}{}{}</span>\
                  <div class=\"message-quote-body\">{}</div></div>",
                 super::escape_html_attribute(target),
-                author_html(author),
+                author_html(author, agents),
                 disposition.map(disposition_html).unwrap_or_default(),
                 task_html(target, tasks),
                 body.html,
@@ -94,12 +101,19 @@ fn render(presentation: &QuotePresentation, tasks: &BTreeMap<String, TaskHandle>
     }
 }
 
-fn author_html(author: &QuoteAuthor) -> String {
+fn author_html(author: &QuoteAuthor, agents: &BTreeMap<CanonicalUuid, String>) -> String {
     match author {
-        QuoteAuthor::Agent { lane, occupant } => format!(
-            "<span class=\"message-quote-author\" data-quote-author=\"agent\" \
-             title=\"lane {lane}; occupant {occupant}\">Agent {occupant}</span>"
-        ),
+        QuoteAuthor::Agent { lane, .. } => {
+            let label = agents
+                .get(lane)
+                .map(String::as_str)
+                .unwrap_or(crate::watchband::UNKNOWN_AGENT_LABEL);
+            format!(
+                "<span class=\"message-quote-author\" data-quote-author=\"agent\">\
+                 Agent: {}</span>",
+                escape_html_text(label),
+            )
+        }
         QuoteAuthor::Directive { actor } => {
             let actor = actor.to_string();
             format!(

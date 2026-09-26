@@ -66,6 +66,7 @@ pub(super) struct FleetRender<'a> {
     pub(super) can_arrange_teams: bool,
     pub(super) can_configure: bool,
     pub(super) topology: Vec<(CanonicalUuid, Vec<CanonicalUuid>)>,
+    pub(super) quote_agents: Rc<BTreeMap<CanonicalUuid, String>>,
     pub(super) sender: &'a SenderHandle,
     pub(super) drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub(super) submissions: &'a SubmissionHandle,
@@ -186,6 +187,7 @@ pub(super) fn render_populated_fleet(
                                 {render_compose(
                                     render.runtime,
                                     team,
+                                    &render.quote_agents,
                                     &team_standings,
                                     render.epoch,
                                     render.topology_revision,

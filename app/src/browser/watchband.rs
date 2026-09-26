@@ -89,6 +89,20 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
     let can_configure = runtime.offers(CommandKind::TeamConfigure);
     let can_arrange_teams = runtime.offers(CommandKind::TeamArrange);
     let topology = watchband::topology(&lanes.lanes);
+    let quote_agents = Rc::new(
+        lanes
+            .lanes
+            .iter()
+            .flat_map(|team| &team.members)
+            .map(|member| {
+                (
+                    member.lane,
+                    watchband::agent_message_label(&member.worktree, member.name.as_deref())
+                        .to_owned(),
+                )
+            })
+            .collect::<BTreeMap<_, _>>(),
+    );
     let teams = lanes
         .lanes
         .iter()
@@ -102,6 +116,7 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
         can_arrange_teams,
         can_configure,
         topology,
+        quote_agents,
         sender,
         drafts,
         submissions,
@@ -144,6 +159,7 @@ pub(super) fn use_team_fleet_right_edge(host: NodeRef, team_count: usize) {
 fn render_compose(
     runtime: &CanvasRuntime,
     team: &crate::runtime::LaneRow,
+    quote_agents: &Rc<BTreeMap<CanonicalUuid, String>>,
     standings: &[Standing],
     epoch: CanonicalUuid,
     topology_revision: u64,
@@ -178,7 +194,7 @@ fn render_compose(
                 .target(member.occupant, member.bound, epoch)
                 .is_some()
         });
-    let cards = activity_cards(runtime, team);
+    let cards = activity_cards(runtime, team, quote_agents);
     let dismiss_agent_menus = Callback::from(dismiss_other_agent_action_menus);
     let history_targets = team
         .members
@@ -291,7 +307,11 @@ fn broadcast_targets(
 /// locus break equal-time ties without parsing a rendered DOM identity. The
 /// persistent plane uses this complete order to distinguish edge additions
 /// from structural middle insertions during staged hydration.
-fn activity_cards(runtime: &CanvasRuntime, team: &crate::runtime::LaneRow) -> Vec<ActivityCard> {
+fn activity_cards(
+    runtime: &CanvasRuntime,
+    team: &crate::runtime::LaneRow,
+    quote_agents: &Rc<BTreeMap<CanonicalUuid, String>>,
+) -> Vec<ActivityCard> {
     let mut cards = runtime
         .messages()
         .iter()
@@ -304,6 +324,7 @@ fn activity_cards(runtime: &CanvasRuntime, team: &crate::runtime::LaneRow) -> Ve
             Some(ActivityCard::Agent {
                 accent: watchband::accent(team.members.len(), position),
                 member: member.clone(),
+                quote_agents: Rc::clone(quote_agents),
                 quote_lane: crate::composer_drafts::quote_lane(&team.members, message),
                 message: Rc::clone(message),
             })
