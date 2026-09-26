@@ -1,10 +1,10 @@
-//! One Escape owner at a time for Canvas modals and disclosures.
+//! Shared ownership rules for Canvas overlays.
 //!
-//! Each dismissible surface registers while it is active. One document
-//! listener hands each Escape press to the most recently activated owner and
-//! consumes it, so repeated presses walk the visible stack one owner at a time.
-//! A native modal dialog is always above every registered owner: while one is
-//! open, its own cancel handles Escape.
+//! Escape dispatch walks active dismissible surfaces from newest to oldest.
+//! Focus ownership follows the element that opened each registered layer, so
+//! focus-leave dismissal treats nested dialogs and frosted panes as descendants
+//! without coupling either surface to the other's selectors. Native modal
+//! dialogs retain their own Escape handling.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -14,6 +14,22 @@ use wasm_bindgen::prelude::*;
 use yew::prelude::*;
 
 type Dismissal = Rc<RefCell<Callback<()>>>;
+struct FocusLayerEntry {
+    id: u64,
+    surface: web_sys::Element,
+    opener: web_sys::Element,
+}
+
+#[derive(Default)]
+struct FocusLayers {
+    next: u64,
+    active: Vec<FocusLayerEntry>,
+}
+
+/// One active layer whose opener establishes its focus ancestry.
+pub(super) struct FocusLayer {
+    id: u64,
+}
 
 /// The document's Escape owners, most recently activated last.
 struct EscapeStack {
@@ -24,6 +40,7 @@ struct EscapeStack {
 
 thread_local! {
     static ESCAPE: RefCell<EscapeStack> = RefCell::new(EscapeStack::install());
+    static FOCUS: RefCell<FocusLayers> = RefCell::default();
 }
 
 impl EscapeStack {
@@ -98,6 +115,58 @@ fn native_modal_open(document: &web_sys::Document) -> bool {
         .ok()
         .flatten()
         .is_some()
+}
+/// Register a layer for as long as its presentation is active.
+///
+/// Registration must precede moving focus into `surface`, so a document-level
+/// focus listener can resolve the new target through `opener` immediately.
+pub(super) fn register_focus_layer(
+    surface: web_sys::Element,
+    opener: web_sys::Element,
+) -> FocusLayer {
+    let id = FOCUS.with_borrow_mut(|layers| {
+        let id = layers.next;
+        layers.next += 1;
+        layers.active.push(FocusLayerEntry {
+            id,
+            surface,
+            opener,
+        });
+        id
+    });
+    FocusLayer { id }
+}
+
+impl Drop for FocusLayer {
+    fn drop(&mut self) {
+        FOCUS.with_borrow_mut(|layers| layers.active.retain(|layer| layer.id != self.id));
+    }
+}
+
+/// Whether `target` belongs to `owner` directly or through active layers whose
+/// opener ancestry leads back to it.
+pub(super) fn owns_focus(owner: &web_sys::Element, target: &web_sys::Node) -> bool {
+    owner.contains(Some(target))
+        || FOCUS.with_borrow(|layers| {
+            layers.active.iter().enumerate().any(|(index, layer)| {
+                layer.surface.is_connected()
+                    && layer.surface.contains(Some(target))
+                    && opens_from(owner, index, &layers.active)
+            })
+        })
+}
+
+fn opens_from(owner: &web_sys::Element, index: usize, layers: &[FocusLayerEntry]) -> bool {
+    let opener = &layers[index].opener;
+    returnable(opener)
+        && (owner.contains(Some(opener.unchecked_ref()))
+            || layers[..index]
+                .iter()
+                .enumerate()
+                .any(|(parent_index, parent)| {
+                    parent.surface.contains(Some(opener.unchecked_ref()))
+                        && opens_from(owner, parent_index, layers)
+                }))
 }
 
 /// Whether focus may return to `element`: it is still in the document,
