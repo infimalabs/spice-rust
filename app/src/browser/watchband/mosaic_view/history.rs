@@ -48,34 +48,40 @@ fn history_targets(
 ) -> Vec<HistoryTarget> {
     targets
         .iter()
-        .filter_map(|(lane, (cursor, completion))| {
+        .map(|(lane, (cursor, completion))| {
             let lane_cards = cards
                 .iter()
                 .filter(|card| {
                     matches!(card, ActivityCard::Agent { message, .. } if message.lane == *lane)
                 })
                 .count();
-            let key = cursor.before.and_then(|before| {
-                cards.iter().find_map(|card| match card {
-                    ActivityCard::Agent { message, .. }
-                        if message.lane == *lane && message.locus == before =>
-                    {
-                        Some(card.key())
-                    }
-                    ActivityCard::Agent { .. } => None,
-                    ActivityCard::Lifecycle { .. } => None,
+            let key = cursor
+                .before
+                .and_then(|before| {
+                    cards.iter().find_map(|card| match card {
+                        ActivityCard::Agent { message, .. }
+                            if message.lane == *lane && message.locus == before =>
+                        {
+                            Some(card.key())
+                        }
+                        ActivityCard::Agent { .. } | ActivityCard::Lifecycle { .. } => None,
+                    })
                 })
-            });
-            if cursor.before.is_some() && key.is_none() {
-                return None;
-            }
-            let key = key.unwrap_or_else(|| format!("history-bootstrap-{lane}"));
-            Some(HistoryTarget {
+                .or_else(|| {
+                    cards.iter().find_map(|card| match card {
+                        ActivityCard::Agent { message, .. } if message.lane == *lane => {
+                            Some(card.key())
+                        }
+                        ActivityCard::Agent { .. } | ActivityCard::Lifecycle { .. } => None,
+                    })
+                })
+                .unwrap_or_else(|| format!("history-bootstrap-{lane}"));
+            HistoryTarget {
                 cursor: *cursor,
                 eager: cursor.before.is_none() || lane_cards < EAGER_HISTORY_CARD_TARGET,
                 request_key: format!("{revision}:{completion}:{key}"),
                 key,
-            })
+            }
         })
         .collect()
 }

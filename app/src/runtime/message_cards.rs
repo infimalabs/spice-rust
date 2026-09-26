@@ -122,6 +122,44 @@ impl MessageCards {
         self.entries != previous
     }
 
+    /// Whether a retained-history interval can only extend the visible edge.
+    ///
+    /// Exact overlaps are harmless, and a preserved compaction may replace its
+    /// captured announcement. Every other new card must precede the oldest
+    /// retained card in its lane so history cannot rewrite a measured middle
+    /// epoch.
+    pub(super) fn admits_history(&self, incoming: &[AgentMessage]) -> bool {
+        let mut seen = HashSet::new();
+        incoming.iter().all(|message| {
+            let Some(next) = fingerprint(message) else {
+                return true;
+            };
+            let key = MessageCardKey::from(message);
+            if !seen.insert(key) {
+                return false;
+            }
+            if let Some(existing) = self
+                .entries
+                .iter()
+                .find(|existing| MessageCardKey::from(existing.as_ref()) == key)
+            {
+                return fingerprint(existing) == Some(next);
+            }
+            if self
+                .entries
+                .iter()
+                .any(|existing| existing.boundary_superseded_by(message))
+            {
+                return true;
+            }
+            self.entries
+                .iter()
+                .filter(|existing| existing.lane == message.lane)
+                .min_by_key(|existing| existing.chronology_key())
+                .is_none_or(|oldest| message.chronology_key() < oldest.chronology_key())
+        })
+    }
+
     /// Merge live or paged records through the same identity and fingerprint law.
     pub(super) fn merge<'a>(
         &mut self,
