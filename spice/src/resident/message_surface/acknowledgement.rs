@@ -292,13 +292,17 @@ fn acknowledged_context_text(
 /// the start of the directive. A directive that quotes nothing anchors at its
 /// first line, which is the head the marker has always taken.
 ///
+/// Quotation is either a `>` block quote or a line that is exactly one
+/// structural quote link, which Canvas replaces with a block quote card.
+///
 /// The marker shares that line when it reads as paragraph text, so the Canvas
 /// pill sits inline with the words the operator wrote. A line that opens
 /// another block (list, heading, table, fence, rule, or indented code) keeps
 /// its structure beneath a marker paragraph of its own. Either way the marker
-/// stands clear of the quote above it: a line directly below a quote would
+/// stands clear of the quotation above it: a line directly below a quote would
 /// lazily continue that quote's paragraph and carry the marker one quote level
-/// deeper than the directive it answers.
+/// deeper than the directive it answers, and a line directly below a quote
+/// card would join the card's paragraph.
 fn mark_acknowledged_context<'a>(marker: &str, text: &'a str) -> Cow<'a, str> {
     if text.is_empty() {
         return Cow::Owned(marker.to_owned());
@@ -328,11 +332,12 @@ fn mark_acknowledged_context<'a>(marker: &str, text: &'a str) -> Cow<'a, str> {
 /// down: nothing of the operator's own is left for the marker to sit beside,
 /// so the caller gives it a paragraph above the whole quotation instead.
 fn own_words_offset(text: &str) -> Option<usize> {
+    let cards = spice::quote::QuoteMessage::parse(text);
     let mut offset = 0;
     let mut run = None;
     let mut last = None;
     for line in text.split('\n') {
-        if line.trim_start().starts_with('>') {
+        if line.trim_start().starts_with('>') || is_quote_card(cards.quotes(), offset, line) {
             run = None;
         } else if !line.trim().is_empty() {
             last = Some(*run.get_or_insert(offset));
@@ -340,6 +345,13 @@ fn own_words_offset(text: &str) -> Option<usize> {
         offset += line.len() + 1;
     }
     last
+}
+
+/// Whether `line`, starting at byte `offset`, is exactly one quote link.
+fn is_quote_card(cards: &[spice::quote::MessageQuote], offset: usize, line: &str) -> bool {
+    let start = offset + (line.len() - line.trim_start().len());
+    let end = offset + line.trim_end().len();
+    cards.iter().any(|card| card.range == (start..end))
 }
 
 fn opens_paragraph_text(line: &str) -> bool {
