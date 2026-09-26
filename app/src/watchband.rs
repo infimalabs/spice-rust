@@ -895,18 +895,23 @@ fn until_next_multiple(millis: i64, quantum: i64) -> i64 {
     quantum - millis.rem_euclid(quantum)
 }
 
-/// First authored line in a message after borrowed Markdown quotes are skipped.
+/// First authored line after borrowed Markdown quote context is skipped.
 ///
 /// Composer headers are intentionally prose-led rather than identity-led. A
-/// reply can begin with several levels of quoted context, so the first raw
-/// line is not necessarily something the resident wrote. Trimming before the
-/// marker check handles indented quote markers, and returning `None` for an
-/// entirely quoted message lets the caller continue into older messages.
+/// reply can begin with blockquotes or canonical structural quote links, so
+/// the first raw line is not necessarily something the resident wrote.
+/// Trimming before classification handles indented context, and returning
+/// `None` for a message containing only context lets the caller continue into
+/// older messages.
 #[must_use]
 pub fn first_nonquoted_prose(text: &str) -> Option<String> {
     text.lines()
         .map(str::trim)
-        .find(|line| !line.is_empty() && !line.starts_with('>'))
+        .find(|line| {
+            !line.is_empty()
+                && !line.starts_with('>')
+                && wire::QuoteTarget::from_markdown(line).is_err()
+        })
         .map(ToOwned::to_owned)
 }
 
