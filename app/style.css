@@ -402,10 +402,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: var(--accent-soft);
 }
 .message.agent-authored { background: var(--panel); }
-.message.operator-direction {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
 .accent-rail {
   position: absolute;
   top: 8px;

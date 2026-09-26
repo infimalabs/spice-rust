@@ -22,9 +22,9 @@ mod vendor_icon;
 
 pub(super) use command_preview::use_command_modifier_preview;
 use composer::{
-    AgentMessageCard, ComposerTextarea, OperatorMessageCard, agent_message_source_id, drop_on_lane,
-    keyboard_submit, paste_images, primary_composer_dragging, primary_textarea_id,
-    render_image_indicators, render_quote_shards,
+    AgentMessageCard, ComposerTextarea, agent_message_source_id, drop_on_lane, keyboard_submit,
+    paste_images, primary_composer_dragging, primary_textarea_id, render_image_indicators,
+    render_quote_shards,
 };
 pub(super) use composer::{PrimaryComposerDragState, use_primary_composer_drag_state};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
@@ -309,17 +309,6 @@ fn activity_cards(runtime: &CanvasRuntime, team: &crate::runtime::LaneRow) -> Ve
             })
         })
         .collect::<Vec<_>>();
-    cards.extend(runtime.operator_messages().iter().filter_map(|message| {
-        let (position, _) = team
-            .members
-            .iter()
-            .enumerate()
-            .find(|(_, member)| member.lane == message.lane())?;
-        Some(ActivityCard::Operator {
-            accent: watchband::accent(team.members.len(), position),
-            message: message.clone(),
-        })
-    }));
     cards.extend(
         runtime
             .lifecycle_boundaries()
@@ -636,7 +625,7 @@ fn primary_composer_header(
 ) -> ComposerHeader {
     let messages = cards.iter().filter_map(|card| match card {
         ActivityCard::Agent { message, .. } => Some(message.as_ref()),
-        ActivityCard::Operator { .. } | ActivityCard::Lifecycle { .. } => None,
+        ActivityCard::Lifecycle { .. } => None,
     });
     watchband::latest_lane_prose(lane, messages).map_or_else(
         || ComposerHeader {

@@ -316,11 +316,7 @@ fn ticker(
     }
 }
 
-/// Who the card is addressed to, and the colour that says so.
-///
-/// For assistant prose this is the immutable producing worktree. A pending
-/// direction carries no agent author, so its correspondent is the member the
-/// operator addressed.
+/// Agent-card actions and the colour of its producing worktree.
 #[derive(Clone, PartialEq)]
 pub(in crate::browser) struct Correspondent {
     pub(in crate::browser) accent: usize,

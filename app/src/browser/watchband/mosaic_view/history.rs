@@ -64,9 +64,7 @@ fn history_targets(
                         {
                             Some(card.key())
                         }
-                        ActivityCard::Agent { .. }
-                        | ActivityCard::Operator { .. }
-                        | ActivityCard::Lifecycle { .. } => None,
+                        ActivityCard::Agent { .. } | ActivityCard::Lifecycle { .. } => None,
                     })
                 })
                 .or_else(|| {
@@ -74,9 +72,7 @@ fn history_targets(
                         ActivityCard::Agent { message, .. } if message.lane == *lane => {
                             Some(card.key())
                         }
-                        ActivityCard::Agent { .. }
-                        | ActivityCard::Operator { .. }
-                        | ActivityCard::Lifecycle { .. } => None,
+                        ActivityCard::Agent { .. } | ActivityCard::Lifecycle { .. } => None,
                     })
                 })
                 .unwrap_or_else(|| format!("history-bootstrap-{lane}"));
