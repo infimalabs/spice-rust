@@ -349,6 +349,41 @@ fn an_overfull_stable_epoch_falls_back_to_complete_replay() {
 }
 
 #[test]
+fn replay_after_backfill_rejects_a_boundary_crossing_above_row_zero() {
+    let initial_snapshot = [
+        measured("discarded-current", candidates(6, 5)),
+        measured("current", candidates(6, 5)),
+    ];
+    let initial = PersistentLanePlane::new(900, &initial_snapshot);
+    let lower = boundary("lower", 1);
+    let left = measured("left", candidates(6, 2));
+    let removed = measured("removed", candidates(6, 2));
+    let upper = boundary("upper", 1);
+    let staged_snapshot = [
+        lower.clone(),
+        left.clone(),
+        removed,
+        upper.clone(),
+        initial_snapshot[0].clone(),
+        initial_snapshot[1].clone(),
+    ];
+    let staged = initial.reconcile(900, &staged_snapshot);
+    assert_eq!(staged.transition(), Transition::Backfill);
+    assert!(staged.cards()[3].card.base < 0);
+
+    let complete = [lower, left, upper, initial_snapshot[1].clone()];
+    let replayed = staged.reconcile(900, &complete);
+    let one_shot = PersistentLanePlane::new(900, &complete);
+
+    assert_eq!(replayed.transition(), Transition::FullReplay);
+    assert_eq!(replayed.cards(), one_shot.cards());
+    assert_eq!(
+        (replayed.max_row(), replayed.rows()),
+        (one_shot.max_row(), one_shot.rows())
+    );
+}
+
+#[test]
 fn replacing_one_epoch_preserves_every_outside_position_and_extent() {
     let old = measured("old", candidates(12, 2));
     let start = boundary("compact-a", 1);

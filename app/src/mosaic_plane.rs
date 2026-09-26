@@ -307,7 +307,9 @@ fn replay_changed_epochs<K: Clone + Ord>(
             .all(|(entry, item)| entry.key == item.key),
         "Mosaic epoch replay preserves the measured chronology"
     );
-    if !epochs_are_disjoint(&reconciled, &replayed_keys) {
+    if !epochs_are_disjoint(&reconciled, &replayed_keys)
+        || boundary_violation(&reconciled).is_some()
+    {
         return None;
     }
     Some(reconciled)
@@ -577,35 +579,56 @@ fn freeze_completed_epochs<K>(entries: &mut [PlaneCard<K>]) {
     }
 }
 
-fn assert_boundary_floors<K>(entries: &[PlaneCard<K>]) {
+#[derive(Clone, Copy)]
+enum BoundaryViolation {
+    Span,
+    BeforeFloor,
+    AfterFloor,
+}
+
+fn boundary_violation<K>(entries: &[PlaneCard<K>]) -> Option<BoundaryViolation> {
     for (index, boundary) in entries
         .iter()
         .enumerate()
         .filter(|(_, entry)| entry.boundary)
     {
-        assert_eq!(
-            (boundary.card.track, boundary.card.span),
-            (0, TRACK_COUNT),
-            "a Mosaic placement boundary occupies every track"
-        );
+        if (boundary.card.track, boundary.card.span) != (0, TRACK_COUNT) {
+            return Some(BoundaryViolation::Span);
+        }
         let floor = boundary.card.base;
-        assert!(
-            entries[..index]
-                .iter()
-                .all(|entry| entry.card.base + entry.card.rows <= floor),
-            "cards before a Mosaic placement boundary remain below its floor"
-        );
+        if entries[..index]
+            .iter()
+            .any(|entry| entry.card.base + entry.card.rows > floor)
+        {
+            return Some(BoundaryViolation::BeforeFloor);
+        }
         let ceiling = boundary.card.base + boundary.card.rows;
         let epoch_end = entries[index + 1..]
             .iter()
             .position(|entry| entry.boundary)
             .map_or(entries.len(), |offset| index + 1 + offset);
-        assert!(
-            entries[index + 1..epoch_end]
-                .iter()
-                .all(|entry| entry.card.base >= ceiling),
-            "cards after a Mosaic placement boundary cannot cross its floor"
-        );
+        if entries[index + 1..epoch_end]
+            .iter()
+            .any(|entry| entry.card.base < ceiling)
+        {
+            return Some(BoundaryViolation::AfterFloor);
+        }
+    }
+    None
+}
+
+fn assert_boundary_floors<K>(entries: &[PlaneCard<K>]) {
+    match boundary_violation(entries) {
+        None => {}
+        Some(BoundaryViolation::Span) => {
+            panic!("a Mosaic placement boundary occupies every track")
+        }
+        Some(BoundaryViolation::BeforeFloor) => {
+            panic!("cards before a Mosaic placement boundary remain below its floor")
+        }
+        Some(BoundaryViolation::AfterFloor) => {
+            panic!("cards after a Mosaic placement boundary cannot cross its floor")
+        }
     }
 }
 
