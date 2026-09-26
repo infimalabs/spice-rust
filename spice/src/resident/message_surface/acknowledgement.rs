@@ -8,16 +8,28 @@
 //! automatic-speech authority.
 
 use std::borrow::Cow;
+use std::ops::Range;
 
 use super::*;
+
+/// One presented message and the quote blocks the resident itself wrote into it.
+#[derive(Debug)]
+pub(super) struct Presentation {
+    pub(super) text: String,
+    /// Byte ranges of the directive-context quotes presentation inserted, in
+    /// source order. Quotation nested inside them is operator-authored journal
+    /// text; anything outside them is the agent's own prose.
+    pub(super) contexts: Vec<Range<usize>>,
+}
 
 pub(super) fn present_steering_acknowledgements_with_directives(
     text: &str,
     directives: &PresentationDirectives,
     event: PresentationEvent,
-) -> Result<String, String> {
+) -> Result<Presentation, String> {
     let standing = EventDirectives { directives, event };
     let mut rendered = String::new();
+    let mut contexts = Vec::new();
     let mut cursor = 0;
     let mut changed = false;
     let mut capitalize_body = false;
@@ -36,6 +48,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
         capitalize_body = false;
         if packet.bare_acknowledgement || !packet.contexts.is_empty() {
             start_quote_block(&mut rendered);
+            let context = rendered.len();
             let mut separated = false;
             if packet.bare_acknowledgement {
                 append_acknowledgement_quote(&mut rendered, wire::stream::ACK_MARKER);
@@ -54,6 +67,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
                 );
                 separated = true;
             }
+            contexts.push(context..rendered.len());
             rendered.push_str("\n\n");
         }
         cursor = acknowledgement.end;
@@ -74,13 +88,19 @@ pub(super) fn present_steering_acknowledgements_with_directives(
     }
 
     if !changed {
-        return Ok(text.to_owned());
+        return Ok(Presentation {
+            text: text.to_owned(),
+            contexts,
+        });
     }
     let source = text
         .get(cursor..)
         .ok_or_else(|| "acknowledgment body crossed a non-character boundary".to_owned())?;
     append_presented_source(&mut rendered, source, capitalize_body);
-    Ok(rendered)
+    Ok(Presentation {
+        text: rendered,
+        contexts,
+    })
 }
 
 /// Reuse the protocol scanner with display standing, not retirement authority.
@@ -266,8 +286,10 @@ fn acknowledged_context_text(
 /// The marker shares that line when it reads as paragraph text, so the Canvas
 /// pill sits inline with the words the operator wrote. A line that opens
 /// another block (list, heading, table, fence, rule, or indented code) keeps
-/// its structure beneath a marker paragraph of its own, and a marker paragraph
-/// always stands clear of the quote above it so no line lazily continues it.
+/// its structure beneath a marker paragraph of its own. Either way the marker
+/// stands clear of the quote above it: a line directly below a quote would
+/// lazily continue that quote's paragraph and carry the marker one quote level
+/// deeper than the directive it answers.
 fn mark_acknowledged_context<'a>(marker: &str, text: &'a str) -> Cow<'a, str> {
     if text.is_empty() {
         return Cow::Owned(marker.to_owned());
@@ -276,13 +298,18 @@ fn mark_acknowledged_context<'a>(marker: &str, text: &'a str) -> Cow<'a, str> {
         return Cow::Owned(format!("{marker}\n\n{text}"));
     };
     let (quoted, own) = text.split_at(anchor);
+    let clear = quoted.strip_suffix('\n').is_none_or(|above| {
+        above
+            .rsplit('\n')
+            .next()
+            .is_some_and(|line| line.trim().is_empty())
+    });
+    let separation = if clear { "" } else { "\n" };
     let first = own.split('\n').next().unwrap_or_default();
     if opens_paragraph_text(first) {
-        Cow::Owned(format!("{quoted}{marker} {own}"))
-    } else if quoted.is_empty() || quoted.ends_with("\n\n") {
-        Cow::Owned(format!("{quoted}{marker}\n\n{own}"))
+        Cow::Owned(format!("{quoted}{separation}{marker} {own}"))
     } else {
-        Cow::Owned(format!("{quoted}\n{marker}\n\n{own}"))
+        Cow::Owned(format!("{quoted}{separation}{marker}\n\n{own}"))
     }
 }
 
