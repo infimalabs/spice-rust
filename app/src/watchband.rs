@@ -898,11 +898,11 @@ fn until_next_multiple(millis: i64, quantum: i64) -> i64 {
 /// First authored line after borrowed Markdown quote context is skipped.
 ///
 /// Composer headers are intentionally prose-led rather than identity-led. A
-/// reply can begin with blockquotes or canonical structural quote links, so
-/// the first raw line is not necessarily something the resident wrote.
-/// Trimming before classification handles indented context, and returning
-/// `None` for a message containing only context lets the caller continue into
-/// older messages.
+/// reply can begin with blockquotes, canonical structural quote links, or the
+/// explicit marker produced when one of those links is unavailable, so the
+/// first raw line is not necessarily something the resident wrote. Trimming
+/// before classification handles indented context, and returning `None` for a
+/// message containing only context lets the caller continue into older messages.
 #[must_use]
 pub fn first_nonquoted_prose(text: &str) -> Option<String> {
     text.lines()
@@ -911,8 +911,24 @@ pub fn first_nonquoted_prose(text: &str) -> Option<String> {
             !line.is_empty()
                 && !line.starts_with('>')
                 && wire::QuoteTarget::from_markdown(line).is_err()
+                && !is_unavailable_quote_context(line)
         })
         .map(ToOwned::to_owned)
+}
+
+/// Whether `line` is the exact structural marker emitted for a failed quote.
+fn is_unavailable_quote_context(line: &str) -> bool {
+    let Some(body) = line.strip_prefix("[quote unavailable: reason=") else {
+        return false;
+    };
+    let Some((reason, source)) = body.split_once(" source=") else {
+        return false;
+    };
+    matches!(
+        reason,
+        "malformed" | "unknown" | "unreadable" | "digest-mismatch" | "depth-exceeded"
+    ) && source.starts_with("\"spice://quote/")
+        && source.ends_with("\"]")
 }
 
 /// Newest prose one lane authored, paired with the line its header shows.

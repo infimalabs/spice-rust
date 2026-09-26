@@ -675,6 +675,35 @@ fn composer_prose_skips_structural_quote_links() {
 }
 
 #[test]
+fn composer_prose_skips_exact_unavailable_quote_context_only() {
+    let target = wire::QuoteTarget::Steering {
+        key: "dTW6dyT56".to_owned(),
+        digest: wire::QuoteTarget::text_digest("quoted operator message"),
+    };
+    let marker = format!(
+        "[quote unavailable: reason=unknown source={:?}]",
+        target.to_string()
+    );
+
+    assert_eq!(
+        first_nonquoted_prose(&format!("{marker}\n\n  **authored reply**  ")).as_deref(),
+        Some("**authored reply**"),
+    );
+    assert_eq!(first_nonquoted_prose(&marker), None);
+    assert_eq!(
+        first_nonquoted_prose("[quote unavailable: temporarily offline]").as_deref(),
+        Some("[quote unavailable: temporarily offline]"),
+    );
+    assert_eq!(
+        first_nonquoted_prose(
+            "[quote unavailable: reason=unknown source=\"https://example.test\"]"
+        )
+        .as_deref(),
+        Some("[quote unavailable: reason=unknown source=\"https://example.test\"]"),
+    );
+}
+
+#[test]
 fn an_entirely_quoted_message_has_no_composer_prose() {
     assert_eq!(
         first_nonquoted_prose("> borrowed\n> > borrowed deeper\n  > borrowed after whitespace"),
