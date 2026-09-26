@@ -284,6 +284,29 @@ pub(super) fn render_media(media: &[wire::Media]) -> Html {
     }
 }
 
+/// Submit the surrounding observation form on the primary command chord.
+fn note_keyboard_submit(enabled: bool) -> Callback<KeyboardEvent> {
+    Callback::from(move |event: KeyboardEvent| {
+        if !enabled
+            || event.key() != "Enter"
+            || !(event.meta_key() || event.ctrl_key())
+            || event.shift_key()
+        {
+            return;
+        }
+        let Some(form) = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+            .and_then(|target| target.closest("form").ok().flatten())
+            .and_then(|form| form.dyn_into::<web_sys::HtmlFormElement>().ok())
+        else {
+            return;
+        };
+        event.prevent_default();
+        let _ = form.request_submit();
+    })
+}
+
 /// The one observation composer every surface showing `task` renders, bound
 /// to that task and showing only that task's draft, refusal, and submission.
 pub(super) fn render_note_composer(
@@ -325,6 +348,7 @@ pub(super) fn render_note_composer(
                 {id}
                 key={composer.draft.clone()}
                 readonly={busy}
+                onkeydown={note_keyboard_submit(!busy)}
             >{composer.draft.clone()}</textarea>
             <button type="submit" class="canvas-compact-control" disabled={busy}>
                 {if busy { "Saving…" } else { "Add observation" }}
