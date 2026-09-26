@@ -323,6 +323,7 @@ impl CaptureReporter for DeclarationReporter {
 
 pub(in crate::resident) fn session_fact(
     session: &wire::LaneSession,
+    source: CanonicalUuid,
 ) -> wire::body::LaneSessionDeclared {
     wire::body::LaneSessionDeclared {
         lane: session.lane,
@@ -332,11 +333,36 @@ pub(in crate::resident) fn session_fact(
         launch: session.launch.clone(),
         epoch: session.epoch,
         stream: session.stream.clone(),
+        source: Some(source),
         identity: session.identity.clone(),
         member: session.locus.member,
         offset: session.locus.offset,
         length: session.locus.length,
     }
+}
+
+pub(in crate::resident) fn session_source(
+    paths: &RuntimePaths,
+    session: &wire::LaneSession,
+) -> CommandResult<CanonicalUuid> {
+    let root = paths
+        .tape
+        .join(session.lane.to_string())
+        .join(session.vendor.as_str());
+    let source = tape::Tape::open_existing(&root)
+        .and_then(|tape| tape.source_id())
+        .map_err(|error| {
+            store_fault(
+                "lane::session-source-unavailable",
+                &format!("{}: {error}", root.display()),
+            )
+        })?;
+    source.as_str().parse().map_err(|error| {
+        store_fault(
+            "lane::session-source-invalid",
+            &format!("{}: {error}", source.as_str()),
+        )
+    })
 }
 
 pub(in crate::resident) fn record_stream(stream: vendor::RecordStream) -> &'static str {

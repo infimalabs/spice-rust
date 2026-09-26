@@ -88,6 +88,7 @@ fn declare_session(
                 launch: session.launch,
                 epoch: session.epoch,
                 stream: session.stream,
+                source: None,
                 identity: session.identity,
                 member: session.locus.member,
                 offset: session.locus.offset,

@@ -22,6 +22,7 @@ mod task_allocation;
 mod task_creator_scope;
 mod team;
 mod topology_revision;
+mod transcript_session_sources;
 mod vocabulary;
 
 const FINALIZED: &str = "finalized";
@@ -634,6 +635,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (27, MigrationStep::Rust(migrate_schema_27)),
     (28, MigrationStep::Rust(generation_index::migrate)),
     (29, MigrationStep::Rust(speech_playback::migrate)),
+    (30, MigrationStep::Rust(transcript_session_sources::migrate)),
 ];
 
 /// Schema 27 to 28: task generations and claim acknowledgements.
@@ -1021,8 +1023,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 30, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 31, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 30;
+PRAGMA user_version = 31;
 "#;

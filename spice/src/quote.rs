@@ -200,9 +200,12 @@ pub struct TranscriptSessions(bus::TranscriptSessions);
 
 impl TranscriptSessions {
     /// Reconstruct source-qualified session boundaries from durable journal facts.
-    #[must_use]
-    pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
-        Self(bus::TranscriptSessions::from_snapshot(snapshot))
+    ///
+    /// # Errors
+    ///
+    /// Refuses retained session authority that did not cross the source migration.
+    pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, String> {
+        bus::TranscriptSessions::from_snapshot(snapshot).map(Self)
     }
 
     /// Worktree bound to the session containing one source-qualified tape locus.
@@ -614,6 +617,7 @@ mod tests {
                         launch: None,
                         epoch: uuid(5),
                         stream: "session".to_owned(),
+                        source: Some(source),
                         identity: identity.to_owned(),
                         member: locus.member,
                         offset: locus.offset,
@@ -684,7 +688,8 @@ mod tests {
         }
         let sessions = TranscriptSessions::from_snapshot(
             &fixture.bus.fact_snapshot().expect("fixture facts read"),
-        );
+        )
+        .expect("fixture sessions are source-qualified");
         assert_eq!(
             sessions.worktree_at(fixture.lane, fixture.source, fixture.predecessor_locus),
             Some(Path::new("/worktrees/predecessor")),

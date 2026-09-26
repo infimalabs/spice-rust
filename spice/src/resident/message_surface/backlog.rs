@@ -132,7 +132,8 @@ impl BacklogReader {
                 ..MessageState::default()
             },
             steering,
-            sessions: TranscriptSessions::from_snapshot(snapshot),
+            sessions: TranscriptSessions::from_snapshot(snapshot)
+                .map_err(|error| store_fault("canvas::message-sessions-invalid", &error))?,
         })
     }
 

@@ -16,7 +16,7 @@ use wire::{
 
 #[cfg(test)]
 use super::lane_surface::await_session;
-use super::lane_surface::{OccupantLaunchRequest, resume_session, session_fact};
+use super::lane_surface::{OccupantLaunchRequest, resume_session, session_fact, session_source};
 use super::shutdown::{current_residency, guard_residency};
 use super::{
     CommandResult, RuntimePaths, commit, new_uuid, seq, store_fault, typed_outcome, write,
@@ -48,6 +48,7 @@ struct ProvenOccupant {
     occupant: CanonicalUuid,
     group: u32,
     session: wire::LaneSession,
+    source: CanonicalUuid,
     git: String,
 }
 
@@ -228,10 +229,12 @@ fn launch_import(
         },
         Arc::clone(&runtime.capture),
     )?;
+    let source = session_source(paths, &launch.session)?;
     let proven = ProvenOccupant {
         occupant: launch.occupant,
         group: launch.group,
         session: launch.session,
+        source,
         git: launch.git,
     };
     let _group = seats
@@ -307,7 +310,10 @@ fn import_facts(
         )
         .map_err(|error| store_fault("lane::import-fact-invalid", &error.to_string()))?;
     let declared = write
-        .fact(session_fact(&proven.session), FactCause::Pending(imported))
+        .fact(
+            session_fact(&proven.session, proven.source),
+            FactCause::Pending(imported),
+        )
         .map_err(|error| store_fault("lane::import-fact-invalid", &error.to_string()))?;
     write
         .fact(

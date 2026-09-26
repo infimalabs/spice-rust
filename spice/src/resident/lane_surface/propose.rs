@@ -158,7 +158,7 @@ pub(super) fn propose_wake(
     guard_residency(&mut write, observed);
     let declared = write
         .fact(
-            session_fact(session),
+            session_fact(session, proven.source),
             FactCause::Existing(observed.position()),
         )
         .map_err(|error| store_fault("lane::fact-invalid", &error.to_string()))?;

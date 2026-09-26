@@ -27,7 +27,7 @@ impl Fixture {
             .expect("session proposal");
         let declared = proposal
             .fact(
-                crate::resident::lane_surface::session_fact(&session),
+                crate::resident::lane_surface::session_fact(&session, self.epoch),
                 FactCause::Existing(observed.position()),
             )
             .expect("session declaration fact");

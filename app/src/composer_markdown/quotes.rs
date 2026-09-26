@@ -93,9 +93,8 @@ fn render(
                  data-quote-state=\"unavailable\" data-quote-reason=\"{reason}\" \
                  data-quote-target=\"{}\"><span class=\"message-quote-header\">\
                  <span class=\"message-quote-author\">Quote unavailable: {reason}</span></span>\
-                 <div class=\"message-quote-body\"><code>{}</code></div></div>",
+                 </div>",
                 super::escape_html_attribute(target),
-                escape_html_text(target),
             )
         }
     }

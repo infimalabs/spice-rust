@@ -751,6 +751,7 @@ mod tests {
             launch: Some(LaneLaunchIdentity::new("sonnet", "high")),
             epoch: uuid(0),
             stream: "stdout".to_owned(),
+            source: None,
             identity: "session-a".to_owned(),
             member: 0,
             offset: 0,
