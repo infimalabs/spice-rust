@@ -319,13 +319,22 @@ fn render_controls(state: &UseStateHandle<WorkMapState>, selected: &TaskStamp) -
     };
     html! {
         <>
-            <section class="work-map-lenses canvas-control-rail" aria-label="Relationship lens">
-                {lens_button(state, TaskRelationKind::Dependency)}
-                {lens_button(state, TaskRelationKind::Origin)}
-                {lens_button(state, TaskRelationKind::Review)}
-                {lens_button(state, TaskRelationKind::Lifecycle)}
-                {lens_button(state, TaskRelationKind::Claim)}
-            </section>
+            <div class="work-map-primary-controls">
+                <section class="work-map-lenses canvas-control-rail" aria-label="Relationship lens">
+                    {lens_button(state, TaskRelationKind::Dependency)}
+                    {lens_button(state, TaskRelationKind::Origin)}
+                    {lens_button(state, TaskRelationKind::Review)}
+                    {lens_button(state, TaskRelationKind::Lifecycle)}
+                    {lens_button(state, TaskRelationKind::Claim)}
+                </section>
+                if state.lens == TaskRelationKind::Dependency {
+                    <div class="work-map-control-group work-map-direction canvas-control-rail" aria-label="Dependency direction">
+                        {direction_button(state, WorkRelationshipDirection::Prerequisites, "Prerequisites")}
+                        {direction_button(state, WorkRelationshipDirection::Both, "Both")}
+                        {direction_button(state, WorkRelationshipDirection::Dependents, "Dependents")}
+                    </div>
+                }
+            </div>
             <section class="work-map-controls" aria-label="Map controls">
                 <div class="work-map-control-group canvas-control-rail work-map-depth" aria-label="Relationship depth">
                     <button type="button" aria-label="Decrease map depth" disabled={state.depth == 0} onclick={depth_callback(state.clone(), false)}>{"−"}</button>
@@ -339,13 +348,6 @@ fn render_controls(state: &UseStateHandle<WorkMapState>, selected: &TaskStamp) -
                     </button>
                     <button type="button" disabled={is_default_view(state)} onclick={reset}>{"Reset view"}</button>
                 </div>
-                if state.lens == TaskRelationKind::Dependency {
-                    <div class="work-map-control-group canvas-control-rail" aria-label="Dependency direction">
-                        {direction_button(state, WorkRelationshipDirection::Prerequisites, "Prerequisites")}
-                        {direction_button(state, WorkRelationshipDirection::Both, "Both")}
-                        {direction_button(state, WorkRelationshipDirection::Dependents, "Dependents")}
-                    </div>
-                }
                 <span class="work-map-bounds">{format!("Limit {} nodes", state.max_nodes)}</span>
             </section>
         </>
