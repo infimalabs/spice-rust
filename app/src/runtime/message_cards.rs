@@ -35,7 +35,7 @@ struct MessageCardFingerprint<'a> {
     observed: Option<&'a wire::Instant>,
     text: &'a str,
     final_answer: bool,
-    badges: wire::AgentMessageBadges,
+    classifications: &'a [wire::MessageClassification],
     automatic_speech: Option<&'a wire::AutomaticSpeech>,
     unavailable_tool_terminals: &'a [String],
     media: &'a [wire::Media],
@@ -59,7 +59,7 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
         observed: message.observed.as_ref(),
         text: &message.text,
         final_answer: message.final_answer,
-        badges: message.badges,
+        classifications: &message.classifications,
         automatic_speech: message.automatic_speech.as_ref(),
         unavailable_tool_terminals: &message.unavailable_tool_terminals,
         media: &message.media,
@@ -246,7 +246,7 @@ mod tests {
             activity,
             final_answer: false,
             text: offset.to_string(),
-            badges: Default::default(),
+            classifications: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
@@ -350,23 +350,24 @@ mod tests {
     }
 
     #[test]
-    fn semantic_badges_replace_the_same_live_card_identity() {
+    fn semantic_classifications_replace_the_same_live_card_identity() {
         let mut cards = MessageCards::default();
         let ordinary = message(1, AgentActivityKind::Prose);
         cards.snapshot(10, std::slice::from_ref(&ordinary));
 
-        let mut badged = ordinary;
-        badged.badges = wire::AgentMessageBadges {
-            acknowledgements: 1,
-            tastes: 0,
-            broadcasts: 0,
-            reviews: 0,
-            pending: 0,
-            declines: 0,
-        };
-        assert!(cards.merge(std::iter::once(&badged)));
+        let mut classified = ordinary;
+        classified.text = "[ACK] accepted".to_owned();
+        classified.classifications = vec![wire::MessageClassification {
+            start: 0,
+            end: 5,
+            kind: wire::MessageClassificationKind::Acknowledgement,
+        }];
+        assert!(cards.merge(std::iter::once(&classified)));
         assert_eq!(cards.entries().len(), 1);
-        assert_eq!(cards.entries()[0].badges, badged.badges);
+        assert_eq!(
+            cards.entries()[0].classifications,
+            classified.classifications
+        );
         assert!(cards.entries()[0].automatic_speech.is_none());
     }
 

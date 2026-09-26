@@ -256,16 +256,17 @@ fn a_preserved_compaction_replaces_the_announcement_in_either_arrival_order() {
 }
 
 #[test]
-fn presentation_revision_moves_only_text_and_badges_and_keeps_the_final_state() {
+fn presentation_revision_moves_only_text_and_classifications_and_keeps_the_final_state() {
     let bus = fixture(1);
     let source = Source::new(bus.reader(), epoch(), 10);
     let publisher = source.message_publisher();
     let mut spoken = message(0xe5, 7);
     spoken.text = "> [ACK PENDING] Keep the current path.\n\nApplied.".to_owned();
-    spoken.badges = wire::AgentMessageBadges {
-        pending: 1,
-        ..wire::AgentMessageBadges::default()
-    };
+    spoken.classifications = vec![wire::MessageClassification {
+        start: 2,
+        end: 15,
+        kind: wire::MessageClassificationKind::AcknowledgementPending,
+    }];
     publisher
         .publish(spoken.clone())
         .expect("spoken acknowledgement publishes");
@@ -279,23 +280,26 @@ fn presentation_revision_moves_only_text_and_badges_and_keeps_the_final_state() 
     let mut updates = source.subscribe_messages();
 
     let retired_text = "> [ACK] Keep the current path.\n\nApplied.".to_owned();
-    let retired_badges = wire::AgentMessageBadges {
-        acknowledgements: 1,
-        ..wire::AgentMessageBadges::default()
-    };
+    let retired_classifications = vec![wire::MessageClassification {
+        start: 2,
+        end: 7,
+        kind: wire::MessageClassificationKind::Acknowledgement,
+    }];
     assert!(
         publisher
             .revise_presentation(
                 spoken.lane,
                 spoken.locus,
                 retired_text.clone(),
-                retired_badges
+                retired_classifications.clone()
             )
             .expect("retired presentation publishes")
     );
     let mut expected = terminal;
     expected.text = retired_text.clone();
-    expected.badges = retired_badges;
+    expected
+        .classifications
+        .clone_from(&retired_classifications);
     let generation = updates.try_recv().expect("retired presentation broadcasts");
     assert_eq!(
         generation.messages,
@@ -308,14 +312,19 @@ fn presentation_revision_moves_only_text_and_badges_and_keeps_the_final_state() 
                 spoken.lane,
                 spoken.locus,
                 retired_text.clone(),
-                retired_badges
+                retired_classifications.clone()
             )
             .expect("identical presentation deduplicates")
     );
     let absent = message(0xe6, 1);
     assert!(
         !publisher
-            .revise_presentation(absent.lane, absent.locus, retired_text, retired_badges)
+            .revise_presentation(
+                absent.lane,
+                absent.locus,
+                retired_text,
+                retired_classifications
+            )
             .expect("a card retention does not hold is not revised")
     );
     assert!(updates.try_recv().is_err(), "nothing else broadcasts");

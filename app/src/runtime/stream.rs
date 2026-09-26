@@ -658,7 +658,7 @@ mod message_retention_tests {
             activity: AgentActivityKind::Prose,
             final_answer: false,
             text: offset.to_string(),
-            badges: Default::default(),
+            classifications: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             boundary: None,

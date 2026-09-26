@@ -51,7 +51,7 @@ fn sampled_crossing_values_preserve_identity() {
     cover_residency_heads();
     cover_head_enums();
     cover_command_frames();
-    cover_message_badges();
+    cover_message_classifications();
     cover_history_cursors();
     cover_stream_frames();
     cover_packed_frames();
@@ -74,23 +74,21 @@ fn cover_environment_requirements() {
     );
 }
 
-fn cover_message_badges() {
-    let empty = AgentMessageBadges::default();
-    let one = |select: fn(&mut AgentMessageBadges)| {
-        let mut badges = AgentMessageBadges::default();
-        select(&mut badges);
-        badges
+fn cover_message_classifications() {
+    let classification = |kind: MessageClassificationKind| MessageClassification {
+        start: 2,
+        end: 2 + u32::try_from(kind.marker().len()).expect("marker fits the wire range"),
+        kind,
     };
     law(
-        "AgentMessageBadges",
+        "MessageClassification",
         &[
-            empty,
-            one(|badges| badges.acknowledgements = 2),
-            one(|badges| badges.tastes = 1),
-            one(|badges| badges.broadcasts = 1),
-            one(|badges| badges.reviews = 1),
-            one(|badges| badges.pending = 1),
-            one(|badges| badges.declines = 1),
+            classification(MessageClassificationKind::Acknowledgement),
+            classification(MessageClassificationKind::AcknowledgementPending),
+            classification(MessageClassificationKind::Decline),
+            classification(MessageClassificationKind::Taste),
+            classification(MessageClassificationKind::Broadcast),
+            classification(MessageClassificationKind::Review),
         ],
     );
     law(
@@ -776,81 +774,7 @@ fn cover_stream_frames() {
         seq: seq(48213),
     };
     cover_operator_directions(first_id, second_id);
-    law(
-        "AgentMessage",
-        &[
-            AgentMessage {
-                lane: first_id,
-                author: second_id,
-                locus: MessageLocus {
-                    member: 1,
-                    offset: 2,
-                    length: 3,
-                    event: 4,
-                },
-                authored: at("2030-04-12T18:44:09.271Z"),
-                authored_synthetic: false,
-                observed: None,
-                activity: AgentActivityKind::Prose,
-                final_answer: false,
-                text: "settled".to_owned(),
-                badges: AgentMessageBadges {
-                    acknowledgements: 2,
-                    tastes: 0,
-                    broadcasts: 0,
-                    reviews: 0,
-                    pending: 0,
-                    declines: 0,
-                },
-                automatic_speech: None,
-                unavailable_tool_terminals: Vec::new(),
-                boundary: None,
-                media: Vec::new(),
-            },
-            AgentMessage {
-                lane: second_id,
-                author: first_id,
-                locus: MessageLocus {
-                    member: 5,
-                    offset: 6,
-                    length: 7,
-                    event: 8,
-                },
-                authored: at("2030-04-12T18:44:09.272Z"),
-                authored_synthetic: false,
-                observed: None,
-                activity: AgentActivityKind::Tool,
-                final_answer: false,
-                text: "Bash".to_owned(),
-                badges: Default::default(),
-                automatic_speech: None,
-                unavailable_tool_terminals: Vec::new(),
-                boundary: None,
-                media: Vec::new(),
-            },
-            AgentMessage {
-                lane: first_id,
-                author: first_id,
-                locus: MessageLocus {
-                    member: 9,
-                    offset: 10,
-                    length: 11,
-                    event: 12,
-                },
-                authored: at("2030-04-12T18:44:09.273Z"),
-                authored_synthetic: false,
-                observed: None,
-                activity: AgentActivityKind::Compaction,
-                final_answer: false,
-                text: "Context compacted".to_owned(),
-                badges: Default::default(),
-                automatic_speech: None,
-                unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
-                boundary: None,
-                media: Vec::new(),
-            },
-        ],
-    );
+    law("AgentMessage", &agent_message_samples(first_id, second_id));
     let requests = stream_request_samples(epoch, first_id, second_id, cursor);
     law("StreamRequest", &requests);
 
@@ -886,6 +810,78 @@ fn cover_stream_frames() {
         epoch, next_epoch, first_id, second_id, cursor,
     ));
     law("StreamFrame", &frames);
+}
+
+fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [AgentMessage; 3] {
+    [
+        AgentMessage {
+            lane: first_id,
+            author: second_id,
+            locus: MessageLocus {
+                member: 1,
+                offset: 2,
+                length: 3,
+                event: 4,
+            },
+            authored: at("2030-04-12T18:44:09.271Z"),
+            authored_synthetic: false,
+            observed: None,
+            activity: AgentActivityKind::Prose,
+            final_answer: false,
+            text: "[ACK] settled".to_owned(),
+            classifications: vec![MessageClassification {
+                start: 0,
+                end: 5,
+                kind: MessageClassificationKind::Acknowledgement,
+            }],
+            automatic_speech: None,
+            unavailable_tool_terminals: Vec::new(),
+            boundary: None,
+            media: Vec::new(),
+        },
+        AgentMessage {
+            lane: second_id,
+            author: first_id,
+            locus: MessageLocus {
+                member: 5,
+                offset: 6,
+                length: 7,
+                event: 8,
+            },
+            authored: at("2030-04-12T18:44:09.272Z"),
+            authored_synthetic: false,
+            observed: None,
+            activity: AgentActivityKind::Tool,
+            final_answer: false,
+            text: "Bash".to_owned(),
+            classifications: Vec::new(),
+            automatic_speech: None,
+            unavailable_tool_terminals: Vec::new(),
+            boundary: None,
+            media: Vec::new(),
+        },
+        AgentMessage {
+            lane: first_id,
+            author: first_id,
+            locus: MessageLocus {
+                member: 9,
+                offset: 10,
+                length: 11,
+                event: 12,
+            },
+            authored: at("2030-04-12T18:44:09.273Z"),
+            authored_synthetic: false,
+            observed: None,
+            activity: AgentActivityKind::Compaction,
+            final_answer: false,
+            text: "Context compacted".to_owned(),
+            classifications: Vec::new(),
+            automatic_speech: None,
+            unavailable_tool_terminals: vec!["Bash: cargo test".to_owned()],
+            boundary: None,
+            media: Vec::new(),
+        },
+    ]
 }
 
 fn cover_operator_directions(first_id: CanonicalUuid, second_id: CanonicalUuid) {
@@ -990,7 +986,7 @@ fn stream_data_samples(
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
         text: "older retained prose".to_owned(),
-        badges: Default::default(),
+        classifications: Vec::new(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
         boundary: None,

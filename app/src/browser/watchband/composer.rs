@@ -280,7 +280,7 @@ fn render_agent_message_card(
         media_description,
         image_only,
         card_label,
-        badges,
+        classifications,
     } = agent_message_presentation(member, message);
     let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
     let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
@@ -308,12 +308,12 @@ fn render_agent_message_card(
             data-layout-phase={if layout.committed { "committed" } else { "measuring" }}
             data-agent-lane={member.lane.to_string()}
             data-agent-activity={watchband::agent_activity_name(message.activity)}
-            data-message-ack-count={badges.acknowledgements.to_string()}
-            data-message-taste-count={badges.tastes.to_string()}
-            data-message-broadcast-count={badges.broadcasts.to_string()}
-            data-message-review-count={badges.reviews.to_string()}
-            data-message-pending-count={badges.pending.to_string()}
-            data-message-final={message.final_answer.to_string()}
+            data-message-ack-count={classifications.acknowledgements.to_string()}
+            data-message-taste-count={classifications.tastes.to_string()}
+            data-message-broadcast-count={classifications.broadcasts.to_string()}
+            data-message-review-count={classifications.reviews.to_string()}
+            data-message-pending-count={classifications.pending.to_string()}
+            data-message-decline-count={classifications.declines.to_string()}
             data-speech-active={correspondent.speaking.to_string()}
             data-producer-target-id={quote_lane.to_string()}
             data-accent={correspondent.accent.to_string()}
@@ -404,7 +404,38 @@ struct AgentMessagePresentation<'a> {
     media_description: Option<String>,
     image_only: bool,
     card_label: String,
-    badges: wire::AgentMessageBadges,
+    classifications: ClassificationMetrics,
+}
+
+#[derive(Default)]
+struct ClassificationMetrics {
+    acknowledgements: usize,
+    tastes: usize,
+    broadcasts: usize,
+    reviews: usize,
+    pending: usize,
+    declines: usize,
+}
+
+impl ClassificationMetrics {
+    fn from_classifications(classifications: &[wire::MessageClassification]) -> Self {
+        let mut metrics = Self::default();
+        for classification in classifications {
+            match classification.kind {
+                wire::MessageClassificationKind::Acknowledgement => {
+                    metrics.acknowledgements += 1;
+                }
+                wire::MessageClassificationKind::AcknowledgementPending => {
+                    metrics.pending += 1;
+                }
+                wire::MessageClassificationKind::Decline => metrics.declines += 1,
+                wire::MessageClassificationKind::Taste => metrics.tastes += 1,
+                wire::MessageClassificationKind::Broadcast => metrics.broadcasts += 1,
+                wire::MessageClassificationKind::Review => metrics.reviews += 1,
+            }
+        }
+        metrics
+    }
 }
 
 fn agent_message_presentation<'a>(
@@ -420,7 +451,7 @@ fn agent_message_presentation<'a>(
     let footer_label =
         watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned();
     let is_boundary = message.activity.is_boundary();
-    let badges = message.badges;
+    let classifications = ClassificationMetrics::from_classifications(&message.classifications);
     // A tool card is its image. The resident's preview line stays on the wire
     // for the ticker and the hook, but here it becomes the image's description
     // rather than visible words, and the resident withholds it altogether when
@@ -429,10 +460,16 @@ fn agent_message_presentation<'a>(
     let media_description = (is_tool && !message.text.trim().is_empty())
         .then(|| watchband::tool_media_description(&message.text));
     let shown_text = if is_tool { "" } else { message.text.as_str() };
-    let shown_text = wire::media::with_media_payloads(shown_text, &message.media)
-        .expect("message media passed admission before browser rendering");
-    let rendered_markdown =
-        crate::composer_markdown::render_received_with_badges(&shown_text, badges);
+    let (shown_text, shown_classifications) = crate::composer_markdown::expand_media_payloads(
+        shown_text,
+        &message.media,
+        &message.classifications,
+    )
+    .expect("message media passed admission before browser rendering");
+    let rendered_markdown = crate::composer_markdown::render_received_with_classifications(
+        &shown_text,
+        &shown_classifications,
+    );
     let card_label = match message.activity {
         wire::AgentActivityKind::Turn => unreachable!("turn events are not message cards"),
         wire::AgentActivityKind::Compaction => format!("Context compacted by {footer_label}"),
@@ -464,7 +501,6 @@ fn agent_message_presentation<'a>(
             <super::super::mermaid::MarkdownBody
                 html={AttrValue::from(rendered_markdown.html)}
                 sources={Rc::new(rendered_markdown.diagrams.into_iter().map(AttrValue::from).collect::<Vec<_>>())}
-                acknowledgements={Rc::new(rendered_markdown.acknowledgements)}
                 final_answer={message.final_answer}
             />
         },
@@ -472,7 +508,7 @@ fn agent_message_presentation<'a>(
         media_description,
         image_only,
         card_label,
-        badges,
+        classifications,
     }
 }
 

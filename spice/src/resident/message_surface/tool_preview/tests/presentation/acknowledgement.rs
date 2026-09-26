@@ -94,7 +94,7 @@ fn message_badges_require_authenticated_positive_directive_evidence() {
     let directives = directives(&[("1kQnrzNZ", "Keep the current path.")]);
     assert_eq!(
         message_badges("ACK 1kQnrzNZ: applied.", Some(&directives), event(),),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             acknowledgements: 0,
             tastes: 0,
             broadcasts: 0,
@@ -105,9 +105,9 @@ fn message_badges_require_authenticated_positive_directive_evidence() {
     );
     assert_eq!(
         message_badges("NACK 1kQnrzNZ: unsafe.", Some(&directives), event()),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             declines: 1,
-            ..wire::AgentMessageBadges::default()
+            ..ClassificationCounts::default()
         },
         "a refusal is an answer, counted apart from credit",
     );
@@ -129,7 +129,7 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
 
     assert_eq!(
         message_badges("ACK 1kQnrzNZ: applied.", Some(&directives), event()),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             acknowledgements: 1,
             tastes: 0,
             broadcasts: 1,
@@ -181,7 +181,7 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
     original.source = Some(source);
     assert_eq!(
         message_badges(text, Some(&directives), original),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             acknowledgements: 0,
             tastes: 0,
             broadcasts: 0,
@@ -448,9 +448,9 @@ fn a_quoted_card_never_moves_the_marker_off_the_directive() {
     );
     assert_eq!(
         message_badges(text, Some(&quoted), event()),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             acknowledgements: 1,
-            ..wire::AgentMessageBadges::default()
+            ..ClassificationCounts::default()
         },
     );
 }
@@ -504,7 +504,7 @@ fn system_acknowledgment_hides_framing_and_earns_no_authored_context() {
     );
     assert_eq!(
         message_badges(text, Some(&directives), event()),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             acknowledgements: 1,
             tastes: 0,
             broadcasts: 0,
@@ -571,16 +571,9 @@ fn system_acknowledgment_badge_reaches_canvas_without_speech_eligibility() {
     let messages = publisher.0.lock().expect("message lock");
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].text, "Accepted revision 44.");
-    assert_eq!(
-        messages[0].badges,
-        wire::AgentMessageBadges {
-            acknowledgements: 1,
-            tastes: 0,
-            broadcasts: 0,
-            reviews: 0,
-            pending: 0,
-            declines: 0,
-        },
+    assert!(
+        messages[0].classifications.is_empty(),
+        "a system acknowledgment has no authored context marker"
     );
     assert!(messages[0].automatic_speech.is_none());
 }
@@ -599,9 +592,9 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
     );
     assert_eq!(
         message_badges(text, Some(&directives), event()),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             pending: 1,
-            ..wire::AgentMessageBadges::default()
+            ..ClassificationCounts::default()
         },
     );
     let locus = wire::MessageLocus {
@@ -633,7 +626,14 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
         messages[0].text,
         "> [ACK PENDING] Keep the current path.\n\nApplied."
     );
-    assert_eq!(messages[0].badges.pending, 1);
+    assert_eq!(
+        messages[0]
+            .classifications
+            .iter()
+            .map(|classification| classification.kind)
+            .collect::<Vec<_>>(),
+        [wire::MessageClassificationKind::AcknowledgementPending]
+    );
     drop(messages);
 
     retire(&mut directives, "1kQnrzNZ");
@@ -644,9 +644,9 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
     );
     assert_eq!(
         message_badges(text, Some(&directives), event()),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             acknowledgements: 1,
-            ..wire::AgentMessageBadges::default()
+            ..ClassificationCounts::default()
         },
     );
     assert!(
@@ -794,7 +794,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
     );
     assert_eq!(
         message_badges(text, Some(&directives), event()),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             acknowledgements: 2,
             tastes: 1,
             broadcasts: 0,
@@ -852,7 +852,7 @@ fn current_system_and_taste_ack_hide_one_shared_protocol_header() {
 
     assert_eq!(
         message_badges(text, Some(&directives), event()),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             acknowledgements: 2,
             tastes: 1,
             broadcasts: 0,
@@ -920,7 +920,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
     );
     assert_eq!(
         message_badges(text, Some(&directives), event()),
-        wire::AgentMessageBadges {
+        ClassificationCounts {
             acknowledgements: 2,
             tastes: 0,
             broadcasts: 0,

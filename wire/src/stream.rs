@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 
 /// Canonical semantic prefix carried by every broadcast steering directive.
 pub const BROADCAST_MARKER: &str = "[BROADCAST]";
+/// Canonical semantic prefix carried by every peer-review steering directive.
+pub const REVIEW_MARKER: &str = "[REVIEW]";
+/// Canonical semantic prefix carried by every taste steering directive.
+pub const TASTE_MARKER: &str = "[TASTE]";
 /// Canonical semantic prefix the resident places on every ordinary directive
 /// quoted as acknowledged context inside an agent message presentation.
 pub const ACK_MARKER: &str = "[ACK]";
@@ -151,51 +155,84 @@ pub enum AutomaticSpeechKind {
     Acknowledgement,
 }
 
-/// Semantic badges earned by one agent-authored message.
+/// One resident-authenticated semantic marker at an exact byte range in the
+/// presented message text.
 ///
-/// These counts are resident-classified from durable steering evidence. Canvas
-/// renders them directly and never parses message prose to infer protocol state.
-/// `acknowledgements` counts positive ordinary, taste, and broadcast
-/// acknowledgements; taste and broadcast are overlapping semantic flavors.
-/// An ordinary acknowledgement spoken while the journal still holds its key
-/// pending counts under `pending` instead, and moves to `acknowledgements`
-/// only when the key retires; flavored directives keep their flavor throughout.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// The resident owns both classification and placement. A consumer may replace
+/// only this exact range after validating it against [`Self::kind`]; identical
+/// marker prose elsewhere remains ordinary text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AgentMessageBadges {
-    /// Positively acknowledged ordinary, taste, and broadcast directives.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub acknowledgements: u32,
-    /// Positively acknowledged taste reminders.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub tastes: u32,
-    /// Positively acknowledged broadcast directives.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub broadcasts: u32,
-    /// Positively acknowledged peer-review feedback directives.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub reviews: u32,
-    /// Ordinary directives acknowledged in prose whose key the journal still
-    /// holds pending, awaiting retirement before they read as acknowledged.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub pending: u32,
-    /// Ordinary directives this prose declined, which the quoted context
-    /// carries as a refusal mark rather than as credit.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub declines: u32,
+pub struct MessageClassification {
+    /// Inclusive UTF-8 byte offset where the canonical marker begins.
+    pub start: u32,
+    /// Exclusive UTF-8 byte offset immediately after the canonical marker.
+    pub end: u32,
+    /// Authenticated semantic presentation at this range.
+    pub kind: MessageClassificationKind,
 }
 
-impl AgentMessageBadges {
-    /// Whether this message earned no semantic badge.
+impl MessageClassification {
+    /// Whether this annotation names its kind's exact canonical marker on UTF-8
+    /// boundaries in `text`.
     #[must_use]
-    pub const fn is_empty(&self) -> bool {
-        self.acknowledgements == 0
-            && self.tastes == 0
-            && self.broadcasts == 0
-            && self.reviews == 0
-            && self.pending == 0
-            && self.declines == 0
+    pub fn is_valid_for(&self, text: &str) -> bool {
+        let Ok(start) = usize::try_from(self.start) else {
+            return false;
+        };
+        let Ok(end) = usize::try_from(self.end) else {
+            return false;
+        };
+        text.get(start..end) == Some(self.kind.marker())
     }
+}
+
+/// Semantic presentation authenticated by the resident for one exact marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MessageClassificationKind {
+    /// Positively acknowledged ordinary directive.
+    Acknowledgement,
+    /// Ordinary directive acknowledged in prose but not yet retired.
+    AcknowledgementPending,
+    /// Ordinary directive explicitly declined by the agent.
+    Decline,
+    /// Confirmed taste guidance.
+    Taste,
+    /// Broadcast steering.
+    Broadcast,
+    /// Peer-review feedback.
+    Review,
+}
+
+impl MessageClassificationKind {
+    /// Canonical source marker this semantic presentation replaces.
+    #[must_use]
+    pub const fn marker(self) -> &'static str {
+        match self {
+            Self::Acknowledgement => ACK_MARKER,
+            Self::AcknowledgementPending => ACK_PENDING_MARKER,
+            Self::Decline => NACK_MARKER,
+            Self::Taste => TASTE_MARKER,
+            Self::Broadcast => BROADCAST_MARKER,
+            Self::Review => REVIEW_MARKER,
+        }
+    }
+}
+
+/// Whether ordered classifications are exact, non-overlapping annotations of
+/// their presented text.
+#[must_use]
+pub fn valid_message_classifications(
+    text: &str,
+    classifications: &[MessageClassification],
+) -> bool {
+    classifications
+        .iter()
+        .all(|classification| classification.is_valid_for(text))
+        && classifications
+            .windows(2)
+            .all(|pair| pair[0].end <= pair[1].start)
 }
 
 /// Resident-selected text for one automatic Speak delivery.
@@ -378,12 +415,13 @@ pub struct AgentMessage {
     pub final_answer: bool,
     /// Visible assistant prose, concise tool preview, or boundary label.
     pub text: String,
-    /// Typed positive directive classifications earned by this message.
+    /// Resident-authenticated semantic markers at exact byte ranges in
+    /// [`Self::text`].
     ///
-    /// Classification is independent of automatic speech eligibility: system
-    /// acknowledgments may earn a badge while deliberately remaining silent.
-    #[serde(default, skip_serializing_if = "AgentMessageBadges::is_empty")]
-    pub badges: AgentMessageBadges,
+    /// The absent wire spelling means no source range may be rendered as
+    /// protocol metadata.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub classifications: Vec<MessageClassification>,
     /// Optional resident-classified automatic Speak delivery.
     ///
     /// Its absence is the compatibility spelling and means this activity must
@@ -415,10 +453,6 @@ pub struct AgentMessage {
     /// Admitted media carried beside this exact transcript event.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub media: Vec<crate::Media>,
-}
-
-const fn is_zero(value: &u32) -> bool {
-    *value == 0
 }
 
 impl AgentMessage {
@@ -506,7 +540,7 @@ mod message_retention_tests {
             activity: AgentActivityKind::Prose,
             final_answer: false,
             text: "fixture".to_owned(),
-            badges: AgentMessageBadges::default(),
+            classifications: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             boundary: None,

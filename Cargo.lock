@@ -3236,6 +3236,7 @@ dependencies = [
  "listen",
  "notify",
  "proof",
+ "pulldown-cmark",
  "rusqlite",
  "rustix",
  "serde",

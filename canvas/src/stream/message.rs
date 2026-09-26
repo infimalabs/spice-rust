@@ -426,6 +426,7 @@ fn validate_history_page(
             message.lane != lane
                 || !visible_message(message)
                 || before.is_some_and(|before| message.chronology_key() >= before.chronology_key())
+                || !wire::valid_message_classifications(&message.text, &message.classifications)
         })
         || page
             .messages
@@ -466,7 +467,7 @@ enum MessageMutation {
         lane: wire::CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
-        badges: wire::AgentMessageBadges,
+        classifications: Vec<wire::MessageClassification>,
     },
 }
 
@@ -582,15 +583,21 @@ impl MessagePublisher {
     }
 
     /// Present one retained prose message again from later journal evidence.
+    ///
+    /// The durable locus remains immutable. A card that spoke an
+    /// acknowledgement before the journal retired its key is presented again
+    /// once the retirement lands, so only `text` and `classifications` move;
+    /// the final state and speech the card already earned stay. A card retention
+    /// longer holds, or one already presented this way, answers false.
     pub fn revise_presentation(
         &self,
         lane: wire::CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
-        badges: wire::AgentMessageBadges,
+        classifications: Vec<wire::MessageClassification>,
     ) -> Result<bool, MessagePublishError> {
         let batch = self.batch()?;
-        let changed = batch.revise_presentation(lane, locus, text, badges)?;
+        let changed = batch.revise_presentation(lane, locus, text, classifications)?;
         if changed {
             batch.commit()?;
         }
@@ -601,7 +608,7 @@ impl MessagePublisher {
 impl MessageBatch {
     /// Stage one new durable activity.
     pub fn publish(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
-        wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+        validate_message_presentation(&message)?;
         let mut state = self
             .state
             .lock()
@@ -619,7 +626,7 @@ impl MessageBatch {
 
     /// Stage the one admitted final-answer revision.
     pub fn revise_final(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
-        wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+        validate_message_presentation(&message)?;
         let mut state = self
             .state
             .lock()
@@ -637,14 +644,22 @@ impl MessageBatch {
         lane: wire::CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
-        badges: wire::AgentMessageBadges,
+        classifications: Vec<wire::MessageClassification>,
     ) -> Result<bool, MessagePublishError> {
+        if !wire::valid_message_classifications(&text, &classifications) {
+            return Err(MessagePublishError::InvalidClassifications);
+        }
         let mut state = self
             .state
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?;
-        let Some(_) =
-            revise_presented_message(&mut state.retained, lane, locus, text.clone(), badges)?
+        let Some(_) = revise_presented_message(
+            &mut state.retained,
+            lane,
+            locus,
+            text.clone(),
+            classifications.clone(),
+        )?
         else {
             return Ok(false);
         };
@@ -652,7 +667,7 @@ impl MessageBatch {
             lane,
             locus,
             text,
-            badges,
+            classifications,
         });
         Ok(true)
     }
@@ -791,9 +806,15 @@ impl MessageMutation {
                 lane,
                 locus,
                 text,
-                badges,
-            } => revise_presented_message(retained, *lane, *locus, text.clone(), *badges)
-                .map(|revised| revised.is_some()),
+                classifications,
+            } => revise_presented_message(
+                retained,
+                *lane,
+                *locus,
+                text.clone(),
+                classifications.clone(),
+            )
+            .map(|revised| revised.is_some()),
         }
     }
 }
@@ -874,7 +895,7 @@ fn revise_presented_message(
     lane: wire::CanonicalUuid,
     locus: wire::MessageLocus,
     text: String,
-    badges: wire::AgentMessageBadges,
+    classifications: Vec<wire::MessageClassification>,
 ) -> Result<Option<AgentMessage>, MessagePublishError> {
     let Some(existing) = retained
         .iter_mut()
@@ -885,12 +906,20 @@ fn revise_presented_message(
     if existing.activity != wire::AgentActivityKind::Prose {
         return Err(MessagePublishError::IdentityConflict);
     }
-    if existing.text == text && existing.badges == badges {
+    if existing.text == text && existing.classifications == classifications {
         return Ok(None);
     }
     existing.text = text;
-    existing.badges = badges;
+    existing.classifications = classifications;
     Ok(Some(existing.clone()))
+}
+
+fn validate_message_presentation(message: &AgentMessage) -> Result<(), MessagePublishError> {
+    wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+    if !wire::valid_message_classifications(&message.text, &message.classifications) {
+        return Err(MessagePublishError::InvalidClassifications);
+    }
+    Ok(())
 }
 
 /// Whether one activity consumes a lane's visible-card retention budget.
@@ -939,6 +968,8 @@ fn trim_visible_lane(
 pub enum MessagePublishError {
     /// Typed media failed the shared count, size, type, or byte admission law.
     InvalidMedia(wire::MediaError),
+    /// Resident classifications did not name exact ordered source markers.
+    InvalidClassifications,
     /// Transcript publication state could not be acquired or advanced.
     Unavailable,
     /// One tape event identity was reused for different content.
@@ -960,6 +991,9 @@ impl fmt::Display for MessagePublishError {
         match self {
             Self::InvalidMedia(error) => {
                 write!(formatter, "canvas message media is invalid: {error}")
+            }
+            Self::InvalidClassifications => {
+                formatter.write_str("canvas message classifications are invalid")
             }
             Self::Unavailable => formatter.write_str("canvas message retention is unavailable"),
             Self::IdentityConflict => {

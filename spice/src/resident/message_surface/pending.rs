@@ -84,7 +84,7 @@ pub(in crate::resident) trait PresentationPublisher {
         lane: CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
-        badges: wire::AgentMessageBadges,
+        classifications: Vec<wire::MessageClassification>,
     ) -> Result<bool, canvas::stream::MessagePublishError>;
 }
 
@@ -94,9 +94,9 @@ impl PresentationPublisher for canvas::stream::MessagePublisher {
         lane: CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
-        badges: wire::AgentMessageBadges,
+        classifications: Vec<wire::MessageClassification>,
     ) -> Result<bool, canvas::stream::MessagePublishError> {
-        Self::revise_presentation(self, lane, locus, text, badges)
+        Self::revise_presentation(self, lane, locus, text, classifications)
     }
 }
 
@@ -106,9 +106,9 @@ impl PresentationPublisher for canvas::stream::MessageBatch {
         lane: CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
-        badges: wire::AgentMessageBadges,
+        classifications: Vec<wire::MessageClassification>,
     ) -> Result<bool, canvas::stream::MessagePublishError> {
-        Self::revise_presentation(self, lane, locus, text, badges)
+        Self::revise_presentation(self, lane, locus, text, classifications)
     }
 }
 
@@ -166,7 +166,7 @@ fn settle_with_directives(
 /// Re-present one card from the current journal disposition of its keys.
 ///
 /// The prose state the turn end revises to final follows the same text and
-/// badges, so the terminal revision still names the card retention holds.
+/// classifications, so the terminal revision still names the card retention holds.
 fn present_again(
     publisher: &impl PresentationPublisher,
     state: &mut MessageState,
@@ -177,19 +177,25 @@ fn present_again(
     if event.source.is_none() {
         event.source = state.observations.source(card.lane, event.locus);
     }
-    let text = present_steering_acknowledgements_with_directives(&card.text, directives, event)
-        .map_err(|detail| store_fault("canvas::message-steering-presentation-invalid", &detail))?;
-    let badges = message_badges(&card.text, Some(directives), event);
+    let presented = present_steering_acknowledgements(&card.text, Some(directives), event)?;
     publisher
-        .revise_presentation(card.lane, card.locus, text.clone(), badges)
+        .revise_presentation(
+            card.lane,
+            card.locus,
+            presented.text.clone(),
+            presented.classifications.clone(),
+        )
         .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
     if let Some(prose) = state.prose.get_mut(&card.lane)
         && prose.published.locus == card.locus
     {
-        prose.published.text.clone_from(&text);
-        prose.published.badges = badges;
-        prose.terminal.text = text;
-        prose.terminal.badges = badges;
+        prose.published.text.clone_from(&presented.text);
+        prose
+            .published
+            .classifications
+            .clone_from(&presented.classifications);
+        prose.terminal.text = presented.text;
+        prose.terminal.classifications = presented.classifications;
     }
     Ok(())
 }

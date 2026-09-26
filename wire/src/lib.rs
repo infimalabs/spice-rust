@@ -104,11 +104,11 @@ pub use reply::{
     ThreadReport, Version,
 };
 pub use stream::{
-    AgentActivityKind, AgentMessage, AgentMessageBadges, AutomaticSpeech, AutomaticSpeechKind,
-    MESSAGE_FLOOR, MessageBoundary, MessageHistoryCursor, MessageLocus, OperatorDirection,
-    StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest,
-    TranscriptGeneration, TranscriptLaneFrontier, TranscriptLaneState, TrustView, ViewSubject,
-    superseded_boundaries,
+    AgentActivityKind, AgentMessage, AutomaticSpeech, AutomaticSpeechKind, MESSAGE_FLOOR,
+    MessageBoundary, MessageClassification, MessageClassificationKind, MessageHistoryCursor,
+    MessageLocus, OperatorDirection, StreamAdmissionError, StreamCursor, StreamFact, StreamFrame,
+    StreamRequest, TranscriptGeneration, TranscriptLaneFrontier, TranscriptLaneState, TrustView,
+    ViewSubject, superseded_boundaries, valid_message_classifications,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,
