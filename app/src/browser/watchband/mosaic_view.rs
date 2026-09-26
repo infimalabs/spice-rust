@@ -116,7 +116,6 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
         || left.authored_synthetic != right.authored_synthetic
         || left.observed != right.observed
         || left.activity != right.activity
-        || left.final_answer != right.final_answer
         || left.text.trim().is_empty() != right.text.trim().is_empty()
         || left.unavailable_tool_terminals != right.unavailable_tool_terminals
         || left.boundary != right.boundary
@@ -124,11 +123,15 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
     {
         return false;
     }
-    let left = crate::composer_markdown::render_received_with_badges(&left.text, left.badges);
-    let right = crate::composer_markdown::render_received_with_badges(&right.text, right.badges);
-    left.html == right.html
-        && left.image_only == right.image_only
-        && left.diagrams == right.diagrams
+    let left = crate::composer_markdown::render_received_with_classifications(
+        &left.text,
+        &left.classifications,
+    );
+    let right = crate::composer_markdown::render_received_with_classifications(
+        &right.text,
+        &right.classifications,
+    );
+    crate::composer_markdown::same_measured_shape(&left, &right)
 }
 
 impl ActivityCard {

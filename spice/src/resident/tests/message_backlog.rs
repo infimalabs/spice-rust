@@ -894,15 +894,23 @@ fn assert_mixed_acknowledgement_message(
         1
     );
     assert_eq!(messages[0].text.matches("[ACK").count(), 1);
+    let first_kind = if marker == wire::stream::ACK_MARKER {
+        wire::MessageClassificationKind::Acknowledgement
+    } else {
+        wire::MessageClassificationKind::AcknowledgementPending
+    };
+    assert!(wire::valid_message_classifications(
+        &messages[0].text,
+        &messages[0].classifications
+    ));
     assert_eq!(
-        messages[0].badges,
-        wire::AgentMessageBadges {
-            acknowledgements: u32::from(marker == wire::stream::ACK_MARKER),
-            pending: u32::from(marker == wire::stream::ACK_PENDING_MARKER),
-            declines: 1,
-            ..wire::AgentMessageBadges::default()
-        },
-        "the badge counts agree with the card text"
+        messages[0]
+            .classifications
+            .iter()
+            .map(|classification| classification.kind)
+            .collect::<Vec<_>>(),
+        [first_kind, wire::MessageClassificationKind::Decline],
+        "the exact classifications agree with the card text"
     );
     assert_eq!(messages[0].text.matches("Nope").count(), 1);
     assert_eq!(messages[0].text.matches("1kQwPZtM").count(), 1);

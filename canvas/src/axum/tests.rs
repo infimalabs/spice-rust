@@ -103,7 +103,7 @@ fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentMessage {
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
         text: text.to_owned(),
-        badges: Default::default(),
+        classifications: Vec::new(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
         boundary: None,

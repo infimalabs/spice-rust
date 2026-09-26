@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use bus::Bus;
 use lane::occupant::Seats;
+use pulldown_cmark::{Event as MarkdownEvent, Options, Parser, Tag, TagEnd};
 use wire::{AgentActivityKind, CanonicalUuid, Outcome};
 
 use super::{
@@ -505,12 +506,29 @@ fn present_steering_acknowledgements(
     text: &str,
     steering: Option<&PresentationDirectives>,
     event: PresentationEvent,
-) -> CommandResult<String> {
+) -> CommandResult<PresentedMessageText> {
     let Some(steering) = steering else {
-        return Ok(text.to_owned());
+        return Ok(PresentedMessageText {
+            text: text.to_owned(),
+            classifications: Vec::new(),
+        });
     };
-    present_steering_acknowledgements_with_directives(text, steering, event)
-        .map_err(|detail| store_fault("canvas::message-steering-presentation-invalid", &detail))
+    let presented = present_steering_acknowledgements_with_directives(text, steering, event)
+        .map_err(|detail| store_fault("canvas::message-steering-presentation-invalid", &detail))?;
+    let classifications =
+        hydrate_message_classifications(&presented, message_badges(text, Some(steering), event))
+            .map_err(|detail| {
+                store_fault("canvas::message-steering-presentation-invalid", &detail)
+            })?;
+    Ok(PresentedMessageText {
+        text: presented,
+        classifications,
+    })
+}
+
+struct PresentedMessageText {
+    text: String,
+    classifications: Vec<wire::MessageClassification>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -674,13 +692,29 @@ fn is_review_feedback(control: Option<&str>) -> bool {
     })
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct ClassificationCounts {
+    acknowledgements: u32,
+    tastes: u32,
+    broadcasts: u32,
+    reviews: u32,
+    pending: u32,
+    declines: u32,
+}
+impl ClassificationCounts {
+    #[cfg(test)]
+    fn is_empty(self) -> bool {
+        self == Self::default()
+    }
+}
+
 fn message_badges(
     text: &str,
     directives: Option<&PresentationDirectives>,
     event: PresentationEvent,
-) -> wire::AgentMessageBadges {
+) -> ClassificationCounts {
     let Some(directives) = directives else {
-        return wire::AgentMessageBadges::default();
+        return ClassificationCounts::default();
     };
     let standing = EventDirectives { directives, event };
     let mut acknowledged = BTreeSet::new();
@@ -714,7 +748,7 @@ fn message_badges(
     // A decline is an answer, not credit: it authorizes the refusal mark on
     // the quoted directive and never adds to the acknowledged total.
     let declines = u32::try_from(declined.len()).unwrap_or(u32::MAX);
-    wire::AgentMessageBadges {
+    ClassificationCounts {
         acknowledgements: u32::try_from(acknowledged.len())
             .unwrap_or(u32::MAX)
             .saturating_sub(reviews)
@@ -725,6 +759,163 @@ fn message_badges(
         pending,
         declines,
     }
+}
+
+#[derive(Debug)]
+struct RemainingClassifications {
+    acknowledgements: usize,
+    tastes: usize,
+    broadcasts: usize,
+    reviews: usize,
+    pending: usize,
+    declines: usize,
+}
+
+impl From<ClassificationCounts> for RemainingClassifications {
+    fn from(counts: ClassificationCounts) -> Self {
+        let count = |value| usize::try_from(value).unwrap_or(usize::MAX);
+        Self {
+            acknowledgements: count(
+                counts
+                    .acknowledgements
+                    .saturating_sub(counts.tastes)
+                    .saturating_sub(counts.broadcasts),
+            ),
+            tastes: count(counts.tastes),
+            broadcasts: count(counts.broadcasts),
+            reviews: count(counts.reviews),
+            pending: count(counts.pending),
+            declines: count(counts.declines),
+        }
+    }
+}
+
+fn hydrate_message_classifications(
+    text: &str,
+    counts: ClassificationCounts,
+) -> Result<Vec<wire::MessageClassification>, String> {
+    let options = Options::ENABLE_TABLES
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_SMART_PUNCTUATION
+        | Options::ENABLE_MATH
+        | Options::ENABLE_GFM;
+    let mut remaining = RemainingClassifications::from(counts);
+    let mut quote_depth = 0usize;
+    let mut code_block = false;
+    let mut image_depth = 0usize;
+    let mut classifications = Vec::new();
+    for (event, source) in Parser::new_ext(text, options).into_offset_iter() {
+        match &event {
+            MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
+            MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
+            MarkdownEvent::Start(Tag::BlockQuote(_)) => quote_depth += 1,
+            MarkdownEvent::End(TagEnd::BlockQuote(_)) => {
+                quote_depth = quote_depth.saturating_sub(1);
+            }
+            MarkdownEvent::Start(Tag::Image { .. }) => image_depth += 1,
+            MarkdownEvent::End(TagEnd::Image) => {
+                image_depth = image_depth.saturating_sub(1);
+            }
+            _ => {}
+        }
+        let MarkdownEvent::Text(_) = event else {
+            continue;
+        };
+        if code_block || image_depth != 0 || quote_depth == 0 {
+            continue;
+        }
+        let source_tail = text
+            .get(source.start..)
+            .ok_or_else(|| "Markdown source offset is not UTF-8 aligned".to_owned())?;
+        let kind = if quote_depth == 1
+            && take_classification(
+                source_tail,
+                wire::MessageClassificationKind::Review,
+                &mut remaining.reviews,
+            ) {
+            Some(wire::MessageClassificationKind::Review)
+        } else if quote_depth == 1
+            && take_classification(
+                source_tail,
+                wire::MessageClassificationKind::Broadcast,
+                &mut remaining.broadcasts,
+            )
+        {
+            Some(wire::MessageClassificationKind::Broadcast)
+        } else if quote_depth == 1
+            && take_classification(
+                source_tail,
+                wire::MessageClassificationKind::AcknowledgementPending,
+                &mut remaining.pending,
+            )
+        {
+            Some(wire::MessageClassificationKind::AcknowledgementPending)
+        } else if quote_depth == 1
+            && take_classification(
+                source_tail,
+                wire::MessageClassificationKind::Decline,
+                &mut remaining.declines,
+            )
+        {
+            Some(wire::MessageClassificationKind::Decline)
+        } else if quote_depth == 1
+            && take_classification(
+                source_tail,
+                wire::MessageClassificationKind::Acknowledgement,
+                &mut remaining.acknowledgements,
+            )
+        {
+            Some(wire::MessageClassificationKind::Acknowledgement)
+        } else if take_classification(
+            source_tail,
+            wire::MessageClassificationKind::Taste,
+            &mut remaining.tastes,
+        ) {
+            Some(wire::MessageClassificationKind::Taste)
+        } else {
+            None
+        };
+        let Some(kind) = kind else {
+            continue;
+        };
+        let marker = kind.marker();
+        let start = source.start;
+        let end = start
+            .checked_add(marker.len())
+            .ok_or_else(|| "classification end overflowed".to_owned())?;
+        classifications.push(wire::MessageClassification {
+            start: u32::try_from(start)
+                .map_err(|_| "classification start exceeds the wire range".to_owned())?,
+            end: u32::try_from(end)
+                .map_err(|_| "classification end exceeds the wire range".to_owned())?,
+            kind,
+        });
+    }
+    if !wire::valid_message_classifications(text, &classifications) {
+        return Err("hydrated message classifications are not exact and ordered".to_owned());
+    }
+    Ok(classifications)
+}
+
+fn take_classification(
+    text: &str,
+    kind: wire::MessageClassificationKind,
+    remaining: &mut usize,
+) -> bool {
+    if *remaining == 0 {
+        return false;
+    }
+    let marker = kind.marker();
+    if !text
+        .strip_prefix(marker)
+        .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(char::is_whitespace))
+    {
+        return false;
+    }
+    *remaining -= 1;
+    true
 }
 
 /// Recognized answers from one presentation scan. Callers select dispositions

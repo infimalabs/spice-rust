@@ -1,7 +1,8 @@
 use wire::{
-    Actor, AgentActivityKind, AgentMessage, AgentMessageBadges, AutomaticSpeech,
-    AutomaticSpeechKind, CanonicalUuid, Envelope, Fact, MessageLocus, Packed, StreamAdmissionError,
-    StreamCursor, StreamFact, StreamFrame, StreamRequest, ViewSubject, WireVersion,
+    Actor, AgentActivityKind, AgentMessage, AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid,
+    Envelope, Fact, MessageClassification, MessageClassificationKind, MessageLocus, Packed,
+    StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest, ViewSubject,
+    WireVersion,
 };
 
 fn uuid(value: &str) -> CanonicalUuid {
@@ -28,7 +29,7 @@ fn prose_message() -> AgentMessage {
         activity: AgentActivityKind::Prose,
         final_answer: false,
         text: "settled".to_owned(),
-        badges: Default::default(),
+        classifications: Vec::new(),
         automatic_speech: None,
         unavailable_tool_terminals: Vec::new(),
         boundary: None,
@@ -311,27 +312,39 @@ fn turn_activity_has_one_explicit_wire_shape() {
 }
 
 #[test]
-fn a_pending_acknowledgement_badge_is_its_own_count_and_marker() {
+fn message_classifications_encode_exact_ordered_source_ranges() {
+    let text = "> [ACK PENDING] Keep the current path.".to_owned();
+    let classification = MessageClassification {
+        start: 2,
+        end: 15,
+        kind: MessageClassificationKind::AcknowledgementPending,
+    };
     let pending = AgentMessage {
-        badges: AgentMessageBadges {
-            pending: 1,
-            ..AgentMessageBadges::default()
-        },
+        text: text.clone(),
+        classifications: vec![classification],
         ..prose_message()
     };
-    assert!(!pending.badges.is_empty(), "a pending count is a badge");
-    let encoded = wire::encode(&pending).expect("pending badge encodes");
-    let encoded_text = String::from_utf8_lossy(&encoded);
-    assert!(encoded_text.contains(r#""badges":{"pending":1}"#));
-    assert!(
-        !encoded_text.contains("acknowledgements"),
-        "a spoken acknowledgement the journal still holds pending earns no acknowledged count"
-    );
+    assert!(wire::valid_message_classifications(
+        &text,
+        &pending.classifications
+    ));
+    let encoded = wire::encode(&pending).expect("pending classification encodes");
     assert_eq!(
         wire::decode::<AgentMessage>(&encoded)
-            .expect("pending badge decodes")
-            .badges,
-        pending.badges,
+            .expect("pending classification decodes")
+            .classifications,
+        [classification],
+    );
+    assert!(
+        !wire::valid_message_classifications(
+            &text,
+            &[MessageClassification {
+                start: 3,
+                end: 16,
+                kind: MessageClassificationKind::AcknowledgementPending,
+            }]
+        ),
+        "a shifted range cannot authenticate neighboring text"
     );
     assert!(
         !wire::stream::ACK_PENDING_MARKER.starts_with(wire::stream::ACK_MARKER)
@@ -354,14 +367,6 @@ fn automatic_speech_is_typed_and_has_one_absence_spelling() {
     );
 
     let spoken = AgentMessage {
-        badges: AgentMessageBadges {
-            acknowledgements: 2,
-            tastes: 1,
-            broadcasts: 1,
-            reviews: 1,
-            pending: 1,
-            declines: 1,
-        },
         automatic_speech: Some(AutomaticSpeech {
             kind: AutomaticSpeechKind::Final,
             text: "selected final".to_owned(),

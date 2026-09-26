@@ -227,7 +227,7 @@ fn publish_turn_boundary(
             activity: AgentActivityKind::Turn,
             final_answer: false,
             text: "New turn".to_owned(),
-            badges: wire::AgentMessageBadges::default(),
+            classifications: Vec::new(),
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
@@ -237,7 +237,10 @@ fn publish_turn_boundary(
 }
 
 fn same_prose(left: &wire::AgentMessage, right: &wire::AgentMessage) -> bool {
-    left.author == right.author && left.text == right.text && left.media == right.media
+    left.author == right.author
+        && left.text == right.text
+        && left.classifications == right.classifications
+        && left.media == right.media
 }
 
 fn publish_message(
@@ -296,63 +299,62 @@ fn project_agent_event(
         locus,
         ordinal,
     };
-    let (activity, final_answer, locus, text, badges, automatic_speech, media) = match decoded {
-        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
-            let event = presentation_event(prose.locus);
-            (
-                AgentActivityKind::Prose,
-                prose.phase.as_deref() == Some("final_answer"),
-                prose.locus,
-                present_steering_acknowledgements(&prose.text, steering, event)?,
-                message_badges(&prose.text, steering, event),
-                automatic_speech::classify(prose, steering, event),
-                prose.media.clone(),
-            )
-        }
-        listen::Event::Tool(tool) => {
-            let activity = tool_preview::activity_in(lane, tool, previews, worktree);
-            let media = match &tool.moment {
-                listen::ToolMoment::Result(outcome) => outcome.media.clone(),
-                listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => Vec::new(),
-            };
-            let text = tool_preview::message_text(tool, activity, &media);
-            (
-                AgentActivityKind::Tool,
+    let (activity, final_answer, locus, text, classifications, automatic_speech, media) =
+        match decoded {
+            listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+                let (presented, automatic_speech) =
+                    project_prose_presentation(prose, steering, presentation_event(prose.locus))?;
+                (
+                    AgentActivityKind::Prose,
+                    prose.phase.as_deref() == Some("final_answer"),
+                    prose.locus,
+                    presented.text,
+                    presented.classifications,
+                    automatic_speech,
+                    prose.media.clone(),
+                )
+            }
+            listen::Event::Tool(tool) => {
+                let activity = tool_preview::activity_in(lane, tool, previews, worktree);
+                let media = tool_message_media(tool);
+                let text = tool_preview::message_text(tool, activity, &media);
+                (
+                    AgentActivityKind::Tool,
+                    false,
+                    tool.locus,
+                    text,
+                    Vec::new(),
+                    None,
+                    media,
+                )
+            }
+            listen::Event::Reasoning(listen::Reasoning {
+                content: listen::ReasoningContent::Plain(parts),
+                locus,
+            }) => (
+                AgentActivityKind::Reasoning,
                 false,
-                tool.locus,
-                text,
-                wire::AgentMessageBadges::default(),
+                *locus,
+                reasoning_preview(parts),
+                Vec::new(),
                 None,
-                media,
-            )
-        }
-        listen::Event::Reasoning(listen::Reasoning {
-            content: listen::ReasoningContent::Plain(parts),
-            locus,
-        }) => (
-            AgentActivityKind::Reasoning,
-            false,
-            *locus,
-            reasoning_preview(parts),
-            wire::AgentMessageBadges::default(),
-            None,
-            Vec::new(),
-        ),
-        listen::Event::Compaction(compaction) => (
-            AgentActivityKind::Compaction,
-            false,
-            compaction.locus,
-            compaction
-                .summary
-                .clone()
-                .filter(|summary| !summary.trim().is_empty())
-                .unwrap_or_else(|| "Context compacted".to_owned()),
-            wire::AgentMessageBadges::default(),
-            None,
-            Vec::new(),
-        ),
-        _ => return Ok(None),
-    };
+                Vec::new(),
+            ),
+            listen::Event::Compaction(compaction) => (
+                AgentActivityKind::Compaction,
+                false,
+                compaction.locus,
+                compaction
+                    .summary
+                    .clone()
+                    .filter(|summary| !summary.trim().is_empty())
+                    .unwrap_or_else(|| "Context compacted".to_owned()),
+                Vec::new(),
+                None,
+                Vec::new(),
+            ),
+            _ => return Ok(None),
+        };
     let (authored, authored_synthetic) = parse_agent_message_authored(authored, locus, ordinal)?;
     let observed = authored_synthetic
         .then(|| observed.or_else(|| observations.at(lane, locus)))
@@ -374,7 +376,7 @@ fn project_agent_event(
         activity,
         final_answer,
         text,
-        badges,
+        classifications,
         automatic_speech,
         unavailable_tool_terminals: unavailable_tool_terminals.to_vec(),
         boundary: event_boundary(decoded),
@@ -382,11 +384,28 @@ fn project_agent_event(
     };
     let pending = pending_presentation(decoded, steering, presentation_event, published.locus);
     let terminal = terminal_prose_card(&published, decoded, steering, presentation_event);
+
     Ok(Some(ProjectedMessage {
         published,
         terminal,
         pending,
     }))
+}
+fn project_prose_presentation(
+    prose: &listen::Prose,
+    steering: Option<&PresentationDirectives>,
+    event: PresentationEvent,
+) -> CommandResult<(PresentedMessageText, Option<wire::AutomaticSpeech>)> {
+    let presented = present_steering_acknowledgements(&prose.text, steering, event)?;
+    let automatic_speech = automatic_speech::classify(prose, steering, event);
+    Ok((presented, automatic_speech))
+}
+
+fn tool_message_media(tool: &listen::Tool) -> Vec<wire::Media> {
+    match &tool.moment {
+        listen::ToolMoment::Result(outcome) => outcome.media.clone(),
+        listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => Vec::new(),
+    }
 }
 
 /// Vendor identity of the compaction this event records, if it records one.

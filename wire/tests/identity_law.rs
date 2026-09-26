@@ -46,21 +46,21 @@ use std::num::NonZeroU64;
 use serde::{Deserialize, Serialize};
 use wire::manifest::{ProductVersion, ReleaseTarget};
 use wire::{
-    Accepted, Actor, AgentActivityKind, AgentMediaReference, AgentMessage, AgentMessageBadges,
-    Answer, AnyFact, AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid, ClaimDisposition,
-    ClaimHead, Command, CommandKind, CursorHead, DemoAnswer, Derived, Digest, Disposition,
-    DoctorObservation, DoctorSubsystem, DoctorToolBounds, DoctorToolCancellation, DoctorToolMode,
-    DoctorToolNetwork, DoctorToolRequirement, DoctorToolSource, Domain, DurationWord, Envelope,
+    Accepted, Actor, AgentActivityKind, AgentMediaReference, AgentMessage, Answer, AnyFact,
+    AutomaticSpeech, AutomaticSpeechKind, CanonicalUuid, ClaimDisposition, ClaimHead, Command,
+    CommandKind, CursorHead, DemoAnswer, Derived, Digest, Disposition, DoctorObservation,
+    DoctorSubsystem, DoctorToolBounds, DoctorToolCancellation, DoctorToolMode, DoctorToolNetwork,
+    DoctorToolRequirement, DoctorToolSource, Domain, DurationWord, Envelope,
     EnvironmentRequirement, EnvironmentRequirements, Fact, FactKind, Fault, FaultClass,
     FindingHead, FindingState, FoldName, Hello, Instant, JournalReport, JournalRestore,
-    LaneResidency, LaneSession, LeaseHead, MessageHistoryCursor, MessageLocus, Name,
-    OperatorDirection, Origin, Outcome, Overflow, Packed, Phase, Producer, ProofEvidence,
-    Provenance, Refusal, ReleaseNotes, ReleaseNotesEntry, ReleasePlanObservations,
-    ReleaseRegistryEvidence, Reply, ReplyPosition, ResidencyHead, ResidentState, Response,
-    RestoreVerification, Seq, SeqRange, SpiceVariable, SteeringHead, StreamCursor, StreamFact,
-    StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead, TaskStamp, TeamSubscription,
-    TrustHead, TrustState, TrustView, ViewSubject, WireVersion, Witness, WitnessClass, WitnessHead,
-    WitnessKind, WorkflowHead, body,
+    LaneResidency, LaneSession, LeaseHead, MessageClassification, MessageClassificationKind,
+    MessageHistoryCursor, MessageLocus, Name, OperatorDirection, Origin, Outcome, Overflow, Packed,
+    Phase, Producer, ProofEvidence, Provenance, Refusal, ReleaseNotes, ReleaseNotesEntry,
+    ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, ResidencyHead,
+    ResidentState, Response, RestoreVerification, Seq, SeqRange, SpiceVariable, SteeringHead,
+    StreamCursor, StreamFact, StreamFrame, StreamRequest, TapeLocus, TaskHandle, TaskHead,
+    TaskStamp, TeamSubscription, TrustHead, TrustState, TrustView, ViewSubject, WireVersion,
+    Witness, WitnessClass, WitnessHead, WitnessKind, WorkflowHead, body,
 };
 
 #[path = "identity_law/laws.rs"]

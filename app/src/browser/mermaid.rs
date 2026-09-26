@@ -347,41 +347,7 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
 pub(super) struct MarkdownBodyProps {
     pub(super) html: AttrValue,
     pub(super) sources: Rc<Vec<AttrValue>>,
-    pub(super) acknowledgements: Rc<Vec<crate::composer_markdown::AcknowledgementState>>,
     pub(super) final_answer: bool,
-}
-
-#[derive(Properties, PartialEq)]
-struct AcknowledgementPillProps {
-    state: crate::composer_markdown::AcknowledgementState,
-}
-
-#[function_component(AcknowledgementPill)]
-fn acknowledgement_pill(props: &AcknowledgementPillProps) -> Html {
-    let (classification, acknowledgement, label, text) = match props.state {
-        crate::composer_markdown::AcknowledgementState::Acknowledged => {
-            ("ack", "acked", "Acknowledgement classification", "ACK")
-        }
-        crate::composer_markdown::AcknowledgementState::Pending => (
-            "ack-pending",
-            "pending",
-            "Acknowledgement awaiting retirement",
-            "ACK",
-        ),
-        crate::composer_markdown::AcknowledgementState::Declined => {
-            ("nack", "declined", "Declined classification", "NACK")
-        }
-    };
-    html! {
-        <span
-            class="message-ack-pill"
-            data-message-classification={classification}
-            data-acknowledgement={acknowledgement}
-            aria-label={label}
-        >
-            <span class="message-ack-label">{text}</span>
-        </span>
-    }
 }
 
 struct Slot {
@@ -431,49 +397,34 @@ fn collect_slots(
     slots
 }
 
-/// Only producer-authored slots inside this card are portal targets. Raw user
-/// HTML still passes through the shared Markdown sanitizer before this point.
+/// Only producer-authored diagram slots inside this card are portal targets.
+/// Raw user HTML still passes through the shared Markdown sanitizer before this
+/// point. Resident-hydrated classifications are already final inline HTML and
+/// need no post-render slot discovery.
 #[function_component(MarkdownBody)]
 pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let host = use_node_ref();
     let diagram_slots = use_state(Vec::<Slot>::new);
-    let acknowledgement_slots = use_state(Vec::<Slot>::new);
     let counter = use_memo((), |()| Cell::new(0_u64));
-    use_effect_with(
-        (
-            props.html.clone(),
-            props.sources.len(),
-            props.acknowledgements.len(),
-        ),
-        {
-            let host = host.clone();
-            let diagram_slots = diagram_slots.clone();
-            let acknowledgement_slots = acknowledgement_slots.clone();
-            let counter = counter.clone();
-            move |(_, source_count, acknowledgement_count)| {
-                let Some(host) = host.cast::<web_sys::Element>() else {
-                    return;
-                };
-                diagram_slots.set(collect_slots(
-                    &host,
-                    "[data-mermaid-slot]",
-                    "data-mermaid-slot",
-                    *source_count,
-                    &diagram_slots,
-                    &counter,
-                ));
-                acknowledgement_slots.set(collect_slots(
-                    &host,
-                    "[data-acknowledgement-slot]",
-                    "data-acknowledgement-slot",
-                    *acknowledgement_count,
-                    &acknowledgement_slots,
-                    &counter,
-                ));
-            }
-        },
-    );
-    // Keep each portal list under a stable VDOM parent. Mixing keyed portals
+    use_effect_with((props.html.clone(), props.sources.len()), {
+        let host = host.clone();
+        let diagram_slots = diagram_slots.clone();
+        let counter = counter.clone();
+        move |(_, source_count)| {
+            let Some(host) = host.cast::<web_sys::Element>() else {
+                return;
+            };
+            diagram_slots.set(collect_slots(
+                &host,
+                "[data-mermaid-slot]",
+                "data-mermaid-slot",
+                *source_count,
+                &diagram_slots,
+                &counter,
+            ));
+        }
+    });
+    // Keep the portal list under a stable VDOM parent. Mixing keyed portals
     // directly with VRaw replaces the raw nodes when the first portal mounts.
     html! {
         <div ref={host} class="message-body markdown-body">
@@ -484,16 +435,6 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                 let source = props.sources.get(slot.index)?.clone();
                 Some(yew::create_portal(html! {
                     <MermaidImage key={slot.key.clone()} {source} final_answer={props.final_answer} />
-                }, slot.target.clone()))
-            })}
-            </span>
-            }
-            if !props.acknowledgements.is_empty() {
-            <span hidden=true>
-            {for acknowledgement_slots.iter().filter_map(|slot| {
-                let state = *props.acknowledgements.get(slot.index)?;
-                Some(yew::create_portal(html! {
-                    <AcknowledgementPill key={slot.key.clone()} {state} />
                 }, slot.target.clone()))
             })}
             </span>

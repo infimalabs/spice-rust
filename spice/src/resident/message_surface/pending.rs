@@ -143,19 +143,25 @@ fn present_again(
     if event.source.is_none() {
         event.source = state.observations.source(card.lane, event.locus);
     }
-    let text = present_steering_acknowledgements_with_directives(&card.text, directives, event)
-        .map_err(|detail| store_fault("canvas::message-steering-presentation-invalid", &detail))?;
-    let badges = message_badges(&card.text, Some(directives), event);
+    let presented = present_steering_acknowledgements(&card.text, Some(directives), event)?;
     publisher
-        .revise_presentation(card.lane, card.locus, text.clone(), badges)
+        .revise_presentation(
+            card.lane,
+            card.locus,
+            presented.text.clone(),
+            presented.classifications.clone(),
+        )
         .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
     if let Some(prose) = state.prose.get_mut(&card.lane)
         && prose.published.locus == card.locus
     {
-        prose.published.text.clone_from(&text);
-        prose.published.badges = badges;
-        prose.terminal.text = text;
-        prose.terminal.badges = badges;
+        prose.published.text.clone_from(&presented.text);
+        prose
+            .published
+            .classifications
+            .clone_from(&presented.classifications);
+        prose.terminal.text = presented.text;
+        prose.terminal.classifications = presented.classifications;
     }
     Ok(())
 }

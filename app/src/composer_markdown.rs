@@ -6,8 +6,12 @@
 //! Nothing here may be duplicated there: a second copy is what let the shipped
 //! quote drift from the tested one until the copies disagreed on blank input.
 
+use std::borrow::Cow;
+use std::collections::BTreeMap;
+use std::ops::Range;
+
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag, TagEnd};
-use wire::Media;
+use wire::{Media, MessageClassification, MessageClassificationKind};
 
 use crate::watchband;
 
@@ -18,13 +22,12 @@ pub(crate) struct RenderedMarkdown {
     pub(crate) html: String,
     pub(crate) image_only: bool,
     pub(crate) diagrams: Vec<String>,
-    pub(crate) acknowledgements: Vec<AcknowledgementState>,
 }
 
 /// Render received text through the one sanitized Markdown path used by cards.
 #[cfg(test)]
 pub(crate) fn render_received(markdown: &str) -> RenderedMarkdown {
-    render_received_with_tastes(markdown, 0)
+    render_received_with_classifications(markdown, &[])
 }
 
 /// Prefix one composed document with the canonical broadcast marker.
@@ -35,63 +38,98 @@ pub(crate) fn mark_broadcast(markdown: &str) -> String {
         format!("{} {markdown}", wire::stream::BROADCAST_MARKER)
     }
 }
+/// Expand display-only media payloads while preserving exact classification
+/// offsets. A media reference containing an authenticated marker is left
+/// untouched rather than making that marker ambiguous.
+pub(crate) fn expand_media_payloads<'a>(
+    markdown: &'a str,
+    media: &[Media],
+    classifications: &'a [MessageClassification],
+) -> Result<(Cow<'a, str>, Cow<'a, [MessageClassification]>), wire::MediaError> {
+    let mut projected = Cow::Borrowed(markdown);
+    let mut remapped = Cow::Borrowed(classifications);
+    if !markdown.contains("](attachment:") {
+        return Ok((projected, remapped));
+    }
+    for item in media {
+        let reference = item.reference_markdown()?;
+        if !projected.contains(&reference) {
+            continue;
+        }
+        let replacement = item.markdown()?;
+        let reference_len = reference.len();
+        let starts = projected
+            .match_indices(&reference)
+            .filter_map(|(start, _)| {
+                let end = start + reference_len;
+                let intersects_classification = remapped.iter().any(|classification| {
+                    usize::try_from(classification.start)
+                        .is_ok_and(|classification_start| classification_start < end)
+                        && usize::try_from(classification.end)
+                            .is_ok_and(|classification_end| start < classification_end)
+                });
+                (!intersects_classification).then_some(start)
+            })
+            .collect::<Vec<_>>();
+        if starts.is_empty() {
+            continue;
+        }
+        let source = projected.as_ref();
+        let mut expanded = String::with_capacity(
+            source
+                .len()
+                .saturating_add(replacement.len().saturating_mul(starts.len())),
+        );
+        let mut cursor = 0;
+        for start in &starts {
+            expanded.push_str(&source[cursor..*start]);
+            expanded.push_str(&replacement);
+            cursor = start + reference_len;
+        }
+        expanded.push_str(&source[cursor..]);
 
-/// Render received text using resident-authenticated semantic classifications.
-pub(crate) fn render_received_with_badges(
+        if !remapped.is_empty() {
+            let delta = i64::try_from(replacement.len()).expect("media Markdown length fits i64")
+                - i64::try_from(reference_len).expect("media reference length fits i64");
+            remapped = Cow::Owned(
+                remapped
+                    .iter()
+                    .map(|classification| {
+                        let start = usize::try_from(classification.start)
+                            .expect("validated classification start fits usize");
+                        let preceding = starts.partition_point(|replacement_start| {
+                            replacement_start + reference_len <= start
+                        });
+                        let shift = delta
+                            .checked_mul(
+                                i64::try_from(preceding).expect("media replacement count fits i64"),
+                            )
+                            .expect("media classification offset shift fits i64");
+                        let mut classification = *classification;
+                        classification.start =
+                            shift_classification_offset(classification.start, shift);
+                        classification.end = shift_classification_offset(classification.end, shift);
+                        classification
+                    })
+                    .collect(),
+            );
+        }
+        projected = Cow::Owned(expanded);
+    }
+    Ok((projected, remapped))
+}
+
+fn shift_classification_offset(offset: u32, shift: i64) -> u32 {
+    let shifted = i64::from(offset)
+        .checked_add(shift)
+        .expect("media classification offset shift does not overflow");
+    u32::try_from(shifted).expect("admitted media projection fits classification offsets")
+}
+
+/// Render received text using exact resident-authenticated semantic ranges.
+pub(crate) fn render_received_with_classifications(
     markdown: &str,
-    badges: wire::AgentMessageBadges,
-) -> RenderedMarkdown {
-    render_received_with_classifications(
-        markdown,
-        Classifications {
-            reviews: badges.reviews,
-            tastes: badges.tastes,
-            broadcasts: badges.broadcasts,
-            acknowledgements: ordinary_acknowledgements(&badges),
-            pending: badges.pending,
-            declines: badges.declines,
-        },
-    )
-}
-
-/// Count the acknowledged contexts the resident marks with the plain ACK marker.
-///
-/// Flavored contexts carry their own classification pill as the acknowledgement
-/// mark, so only the remainder may surface an inline ACK pill. Pending
-/// acknowledgements are already counted apart, so they do not subtract here.
-fn ordinary_acknowledgements(badges: &wire::AgentMessageBadges) -> u32 {
-    badges
-        .acknowledgements
-        .saturating_sub(badges.tastes)
-        .saturating_sub(badges.broadcasts)
-}
-
-/// Authenticated classification counts bounding inline marker replacement.
-#[derive(Clone, Copy, Debug, Default)]
-struct Classifications {
-    reviews: u32,
-    tastes: u32,
-    broadcasts: u32,
-    acknowledgements: u32,
-    pending: u32,
-    declines: u32,
-}
-
-/// Render received text and replace authenticated quoted classification markers inline.
-#[cfg(test)]
-pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> RenderedMarkdown {
-    render_received_with_classifications(
-        markdown,
-        Classifications {
-            tastes,
-            ..Classifications::default()
-        },
-    )
-}
-
-fn render_received_with_classifications(
-    markdown: &str,
-    classifications: Classifications,
+    classifications: &[MessageClassification],
 ) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -100,41 +138,54 @@ fn render_received_with_classifications(
         | Options::ENABLE_SMART_PUNCTUATION
         | Options::ENABLE_MATH
         | Options::ENABLE_GFM;
-    let markdown = taste_quotes::normalize(markdown, classifications.tastes, options);
+    let normalized = taste_quotes::normalize(markdown, classifications, options);
+    let markdown = normalized.markdown;
+    let mut remaining = normalized
+        .classifications
+        .into_iter()
+        .map(|classification| (classification.start, classification))
+        .collect::<BTreeMap<_, _>>();
+    let mut skipped_marker = None;
+    let mut code_block = false;
     let events = Parser::new_ext(&markdown, options)
-        .map(sanitize_markdown_event)
+        .into_offset_iter()
+        .flat_map(|(event, source)| {
+            match &event {
+                MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
+                MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
+                _ => {}
+            }
+            let event = sanitize_markdown_event(event);
+            if code_block {
+                vec![event]
+            } else {
+                inline_classification_marker(event, source, &mut remaining, &mut skipped_marker)
+            }
+        })
         .collect::<Vec<_>>();
+    debug_assert!(
+        remaining.is_empty(),
+        "every resident classification maps to one Markdown text event"
+    );
     let events = coalesce_text_events(events);
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
     let image_only = markdown_is_image_only(&events, has_diagrams);
-    let mut code_block = false;
-    let mut block_quote_depth = 0usize;
-    let mut remaining = RemainingClassifications::from(classifications);
-    let mut acknowledgements = Vec::new();
     // Diagram controls and nested block structure must not collapse into an image row.
+    let mut task_code_block = false;
     let events = decorate_markdown_images(events, image_only && !has_diagrams)
         .into_iter()
-        .flat_map(|event| {
-            match &event {
-                MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
-                MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
-                MarkdownEvent::Start(Tag::BlockQuote(_)) => block_quote_depth += 1,
-                MarkdownEvent::End(TagEnd::BlockQuote(_)) => {
-                    block_quote_depth = block_quote_depth.saturating_sub(1);
-                }
-                _ => {}
-            }
-            if code_block {
+        .flat_map(|event| match &event {
+            MarkdownEvent::Start(Tag::CodeBlock(_)) => {
+                task_code_block = true;
                 vec![event]
-            } else {
-                let events = inline_classification_marker(
-                    event,
-                    (block_quote_depth == 1).then_some(&mut remaining),
-                    &mut acknowledgements,
-                );
-                events.into_iter().flat_map(inline_task_chips).collect()
             }
+            MarkdownEvent::End(TagEnd::CodeBlock) => {
+                task_code_block = false;
+                vec![event]
+            }
+            _ if task_code_block => vec![event],
+            _ => inline_task_chips(event),
         });
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, events);
@@ -142,7 +193,6 @@ fn render_received_with_classifications(
         html,
         image_only,
         diagrams,
-        acknowledgements,
     }
 }
 
@@ -162,125 +212,197 @@ fn coalesce_text_events(events: Vec<MarkdownEvent<'_>>) -> Vec<MarkdownEvent<'_>
     coalesced
 }
 
-/// Marker replacements still authorized while walking one rendered document.
-#[derive(Debug)]
-struct RemainingClassifications {
-    reviews: usize,
-    tastes: usize,
-    broadcasts: usize,
-    acknowledgements: usize,
-    pending: usize,
-    declines: usize,
-}
-
-impl From<Classifications> for RemainingClassifications {
-    fn from(classifications: Classifications) -> Self {
-        let remaining = |count: u32| usize::try_from(count).unwrap_or(usize::MAX);
-        Self {
-            reviews: remaining(classifications.reviews),
-            tastes: remaining(classifications.tastes),
-            broadcasts: remaining(classifications.broadcasts),
-            acknowledgements: remaining(classifications.acknowledgements),
-            pending: remaining(classifications.pending),
-            declines: remaining(classifications.declines),
-        }
-    }
-}
-
-/// Replace one quoted classification marker with its inline pill when a badge
-/// still authorizes it; `remaining` is `None` outside the presented quote.
+/// Replace one exact resident-authenticated marker with its final inline pill.
 ///
-/// The resident quotes each directive it answers exactly one level deep, so
-/// that depth is the whole vocabulary: a marker nested deeper belongs to a card
-/// the operator quoted back, whose badge was earned elsewhere, and it stays
-/// literal rather than spending this message's count.
+/// `pulldown-cmark` can split bracketed markers into several adjacent text
+/// events. The authenticated source range, rather than event shape, controls
+/// which bytes disappear.
 fn inline_classification_marker<'a>(
     event: MarkdownEvent<'a>,
-    remaining: Option<&mut RemainingClassifications>,
-    acknowledgements: &mut Vec<AcknowledgementState>,
+    source: Range<usize>,
+    remaining: &mut BTreeMap<u32, MessageClassification>,
+    skipped_marker: &mut Option<(usize, bool)>,
 ) -> Vec<MarkdownEvent<'a>> {
-    let MarkdownEvent::Text(text) = event else {
+    let MarkdownEvent::Text(mut text) = event else {
         return vec![event];
     };
-    let Some(remaining) = remaining else {
+    if let Some((end, taste)) = *skipped_marker {
+        if source.end <= end {
+            return Vec::new();
+        }
+        if source.start < end {
+            let relative = end - source.start;
+            text = text
+                .get(relative..)
+                .expect("canonical marker source and rendered text align")
+                .to_owned()
+                .into();
+        }
+        *skipped_marker = None;
+        if taste {
+            text = taste_guidance_suffix(&text).into();
+        }
+        return vec![MarkdownEvent::Text(text)];
+    }
+
+    let source_start = u32::try_from(source.start).expect("Markdown source offset fits u32");
+    let source_end = u32::try_from(source.end).expect("Markdown source offset fits u32");
+    let Some((&start, _)) = remaining.range(source_start..source_end).next() else {
         return vec![MarkdownEvent::Text(text)];
     };
-    let plain = [
-        (&mut remaining.reviews, "[REVIEW]", review_pill_html()),
-        (
-            &mut remaining.broadcasts,
-            wire::stream::BROADCAST_MARKER,
-            broadcast_pill_html(),
-        ),
-    ];
-    for (count, marker, pill) in plain {
-        if *count == 0 {
-            continue;
+    let classification = remaining
+        .remove(&start)
+        .expect("the selected resident classification remains");
+    let start =
+        usize::try_from(classification.start).expect("validated classification start fits usize");
+    let end = usize::try_from(classification.end).expect("validated classification end fits usize");
+    let mut events = Vec::with_capacity(3);
+    if source.start < start {
+        events.push(MarkdownEvent::Text(
+            text.get(..start - source.start)
+                .expect("classification prefix aligns with rendered text")
+                .to_owned()
+                .into(),
+        ));
+    }
+    events.push(MarkdownEvent::InlineHtml(
+        classification_pill_html(classification.kind).into(),
+    ));
+    let taste = classification.kind == MessageClassificationKind::Taste;
+    if source.end <= end {
+        *skipped_marker = Some((end, taste));
+    } else {
+        let mut suffix = text
+            .get(end - source.start..)
+            .expect("classification suffix aligns with rendered text")
+            .to_owned();
+        if taste {
+            suffix = taste_guidance_suffix(&suffix);
         }
-        let Some(suffix) = marker_suffix(&text, marker) else {
-            continue;
-        };
-        *count -= 1;
-        return vec![
-            MarkdownEvent::InlineHtml(pill.into()),
-            MarkdownEvent::Text(suffix.into()),
-        ];
+        events.push(MarkdownEvent::Text(suffix.into()));
     }
-    let acknowledgement = [
-        (
-            &mut remaining.pending,
-            wire::stream::ACK_PENDING_MARKER,
-            AcknowledgementState::Pending,
-        ),
-        (
-            &mut remaining.declines,
-            wire::stream::NACK_MARKER,
-            AcknowledgementState::Declined,
-        ),
-        (
-            &mut remaining.acknowledgements,
-            wire::stream::ACK_MARKER,
-            AcknowledgementState::Acknowledged,
-        ),
-    ];
-    for (count, marker, state) in acknowledgement {
-        if *count == 0 {
-            continue;
+    events
+}
+
+fn classification_pill_html(kind: MessageClassificationKind) -> String {
+    match kind {
+        MessageClassificationKind::Review => review_pill_html(),
+        MessageClassificationKind::Broadcast => broadcast_pill_html(),
+        MessageClassificationKind::Taste => taste_pill_html(),
+        MessageClassificationKind::Acknowledgement => {
+            acknowledgement_pill_html("ack", "acked", "Acknowledgement classification", "ACK")
         }
-        let Some(suffix) = marker_suffix(&text, marker) else {
-            continue;
+        MessageClassificationKind::AcknowledgementPending => acknowledgement_pill_html(
+            "ack-pending",
+            "pending",
+            "Acknowledgement awaiting retirement",
+            "ACK",
+        ),
+        MessageClassificationKind::Decline => {
+            acknowledgement_pill_html("nack", "declined", "Declined classification", "NACK")
+        }
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default)]
+struct TestClassifications {
+    reviews: u32,
+    tastes: u32,
+    broadcasts: u32,
+    acknowledgements: u32,
+    pending: u32,
+    declines: u32,
+}
+
+#[cfg(test)]
+fn render_received_with_fixture_classifications(
+    markdown: &str,
+    requested: TestClassifications,
+) -> RenderedMarkdown {
+    let ordinary = requested
+        .acknowledgements
+        .saturating_sub(requested.tastes)
+        .saturating_sub(requested.broadcasts);
+    let requested = [
+        (MessageClassificationKind::Review, requested.reviews),
+        (MessageClassificationKind::Taste, requested.tastes),
+        (MessageClassificationKind::Broadcast, requested.broadcasts),
+        (
+            MessageClassificationKind::AcknowledgementPending,
+            requested.pending,
+        ),
+        (MessageClassificationKind::Decline, requested.declines),
+        (MessageClassificationKind::Acknowledgement, ordinary),
+    ];
+    let mut classifications = requested
+        .into_iter()
+        .flat_map(|(kind, count)| test_classifications(markdown, kind, count))
+        .collect::<Vec<_>>();
+    classifications.sort_by_key(|classification| classification.start);
+    render_received_with_classifications(markdown, &classifications)
+}
+#[cfg(test)]
+fn test_classifications(
+    markdown: &str,
+    kind: MessageClassificationKind,
+    count: u32,
+) -> Vec<MessageClassification> {
+    if count == 0 {
+        return Vec::new();
+    }
+    let mut classifications = Vec::new();
+    let mut line_start = 0usize;
+    for line in markdown.split_inclusive('\n') {
+        let mut marker_start = line_start;
+        let mut content = line.trim_end_matches(['\r', '\n']);
+        let mut quote_depth = 0usize;
+        while let Some(rest) = content.strip_prefix("> ") {
+            quote_depth += 1;
+            marker_start += 2;
+            content = rest;
+        }
+        let eligible_depth = if kind == MessageClassificationKind::Taste {
+            quote_depth > 0
+        } else {
+            quote_depth == 1
         };
-        *count -= 1;
-        let index = acknowledgements.len();
-        acknowledgements.push(state);
-        return vec![
-            MarkdownEvent::InlineHtml(acknowledgement_slot_html(index).into()),
-            MarkdownEvent::Text(suffix.into()),
-        ];
+        let marker = kind.marker();
+        if eligible_depth
+            && content
+                .strip_prefix(marker)
+                .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(char::is_whitespace))
+        {
+            classifications.push(MessageClassification {
+                start: u32::try_from(marker_start).expect("fixture marker offset fits u32"),
+                end: u32::try_from(marker_start + marker.len())
+                    .expect("fixture marker offset fits u32"),
+                kind,
+            });
+            if classifications.len() == usize::try_from(count).unwrap_or(usize::MAX) {
+                break;
+            }
+        }
+        line_start += line.len();
     }
-    if remaining.tastes == 0 {
-        return vec![MarkdownEvent::Text(text)];
-    }
-    let Some(suffix) = marker_suffix(&text, "[TASTE]") else {
-        return vec![MarkdownEvent::Text(text)];
-    };
-    remaining.tastes -= 1;
-    vec![
-        MarkdownEvent::InlineHtml(taste_pill_html().into()),
-        MarkdownEvent::Text(taste_guidance_suffix(&suffix).into()),
-    ]
+    classifications
+}
+
+/// Render received text with authenticated taste locations in native tests.
+#[cfg(test)]
+pub(crate) fn render_received_with_tastes(markdown: &str, tastes: u32) -> RenderedMarkdown {
+    render_received_with_fixture_classifications(
+        markdown,
+        TestClassifications {
+            tastes,
+            ..TestClassifications::default()
+        },
+    )
 }
 
 fn has_marker_prefix(text: &str, marker: &str) -> bool {
     text.strip_prefix(marker)
         .is_some_and(|suffix| suffix.starts_with(char::is_whitespace))
-}
-
-fn marker_suffix(text: &str, marker: &str) -> Option<String> {
-    let suffix = text
-        .strip_prefix(marker)
-        .filter(|suffix| suffix.is_empty() || suffix.starts_with(char::is_whitespace))?;
-    Some(suffix.to_owned())
 }
 
 fn taste_guidance_suffix(suffix: &str) -> String {
@@ -294,39 +416,60 @@ fn taste_guidance_suffix(suffix: &str) -> String {
     format!(" {}", guidance.trim_start())
 }
 
-fn taste_pill_html() -> &'static str {
+fn taste_pill_html() -> String {
     "<span class=\"message-taste-pill\" data-message-classification=\"taste\" \
      aria-label=\"Taste classification\">TASTE</span>"
+        .to_owned()
 }
 
-fn broadcast_pill_html() -> &'static str {
+fn broadcast_pill_html() -> String {
     "<span class=\"message-broadcast-pill\" data-message-classification=\"broadcast\" \
      aria-label=\"Broadcast classification\">BROADCAST</span>"
+        .to_owned()
 }
 
-fn review_pill_html() -> &'static str {
+fn review_pill_html() -> String {
     "<span class=\"message-review-pill\" data-message-classification=\"review\" \
      aria-label=\"Review classification\">REVIEW</span>"
+        .to_owned()
 }
 
-/// How the quoted directive beside this pill was answered.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum AcknowledgementState {
-    /// The journal retired the key: the answer is credited.
-    Acknowledged,
-    /// The answer was spoken; the journal still holds the key.
-    Pending,
-    /// The lane refused the direction.
-    Declined,
+fn acknowledgement_pill_html(
+    classification: &str,
+    acknowledgement: &str,
+    label: &str,
+    text: &str,
+) -> String {
+    format!(
+        "<span class=\"message-ack-pill\" data-message-classification=\"{classification}\" \
+         data-acknowledgement=\"{acknowledgement}\" aria-label=\"{label}\">\
+         <span class=\"message-ack-label\">{text}</span></span>"
+    )
 }
-
-/// One state-neutral portal target for a receipt pill.
+/// Whether two rendered messages have identical measured content.
 ///
-/// Pending, acknowledged, and declined spellings deliberately emit identical
-/// raw HTML. The browser can then update the keyed pill inside this slot
-/// without replacing selected prose or stateful diagram hosts beside it.
-fn acknowledgement_slot_html(index: usize) -> String {
-    format!("<span data-acknowledgement-slot=\"{index}\"></span>")
+/// Pending-to-acknowledged settlement changes only attributes on the same
+/// fixed-width ACK pill. Normalize that state transition while retaining every
+/// geometry-bearing distinction, including a declined NACK label.
+pub(crate) fn same_measured_shape(left: &RenderedMarkdown, right: &RenderedMarkdown) -> bool {
+    measured_html(&left.html) == measured_html(&right.html)
+        && left.image_only == right.image_only
+        && left.diagrams == right.diagrams
+}
+
+fn measured_html(html: &str) -> std::borrow::Cow<'_, str> {
+    let pending = acknowledgement_pill_html(
+        "ack-pending",
+        "pending",
+        "Acknowledgement awaiting retirement",
+        "ACK",
+    );
+    if !html.contains(&pending) {
+        return std::borrow::Cow::Borrowed(html);
+    }
+    let acknowledged =
+        acknowledgement_pill_html("ack", "acked", "Acknowledgement classification", "ACK");
+    std::borrow::Cow::Owned(html.replace(&pending, &acknowledged))
 }
 
 fn markdown_is_image_only(events: &[MarkdownEvent<'_>], has_diagrams: bool) -> bool {
@@ -747,708 +890,4 @@ pub(crate) fn block_quote(raw: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    const OPENABLE_PNG: &str = "data:image/png;base64,iVBORw0KGgo=";
-
-    fn quoted<'a>(values: &'a [(&'a str, &'a str)]) -> Vec<QuotedReply<'a>> {
-        values
-            .iter()
-            .map(|(quote, body)| QuotedReply {
-                quote,
-                body,
-                attachments: &[],
-            })
-            .collect()
-    }
-
-    #[test]
-    fn composed_markdown_follows_visible_shard_order_and_drops_blank_parts() {
-        assert_eq!(compose("  body only  ", &[], &[]), "body only");
-        assert_eq!(
-            compose(
-                "",
-                &quoted(&[("first quote", ""), ("  ", ""), ("second quote", "")]),
-                &[]
-            ),
-            "> first quote\n\n> second quote"
-        );
-        assert_eq!(
-            compose("body", &quoted(&[("quoted line", "")]), &[]),
-            "> quoted line\n\nbody"
-        );
-    }
-
-    #[test]
-    fn a_reply_follows_the_quote_it_answers_inside_one_part() {
-        assert_eq!(
-            compose("", &quoted(&[("quoted line", "  my reply  ")]), &[]),
-            "> quoted line\n\nmy reply"
-        );
-    }
-
-    #[test]
-    fn block_quotes_normalize_every_line_ending_before_prefixing() {
-        assert_eq!(block_quote("first\r\nsecond"), "> first\n> second");
-        assert_eq!(block_quote("first\rsecond"), "> first\n> second");
-        assert_eq!(block_quote("first\n\nthird"), "> first\n> \n> third");
-    }
-
-    /// Quoted message text routinely ends on a blank line, and the blank line is
-    /// the one the marker can lose. The copy that trimmed the joined result left
-    /// `>` alone on the last line: a bare marker, not the `> ` every line of a
-    /// block quote carries. Asserting the whole string and the per-line marker
-    /// together states both the exact output and the invariant behind it.
-    #[test]
-    fn a_quote_that_ends_on_a_blank_line_keeps_the_marker_on_every_line() {
-        let quote = block_quote("first\n\n");
-
-        assert_eq!(quote, "> first");
-        assert!(
-            quote.lines().all(|line| line.starts_with("> ")),
-            "every line of a block quote carries the marker, got {quote:?}"
-        );
-    }
-
-    /// The composer drops a quote that would contribute nothing, and it can only
-    /// drop what arrives empty. The copy that trimmed the joined result returned
-    /// a lone `>` here, which is not empty, so the drag handler sent a directive
-    /// whose entire body was a marker.
-    #[test]
-    fn whitespace_only_quoted_text_composes_to_nothing_at_all() {
-        assert_eq!(block_quote("   \n\t\n  "), "");
-        assert_eq!(block_quote(""), "");
-        assert_eq!(compose("", &quoted(&[("   \n  ", "")]), &[]), "");
-    }
-
-    #[test]
-    fn every_task_handle_occurrence_renders_in_source_order() {
-        let control = "CONTROL-1kKbC3j4"
-            .parse::<wire::TaskHandle>()
-            .expect("fixture handle parses");
-        let mosaic = "MOSAIC-1kRYqQxy"
-            .parse::<wire::TaskHandle>()
-            .expect("fixture handle parses");
-        let identity = "IDENTIT-dRyDYZqJJ"
-            .parse::<wire::TaskHandle>()
-            .expect("current fixture handle parses");
-        let control_chip = task_chip_html(&control);
-        let mosaic_chip = task_chip_html(&mosaic);
-        let identity_chip = task_chip_html(&identity);
-
-        let rendered = render_received(
-            "Plain CONTROL-1kKbC3j4, CONTROL-1kKbC3j4, and `CONTROL-1kKbC3j4`.\n\n\
-             Then MOSAIC-1kRYqQxy, IDENTIT-dRyDYZqJJ, and CONTROL-1kKbC3j4!",
-        );
-
-        assert_eq!(
-            rendered.html,
-            format!(
-                "<p>Plain {control_chip}, {control_chip}, and {control_chip}.</p>\n\
-                 <p>Then {mosaic_chip}, {identity_chip}, and {control_chip}!</p>\n"
-            ),
-        );
-        assert_eq!(
-            rendered.html.matches("class=\"message-task-chip\"").count(),
-            6
-        );
-    }
-
-    #[test]
-    fn quoted_first_and_nested_mentions_do_not_consume_later_prose_occurrences() {
-        let rendered = render_received(
-            "> Quoted CONTROL-1kKbC3j4.\n\
-             > > Nested `CONTROL-1kKbC3j4`.\n\n\
-             Authored CONTROL-1kKbC3j4 and CONTROL-1kKbC3j4.",
-        );
-        let marker = "data-task-handle=\"CONTROL-1kKbC3j4\"";
-
-        assert_eq!(
-            rendered.html.matches(marker).count(),
-            4,
-            "{}",
-            rendered.html
-        );
-        assert_eq!(rendered.html.matches("<blockquote>").count(), 2);
-        assert!(rendered.html.contains("Quoted "));
-        assert!(rendered.html.contains("Nested "));
-        assert!(rendered.html.contains("Authored "));
-        assert!(
-            rendered.html.rfind(marker).expect("authored chip renders")
-                > rendered
-                    .html
-                    .rfind("</blockquote>")
-                    .expect("quoted context closes"),
-            "the authored occurrence follows the quoted context: {}",
-            rendered.html,
-        );
-    }
-
-    #[test]
-    fn authenticated_classification_markers_become_inline_pills() {
-        let rendered = render_received_with_badges(
-            "> [REVIEW] Peer feedback for CANVAS-1kKRRsDR:\n>\n\
-             > > missing current coverage\n>\n\
-             > Keep working the current task.\n\n\
-             [REVIEW] Ordinary prose remains unchanged.\n\n\
-             > [REVIEW] A second quoted marker remains unchanged.\n\n\
-             > `[REVIEW]` remains inline code.\n\n\
-             > ```text\n> [REVIEW] remains fenced code\n> ```\n\n\
-             > [TASTE] compatibility: Keep one tested path.\n\n\
-             > > [TASTE] fallbacks: Nested guidance keeps its own accent.\n\n\
-             > [TASTE] polling: Wait for completion.\n\n\
-             > [BROADCAST] Send this to every occupied agent.\n\n\
-             ACK: ordinary [TASTE] prose stays text.",
-            wire::AgentMessageBadges {
-                acknowledgements: 0,
-                tastes: 3,
-                broadcasts: 1,
-                reviews: 1,
-                pending: 0,
-                declines: 0,
-            },
-        );
-        assert!(!rendered.html.contains("compatibility:"));
-        assert!(!rendered.html.contains("fallbacks:"));
-        assert!(!rendered.html.contains("polling:"));
-        assert!(rendered.html.contains("Keep one tested path."));
-        assert!(
-            rendered
-                .html
-                .contains("Nested guidance keeps its own accent.")
-        );
-        assert!(rendered.html.contains("Wait for completion."));
-        assert!(rendered.html.contains("Peer feedback for "));
-        assert!(
-            rendered
-                .html
-                .contains("data-task-handle=\"CANVAS-1kKRRsDR\"")
-        );
-        assert!(rendered.html.contains("missing current coverage"));
-        assert!(rendered.html.contains("Keep working the current task."));
-        assert!(!rendered.html.contains("[REVIEW] Peer feedback"));
-        assert!(
-            rendered
-                .html
-                .contains("[REVIEW] Ordinary prose remains unchanged.")
-        );
-        assert!(
-            rendered
-                .html
-                .contains("[REVIEW] A second quoted marker remains unchanged.")
-        );
-        assert!(rendered.html.contains("<code>[REVIEW]</code>"));
-        assert!(rendered.html.contains("[REVIEW] remains fenced code"));
-        assert!(rendered.html.contains("class=\"message-review-pill\""));
-        assert!(
-            rendered
-                .html
-                .contains("aria-label=\"Review classification\">REVIEW</span>")
-        );
-        assert_eq!(rendered.html.matches("message-review-pill").count(), 1);
-
-        assert_eq!(
-            rendered
-                .html
-                .matches("class=\"message-broadcast-pill\"")
-                .count(),
-            1,
-        );
-
-        assert_eq!(
-            rendered
-                .html
-                .matches("class=\"message-taste-pill\"")
-                .count(),
-            3,
-            "{}",
-            rendered.html,
-        );
-        assert_eq!(
-            rendered
-                .html
-                .matches("aria-label=\"Taste classification\">TASTE</span>")
-                .count(),
-            3,
-        );
-        assert!(
-            rendered
-                .html
-                .contains("ACK: ordinary [TASTE] prose stays text.")
-        );
-
-        let unauthenticated = render_received("> [REVIEW] Quoted prose is not metadata.");
-        assert!(!unauthenticated.html.contains("message-review-pill"));
-        assert!(
-            unauthenticated
-                .html
-                .contains("[REVIEW] Quoted prose is not metadata.")
-        );
-    }
-
-    #[test]
-    fn broadcast_marker_is_idempotent_and_requires_authenticated_quote_metadata() {
-        let marked = mark_broadcast("Send this to every occupied agent.");
-        assert_eq!(marked, "[BROADCAST] Send this to every occupied agent.");
-        assert_eq!(mark_broadcast(&marked), marked);
-
-        let classified = render_received_with_badges(
-            "> [BROADCAST] Send this to every occupied agent.\n\n\
-             > [BROADCAST] A second marker remains literal.\n\n\
-             `[BROADCAST]` remains code.",
-            wire::AgentMessageBadges {
-                broadcasts: 1,
-                ..wire::AgentMessageBadges::default()
-            },
-        );
-        assert_eq!(
-            classified
-                .html
-                .matches("class=\"message-broadcast-pill\"")
-                .count(),
-            1,
-        );
-        assert!(
-            classified
-                .html
-                .contains("Send this to every occupied agent.")
-        );
-        assert!(
-            classified
-                .html
-                .contains("[BROADCAST] A second marker remains literal.")
-        );
-        assert!(classified.html.contains("<code>[BROADCAST]</code>"));
-
-        let unclassified = render_received("> [BROADCAST] Remains ordinary quoted prose.");
-        assert!(!unclassified.html.contains("message-broadcast-pill"));
-        assert!(
-            unclassified
-                .html
-                .contains("[BROADCAST] Remains ordinary quoted prose.")
-        );
-    }
-
-    #[test]
-    fn acknowledged_context_markers_nest_an_uncounted_pill_inside_the_quote() {
-        let rendered = render_received_with_badges(
-            "> [ACK] Keep the current path.\n\n\
-             Applied.\n\n\
-             > [ACK] A second marker remains literal.\n\n\
-             [ACK] Ordinary prose remains literal.\n\n\
-             > `[ACK]` remains inline code.\n\n\
-             > ```text\n> [ACK] remains fenced code\n> ```",
-            wire::AgentMessageBadges {
-                acknowledgements: 1,
-                ..wire::AgentMessageBadges::default()
-            },
-        );
-        assert_eq!(
-            rendered.acknowledgements,
-            vec![AcknowledgementState::Acknowledged]
-        );
-        assert_eq!(
-            rendered.html.matches("data-acknowledgement-slot").count(),
-            1,
-        );
-        assert!(!rendered.html.contains("message-classifiers"));
-        assert!(!rendered.html.contains("message-badge-count"));
-        let pill = rendered
-            .html
-            .find("<span data-acknowledgement-slot=\"0\"></span>")
-            .expect("acknowledgement slot renders");
-        let quote = rendered
-            .html
-            .find("<blockquote>")
-            .expect("quoted context renders");
-        assert!(
-            quote < pill,
-            "the pill nests inside the quote: {}",
-            rendered.html
-        );
-        assert!(
-            rendered
-                .html
-                .contains("<span data-acknowledgement-slot=\"0\"></span> Keep the current path.")
-        );
-        assert!(
-            rendered
-                .html
-                .contains("[ACK] A second marker remains literal.")
-        );
-        assert!(
-            rendered
-                .html
-                .contains("[ACK] Ordinary prose remains literal.")
-        );
-        assert!(rendered.html.contains("<code>[ACK]</code>"));
-        assert!(rendered.html.contains("[ACK] remains fenced code"));
-
-        let unclassified = render_received("> [ACK] Remains ordinary quoted prose.");
-        assert!(!unclassified.html.contains("message-ack-pill"));
-        assert!(
-            unclassified
-                .html
-                .contains("[ACK] Remains ordinary quoted prose.")
-        );
-    }
-
-    #[test]
-    fn bare_acknowledged_context_marker_heads_a_nested_operator_quote() {
-        let rendered = render_received_with_badges(
-            "> [ACK]\n>\n> > The original assertion remains visible.\n>\n> approved\n\nApplied.",
-            wire::AgentMessageBadges {
-                acknowledgements: 1,
-                ..wire::AgentMessageBadges::default()
-            },
-        );
-        assert_eq!(
-            rendered.acknowledgements,
-            vec![AcknowledgementState::Acknowledged]
-        );
-        assert!(
-            rendered
-                .html
-                .contains("<span data-acknowledgement-slot=\"0\"></span></p>")
-        );
-        assert!(rendered.html.contains(
-            "<blockquote>\n<p>The original assertion remains visible.</p>\n</blockquote>"
-        ));
-        assert!(rendered.html.contains("<p>approved</p>"));
-    }
-
-    #[test]
-    fn a_marker_quoted_back_from_another_card_never_takes_this_badge() {
-        let rendered = render_received_with_badges(
-            "> > > [ACK] Tell me what the task is even about\n\
-             > > \n\
-             > > GIT-dSfJfCXfp is the task-git admission-depth task.\n\
-             >\n\
-             > [ACK] Delete it\n\n\
-             Deleting GIT-dSfJfCXfp as directed.",
-            wire::AgentMessageBadges {
-                acknowledgements: 1,
-                ..wire::AgentMessageBadges::default()
-            },
-        );
-        assert_eq!(
-            rendered.acknowledgements,
-            vec![AcknowledgementState::Acknowledged]
-        );
-        assert!(
-            rendered
-                .html
-                .contains("<span data-acknowledgement-slot=\"0\"></span> Delete it</p>"),
-            "the badge slot lands on the operator's own words: {}",
-            rendered.html
-        );
-        assert!(
-            rendered
-                .html
-                .contains("[ACK] Tell me what the task is even about"),
-            "the deeper marker stays literal: {}",
-            rendered.html
-        );
-    }
-
-    #[test]
-    fn flavored_acknowledgements_keep_their_own_pill_as_the_mark() {
-        let rendered = render_received_with_badges(
-            "> [TASTE] polling: Wait for completion.\n\n\
-             > [BROADCAST] Send this to every occupied agent.\n\n\
-             > [ACK] Stray marker stays literal.",
-            wire::AgentMessageBadges {
-                acknowledgements: 2,
-                tastes: 1,
-                broadcasts: 1,
-                reviews: 0,
-                pending: 0,
-                declines: 0,
-            },
-        );
-        assert_eq!(
-            rendered
-                .html
-                .matches("class=\"message-taste-pill\"")
-                .count(),
-            1
-        );
-        assert_eq!(
-            rendered
-                .html
-                .matches("class=\"message-broadcast-pill\"")
-                .count(),
-            1
-        );
-        assert!(!rendered.html.contains("message-ack-pill"));
-        assert!(rendered.html.contains("[ACK] Stray marker stays literal."));
-
-        let mixed = render_received_with_badges(
-            "> [TASTE] polling: Wait for completion.\n\n> [ACK] Keep the current path.",
-            wire::AgentMessageBadges {
-                acknowledgements: 2,
-                tastes: 1,
-                ..wire::AgentMessageBadges::default()
-            },
-        );
-        assert_eq!(
-            mixed.html.matches("class=\"message-taste-pill\"").count(),
-            1
-        );
-        assert_eq!(
-            mixed.acknowledgements,
-            vec![AcknowledgementState::Acknowledged]
-        );
-    }
-
-    #[test]
-    fn acknowledgement_receipts_keep_one_stable_markdown_slot() {
-        let render = |marker, badges| {
-            render_received_with_badges(
-                &format!(
-                    "> {marker} Keep the current path.\n\n\
-                     ```mermaid\n\
-                     graph LR\n\
-                       A[Receipt] --> B[Stable card]\n\
-                     ```"
-                ),
-                badges,
-            )
-        };
-        let pending = render(
-            "[ACK PENDING]",
-            wire::AgentMessageBadges {
-                pending: 1,
-                ..wire::AgentMessageBadges::default()
-            },
-        );
-        let retired = render(
-            "[ACK]",
-            wire::AgentMessageBadges {
-                acknowledgements: 1,
-                ..wire::AgentMessageBadges::default()
-            },
-        );
-        let declined = render(
-            "[NACK]",
-            wire::AgentMessageBadges {
-                declines: 1,
-                ..wire::AgentMessageBadges::default()
-            },
-        );
-
-        assert_eq!(
-            pending.acknowledgements,
-            vec![AcknowledgementState::Pending]
-        );
-        assert_eq!(
-            retired.acknowledgements,
-            vec![AcknowledgementState::Acknowledged]
-        );
-        assert_eq!(
-            declined.acknowledgements,
-            vec![AcknowledgementState::Declined]
-        );
-        assert_eq!(pending.html, retired.html);
-        assert_eq!(pending.html, declined.html);
-        assert_eq!(
-            pending
-                .html
-                .matches("<span data-acknowledgement-slot=\"0\"></span>")
-                .count(),
-            1
-        );
-        assert_eq!(
-            pending.diagrams,
-            vec!["graph LR\nA[Receipt] --> B[Stable card]\n"]
-        );
-        assert_eq!(pending.diagrams, retired.diagrams);
-        assert_eq!(pending.diagrams, declined.diagrams);
-        assert_eq!(pending.image_only, retired.image_only);
-        assert_eq!(pending.image_only, declined.image_only);
-    }
-
-    #[test]
-    fn taste_metadata_neither_overreaches_nor_decorates_code() {
-        let one = render_received_with_tastes(
-            "> `[TASTE]` remains code.\n\n\
-             > [TASTE] first.\n\n\
-             > [TASTE] second remains literal.",
-            1,
-        );
-        assert_eq!(one.html.matches("class=\"message-taste-pill\"").count(), 1);
-        assert!(one.html.contains("<code>[TASTE]</code>"));
-        assert!(one.html.contains("[TASTE] second remains literal."));
-
-        let none = render_received_with_tastes("> [TASTE] untouched.", 0);
-        assert!(!none.html.contains("message-taste-pill"));
-        assert!(none.html.contains("[TASTE] untouched."));
-
-        let token = render_received_with_tastes("> [TASTE]ful is not a marker.", 1);
-        assert!(!token.html.contains("message-taste-pill"));
-        assert!(token.html.contains("[TASTE]ful is not a marker."));
-
-        let prefixed =
-            render_received_with_tastes("> prefix[TASTE] stays text.\n\n> [TASTE] actual.", 1);
-        assert_eq!(
-            prefixed
-                .html
-                .matches("class=\"message-taste-pill\"")
-                .count(),
-            1,
-        );
-        assert!(prefixed.html.contains("prefix[TASTE] stays text."));
-    }
-
-    #[test]
-    fn noncanonical_and_block_code_handles_remain_ordinary_markdown() {
-        let rendered = render_received("`APP-a1` and APP-a1.\n\n```text\nCONTROL-1kKbC3j4\n```");
-
-        assert!(!rendered.html.contains("message-task-chip"));
-        assert!(
-            rendered.diagrams.is_empty(),
-            "ordinary code must not request diagram rendering"
-        );
-        assert!(rendered.html.contains("<code>APP-a1</code> and APP-a1."));
-        assert!(rendered.html.contains("CONTROL-1kKbC3j4"));
-    }
-
-    #[test]
-    fn every_image_only_markdown_shape_renders_one_card_wide_stack() {
-        let image = |name: &str| format!("![{name}]({OPENABLE_PNG})");
-        let shapes = [
-            [image("one"), image("two"), image("three")].join(" "),
-            [image("one"), image("two"), image("three")].join("\n"),
-            [image("one"), image("two"), image("three")].join("  \n"),
-            [image("one"), image("two"), image("three")].join("\n\n"),
-        ];
-
-        for markdown in shapes {
-            let rendered = render_received(&markdown);
-            assert!(
-                rendered.image_only,
-                "shape must receive the large tier: {markdown:?}"
-            );
-            assert_eq!(
-                rendered
-                    .html
-                    .matches("class=\"message-image-stack\"")
-                    .count(),
-                1,
-                "all image blocks must share one stack: {}",
-                rendered.html,
-            );
-            assert_eq!(
-                rendered
-                    .html
-                    .matches("class=\"message-image message-image--openable\"")
-                    .count(),
-                3,
-                "every preview must remain present: {}",
-                rendered.html,
-            );
-            assert!(!rendered.html.contains("<a "));
-        }
-    }
-
-    #[test]
-    fn image_actions_preserve_the_stack_without_admitting_script_urls() {
-        let rendered = render_received(
-            "![remote](https://example.test/image.png)\n\n\
-             ![vector](data:image/svg+xml;base64,PHN2Zz4=)\n\n\
-             ![refused](javascript:alert(1))",
-        );
-
-        assert!(rendered.image_only);
-        assert_eq!(
-            rendered
-                .html
-                .matches("class=\"message-image-stack\"")
-                .count(),
-            1
-        );
-        assert_eq!(rendered.html.matches("<button ").count(), 2);
-        assert_eq!(
-            rendered
-                .html
-                .matches("<span class=\"message-image\"")
-                .count(),
-            1
-        );
-        assert!(!rendered.html.contains("javascript:"));
-    }
-
-    #[test]
-    fn linked_images_keep_one_image_action_without_navigation() {
-        let image_only = render_received(
-            "[![one](https://images.example.test/one.png)](https://links.example.test/one)\n\n\
-             [![two](https://images.example.test/two.png)](https://links.example.test/two)",
-        );
-
-        assert!(image_only.image_only);
-        assert_eq!(
-            image_only
-                .html
-                .matches("class=\"message-image-stack\"")
-                .count(),
-            1
-        );
-        assert_eq!(image_only.html.matches("<button ").count(), 2);
-        assert!(!image_only.html.contains("<a "));
-        assert!(
-            image_only
-                .html
-                .contains("src=\"https://images.example.test/one.png\"")
-        );
-        assert!(
-            image_only
-                .html
-                .contains("src=\"https://images.example.test/two.png\"")
-        );
-        assert!(!image_only.html.contains("links.example.test"));
-
-        let mixed = render_received(
-            "See [![preview](https://images.example.test/mixed.png)](https://links.example.test/mixed) now.",
-        );
-        assert!(!mixed.image_only);
-        assert_eq!(mixed.html.matches("<button ").count(), 1);
-        assert!(!mixed.html.contains("<a "));
-        assert!(
-            mixed
-                .html
-                .contains("src=\"https://images.example.test/mixed.png\"")
-        );
-        assert!(!mixed.html.contains("links.example.test"));
-    }
-
-    #[test]
-    fn prose_and_images_keep_the_ordinary_rendering_path() {
-        let rendered =
-            render_received("ordinary prose\n\n![preview](https://example.test/image.png)");
-
-        assert!(!rendered.image_only);
-        assert!(rendered.html.starts_with("<p>ordinary prose</p>\n"));
-        assert_eq!(
-            rendered
-                .html
-                .matches("class=\"message-image-stack\"")
-                .count(),
-            1
-        );
-        assert!(!rendered.html.contains("<a "));
-    }
-
-    #[test]
-    fn every_image_preview_owns_an_explicit_initial_lifecycle() {
-        let remote = render_received("![remote](https://example.test/image.png)");
-        assert!(remote.html.contains("data-mosaic-image-state=\"pending\""));
-
-        let cached = render_received(&format!("![cached]({OPENABLE_PNG})"));
-        assert!(cached.html.contains("data-mosaic-image-state=\"pending\""));
-        assert_eq!(cached.html.matches("data-mosaic-image-status=").count(), 1);
-
-        let malformed = render_received("![broken](data:image/png;base64,%%%)");
-        assert!(malformed.html.contains("data-mosaic-image-state=\"error\""));
-    }
-}
+mod tests;

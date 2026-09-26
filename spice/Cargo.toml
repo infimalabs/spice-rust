@@ -28,6 +28,7 @@ journal = { path = "../journal" }
 lane = { path = "../lane" }
 listen = { path = "../listen" }
 proof = { path = "../proof" }
+pulldown-cmark = { version = "0.13.4", default-features = false }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 serde_path_to_error = "0.1.20"

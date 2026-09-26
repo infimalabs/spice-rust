@@ -283,6 +283,7 @@ fn validate_history_page(
             message.lane != lane
                 || !visible_message(message)
                 || before.is_some_and(|before| message.chronology_key() >= before.chronology_key())
+                || !wire::valid_message_classifications(&message.text, &message.classifications)
         })
         || page
             .messages
@@ -363,7 +364,7 @@ impl MessagePublisher {
     /// transcript identity is reused for different content, or when an
     /// upstream emitter presents media outside the canonical decoding law.
     pub fn publish(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
-        wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+        validate_message_presentation(&message)?;
         let mut retained = self
             .feed
             .retained
@@ -384,7 +385,7 @@ impl MessagePublisher {
     /// `final_answer` from false to true and may replace the derived automatic
     /// speech instruction; every authored field and payload byte must match.
     pub fn revise_final(&self, message: AgentMessage) -> Result<bool, MessagePublishError> {
-        wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+        validate_message_presentation(&message)?;
         let mut retained = self
             .feed
             .retained
@@ -403,22 +404,26 @@ impl MessagePublisher {
     ///
     /// The durable locus remains immutable. A card that spoke an
     /// acknowledgement before the journal retired its key is presented again
-    /// once the retirement lands, so only `text` and `badges` move; the final
-    /// state and speech the card already earned stay. A card retention no
+    /// once the retirement lands, so only `text` and `classifications` move;
+    /// the final state and speech the card already earned stay. A card retention
     /// longer holds, or one already presented this way, answers false.
     pub fn revise_presentation(
         &self,
         lane: wire::CanonicalUuid,
         locus: wire::MessageLocus,
         text: String,
-        badges: wire::AgentMessageBadges,
+        classifications: Vec<wire::MessageClassification>,
     ) -> Result<bool, MessagePublishError> {
+        if !wire::valid_message_classifications(&text, &classifications) {
+            return Err(MessagePublishError::InvalidClassifications);
+        }
         let mut retained = self
             .feed
             .retained
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?;
-        let Some(revised) = revise_presented_message(&mut retained, lane, locus, text, badges)?
+        let Some(revised) =
+            revise_presented_message(&mut retained, lane, locus, text, classifications)?
         else {
             return Ok(false);
         };
@@ -504,7 +509,7 @@ fn revise_presented_message(
     lane: wire::CanonicalUuid,
     locus: wire::MessageLocus,
     text: String,
-    badges: wire::AgentMessageBadges,
+    classifications: Vec<wire::MessageClassification>,
 ) -> Result<Option<AgentMessage>, MessagePublishError> {
     let Some(existing) = retained
         .iter_mut()
@@ -515,12 +520,20 @@ fn revise_presented_message(
     if existing.activity != wire::AgentActivityKind::Prose {
         return Err(MessagePublishError::IdentityConflict);
     }
-    if existing.text == text && existing.badges == badges {
+    if existing.text == text && existing.classifications == classifications {
         return Ok(None);
     }
     existing.text = text;
-    existing.badges = badges;
+    existing.classifications = classifications;
     Ok(Some(existing.clone()))
+}
+
+fn validate_message_presentation(message: &AgentMessage) -> Result<(), MessagePublishError> {
+    wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
+    if !wire::valid_message_classifications(&message.text, &message.classifications) {
+        return Err(MessagePublishError::InvalidClassifications);
+    }
+    Ok(())
 }
 
 /// Whether one activity consumes a lane's visible-card retention budget.
@@ -569,6 +582,8 @@ fn trim_visible_lane(
 pub enum MessagePublishError {
     /// Typed media failed the shared count, size, type, or byte admission law.
     InvalidMedia(wire::MediaError),
+    /// Resident classifications did not name exact ordered source markers.
+    InvalidClassifications,
     /// Retained message state could not be acquired.
     Unavailable,
     /// One tape event identity was reused for different content.
@@ -584,6 +599,9 @@ impl fmt::Display for MessagePublishError {
         match self {
             Self::InvalidMedia(error) => {
                 write!(formatter, "canvas message media is invalid: {error}")
+            }
+            Self::InvalidClassifications => {
+                formatter.write_str("canvas message classifications are invalid")
             }
             Self::Unavailable => formatter.write_str("canvas message retention is unavailable"),
             Self::IdentityConflict => {

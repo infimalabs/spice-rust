@@ -32,7 +32,7 @@ fn claude_narration_publishes_one_reasoning_presence_flattened_to_one_line() {
         "The tape lives under the shared root, not the worktree."
     );
     assert!(!presence.final_answer);
-    assert_eq!(presence.badges, wire::AgentMessageBadges::default());
+    assert!(presence.classifications.is_empty());
     assert_eq!(presence.automatic_speech, None);
     assert!(presence.media.is_empty());
     assert_eq!(
