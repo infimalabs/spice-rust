@@ -592,6 +592,9 @@ pub struct BoardTask {
         deserialize_with = "crate::optional::present"
     )]
     pub lease: Option<Positioned<crate::LeaseHead>>,
+    /// Whether the current freed claim came from an explicit release command.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub explicit_release: bool,
     /// Claim-opening transcript coordinates, without embedded transcript content.
     #[serde(
         default,
@@ -662,9 +665,16 @@ impl BoardTask {
             workflow,
             claim,
             lease,
+            explicit_release: false,
             claim_context: None,
             git_context: None,
         }
+    }
+    /// Attach whether the current claim head records an explicit release.
+    #[must_use]
+    pub const fn with_explicit_release(mut self, explicit_release: bool) -> Self {
+        self.explicit_release = explicit_release;
+        self
     }
 
     /// Attach compact recovery references derived from the same authoritative snapshot.
@@ -766,4 +776,8 @@ impl BoardAnswer {
 #[serde(deny_unknown_fields)]
 pub struct TextAnswer {
     pub text: String,
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }

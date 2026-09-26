@@ -145,7 +145,22 @@ pub(super) fn advance_task_to_review(
         panic!("claim release did not return a claim answer");
     };
     assert_eq!(released.next.as_deref(), Some("spice task next"));
-    claim_and_complete_task(bus, epoch, seat, lane, task);
+    capture_for(bus, epoch, seat, task);
+    let held = board(bus, epoch, lane.clone());
+    let expected = progress_witnesses(&held, at(&held, task), seat.lane, seat.occupant, false)
+        .expect("held task has progress witnesses");
+    assert_committed(issue(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::TaskDone,
+        expected,
+        &TaskDone {
+            task: task.clone(),
+            validation: "fixture completion".to_owned(),
+            operation: Some(completion_operation()),
+        },
+    ));
 }
 
 pub(super) fn claim_and_complete_task(

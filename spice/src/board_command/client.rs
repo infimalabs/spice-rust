@@ -659,7 +659,11 @@ pub(super) fn actor_entries(board: &BoardAnswer) -> Result<Vec<Entry>, Outcome<C
                     ),
                 )
             })
-            .map(|entry| entry.with_creator_team(heads.creator_team))
+            .map(|entry| {
+                entry
+                    .with_creator_team(heads.creator_team)
+                    .with_explicit_release(heads.explicit_release)
+            })
         })
         .collect()
 }

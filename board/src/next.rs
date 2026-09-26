@@ -337,7 +337,14 @@ fn selectable(
 }
 
 fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
-    workable(entry, actor, completed) && unheld(entry)
+    workable(entry, actor, completed) && unheld(entry) && !explicitly_released_by(entry, actor)
+}
+
+fn explicitly_released_by(entry: &Entry, actor: &Actor) -> bool {
+    entry.explicit_release()
+        && entry.claim().is_some_and(|claim| {
+            claim.disposition == ClaimDisposition::Freed && &claim.actor == actor
+        })
 }
 
 /// Every eligibility clause except possession.

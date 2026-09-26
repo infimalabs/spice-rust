@@ -93,7 +93,7 @@ fn deferred_wake_claims_in_one_transaction_and_an_existing_claim_refuses_without
     };
     let held = answer.claim.expect("wake --claim returns its held claim");
     assert_eq!(held.task, task);
-    assert_eq!(held.holder, actor);
+    assert_eq!(held.holder, Some(actor.clone()));
     let committed = bus
         .fact_snapshot()
         .expect("fixture facts remain readable")
@@ -218,7 +218,7 @@ fn parked_oops_requires_into_then_promotes_and_claims_in_one_transaction() {
         .claim
         .expect("wake --into --claim returns its held claim");
     assert_eq!(held.task, promoted);
-    assert_eq!(held.holder, actor);
+    assert_eq!(held.holder, Some(actor.clone()));
     let committed = bus
         .fact_snapshot()
         .expect("fixture facts remain readable")

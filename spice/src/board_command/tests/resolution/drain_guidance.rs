@@ -36,7 +36,83 @@ fn drive_guidance_preserves_creator_team_on_claim_release() {
     let CommandAnswer::Claim(released) = released else {
         panic!("claim release did not return a claim answer");
     };
-    assert_eq!(released.next.as_deref(), Some("spice task next"));
+    assert_eq!(released.next, None);
+    clean(&root, bus);
+}
+
+#[test]
+fn explicit_release_clears_possession_and_skips_the_row_for_that_lane() {
+    let (root, bus, epoch, seats) = fixture("drain-explicit-release", 1);
+    authorize_lane_creation(&bus, epoch, &seats[0]);
+    let lane = Actor::Lane(seats[0].lane);
+    let released_task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RELEASE-first01",
+        "Release this task",
+        Some("todo"),
+    );
+    let next_task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "RELEASE-second1",
+        "Continue draining here",
+        Some("todo"),
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &released_task);
+
+    let held = board(&bus, epoch, lane.clone());
+    let held_heads = at(&held, &released_task);
+    let released = assert_committed(issue(
+        &bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimFree,
+        vec![
+            claim_witness(held_heads),
+            Witness::Lease {
+                task: held_heads.statement.body.born.clone(),
+                head: held_heads.lease.as_ref().expect("lease head").position,
+            },
+            residency(&held, &seats[0]),
+        ],
+        &TaskRef {
+            task: released_task.clone(),
+        },
+    ));
+    let CommandAnswer::Claim(released) = released else {
+        panic!("claim release did not return a claim answer");
+    };
+    assert_eq!(released.holder, None);
+
+    let available = board(&bus, epoch, lane.clone());
+    let released_heads = at(&available, &released_task);
+    assert!(released_heads.explicit_release);
+    assert!(
+        task_show(&available, released_heads, &[])
+            .lines()
+            .any(|line| line == "claim - until -"),
+        "an inactive historical claim is not current possession",
+    );
+    claim_task(&bus, epoch, &seats[0], &lane, &next_task);
+
+    let continued = board(&bus, epoch, lane);
+    assert_eq!(
+        at(&continued, &next_task)
+            .claim
+            .as_ref()
+            .map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Active),
+    );
+    assert_eq!(
+        at(&continued, &released_task)
+            .claim
+            .as_ref()
+            .map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Freed),
+    );
     clean(&root, bus);
 }
 

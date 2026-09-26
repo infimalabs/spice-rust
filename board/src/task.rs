@@ -451,6 +451,7 @@ pub struct Entry {
     claim: Option<ClaimHead>,
     lease: Option<LeaseHead>,
     creator_team: Option<wire::CanonicalUuid>,
+    explicit_release: bool,
     project: Project,
     family: Family,
 }
@@ -510,6 +511,7 @@ impl Entry {
             claim,
             lease,
             creator_team: None,
+            explicit_release: false,
             project,
             family,
         })
@@ -562,6 +564,19 @@ impl Entry {
     pub fn with_creator_team(mut self, creator_team: Option<wire::CanonicalUuid>) -> Self {
         self.creator_team = creator_team;
         self
+    }
+
+    /// Attach whether the current freed claim came from an explicit release command.
+    #[must_use]
+    pub const fn with_explicit_release(mut self, explicit_release: bool) -> Self {
+        self.explicit_release = explicit_release;
+        self
+    }
+
+    /// Whether the current freed claim came from an explicit release command.
+    #[must_use]
+    pub const fn explicit_release(&self) -> bool {
+        self.explicit_release
     }
 
     /// Validated and classified project.

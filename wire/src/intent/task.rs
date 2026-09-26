@@ -473,8 +473,13 @@ pub struct TaskLearning {
 pub struct ClaimAnswer {
     /// Task whose possession moved.
     pub task: TaskHandle,
-    /// Actor holding it after the transaction.
-    pub holder: Actor,
+    /// Actor holding it after the transaction, absent when possession was released.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub holder: Option<Actor>,
     /// Resulting lease expiry when this command explicitly renewed possession.
     #[serde(
         default,

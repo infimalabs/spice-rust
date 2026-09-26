@@ -301,7 +301,7 @@ fn automatic_answer(
 ) -> wire::intent::ClaimAnswer {
     wire::intent::ClaimAnswer {
         task,
-        holder: actor,
+        holder: Some(actor),
         expiry: None,
         warnings: board::claim_overlaps(selected, entries)
             .into_iter()
@@ -350,7 +350,7 @@ pub(crate) fn release_automatic(
     write.claim_head(task.clone(), freed, move |fact| ClaimHead { fact, ..next });
     let answer = wire::intent::ClaimAnswer {
         task: handle,
-        holder: actor,
+        holder: None,
         expiry: None,
         warnings: Box::default(),
         creation_context: None,

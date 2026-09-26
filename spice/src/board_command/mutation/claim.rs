@@ -242,7 +242,7 @@ fn claim_answer(
 ) -> wire::intent::ClaimAnswer {
     wire::intent::ClaimAnswer {
         task: selected.handle().clone(),
-        holder: command.actor().clone(),
+        holder: Some(command.actor().clone()),
         expiry: None,
         warnings: board::claim_overlaps(selected, entries)
             .into_iter()
