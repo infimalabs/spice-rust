@@ -42,6 +42,7 @@ pub struct Subscription {
     pub(super) barrier: Option<CanvasHeads>,
     pub(super) catch_up: Option<CanvasHeads>,
     pub(super) rows: usize,
+    pub(super) message_generation: Option<u64>,
 }
 
 impl Subscription {
@@ -224,17 +225,28 @@ impl Subscription {
         })
     }
 
-    /// Project one live transcript generation for subscriptions that asked for it.
+    /// Project one newer live transcript generation for subscriptions that asked for it.
     #[must_use]
     pub fn message(&self, generation: wire::TranscriptGeneration) -> Option<StreamFrame> {
-        (self.is_live() && self.subjects.contains(&ViewSubject::Messages)).then_some(
-            StreamFrame::MessageGeneration {
-                v: WireVersion::CURRENT,
-                id: self.id,
-                epoch: self.epoch,
-                generation,
-            },
-        )
+        (self.is_live()
+            && self.subjects.contains(&ViewSubject::Messages)
+            && self
+                .message_generation
+                .is_none_or(|current| generation.generation > current))
+        .then_some(StreamFrame::MessageGeneration {
+            v: WireVersion::CURRENT,
+            id: self.id,
+            epoch: self.epoch,
+            generation,
+        })
+    }
+
+    /// Advance the transcript watermark after its frame reached the socket.
+    pub fn admit_message(&mut self, generation: u64) {
+        self.message_generation = Some(
+            self.message_generation
+                .map_or(generation, |current| current.max(generation)),
+        );
     }
 
     /// Terminal bounded-backpressure frame, resumable after the admitted cursor.

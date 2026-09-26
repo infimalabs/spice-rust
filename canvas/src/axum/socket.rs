@@ -215,7 +215,7 @@ impl ActiveSession {
                     &self.accepted,
                     self.capability,
                     self.subscription
-                        .as_ref()
+                        .as_mut()
                         .expect("live branch has a subscription"),
                     notice,
                 )
@@ -529,7 +529,7 @@ async fn route_message_broadcast(
     state: &SurfaceState,
     accepted: &wire::Accepted,
     capability: wire::CanonicalUuid,
-    subscription: &crate::stream::Subscription,
+    subscription: &mut crate::stream::Subscription,
     notice: Result<Box<wire::TranscriptGeneration>, tokio::sync::broadcast::error::RecvError>,
 ) -> SessionFlow {
     if !state.capabilities.matches(capability, &accepted.actor) {
@@ -537,11 +537,13 @@ async fn route_message_broadcast(
         return SessionFlow::Close;
     }
     match notice {
-        Ok(message) => {
-            let Some(frame) = subscription.message(*message) else {
+        Ok(generation) => {
+            let generation_id = generation.generation;
+            let Some(frame) = subscription.message(*generation) else {
                 return SessionFlow::Continue;
             };
             if send_encoded(socket, &frame).await {
+                subscription.admit_message(generation_id);
                 SessionFlow::Continue
             } else {
                 SessionFlow::Close
