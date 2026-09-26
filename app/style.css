@@ -16,6 +16,7 @@
   --warning-soft: #fff0c9;
   --danger: #a23932;
   --danger-soft: #f9dfdc;
+  --triage: #b3402a;
   --shadow: 0 1px 2px rgb(21 27 21 / 8%);
   --canvas-radius-control: 5px; --canvas-radius-element: 6px; --canvas-radius-compact: 7px; --canvas-radius-inset: 8px;
   --canvas-radius-surface: 9px; --canvas-radius-frame: 10px; --canvas-radius-overlay: 12px;
@@ -53,6 +54,7 @@
     --warning-soft: #453817;
     --danger: #ee8f88;
     --danger-soft: #482522;
+    --triage: #e0734f;
     --shadow: 0 1px 2px rgb(0 0 0 / 24%);
     --accent-0: #95d5b2;
     --accent-1: #8ea2ff;

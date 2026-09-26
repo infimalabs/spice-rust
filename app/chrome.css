@@ -79,7 +79,7 @@ body:has(.shell--mosaic),
 }
 .task-pill.active { opacity: .78; }
 .task-pill.dormant { border-color: var(--muted); color: var(--muted); }
-.task-pill.system { border-style: dashed; border-color: var(--warning); color: var(--warning); }
+.task-pill.system { border-style: dashed; border-color: var(--triage); color: var(--triage); }
 .task-pill-count {
   padding: 0 5px;
   border-radius: var(--canvas-radius-pill);
@@ -89,7 +89,7 @@ body:has(.shell--mosaic),
   font-size: 9px;
 }
 .task-pill.dormant .task-pill-count { background: var(--muted); }
-.task-pill.system .task-pill-count { background: var(--warning); }
+.task-pill.system .task-pill-count { background: var(--triage); }
 .canvas-menu { position: static; grid-area: 1 / 2; }
 .canvas-menu > summary {
   --canvas-menu-accent: var(--accent);
