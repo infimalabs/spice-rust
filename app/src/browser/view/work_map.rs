@@ -327,13 +327,6 @@ fn render_controls(state: &UseStateHandle<WorkMapState>, selected: &TaskStamp) -
                 {lens_button(state, TaskRelationKind::Claim)}
             </section>
             <section class="work-map-controls" aria-label="Map controls">
-                if state.lens == TaskRelationKind::Dependency {
-                    <div class="work-map-control-group canvas-control-rail" aria-label="Dependency direction">
-                        {direction_button(state, WorkRelationshipDirection::Prerequisites, "Prerequisites")}
-                        {direction_button(state, WorkRelationshipDirection::Both, "Both")}
-                        {direction_button(state, WorkRelationshipDirection::Dependents, "Dependents")}
-                    </div>
-                }
                 <div class="work-map-control-group canvas-control-rail work-map-depth" aria-label="Relationship depth">
                     <button type="button" aria-label="Decrease map depth" disabled={state.depth == 0} onclick={depth_callback(state.clone(), false)}>{"−"}</button>
                     <span>{format!("Depth {}", state.depth)}</span>
@@ -346,6 +339,13 @@ fn render_controls(state: &UseStateHandle<WorkMapState>, selected: &TaskStamp) -
                     </button>
                     <button type="button" disabled={is_default_view(state)} onclick={reset}>{"Reset view"}</button>
                 </div>
+                if state.lens == TaskRelationKind::Dependency {
+                    <div class="work-map-control-group canvas-control-rail" aria-label="Dependency direction">
+                        {direction_button(state, WorkRelationshipDirection::Prerequisites, "Prerequisites")}
+                        {direction_button(state, WorkRelationshipDirection::Both, "Both")}
+                        {direction_button(state, WorkRelationshipDirection::Dependents, "Dependents")}
+                    </div>
+                }
                 <span class="work-map-bounds">{format!("Limit {} nodes", state.max_nodes)}</span>
             </section>
         </>
