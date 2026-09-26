@@ -223,7 +223,12 @@
   min-height: 0;
   overflow: hidden;
 }
+/* The normal face fills the card's committed height and lays out its body,
+   media, and footer as the card's own rows, so the footer's end alignment
+   pins it to the card's bottom edge regardless of content height. */
 .team-surface .mosaic-message-normal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-area: 1 / 1;
   min-width: 0;
   opacity: 1;
