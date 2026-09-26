@@ -186,7 +186,12 @@ fn admit(name: &str, data_url: &str) -> Result<Media, ResidueKind> {
     Media::admit(name, content_type, data_url).map_err(|_| malformed())
 }
 
-pub(crate) fn unique(media: Vec<Media>) -> Result<Vec<Media>, ResidueKind> {
+/// Keep the first wire-representable source-order media prefix.
+///
+/// Every candidate has already passed individual shape admission while it was
+/// collected, so truncation bounds projection without hiding malformed input.
+pub(crate) fn unique(mut media: Vec<Media>) -> Result<Vec<Media>, ResidueKind> {
+    media.truncate(wire::media::MAX_MEDIA_ITEMS);
     wire::media::validate_media(&media).map_err(|_| malformed())?;
     let mut unique = Vec::<Media>::new();
     for candidate in media {
