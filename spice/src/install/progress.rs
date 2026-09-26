@@ -1,8 +1,38 @@
 use super::record::{
-    InstallRecord, LoadedRecord, RefreshRecord, read_record_for_refresh, write_initial_record,
-    write_record,
+    InstallRecord, LoadedRecord, RefreshRecord, read_record_for_refresh, record_path,
+    write_initial_record, write_record,
 };
 use super::*;
+
+/// An install plan derived and admitted in this process, carried into apply.
+///
+/// It holds the receipt image it was derived from as a compare-and-swap
+/// witness instead of deriving the plan again. Before the first mutation,
+/// apply still proves every source byte it publishes, every destination
+/// binding and image, and that the receipt is the one this plan superseded.
+pub struct PreparedInstall {
+    record: InstallRecord,
+    receipt: Option<ReceiptGeneration>,
+    fresh: bool,
+}
+
+impl PreparedInstall {
+    /// Exact plan apply will execute.
+    #[must_use]
+    pub const fn plan(&self) -> &InstallPlan {
+        &self.record.plan
+    }
+
+    /// Canonical digest of [`Self::plan`].
+    #[must_use]
+    pub const fn digest(&self) -> &Digest {
+        &self.record.plan_digest
+    }
+
+    pub(super) fn into_plan(self) -> InstallPlan {
+        self.record.plan
+    }
+}
 
 pub(super) fn apply_with_interruption(
     repository: &Repository,
@@ -10,10 +40,32 @@ pub(super) fn apply_with_interruption(
     expected: &Digest,
     interrupt_after_write: Option<usize>,
 ) -> Result<InstallReceipt, InstallError> {
-    let (mut record, record_generation, fresh) = prepare_apply(repository, spice_binary, expected)?;
+    let prepared = prepare(repository, spice_binary)?;
+    if prepared.digest() != expected {
+        return Err(InstallError::DigestMismatch {
+            expected: expected.clone(),
+            observed: prepared.record.plan_digest,
+        });
+    }
+    apply_prepared_with_interruption(repository, spice_binary, prepared, interrupt_after_write)
+}
+
+pub(super) fn apply_prepared_with_interruption(
+    repository: &Repository,
+    spice_binary: Option<&Path>,
+    prepared: PreparedInstall,
+    interrupt_after_write: Option<usize>,
+) -> Result<InstallReceipt, InstallError> {
+    let PreparedInstall {
+        mut record,
+        receipt: record_generation,
+        fresh,
+    } = prepared;
     reclaim_temporary_records(repository)?;
-    if record.status == InstallStatus::Complete {
-        return Ok(record.receipt());
+    match record.status {
+        InstallStatus::Complete => return Ok(record.receipt()),
+        InstallStatus::Unapplying => return Err(InstallError::UnapplyInProgress),
+        InstallStatus::Applying | InstallStatus::Uninstalled => {}
     }
     let _rollback_lock = record.plan.lock_rollback(repository)?;
     let app = spice_binary
@@ -25,10 +77,17 @@ pub(super) fn apply_with_interruption(
         .flatten();
     let generated = materialize_operations(&record, spice_binary, app.as_ref(), symbols.as_ref())?;
     if fresh {
+        // Materialization proved every published byte; a source now naming
+        // another generation would still install history the plan no longer
+        // describes.
+        if app.as_ref().map(app::Source::generation) != record.plan.app.as_ref() {
+            return Err(InstallError::BinaryContextChanged);
+        }
         record.plan.validate_pristine(repository)?;
     } else {
         record.plan.validate_for_repository(repository)?;
     }
+    require_receipt(repository, &record.plan, record_generation.as_ref())?;
     record.plan.publish_staged_rollback(repository)?;
     let mut record_generation = match record_generation {
         Some(generation) => write_record(repository, &record, generation)?,
@@ -56,6 +115,33 @@ pub(super) fn apply_with_interruption(
     record.status = InstallStatus::Complete;
     write_record(repository, &record, record_generation)?;
     Ok(record.receipt())
+}
+
+/// The receipt a plan was derived from must still be the one it supersedes.
+///
+/// Comparing the native generation and complete image proves this without
+/// decoding the receipt again; every later receipt write repeats the same
+/// compare-and-swap.
+fn require_receipt(
+    repository: &Repository,
+    plan: &InstallPlan,
+    expected: Option<&ReceiptGeneration>,
+) -> Result<(), InstallError> {
+    let (observed, _) = observe_bound(
+        repository.common_dir(),
+        &plan.record.destination,
+        &plan.record.parent,
+    )?;
+    let unchanged = match (expected, observed.as_ref()) {
+        (None, None) => true,
+        (Some(expected), Some(observed)) => expected.matches(observed),
+        _ => false,
+    };
+    if unchanged {
+        Ok(())
+    } else {
+        Err(InstallError::ParentChanged(record_path(repository)?))
+    }
 }
 
 fn apply_file_operations(
@@ -102,14 +188,17 @@ fn apply_retirements(
     while record.completed < record.plan.operations.len() + record.plan.retirements.len() {
         let index = record.completed - record.plan.operations.len();
         let step = record.completed;
-        record.plan.retirements[index].validate_binding(repository)?;
-        if record.plan.retirements[index].discards_payload()
-            && record.retired_parents[index].is_none()
-        {
-            record.retired_parents[index] =
-                prepare_retirement(repository, &record.plan.retirements[index], index)?;
-            record_generation = write_record(repository, record, record_generation)?;
+        if record.plan.retirements[index].discards_payload() {
+            record_generation = apply_discards(
+                repository,
+                record,
+                index,
+                record_generation,
+                interrupt_after_write,
+            )?;
+            continue;
         }
+        record.plan.retirements[index].validate_binding(repository)?;
         let parent = retire_path(repository, &record.plan.retirements[index], index)?;
         record.retired_parents[index] = parent;
         if interrupt_after_write == Some(step) {
@@ -120,6 +209,62 @@ fn apply_retirements(
         record_generation = write_record(repository, record, record_generation)?;
     }
     Ok(record_generation)
+}
+
+/// Retire one run of discards sharing a parent binding as one durable step.
+///
+/// Every temporary name in the run is proved free and fenced in the receipt
+/// before any file moves, so resume finishes each file from wherever it
+/// stopped. The run then withdraws the parent its binding names as missing
+/// and advances progress past all of it with one more receipt write, rather
+/// than two writes per file.
+fn apply_discards(
+    repository: &Repository,
+    record: &mut InstallRecord,
+    start: usize,
+    mut record_generation: ReceiptGeneration,
+    interrupt_after_write: Option<usize>,
+) -> Result<ReceiptGeneration, InstallError> {
+    let retirements = &record.plan.retirements;
+    let end = start
+        + retirements[start..]
+            .iter()
+            .take_while(|retirement| {
+                retirement.discards_payload() && retirement.parent == retirements[start].parent
+            })
+            .count();
+    for retirement in &retirements[start..end] {
+        retirement.validate_binding(repository)?;
+    }
+    if record.retired_parents[start..end]
+        .iter()
+        .any(Option::is_none)
+    {
+        for index in start..end {
+            if record.retired_parents[index].is_none() {
+                record.retired_parents[index] =
+                    prepare_retirement(repository, &record.plan.retirements[index], index)?;
+            }
+        }
+        record_generation = write_record(repository, record, record_generation)?;
+    }
+    let operations = record.plan.operations.len();
+    for index in start..end {
+        record.retired_parents[index] =
+            retire_path(repository, &record.plan.retirements[index], index)?;
+        if interrupt_after_write == Some(operations + index) {
+            write_record(repository, record, record_generation)?;
+            return Err(InstallError::Interrupted {
+                operation: operations + index,
+            });
+        }
+    }
+    let last = &record.plan.retirements[end - 1];
+    if last.withdraws_parent(record.plan.retirements.get(end)) {
+        withdraw_parent(repository, last)?;
+    }
+    record.completed = operations + end;
+    write_record(repository, record, record_generation)
 }
 
 fn materialize_operations(
@@ -174,77 +319,71 @@ fn apply_activation(
     Ok(record_generation)
 }
 
-fn prepare_apply(
+/// Derive the one plan apply would execute now, without mutating anything.
+pub(super) fn prepare(
     repository: &Repository,
     spice_binary: Option<&Path>,
-    expected: &Digest,
-) -> Result<(InstallRecord, Option<ReceiptGeneration>, bool), InstallError> {
+) -> Result<PreparedInstall, InstallError> {
     match read_record_for_refresh(repository)? {
-        Some(loaded) => prepare_loaded(repository, spice_binary, expected, loaded),
-        None => {
-            let plan = build_plan(repository, spice_binary)?;
-            admit_digest(&plan, expected)?;
-            Ok((InstallRecord::new(plan)?, None, true))
-        }
+        Some(refresh) => prepare_over(repository, spice_binary, refresh),
+        None => fresh(build_plan(repository, spice_binary)?, None),
     }
 }
 
-fn prepare_loaded(
+/// Derive the one plan apply would execute over an already loaded receipt.
+pub(super) fn prepare_over(
     repository: &Repository,
     spice_binary: Option<&Path>,
-    expected: &Digest,
     refresh: RefreshRecord,
-) -> Result<(InstallRecord, Option<ReceiptGeneration>, bool), InstallError> {
-    let repairable = matches!(refresh, RefreshRecord::Repairable { .. });
-    let loaded = refresh.into_loaded();
+) -> Result<PreparedInstall, InstallError> {
+    let repairable = refresh.is_repairable();
     let LoadedRecord {
         record,
         generation,
         image,
-    } = loaded;
+    } = refresh.into_loaded();
     if record.status == InstallStatus::Uninstalled {
-        return prepare_reinstall(repository, spice_binary, expected, generation, record);
+        verify_progress(repository, &record)?;
+        return fresh(build_plan(repository, spice_binary)?, Some(generation));
     }
     if record.status == InstallStatus::Complete
         && (repairable || refresh_required(repository, &record.plan, spice_binary)?)
     {
-        return prepare_refresh(
-            repository,
-            spice_binary,
-            expected,
-            generation,
-            image,
-            record,
+        return fresh(
+            refresh_plan(repository, spice_binary, image, &record)?,
+            Some(generation),
         );
     }
-    prepare_resume(repository, spice_binary, expected, generation, record)
-}
-
-fn prepare_reinstall(
-    repository: &Repository,
-    spice_binary: Option<&Path>,
-    expected: &Digest,
-    generation: ReceiptGeneration,
-    record: InstallRecord,
-) -> Result<(InstallRecord, Option<ReceiptGeneration>, bool), InstallError> {
+    verify_binary_context(&record.plan, spice_binary)?;
     verify_progress(repository, &record)?;
-    let plan = build_plan(repository, spice_binary)?;
-    admit_digest(&plan, expected)?;
-    Ok((InstallRecord::new(plan)?, Some(generation), true))
+    Ok(PreparedInstall {
+        record,
+        receipt: Some(generation),
+        fresh: false,
+    })
 }
 
-fn prepare_refresh(
+fn fresh(
+    plan: InstallPlan,
+    receipt: Option<ReceiptGeneration>,
+) -> Result<PreparedInstall, InstallError> {
+    Ok(PreparedInstall {
+        record: InstallRecord::new(plan)?,
+        receipt,
+        fresh: true,
+    })
+}
+
+fn refresh_plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
-    expected: &Digest,
-    generation: ReceiptGeneration,
     prior_receipt: Option<FileImage>,
-    record: InstallRecord,
-) -> Result<(InstallRecord, Option<ReceiptGeneration>, bool), InstallError> {
+    record: &InstallRecord,
+) -> Result<InstallPlan, InstallError> {
     // One record swap derives a complete current plan before any destination
     // changes. Binary-only drift is the sole reconciled input; fixed assets
     // remain receipt-strict.
-    let binary_superseded = verify_refresh_progress(repository, &record)?;
+    let binary_superseded = verify_refresh_progress(repository, record)?;
     let rollback_record = (record.plan.version == MIGRATABLE_RECORD_VERSION).then(|| {
         prior_receipt
             .as_ref()
@@ -253,44 +392,14 @@ fn prepare_refresh(
     let rollback_archive = (record.plan.version != MIGRATABLE_RECORD_VERSION)
         .then_some(record.plan.rollback_archive.as_ref())
         .flatten();
-    let plan = build_plan_over(
+    build_plan_over(
         repository,
         spice_binary,
         Some(&record.plan),
         binary_superseded.as_ref(),
         rollback_record,
         rollback_archive,
-    )?;
-    admit_digest(&plan, expected)?;
-    Ok((InstallRecord::new(plan)?, Some(generation), true))
-}
-
-fn prepare_resume(
-    repository: &Repository,
-    spice_binary: Option<&Path>,
-    expected: &Digest,
-    generation: ReceiptGeneration,
-    record: InstallRecord,
-) -> Result<(InstallRecord, Option<ReceiptGeneration>, bool), InstallError> {
-    verify_binary_context(&record.plan, spice_binary)?;
-    if &record.plan_digest != expected {
-        return Err(InstallError::DigestMismatch {
-            expected: expected.clone(),
-            observed: record.plan_digest,
-        });
-    }
-    match record.status {
-        InstallStatus::Complete => {
-            verify_progress(repository, &record)?;
-            Ok((record, Some(generation), false))
-        }
-        InstallStatus::Unapplying => Err(InstallError::UnapplyInProgress),
-        InstallStatus::Uninstalled => unreachable!("handled above"),
-        InstallStatus::Applying => {
-            verify_progress(repository, &record)?;
-            Ok((record, Some(generation), false))
-        }
-    }
+    )
 }
 
 fn refresh_required(
@@ -660,12 +769,18 @@ fn verify_retirement_progress(
             &retirement.destination,
             &retirement.parent,
         )?;
-        let absent = observed.is_none() && parent == record.retired_parents[index];
+        // A discard restores nothing, so its parent carries no reversal
+        // authority: a run that withdrew its emptied directory is still absent.
+        let absent = observed.is_none()
+            && (retirement.discards_payload() || parent == record.retired_parents[index]);
         let prior = image_matches(observed.as_ref(), previous);
         let planned = retirement.expects_in_place(observed.as_ref());
+        // A fenced discard run may be interrupted after any of its files.
+        let in_flight = index == applying_completed
+            || (retirement.discards_payload() && record.retired_parents[index].is_some());
         let valid = match record.status {
             InstallStatus::Applying if index < applying_completed => absent,
-            InstallStatus::Applying if index == applying_completed => planned || absent,
+            InstallStatus::Applying if in_flight => planned || absent,
             InstallStatus::Applying => planned,
             InstallStatus::Complete => observed.is_none(),
             InstallStatus::Unapplying => {
@@ -863,18 +978,6 @@ pub(super) fn verify_refresh_progress(
         hook_activation::verify_refreshable(activation)?;
     }
     Ok(binary_superseded)
-}
-
-fn admit_digest(plan: &InstallPlan, expected: &Digest) -> Result<(), InstallError> {
-    let observed = plan.digest()?;
-    if &observed == expected {
-        Ok(())
-    } else {
-        Err(InstallError::DigestMismatch {
-            expected: expected.clone(),
-            observed,
-        })
-    }
 }
 
 fn installed_matches(

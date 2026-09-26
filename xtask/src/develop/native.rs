@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use spice::install::{self, InstallError, InstallPreview};
+use spice::install::{self, InstallError};
 use spice::repository::Repository;
 use wire::Digest;
 
@@ -196,11 +196,14 @@ const fn schema_rollback_safe(before: Option<u32>, after: Option<u32>) -> bool {
 /// the installer's own atomic rename, and the receipt names the exact digest
 /// applied. Nothing here is ever absent, which is what lets a hook fire and a
 /// worktree resolve `.spice-install/bin/spice` for the whole of a refresh.
+///
+/// The plan is derived once and carried into apply, which proves the sources,
+/// destinations, and receipt it was derived from are unchanged before any
+/// mutation instead of deriving the plan a second time.
 pub fn refresh_install(repository: &Repository, binary: &Path) -> Result<Digest, InstallError> {
-    let plan = install::plan(repository, Some(binary))?;
-    let preview = InstallPreview::from_plan(plan)?;
-    let digest = preview.digest().clone();
-    install::apply(repository, Some(binary), &digest)?;
+    let prepared = install::prepare(repository, Some(binary))?;
+    let digest = prepared.digest().clone();
+    install::apply_prepared(repository, Some(binary), prepared)?;
     Ok(digest)
 }
 /// Build `spice` and answer the executable Cargo reported for it.
