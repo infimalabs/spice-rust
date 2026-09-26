@@ -164,6 +164,9 @@ pub struct TaskDetailNote {
 pub struct TaskDetailAnswer {
     /// Current task heads projected at the reply's snapshot barrier.
     pub task: BoardTask,
+    /// Bounded browser-renderable artifacts in task citation order.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub media: Vec<crate::Media>,
     /// Notes ordered by ascending durable journal position.
     pub notes: Vec<TaskDetailNote>,
 }

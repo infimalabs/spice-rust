@@ -13,6 +13,7 @@ fn detail_answer(label: &str, text: &str) -> TaskDetailAnswer {
             "canvas.detail",
             wire::EnvironmentRequirements::default(),
         ),
+        media: Vec::new(),
         notes: vec![TaskDetailNote {
             position: seq(41),
             at: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),

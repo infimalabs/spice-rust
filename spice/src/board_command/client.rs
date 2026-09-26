@@ -96,12 +96,12 @@ mod completion;
 use completion::{client_done, client_review};
 mod submission;
 pub(super) use submission::mutation_read;
-use submission::{
-    artifact_operation_failure, mutate_from_board, mutate_task, mutate_task_from_board,
-    repository_state_failure,
+pub(in crate::board_command) use submission::{
+    artifact_operation_failure, repository_state_failure,
 };
 use submission::{client_add, client_capture, client_oops};
 pub(crate) use submission::{current_board, submit_task_add, submit_taste_proposal};
+use submission::{mutate_from_board, mutate_task, mutate_task_from_board};
 
 fn client_graph(
     repository: &Repository,
@@ -977,9 +977,14 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::BoardRead(read) => {
             read_board(bus, read, command.actor().clone(), projects, allocation)
         }
-        wire::intent::Intent::TaskDetail(detail) => {
-            read_task_detail(bus, detail, command.actor().clone(), projects, allocation)
-        }
+        wire::intent::Intent::TaskDetail(detail) => read_task_detail(
+            bus,
+            repository,
+            detail,
+            command.actor().clone(),
+            projects,
+            allocation,
+        ),
         wire::intent::Intent::TaskRelations(relations) => read_task_relations(
             bus,
             relations,

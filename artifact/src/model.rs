@@ -82,6 +82,15 @@ impl MediaType {
                 | Self::TEXT_TSV
         )
     }
+
+    /// Whether this type has a browser-renderable image representation.
+    #[must_use]
+    pub fn is_image(&self) -> bool {
+        matches!(
+            self.0.as_str(),
+            Self::IMAGE_PNG | Self::IMAGE_JPEG | Self::IMAGE_GIF | Self::IMAGE_WEBP
+        )
+    }
 }
 
 impl fmt::Display for MediaType {

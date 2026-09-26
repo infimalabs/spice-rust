@@ -544,6 +544,7 @@
 .work-detail-section h4 { margin: 15px 0 8px; color: var(--muted); font-size: .72rem; text-transform: uppercase; }
 .work-detail-section ul { margin: 8px 0 0; padding-left: 20px; }
 .work-detail-description { margin: 0; white-space: pre-wrap; }
+.work-detail-media { --mosaic-image-size: 8.75rem; min-width: 0; }
 .work-detail-subsection { margin-top: 15px; padding-top: 1px; border-top: var(--canvas-edge-soft); }
 
 .work-detail-facts {

@@ -214,6 +214,42 @@ impl Store {
         Ok((artifact, bytes))
     }
 
+    /// Return each payload selected from one canonical task manifest.
+    ///
+    /// Selection runs in manifest order under the store lock. Only selected
+    /// payloads are read, and each is checked against its object metadata and
+    /// citation before it leaves the store.
+    pub fn show_matching(
+        &self,
+        task: &TaskStamp,
+        mut selected: impl FnMut(&Artifact) -> bool,
+    ) -> Result<Vec<(Artifact, Vec<u8>)>, Error> {
+        let _possession = self.acquire()?;
+        refuse_legacy_layout(&self.root)?;
+        let task_dir = self.task_dir(task);
+        let manifest = read_manifest(&task_dir, task)?;
+        validate_manifest(&task_dir, task, &manifest, false)?;
+        manifest
+            .artifacts
+            .into_iter()
+            .filter(|artifact| selected(artifact))
+            .map(|artifact| {
+                let object = object_dir(&task_dir, &artifact.digest);
+                let metadata_path = object.join(METADATA);
+                let metadata_bytes = read_cited(&metadata_path, &artifact.id, "object metadata")?;
+                let metadata = decode_canonical::<ObjectMetadata>(
+                    &metadata_bytes,
+                    &metadata_path.display().to_string(),
+                )?;
+                validate_object(&metadata_path.display().to_string(), &metadata, &artifact)?;
+                let path = payload_path(&task_dir, &artifact.digest);
+                let bytes = read_cited(&path, &artifact.id, "payload")?;
+                validate_payload(&path.display().to_string(), &bytes, &artifact)?;
+                Ok((artifact, bytes))
+            })
+            .collect()
+    }
+
     /// Compute one ordered retention preview without changing the store.
     pub fn plan_prune(
         &self,

@@ -294,6 +294,7 @@ fn render_available(
                     <p class="muted">{"No description was recorded."}</p>
                 }
             </section>
+            {task_detail::render_media(&answer.media)}
             <section class="work-detail-section">
                 <h3>{"State"}</h3>
                 <dl class="work-detail-facts">
