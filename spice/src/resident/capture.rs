@@ -154,8 +154,9 @@ impl SupervisorReports {
                 match usize::try_from(received) {
                     Ok(received) => {
                         let notice = decode(&buffer[..received]);
-                        publish_notice(&self.messages, &notice);
+                        let wake = notice.as_ref().ok().and_then(message_notice_identity);
                         notices.push(notice);
+                        publish_wake(&self.messages, wake);
                     }
                     Err(_) => {
                         let error = io::Error::last_os_error();
@@ -245,10 +246,11 @@ async fn drain_notices(
             Ok(received) => decode(&buffer[..received]),
             Err(error) => Err(error),
         };
-        publish_notice(&messages, &notice);
+        let wake = notice.as_ref().ok().and_then(message_notice_identity);
         if notices.send(notice).is_err() {
             return;
         }
+        publish_wake(&messages, wake);
     }
 }
 
@@ -264,10 +266,24 @@ fn install_messages(
     })
 }
 
-fn publish_notice(messages: &OnceLock<LiveMessages>, notice: &io::Result<Notice>) {
+fn message_notice_identity(notice: &Notice) -> Option<(CanonicalUuid, CanonicalUuid)> {
+    match notice {
+        Notice::Record { lane, occupant, .. }
+        | Notice::Exited { lane, occupant }
+        | Notice::Failed { lane, occupant, .. } => Some((*lane, *occupant)),
+        Notice::Asked { .. } => None,
+    }
+}
+
+/// Wake Canvas only after the accounting receiver owns the same event.
+///
+/// The resident loop prioritizes record and notice receivers over live wakes.
+/// Publishing in this order prevents visible prose—especially ACK headers—from
+/// outrunning the durable fold that retires the state they present.
+fn publish_wake(messages: &OnceLock<LiveMessages>, wake: Option<(CanonicalUuid, CanonicalUuid)>) {
     if let Some(messages) = messages.get()
-        && let Ok(notice) = notice
-        && let Err(error) = messages.notice(notice)
+        && let Some((lane, occupant)) = wake
+        && let Err(error) = messages.wake(lane, occupant)
     {
         eprintln!("canvas live message unavailable: {error:?}");
     }
@@ -417,11 +433,7 @@ struct Reporter {
 
 impl CaptureReporter for Reporter {
     fn record(&self, record: CaptureRecord) -> Result<(), CaptureReportError> {
-        if let Some(messages) = self.messages.get()
-            && let Err(error) = messages.wake(record.lane, record.occupant)
-        {
-            eprintln!("canvas live message unavailable: {error:?}");
-        }
+        let wake = (record.lane, record.occupant);
         self.records.try_send(record).map_err(|error| match error {
             mpsc::error::TrySendError::Full(_) => {
                 CaptureReportError::new("resident capture report queue is full")
@@ -429,7 +441,9 @@ impl CaptureReporter for Reporter {
             mpsc::error::TrySendError::Closed(_) => {
                 CaptureReportError::new("resident capture report receiver is closed")
             }
-        })
+        })?;
+        publish_wake(&self.messages, Some(wake));
+        Ok(())
     }
 
     fn failed(&self, failure: CaptureFailure) {
@@ -463,6 +477,21 @@ mod tests {
         format!("00000000-0000-4000-8000-0000000000{byte:02x}")
             .parse()
             .expect("fixture uuid")
+    }
+
+    fn captured(offset: u64) -> CaptureRecord {
+        CaptureRecord {
+            lane: uuid(1),
+            occupant: uuid(2),
+            stream: vendor::RecordStream::Stdout,
+            boundary: sill::RecordBoundary::Complete,
+            locus: listen::Locus::new(1, offset, 1),
+            declaration: None,
+            decoded: listen::Decoded::Events {
+                context: listen::RecordContext::default(),
+                events: Vec::new(),
+            },
+        }
     }
 
     fn spelled(notices: &[io::Result<Notice>]) -> Vec<String> {
@@ -508,5 +537,65 @@ mod tests {
                 format!("record {} @10", uuid(4)),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn a_rejected_accounting_record_cannot_wake_live_presentation() {
+        let root = std::env::temp_dir().join(format!(
+            "spice-capture-rejected-record-wake-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".git")).expect("git directory");
+        let root = fs::canonicalize(root).expect("fixture root canonicalizes");
+        let paths = super::super::RuntimePaths::discover(&root).expect("runtime paths resolve");
+        fs::create_dir_all(&paths.data).expect("data directory");
+        let journal = journal::Journal::open(&paths.journal).expect("fixture journal opens");
+        let (messages, mut wakes) = LiveMessages::new(
+            &paths,
+            uuid(9),
+            super::super::message_surface::MessageState::default(),
+        )
+        .expect("live messages start");
+        let mut channels = channels();
+        for offset in 0..RECORD_CAPACITY {
+            channels
+                .reporter
+                .record(captured(offset as u64))
+                .expect("accounting queue accepts its capacity");
+        }
+        channels
+            .enable_live(messages)
+            .expect("live presentation attaches");
+
+        assert!(
+            channels
+                .reporter
+                .record(captured(RECORD_CAPACITY as u64))
+                .is_err(),
+            "the saturated accounting queue refuses another record"
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), wakes.recv())
+                .await
+                .is_err(),
+            "a record Canvas can present must already be queued for durable accounting"
+        );
+        channels
+            .records
+            .try_recv()
+            .expect("accounting one record opens queue capacity");
+        channels
+            .reporter
+            .record(captured((RECORD_CAPACITY + 1) as u64))
+            .expect("an accounted record is accepted");
+        let presented = tokio::time::timeout(std::time::Duration::from_millis(20), wakes.recv())
+            .await
+            .expect("an accounted record wakes presentation")
+            .expect("live presentation remains connected");
+        assert_eq!(presented, vec![(uuid(1), uuid(2))]);
+
+        drop(journal);
+        fs::remove_dir_all(root).expect("fixture cleanup");
     }
 }
