@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::*;
+use spice::quote::TranscriptSessions;
 
 mod history;
 #[cfg(test)]
@@ -102,71 +103,6 @@ fn tail_budget(window_bytes: u64, source_bytes: u64) -> listen::TailBudget {
     .expect("Canvas tail allowances are positive")
 }
 
-#[derive(Clone, Debug, Default)]
-struct SessionWorktrees(BTreeMap<(CanonicalUuid, CanonicalUuid), Vec<SessionWorktree>>);
-
-#[derive(Clone, Debug)]
-struct SessionWorktree {
-    member: u64,
-    offset: u64,
-    worktree: std::path::PathBuf,
-}
-
-impl SessionWorktrees {
-    #[cfg(test)]
-    fn from_snapshot(snapshot: &journal::FactSnapshot) -> Self {
-        let ingestions = snapshot
-            .facts()
-            .iter()
-            .filter_map(|envelope| {
-                envelope
-                    .fact
-                    .read::<wire::body::JournalIngested>()
-                    .map(|batch| (envelope.seq, batch))
-            })
-            .collect::<Vec<_>>();
-        let mut worktrees = BTreeMap::<(CanonicalUuid, CanonicalUuid), Vec<SessionWorktree>>::new();
-        for envelope in snapshot.facts() {
-            let Some(session) = envelope.fact.read::<wire::body::LaneSessionDeclared>() else {
-                continue;
-            };
-            let position = (session.member, session.offset);
-            let Some(source) = ingestions.iter().find_map(|(seq, batch)| {
-                (*seq > envelope.seq
-                    && batch.lane == session.lane
-                    && batch.vendor == session.vendor
-                    && batch.stream == session.stream
-                    && (batch.from.member, batch.from.offset) <= position
-                    && position < (batch.to.member, batch.to.offset))
-                    .then_some(batch.source)
-            }) else {
-                continue;
-            };
-            worktrees
-                .entry((session.lane, source))
-                .or_default()
-                .push(SessionWorktree {
-                    member: session.member,
-                    offset: session.offset,
-                    worktree: session.worktree.into(),
-                });
-        }
-        for sessions in worktrees.values_mut() {
-            sessions.sort_by_key(|session| (session.member, session.offset));
-        }
-        Self(worktrees)
-    }
-
-    fn at(&self, lane: CanonicalUuid, source: CanonicalUuid, locus: tape::Locus) -> Option<&Path> {
-        self.0
-            .get(&(lane, source))?
-            .iter()
-            .rev()
-            .find(|session| (session.member, session.offset) <= (locus.member, locus.offset))
-            .map(|session| session.worktree.as_path())
-    }
-}
-
 /// Source-authenticated per-lane continuation state for repeated backlog reads.
 #[derive(Debug, Default)]
 pub(in crate::resident) struct BacklogReader {
@@ -174,7 +110,7 @@ pub(in crate::resident) struct BacklogReader {
     startup_work: StartupWork,
     state: MessageState,
     steering: PresentationDirectives,
-    worktrees: SessionWorktrees,
+    sessions: TranscriptSessions,
 }
 
 impl BacklogReader {
@@ -196,7 +132,7 @@ impl BacklogReader {
                 ..MessageState::default()
             },
             steering,
-            worktrees: SessionWorktrees::from_snapshot(snapshot),
+            sessions: TranscriptSessions::from_snapshot(snapshot),
         })
     }
 
@@ -331,7 +267,7 @@ struct DurableHistory {
     hydration: Mutex<Hydration>,
     bus: Option<bus::BusReader>,
     steering: PresentationDirectives,
-    worktrees: SessionWorktrees,
+    sessions: TranscriptSessions,
 }
 
 /// Observation times known to this provider, and how far each lane's walk got.
@@ -441,7 +377,7 @@ impl DurableHistory {
             }),
             bus: bus.cloned(),
             steering: reader.steering.clone(),
-            worktrees: reader.worktrees.clone(),
+            sessions: reader.sessions.clone(),
         }
     }
 }
@@ -627,7 +563,7 @@ impl DurableHistory {
                 ..MessageState::default()
             },
             steering: self.steering.clone(),
-            worktrees: self.worktrees.clone(),
+            sessions: self.sessions.clone(),
         };
         let mut diagnostic = Vec::new();
         publish_scan(
@@ -1086,8 +1022,8 @@ fn publish_scan(
             continue;
         };
         let worktree = reader
-            .worktrees
-            .at(lane, source, record.locus)
+            .sessions
+            .worktree_at(lane, source, record.locus)
             .unwrap_or(fallback_worktree);
         let decoded = events
             .iter()
