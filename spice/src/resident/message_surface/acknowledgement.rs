@@ -12,14 +12,20 @@ use std::ops::Range;
 
 use super::*;
 
+/// One directive context the resident inserted into a presented card.
+#[derive(Debug)]
+pub(super) struct PresentedDirectiveContext {
+    pub(super) key: steer::Key,
+    pub(super) range: Range<usize>,
+}
+
 /// One presented message and the quote blocks the resident itself wrote into it.
 #[derive(Debug)]
 pub(super) struct Presentation {
     pub(super) text: String,
-    /// Byte ranges of the directive-context quotes presentation inserted, in
-    /// source order. Quotation nested inside them is operator-authored journal
-    /// text; anything outside them is the agent's own prose.
-    pub(super) contexts: Vec<Range<usize>>,
+    /// Exact directive contexts in source order. Quotation nested inside them
+    /// is operator-authored journal text; anything outside them is agent prose.
+    pub(super) contexts: Vec<PresentedDirectiveContext>,
 }
 
 pub(super) fn present_steering_acknowledgements_with_directives(
@@ -48,7 +54,6 @@ pub(super) fn present_steering_acknowledgements_with_directives(
         capitalize_body = false;
         if packet.bare_acknowledgement || !packet.contexts.is_empty() {
             start_quote_block(&mut rendered);
-            let context = rendered.len();
             let mut separated = false;
             if packet.bare_acknowledgement {
                 append_acknowledgement_quote(&mut rendered, wire::stream::ACK_MARKER);
@@ -61,13 +66,17 @@ pub(super) fn present_steering_acknowledgements_with_directives(
                 if separated {
                     rendered.push_str("\n\n");
                 }
+                let start = rendered.len();
                 append_acknowledgement_quote(
                     &mut rendered,
                     &acknowledged_context_text(directive, *state),
                 );
+                contexts.push(PresentedDirectiveContext {
+                    key: key.clone(),
+                    range: start..rendered.len(),
+                });
                 separated = true;
             }
-            contexts.push(context..rendered.len());
             rendered.push_str("\n\n");
         }
         cursor = acknowledgement.end;

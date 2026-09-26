@@ -424,15 +424,21 @@ mod tests {
 
     fn directives(keys: &[&str]) -> PresentationDirectives {
         PresentationDirectives(BTreeMap::from_iter(keys.iter().map(|key| {
+            let text = format!("direction for {key}");
+            let quote_target = wire::QuoteTarget::Steering {
+                key: (*key).to_owned(),
+                digest: wire::QuoteTarget::text_digest(&text),
+            };
             (
                 key.parse().expect("fixture steering key"),
                 PresentationDirective {
                     lane: lane(),
-                    text: format!("direction for {key}"),
+                    text,
                     authored: true,
                     taste: false,
                     review: false,
                     disposition: Disposition::Live,
+                    quote_target,
                     retirement: None,
                 },
             )

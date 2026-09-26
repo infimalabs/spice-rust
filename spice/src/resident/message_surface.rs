@@ -528,6 +528,7 @@ fn present_steering_acknowledgements(
         return Ok(PresentedMessageText {
             text: text.to_owned(),
             classifications: Vec::new(),
+            directive_contexts: Vec::new(),
         });
     };
     let presented = present_steering_acknowledgements_with_directives(text, steering, event)
@@ -537,15 +538,19 @@ fn present_steering_acknowledgements(
             .map_err(|detail| {
                 store_fault("canvas::message-steering-presentation-invalid", &detail)
             })?;
+    let directive_contexts = hydrate_directive_contexts(&presented, steering)
+        .map_err(|detail| store_fault("canvas::message-steering-presentation-invalid", &detail))?;
     Ok(PresentedMessageText {
         text: presented.text,
         classifications,
+        directive_contexts,
     })
 }
 
 struct PresentedMessageText {
     text: String,
     classifications: Vec<wire::MessageClassification>,
+    directive_contexts: Vec<wire::MessageDirective>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -559,6 +564,7 @@ struct PresentationDirective {
     taste: bool,
     review: bool,
     disposition: wire::Disposition,
+    quote_target: wire::QuoteTarget,
     retirement: Option<wire::body::TranscriptLocus>,
 }
 
@@ -605,6 +611,10 @@ impl PresentationDirectives {
                     let retirement = retirements.get(&key).copied();
                     let taste = tastes.contains(&key);
                     let review = is_review_feedback(directive.control());
+                    let quote_target = wire::QuoteTarget::Steering {
+                        key: key.to_string(),
+                        digest: wire::QuoteTarget::text_digest(directive.text()),
+                    };
                     Ok((
                         key,
                         PresentationDirective {
@@ -620,6 +630,7 @@ impl PresentationDirectives {
                             review,
                             disposition: directive.disposition(),
                             retirement,
+                            quote_target,
                         },
                     ))
                 })
@@ -654,6 +665,10 @@ impl PresentationDirectives {
                     .is_some_and(|body| {
                         matches!(body.decision, wire::body::TasteDecision::Confirmed { .. })
                     });
+            let quote_target = wire::QuoteTarget::Steering {
+                key: key.to_string(),
+                digest: wire::QuoteTarget::text_digest(&head.text),
+            };
             directives.insert(
                 key,
                 PresentationDirective {
@@ -666,6 +681,7 @@ impl PresentationDirectives {
                     review: is_review_feedback(head.control.as_deref()),
                     disposition: head.disposition,
                     retirement,
+                    quote_target,
                 },
             );
         }
@@ -871,7 +887,7 @@ fn hydrate_message_classifications(
             && presented
                 .contexts
                 .iter()
-                .any(|context| context.contains(&source.start));
+                .any(|context| context.range.contains(&source.start));
         let kind = if historical {
             historical_classification(source_tail)
         } else {
@@ -898,6 +914,30 @@ fn hydrate_message_classifications(
         return Err("hydrated message classifications are not exact and ordered".to_owned());
     }
     Ok(classifications)
+}
+fn hydrate_directive_contexts(
+    presented: &Presentation,
+    directives: &PresentationDirectives,
+) -> Result<Vec<wire::MessageDirective>, String> {
+    presented
+        .contexts
+        .iter()
+        .map(|context| {
+            let directive = directives.0.get(&context.key).ok_or_else(|| {
+                format!(
+                    "canonical acknowledgment presentation lost directive {}",
+                    context.key
+                )
+            })?;
+            Ok(wire::MessageDirective {
+                start: u32::try_from(context.range.start)
+                    .map_err(|_| "directive context start exceeds the wire range".to_owned())?,
+                end: u32::try_from(context.range.end)
+                    .map_err(|_| "directive context end exceeds the wire range".to_owned())?,
+                quote_target: directive.quote_target.clone(),
+            })
+        })
+        .collect()
 }
 
 /// A marker on the live answer's level, drawn from what the answer earned.

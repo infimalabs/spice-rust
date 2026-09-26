@@ -154,6 +154,10 @@ fn packed_frame(
 }
 
 fn directions_frame(text: &str) -> Vec<u8> {
+    let quote_target = wire::QuoteTarget::Steering {
+        key: "1kQnrzNZ".to_owned(),
+        digest: wire::QuoteTarget::text_digest(text),
+    };
     serde_json::to_vec(&serde_json::json!({
         "stream": "directions",
         "v": 1,
@@ -166,6 +170,7 @@ fn directions_frame(text: &str) -> Vec<u8> {
             "key": "1kQnrzNZ",
             "lane": LANE,
             "text": text,
+            "quote_target": quote_target,
         }],
     }))
     .expect("direction snapshot serializes")

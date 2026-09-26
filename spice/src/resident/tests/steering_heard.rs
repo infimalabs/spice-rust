@@ -126,7 +126,8 @@ impl Heard {
                 }),
             )
             .expect("the fixture occupant is seated");
-        let source = canvas::stream::Source::new(self.bus.reader(), self.epoch, 8);
+        let source =
+            canvas::stream::Source::new(self.bus.reader(), self.epoch, 8, quote_presenter());
         let publisher = source.message_publisher();
         let message_state = std::sync::Mutex::new(MessageState::default());
         let tastes = taste::Bag::new(Vec::new()).expect("empty taste bag");

@@ -1,17 +1,15 @@
 //! Bounded resolution of authenticated transcript quote targets.
 
 use std::ops::Range;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Parser, Tag, TagEnd};
 
 use bus::BusReader;
 use wire::{
-    CanonicalUuid, QUOTE_DEPTH_LIMIT, QuoteAuthor, QuoteResolution, QuoteTarget, QuoteUnavailable,
-    ResolvedQuote,
+    CanonicalUuid, QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation, QuoteResolution, QuoteTarget,
+    QuoteUnavailable, ResolvedQuote,
 };
-
-use crate::repository::StatePaths;
 
 /// One fixed-label Markdown quote link and its exact source range.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -95,11 +93,11 @@ pub struct Resolver<'a> {
 }
 
 impl<'a> Resolver<'a> {
-    /// Bind quote reads to one admitted repository state and bus snapshot source.
+    /// Bind quote reads to one admitted tape root and Bus snapshot source.
     #[must_use]
-    pub const fn new(paths: &'a StatePaths, bus: &'a BusReader) -> Self {
+    pub const fn new(tape: &'a Path, bus: &'a BusReader) -> Self {
         Self {
-            store: ResidentStore { paths, bus },
+            store: ResidentStore { tape, bus },
         }
     }
 
@@ -111,6 +109,44 @@ impl<'a> Resolver<'a> {
     pub fn resolve(&self, target: &str, depth: u8) -> QuoteResolution {
         resolve_with(&self.store, target, depth)
     }
+
+    /// Resolve every fixed-label quote link into a complete presentation tree.
+    #[must_use]
+    pub fn present(&self, text: &str) -> Vec<QuotePresentation> {
+        present_with(&self.store, text, 0)
+    }
+}
+
+fn present_with(store: &impl QuoteStore, text: &str, depth: u8) -> Vec<QuotePresentation> {
+    QuoteMessage::parse(text)
+        .quotes()
+        .iter()
+        .map(|quote| match resolve_with(store, &quote.target, depth) {
+            QuoteResolution::Resolved(resolved) => {
+                let quotes = present_with(
+                    store,
+                    &resolved.text,
+                    depth.checked_add(1).unwrap_or(QUOTE_DEPTH_LIMIT),
+                );
+                QuotePresentation::Resolved {
+                    target: quote.target.clone(),
+                    text: resolved.text,
+                    author: resolved.author,
+                    disposition: resolved.disposition,
+                    quotes,
+                }
+            }
+            QuoteResolution::Unavailable { target, reason } => {
+                QuotePresentation::Unavailable { target, reason }
+            }
+        })
+        .collect()
+}
+
+/// Bind the resident quote authority into Canvas serialization.
+#[must_use]
+pub fn presenter(tape: PathBuf, bus: BusReader) -> canvas::stream::QuotePresenter {
+    canvas::stream::QuotePresenter::new(move |text| Resolver::new(&tape, &bus).present(text))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -138,7 +174,7 @@ trait QuoteStore {
 }
 
 struct ResidentStore<'a> {
-    paths: &'a StatePaths,
+    tape: &'a Path,
     bus: &'a BusReader,
 }
 
@@ -167,11 +203,7 @@ impl QuoteStore for ResidentStore<'_> {
             .vendor(row.vendor.as_str())
             .map(|vendor| vendor.dialect())
             .ok_or(SourceError::Unknown)?;
-        let root = self
-            .paths
-            .tape()
-            .join(lane.to_string())
-            .join(row.vendor.as_str());
+        let root = self.tape.join(lane.to_string()).join(row.vendor.as_str());
         resolve_tape(&root, source, locus, dialect, lane, occupant)
     }
 
@@ -478,10 +510,10 @@ mod tests {
     }
 
     #[test]
-    fn nested_expansion_is_one_level_and_stops_before_depth_eight() {
+    fn presentation_expands_nested_quotes_and_preserves_the_depth_boundary_target() {
         let mut store = MemoryStore::default();
         let mut returned_text = "terminal text".to_owned();
-        let mut outer = None;
+        let mut targets = Vec::new();
         for index in 0..9 {
             let key = format!("0000000{index}");
             let target = steering_target(&key, &returned_text);
@@ -492,26 +524,116 @@ mod tests {
                     author: QuoteAuthor::Directive {
                         actor: wire::Actor::Operator,
                     },
-                    disposition: Some(wire::Disposition::Live),
+                    disposition: Some(if index == 4 {
+                        wire::Disposition::Acked
+                    } else {
+                        wire::Disposition::Live
+                    }),
                 },
             );
             returned_text = target.markdown();
-            outer = Some(target);
+            targets.push(target);
         }
+        let unknown = steering_target("dTVLR0qL1", "missing");
+        let presented = present_with(
+            &store,
+            &format!(
+                "{} and {}",
+                targets
+                    .last()
+                    .expect("chain has an outer target")
+                    .markdown(),
+                unknown.markdown()
+            ),
+            0,
+        );
 
-        let mut target = outer.expect("chain has an outer target");
-        for depth in 0..QUOTE_DEPTH_LIMIT {
-            let QuoteResolution::Resolved(resolved) =
-                resolve_with(&store, &target.to_string(), depth)
+        assert_eq!(presented.len(), 2);
+        let mut node = &presented[0];
+        for depth in 0..usize::from(QUOTE_DEPTH_LIMIT) {
+            let QuotePresentation::Resolved {
+                target,
+                author,
+                disposition,
+                quotes,
+                ..
+            } = node
             else {
                 panic!("depth {depth} should resolve");
             };
-            target = QuoteTarget::from_markdown(&resolved.text).expect("next nested target");
+            let source_index = 8 - depth;
+            assert_eq!(target, &targets[source_index].to_string());
+            assert_eq!(
+                author,
+                &QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                }
+            );
+            assert_eq!(
+                *disposition,
+                Some(if source_index == 4 {
+                    wire::Disposition::Acked
+                } else {
+                    wire::Disposition::Live
+                })
+            );
+            assert_eq!(quotes.len(), 1);
+            node = &quotes[0];
         }
-        let spelling = target.to_string();
         assert_eq!(
-            resolve_with(&store, &spelling, QUOTE_DEPTH_LIMIT),
-            unavailable(&spelling, QuoteUnavailable::DepthExceeded)
+            node,
+            &QuotePresentation::Unavailable {
+                target: targets[0].to_string(),
+                reason: QuoteUnavailable::DepthExceeded,
+            }
         );
+        assert_eq!(
+            presented[1],
+            QuotePresentation::Unavailable {
+                target: unknown.to_string(),
+                reason: QuoteUnavailable::Unknown,
+            }
+        );
+    }
+
+    #[test]
+    fn presentation_reloads_current_directive_disposition() {
+        let key = "dTVLR0qL0";
+        let text = "operator text";
+        let target = steering_target(key, text);
+        let mut store = MemoryStore::default();
+        store.steering.insert(
+            key.to_owned(),
+            SourceQuote {
+                text: text.to_owned(),
+                author: QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                },
+                disposition: Some(wire::Disposition::Live),
+            },
+        );
+        let message = target.markdown();
+        let live = present_with(&store, &message, 0);
+        store
+            .steering
+            .get_mut(key)
+            .expect("directive fixture exists")
+            .disposition = Some(wire::Disposition::Acked);
+        let refreshed = present_with(&store, &message, 0);
+
+        assert!(matches!(
+            &live[0],
+            QuotePresentation::Resolved {
+                disposition: Some(wire::Disposition::Live),
+                ..
+            }
+        ));
+        assert!(matches!(
+            &refreshed[0],
+            QuotePresentation::Resolved {
+                disposition: Some(wire::Disposition::Acked),
+                ..
+            }
+        ));
     }
 }

@@ -97,8 +97,8 @@ pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotes
 pub use media::{AgentMediaReference, Media, MediaError};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
 pub use quote::{
-    QUOTE_DEPTH_LIMIT, QuoteAuthor, QuoteResolution, QuoteTarget, QuoteTargetError,
-    QuoteUnavailable, ResolvedQuote,
+    QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation, QuoteResolution, QuoteTarget,
+    QuoteTargetError, QuoteUnavailable, ResolvedQuote,
 };
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,
@@ -110,10 +110,11 @@ pub use reply::{
 };
 pub use stream::{
     AgentActivityKind, AgentMessage, AutomaticSpeech, AutomaticSpeechKind, MESSAGE_FLOOR,
-    MessageBoundary, MessageClassification, MessageClassificationKind, MessageHistoryCursor,
-    MessageLocus, OperatorDirection, StreamAdmissionError, StreamCursor, StreamFact, StreamFrame,
-    StreamRequest, TranscriptGeneration, TranscriptLaneFrontier, TranscriptLaneState, TrustView,
-    ViewSubject, superseded_boundaries, valid_message_classifications,
+    MessageBoundary, MessageClassification, MessageClassificationKind, MessageDirective,
+    MessageHistoryCursor, MessageLocus, OperatorDirection, StreamAdmissionError, StreamCursor,
+    StreamFact, StreamFrame, StreamRequest, TranscriptGeneration, TranscriptLaneFrontier,
+    TranscriptLaneState, TrustView, ViewSubject, superseded_boundaries,
+    valid_message_classifications, valid_message_directives,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,

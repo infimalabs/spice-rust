@@ -1,7 +1,7 @@
 //! Authenticated Canvas subscriptions over journal and transcript sources.
 
 use std::collections::BTreeMap;
-#[cfg(test)]
+use std::fmt;
 use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -35,6 +35,36 @@ pub use subscription::{LiveDelivery, Subscription};
 
 /// Maximum newest durable operator directions restored for each lane.
 pub const OPERATOR_DIRECTION_CAPACITY: usize = 256;
+/// Repository-owned expansion of fixed-label quote links.
+///
+/// Canvas invokes this before every message or direction crosses the wire. The
+/// resolver stays in the resident, where tape and journal authority live.
+#[derive(Clone)]
+pub struct QuotePresenter {
+    present: Arc<dyn Fn(&str) -> Vec<wire::QuotePresentation> + Send + Sync>,
+}
+
+impl QuotePresenter {
+    /// Bind one authoritative presentation function to the Canvas generation.
+    #[must_use]
+    pub fn new(
+        present: impl Fn(&str) -> Vec<wire::QuotePresentation> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            present: Arc::new(present),
+        }
+    }
+
+    fn present(&self, text: &str) -> Vec<wire::QuotePresentation> {
+        (self.present)(text)
+    }
+}
+
+impl fmt::Debug for QuotePresenter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("QuotePresenter")
+    }
+}
 
 /// Generation-owned source for every streamed canvas answer.
 #[derive(Clone, Debug)]
@@ -42,6 +72,7 @@ pub struct Source {
     bus: BusReader,
     epoch: wire::CanonicalUuid,
     rows: usize,
+    presenter: QuotePresenter,
     messages: MessageFeed,
     #[cfg(test)]
     reads: Arc<ReadCounts>,
@@ -57,12 +88,18 @@ struct ReadCounts {
 impl Source {
     /// Bind canvas reads to one resident Bus generation and one packing bound.
     #[must_use]
-    pub fn new(bus: BusReader, epoch: wire::CanonicalUuid, rows: usize) -> Self {
+    pub fn new(
+        bus: BusReader,
+        epoch: wire::CanonicalUuid,
+        rows: usize,
+        presenter: QuotePresenter,
+    ) -> Self {
         Self {
             bus,
             epoch,
             rows,
-            messages: MessageFeed::new(),
+            messages: MessageFeed::new(presenter.clone()),
+            presenter,
             #[cfg(test)]
             reads: Arc::new(ReadCounts::default()),
         }
@@ -304,13 +341,21 @@ impl Source {
             .map(|heads| {
                 heads
                     .into_iter()
-                    .map(|head| OperatorDirection {
-                        authored: head.body().published,
-                        directive: head.body().directive,
-                        key: head.body().key.clone(),
-                        lane: head.body().lane,
-                        text: head.body().text.clone(),
-                        attachments: head.body().attachments.clone(),
+                    .map(|head| {
+                        let target = wire::QuoteTarget::Steering {
+                            key: head.body().key.clone(),
+                            digest: wire::QuoteTarget::text_digest(&head.body().text),
+                        };
+                        OperatorDirection {
+                            authored: head.body().published,
+                            directive: head.body().directive,
+                            key: head.body().key.clone(),
+                            lane: head.body().lane,
+                            text: head.body().text.clone(),
+                            quote_target: target,
+                            quotes: self.presenter.present(&head.body().text),
+                            attachments: head.body().attachments.clone(),
+                        }
                     })
                     .collect()
             })

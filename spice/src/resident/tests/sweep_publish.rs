@@ -38,7 +38,7 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
             }),
         )
         .expect("the sweep fixture occupant is seated");
-    let source = canvas::stream::Source::new(bus.reader(), epoch, 8);
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let mut updates = source.subscribe_messages();
     let mut diagnostics = Vec::new();

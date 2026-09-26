@@ -51,6 +51,9 @@ use canvas_announcement::{
 };
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
+fn quote_presenter() -> canvas::stream::QuotePresenter {
+    canvas::stream::QuotePresenter::new(|_| Vec::new())
+}
 
 #[test]
 fn consent_initialization_resumes_across_small_materializer_steps() {

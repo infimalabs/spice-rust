@@ -121,6 +121,41 @@ pub enum QuoteResolution {
         reason: QuoteUnavailable,
     },
 }
+/// One recursively expanded fixed-label quote link ready for presentation.
+///
+/// Every node retains the exact original target. Resolved nodes carry only
+/// authenticated source data, while unavailable nodes carry one closed refusal
+/// class and no invented text or author.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum QuotePresentation {
+    /// Durable authority authenticated this node and any nested quote links.
+    Resolved {
+        /// Original target spelling embedded in the containing message.
+        target: String,
+        /// Exact authenticated UTF-8 text.
+        text: String,
+        /// Durable recorded authorship.
+        author: QuoteAuthor,
+        /// Current directive disposition; absent for tape prose.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        disposition: Option<Disposition>,
+        /// Quote links found in `text`, in source order.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        quotes: Vec<QuotePresentation>,
+    },
+    /// Resolution refused without fabricating presentation data.
+    Unavailable {
+        /// Original target spelling embedded in the containing message.
+        target: String,
+        /// Typed refusal class.
+        reason: QuoteUnavailable,
+    },
+}
 
 impl QuoteTarget {
     /// Digest the exact text a target authenticates.

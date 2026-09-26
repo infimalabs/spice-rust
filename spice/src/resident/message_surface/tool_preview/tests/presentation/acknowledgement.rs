@@ -1,5 +1,12 @@
 use super::*;
 
+fn quote_target(key: &str, text: &str) -> wire::QuoteTarget {
+    wire::QuoteTarget::Steering {
+        key: key.to_owned(),
+        digest: wire::QuoteTarget::text_digest(text),
+    }
+}
+
 fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
     PresentationDirectives(
         rows.iter()
@@ -13,6 +20,7 @@ fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
                         taste: false,
                         review: false,
                         disposition: wire::Disposition::Live,
+                        quote_target: quote_target(key, text),
                         retirement: None,
                     },
                 )
@@ -172,6 +180,14 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             taste: false,
             review: true,
             disposition: wire::Disposition::Acked,
+            quote_target: quote_target(
+                "1kQnrzNZ",
+                concat!(
+                    "[REVIEW] Peer feedback for CANVAS-1kKRRsDR:\n\n",
+                    "> preserve the finding\n\n",
+                    "Keep working the current task."
+                ),
+            ),
             retirement: Some(wire::body::TranscriptLocus {
                 source: Some(source),
                 member: 1,
@@ -547,6 +563,7 @@ fn system_acknowledgment_hides_framing_and_earns_no_authored_context() {
             taste: false,
             review: false,
             disposition: wire::Disposition::Acked,
+            quote_target: quote_target("dRyzkGX8b", "Accepted lane renewal context."),
             retirement: Some(wire::body::TranscriptLocus {
                 source: None,
                 member: 1,
@@ -590,6 +607,7 @@ fn system_acknowledgment_badge_reaches_canvas_without_speech_eligibility() {
             taste: false,
             review: false,
             disposition: wire::Disposition::Acked,
+            quote_target: quote_target("dRyzkGX8b", "Accepted lane renewal context."),
             retirement: Some(wire::body::TranscriptLocus {
                 source: None,
                 member: 1,
@@ -615,7 +633,7 @@ fn system_acknowledgment_badge_reaches_canvas_without_speech_eligibility() {
         AgentEvent {
             lane: lane(),
             author: lane(),
-            source: None,
+            source: Some(TEST_TAPE_SOURCE.parse().expect("fixture source")),
             worktree: None,
             ordinal: 0,
             decoded: &prose,
@@ -686,6 +704,17 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
         messages[0].text,
         "> [ACK PENDING] Keep the current path.\n\nApplied."
     );
+    let [context] = messages[0].directive_contexts.as_slice() else {
+        panic!("one directive context should be quoteable")
+    };
+    assert_eq!(
+        &messages[0].text[context.start as usize..context.end as usize],
+        "> [ACK PENDING] Keep the current path."
+    );
+    assert_eq!(
+        context.quote_target,
+        quote_target("1kQnrzNZ", "Keep the current path.")
+    );
     assert_eq!(
         messages[0]
             .classifications
@@ -755,6 +784,7 @@ fn repeated_acknowledgement_keeps_context_without_reearning_speech() {
             taste: false,
             review: false,
             disposition: wire::Disposition::Acked,
+            quote_target: quote_target("1kQwPZtK", "Keep the original response context."),
             retirement: Some(retirement),
         },
     )]));
@@ -818,6 +848,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
                 taste: false,
                 review: false,
                 disposition: wire::Disposition::Acked,
+                quote_target: quote_target("1kR5x8yR", "Continue"),
                 retirement: Some(retirement(8, 5)),
             },
         ),
@@ -830,6 +861,10 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
                 taste: true,
                 review: false,
                 disposition: wire::Disposition::Acked,
+                quote_target: quote_target(
+                    "1kR5xJDD",
+                    "[TASTE] fallbacks: Keep one deterministic path.",
+                ),
                 retirement: Some(retirement(0, 14)),
             },
         ),
@@ -888,6 +923,7 @@ fn current_system_and_taste_ack_hide_one_shared_protocol_header() {
                 taste: false,
                 review: false,
                 disposition: wire::Disposition::Acked,
+                quote_target: quote_target("dRyzkGX8b", "Accepted lane renewal context."),
                 retirement: Some(retirement(5)),
             },
         ),
@@ -900,6 +936,10 @@ fn current_system_and_taste_ack_hide_one_shared_protocol_header() {
                 taste: true,
                 review: false,
                 disposition: wire::Disposition::Acked,
+                quote_target: quote_target(
+                    "dRyzkQp1P",
+                    "[TASTE] compatibility: Keep one tested path.",
+                ),
                 retirement: Some(retirement(15)),
             },
         ),
@@ -951,6 +991,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
                 taste: false,
                 review: false,
                 disposition: wire::Disposition::Acked,
+                quote_target: quote_target("dRyzkGX8b", "Accepted lane renewal context."),
                 retirement: Some(retirement(13)),
             },
         ),
@@ -963,6 +1004,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
                 taste: false,
                 review: false,
                 disposition: wire::Disposition::Acked,
+                quote_target: quote_target("1kQwPZtK", "Keep retained direction readable."),
                 retirement: Some(retirement(23)),
             },
         ),
@@ -1004,6 +1046,7 @@ fn acknowledged_context_survives_transcript_source_replacement() {
             taste: false,
             review: false,
             disposition: wire::Disposition::Acked,
+            quote_target: quote_target("1kQwPZtK", "Keep the original response context."),
             retirement: Some(wire::body::TranscriptLocus {
                 source: Some(expected_source),
                 member: 1,

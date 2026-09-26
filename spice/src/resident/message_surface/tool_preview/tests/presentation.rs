@@ -1,6 +1,7 @@
 use std::sync::Mutex;
 
 use super::super::super::*;
+use crate::resident::message_surface::projection::TEST_TAPE_SOURCE;
 
 const CLAUDE_TURN_START: &str = r#"{"type":"user","promptId":"turn-1","message":{"type":"message","role":"user","content":[{"type":"text","text":"continue"}]}}"#;
 const CLAUDE_STRING_TURN_START: &str = r#"{"type":"user","promptId":"turn-1","message":{"type":"message","role":"user","content":"continue"}}"#;
@@ -124,6 +125,16 @@ fn assert_turn_sequence(dialect: listen::Dialect, records: &[&[u8]]) {
     let prose = messages.last().expect("assistant prose follows the turn");
     assert_eq!(prose.activity, wire::AgentActivityKind::Prose);
     assert_eq!(prose.text, "new work");
+    assert_eq!(
+        prose.quote_target,
+        Some(wire::QuoteTarget::Tape {
+            lane: prose.lane,
+            source: TEST_TAPE_SOURCE.parse().expect("fixture source"),
+            locus: prose.locus,
+            digest: wire::QuoteTarget::text_digest("new work"),
+        })
+    );
+    assert!(messages[0].quote_target.is_none());
     assert!(messages[0].chronology_key() < prose.chronology_key());
 }
 
@@ -351,7 +362,7 @@ fn terminal_assistant_prose_preserves_final_answer_state() {
         AgentEvent {
             lane: lane(),
             author: lane(),
-            source: None,
+            source: Some(TEST_TAPE_SOURCE.parse().expect("fixture source")),
             worktree: None,
             ordinal: 0,
             decoded: &prose,

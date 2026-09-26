@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use wire::{AgentMessage, Fault, FaultClass};
 
-use super::Failure;
+use super::{Failure, QuotePresenter};
 
 /// Newest visible transcript cards retained per lane for a reconnecting Canvas.
 pub const MESSAGE_CAPACITY: usize = 256;
@@ -62,13 +62,14 @@ pub(super) struct MessageFeed {
     history_open: Arc<Mutex<HashSet<wire::CanonicalUuid>>>,
     history_anchors: Arc<Mutex<HistoryAnchorMap>>,
     lanes: Arc<Mutex<BTreeMap<wire::CanonicalUuid, bool>>>,
+    presenter: QuotePresenter,
     generation: Arc<AtomicU64>,
     pub(super) updates: tokio::sync::broadcast::Sender<wire::TranscriptGeneration>,
     capacity: usize,
 }
 
 impl MessageFeed {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(presenter: QuotePresenter) -> Self {
         let (updates, _) = tokio::sync::broadcast::channel(MESSAGE_CAPACITY);
         Self {
             retained: Arc::new(Mutex::new(VecDeque::new())),
@@ -79,6 +80,7 @@ impl MessageFeed {
             generation: Arc::new(AtomicU64::new(0)),
             updates,
             capacity: MESSAGE_CAPACITY,
+            presenter,
         }
     }
 
@@ -123,6 +125,7 @@ impl MessageFeed {
                 !visible_message(message) || selected.contains(&(message.lane, message.locus))
             })
             .cloned()
+            .map(|message| self.present(message))
             .collect();
         Ok(wire::TranscriptGeneration {
             generation: self.generation.load(Ordering::Acquire),
@@ -154,6 +157,9 @@ impl MessageFeed {
         }
         if read.generation != self.generation.load(Ordering::Acquire) {
             return Err(MessagePublishError::StaleGeneration);
+        }
+        for message in &mut messages {
+            message.quotes = self.presenter.present(&message.text);
         }
         Ok(wire::TranscriptGeneration {
             generation: read.generation,
@@ -468,6 +474,7 @@ enum MessageMutation {
         locus: wire::MessageLocus,
         text: String,
         classifications: Vec<wire::MessageClassification>,
+        directive_contexts: Vec<wire::MessageDirective>,
     },
 }
 
@@ -586,7 +593,7 @@ impl MessagePublisher {
     ///
     /// The durable locus remains immutable. A card that spoke an
     /// acknowledgement before the journal retired its key is presented again
-    /// once the retirement lands, so only `text` and `classifications` move;
+    /// once the retirement lands, so only journal-derived presentation moves;
     /// the final state and speech the card already earned stay. A card retention
     /// longer holds, or one already presented this way, answers false.
     pub fn revise_presentation(
@@ -595,9 +602,11 @@ impl MessagePublisher {
         locus: wire::MessageLocus,
         text: String,
         classifications: Vec<wire::MessageClassification>,
+        directive_contexts: Vec<wire::MessageDirective>,
     ) -> Result<bool, MessagePublishError> {
         let batch = self.batch()?;
-        let changed = batch.revise_presentation(lane, locus, text, classifications)?;
+        let changed =
+            batch.revise_presentation(lane, locus, text, classifications, directive_contexts)?;
         if changed {
             batch.commit()?;
         }
@@ -645,8 +654,11 @@ impl MessageBatch {
         locus: wire::MessageLocus,
         text: String,
         classifications: Vec<wire::MessageClassification>,
+        directive_contexts: Vec<wire::MessageDirective>,
     ) -> Result<bool, MessagePublishError> {
-        if !wire::valid_message_classifications(&text, &classifications) {
+        if !wire::valid_message_classifications(&text, &classifications)
+            || !wire::valid_message_directives(&text, &directive_contexts)
+        {
             return Err(MessagePublishError::InvalidClassifications);
         }
         let mut state = self
@@ -659,6 +671,7 @@ impl MessageBatch {
             locus,
             text.clone(),
             classifications.clone(),
+            directive_contexts.clone(),
         )?
         else {
             return Ok(false);
@@ -668,6 +681,7 @@ impl MessageBatch {
             locus,
             text,
             classifications,
+            directive_contexts,
         });
         Ok(true)
     }
@@ -742,6 +756,7 @@ impl MessageBatch {
             .iter()
             .filter(|message| keys.contains(&(message.lane, message.locus)))
             .cloned()
+            .map(|message| self.publisher.feed.present(message))
             .collect::<Vec<_>>();
         if messages.is_empty() {
             return Ok(false);
@@ -778,6 +793,12 @@ impl MessageBatch {
         Ok(true)
     }
 }
+impl MessageFeed {
+    fn present(&self, mut message: AgentMessage) -> AgentMessage {
+        message.quotes = self.presenter.present(&message.text);
+        message
+    }
+}
 
 impl MessageMutation {
     fn lane(&self) -> wire::CanonicalUuid {
@@ -807,12 +828,14 @@ impl MessageMutation {
                 locus,
                 text,
                 classifications,
+                directive_contexts,
             } => revise_presented_message(
                 retained,
                 *lane,
                 *locus,
                 text.clone(),
                 classifications.clone(),
+                directive_contexts.clone(),
             )
             .map(|revised| revised.is_some()),
         }
@@ -896,6 +919,7 @@ fn revise_presented_message(
     locus: wire::MessageLocus,
     text: String,
     classifications: Vec<wire::MessageClassification>,
+    directive_contexts: Vec<wire::MessageDirective>,
 ) -> Result<Option<AgentMessage>, MessagePublishError> {
     let Some(existing) = retained
         .iter_mut()
@@ -906,17 +930,23 @@ fn revise_presented_message(
     if existing.activity != wire::AgentActivityKind::Prose {
         return Err(MessagePublishError::IdentityConflict);
     }
-    if existing.text == text && existing.classifications == classifications {
+    if existing.text == text
+        && existing.classifications == classifications
+        && existing.directive_contexts == directive_contexts
+    {
         return Ok(None);
     }
     existing.text = text;
     existing.classifications = classifications;
+    existing.directive_contexts = directive_contexts;
     Ok(Some(existing.clone()))
 }
 
 fn validate_message_presentation(message: &AgentMessage) -> Result<(), MessagePublishError> {
     wire::media::validate_media(&message.media).map_err(MessagePublishError::InvalidMedia)?;
-    if !wire::valid_message_classifications(&message.text, &message.classifications) {
+    if !wire::valid_message_classifications(&message.text, &message.classifications)
+        || !wire::valid_message_directives(&message.text, &message.directive_contexts)
+    {
         return Err(MessagePublishError::InvalidClassifications);
     }
     Ok(())
