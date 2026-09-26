@@ -291,6 +291,12 @@ fn render_agent_message_card(
     let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
     let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
     let inspection_open = inspection.is_some_and(|inspection| inspection.open);
+    let directive_actions = render_directive_quote_actions(
+        message,
+        quote_lane,
+        &props.quote_dispatcher,
+        layout.measurement_index,
+    );
     html! {
         <article
             key={source_id.clone()}
@@ -361,6 +367,7 @@ fn render_agent_message_card(
                             crate::runtime::agent_message_display_millis(message),
                             &footer_label,
                             &attribution,
+                            directive_actions,
                         )}
                     </div>
                 </div>
@@ -644,29 +651,29 @@ fn agent_message_correspondent(
     speaking: bool,
     order: u64,
 ) -> view::chrome::Correspondent {
-    let lane_key = quote_lane.to_string();
-    let quote_text = message.text.clone();
-    let quote_preview = watchband::first_nonquoted_prose(&message.text);
-    let quote_identity = agent_message_quote_identity(message);
-    let display_millis = crate::runtime::agent_message_display_millis(message);
-    let focus_identity = quote_identity.clone();
-    let focus_lane = lane_key.clone();
-    let quote_dispatcher = quote_dispatcher.clone();
+    let quote = message.quote_target.clone().map(|target| {
+        let lane = quote_lane.to_string();
+        let identity = target.to_string();
+        let focus_identity = identity.clone();
+        let focus_lane = lane.clone();
+        let dispatcher = quote_dispatcher.clone();
+        let display_millis = crate::runtime::agent_message_display_millis(message);
+        Callback::from(move |()| {
+            dispatcher.dispatch(ComposerAction::AddQuote {
+                lane: lane.clone(),
+                target: target.clone(),
+                order,
+                display_millis,
+                preview: "Agent quote".to_owned(),
+            });
+            focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
+        })
+    });
     view::chrome::Correspondent {
         accent,
         speak: speak.clone(),
         speaking,
-        quote: Callback::from(move |()| {
-            quote_dispatcher.dispatch(ComposerAction::AddQuote {
-                lane: lane_key.clone(),
-                identity: quote_identity.clone(),
-                order,
-                display_millis,
-                quote: quote_text.clone(),
-                preview: quote_preview.clone(),
-            });
-            focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
-        }),
+        quote,
     }
 }
 
@@ -711,6 +718,46 @@ fn render_agent_message_media(
     }
 }
 
+fn render_directive_quote_actions(
+    message: &wire::AgentMessage,
+    quote_lane: CanonicalUuid,
+    dispatcher: &UseReducerDispatcher<ComposerDrafts>,
+    order: usize,
+) -> Html {
+    let lane = quote_lane.to_string();
+    let display_millis = crate::runtime::agent_message_display_millis(message);
+    let order = u64::try_from(order).expect("Mosaic creation index fits quote ordering");
+    html! {
+        {for message.directive_contexts.iter().map(|context| {
+            let target = context.quote_target.clone();
+            let identity = target.to_string();
+            let focus_identity = identity.clone();
+            let focus_lane = lane.clone();
+            let action_lane = lane.clone();
+            let dispatcher = dispatcher.clone();
+            html! {
+                <button
+                    class="card-action card-action--quote message-directive-quote"
+                    type="button"
+                    title="Quote this directive"
+                    aria-label="Quote this directive"
+                    data-quote-target={identity}
+                    onclick={Callback::from(move |_| {
+                        dispatcher.dispatch(ComposerAction::AddQuote {
+                            lane: action_lane.clone(),
+                            target: target.clone(),
+                            order,
+                            display_millis,
+                            preview: "Directive quote".to_owned(),
+                        });
+                        focus_after_render(quote_textarea_id(&focus_lane, &focus_identity));
+                    })}
+                ><span class="card-action-icon" aria-hidden="true">{"❝"}</span></button>
+            }
+        })}
+    }
+}
+
 fn render_agent_message_footer(
     message: &wire::AgentMessage,
     shown_text: &str,
@@ -718,6 +765,7 @@ fn render_agent_message_footer(
     display_millis: i64,
     producer_label: &str,
     attribution: &str,
+    directive_actions: Html,
 ) -> Html {
     let locus = format!(
         "tape {}:{}+{}#{}",
@@ -751,6 +799,7 @@ fn render_agent_message_footer(
                 if has_actions {
                     {view::chrome::render_card_actions(shown_text, correspondent)}
                 }
+                {directive_actions}
             </div>
         </footer>
     }
@@ -776,9 +825,8 @@ pub(super) fn render_quote_shards(
                         identity: remove_identity.clone(),
                     });
                 });
-                let shown = watchband::quote_label(quote.preview.as_deref());
+                let shown = quote.preview.as_str();
                 let textarea_id = quote_textarea_id(lane_key, &quote.identity);
-                let source_id = format!("message-{}", quote.identity);
                 let onpaste = paste_images(
                     lane_key.to_owned(),
                     Some(quote.identity.clone()),
@@ -788,27 +836,26 @@ pub(super) fn render_quote_shards(
                     <article
                         key={quote.identity.clone()}
                         class="mosaic-composer composer-shard composer-shard--quote"
-                        title={quote.quote.clone()}
+                        title={shown.to_owned()}
                         data-shard-kind="quote"
                         data-shard-target-id={lane_key.to_owned()}
                         data-quote-identity={quote.identity.clone()}
                         data-quote-target-id={lane_key.to_owned()}
                     >
                         <header class="composer-shard-heading">
-                            <a
+                            <span
                                 class={classes!(
                                     "composer-shard-link",
                                     "composer-shard-age",
                                     status.key(),
                                 )}
-                                href={format!("#{source_id}")}
-                                aria-label={format!("Jump to quoted message: {shown}")}
+                                aria-label={format!("Quoted source: {shown}")}
                                 data-lane-status={status.key()}
                             >{lease_age(
                                 Some(quote.display_millis),
                                 "composer-shard-age-label",
                                 "—",
-                            )}</a>
+                            )}</span>
                             <strong class="composer-shard-prose" title={shown.to_owned()}>{shown}</strong>
                             {render_image_indicators(
                                 lane_key,

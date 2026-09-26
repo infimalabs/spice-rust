@@ -17,11 +17,10 @@ pub(in crate::browser) struct ComposerDrafts(pub(super) DraftStore);
 pub(in crate::browser) enum ComposerAction {
     AddQuote {
         lane: String,
-        identity: String,
+        target: wire::QuoteTarget,
         order: u64,
         display_millis: i64,
-        quote: String,
-        preview: Option<String>,
+        preview: String,
     },
     RemoveQuote {
         lane: String,
@@ -77,14 +76,13 @@ impl Reducible for ComposerDrafts {
         match action {
             ComposerAction::AddQuote {
                 lane,
-                identity,
+                target,
                 order,
                 display_millis,
-                quote,
                 preview,
             } => {
                 next.0
-                    .add_quote(lane, identity, order, display_millis, quote, preview);
+                    .add_quote(lane, target, order, display_millis, preview);
             }
             ComposerAction::RemoveQuote { lane, identity } => {
                 next.0.remove_quote(lane, &identity);

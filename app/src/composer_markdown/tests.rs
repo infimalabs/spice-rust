@@ -2,11 +2,36 @@ use super::*;
 
 const OPENABLE_PNG: &str = "data:image/png;base64,iVBORw0KGgo=";
 
-fn quoted<'a>(values: &'a [(&'a str, &'a str)]) -> Vec<QuotedReply<'a>> {
+fn steering_target(key: &str, text: &str) -> wire::QuoteTarget {
+    wire::QuoteTarget::Steering {
+        key: key.to_owned(),
+        digest: wire::QuoteTarget::text_digest(text),
+    }
+}
+
+fn tape_target(text: &str) -> wire::QuoteTarget {
+    wire::QuoteTarget::Tape {
+        lane: "018f82d4-6f59-7d06-92e3-bce9131163e6"
+            .parse()
+            .expect("fixture lane is canonical"),
+        source: "018f82d4-6f59-7d06-92e3-bce9131163e7"
+            .parse()
+            .expect("fixture source is canonical"),
+        locus: wire::MessageLocus {
+            member: 1,
+            offset: 24,
+            length: 80,
+            event: 2,
+        },
+        digest: wire::QuoteTarget::text_digest(text),
+    }
+}
+
+fn quoted<'a>(values: &'a [(String, &'a str)]) -> Vec<QuotedReply<'a>> {
     values
         .iter()
-        .map(|(quote, body)| QuotedReply {
-            quote,
+        .map(|(target, body)| QuotedReply {
+            target,
             body,
             attachments: &[],
         })
@@ -14,28 +39,25 @@ fn quoted<'a>(values: &'a [(&'a str, &'a str)]) -> Vec<QuotedReply<'a>> {
 }
 
 #[test]
-fn composed_markdown_follows_visible_shard_order_and_drops_blank_parts() {
+fn composed_markdown_emits_canonical_target_links_in_visible_shard_order() {
     assert_eq!(compose("  body only  ", &[], &[]), "body only");
+    let tape = tape_target("agent source text");
+    let directive = steering_target("dTVQdQfLw", "directive source text");
+    let quotes = [(tape.to_string(), ""), (directive.to_string(), "reply")];
     assert_eq!(
-        compose(
-            "",
-            &quoted(&[("first quote", ""), ("  ", ""), ("second quote", "")]),
-            &[]
-        ),
-        "> first quote\n\n> second quote"
-    );
-    assert_eq!(
-        compose("body", &quoted(&[("quoted line", "")]), &[]),
-        "> quoted line\n\nbody"
+        compose("body", &quoted(&quotes), &[]),
+        format!(
+            "{}\n\n{}\n\nreply\n\nbody",
+            tape.markdown(),
+            directive.markdown()
+        )
     );
 }
 
 #[test]
-fn a_reply_follows_the_quote_it_answers_inside_one_part() {
-    assert_eq!(
-        compose("", &quoted(&[("quoted line", "  my reply  ")]), &[]),
-        "> quoted line\n\nmy reply"
-    );
+fn operator_typed_block_quotes_remain_ordinary_composed_markdown() {
+    let typed = "> copied words\n>\n> still operator-authored";
+    assert_eq!(compose(typed, &[], &[]), typed);
 }
 
 #[test]
@@ -45,11 +67,6 @@ fn block_quotes_normalize_every_line_ending_before_prefixing() {
     assert_eq!(block_quote("first\n\nthird"), "> first\n> \n> third");
 }
 
-/// Quoted message text routinely ends on a blank line, and the blank line is
-/// the one the marker can lose. The copy that trimmed the joined result left
-/// `>` alone on the last line: a bare marker, not the `> ` every line of a
-/// block quote carries. Asserting the whole string and the per-line marker
-/// together states both the exact output and the invariant behind it.
 #[test]
 fn a_quote_that_ends_on_a_blank_line_keeps_the_marker_on_every_line() {
     let quote = block_quote("first\n\n");
@@ -61,15 +78,10 @@ fn a_quote_that_ends_on_a_blank_line_keeps_the_marker_on_every_line() {
     );
 }
 
-/// The composer drops a quote that would contribute nothing, and it can only
-/// drop what arrives empty. The copy that trimmed the joined result returned
-/// a lone `>` here, which is not empty, so the drag handler sent a directive
-/// whose entire body was a marker.
 #[test]
-fn whitespace_only_quoted_text_composes_to_nothing_at_all() {
+fn whitespace_only_operator_block_quote_text_composes_to_nothing() {
     assert_eq!(block_quote("   \n\t\n  "), "");
     assert_eq!(block_quote(""), "");
-    assert_eq!(compose("", &quoted(&[("   \n  ", "")]), &[]), "");
 }
 
 #[test]
@@ -715,13 +727,6 @@ fn every_image_preview_owns_an_explicit_initial_lifecycle() {
 
     let malformed = render_received("![broken](data:image/png;base64,%%%)");
     assert!(malformed.html.contains("data-mosaic-image-state=\"error\""));
-}
-
-fn steering_target(key: &str, text: &str) -> wire::QuoteTarget {
-    wire::QuoteTarget::Steering {
-        key: key.to_owned(),
-        digest: wire::QuoteTarget::text_digest(text),
-    }
 }
 
 #[test]

@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use wire::body::DirectiveAttachment;
-use wire::{AgentMessage, CanonicalUuid};
+use wire::{AgentMessage, CanonicalUuid, QuoteTarget};
 
 use crate::composer_markdown::QuotedReply;
 use crate::runtime::LaneMember;
@@ -22,12 +22,11 @@ pub(crate) struct ComposerDraft {
     pub(crate) issue: Option<String>,
 }
 
-/// One quoted source message and the reply being composed beneath it.
+/// One canonical quoted source and the reply being composed beneath it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QuoteDraft {
     pub(crate) identity: String,
-    pub(crate) quote: String,
-    pub(crate) preview: Option<String>,
+    pub(crate) preview: String,
     pub(crate) display_millis: i64,
     pub(crate) body: String,
     pub(crate) attachments: Vec<DirectiveAttachment>,
@@ -70,14 +69,14 @@ impl DraftStore {
 
     pub(crate) fn add_quote(
         &mut self,
-        target: String,
-        identity: String,
+        lane: String,
+        quote_target: QuoteTarget,
         order: u64,
         display_millis: i64,
-        quote: String,
-        preview: Option<String>,
+        preview: String,
     ) -> QuotePlacement {
-        let draft = self.draft_mut(target);
+        let identity = quote_target.to_string();
+        let draft = self.draft_mut(lane);
         if draft
             .quotes
             .iter()
@@ -87,7 +86,6 @@ impl DraftStore {
         }
         draft.quotes.push(QuoteDraft {
             identity,
-            quote,
             preview,
             display_millis,
             body: String::new(),
@@ -235,7 +233,6 @@ impl DraftStore {
                     .collect::<Vec<_>>()
                     .join("\n\n");
                 restored.order = restored.order.max(current_quote.order);
-                restored.quote = current_quote.quote;
                 restored.preview = current_quote.preview;
                 restored.display_millis = current_quote.display_millis;
                 restored.attachments.extend(current_quote.attachments);
@@ -305,7 +302,7 @@ pub(crate) fn compose(draft: &ComposerDraft) -> String {
         .quotes
         .iter()
         .map(|quote| QuotedReply {
-            quote: &quote.quote,
+            target: &quote.identity,
             body: &quote.body,
             attachments: &quote.attachments,
         })
@@ -321,6 +318,17 @@ mod tests {
 
     fn attachment(name: &str) -> DirectiveAttachment {
         DirectiveAttachment::from_base64(name, "image/png", PNG).expect("fixture attachment admits")
+    }
+
+    fn target(key: &str) -> QuoteTarget {
+        QuoteTarget::Steering {
+            key: key.to_owned(),
+            digest: QuoteTarget::text_digest(key),
+        }
+    }
+
+    fn identity(key: &str) -> String {
+        target(key).to_string()
     }
 
     #[test]
@@ -456,33 +464,30 @@ mod tests {
         assert_eq!(
             store.add_quote(
                 "agent-a".to_owned(),
-                "message-old".to_owned(),
+                target("message-old"),
                 10,
                 1_000,
-                "same text".to_owned(),
-                None,
+                "Old quote".to_owned(),
             ),
             QuotePlacement::Added
         );
         assert_eq!(
             store.add_quote(
                 "agent-a".to_owned(),
-                "message-new".to_owned(),
+                target("message-new"),
                 30,
                 3_000,
-                "same text".to_owned(),
-                None,
+                "New quote".to_owned(),
             ),
             QuotePlacement::Added
         );
         assert_eq!(
             store.add_quote(
                 "agent-a".to_owned(),
-                "message-old".to_owned(),
+                target("message-old"),
                 10,
                 1_000,
-                "changed copy is ignored for an existing identity".to_owned(),
-                None,
+                "Changed preview is ignored".to_owned(),
             ),
             QuotePlacement::Existing
         );
@@ -494,9 +499,12 @@ mod tests {
             .iter()
             .map(|quote| quote.identity.as_str())
             .collect::<Vec<_>>();
-        assert_eq!(identities, ["message-old", "message-new"]);
+        assert_eq!(
+            identities,
+            [identity("message-old"), identity("message-new")]
+        );
 
-        store.remove_quote("agent-a".to_owned(), "message-old");
+        store.remove_quote("agent-a".to_owned(), &identity("message-old"));
         assert_eq!(store.get("agent-a").unwrap().quotes.len(), 1);
     }
 
@@ -508,13 +516,16 @@ mod tests {
         store.set_body("agent-a".to_owned(), "body".to_owned());
         store.add_quote(
             "agent-a".to_owned(),
-            "message".to_owned(),
+            target("message"),
             1,
             1_000,
-            "quoted\nline".to_owned(),
-            None,
+            "Quoted source".to_owned(),
         );
-        store.set_quote_body("agent-a".to_owned(), "message", "reply".to_owned());
+        store.set_quote_body(
+            "agent-a".to_owned(),
+            &identity("message"),
+            "reply".to_owned(),
+        );
         store
             .draft_mut("agent-a".to_owned())
             .quotes
@@ -542,7 +553,8 @@ mod tests {
         assert_eq!(
             prepared.message,
             format!(
-                "> quoted\n> line\n\nreply\n\n{}\n\nbody\n\n{}",
+                "{}\n\nreply\n\n{}\n\nbody\n\n{}",
+                target("message").markdown(),
                 quote_attachment
                     .reference_markdown()
                     .expect("fixture Markdown renders"),
@@ -565,13 +577,16 @@ mod tests {
             .push(attachment("sent"));
         store.add_quote(
             "agent-a".to_owned(),
-            "sent-quote".to_owned(),
+            target("sent-quote"),
             1,
             1_000,
-            "sent quote".to_owned(),
-            None,
+            "Sent quote".to_owned(),
         );
-        store.set_quote_body("agent-a".to_owned(), "sent-quote", "sent reply".to_owned());
+        store.set_quote_body(
+            "agent-a".to_owned(),
+            &identity("sent-quote"),
+            "sent reply".to_owned(),
+        );
         store
             .draft_mut("agent-a".to_owned())
             .quotes
@@ -592,15 +607,14 @@ mod tests {
             .push(attachment("newer"));
         store.add_quote(
             "agent-a".to_owned(),
-            "sent-quote".to_owned(),
+            target("sent-quote"),
             2,
             2_000,
-            "sent quote".to_owned(),
-            None,
+            "Sent quote".to_owned(),
         );
         store.set_quote_body(
             "agent-a".to_owned(),
-            "sent-quote",
+            &identity("sent-quote"),
             "typed after send".to_owned(),
         );
         store
@@ -612,11 +626,10 @@ mod tests {
             .push(attachment("quote-newer"));
         store.add_quote(
             "agent-a".to_owned(),
-            "newer-quote".to_owned(),
+            target("newer-quote"),
             3,
             3_000,
-            "newer quote".to_owned(),
-            None,
+            "Newer quote".to_owned(),
         );
         store.restore("agent-a".to_owned(), snapshot);
 
@@ -636,7 +649,7 @@ mod tests {
                 .iter()
                 .map(|quote| quote.identity.as_str())
                 .collect::<Vec<_>>(),
-            ["sent-quote", "newer-quote"]
+            [identity("sent-quote"), identity("newer-quote")]
         );
         let restored_quote = &restored.quotes[0];
         assert_eq!(restored_quote.body, "sent reply\n\ntyped after send");
@@ -661,13 +674,16 @@ mod tests {
             .push(attachment("primary"));
         store.add_quote(
             "agent-a".to_owned(),
-            "quote".to_owned(),
+            target("quote"),
             1,
             1_000,
-            "quoted source".to_owned(),
-            None,
+            "Quoted source".to_owned(),
         );
-        store.set_quote_body("agent-a".to_owned(), "quote", "local reply".to_owned());
+        store.set_quote_body(
+            "agent-a".to_owned(),
+            &identity("quote"),
+            "local reply".to_owned(),
+        );
         store
             .draft_mut("agent-a".to_owned())
             .quotes
@@ -739,11 +755,10 @@ mod tests {
         store.clear("agent-a");
         store.add_quote(
             "agent-a".to_owned(),
-            "source".to_owned(),
+            target("source"),
             1,
             1_000,
-            "quoted".to_owned(),
-            None,
+            "Quoted source".to_owned(),
         );
         assert!(
             store.is_unsafe(),
@@ -756,14 +771,18 @@ mod tests {
         let mut store = DraftStore::default();
         store.add_quote(
             "agent-a".to_owned(),
-            "source".to_owned(),
+            target("source"),
             1,
             1_000,
-            "quoted".to_owned(),
-            None,
+            "Quoted source".to_owned(),
         );
         store.keep_detached("agent-a".to_owned(), None, "", "typed".to_owned());
-        store.keep_detached("agent-a".to_owned(), Some("source"), "", "reply".to_owned());
+        store.keep_detached(
+            "agent-a".to_owned(),
+            Some(&identity("source")),
+            "",
+            "reply".to_owned(),
+        );
         let kept = store.get("agent-a").expect("moved draft stays on its lane");
         assert_eq!(kept.body, "typed");
         assert_eq!(kept.quotes[0].body, "reply");
@@ -782,10 +801,10 @@ mod tests {
             "an element replaced by a restore does not overwrite it"
         );
 
-        store.remove_quote("agent-a".to_owned(), "source");
+        store.remove_quote("agent-a".to_owned(), &identity("source"));
         store.keep_detached(
             "agent-a".to_owned(),
-            Some("source"),
+            Some(&identity("source")),
             "reply",
             "reply and more".to_owned(),
         );
