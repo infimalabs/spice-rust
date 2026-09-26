@@ -520,25 +520,20 @@ fn apply_inbox_response(
 ) -> Result<CommandApplication, String> {
     let admitted: crate::Admitted<Response<wire::intent::InboxAnswer>> =
         admit_response(session, bytes)?;
-    let mut stale = crate::Stale::default();
     let answered = if let wire::Outcome::Reply(reply) = &admitted.get().outcome {
-        if handles.submissions.queue.borrow_mut().observe_backend(
+        handles.submissions.queue.borrow_mut().observe_backend(
             reply.body.lanes.iter().flat_map(|lane| lane.pending.iter()),
             covered,
-        )? {
-            stale.invalidate_lanes();
-        }
+        )?;
         handles.submissions.publish();
         true
     } else {
         false
     };
     runtime.apply_inbox(&admitted);
-    Ok(CommandApplication {
-        refresh: answered && !handles.submissions.queue.borrow().accepted().is_empty(),
-        lane_authority: false,
-        stale,
-    })
+    Ok(CommandApplication::ordinary(
+        answered && !handles.submissions.queue.borrow().accepted().is_empty(),
+    ))
 }
 
 fn apply_submission_response(

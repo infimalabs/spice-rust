@@ -1,6 +1,7 @@
 //! Demand-driven Canvas current reads and duplicate-request coalescing.
 
 use super::*;
+use crate::action_mailbox::CurrentRead;
 
 pub(super) async fn send_after_frame(
     principal: &Principal,
@@ -16,11 +17,14 @@ pub(super) async fn send_after_frame(
         send_stale(principal, writer, actions, submissions, stale).await?;
     }
 
-    // A lane read already in flight can coalesce the refresh caused by a wake
-    // reply, but that older read cannot prove post-wake residency. Once its
-    // response clears it, keep the causal read live until one nominated after
-    // the wake is actually in flight.
-    if !submissions.queue.borrow().awaiting_residency().is_empty() {
+    // A lane read already in flight can coalesce a causal refresh, but it
+    // cannot prove a wake's residency or activity observed by a newer inbox.
+    // Keep the requirement live until a post-observation lane read starts.
+    let causal_lane_read = {
+        let queue = submissions.queue.borrow();
+        !queue.awaiting_residency().is_empty() || queue.activity_read_requirement().is_some()
+    };
+    if causal_lane_read {
         send_lanes(principal, writer, actions, submissions).await?;
     }
     Ok(())
@@ -175,16 +179,33 @@ pub(super) async fn send_lanes(
     actions: &ActionQueue,
     submissions: &SubmissionHandle,
 ) -> Result<(), String> {
-    let wakes = submissions.queue.borrow().awaiting_residency();
-    send_if_offered(
+    let (wakes, activity_generation) = {
+        let queue = submissions.queue.borrow();
+        (
+            queue.awaiting_residency(),
+            queue.activity_read_requirement(),
+        )
+    };
+    if !SteerPane::over(principal).offers(CommandKind::LaneRead)
+        || actions.has_current_read(CurrentRead::Lanes)
+    {
+        return Ok(());
+    }
+    send_typed(
         principal,
         writer,
         actions,
         PendingKind::Lanes { wakes },
         CommandKind::LaneRead,
+        vec![],
         LaneRead {},
     )
-    .await
+    .await?;
+    submissions
+        .queue
+        .borrow_mut()
+        .activity_read_started(activity_generation);
+    Ok(())
 }
 
 async fn send_inbox(

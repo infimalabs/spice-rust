@@ -348,6 +348,8 @@ pub(crate) struct SubmissionQueue {
     rows: BTreeMap<CanonicalUuid, VecDeque<Submission>>,
     identities: BTreeMap<CanonicalUuid, CanonicalUuid>,
     backend: BTreeMap<CanonicalUuid, String>,
+    activity_read_generation: u64,
+    activity_read_required: Option<u64>,
     payloads: BTreeMap<CanonicalUuid, RetainedPayload>,
     retained_bytes: usize,
 }
@@ -713,17 +715,27 @@ impl SubmissionQueue {
             .collect()
     }
 
+    /// Causal generation that still requires a lane read to start.
+    pub(crate) const fn activity_read_requirement(&self) -> Option<u64> {
+        self.activity_read_required
+    }
+
+    /// Observe that one lane read carrying this causal generation started.
+    pub(crate) fn activity_read_started(&mut self, generation: Option<u64>) {
+        if generation.is_some() && generation == self.activity_read_required {
+            self.activity_read_required = None;
+        }
+    }
+
     /// Retire accepted predictions after one causally fresh inbox observation.
     ///
-    /// The return value says an accepted directive was absent from that inbox.
-    /// Its pending prediction is then gone, but the lane may already have
-    /// started processing it, so the caller must refresh lane activity after
-    /// this observation rather than relying on an older concurrent lane read.
+    /// A consumed directive may already be running, so this records a lane-read
+    /// generation that an older concurrent read cannot satisfy.
     pub(crate) fn observe_backend<'a>(
         &mut self,
         pending: impl Iterator<Item = &'a PendingDirective>,
         covered: &BTreeMap<CanonicalUuid, String>,
-    ) -> Result<bool, String> {
+    ) -> Result<(), String> {
         let backend = pending
             .filter(|directive| self.identities.contains_key(&directive.directive))
             .map(|directive| (directive.directive, directive.key.clone()))
@@ -774,7 +786,14 @@ impl SubmissionQueue {
         for id in retired {
             self.remove(id);
         }
-        Ok(consumed)
+        if consumed {
+            self.activity_read_generation = self
+                .activity_read_generation
+                .checked_add(1)
+                .expect("composer activity-read generation is exhausted");
+            self.activity_read_required = Some(self.activity_read_generation);
+        }
+        Ok(())
     }
 
     pub(crate) fn status(&self) -> SubmissionStatus {
@@ -1060,10 +1079,12 @@ mod tests {
         accept(&mut queue, ID_A, "1kKey", Disposition::Live);
         assert!(queue.status().is_unsafe());
         assert_eq!(queue.accepted()[&uuid(ID_A)], "1kKey");
-        assert!(
-            !queue
-                .observe_backend([pending(ID_A, "1kKey")].iter(), &BTreeMap::new())
-                .unwrap(),
+        queue
+            .observe_backend([pending(ID_A, "1kKey")].iter(), &BTreeMap::new())
+            .unwrap();
+        assert_eq!(
+            queue.activity_read_requirement(),
+            None,
             "a directive still pending does not imply lane activity changed"
         );
         assert_eq!(queue.status().len(), 1);
@@ -1078,16 +1099,25 @@ mod tests {
         let mut queue = SubmissionQueue::default();
         queue.enqueue(submission(ID_A, LANE_A, "start")).unwrap();
         accept(&mut queue, ID_A, "1kStarted", Disposition::Live);
+        let coalesced = queue.activity_read_requirement();
 
-        assert!(
-            queue
-                .observe_backend(
-                    std::iter::empty(),
-                    &BTreeMap::from([(uuid(ID_A), "1kStarted".to_owned())]),
-                )
-                .unwrap(),
-            "a post-acceptance inbox without the directive invalidates an older lane read"
+        queue
+            .observe_backend(
+                std::iter::empty(),
+                &BTreeMap::from([(uuid(ID_A), "1kStarted".to_owned())]),
+            )
+            .unwrap();
+
+        let causal = queue.activity_read_requirement();
+        assert!(causal.is_some());
+        queue.activity_read_started(coalesced);
+        assert_eq!(
+            queue.activity_read_requirement(),
+            causal,
+            "a lane read started before inbox acceptance cannot satisfy the causal refresh"
         );
+        queue.activity_read_started(causal);
+        assert_eq!(queue.activity_read_requirement(), None);
         assert!(queue.identities.is_empty());
     }
 
