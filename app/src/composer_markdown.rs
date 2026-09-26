@@ -133,7 +133,13 @@ pub(crate) fn render_received_with_classifications(
     markdown: &str,
     classifications: &[MessageClassification],
 ) -> RenderedMarkdown {
-    render_received_with_quotes(markdown, classifications, &[], &BTreeMap::new())
+    render_received_with_quotes(
+        markdown,
+        classifications,
+        &[],
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    )
 }
 
 /// Render received text and its resident-resolved structural quote links.
@@ -141,6 +147,7 @@ pub(crate) fn render_received_with_quotes(
     markdown: &str,
     classifications: &[MessageClassification],
     quotes: &[wire::QuotePresentation],
+    quote_agents: &BTreeMap<wire::CanonicalUuid, String>,
     quote_tasks: &BTreeMap<String, wire::TaskHandle>,
 ) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
@@ -180,7 +187,7 @@ pub(crate) fn render_received_with_quotes(
         "every resident classification maps to one Markdown text event"
     );
     let events = coalesce_text_events(events);
-    let events = quotes::expand(events, quotes, quote_tasks);
+    let events = quotes::expand(events, quotes, quote_agents, quote_tasks);
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
     let image_only = markdown_is_image_only(&events, has_diagrams);

@@ -18,6 +18,7 @@ pub(super) enum ActivityCard {
     Agent {
         accent: usize,
         member: crate::runtime::LaneMember,
+        quote_agents: Rc<BTreeMap<CanonicalUuid, String>>,
         quote_lane: CanonicalUuid,
         message: Rc<wire::AgentMessage>,
     },
@@ -35,12 +36,14 @@ impl PartialEq for ActivityCard {
                 Self::Agent {
                     accent: left_accent,
                     member: left_member,
+                    quote_agents: left_quote_agents,
                     quote_lane: left_quote_lane,
                     message: left_message,
                 },
                 Self::Agent {
                     accent: right_accent,
                     member: right_member,
+                    quote_agents: right_quote_agents,
                     quote_lane: right_quote_lane,
                     message: right_message,
                 },
@@ -49,6 +52,7 @@ impl PartialEq for ActivityCard {
                     && left_member.lane == right_member.lane
                     && left_member.name == right_member.name
                     && left_member.worktree == right_member.worktree
+                    && left_quote_agents == right_quote_agents
                     && left_quote_lane == right_quote_lane
                     && (Rc::ptr_eq(left_message, right_message) || left_message == right_message)
             }
@@ -77,6 +81,7 @@ impl PartialEq for ActivityCard {
 enum ActivityFingerprint {
     Agent {
         worktree: String,
+        quote_agents: Rc<BTreeMap<CanonicalUuid, String>>,
         message: Rc<wire::AgentMessage>,
     },
     Lifecycle(crate::runtime::LaneLifecycleBoundary),
@@ -88,14 +93,17 @@ impl PartialEq for ActivityFingerprint {
             (
                 Self::Agent {
                     worktree: left_worktree,
+                    quote_agents: left_quote_agents,
                     message: left_message,
                 },
                 Self::Agent {
                     worktree: right_worktree,
+                    quote_agents: right_quote_agents,
                     message: right_message,
                 },
             ) => {
                 left_worktree == right_worktree
+                    && left_quote_agents == right_quote_agents
                     && (Rc::ptr_eq(left_message, right_message)
                         || same_measured_agent_content(left_message, right_message))
             }
@@ -128,11 +136,13 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
         &left.classifications,
         &left.quotes,
         &BTreeMap::new(),
+        &BTreeMap::new(),
     );
     let right = crate::composer_markdown::render_received_with_quotes(
         &right.text,
         &right.classifications,
         &right.quotes,
+        &BTreeMap::new(),
         &BTreeMap::new(),
     );
     crate::composer_markdown::same_measured_shape(&left, &right)
@@ -179,9 +189,13 @@ impl ActivityCard {
     fn measurement_fingerprint(&self) -> ActivityFingerprint {
         match self {
             Self::Agent {
-                member, message, ..
+                member,
+                quote_agents,
+                message,
+                ..
             } => ActivityFingerprint::Agent {
                 worktree: member.worktree.clone(),
+                quote_agents: Rc::clone(quote_agents),
                 message: Rc::clone(message),
             },
             Self::Lifecycle { boundary, .. } => ActivityFingerprint::Lifecycle(boundary.clone()),
@@ -1142,6 +1156,7 @@ fn render_activity_cards(
                 ActivityCard::Agent {
                     accent,
                     member,
+                    quote_agents,
                     quote_lane,
                     message,
                 } => html! {
@@ -1149,6 +1164,7 @@ fn render_activity_cards(
                         key={key}
                         accent={*accent}
                         member={member.clone()}
+                        quote_agents={quote_agents.clone()}
                         quote_lane={*quote_lane}
                         message={message.clone()}
                         quote_dispatcher={properties.quote_dispatcher.clone()}
