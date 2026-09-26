@@ -337,7 +337,7 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
             <div class="mermaid-source-body" hidden={!*show_source}>
                 if let Some(error) = error { <p>{error}</p> }
                 <pre><code>{props.source.clone()}</code></pre>
-                <button ref={retry_button} type="button">{"Retry diagram"}</button>
+                <button ref={retry_button} type="button" class="canvas-compact-control">{"Retry diagram"}</button>
             </div>
         </div>
     }

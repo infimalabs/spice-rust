@@ -326,7 +326,7 @@ pub(super) fn render_note_composer(
                 key={composer.draft.clone()}
                 readonly={busy}
             >{composer.draft.clone()}</textarea>
-            <button type="submit" disabled={busy}>
+            <button type="submit" class="canvas-compact-control" disabled={busy}>
                 {if busy { "Saving…" } else { "Add observation" }}
             </button>
             {view::render_notice(&composer.notice)}

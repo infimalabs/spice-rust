@@ -574,7 +574,6 @@
   gap: 2px;
   min-width: 0;
   padding: 9px 10px;
-  border-radius: var(--canvas-radius-element);
   text-align: left;
 }
 .work-detail-link span { color: var(--muted); font-size: .65rem; text-transform: uppercase; }
@@ -763,11 +762,7 @@
   padding: 9px 10px;
   text-align: left;
 }
-.work-map-task,
-.work-map-fact {
-  border-radius: var(--canvas-radius-element);
-  background: var(--control-surface-soft);
-}
+.work-map-fact { border-radius: var(--canvas-radius-element); background: var(--control-surface-soft); }
 .work-map-task span,
 .work-map-fact span { color: var(--accent); font-size: .62rem; text-transform: uppercase; }
 .work-map-task strong,

@@ -274,7 +274,7 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
     html! {
         <aside class="seat-panel">
             <form class="seat-form" onsubmit={controls.submit_seat.clone()}>
-                <button type="submit" disabled={!ready}>{"Seat agent"}</button>
+                <button type="submit" class="canvas-compact-control" disabled={!ready}>{"Seat agent"}</button>
                 <label>
                     <span title="Name">{"Name"}</span>
                     <input id="seat-name" type="text" placeholder="Ava" />

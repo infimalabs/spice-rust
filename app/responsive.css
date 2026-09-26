@@ -120,6 +120,8 @@
   .work-detail-content { padding-inline: 14px; }
   .work-detail-tabs,
   .work-map-content { padding-inline: 14px; }
+  /* Five lenses wrap onto two rows here; a wrapped rail is a frame, not a capsule. */
+  .work-map-lenses { width: 100%; border-radius: var(--canvas-radius-frame); }
   .work-map-controls { align-items: stretch; }
   .work-map-control-group { width: 100%; }
   .work-map-control-group button { flex: 1 1 0; }

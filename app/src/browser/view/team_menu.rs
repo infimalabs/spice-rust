@@ -249,7 +249,7 @@ fn render_version_footer(
         );
         html! {
             <button
-                class="canvas-menu-version canvas-menu-version--update"
+                class="canvas-menu-version canvas-menu-version--update canvas-compact-control"
                 type="button"
                 aria-label={update_accessible}
                 title={update_details}
@@ -462,7 +462,7 @@ fn render_team(
                 if closed {
                     <button
                         type="button"
-                        class="canvas-team-open"
+                        class="canvas-team-open canvas-compact-control"
                         onclick={Callback::from(move |_| {
                             reopen.dispatch(TeamControlAction::OpenTeam {
                                 team: target,
@@ -539,7 +539,7 @@ fn render_member(
             if closed && show_reopen {
                 <button
                     type="button"
-                    class="canvas-team-open"
+                    class="canvas-team-open canvas-compact-control"
                     onclick={Callback::from(move |_| {
                         reopen.dispatch(TeamControlAction::OpenTeam { team: source });
                     })}

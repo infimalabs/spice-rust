@@ -192,7 +192,7 @@
   width: var(--message-image-size); height: var(--message-image-size);
   min-width: var(--message-image-size); aspect-ratio: 1 / 1;
   place-items: center; text-decoration: none;
-  padding: 0; border: 0; border-radius: var(--canvas-radius-control); background: transparent;
+  padding: 0; border: 0; background: transparent;
 }
 .message-image img {
   grid-area: 1 / 1; display: block; width: 100%; height: 100%;

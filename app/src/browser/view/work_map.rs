@@ -213,7 +213,7 @@ pub(super) fn render(render: WorkMapRender<'_>) -> Html {
                         <h3>{"Relationship map unavailable"}</h3>
                         <p><code>{reason}</code></p>
                         if let Some(detail) = detail { <p>{detail}</p> }
-                        <button type="button" onclick={render.retry.clone()}>{"Retry lens"}</button>
+                        <button type="button" class="canvas-compact-control" onclick={render.retry.clone()}>{"Retry lens"}</button>
                     </div>
                 </div>
             };
@@ -524,7 +524,7 @@ fn render_truncation(
                     <li>{format!("{} additional frontier edges exceed the metadata bound", truncation.omitted)}</li>
                 }
             </ul>
-            <button type="button" disabled={cannot_expand} onclick={expand}>{"Expand typed read"}</button>
+            <button type="button" class="canvas-compact-control" disabled={cannot_expand} onclick={expand}>{"Expand typed read"}</button>
         </section>
     }
 }

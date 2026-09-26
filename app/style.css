@@ -85,8 +85,12 @@ select, input, textarea { border-radius: var(--canvas-radius-control); }
 
 .canvas-control-rail { border: var(--canvas-control-edge); border-radius: var(--canvas-radius-pill); background: var(--control-surface-soft); }
 
+/* Bare buttons take control geometry, so a button that frames content reads
+   as a card. Capsule geometry belongs to the compact-control role: a control
+   class that owns its shape, or canvas-compact-control for a compact action
+   with no class of its own. */
 button {
-  border-radius: var(--canvas-radius-pill);
+  border-radius: var(--canvas-radius-control);
   min-height: 36px;
   padding: 0 12px;
   cursor: pointer;
@@ -94,6 +98,7 @@ button {
 }
 
 button:hover { border-color: var(--accent); }
+.canvas-compact-control { border-radius: var(--canvas-radius-pill); }
 button:is(:disabled, [aria-disabled="true"]) { cursor: not-allowed; opacity: .5; }
 
 button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {

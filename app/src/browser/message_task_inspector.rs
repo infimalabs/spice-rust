@@ -279,7 +279,7 @@ fn render_detail(
                 if let Some(detail) = detail {
                     <p>{detail}</p>
                 }
-                <button type="button" onclick={retry}>{"Retry detail"}</button>
+                <button type="button" class="canvas-compact-control" onclick={retry}>{"Retry detail"}</button>
             </div>
         },
         Some(TaskDetailState::Available(answer) | TaskDetailState::Refreshing(answer)) => {
