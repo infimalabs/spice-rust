@@ -674,7 +674,7 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .canvas-team > header > div { display: grid; min-width: 0; gap: 2px; }
 .canvas-menu-panel .canvas-team-member {
-  grid-template-columns: 24px minmax(0, 1fr) 16px auto;
+  grid-template-columns: 28px minmax(0, 1fr) 16px auto;
 }
 
 /* Keep team overlays inside their own stacking context, below global chrome. */
