@@ -380,14 +380,14 @@ pub(super) fn seat(
     let proposal = match proposal {
         Ok(proposal) => proposal,
         Err(outcome) => {
-            remove_seat_surface(paths, runtime, &request.worktree, request.lane, capability);
+            remove_seat_surface(paths, runtime, request.lane, capability);
             return typed_outcome(outcome);
         }
     };
     match commit(bus, proposal) {
         Ok(committed) => committed_lane_reply(committed, answer),
         Err(outcome) => {
-            remove_seat_surface(paths, runtime, &request.worktree, request.lane, capability);
+            remove_seat_surface(paths, runtime, request.lane, capability);
             typed_outcome(outcome)
         }
     }
@@ -684,13 +684,9 @@ fn prepare_seat_surface(
         .map_err(|error| {
             typed_environment_fault("lane::capability-unavailable", &error.to_string())
         })?;
-    if let Err(outcome) = super::steering::publish_lane_surface(
-        paths,
-        runtime.discovery,
-        &request.worktree,
-        request.lane,
-        capability,
-    ) {
+    if let Err(outcome) =
+        super::steering::publish_lane_surface(paths, runtime.discovery, request.lane, capability)
+    {
         runtime.capabilities.remove(capability, &actor);
         return Err(typed_outcome(outcome));
     }
@@ -700,12 +696,11 @@ fn prepare_seat_surface(
 fn remove_seat_surface(
     paths: &RuntimePaths,
     runtime: &Runtime<'_>,
-    worktree: &str,
     lane: CanonicalUuid,
     capability: CanonicalUuid,
 ) {
     runtime.capabilities.remove(capability, &Actor::Lane(lane));
-    super::steering::remove_lane_surface(paths, worktree, lane);
+    super::steering::remove_lane_surface(paths, lane);
 }
 
 /// Drain, wake, or remove one current lane.
@@ -799,7 +794,7 @@ pub(super) fn remove(
             runtime
                 .capabilities
                 .remove(capability, &Actor::Lane(row.lane));
-            super::steering::remove_lane_surface(paths, &row.worktree, row.lane);
+            super::steering::remove_lane_surface(paths, row.lane);
             committed_lane_reply(committed, answer)
         }
         Err(outcome) => typed_outcome(outcome),

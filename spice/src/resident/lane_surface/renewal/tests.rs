@@ -60,11 +60,7 @@ fn request_duplicate_and_cancel_keep_one_pre_handoff_transition() {
     assert_cancellation(&fixture, &bus, &seats, &config);
 
     seats.release_all();
-    super::super::super::steering::remove_lane_surface(
-        &fixture.paths,
-        fixture.root.to_str().expect("fixture root is UTF-8"),
-        fixture.lane,
-    );
+    super::super::super::steering::remove_lane_surface(&fixture.paths, fixture.lane);
     drop(discovery);
     bus.verify().expect("renewal command authority verifies");
     bus.shutdown().expect("renewal command bus stops");
@@ -185,11 +181,7 @@ fn a_pending_replacement_reconciles_without_starting_a_successor() {
             .is_empty(),
         "a mark no start has consumed stays withdrawable",
     );
-    super::super::super::steering::remove_lane_surface(
-        &fixture.paths,
-        fixture.root.to_str().expect("fixture root is UTF-8"),
-        fixture.lane,
-    );
+    super::super::super::steering::remove_lane_surface(&fixture.paths, fixture.lane);
 
     drop(discovery);
     bus.verify().expect("pending renewal authority verifies");
@@ -240,11 +232,7 @@ fn the_next_start_consumes_the_pending_replacement() {
     assert_eq!(controls(&bus, fixture.lane), [CONTEXT_CONTROL]);
 
     seats.release_all();
-    super::super::super::steering::remove_lane_surface(
-        &fixture.paths,
-        fixture.root.to_str().expect("fixture root is UTF-8"),
-        fixture.lane,
-    );
+    super::super::super::steering::remove_lane_surface(&fixture.paths, fixture.lane);
     drop(discovery);
     bus.verify().expect("consumed renewal authority verifies");
     bus.shutdown().expect("consumed renewal bus stops");
@@ -534,7 +522,6 @@ fn publish_surface(fixture: &AdvisoryRtkFixture) -> canvas::Discovery {
     super::super::super::steering::publish_lane_surface(
         &fixture.paths,
         &discovery,
-        fixture.root.to_str().expect("fixture root is UTF-8"),
         fixture.lane,
         fixture.capability,
     )

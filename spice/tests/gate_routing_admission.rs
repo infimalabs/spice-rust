@@ -15,10 +15,9 @@ mod routing_authority;
 #[path = "support/staged_app.rs"]
 mod staged_app;
 
-const ROUTING: [wire::SpiceVariable; 10] = [
+const ROUTING: [wire::SpiceVariable; 9] = [
     wire::SpiceVariable::AgentVendor,
     wire::SpiceVariable::Hooks,
-    wire::SpiceVariable::Inbox,
     wire::SpiceVariable::Lane,
     wire::SpiceVariable::NativeShell,
     wire::SpiceVariable::PreCommitPaths,
@@ -281,7 +280,6 @@ impl Fixture {
         if routing {
             command
                 .env(wire::SpiceVariable::Hooks.as_str(), self.root.join("hooks"))
-                .env(wire::SpiceVariable::Inbox.as_str(), self.root.join("inbox"))
                 .env(wire::SpiceVariable::Lane.as_str(), self.lane.to_string())
                 .env(
                     wire::SpiceVariable::PreCommitPaths.as_str(),

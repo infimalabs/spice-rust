@@ -71,8 +71,6 @@ mod rtk_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod run_meter;
 #[cfg(not(target_arch = "wasm32"))]
-mod run_steering;
-#[cfg(not(target_arch = "wasm32"))]
 mod session_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod steering_command;
@@ -467,13 +465,12 @@ impl NativeInvocation<'_> {
             ["task", "next"] => task_next_delivery::deliver(
                 &board_command::run_task_next(contract),
                 form,
-                bootstrap_environment(steer::hook::INBOX).is_some(),
+                bootstrap_environment(steer::hook::LANE).is_some(),
             ),
             ["steer"]
             | ["steer", "cancel"]
             | ["steer", "resend"]
             | ["steer", "recover"]
-            | ["steer", "repair"]
             | ["ack"]
             | ["inbox"] => deliver(
                 &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
@@ -798,12 +795,9 @@ fn journal_version_failure(error: journal::OpenError) -> Outcome<wire::Version> 
     }
 }
 
-/// Streams pending direction to this wrapper's stderr while waiting on one child.
+/// Runs one command through the structural wrapper.
 #[cfg(not(target_arch = "wasm32"))]
 fn run(command: Vec<OsString>) -> ! {
-    let rendering = bootstrap_environment(steer::hook::INBOX).map(PathBuf::from);
-    let mut steering = run_steering::Runtime::start(rendering.as_deref());
-
     let rewritten = bootstrap_environment(spice::rtk::EXECUTABLE_VARIABLE)
         .map(|executable| spice::rtk::rewrite(&command, &executable));
     if let Some(diagnostic) = rewritten
@@ -821,8 +815,7 @@ fn run(command: Vec<OsString>) -> ! {
         .split_first()
         .expect("clap requires the run command operand");
 
-    let result = steer::run::hand_with_exit(program, arguments, || steering.stop());
-    steering.stop();
+    let result = steer::run::hand_with_exit(program, arguments, || {});
     match result {
         Ok(status) => {
             meter.stop();

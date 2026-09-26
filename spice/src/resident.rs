@@ -22,24 +22,24 @@ type CommandResult<T> = Result<T, Outcome<()>>;
 
 #[derive(Default)]
 struct CommandEffects {
-    inbox_projection: Option<CanonicalUuid>,
+    inbox_delivery: Option<CanonicalUuid>,
 }
 
 impl CommandEffects {
-    fn project_inbox(&mut self, lane: CanonicalUuid) {
+    fn notify_inbox(&mut self, lane: CanonicalUuid) {
         assert!(
-            self.inbox_projection.replace(lane).is_none(),
-            "one command cannot project more than one lane inbox"
+            self.inbox_delivery.replace(lane).is_none(),
+            "one command cannot notify more than one lane inbox"
         );
     }
 }
 
-enum InboxProjections {
+enum InboxDeliveries {
     Exact(VecDeque<CanonicalUuid>),
     Full { witness: Option<Seq>, next: usize },
 }
 
-enum InboxProjection {
+enum InboxDelivery {
     Exact(CanonicalUuid),
     Full {
         lane: CanonicalUuid,
@@ -48,7 +48,7 @@ enum InboxProjection {
     },
 }
 
-impl InboxProjection {
+impl InboxDelivery {
     fn lane(&self) -> CanonicalUuid {
         match self {
             Self::Exact(lane) | Self::Full { lane, .. } => *lane,
@@ -56,7 +56,7 @@ impl InboxProjection {
     }
 }
 
-impl InboxProjections {
+impl InboxDeliveries {
     fn new() -> Self {
         Self::Exact(VecDeque::with_capacity(
             canvas::axum::Control::FAIR_CYCLE_LIMIT,
@@ -74,7 +74,7 @@ impl InboxProjections {
             return;
         }
         let Self::Exact(lanes) = self else {
-            unreachable!("full projection state returned above")
+            unreachable!("full delivery state returned above")
         };
         if !lanes.contains(&lane) {
             if lanes.len() == canvas::axum::Control::FAIR_CYCLE_LIMIT {
@@ -88,9 +88,9 @@ impl InboxProjections {
         }
     }
 
-    fn next(&mut self, residency: &journal::JournalHead<ResidencyHead>) -> Option<InboxProjection> {
+    fn next(&mut self, residency: &journal::JournalHead<ResidencyHead>) -> Option<InboxDelivery> {
         match self {
-            Self::Exact(lanes) => lanes.pop_front().map(InboxProjection::Exact),
+            Self::Exact(lanes) => lanes.pop_front().map(InboxDelivery::Exact),
             Self::Full { witness, next } => {
                 if *witness != Some(residency.position()) {
                     *witness = Some(residency.position());
@@ -100,7 +100,7 @@ impl InboxProjections {
                     *self = Self::new();
                     return None;
                 };
-                Some(InboxProjection::Full {
+                Some(InboxDelivery::Full {
                     lane,
                     witness: residency.position(),
                     last: *next + 1 == residency.body().lanes.len(),
@@ -109,28 +109,22 @@ impl InboxProjections {
         }
     }
 
-    fn complete(&mut self, projection: InboxProjection, attempt: steering::FoldAttempt) {
-        match projection {
-            InboxProjection::Exact(lane) => {
-                if attempt == steering::FoldAttempt::Moved {
-                    self.insert(lane);
-                }
-            }
-            InboxProjection::Full { witness, last, .. } => {
+    fn complete(&mut self, delivery: InboxDelivery) {
+        match delivery {
+            InboxDelivery::Exact(_) => {}
+            InboxDelivery::Full { witness, last, .. } => {
                 let Self::Full {
                     witness: current,
                     next,
                 } = self
                 else {
-                    unreachable!("a full projection turn completes against full state")
+                    unreachable!("a full delivery turn completes against full state")
                 };
                 debug_assert_eq!(*current, Some(witness));
-                if attempt == steering::FoldAttempt::Settled {
-                    if last {
-                        *self = Self::new();
-                    } else {
-                        *next += 1;
-                    }
+                if last {
+                    *self = Self::new();
+                } else {
+                    *next += 1;
                 }
             }
         }

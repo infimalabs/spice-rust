@@ -569,7 +569,12 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
     let _door = launch
         .opening
         .map(|opening| {
-            let driver = command::Driver::new(running.take_stdin()?, launch.inbox, terminal);
+            let driver = command::Driver::new(
+                running.take_stdin()?,
+                paths.canvas.clone(),
+                request.lane,
+                terminal,
+            );
             reporter.drive(Arc::clone(&driver));
             driver.open(&opening)?;
             let door = command::listen_for_kicks(
@@ -578,7 +583,6 @@ fn run_agent(request: &Request, mut state: State) -> io::Result<()> {
                 request.occupant,
                 Arc::clone(&driver),
             )?;
-            driver.catch_up();
             Ok::<_, io::Error>(door)
         })
         .transpose()?;
@@ -1051,8 +1055,6 @@ mod tests {
             resident: root.join("resident"),
             canvas: root.join("canvas"),
             lane_canvas: root.join("lane-canvas"),
-            inbox: root.join("inbox"),
-            legacy_inbox: root.join("legacy-inbox"),
             degraded: root.join("degraded"),
             tape: root.join("tape"),
             supervisors: root.join("supervisors"),

@@ -274,14 +274,7 @@ fn finish_set(
     if let Err(outcome) = reconciled {
         return typed_outcome(outcome);
     }
-    let residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    if let Err(outcome) = super::super::steering::publish_inbox(bus, paths, residency.body(), lane)
-    {
-        return typed_outcome(outcome);
-    }
+    super::super::steering::notify_inbox(paths, lane);
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange {
             first: seq(committed.first()),
@@ -569,8 +562,8 @@ fn ensure_context(
         },
     )?;
     commit(bus, proposal)?;
-    let current = current_residency(bus, epoch)?;
-    super::super::steering::publish_inbox(bus, paths, current.body(), renewal.lane)
+    super::super::steering::notify_inbox(paths, renewal.lane);
+    Ok(())
 }
 
 fn ensure_handoff(
@@ -609,8 +602,8 @@ fn ensure_handoff(
         },
     )?;
     commit(bus, proposal)?;
-    let current = current_residency(bus, epoch)?;
-    super::super::steering::publish_inbox(bus, paths, current.body(), lane)
+    super::super::steering::notify_inbox(paths, lane);
+    Ok(())
 }
 
 fn cancel_handoff(
@@ -634,8 +627,8 @@ fn cancel_handoff(
         return Ok(());
     };
     commit(bus, proposal)?;
-    let current = current_residency(bus, epoch)?;
-    super::super::steering::publish_inbox(bus, paths, current.body(), lane)
+    super::super::steering::notify_inbox(paths, lane);
+    Ok(())
 }
 
 /// Record the successor one consumed mark seated, inside the start's own

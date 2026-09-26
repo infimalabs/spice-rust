@@ -183,7 +183,6 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::DocApply
         | CommandKind::SteerSend
         | CommandKind::SteerInbox
-        | CommandKind::SteerRepair
         | CommandKind::SteerResend
         | CommandKind::SteerRecover
         | CommandKind::SteerDispose
@@ -348,7 +347,6 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["steer", "cancel"]
             | ["steer", "resend"]
             | ["steer", "recover"]
-            | ["steer", "repair"]
             | ["inbox"]
             | ["hook"]
             | ["ack"]

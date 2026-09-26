@@ -272,10 +272,6 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
             OsString::from("lane-a"),
         ),
         (
-            OsString::from(wire::SpiceVariable::Inbox.as_str()),
-            OsString::from("operator direction"),
-        ),
-        (
             OsString::from(wire::SpiceVariable::PreCommitSource.as_str()),
             OsString::from("staged-source-a"),
         ),

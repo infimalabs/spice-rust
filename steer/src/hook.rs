@@ -22,9 +22,6 @@ use std::path::{Path, PathBuf};
 /// The variable naming the installed hooks directory.
 pub const HOOKS: &str = wire::SpiceVariable::Hooks.as_str();
 
-/// The variable naming the lane's rendered direction.
-pub const INBOX: &str = wire::SpiceVariable::Inbox.as_str();
-
 /// The variable naming the lane a shell is bound to.
 pub const LANE: &str = wire::SpiceVariable::Lane.as_str();
 

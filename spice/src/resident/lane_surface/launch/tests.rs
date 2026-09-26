@@ -41,7 +41,6 @@ fn absent_cargo_lock_launches_without_rust_environment_or_tool_probe() {
     let repository = Repository::discover(&fixture.root).expect("fixture repository discovers");
 
     let (environment, _) = launch_environment(
-        &fixture.paths,
         &repository,
         &fixture.root.join("fake-claude"),
         None,
@@ -73,7 +72,6 @@ fn absent_cargo_lock_launches_without_rust_environment_or_tool_probe() {
         steer::hook::ZDOTDIR,
         steer::hook::HOOKS,
         steer::hook::NATIVE_SHELL,
-        steer::hook::INBOX,
         steer::hook::EXECUTABLE,
         spice::rtk::EXECUTABLE_VARIABLE,
         spice::rtk::HISTORY_VARIABLE,

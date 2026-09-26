@@ -17,8 +17,7 @@ struct Heard {
 }
 
 impl Heard {
-    /// One occupied lane of the named vendor with one live direction
-    /// delivered to its inbox.
+    /// One occupied lane of the named vendor with one live direction.
     fn new(tag: &str, vendor: &'static str) -> Self {
         let (root, paths) = resident_fixture(tag);
         let repository = Repository::discover(&root).expect("fixture repository resolves");
@@ -73,9 +72,6 @@ impl Heard {
         else {
             panic!("the operator direction is durable: {outcome:?}");
         };
-        let residency = current_residency(&bus, epoch).expect("residency reads");
-        steering::publish_inbox(&bus, &paths, residency.body(), lane)
-            .expect("the direction is delivered to the lane inbox");
         Self {
             root,
             paths,
@@ -156,9 +152,12 @@ impl Heard {
             .disposition
     }
 
-    fn inbox(&self) -> String {
-        fs::read_to_string(steer::inbox::path(&self.paths.inbox, self.lane))
-            .expect("the lane inbox reads")
+    fn pending(&self) -> bool {
+        steer::Ledger::from_snapshot(&self.bus.fact_snapshot().expect("snapshot reads"))
+            .expect("steering authority replays")
+            .pending(self.lane)
+            .iter()
+            .any(|directive| directive.key().as_str() == self.key)
     }
 
     fn finish(self) {
@@ -172,7 +171,7 @@ impl Heard {
 fn an_interjected_lane_s_answer_retires_its_key_as_the_prose_lands() {
     let heard = Heard::new("steer-heard-omp", "omp");
     let key = heard.key.clone();
-    assert!(heard.inbox().contains(&key));
+    assert!(heard.pending());
     let record = format!(
         r#"{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"ACK {key}: Answering now."}}],"stopReason":"stop"}}}}"#
     );
@@ -180,10 +179,7 @@ fn an_interjected_lane_s_answer_retires_its_key_as_the_prose_lands() {
     heard.speak(format!("{record}\n").as_bytes());
 
     assert_eq!(heard.disposition(), Disposition::Acked);
-    assert!(
-        !heard.inbox().contains(&key),
-        "the lane inbox is refolded to match the journal"
-    );
+    assert!(!heard.pending(), "the disposition retires the pending key");
     heard.finish();
 }
 
@@ -201,6 +197,6 @@ fn a_lane_that_retires_its_own_keys_is_left_to_its_ack_command() {
 
     assert_eq!(heard.disposition(), Disposition::Live);
     assert_eq!(spoken, "");
-    assert!(heard.inbox().contains(&key));
+    assert!(heard.pending());
     heard.finish();
 }

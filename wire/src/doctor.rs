@@ -50,9 +50,6 @@ pub enum SpiceVariable {
     /// Installed Rust shell-hook directory.
     #[serde(rename = "SPICE_RS_HOOKS")] // env-policy: allow
     Hooks,
-    /// Rendered Rust lane direction.
-    #[serde(rename = "SPICE_RS_INBOX")] // env-policy: allow
-    Inbox,
     /// Rust lane bound to an intercepted shell.
     #[serde(rename = "SPICE_RS_LANE")] // env-policy: allow
     Lane,
@@ -104,7 +101,6 @@ impl SpiceVariable {
         Self::NativePins,
         Self::BootstrapCargoHome,
         Self::Hooks,
-        Self::Inbox,
         Self::Lane,
         Self::NativeCargo,
         Self::NativeRustc,
@@ -136,7 +132,6 @@ impl SpiceVariable {
             Self::HygieneInterpreterMarker => {
                 "SPICE_HYGIENE_INTERPRETER_MARKER" // env-policy: allow
             }
-            Self::Inbox => "SPICE_RS_INBOX", // env-policy: allow
             Self::InstallTestExecutable => {
                 "SPICE_INSTALL_TEST_EXECUTABLE" // env-policy: allow
             }

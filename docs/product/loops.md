@@ -5,46 +5,6 @@ language, framework, or visual spelling that realizes them.
 
 ---
 
-## How to read a loop
-
-Each loop states the same things, and the split between them is the point:
-
-- **Invariants** — must hold in any implementation, in any spelling.
-- **Policy** — tunable numbers with the reasoning that chose them. Change them
-  deliberately; they are not arbitrary.
-- **Incidental** — left open by the product model, named explicitly so the
-  boundary of the requirement is unambiguous.
-- **Acceptance** — how you observe the invariant from outside.
-
-The invariant register owns every cross-document label. Each rule here is
-identified by its language and enclosing loop.
-
----
-
-## Core transformations
-
-These are the product's operator-facing loops. Supporting authorities may carry
-their own typed states; this map is a navigation aid, not a closed-world schema.
-
-```mermaid
-erDiagram
-    ORG ||--|{ LANE : "groups — both governed by L-LANE"
-    LANE ||--o| AGENT : "hosts as occupant — 0..1 at a time"
-    AGENT ||--o| TASK : "claims — at most one active"
-    AGENT ||--o{ MESSAGE : "emits"
-    LANE ||--o{ DRAFT : "operator forms in"
-    DRAFT ||--o| STEERING_ITEM : "becomes on submit"
-    AGENT ||--o{ STEERING_ITEM : "must answer"
-```
-
-Read it as: a **team** groups **lanes**; each lane is an independently steerable
-worktree seat and hosts an **agent** as its
-occupant, which claims a **task** and emits **messages**; the operator forms a
-**draft** in that lane, which becomes a **steering item** the agent must answer.
-Org topology and lane lifecycle meet on the same console without becoming the
-same entity.
-
----
 
 ## L-TASK — the unit of work
 
@@ -197,21 +157,20 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-  J["journal standing is live<br/>with retained presentation stage"] --> P["disposable inbox projection"]
-  P --> V["vendor post-tool boundary"]
-  P --> S["next top-level shell boundary"]
+  J["journal standing is live<br/>with retained presentation stage"] --> V["authenticated vendor-hook read"]
+  J --> S["authenticated supervisor read<br/>at startup or resident kick"]
   V --> H["locked durable hook suppression"]
   H --> VR["eligible post-tool readout"]
-  S --> SR["independent rendered-file read;<br/>may repeat while nonempty"]
+  S --> SR["occupant-local dedupe, nudge,<br/>interruption, and compaction reset"]
   VR --> U["observation only;<br/>journal standing and stage unchanged"]
   SR --> U
 ```
 
 **Invariants**
 
-- The journal fact exists before any disposable filesystem projection is
-   delivered. Delivery is retryable; recovery preserves identity, lineage,
-   presentation stage, and presentation history.
+- The journal fact and current pending head exist before any delivery reader is
+  notified. Recovery preserves identity, lineage, presentation stage, and
+  presentation history.
 - A read changes neither disposition nor presentation stage. At every live
    stage, `acked`, `declined`, `canceled`, `lapsed`, and `deadlettered` are the
    same typed exits.
@@ -227,19 +186,19 @@ flowchart LR
    capacity, operator-start, nonterminal-error, and arbitrary delivery-failure
    paths do not deadletter.
 - Delivery is eligible at each admitted agent boundary: the vendor's post-tool
-   hook and an active or next top-level shell command. They share live content,
-   not a suppression decision: the hook consults its locked durable delivery
-   record, while each shell command independently streams changed rendered-inbox
-   bytes throughout its immediate-child lifetime and may repeat live content
-   seen by another command. Descendant shells remain unmodified and cannot
-   duplicate the wrapper.
+  hook and the command-driven supervisor. Both query the current authenticated
+  journal inbox directly. The hook consults its locked durable delivery record;
+  the supervisor catches up at occupant start, reads again on resident kicks,
+  deduplicates unchanged renderings, nudges repeated keys, interrupts active
+  commands for unheard direction, and resets occupant-local telling state after
+  compaction. Descendant shells remain unmodified.
 - Submit cost is independent of backlog depth; the journal allocates identity
    without reading queued bodies.
 
 **Policy** — 24h lapse threshold; every directive follows the same named
 escalation cadence.
 
-**Incidental** — the inbox projection's file format and the key alphabet.
+**Incidental** — the rendered interjection format and the key alphabet.
 
 **Acceptance** — before the authority returns a live durable key, the
 browser-local queued or sent prediction may be lost with the browser; durability

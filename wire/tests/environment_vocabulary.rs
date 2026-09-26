@@ -71,7 +71,6 @@ const FOREIGN_TRACKED_NAMES: &[&str] = &[
     "SPICE_HOOK_ARGV_LOG",                          // env-policy: allow
     "SPICE_HOOK_EXIT_CODE",                         // env-policy: allow
     "SPICE_HOOK_STDIN_LOG",                         // env-policy: allow
-    "SPICE_INBOX",                                  // env-policy: allow
     "SPICE_LANE",                                   // env-policy: allow
     "SPICE_MOUNTED_COMMAND",                        // env-policy: allow
     "SPICE_NATIVE_SHELL",                           // env-policy: allow

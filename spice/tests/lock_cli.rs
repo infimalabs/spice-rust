@@ -117,7 +117,6 @@ impl Fixture {
         let output = Command::new(env!("CARGO_BIN_EXE_spice"))
             .args(argv)
             .current_dir(&self.root)
-            .env_remove(steer::hook::INBOX)
             .output()
             .expect("spice lock process launches");
         Spoken {
@@ -134,7 +133,6 @@ impl Fixture {
             .arg("run")
             .arg(name)
             .current_dir(&self.root)
-            .env_remove(steer::hook::INBOX)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -235,7 +233,6 @@ impl AbruptProtected {
                 "--nocapture",
             ])
             .current_dir(&fixture.root)
-            .env_remove(steer::hook::INBOX)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -495,7 +492,6 @@ fn run_preserves_exact_argv_environment_cwd_and_child_status() {
             "--child-flag",
         ])
         .current_dir(&fixture.root)
-        .env_remove(steer::hook::INBOX)
         .env("LOCK_PROBE", "exact")
         .output()
         .expect("lock child process launches");
@@ -653,7 +649,6 @@ fn a_signal_to_the_wrapper_terminates_the_child_group_and_releases_the_lock() {
             "printf 'READY\\n'; exec /usr/bin/tail -f /dev/null",
         ])
         .current_dir(&fixture.root)
-        .env_remove(steer::hook::INBOX)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -768,7 +763,6 @@ fn a_surviving_group_member_retains_possession_after_the_leader_exits() {
             "exec 3<&0; /bin/cat <&3 & printf 'READY\\n'",
         ])
         .current_dir(&fixture.root)
-        .env_remove(steer::hook::INBOX)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

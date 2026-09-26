@@ -187,7 +187,6 @@ const CASES: &[Case] = &[
     case("steer cancel", &["steer", "cancel", UUID]),
     case("steer resend", &["steer", "resend", UUID]),
     case("steer recover", &["steer", "recover", UUID]),
-    case("steer repair", &["steer", "repair", UUID]),
     case("inbox", &["inbox"]),
     case("hook", &["hook", "codex"]),
     case("recall", &["recall"]),
@@ -456,7 +455,6 @@ fn invoke(root: &Path, case: &Case, json: bool) -> Output {
     }
     command
         .current_dir(root)
-        .env_remove(steer::hook::INBOX)
         .env_remove("CODEX_THREAD_ID") // env-policy: allow
         .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
         .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow

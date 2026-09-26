@@ -96,10 +96,10 @@ pre_commit = [
 # agent vendor. `steer` owns the four hook/session names. The configured commit
 # executor owns the staged-path JSON and source-digest handoff names. A supervised launch
 # separates the installed outer shell from the native shell restored by its
-# inner stage, while the wrapper reads the lane's rendered inbox and lane-bound
-# commands carry that lane identity. `gate` owns the mutation seed and attempt
-# number it repeats into every bounded cargo-mutants process. Its hygiene
-# acquisition fixture passes the captured repository and execution-tripwire
+# inner stage, while resident delivery reads the lane's authenticated journal
+# inbox and lane-bound commands carry that lane identity. `gate` owns the
+# mutation seed and attempt number it repeats into every bounded cargo-mutants
+# process. Its hygiene acquisition fixture passes the captured repository and
 # marker to an isolated copy of the current test process, and fixes `TMPDIR` at
 # private writable scratch so that isolation remains valid on a read-only proof
 # host.
@@ -138,7 +138,6 @@ env_names = [
     "SPICE_HOOKS",
     "SPICE_HYGIENE_ACQUIRE_REPOSITORY",
     "SPICE_HYGIENE_INTERPRETER_MARKER",
-    "SPICE_INBOX",
     "SPICE_INSTALL_TEST_EXECUTABLE",
     "SPICE_LANE",
     "SPICE_MUTATION_ATTEMPT",
@@ -147,7 +146,6 @@ env_names = [
     "SPICE_NATIVE_SHELL",
     "SPICE_PROOF",
     "SPICE_RS_HOOKS",
-    "SPICE_RS_INBOX",
     "SPICE_RS_LANE",
     "SPICE_RS_NATIVE_SHELL",
     "SPICE_RS_PRE_COMMIT_PATHS",

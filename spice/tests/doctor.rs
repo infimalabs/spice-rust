@@ -162,7 +162,7 @@ fn healthy_fixture() -> HealthyFixture {
             ".git/.spice/hooks/pre-commit",
             b"hook sentinel\n".as_slice(),
         ),
-        (".git/.spice-rs/inbox/steering", b"steering sentinel\n"),
+        (".git/.spice-rs/unknown/steering", b"steering sentinel\n"),
         (
             ".git/.spice-rs/artifacts/tasks/projection",
             b"projection sentinel\n",
@@ -333,7 +333,7 @@ fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
     // accounts the ones its fixtures, Git shadow, and predecessor development
     // bridge use. The gate's name ledger is pinned separately in
     // wire/tests/environment_vocabulary.rs.
-    const UNOWNED: [&str; 32] = [
+    const UNOWNED: [&str; 31] = [
         "BASH_ENV",                                     // env-policy: allow
         "GIT_CONFIG_COUNT",                             // env-policy: allow
         "GIT_CONFIG_SYSTEM",                            // env-policy: allow
@@ -348,7 +348,6 @@ fn assert_tracked_environment_vocabulary(report: &DoctorReport<Root>) {
         "SPICE_HOOK_ARGV_LOG",                          // env-policy: allow
         "SPICE_HOOK_EXIT_CODE",                         // env-policy: allow
         "SPICE_HOOK_STDIN_LOG",                         // env-policy: allow
-        "SPICE_INBOX",                                  // env-policy: allow
         "SPICE_LANE",                                   // env-policy: allow
         "SPICE_MOUNTED_COMMAND",                        // env-policy: allow
         "SPICE_NATIVE_SHELL",                           // env-policy: allow

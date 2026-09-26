@@ -1,17 +1,14 @@
-//! Resident-owned steering reads, transitions, and disposable renderings.
+//! Resident-owned steering reads and transitions.
 //! Transcript-backed disposition is the sole acknowledgment path.
 
 use std::fs;
-use std::path::Path;
-use std::sync::Mutex;
 
 use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite, PendingFact};
 use steer::{Miss, Outcome as ScanOutcome};
 use wire::body::TranscriptLocus;
 use wire::intent::{
-    CommandAnswer, DeliveryAnswer, DeliveryStanding, DirectiveAnswer, InboxAnswer, LaneInbox,
-    PendingDirective, TaskGenerationNotice,
+    CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective, TaskGenerationNotice,
 };
 use wire::{
     Actor, CanonicalUuid, Command, Disposition, Fault, FaultClass, Instant, Outcome, Producer,
@@ -239,12 +236,11 @@ pub(super) fn dead_letter_pending(
     cursor: Seq,
     failure: &Outcome<()>,
 ) -> CommandResult<Vec<DeadLetter>> {
-    let (observed_cursor, heads, residency) = bus
+    let (observed_cursor, heads) = bus
         .read(move |read| {
             Ok((
                 read.cursor()?,
                 crate::steering_read::pending(read, Some(lane))?,
-                read.residency_head()?,
             ))
         })
         .map_err(|error| store_fault("steer::dead-letter-index-unreadable", &error.to_string()))?;
@@ -311,9 +307,7 @@ pub(super) fn dead_letter_pending(
         });
     }
     commit(bus, proposal)?;
-    if let Some(residency) = residency {
-        let _rendering = publish_inbox(bus, paths, residency.body(), lane);
-    }
+    notify_inbox(paths, lane);
     Ok(parked)
 }
 
@@ -428,15 +422,6 @@ pub(super) fn apply_deadline(
     }
 }
 
-const FOLD_RETRIES: usize = 4;
-static FOLD_AUTHORITY: Mutex<()> = Mutex::new(());
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum FoldAttempt {
-    Settled,
-    Moved,
-}
-
 pub(super) fn publish_lane_discoveries(
     paths: &RuntimePaths,
     operator: &canvas::Discovery,
@@ -455,33 +440,17 @@ pub(super) fn publish_lane_discoveries(
 pub(super) fn publish_lane_surface(
     paths: &RuntimePaths,
     operator: &canvas::Discovery,
-    worktree: &str,
     lane: CanonicalUuid,
     capability: CanonicalUuid,
 ) -> CommandResult<()> {
-    let inbox = paths.inbox_for_worktree(worktree)?;
     fs::create_dir_all(&paths.lane_canvas).map_err(|error| {
         environment_fault("canvas::lane-directory-unavailable", &error.to_string())
     })?;
-    publish_lane_discovery(paths, operator, lane, capability)?;
-    let seal = steer::Key::for_identity(lane);
-    if let Err(error) = steer::inbox::publish(&inbox, lane, &seal, &[]) {
-        remove_lane_surface(paths, worktree, lane);
-        return Err(environment_fault(
-            "steer::inbox-unwritable",
-            &error.to_string(),
-        ));
-    }
-    remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane);
-    Ok(())
+    publish_lane_discovery(paths, operator, lane, capability)
 }
 
-pub(super) fn remove_lane_surface(paths: &RuntimePaths, worktree: &str, lane: CanonicalUuid) {
+pub(super) fn remove_lane_surface(paths: &RuntimePaths, lane: CanonicalUuid) {
     let _ = fs::remove_file(paths.lane_canvas.join(lane.to_string()));
-    if let Ok(inbox) = paths.inbox_for_worktree(worktree) {
-        let _ = fs::remove_file(steer::inbox::path(&inbox, lane));
-        remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane);
-    }
 }
 
 fn publish_lane_discovery(
@@ -499,194 +468,14 @@ fn publish_lane_discovery(
     .map_err(|error| environment_fault("canvas::lane-publish-failed", &error.to_string()))
 }
 
-pub(super) fn publish_inboxes(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    residency: &ResidencyHead,
-) -> CommandResult<()> {
+pub(super) fn notify_inboxes(paths: &RuntimePaths, residency: &ResidencyHead) {
     for lane in &residency.lanes {
-        publish_inbox(bus, paths, residency, lane.lane)?;
+        notify_inbox(paths, lane.lane);
     }
-    Ok(())
 }
 
-pub(super) fn publish_inbox(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    residency: &ResidencyHead,
-    selected: CanonicalUuid,
-) -> CommandResult<()> {
-    let lane = residency
-        .lanes
-        .iter()
-        .find(|lane| lane.lane == selected)
-        .ok_or_else(|| {
-            store_fault(
-                "steer::lane-missing-after-commit",
-                &format!("lane {selected} disappeared while publishing its inbox"),
-            )
-        })?;
-    fold_lane_inbox(bus, paths, lane).map(|_| ())
-}
-
-pub(super) fn publish_inbox_once(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    residency: &ResidencyHead,
-    selected: CanonicalUuid,
-) -> CommandResult<FoldAttempt> {
-    let lane = residency
-        .lanes
-        .iter()
-        .find(|lane| lane.lane == selected)
-        .ok_or_else(|| {
-            store_fault(
-                "steer::lane-missing-after-commit",
-                &format!("lane {selected} disappeared while publishing its inbox"),
-            )
-        })?;
-    let _authority = FOLD_AUTHORITY
-        .lock()
-        .map_err(|error| store_fault("steer::fold-authority-poisoned", &error.to_string()))?;
-    fold_lane_inbox_attempt(bus, paths, lane, 0, &mut |_| {})
-        .map(|attempt| attempt.map_or(FoldAttempt::Moved, |_| FoldAttempt::Settled))
-}
-
-fn fold_lane_inbox(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    lane: &wire::LaneResidency,
-) -> CommandResult<DeliveryStanding> {
-    fold_lane_inbox_with(bus, paths, lane, |_| {})
-}
-
-pub(super) fn fold_lane_inbox_with(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    lane: &wire::LaneResidency,
-    mut after_publication: impl FnMut(usize),
-) -> CommandResult<DeliveryStanding> {
-    // Publication and its durable progress record are one process-local
-    // authority. A newer command may commit while this guard is held, but its
-    // fold queues behind this one and therefore has the final word.
-    let _authority = FOLD_AUTHORITY
-        .lock()
-        .map_err(|error| store_fault("steer::fold-authority-poisoned", &error.to_string()))?;
-    for attempt in 0..FOLD_RETRIES {
-        if let Some(delivery) =
-            fold_lane_inbox_attempt(bus, paths, lane, attempt, &mut after_publication)?
-        {
-            return Ok(delivery);
-        }
-    }
-    Err(store_fault(
-        "steer::fold-moving",
-        "lane steering authority moved throughout the bounded fold refill",
-    ))
-}
-
-fn fold_lane_inbox_attempt(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    lane: &wire::LaneResidency,
-    attempt: usize,
-    after_publication: &mut impl FnMut(usize),
-) -> CommandResult<Option<DeliveryStanding>> {
-    let (source, heads) = bus
-        .read({
-            let selected = lane.lane;
-            move |read| {
-                Ok((
-                    read.cursor()?,
-                    crate::steering_read::pending(read, Some(selected))?,
-                ))
-            }
-        })
-        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?;
-    let source = source.ok_or_else(|| {
-        store_fault(
-            "steer::journal-empty",
-            "a running resident has no durable startup fact",
-        )
-    })?;
-    let ledger = steer::Ledger::from_authority_heads(heads.iter().map(|head| head.body()))
-        .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
-    let keys = pending_keys(&ledger, lane.lane);
-    let publication = publish_lane_inbox(paths, lane, &ledger);
-    after_publication(attempt);
-    let current = bus
-        .read({
-            let selected = lane.lane;
-            move |read| crate::steering_read::pending(read, Some(selected))
-        })
-        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?;
-    let current = steer::Ledger::from_authority_heads(current.iter().map(|head| head.body()))
-        .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
-    if pending_keys(&current, lane.lane) != keys {
-        return Ok(None);
-    }
-    let delivery = match publication {
-        Ok(()) => DeliveryStanding::Published { source },
-        Err(Outcome::Fault(fault)) => DeliveryStanding::Parked {
-            source,
-            keys,
-            failure: format!("{}: {}", fault.reason, fault.detail),
-            repair: format!("spice steer repair {}", lane.lane),
-        },
-        Err(outcome) => return Err(outcome),
-    };
-    let record = steer::fold::Record::new(lane.lane, delivery.clone());
-    steer::fold::publish(&paths.data, &record).map_err(|error| {
-        environment_fault("steer::fold-progress-unwritable", &error.to_string())
-    })?;
-    Ok(Some(delivery))
-}
-
-fn pending_keys(ledger: &steer::Ledger, lane: CanonicalUuid) -> Vec<String> {
-    ledger
-        .pending(lane)
-        .iter()
-        .map(|directive| directive.key().to_string())
-        .collect()
-}
-
-fn fold_delivery(paths: &RuntimePaths, lane: CanonicalUuid) -> CommandResult<DeliveryStanding> {
-    steer::fold::read(&paths.data, lane)
-        .map(|record| {
-            record.map_or(DeliveryStanding::Unknown, |record| {
-                record.delivery().clone()
-            })
-        })
-        .map_err(|error| environment_fault("steer::fold-progress-unreadable", &error.to_string()))
-}
-
-fn publish_lane_inbox(
-    paths: &RuntimePaths,
-    lane: &wire::LaneResidency,
-    ledger: &steer::Ledger,
-) -> CommandResult<()> {
-    let seal = steer::Key::for_identity(lane.lane);
-    let inbox = paths.inbox_for_worktree(&lane.worktree)?;
-    let pending = ledger
-        .pending(lane.lane)
-        .into_iter()
-        .filter(|directive| {
-            !directive.control().is_some_and(|control| {
-                control.starts_with(spice::session_meter::TASK_GENERATION_CONTROL_PREFIX)
-            })
-        })
-        .collect::<Vec<_>>();
-    steer::inbox::publish(&inbox, lane.lane, &seal, &pending)
-        .map_err(|error| environment_fault("steer::inbox-unwritable", &error.to_string()))?;
-    remove_legacy_inbox(&paths.legacy_inbox, &inbox, lane.lane);
-    super::supervisor::command::kick(paths, lane.lane);
-    Ok(())
-}
-
-fn remove_legacy_inbox(legacy: &Path, current: &Path, lane: CanonicalUuid) {
-    if current != legacy {
-        let _ = fs::remove_file(steer::inbox::path(legacy, lane));
-    }
+pub(super) fn notify_inbox(paths: &RuntimePaths, lane: CanonicalUuid) {
+    super::supervisor::command::kick(paths, lane);
 }
 
 pub(super) fn lane_capability(lane: &wire::LaneResidency) -> CommandResult<CanonicalUuid> {
@@ -705,7 +494,6 @@ pub(super) fn lane_capability(lane: &wire::LaneResidency) -> CommandResult<Canon
 
 pub(super) fn inbox(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
     command: &wire::AdmittedCommand,
     request: &wire::intent::SteerInbox,
@@ -765,10 +553,6 @@ pub(super) fn inbox(
             compaction,
             pending,
             generation_notices,
-            delivery: match fold_delivery(paths, lane.lane) {
-                Ok(delivery) => delivery,
-                Err(outcome) => return typed_outcome(outcome),
-            },
         });
     }
     if let Some(selected) = selected
@@ -784,60 +568,6 @@ pub(super) fn inbox(
     Outcome::Reply(Reply {
         position: ReplyPosition::Snapshot(snapshot.position),
         body: CommandAnswer::Inbox(InboxAnswer { epoch, lanes }),
-    })
-}
-
-pub(super) fn repair(
-    bus: &Bus,
-    paths: &RuntimePaths,
-    epoch: CanonicalUuid,
-    command: &wire::AdmittedCommand,
-    request: &wire::intent::SteerRepair,
-) -> Outcome<CommandAnswer> {
-    if !matches!(command.actor(), Actor::Operator) {
-        return refusal(
-            "steer::operator-required",
-            Some("operator".to_owned()),
-            Some(command.actor().to_string()),
-            "submit fold repair through the current operator discovery",
-        );
-    }
-    let residency = match current_residency(bus, epoch) {
-        Ok(residency) => residency,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let Some(lane) = residency
-        .body()
-        .lanes
-        .iter()
-        .find(|lane| lane.lane == request.lane)
-    else {
-        return refusal(
-            "steer::repair-lane-unknown",
-            Some("one current seated lane".to_owned()),
-            Some(request.lane.to_string()),
-            "read lane state and repair a lane the resident currently owns",
-        );
-    };
-    let delivery = match fold_lane_inbox(bus, paths, lane) {
-        Ok(delivery) => delivery,
-        Err(outcome) => return typed_outcome(outcome),
-    };
-    let source = match &delivery {
-        DeliveryStanding::Published { source } | DeliveryStanding::Parked { source, .. } => *source,
-        DeliveryStanding::Unknown => {
-            return typed_store_fault(
-                "steer::fold-standing-invalid",
-                "repair completed without a published or parked standing",
-            );
-        }
-    };
-    Outcome::Reply(Reply {
-        position: ReplyPosition::Snapshot(source),
-        body: CommandAnswer::Delivery(DeliveryAnswer {
-            lane: request.lane,
-            delivery: Box::new(delivery),
-        }),
     })
 }
 
@@ -1356,7 +1086,7 @@ fn finish(
         Ok(committed) => committed,
         Err(outcome) => return typed_outcome(outcome),
     };
-    effects.project_inbox(lane);
+    effects.notify_inbox(lane);
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange {
             first: seq(committed.first()),

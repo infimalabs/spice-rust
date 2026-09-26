@@ -439,7 +439,6 @@ fn the_grant_pane_presents_exactly_the_commands_wire_gives_operator_authority() 
             CommandKind::SteerSend,
             CommandKind::SteerResend,
             CommandKind::SteerRecover,
-            CommandKind::SteerRepair,
             CommandKind::SteerCancel,
             CommandKind::ConsentRead,
             CommandKind::ConsentPolicy,

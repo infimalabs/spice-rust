@@ -41,10 +41,9 @@ their own meaning.
 ```mermaid
 flowchart TD
   O["operator sends"] --> J["journal accepts one directive fact<br/>atomically"]
-  J --> F["filesystem inbox projects<br/>the still-live directive"]
-  F --> B{"next admitted agent boundary"}
+  J --> B{"authenticated delivery reader"}
   B --> V["vendor post-tool hook"]
-  B --> S["active or next top-level shell command"]
+  B --> S["command-driven supervisor<br/>startup catch-up or resident kick"]
   V --> K["agent ACKs or declines<br/>operator may cancel"]
   S --> K
   K --> T["journal records the typed disposition"]
@@ -53,13 +52,13 @@ flowchart TD
   D -->|"recovery transaction accepted"| J
 ```
 
-The directive is accepted in the journal before its disposable inbox projection
-is delivered. Delivery is eligible at both the vendor's post-tool hook and an
-active or next top-level shell command. They share the same live content, not a
-suppression decision: vendor hooks consult a locked durable hook-delivery
-record, while each shell command independently streams changed rendered-inbox
-bytes throughout its immediate-child lifetime and may repeat live content seen
-by another command. A *read* never changes disposition. `acked`, `declined`,
+The directive is accepted in the journal before any delivery reader is
+notified. Delivery is eligible at both the vendor's post-tool hook and the
+command-driven supervisor. Both obtain the current authenticated journal inbox
+directly, not a filesystem copy. Vendor hooks consult a locked durable
+hook-delivery record. The supervisor catches up at occupant start and reads
+again on resident kicks, with occupant-local deduplication, nudge, interruption,
+and compaction behavior. A *read* never changes disposition. `acked`, `declined`,
 `canceled`, `lapsed`, `deadlettered`, and recovery are distinct durable facts,
 and a `PendingInbox` automatic wake that returns `Unstarted` or a terminal-class
 start failure deadletters every pending directive on that lane from its retained
@@ -357,112 +356,30 @@ the discovery happens after the one step that cannot be undone.
 
 ### The Canvas view rail
 
-```mermaid
-flowchart LR
-  C["Canvas"] --> I["Info<br/>what is connected and possessed?"]
-  C --> W["Work<br/>what work is moving?"]
-  C --> H["Chat<br/>converse with seated agents"]
-```
-
-Info, Work, and Chat are the sole panel names in global navigation and each
-team's tab rail. Info and Work present the internal Topology and Flow axes;
-those analytical identities and the domain team, task, and agent names stay
-unchanged. The global rail changes the question asked of the whole Canvas,
-not the mode of one lane or team.
-
-The global rail is the first row inside the Spice Canvas menu, immediately
-above global settings. It divides its width equally among every destination,
-so adding another global destination preserves equal access rather than
-shrinking one privileged control. It is the team tab rail itself, not a
-lookalike: the open menu frame lies over the team surface beneath it, and the
-global rail renders with the team rail's classes, top padding, and inset, so
-the two occupy the same band and read as one control changing scope.
-
-Panel variants and DOM mode identifiers use Info, Work, and Chat directly.
-The selected global destination is the `page` URL query: switching destinations
-pushes browser history, and Back, Forward, reload, and a copied URL restore the
-same destination. A legacy URL without `page` continues to open Chat. Team
-selection, stored speech preferences, and narration cursors retain their
-existing formats and restore unchanged; no panel-name data migration or storage
-reset is needed.
+Info, Work, and Chat are the sole global and team panel names. The selected
+global destination is the `page` URL query, so browser history, reload, and
+copied URLs restore it; an absent legacy query opens Chat. Existing team,
+speech, and narration state keeps its current format.
 
 ### The global Work page
 
-The global Work page keeps the complete open-work set visible as one board:
-every project shares the same in-flight, ready, blocked, and deferred lanes,
-each card names its full project, and History follows the open board. The
-board header, with its totals and arrangement controls, stays pinned under the
-command bar while the lanes scroll beneath it. Status is named in text and
-reinforced consistently by the lane header, count, empty well, and card edge;
-color never carries status alone. Empty lanes remain visible evidence rather
-than disappearing.
-
-Cards default to the allocator's real offer order, so the task the resident
-would hand a draining lane next sits at the top; the resident computes that
-order with `task next`'s own selection step on the board read the Canvas
-already makes. Newest-first creation order and clusters by project or phase
-are secondary arrangements of the same cards: a cluster is marked by a thin
-labelled separator, never a separate board, and clusters follow their first
-card so the leading card still leads. There is no owner clustering: an agent
-holds at most one active task, so owner groups would each hold one card.
-
-Cards preserve their identity, flow, project, ownership, and map controls while
-the detail drawer and relationship map expose progressively deeper evidence.
-Owners and note authors read as agent names, keeping the full identity for
-disambiguation. Those surfaces share the board's typography, borders, spacing,
-and interaction states. The board moves from four columns to two and then one
-as width narrows; narrow empty lanes stay compact so absent work does not
-dominate the page.
+One board shows all open work in in-flight, ready, blocked, and deferred lanes.
+Cards default to the allocator's real offer order; creation order and
+project/phase clusters are alternate arrangements of the same cards. Empty
+lanes remain visible, status is textual as well as colored, and narrow layouts
+collapse from four columns to two and then one. Task detail and relationship
+views preserve the same identity and evidence.
 
 ### The team console
 
-The Chat view tiles one console per live team. A console contains
-one or more member lanes, and every row answers a question the operator would
-otherwise have to go and ask.
+Chat tiles one console per live team. Its ordered surface exposes team identity
+and liveness, the Info/Work/Chat rail, pane-specific member standing, and the
+lane-attributed message stream. Each member lane remains the concrete address
+of one worktree; the team is never a broadcast identity.
 
-```mermaid
-block-beta
-  columns 2
-  T["team row<br/>member lights, mode rail, team menu"] q1["which team is this,<br/>and who is alive?"]
-  V["team view<br/>Info | Work | Chat"] q2["what can I do with the team<br/>without leaving?"]
-  S["member surfaces<br/>lane/worktree address identity;<br/>pane-specific standing fields"] q3["where is each lane addressed,<br/>and what does this pane expose?"]
-  M["merged message stream<br/>newest first, explicit lane attribution"] q4["what did the team<br/>just say?"]
-```
-
-The whole strip is scannable top to bottom in about a second, and the order is
-deliberate: liveness before routing, routing before state, state before words.
-An operator sweeping several teams reads the first two rows of each and stops at
-whichever team needs attention.
-
-The member row describes the cross-mode surface, not one field bundle. Compose,
-Metrics, and Info expose lane/worktree identity and their own applicable agent,
-liveness or age, pending, and held-work fields; no pane repeats the whole set.
-
-The team menu's **Import agent** action opens one panel for creating a new agent
-or importing an existing one. The complete Seat agent form sits above the import
-choices; Info contains only agent and team information. An empty fleet exposes
-the same panel from its toolbar, so the first agent can still be seated.
-A successful import keeps the panel open so the operator can import additional
-agents without reopening it.
-
-An expanded member's action drawer offers **Create new team** when that member
-belongs to a multi-agent team. It moves only that member into a fresh team,
-preserves every sibling in the source team, and inherits the source team's
-allocation policy. The action is disabled for a sole agent.
-
-**Leave all teams** moves only the selected member to its own lane identity,
-preserving its seat and every other member. It is disabled only when that lane
-already stands outside a team.
-
-All six fields remain visible, with aligned, bounded labels beside their controls:
-three paired rows when space permits, one field per row on narrow tiles.
-The Seat agent button stays at the form's upper right. Long values scroll inside
-single-line inputs rather than widening the tile; admission validation stays inline.
-
-**Why it's the right unit:** the server-owned team topology is exactly what the
-operator arranged. The team tiles as one surface while each member lane remains
-the concrete address of one worktree. That keeps a fused team together without
-turning its members into a broadcast address.
+Seat and import share one panel, including for an empty fleet. Moving one member
+to a new team preserves its siblings and allocation policy. Leaving all teams
+moves only that member to its lane identity and preserves its seat.
 
 ### Lane, team, occupant
 

@@ -31,13 +31,11 @@ struct MessageStartup {
 impl SurfacePublication<'_> {
     fn publish(
         &mut self,
-        bus: &Bus,
         paths: &RuntimePaths,
         residency: &ResidencyHead,
         progress: &mut dyn io::Write,
     ) -> CommandResult<()> {
         steering::publish_lane_discoveries(paths, &self.discovery, residency)?;
-        steering::publish_inboxes(bus, paths, residency)?;
         self.discovery
             .publish(&self.published.path)
             .map_err(|error| environment_fault("canvas::publish-failed", &error.to_string()))?;
@@ -233,7 +231,7 @@ pub(super) async fn run_surface(
         &mut publication,
     )
     .await?;
-    let mut inbox_projections = InboxProjections::new();
+    let mut inbox_deliveries = InboxDeliveries::new();
     let mut lifecycle_reconciliation = lifecycle::Reconciliation::default();
     let Some(message_startup) = await_message_startup(
         &mut message_startup,
@@ -245,7 +243,7 @@ pub(super) async fn run_surface(
         &mut supervisor_reports,
         &mut control,
         &mut server_task,
-        &mut inbox_projections,
+        &mut inbox_deliveries,
         &mut lifecycle_reconciliation,
         progress,
     )
@@ -283,7 +281,7 @@ pub(super) async fn run_surface(
         timers,
         timer_commits,
         lifecycle,
-        inbox_projections,
+        inbox_deliveries,
         lifecycle_reconciliation,
     )
     .await
@@ -316,7 +314,7 @@ async fn publish_ready_surface(
     command_surface.synchronize_reads_before_publish()?;
     let residency = current_residency(bus, epoch)?;
     tokio::task::yield_now().await;
-    publication.publish(bus, command_surface.paths, residency.body(), diagnostic)
+    publication.publish(command_surface.paths, residency.body(), diagnostic)
 }
 
 fn launch_message_startup(
@@ -377,7 +375,7 @@ async fn await_message_startup(
     door: &mut capture::SupervisorReports,
     control: &mut canvas::axum::Control,
     server_task: &mut tokio::task::JoinHandle<Result<(), io::Error>>,
-    inbox_projections: &mut InboxProjections,
+    inbox_deliveries: &mut InboxDeliveries,
     lifecycle_reconciliation: &mut lifecycle::Reconciliation,
     diagnostic: &mut dyn io::Write,
 ) -> CommandResult<Option<MessageStartup>> {
@@ -390,23 +388,23 @@ async fn await_message_startup(
                 ))?;
                 return ready.map(Some);
             }
-            (turn, request) = control_projection_turn(
-                control, inbox_projections, lifecycle_reconciliation.control_enabled(),
+            (turn, request) = control_delivery_turn(
+                control, inbox_deliveries, lifecycle_reconciliation.control_enabled(),
             ) => match turn {
-                ControlProjectionTurn::Control => {
+                ControlDeliveryTurn::Control => {
                     reconcile_for_control(
                         lifecycle_reconciliation, bus, command_surface, seats, diagnostic, timers,
                         lifecycle, door,
                     )?;
-                    if dispatch_control_projection_burst(
-                        command_surface, seats, lifecycle, control, request, inbox_projections,
+                    if dispatch_control_delivery_burst(
+                        command_surface, seats, lifecycle, control, request, inbox_deliveries,
                         lifecycle_reconciliation,
                     ).await? {
                         return Ok(None);
                     }
                 }
-                ControlProjectionTurn::Projection => {
-                    project_owed_inbox(command_surface, inbox_projections).await?;
+                ControlDeliveryTurn::Delivery => {
+                    deliver_owed_inbox(command_surface, inbox_deliveries).await?;
                 }
             },
             ending = &mut *server_task => return Err(server_outcome(ending)),
@@ -521,7 +519,7 @@ async fn drive_surface(
     mut timers: timers::Runtime,
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
-    mut inbox_projections: InboxProjections,
+    mut inbox_deliveries: InboxDeliveries,
     mut lifecycle_reconciliation: lifecycle::Reconciliation,
 ) -> CommandResult<()> {
     loop {
@@ -547,24 +545,24 @@ async fn drive_surface(
                     });
                 narration::record(bus, command_surface.paths, epoch, steps, diagnostic)?;
             },
-            (turn, request) = control_projection_turn(
-                &mut control, &inbox_projections, lifecycle_reconciliation.control_enabled(),
+            (turn, request) = control_delivery_turn(
+                &mut control, &inbox_deliveries, lifecycle_reconciliation.control_enabled(),
             ) => match turn {
-                ControlProjectionTurn::Control => {
+                ControlDeliveryTurn::Control => {
                     reconcile_for_control(
                         &mut lifecycle_reconciliation, bus, command_surface, seats, diagnostic,
                         &mut timers, &mut lifecycle, &mut supervisor_reports,
                     )?;
-                    if dispatch_control_projection_burst(
+                    if dispatch_control_delivery_burst(
                         command_surface, seats, &mut lifecycle, &mut control, request,
-                        &mut inbox_projections, &mut lifecycle_reconciliation,
+                        &mut inbox_deliveries, &mut lifecycle_reconciliation,
                     ).await? {
                         timers.synchronize(bus)?;
                         return stop_surface(publication, shutdown, server_task).await;
                     }
                 }
-                ControlProjectionTurn::Projection => {
-                    project_owed_inbox(command_surface, &mut inbox_projections).await?;
+                ControlDeliveryTurn::Delivery => {
+                    deliver_owed_inbox(command_surface, &mut inbox_deliveries).await?;
                 }
             },
             record = records.recv() => accept_record_turn(
@@ -611,40 +609,40 @@ async fn drive_surface(
     }
 }
 
-pub(in crate::resident) enum ControlProjectionTurn {
+pub(in crate::resident) enum ControlDeliveryTurn {
     Control,
-    Projection,
+    Delivery,
 }
 
-pub(in crate::resident) async fn control_projection_turn(
+pub(in crate::resident) async fn control_delivery_turn(
     control: &mut canvas::axum::Control,
-    inbox_projections: &InboxProjections,
+    inbox_deliveries: &InboxDeliveries,
     control_enabled: bool,
-) -> (ControlProjectionTurn, Option<canvas::axum::ControlRequest>) {
-    if inbox_projections.is_empty() {
+) -> (ControlDeliveryTurn, Option<canvas::axum::ControlRequest>) {
+    if inbox_deliveries.is_empty() {
         return if control_enabled {
-            (ControlProjectionTurn::Control, control.recv().await)
+            (ControlDeliveryTurn::Control, control.recv().await)
         } else {
             std::future::pending().await
         };
     }
     if !control_enabled {
-        return (ControlProjectionTurn::Projection, None);
+        return (ControlDeliveryTurn::Delivery, None);
     }
     tokio::select! {
         biased;
-        request = control.recv() => (ControlProjectionTurn::Control, request),
-        () = std::future::ready(()) => (ControlProjectionTurn::Projection, None),
+        request = control.recv() => (ControlDeliveryTurn::Control, request),
+        () = std::future::ready(()) => (ControlDeliveryTurn::Delivery, None),
     }
 }
 
-async fn dispatch_control_projection_burst(
+async fn dispatch_control_delivery_burst(
     command_surface: &command_surface::Surface<'_>,
     seats: &mut Seats,
     lifecycle: &mut lifecycle::Runtime,
     control: &mut canvas::axum::Control,
     request: Option<canvas::axum::ControlRequest>,
-    inbox_projections: &mut InboxProjections,
+    inbox_deliveries: &mut InboxDeliveries,
     lifecycle_reconciliation: &mut lifecycle::Reconciliation,
 ) -> CommandResult<bool> {
     let dispatched = dispatch_control_burst(
@@ -653,34 +651,34 @@ async fn dispatch_control_projection_burst(
         lifecycle,
         control,
         request,
-        inbox_projections,
+        inbox_deliveries,
     )
     .await?;
     request_lifecycle_reconciliation(lifecycle_reconciliation, &dispatched);
     if !dispatched.reached_dark {
-        project_owed_inbox(command_surface, inbox_projections).await?;
+        deliver_owed_inbox(command_surface, inbox_deliveries).await?;
     }
     Ok(dispatched.reached_dark)
 }
 
-/// Pay one scheduled fold turn, then let readiness produced during that
-/// synchronous attempt reach the current-thread executor before choosing again.
-pub(in crate::resident) async fn project_owed_inbox(
+/// Pay one scheduled delivery turn, then let readiness produced during that
+/// synchronous notification reach the current-thread executor before choosing again.
+pub(in crate::resident) async fn deliver_owed_inbox(
     command_surface: &command_surface::Surface<'_>,
-    inbox_projections: &mut InboxProjections,
+    inbox_deliveries: &mut InboxDeliveries,
 ) -> CommandResult<()> {
-    project_owed_inbox_with(inbox_projections, |projections| {
-        project_next_inbox(command_surface, projections)
+    deliver_owed_inbox_with(inbox_deliveries, |deliveries| {
+        deliver_next_inbox(command_surface, deliveries)
     })
     .await
 }
 
-async fn project_owed_inbox_with(
-    inbox_projections: &mut InboxProjections,
-    project: impl FnOnce(&mut InboxProjections) -> CommandResult<()>,
+async fn deliver_owed_inbox_with(
+    inbox_deliveries: &mut InboxDeliveries,
+    deliver: impl FnOnce(&mut InboxDeliveries) -> CommandResult<()>,
 ) -> CommandResult<()> {
-    if !inbox_projections.is_empty() {
-        project(inbox_projections)?;
+    if !inbox_deliveries.is_empty() {
+        deliver(inbox_deliveries)?;
         tokio::task::yield_now().await;
     }
     Ok(())
@@ -1010,7 +1008,7 @@ fn accept_timer_fired(
                 .residency_head()
                 .map_err(|error| store_fault("steer::residency-unreadable", &error.to_string()))?;
             if let Some(residency) = residency {
-                steering::publish_inboxes(bus, command_surface.paths, residency.body())?;
+                steering::notify_inboxes(command_surface.paths, residency.body());
             }
             Ok(())
         }
@@ -1370,7 +1368,7 @@ fn reconcile_wakes(
 pub(in crate::resident) struct ControlDispatch {
     pub(in crate::resident) reached_dark: bool,
     lifecycle_witness: Option<lifecycle::ReconciliationWitness>,
-    inbox_projection: Option<CanonicalUuid>,
+    inbox_delivery: Option<CanonicalUuid>,
 }
 
 pub(in crate::resident) async fn dispatch_control(
@@ -1413,7 +1411,7 @@ pub(in crate::resident) async fn dispatch_control(
     Ok(ControlDispatch {
         reached_dark,
         lifecycle_witness,
-        inbox_projection: effects.inbox_projection,
+        inbox_delivery: effects.inbox_delivery,
     })
 }
 
@@ -1423,19 +1421,19 @@ pub(in crate::resident) async fn dispatch_control_burst(
     lifecycle: &mut lifecycle::Runtime,
     control: &mut canvas::axum::Control,
     request: Option<canvas::axum::ControlRequest>,
-    inbox_projections: &mut InboxProjections,
+    inbox_deliveries: &mut InboxDeliveries,
 ) -> CommandResult<ControlDispatch> {
     let mut request = request;
     let mut burst = ControlDispatch {
         reached_dark: false,
         lifecycle_witness: None,
-        inbox_projection: None,
+        inbox_delivery: None,
     };
     for turn in 0..canvas::axum::Control::FAIR_CYCLE_LIMIT {
         let dispatched =
             dispatch_control(command_surface, seats, lifecycle, control, request.take()).await?;
-        if let Some(lane) = dispatched.inbox_projection {
-            inbox_projections.insert(lane);
+        if let Some(lane) = dispatched.inbox_delivery {
+            inbox_deliveries.insert(lane);
         }
         burst.reached_dark |= dispatched.reached_dark;
         if dispatched.lifecycle_witness.is_some() {
@@ -1464,16 +1462,16 @@ async fn complete_response(request: canvas::axum::ControlRequest, outcome: Outco
     }
 }
 
-pub(in crate::resident) fn project_next_inbox(
+pub(in crate::resident) fn deliver_next_inbox(
     command_surface: &command_surface::Surface<'_>,
-    inbox_projections: &mut InboxProjections,
+    inbox_deliveries: &mut InboxDeliveries,
 ) -> CommandResult<()> {
     let residency = command_surface.inbox_residency()?;
-    let Some(projection) = inbox_projections.next(&residency) else {
+    let Some(delivery) = inbox_deliveries.next(&residency) else {
         return Ok(());
     };
-    let attempt = command_surface.project_inbox_once(residency.body(), projection.lane())?;
-    inbox_projections.complete(projection, attempt);
+    command_surface.notify_inbox(delivery.lane());
+    inbox_deliveries.complete(delivery);
     Ok(())
 }
 

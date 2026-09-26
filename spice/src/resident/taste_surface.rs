@@ -364,7 +364,10 @@ pub(super) fn recognize(
         judge,
         record,
         |bus, _, proposal| commit(bus, proposal),
-        steering::publish_inbox,
+        |_, paths, _, lane| {
+            steering::notify_inbox(paths, lane);
+            Ok(())
+        },
     )
 }
 
@@ -806,7 +809,7 @@ pub(super) fn complete_judgment(
         match commit(bus, proposal) {
             Ok(_) => {
                 if !openings.is_empty() {
-                    steering::publish_inbox(bus, paths, observed.body(), completed.prepared.lane)?;
+                    steering::notify_inbox(paths, completed.prepared.lane);
                 }
                 return Ok(());
             }

@@ -187,19 +187,6 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
 }"#,
     ),
     (
-        AnswerShape::Delivery,
-        r#"{
-  "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
-  "delivery": {
-    "standing": "parked",
-    "source": 41,
-    "keys": ["1kJJP87B"],
-    "failure": "steer::inbox-unwritable: inbox directory blocked",
-    "repair": "spice steer repair 018f82d4-6f59-7d06-92e3-bce9131163c2"
-  }
-}"#,
-    ),
-    (
         AnswerShape::Inbox,
         r#"{
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",

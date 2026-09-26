@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
-use std::ffi::OsStr;
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -79,25 +78,21 @@ struct Spoken {
 }
 
 fn invoke(argv: &[&str]) -> Spoken {
-    invoke_with_inbox(argv, None)
-}
-
-fn invoke_with_inbox(argv: &[&str], inbox: Option<&OsStr>) -> Spoken {
-    invoke_configured(argv, inbox, None)
+    invoke_configured(argv, None)
 }
 
 fn invoke_at(argv: &[&str], current_dir: &Path) -> Spoken {
-    invoke_configured(argv, None, Some(current_dir))
+    invoke_configured(argv, Some(current_dir))
 }
 
-fn invoke_configured(argv: &[&str], inbox: Option<&OsStr>, current_dir: Option<&Path>) -> Spoken {
+fn invoke_configured(argv: &[&str], current_dir: Option<&Path>) -> Spoken {
     let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
     command
         .args(argv)
-        .env_remove(steer::hook::INBOX)
         .env_remove("CODEX_THREAD_ID") // env-policy: allow
         .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
         .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
+        .env_remove(steer::hook::LANE)
         // Assertions below exercise the CLI's words, not terminal styling.
         // Refuse ambient color-forcing variables so captured output remains
         // stable under developer shells, CI runners, and test harnesses.
@@ -105,9 +100,6 @@ fn invoke_configured(argv: &[&str], inbox: Option<&OsStr>, current_dir: Option<&
         .env_remove("CLICOLOR_FORCE")
         .env_remove("FORCE_COLOR")
         .env("NO_COLOR", "1");
-    if let Some(inbox) = inbox {
-        command.env(steer::hook::INBOX, inbox);
-    }
     if let Some(current_dir) = current_dir {
         command.current_dir(current_dir);
     }
@@ -129,7 +121,6 @@ fn invoke_isolated_rtk_run(
     command
         .args(["run", "--", "/bin/sh", "-c", "printf native"])
         .current_dir(working)
-        .env_remove(steer::hook::INBOX)
         .env_remove(steer::hook::LANE)
         .env_remove("CODEX_THREAD_ID") // env-policy: allow
         .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
@@ -493,143 +484,6 @@ fn a_child_commands_flag_is_not_the_renderers() {
 
 #[test]
 #[cfg(unix)]
-fn run_emits_pending_direction_then_inherits_the_childs_streams_and_exit() {
-    let inbox = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/run-inbox.txt");
-    let spoken = invoke_with_inbox(
-        &[
-            "run",
-            "--",
-            "/bin/sh",
-            "-c",
-            "printf child-out; printf child-err >&2; sleep 0.35; exit 7",
-        ],
-        Some(inbox.as_os_str()),
-    );
-
-    assert_eq!(spoken.code, Some(7));
-    assert_eq!(spoken.out, b"child-out");
-    assert_eq!(
-        spoken.err,
-        b"<run-test>\npending direction\n</run-test>\nchild-err"
-    );
-}
-
-#[test]
-#[cfg(unix)]
-fn run_streams_direction_authored_while_its_immediate_child_is_active() {
-    let scratch = Scratch::new("active-child-steering");
-    let inbox = scratch.path().join("inbox");
-    fs::write(&inbox, b"").expect("empty inbox fixture writes");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
-    command
-        .args([
-            "run",
-            "--",
-            "/bin/sh",
-            "-c",
-            "printf 'child-start\n' >&2; printf 'ready\n'; IFS= read -r _; \
-             printf 'child-end\n' >&2",
-        ])
-        .env(steer::hook::INBOX, &inbox)
-        .env_remove(steer::hook::LANE)
-        .env_remove("CODEX_THREAD_ID") // env-policy: allow
-        .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
-        .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
-        .env_remove(spice::rtk::EXECUTABLE_VARIABLE)
-        .env_remove(spice::rtk::HISTORY_VARIABLE)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = command.spawn().expect("spice run fixture launches");
-    let mut stdout = BufReader::new(child.stdout.take().expect("child stdout is piped"));
-    let mut ready = String::new();
-    stdout
-        .read_line(&mut ready)
-        .expect("child readiness reaches the caller");
-    assert_eq!(ready, "ready\n");
-
-    let stderr = child.stderr.take().expect("child stderr is piped");
-    let (sender, receiver) = mpsc::channel();
-    let reader = std::thread::spawn(move || {
-        let mut captured = Vec::new();
-        for line in BufReader::new(stderr).lines() {
-            let line = line.expect("wrapper stderr stays readable");
-            sender
-                .send(line.clone())
-                .expect("test still receives wrapper stderr");
-            captured.push(line);
-        }
-        captured
-    });
-    assert_eq!(
-        receiver
-            .recv_timeout(Duration::from_secs(5))
-            .expect("child start reaches wrapper stderr"),
-        "child-start"
-    );
-
-    let rendering = b"<late-run-test>\nlate direction\n</late-run-test>\n";
-    atomic::Destination::new(&inbox)
-        .expect("inbox destination admits")
-        .publish(|staged| staged.write_all(rendering))
-        .expect("late inbox atomically publishes");
-    for expected in ["<late-run-test>", "late direction", "</late-run-test>"] {
-        assert_eq!(
-            receiver
-                .recv_timeout(Duration::from_secs(5))
-                .expect("late steering reaches the active wrapper"),
-            expected
-        );
-    }
-    fs::write(scratch.path().join("unrelated"), b"parent-directory churn")
-        .expect("unrelated parent entry writes");
-    assert_eq!(
-        receiver.recv_timeout(Duration::from_millis(350)),
-        Err(mpsc::RecvTimeoutError::Timeout),
-        "unrelated watcher events repeated unchanged steering"
-    );
-
-    child
-        .stdin
-        .as_mut()
-        .expect("child stdin is piped")
-        .write_all(b"release\n")
-        .expect("child release writes");
-    let status = child.wait().expect("spice run fixture exits");
-    assert_eq!(status.code(), Some(0));
-    assert_eq!(
-        reader.join().expect("stderr reader joins"),
-        [
-            "child-start",
-            "<late-run-test>",
-            "late direction",
-            "</late-run-test>",
-            "child-end",
-        ]
-    );
-    scratch.remove();
-}
-
-#[test]
-#[cfg(unix)]
-fn absent_empty_and_unreadable_inboxes_never_block_the_child() {
-    let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let absent = manifest.join("tests/never-written-run-inbox");
-
-    for inbox in [absent.as_path(), Path::new("/dev/null"), manifest] {
-        let spoken = invoke_with_inbox(
-            &["run", "--", "/bin/sh", "-c", "printf ran"],
-            Some(inbox.as_os_str()),
-        );
-
-        assert_eq!(spoken.code, Some(0), "{}", inbox.display());
-        assert_eq!(spoken.out, b"ran", "{}", inbox.display());
-        assert!(spoken.err.is_empty(), "{}", inbox.display());
-    }
-}
-
-#[test]
-#[cfg(unix)]
 fn run_preserves_the_childs_argument_vector() {
     let spoken = invoke(&[
         "run",
@@ -660,9 +514,6 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
     let scratch = Scratch::new("structural-shell-boundary");
     let hooks = steer::hook::Hooks::new(scratch.path().join("hooks"));
     hooks.install().expect("structural stages install");
-    let inbox = scratch.path().join("inbox");
-    fs::write(&inbox, b"<steering>\none wrapper\n</steering>\n")
-        .expect("steering rendering writes");
 
     let arguments = scratch.path().join("native-arguments");
     let native = scratch.path().join("native-shell");
@@ -709,7 +560,6 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
         .env(steer::hook::EXECUTABLE, binary)
         .env(steer::hook::HOOKS, hooks.root())
         .env(steer::hook::NATIVE_SHELL, &native)
-        .env(steer::hook::INBOX, &inbox)
         .env("BOUNDARY_ARGUMENTS", &arguments)
         .env_remove(vendor::CODEX.thread_id_environment())
         .env_remove(vendor::CLAUDE.thread_id_environment())
@@ -728,9 +578,9 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
         "sourced script did not share nounset shell option: {stdout:?}"
     );
     assert!(stdout.contains(&format!("executed=<{}>:<unset>:<unset>", native.display())));
-    assert_eq!(
-        output.stderr, b"<steering>\none wrapper\n</steering>\n",
-        "descendant stderr redirection captured or duplicated wrapper steering"
+    assert!(
+        output.stderr.is_empty(),
+        "descendant stderr redirection must remain private"
     );
     assert_eq!(
         fs::read(&arguments).expect("native shell captured its arguments"),
@@ -782,7 +632,6 @@ fn direct_zsh_and_bash_command_shells_cross_the_rtk_wrapper_once() {
             .env("SHELL", hooks.stage(steer::hook::STAGES[0]))
             .env(spice::rtk::EXECUTABLE_VARIABLE, &rtk)
             .env(spice::rtk::HISTORY_VARIABLE, &history)
-            .env_remove(steer::hook::INBOX)
             .env_remove(steer::hook::LANE)
             .output()
             .expect("direct command shell runs");
@@ -890,38 +739,6 @@ fn run_uses_optional_rtk_and_degrades_to_the_unchanged_native_command() {
 
 #[test]
 #[cfg(unix)]
-fn steering_follows_the_wrappers_own_stderr_redirection() {
-    let scratch = Scratch::new("run-stderr");
-    let inbox = scratch.path().join("inbox");
-    let redirected = scratch.path().join("wrapper-stderr");
-    fs::write(&inbox, b"wrapper steering\n").expect("inbox writes");
-    let stderr = fs::File::create(&redirected).expect("redirect target creates");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_spice"))
-        .args([
-            "run",
-            "--",
-            "/bin/sh",
-            "-c",
-            "printf child-output; printf hidden-child-error >&2",
-        ])
-        .env(steer::hook::INBOX, &inbox)
-        .stderr(Stdio::from(stderr))
-        .output()
-        .expect("wrapper runs with redirected stderr");
-
-    assert!(output.status.success());
-    assert_eq!(output.stdout, b"child-output");
-    assert!(output.stderr.is_empty(), "stderr was redirected at spawn");
-    assert_eq!(
-        fs::read(&redirected).expect("redirected stderr reads"),
-        b"wrapper steering\nhidden-child-error"
-    );
-    scratch.remove();
-}
-
-#[test]
-#[cfg(unix)]
 fn run_waits_through_exec_and_closes_capture_while_an_unredirected_descendant_lives() {
     let scratch = Scratch::new("run-child-identity");
     let before = scratch.path().join("before-pid");
@@ -986,7 +803,6 @@ fn run_drains_complete_foreground_output_under_backpressure() {
             "--ignored",
             "--nocapture",
         ])
-        .env_remove(steer::hook::INBOX)
         .current_dir(scratch.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

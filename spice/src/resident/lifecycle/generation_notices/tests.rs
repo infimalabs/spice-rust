@@ -1,5 +1,3 @@
-use std::fs;
-
 use super::*;
 use crate::resident::CommandEffects;
 use crate::resident::lane_surface::{AdvisoryRtkFixture, seed_task_claim};
@@ -81,16 +79,6 @@ fn every_foreign_change_since_the_acknowledgement_publishes_one_reclaim_notice()
         );
     }
     assert!(notices[0].text.contains("by operator"));
-    let inbox = fixture
-        .paths
-        .inbox_for_worktree(fixture.root.to_str().expect("fixture path is UTF-8"))
-        .expect("fixture inbox resolves");
-    assert_eq!(
-        fs::read_to_string(steer::inbox::path(&inbox, fixture.lane))
-            .expect("disposable inbox reads"),
-        "",
-        "system notices never enter the authored steering rendering",
-    );
     let after = bus.task_snapshot().expect("post-notice snapshot reads");
     assert_eq!(after.tasks()[0].claim(), before.claim());
     assert_eq!(after.tasks()[0].lease(), before.lease());

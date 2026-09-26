@@ -12,10 +12,10 @@ use crate::resident::ingest_vendor;
 /// can run the ack command, so its answer sits in the transcript alone until
 /// a successor wakes to cite it. The exit reads that transcript under the
 /// rules the ack command applies, journals the disposition the successor
-/// would have journaled with the transcript locus as evidence, and refolds
-/// the lane inbox so the delivered rendering follows the journal the Canvas
-/// card already reads. A key the transcript does not answer stays live and
-/// still wakes a successor, and nothing here disturbs the exit that was
+/// would have journaled with the transcript locus as evidence, and notifies the
+/// lane supervisor so its next authenticated inbox read follows the journal the
+/// Canvas card already reads. A key the transcript does not answer stays live
+/// and still wakes a successor, and nothing here disturbs the exit that was
 /// already accounted: every failure is written down and leaves the key
 /// pending for the command path.
 pub(in crate::resident) fn dispose_at_exit(
@@ -163,15 +163,7 @@ fn dispose_pending(
     if !retired {
         return;
     }
-    let refolded = current_residency(bus, epoch)
-        .and_then(|residency| publish_inbox(bus, paths, residency.body(), lane));
-    if let Err(outcome) = refolded {
-        let _ = writeln!(
-            diagnostic,
-            "lane {lane} inbox not refolded {moment}: {}",
-            failure_line(&outcome)
-        );
-    }
+    notify_inbox(paths, lane);
 }
 
 /// Journal the disposition the transcript carries for one live directive.

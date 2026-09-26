@@ -72,9 +72,8 @@ confusion the design specifically resolves.
 ```mermaid
 flowchart LR
   T["agent finishes a non-shell tool call"] --> H["vendor PostToolUse hook"]
-  J["journal standing is LIVE"] --> Q["disposable inbox projection"]
-  H --> P{"eligible projected readout?"}
-  Q --> P
+  J["journal standing is LIVE"] --> P{"authenticated current inbox<br/>eligible under suppression?"}
+  H --> P
   P -- yes --> R["deliver readout, with suppression"]
   P -- no --> N["nothing"]
   R --> O["delivery observation only;<br/>journal lifecycle unchanged"]
@@ -95,34 +94,33 @@ neither the directive's disposition nor its presentation stage.
 **Invariant —** The hot path must not query the task database. Steering delivery
 cannot be allowed to cost what a board read costs.
 
-### The instrumented command boundary
+### The command-driven supervisor and instrumented command boundary
 
-Steering has to reach an agent while it is running shell commands, so something
-must sit between the agent and its shell. Exactly where that something sits is
-the whole design.
+The resident-owned supervisor sits between the vendor command stream and the
+lane terminal. Steering reaches that stream from journal authority; shell
+instrumentation remains responsible only for one-shot command execution and
+private output relays.
 
 ```mermaid
 flowchart TD
-  A["the agent's top-level shell command"] --> R["redirector"]
-  R --> W["the wrapper — ONE hop, exactly once"]
-  W --> P["arm the bounded filesystem watcher"]
-  P --> Q{"initial rendering nonempty?"}
-  I["rendered inbox file"] --> Q
-  Q -- yes --> S["write the whole rendering<br/>to wrapper stderr"]
-  Q -- no --> RW["optional rewrite decision"]
-  S --> RW
-  RW --> C["spawn one immediate command shell<br/>over private stdout/stderr relays"]
-  C --> L["bounded watcher remains active"]
-  I --> U["atomic replacement while<br/>the immediate child runs"]
-  U --> CH{"changed and nonempty?"}
-  CH -- yes --> E["write the whole rendering<br/>to wrapper stderr"]
-  CH -- no --> L
-  E --> L
-  C --> SRC["a SOURCED script<br/>shares this shell's functions:<br/>sourcing creates no process"]
-  C --> EX["an executed script, a child shell"]
+  J["journal standing is LIVE"] --> N["resident lane notification"]
+  O["occupant starts"] --> C["supervisor catch-up"]
+  N --> R["authenticated current-inbox read"]
+  C --> R
+  R --> D{"changed nonempty rendering?"}
+  D -- yes, unheard key --> I["interrupt active host calls"]
+  I --> S["interject on vendor command stream"]
+  D -- yes, repeated key --> U["compose occupant-aware nudge"]
+  U --> S
+  D -- no --> W["wait for next notification"]
+  A["agent's top-level shell command"] --> T["supervisor terminal"]
+  T --> X["wrapper — ONE hop, exactly once"]
+  X --> P["spawn one immediate command shell<br/>over private stdout/stderr relays"]
+  P --> SRC["a SOURCED script<br/>shares this shell's functions"]
+  P --> EX["an executed script, a child shell"]
   EX --> NAT["starts NATIVELY —<br/>the user's shell, no second interception"]
-  L --> X["immediate child exits"]
-  X --> V["stop the filesystem watcher;<br/>revoke descendant relay writers;<br/>drain relays and finish"]
+  P --> F["immediate child exits"]
+  F --> V["revoke descendant relay writers;<br/>drain relays and finish"]
 ```
 
 **Invariant —** Instrumentation is **one-shot, at the agent's own command
@@ -143,12 +141,12 @@ outside the agent, which is what makes leaving the instrumentation on safe.
 shell's functions and options. The boundary being drawn is the **process**
 boundary, and sourcing does not cross it.
 
-**Invariant —** Shell-boundary steering is bounded by the immediate child. The
-wrapper arms a bounded filesystem watcher, writes the initial nonempty
-disposable rendered inbox before spawn, and writes each changed nonempty whole
-rendering while the child remains active. Identical bytes are suppressed within
-that command. The watcher never reads the journal and ends before relay cleanup
-begins.
+**Invariant —** Supervisor delivery reads journal authority. Startup performs a
+catch-up read; each resident notification prompts another authenticated read.
+Changed nonempty renderings are interjected on the vendor command stream,
+identical bytes are suppressed, repeated keys receive occupant-aware nudges,
+unheard keys interrupt in-flight commands, and compaction resets the
+occupant-local telling state.
 
 **Invariant —** The wrapper waits on that one immediate process identity while
 private relays carry its output. The wait survives the child forking, waiting,
@@ -156,10 +154,6 @@ or replacing itself; when that identity exits, the wrapper revokes inherited
 relay writers, drains committed output, and finishes even if a background
 descendant remains alive.
 
-**Invariant —** Steering is written to the **wrapper's own error stream**, so a
-redirection performed inside a descendant cannot capture or silence it.
-Redirecting the wrapper itself does, which is the one place an operator would
-expect that to work.
 
 **Invariant —** The complete top-level command string is handed to the wrapper
 exactly once. That is what makes rewriting possible at all: it is the last point
@@ -244,19 +238,19 @@ work.
 
 A live directive may be rendered through whichever admitted delivery path is
 active or occurs next. Vendor post-tool hooks keep non-shell tool sequences
-reachable between calls; the one-shot wrapper covers its top-level shell
-command throughout the immediate child's lifetime. Only a stretch that crosses
-neither path offers no delivery opportunity.
+reachable between calls; the command-driven supervisor catches up at occupant
+startup and reacts to resident notifications while the turn is active. Only a
+stretch crossing neither path offers no delivery opportunity.
 
 ```mermaid
 flowchart TD
-  D["live steering in the disposable projection"] --> B{"active or next admitted delivery path"}
+  D["live steering in journal authority"] --> B{"active or next admitted delivery path"}
   B --> T["vendor post-tool hook"]
-  B --> C["active or next top-level shell command"]
-  T --> HS["locked hook-delivery suppression"]
-  HS --> HR["eligible post-tool readout"]
-  C --> SR["independent bounded filesystem watcher;<br/>initial pre-spawn read plus changed renderings during the child"]
-  HR --> O["observation only;<br/>durable lifecycle stays live"]
+  B --> C["command-driven supervisor"]
+  T --> HS["authenticated inbox read<br/>plus locked hook suppression"]
+  C --> SR["authenticated startup or kick read<br/>plus occupant-local dedupe"]
+  HR["eligible post-tool readout"] --> O["observation only;<br/>durable lifecycle stays live"]
+  HS --> HR
   SR --> O
   D --> N["neither delivery path occurs"]
   N --> W["delivery waits;<br/>durable lifecycle stays live"]
@@ -266,17 +260,16 @@ flowchart TD
   X --> RL["the keeper requests a lane wake;<br/>startup catch-up delivers the completion"]
 ```
 
-**Invariant —** Admitted-path cadence is delivery cadence, not command cadence
-alone. Non-shell work remains reachable between calls at vendor post-tool
-boundaries. If neither a post-tool hook nor an active or next top-level shell
-command offers a delivery span, the directive remains live and its delivery
-waits without fabricating a lifecycle transition.
+**Invariant —** Admitted-path cadence is delivery cadence, not shell-command
+cadence alone. Non-shell work remains reachable between calls at vendor
+post-tool boundaries. If neither a post-tool hook nor a running supervisor
+offers a delivery opportunity, the directive remains live without fabricating a
+lifecycle transition.
 
-**Invariant —** The two paths share the same live directive content, not one
-suppression decision. Post-tool delivery consults its locked durable hook
-record; every top-level shell command independently streams changed bytes from
-the current rendered inbox, so it may repeat live content seen by another
-command while suppressing identical bytes during its own child lifetime.
+**Invariant —** The two paths share the same authenticated journal inbox, not
+one suppression decision. Post-tool delivery consults its locked durable hook
+record; the supervisor independently deduplicates within the occupant and
+compaction epoch.
 
 **Invariant —** Every turn exit vacates the lane, including exit code zero. A
 backgrounded command survives under its detached keeper. If a non-stopped

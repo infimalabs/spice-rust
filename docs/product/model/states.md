@@ -247,23 +247,21 @@ stateDiagram-v2
   escalated --> overdue: quiet longer still
 ```
 
-Delivery is a separate, rebuildable view of that live standing:
+Delivery is a direct read of that live standing:
 
 ```mermaid
 flowchart LR
-  J["journal standing is LIVE"] --> I["disposable inbox projection"]
-  I --> H["vendor post-tool hook"]
-  I --> S["next top-level shell-command boundary"]
+  J["journal standing is LIVE"] --> H["authenticated vendor-hook read"]
+  J --> S["authenticated supervisor read<br/>at startup or resident kick"]
   H --> HR["readout under locked<br/>hook-delivery suppression"]
-  S --> SR["independent rendered-file read;<br/>may repeat while nonempty"]
+  S --> SR["occupant-local dedupe, nudge,<br/>interruption, and compaction reset"]
   HR --> O["observation only;<br/>journal disposition and stage unchanged"]
   SR --> O
 ```
 
 **Invariant —** Publish is one accepted journal transaction and is durable before
-delivery is attempted. The filesystem inbox is a rebuildable projection of live
-directives, published with a same-directory staged file, durable flushes, and an
-atomic rename.
+delivery readers are notified. The journal's current pending heads are the inbox;
+hooks, supervisors, and the `inbox` command authenticate and read them directly.
 
 **Invariant —** Reads never change disposition. At every live presentation stage,
 `acked`, `declined`, `canceled`, `lapsed`, and `deadlettered` are the same

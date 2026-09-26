@@ -121,9 +121,8 @@ fn retire(
     if lanes.is_empty() {
         return Ok(false);
     }
-    let residency = current_residency(bus, epoch)?;
     for lane in lanes {
-        super::super::steering::publish_inbox(bus, paths, residency.body(), lane)?;
+        super::super::steering::notify_inbox(paths, lane);
     }
     Ok(true)
 }
@@ -216,8 +215,7 @@ fn publish(
     }
     match commit(bus, proposal) {
         Ok(_) => {
-            let residency = current_residency(bus, epoch)?;
-            super::super::steering::publish_inbox(bus, paths, residency.body(), lane)?;
+            super::super::steering::notify_inbox(paths, lane);
         }
         Err(Outcome::Refusal(refusal)) if refusal.reason() == CLAIM_MOVED => {}
         Err(outcome) => return Err(outcome),

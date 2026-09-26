@@ -15,10 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::Value;
 use spice::repository::{Repository, StatePaths};
-use steer::ack::keys::Key;
-use steer::directives::{Ledger, Steering};
-use wire::body::SteerSent;
-use wire::{CanonicalUuid, SpiceVariable};
+use wire::SpiceVariable;
 
 #[path = "support/git_repository.rs"]
 mod git_repository;
@@ -60,12 +57,10 @@ const PREDECESSOR_GATE_STATE: &[(&str, &[u8])] = &[
 
 /// Environment variables the predecessor owns for its live shell handoff.
 const PREDECESSOR_HOOKS_ENV: &str = "SPICE_HOOKS"; // env-policy: allow
-const PREDECESSOR_INBOX_ENV: &str = "SPICE_INBOX"; // env-policy: allow
 const PREDECESSOR_LANE_ENV: &str = "SPICE_LANE"; // env-policy: allow
 const PREDECESSOR_NATIVE_SHELL_ENV: &str = "SPICE_NATIVE_SHELL"; // env-policy: allow
 const PREDECESSOR_ENVIRONMENT: &[&str] = &[
     PREDECESSOR_HOOKS_ENV,
-    PREDECESSOR_INBOX_ENV,
     PREDECESSOR_LANE_ENV,
     PREDECESSOR_NATIVE_SHELL_ENV,
 ];
@@ -148,7 +143,6 @@ fn ownership_covers_unnameable_files_inside_an_exclusive_directory() {
 fn runtime_environment_names_are_rust_specific() {
     let rust_environment = [
         steer::hook::HOOKS,
-        steer::hook::INBOX,
         steer::hook::LANE,
         steer::hook::NATIVE_SHELL,
     ];
@@ -157,13 +151,11 @@ fn runtime_environment_names_are_rust_specific() {
         rust_environment,
         [
             "SPICE_RS_HOOKS",        // env-policy: not-an-env SPICE_RS_HOOKS
-            "SPICE_RS_INBOX",        // env-policy: not-an-env SPICE_RS_INBOX
             "SPICE_RS_LANE",         // env-policy: not-an-env SPICE_RS_LANE
             "SPICE_RS_NATIVE_SHELL", // env-policy: not-an-env SPICE_RS_NATIVE_SHELL
         ]
     );
     assert_eq!(SpiceVariable::Hooks.as_str(), steer::hook::HOOKS);
-    assert_eq!(SpiceVariable::Inbox.as_str(), steer::hook::INBOX);
     assert_eq!(SpiceVariable::Lane.as_str(), steer::hook::LANE);
     assert_eq!(
         SpiceVariable::NativeShell.as_str(),
@@ -314,62 +306,27 @@ fn the_bridge_refuses_without_an_operator_named_export() {
     );
 }
 
-/// Worktree paths spelling the Rust state layout cannot become inbox or ACK
-/// authority. Production publishes a real sealed rendering and opens the real
-/// journal while the lookalike bytes stay unchanged.
+/// Worktree paths spelling the Rust state layout cannot become journal
+/// authority. Production opens the real Git-common journal while the lookalike
+/// bytes stay unchanged.
 #[test]
-fn repository_lookalikes_cannot_replace_inbox_and_ack_authority() {
-    let fixture = Fixture::bare("inbox-authority");
-    let lane: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce913116302"
-        .parse()
-        .expect("fixture lane");
-    let impostor_inbox = fixture.root.join(".spice-rs/inbox").join(lane.to_string());
+fn repository_lookalikes_cannot_replace_journal_authority() {
+    let fixture = Fixture::seeded("tracked-lookalikes");
     let impostor_journal = fixture.root.join(".spice-rs/data/spicejournal.sqlite3");
-    fs::create_dir_all(impostor_inbox.parent().expect("impostor inbox parent"))
-        .expect("create impostor inbox parent");
     fs::create_dir_all(impostor_journal.parent().expect("impostor journal parent"))
         .expect("create impostor journal parent");
-    fs::write(&impostor_inbox, b"repository-injected direction\n").expect("write impostor inbox");
     fs::write(&impostor_journal, b"repository-injected acknowledgment\n")
         .expect("write impostor journal");
 
     let paths = fixture.paths();
     let impostor_root = fixture.root.join(".spice-rs");
-    assert!(!paths.inbox().starts_with(&impostor_root));
     assert!(!paths.journal().starts_with(&impostor_root));
-    let mut ledger = Ledger::new();
-    ledger
-        .absorb(Steering::Sent(&SteerSent {
-            directive: "018f82d4-6f59-7d06-92e3-bce913116399"
-                .parse()
-                .expect("fixture directive"),
-            fanout: None,
-            key: "1kJK6M0V".to_owned(),
-            lane,
-            text: "authoritative rendered direction".to_owned(),
-            control: None,
-            attachments: Vec::new(),
-            expires: "2026-08-11T07:07:19.000Z".parse().expect("fixture expiry"),
-        }))
-        .expect("fixture directive absorbs");
-    let seal: Key = "1kJK6N3R".parse().expect("fixture seal");
-    steer::inbox::publish(paths.inbox(), lane, &seal, &ledger.pending(lane))
-        .expect("authoritative inbox publishes");
     fs::create_dir_all(paths.data()).expect("create authoritative journal parent");
     drop(journal::Journal::open(paths.journal()).expect("ACK authority journal opens"));
 
     assert_eq!(
-        fs::read(&impostor_inbox).expect("impostor inbox remains readable"),
-        b"repository-injected direction\n"
-    );
-    assert_eq!(
         fs::read(&impostor_journal).expect("impostor journal remains readable"),
         b"repository-injected acknowledgment\n"
-    );
-    assert!(
-        fs::read_to_string(steer::inbox::path(paths.inbox(), lane))
-            .expect("authoritative inbox reads")
-            .contains("authoritative rendered direction")
     );
 }
 
@@ -436,10 +393,6 @@ impl Fixture {
         command
             .args(args)
             .env(PREDECESSOR_HOOKS_ENV, self.predecessor_root().join("hooks"))
-            .env(
-                PREDECESSOR_INBOX_ENV,
-                self.predecessor_root().join("inbox").join(lane),
-            )
             .env(PREDECESSOR_LANE_ENV, lane)
             .env(PREDECESSOR_NATIVE_SHELL_ENV, "/bin/sh")
             .output()
@@ -452,11 +405,9 @@ impl Fixture {
             .current_dir(&self.root)
             .env("PATH", "")
             .env_remove(steer::hook::HOOKS)
-            .env_remove(steer::hook::INBOX)
             .env_remove(steer::hook::LANE)
             .env_remove(steer::hook::NATIVE_SHELL)
             .env_remove(PREDECESSOR_HOOKS_ENV)
-            .env_remove(PREDECESSOR_INBOX_ENV)
             .env_remove(PREDECESSOR_LANE_ENV)
             .env_remove(PREDECESSOR_NATIVE_SHELL_ENV);
         command

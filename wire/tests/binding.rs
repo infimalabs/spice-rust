@@ -144,10 +144,6 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (CommandKind::SteerInbox, r#"{}"#),
     (
-        CommandKind::SteerRepair,
-        r#"{ "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2" }"#,
-    ),
-    (
         CommandKind::SteerResend,
         r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
     ),
@@ -857,7 +853,6 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::DocApply,
     BodyShape::SteerSend,
     BodyShape::SteerInbox,
-    BodyShape::SteerRepair,
     BodyShape::DirectiveRef,
     BodyShape::SteerDispose,
     BodyShape::ConsentDecide,
@@ -889,7 +884,6 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Claim,
     AnswerShape::Doc,
     AnswerShape::Directive,
-    AnswerShape::Delivery,
     AnswerShape::Inbox,
     AnswerShape::Consent,
     AnswerShape::ConsentQueue,

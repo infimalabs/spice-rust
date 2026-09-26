@@ -25,8 +25,6 @@ pub mod ack;
 pub mod config;
 pub mod directives;
 #[cfg(not(target_arch = "wasm32"))]
-pub mod fold;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod hook;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod inbox;

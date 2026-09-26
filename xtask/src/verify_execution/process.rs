@@ -386,13 +386,13 @@ impl SignalGuard {
 mod tests {
     use super::*;
 
-    const INBOX: &str = wire::SpiceVariable::Inbox.as_str();
+    const LANE: &str = wire::SpiceVariable::Lane.as_str();
 
     fn fixture_environment() -> Environment {
         Environment::new([
             ("BASH_ENV", "/fixture/bash-env"),
             ("PATH", "/fixture/bin"),
-            (INBOX, "/fixture/live-inbox"),
+            (LANE, "018f82d4-6f59-7d06-92e3-bce913116301"),
             ("ZDOTDIR", "/fixture/zdotdir"),
         ])
         .expect("fixture environment")
@@ -419,12 +419,12 @@ mod tests {
         let opted_in = selected_process_environment(
             fixture_environment(),
             None,
-            &[(INBOX, OsStr::new("/fixture/owned-inbox"))],
+            &[(LANE, OsStr::new("018f82d4-6f59-7d06-92e3-bce913116302"))],
         )
         .expect("opted-in environment");
         assert_eq!(
-            value(&opted_in, INBOX),
-            Some(OsStr::new("/fixture/owned-inbox"))
+            value(&opted_in, LANE),
+            Some(OsStr::new("018f82d4-6f59-7d06-92e3-bce913116302"))
         );
         assert_eq!(value(&opted_in, "BASH_ENV"), None);
         assert_eq!(value(&opted_in, "ZDOTDIR"), None);

@@ -49,7 +49,7 @@ fn a_placed_header_retires_its_key_when_the_same_prose_later_cites_it() {
         (1, 6),
         "the journaled locus cites the header, not the citation"
     );
-    assert_eq!(effects.inbox_projection, Some(direction.lane));
+    assert_eq!(effects.inbox_delivery, Some(direction.lane));
 
     direction.speak(&format!("ACK {}: again, after the fact.", direction.key));
     let (stale, _) = direction.ack(Disposition::Acked, direction.live_witness());
@@ -105,7 +105,7 @@ fn a_quoted_or_buried_mention_against_a_live_witness_names_its_miss() {
                  a quoted or buried mention of the key acknowledges nothing"
             )
         );
-        assert!(effects.inbox_projection.is_none());
+        assert!(effects.inbox_delivery.is_none());
         let missed = direction
             .last_fact::<wire::body::SteerMissed>()
             .expect("the miss is journaled");
