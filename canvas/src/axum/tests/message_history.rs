@@ -137,26 +137,28 @@ async fn authenticated_socket_pages_member_history_before_the_initial_window() {
 
 /// A history provider the test holds shut until it releases it.
 ///
-/// `history` reports that it was entered and then blocks its thread on the
+/// `history` reports every lane that entered and then blocks its thread on the
 /// latch. On the surface runtime thread that would freeze every socket, the
 /// test included, so a read arriving on the thread that built the provider
 /// refuses instead and drops the entry report, which fails the test at once
-/// rather than hanging it. On the blocking pool only the one request that
-/// asked stands still.
+/// rather than hanging it.
 #[derive(Debug)]
 struct LatchedHistory {
     runtime: std::thread::ThreadId,
-    entered: std::sync::Mutex<Option<oneshot::Sender<()>>>,
+    entered: tokio::sync::mpsc::UnboundedSender<wire::CanonicalUuid>,
     released: std::sync::Mutex<bool>,
     release: std::sync::Condvar,
 }
 
 impl LatchedHistory {
-    fn new() -> (Arc<Self>, oneshot::Receiver<()>) {
-        let (entered, observed) = oneshot::channel();
+    fn new() -> (
+        Arc<Self>,
+        tokio::sync::mpsc::UnboundedReceiver<wire::CanonicalUuid>,
+    ) {
+        let (entered, observed) = tokio::sync::mpsc::unbounded_channel();
         let provider = Arc::new(Self {
             runtime: std::thread::current().id(),
-            entered: std::sync::Mutex::new(Some(entered)),
+            entered,
             released: std::sync::Mutex::new(false),
             release: std::sync::Condvar::new(),
         });
@@ -172,24 +174,22 @@ impl LatchedHistory {
 impl MessageHistoryProvider for LatchedHistory {
     fn history(
         &self,
-        _lane: wire::CanonicalUuid,
+        lane: wire::CanonicalUuid,
         _before: Option<&wire::AgentMessage>,
         _limit: usize,
     ) -> Result<Option<MessageHistoryPage>, String> {
-        let entered = self.entered.lock().expect("entered lock").take();
         if std::thread::current().id() == self.runtime {
-            drop(entered);
             return Err("history ran on the surface runtime thread".to_owned());
         }
-        if let Some(entered) = entered {
-            let _ = entered.send(());
-        }
+        let _ = self.entered.send(lane);
         let mut released = self.released.lock().expect("latch lock");
         while !*released {
             released = self.release.wait(released).expect("latch condvar");
         }
+        let mut message = agent_message(0xe6, 5, "held page");
+        message.lane = lane;
         Ok(Some(MessageHistoryPage {
-            messages: vec![agent_message(0xe6, 5, "held page")],
+            messages: vec![message],
             more: false,
         }))
     }
@@ -316,7 +316,7 @@ async fn held_history_read_leaves_the_runtime_serving_other_sockets() {
     let publisher = server
         .message_publisher()
         .expect("streaming server publishes messages");
-    let (provider, entered) = LatchedHistory::new();
+    let (provider, mut entered) = LatchedHistory::new();
     publisher
         .set_history_provider(provider.clone())
         .expect("latched provider installs");
@@ -337,7 +337,7 @@ async fn held_history_read_leaves_the_runtime_serving_other_sockets() {
     assert_eq!(cursor.lane, identity(0xe5));
     assert_eq!(cursor.before, None);
     request_history(&mut reader, identity(0xd1), cursor).await;
-    timeout(ASSERTION_DEADLINE, entered)
+    timeout(ASSERTION_DEADLINE, entered.recv())
         .await
         .expect("provider is entered before the deadline")
         .expect("provider reports its entry");
@@ -359,6 +359,101 @@ async fn held_history_read_leaves_the_runtime_serving_other_sockets() {
         ));
         assert_socket_terminated(socket).await;
     }
+    server_task
+        .await
+        .expect("server task joins")
+        .expect("server stops");
+    bus.shutdown().expect("bus shuts down");
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn one_socket_starts_lane_history_reads_concurrently() {
+    let app = TestApp::new();
+    let bus = bus::Bus::start(journal::Journal::in_memory().expect("authority opens"))
+        .expect("bus starts");
+    commit_stream(&bus, "concurrent history horizon", false);
+    let capabilities = Capabilities::default();
+    capabilities
+        .insert(operator(), wire::Actor::Operator)
+        .expect("operator capability");
+    let (server, _control) = Server::bind_test_streaming(
+        Binding::new(LOOPBACK_EPHEMERAL, Access::local()),
+        generation(&app, capabilities),
+        bus.reader(),
+        8,
+    )
+    .await
+    .expect("streaming server binds");
+    let publisher = server
+        .message_publisher()
+        .expect("streaming server publishes messages");
+    let (provider, mut entered) = LatchedHistory::new();
+    publisher
+        .set_history_provider(provider.clone())
+        .expect("latched provider installs");
+    publisher
+        .set_history_open([identity(0xe5), identity(0xe7)])
+        .expect("lanes open durable history");
+    let address = server.local_addr().expect("address");
+    let (shutdown, stopped) = oneshot::channel();
+    let server_task = tokio::spawn(server.up_until(async move {
+        let _ = stopped.await;
+    }));
+
+    let (mut socket, cursors) = subscribe_messages(address, identity(0xd0)).await;
+    assert_eq!(cursors.len(), 2);
+    request_history(&mut socket, identity(0xd1), cursors[0]).await;
+    request_history(&mut socket, identity(0xd2), cursors[1]).await;
+
+    let first = timeout(ASSERTION_DEADLINE, entered.recv()).await;
+    let second = timeout(ASSERTION_DEADLINE, entered.recv()).await;
+    if first.is_err() || second.is_err() {
+        provider.release();
+    }
+    let mut entered_lanes = [
+        first
+            .expect("first provider call enters before the deadline")
+            .expect("first provider call reports its lane"),
+        second
+            .expect("second provider call enters while the first is held")
+            .expect("second provider call reports its lane"),
+    ];
+    entered_lanes.sort();
+    assert_eq!(entered_lanes, [identity(0xe5), identity(0xe7)]);
+
+    send_client(
+        &mut socket,
+        &wire::StreamRequest::Ping {
+            v: wire::WireVersion::CURRENT,
+            id: identity(0xd3),
+            epoch: epoch(),
+        },
+    )
+    .await;
+    let pong = timeout(ASSERTION_DEADLINE, stream_frame(&mut socket)).await;
+    provider.release();
+    assert!(matches!(
+        pong.expect("the held reads do not block the same socket"),
+        wire::StreamFrame::Pong { id, .. } if id == identity(0xd3)
+    ));
+
+    let mut answered = [
+        stream_frame(&mut socket).await,
+        stream_frame(&mut socket).await,
+    ]
+    .map(|frame| match frame {
+        wire::StreamFrame::MessageHistory { id, .. } => id,
+        other => panic!("expected history answer, got {other:?}"),
+    });
+    answered.sort();
+    assert_eq!(answered, [identity(0xd1), identity(0xd2)]);
+
+    shutdown.send(()).expect("shutdown signals");
+    assert!(matches!(
+        stream_frame(&mut socket).await,
+        wire::StreamFrame::Closing { .. }
+    ));
+    assert_socket_terminated(&mut socket).await;
     server_task
         .await
         .expect("server task joins")
