@@ -725,36 +725,10 @@ pub struct StreamCursor {
 pub enum ViewSubject {
     /// Canonical fact envelopes in durable journal order.
     Facts,
-    /// Bounded operator-authored direction history from durable steering authority.
-    Directions,
     /// Current executable-surface trust heads.
     Trust,
     /// Agent-authored prose and tool moments projected from transcript capture.
     Messages,
-}
-
-/// One durable operator direction projected independently of its current standing.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct OperatorDirection {
-    /// Original journal instant retained across clients and resident restarts.
-    pub authored: Instant,
-    /// Stable directive identity.
-    pub directive: CanonicalUuid,
-    /// Human-sized acknowledgement key.
-    pub key: String,
-    /// Lane the direction addressed.
-    pub lane: CanonicalUuid,
-    /// Operator-authored prose.
-    pub text: String,
-    /// Canonical target for quoting this directive.
-    pub quote_target: QuoteTarget,
-    /// Recursively resolved fixed-label quote links found in [`Self::text`].
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub quotes: Vec<QuotePresentation>,
-    /// Admitted media carried by the direction.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub attachments: Vec<crate::Media>,
 }
 
 /// One strict client-to-resident stream request.
@@ -1166,15 +1140,6 @@ pub enum StreamFrame {
         id: CanonicalUuid,
         epoch: CanonicalUuid,
         packed: Packed<StreamFact>,
-    },
-    /// Current bounded operator-direction history.
-    Directions {
-        v: WireVersion,
-        id: CanonicalUuid,
-        epoch: CanonicalUuid,
-        /// Maximum number of newest records retained for each lane.
-        limit: u32,
-        directions: Vec<OperatorDirection>,
     },
     /// Initial, continued, or refreshed trust-head page.
     Trust {

@@ -2,8 +2,8 @@
 //!
 //! Every mutation enters through an admitted acceptance, response, or stream
 //! frame. Stream facts contribute credential-free envelope metadata; accepted
-//! steering replies, live steering facts, and durable direction snapshots
-//! contribute the operator records rendered by conversation.
+//! steering replies and live steering facts contribute the operator records
+//! rendered by conversation.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
@@ -724,7 +724,6 @@ impl CanvasRuntime {
     pub fn subjects(&self) -> Vec<ViewSubject> {
         let mut subjects = vec![ViewSubject::Facts];
         if self.principal.actor() == &Actor::Operator {
-            subjects.push(ViewSubject::Directions);
             subjects.push(ViewSubject::Messages);
         }
         subjects

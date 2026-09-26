@@ -111,10 +111,10 @@ pub use reply::{
 pub use stream::{
     AgentActivityKind, AgentMessage, AutomaticSpeech, AutomaticSpeechKind, MESSAGE_FLOOR,
     MessageBoundary, MessageClassification, MessageClassificationKind, MessageDirective,
-    MessageHistoryCursor, MessageLocus, OperatorDirection, StreamAdmissionError, StreamCursor,
-    StreamFact, StreamFrame, StreamRequest, TranscriptGeneration, TranscriptLaneFrontier,
-    TranscriptLaneState, TrustView, ViewSubject, superseded_boundaries,
-    valid_message_classifications, valid_message_directives,
+    MessageHistoryCursor, MessageLocus, StreamAdmissionError, StreamCursor, StreamFact,
+    StreamFrame, StreamRequest, TranscriptGeneration, TranscriptLaneFrontier, TranscriptLaneState,
+    TrustView, ViewSubject, superseded_boundaries, valid_message_classifications,
+    valid_message_directives,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,

@@ -81,9 +81,9 @@ impl CanvasRuntime {
         let epoch = self.principal.epoch();
         match admitted.get() {
             StreamFrame::Facts { packed, .. } => self.apply_fact_page(packed, epoch),
-            StreamFrame::Directions { .. }
-            | StreamFrame::Trust { .. }
-            | StreamFrame::Thread { .. } => StreamApplication::new(Vec::new(), false),
+            StreamFrame::Trust { .. } | StreamFrame::Thread { .. } => {
+                StreamApplication::new(Vec::new(), false)
+            }
             StreamFrame::Messages {
                 limit, generation, ..
             } => self.apply_message_snapshot(*limit as usize, generation),

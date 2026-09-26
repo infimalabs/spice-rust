@@ -773,7 +773,6 @@ fn cover_stream_frames() {
         epoch,
         seq: seq(48213),
     };
-    cover_operator_directions(first_id, second_id);
     law("AgentMessage", &agent_message_samples(first_id, second_id));
     let requests = stream_request_samples(epoch, first_id, second_id, cursor);
     law("StreamRequest", &requests);
@@ -877,7 +876,10 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             classifications: Vec::new(),
             quote_target: None,
             directive_contexts: Vec::new(),
-            quotes: Vec::new(),
+            quotes: vec![wire::QuotePresentation::Unavailable {
+                target: "spice://quote/v1/unknown".to_owned(),
+                reason: wire::QuoteUnavailable::Malformed,
+            }],
             automatic_speech: None,
             unavailable_tool_terminals: Vec::new(),
             boundary: None,
@@ -908,46 +910,6 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
             media: Vec::new(),
         },
     ]
-}
-
-fn cover_operator_directions(first_id: CanonicalUuid, second_id: CanonicalUuid) {
-    law(
-        "OperatorDirection",
-        &[
-            OperatorDirection {
-                authored: at("2030-04-12T18:44:09.271Z"),
-                directive: first_id,
-                key: "amber-fern".to_owned(),
-                lane: second_id,
-                text: "hold the indexed line".to_owned(),
-                quote_target: wire::QuoteTarget::Steering {
-                    key: "amberfern".to_owned(),
-                    digest: wire::QuoteTarget::text_digest("hold the indexed line"),
-                },
-                quotes: Vec::new(),
-                attachments: Vec::new(),
-            },
-            OperatorDirection {
-                authored: at("2030-04-12T18:44:09.272Z"),
-                directive: second_id,
-                key: "silver-ash".to_owned(),
-                lane: first_id,
-                text: "resume after acknowledgement".to_owned(),
-                quote_target: wire::QuoteTarget::Steering {
-                    key: "silverash".to_owned(),
-                    digest: wire::QuoteTarget::text_digest("resume after acknowledgement"),
-                },
-                quotes: vec![wire::QuotePresentation::Unavailable {
-                    target: "spice://quote/v1/unknown".to_owned(),
-                    reason: wire::QuoteUnavailable::Malformed,
-                }],
-                attachments: vec![
-                    wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
-                        .expect("fixture media"),
-                ],
-            },
-        ],
-    );
 }
 
 fn stream_request_samples(

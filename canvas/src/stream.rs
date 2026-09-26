@@ -10,8 +10,7 @@ use bus::{BusReader, CanvasHeads};
 #[cfg(test)]
 use wire::AgentMessage;
 use wire::{
-    Accepted, Fault, FaultClass, OperatorDirection, Packed, Seq, StreamFrame, StreamRequest,
-    ViewSubject, WireVersion,
+    Accepted, Fault, FaultClass, Packed, Seq, StreamFrame, StreamRequest, ViewSubject, WireVersion,
 };
 
 mod budget;
@@ -33,12 +32,10 @@ use policy::{
 };
 pub use subscription::{LiveDelivery, Subscription};
 
-/// Maximum newest durable operator directions restored for each lane.
-pub const OPERATOR_DIRECTION_CAPACITY: usize = 256;
 /// Repository-owned expansion of fixed-label quote links.
 ///
-/// Canvas invokes this before every message or direction crosses the wire. The
-/// resolver stays in the resident, where tape and journal authority live.
+/// Canvas invokes this before every message crosses the wire. The resolver
+/// stays in the resident, where tape and journal authority live.
 #[derive(Clone)]
 pub struct QuotePresenter {
     present: Arc<dyn Fn(&str) -> Vec<wire::QuotePresentation> + Send + Sync>,
@@ -72,7 +69,6 @@ pub struct Source {
     bus: BusReader,
     epoch: wire::CanonicalUuid,
     rows: usize,
-    presenter: QuotePresenter,
     messages: MessageFeed,
     #[cfg(test)]
     reads: Arc<ReadCounts>,
@@ -98,8 +94,7 @@ impl Source {
             bus,
             epoch,
             rows,
-            messages: MessageFeed::new(presenter.clone()),
-            presenter,
+            messages: MessageFeed::new(presenter),
             #[cfg(test)]
             reads: Arc::new(ReadCounts::default()),
         }
@@ -208,14 +203,6 @@ impl Source {
         let mut frames = Vec::new();
         for subject in subscription.subjects.iter().copied().collect::<Vec<_>>() {
             let frame = match subject {
-                ViewSubject::Directions => StreamFrame::Directions {
-                    v: WireVersion::CURRENT,
-                    id: *id,
-                    epoch: self.epoch,
-                    limit: u32::try_from(OPERATOR_DIRECTION_CAPACITY)
-                        .expect("the fixed direction capacity fits in the wire field"),
-                    directions: self.directions()?,
-                },
                 ViewSubject::Messages => {
                     let generation = message_generation
                         .take()
@@ -325,39 +312,6 @@ impl Source {
                     reason: "stream::fact-page-failed".to_owned(),
                     detail: error.to_string(),
                 })
-            })
-    }
-
-    fn directions(&self) -> Result<Vec<OperatorDirection>, Failure> {
-        self.bus
-            .canvas_directions(OPERATOR_DIRECTION_CAPACITY)
-            .map_err(|error| {
-                Failure::Fault(Fault {
-                    class: FaultClass::Store,
-                    reason: "stream::direction-snapshot-failed".to_owned(),
-                    detail: error.to_string(),
-                })
-            })
-            .map(|heads| {
-                heads
-                    .into_iter()
-                    .map(|head| {
-                        let target = wire::QuoteTarget::Steering {
-                            key: head.body().key.clone(),
-                            digest: wire::QuoteTarget::text_digest(&head.body().text),
-                        };
-                        OperatorDirection {
-                            authored: head.body().published,
-                            directive: head.body().directive,
-                            key: head.body().key.clone(),
-                            lane: head.body().lane,
-                            text: head.body().text.clone(),
-                            quote_target: target,
-                            quotes: self.presenter.present(&head.body().text),
-                            attachments: head.body().attachments.clone(),
-                        }
-                    })
-                    .collect()
             })
     }
 
