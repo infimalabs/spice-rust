@@ -1,4 +1,6 @@
 //! Canvas publication and the resident's live surface loop.
+mod capabilities;
+mod input;
 
 use super::*;
 
@@ -63,7 +65,7 @@ async fn start_surface<'a>(
     launch: SurfaceLaunch<'a>,
 ) -> CommandResult<StartedSurface<'a>> {
     let operator = new_uuid();
-    let capabilities = surface_capabilities(operator, residency)?;
+    let capabilities = capabilities::build(operator, residency)?;
     let SurfaceLaunch {
         app,
         version,
@@ -475,26 +477,6 @@ fn canvas_opening(endpoint: &str, auth_token: Option<&str>) -> String {
     )
 }
 
-fn surface_capabilities(
-    operator: CanonicalUuid,
-    residency: &ResidencyHead,
-) -> CommandResult<canvas::axum::Capabilities> {
-    let capabilities = canvas::axum::Capabilities::default();
-    capabilities
-        .insert(operator, Actor::Operator)
-        .map_err(|error| environment_fault("canvas::capability-invalid", &error.to_string()))?;
-    for lane in &residency.lanes {
-        for capability in &lane.capabilities {
-            capabilities
-                .insert(*capability, Actor::Lane(lane.lane))
-                .map_err(|error| {
-                    environment_fault("canvas::capability-invalid", &error.to_string())
-                })?;
-        }
-    }
-    Ok(capabilities)
-}
-
 #[allow(
     clippy::too_many_arguments,
     reason = "the resident loop owns one receiver for each closed event source"
@@ -525,21 +507,49 @@ async fn drive_surface(
     mut inbox_deliveries: InboxDeliveries,
     mut lifecycle_reconciliation: lifecycle::Reconciliation,
 ) -> CommandResult<()> {
+    let mut input_lead = input::Lead::Supervisor;
     loop {
         let narration_deadline = message_surface::lock_state(message_state.state())?
             .narration
             .next_deadline();
         tokio::select! {
-            // Notices already read off the supervisor door come before any
-            // arm that reconciles, and the seat sweep every reconcile runs
-            // asks the door itself, so it never speaks for an ending whose
-            // notice is waiting in either queue.
-            biased;
-            report = supervisor_reports.recv() => accept_supervisor_reports(
-                bus, epoch, seats, command_surface, &message_publisher,
-                taste_submitter.as_deref_mut(), &mut lifecycle, &mut session_compactions,
-                supervisor_reports.batch(report), message_state.state(), diagnostic,
-            )?,
+            // Every reconciliation sweep asks the supervisor door itself, so
+            // selecting another ready source first cannot lose an ending.
+            // Keep the outer selection fair, and rotate the two sources that
+            // can remain ready continuously.
+            input = input::next(
+                &mut input_lead,
+                supervisor_reports.recv(),
+                control_delivery_turn(
+                    &mut control,
+                    &inbox_deliveries,
+                    lifecycle_reconciliation.control_enabled(),
+                ),
+            ) => match input {
+                input::Input::Supervisor(report) => accept_supervisor_reports(
+                    bus, epoch, seats, command_surface, &message_publisher,
+                    taste_submitter.as_deref_mut(), &mut lifecycle, &mut session_compactions,
+                    supervisor_reports.batch(report), message_state.state(), diagnostic,
+                )?,
+                input::Input::Control((turn, request)) => match turn {
+                    ControlDeliveryTurn::Control => {
+                        reconcile_for_control(
+                            &mut lifecycle_reconciliation, bus, command_surface, seats, diagnostic,
+                            &mut timers, &mut lifecycle, &mut supervisor_reports,
+                        )?;
+                        if dispatch_control_delivery_burst(
+                            command_surface, seats, &mut lifecycle, &mut control, request,
+                            &mut inbox_deliveries, &mut lifecycle_reconciliation,
+                        ).await? {
+                            timers.synchronize(bus)?;
+                            return stop_surface(publication, shutdown, server_task).await;
+                        }
+                    }
+                    ControlDeliveryTurn::Delivery => {
+                        deliver_owed_inbox(command_surface, &mut inbox_deliveries).await?;
+                    }
+                },
+            },
             () = narration::wait(narration_deadline) => {
                 let steps = message_surface::lock_state(message_state.state())?
                     .narration
@@ -547,26 +557,6 @@ async fn drive_surface(
                         seats.activity(lane).is_some_and(|activity| activity.occupant() == occupant)
                     });
                 narration::record(bus, command_surface.paths, epoch, steps, diagnostic)?;
-            },
-            (turn, request) = control_delivery_turn(
-                &mut control, &inbox_deliveries, lifecycle_reconciliation.control_enabled(),
-            ) => match turn {
-                ControlDeliveryTurn::Control => {
-                    reconcile_for_control(
-                        &mut lifecycle_reconciliation, bus, command_surface, seats, diagnostic,
-                        &mut timers, &mut lifecycle, &mut supervisor_reports,
-                    )?;
-                    if dispatch_control_delivery_burst(
-                        command_surface, seats, &mut lifecycle, &mut control, request,
-                        &mut inbox_deliveries, &mut lifecycle_reconciliation,
-                    ).await? {
-                        timers.synchronize(bus)?;
-                        return stop_surface(publication, shutdown, server_task).await;
-                    }
-                }
-                ControlDeliveryTurn::Delivery => {
-                    deliver_owed_inbox(command_surface, &mut inbox_deliveries).await?;
-                }
             },
             record = records.recv() => accept_record_turn(
                 bus, epoch, seats, command_surface, &message_publisher,
