@@ -62,40 +62,6 @@ fn startup_work_caps_lane_reads_and_total_source_bytes() {
 }
 
 #[test]
-fn replay_uses_the_worktree_bound_to_each_session_locus() {
-    let lane: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e5"
-        .parse()
-        .expect("fixture lane");
-    let source: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e6"
-        .parse()
-        .expect("fixture source");
-    let worktrees = SessionWorktrees(BTreeMap::from([(
-        (lane, source),
-        vec![
-            SessionWorktree {
-                member: 1,
-                offset: 10,
-                worktree: PathBuf::from("/worktrees/old"),
-            },
-            SessionWorktree {
-                member: 1,
-                offset: 30,
-                worktree: PathBuf::from("/worktrees/new"),
-            },
-        ],
-    )]));
-
-    assert_eq!(
-        worktrees.at(lane, source, tape::Locus::new(1, 20, 1)),
-        Some(Path::new("/worktrees/old")),
-    );
-    assert_eq!(
-        worktrees.at(lane, source, tape::Locus::new(1, 40, 1)),
-        Some(Path::new("/worktrees/new")),
-    );
-}
-
-#[test]
 fn codex_completed_turn_materializes_history_as_one_final_card() {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
@@ -304,7 +270,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
-        worktrees: SessionWorktrees::default(),
+        sessions: TranscriptSessions::default(),
     };
     let future = wire::AgentMessage {
         lane,
@@ -494,7 +460,7 @@ fn season_history(root: &Path) -> (DurableHistory, CanonicalUuid, listen::Checkp
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
-        worktrees: SessionWorktrees::default(),
+        sessions: TranscriptSessions::default(),
     };
     (history, lane, source_end)
 }
@@ -919,7 +885,7 @@ fn season_session_horizon(root: &Path, groups: usize) -> (DurableHistory, Canoni
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
-        worktrees: SessionWorktrees::default(),
+        sessions: TranscriptSessions::default(),
     };
     (history, lane)
 }
@@ -1111,7 +1077,7 @@ fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::A
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
-        worktrees: SessionWorktrees::default(),
+        sessions: TranscriptSessions::default(),
     };
     let future = wire::AgentMessage {
         lane,
