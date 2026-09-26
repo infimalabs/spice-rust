@@ -19,7 +19,6 @@ use super::{
 mod acknowledgement;
 mod automatic_speech;
 mod backlog;
-mod live;
 mod pending;
 mod projection;
 mod session_compaction;
@@ -49,7 +48,6 @@ const HISTORY_DURATION: Duration = Duration::from_secs(5);
 #[cfg(test)]
 pub(super) use backlog::restore_agent_messages;
 pub(super) use backlog::{BacklogReader, restore_agent_messages_indexed};
-pub(super) use live::{LiveMessageWakes, LiveMessages, Wake};
 pub(super) use session_compaction::SessionCompactions;
 pub(super) use tool_preview::CallPreviews;
 
@@ -317,9 +315,9 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
     // responsibility for, rather than leaving the gap for the next start to
     // find. A record the resident did not accept above does not account either.
     //
-    // Live projection can already have displayed these bytes without waiting
-    // for the writer. This sweep catches records whose finite-queue notice
-    // never arrived; the shared presentation position prevents duplicates.
+    // Accounting and live presentation share this sweep, so nothing publishes
+    // before capture admission. Scanning through the live head also catches
+    // records whose finite-queue notice never arrived.
     let held = std::mem::take(&mut lock_state(views.state)?.accounting);
     let (mut observations, held) = super::ingest_transcripts(
         bus,
