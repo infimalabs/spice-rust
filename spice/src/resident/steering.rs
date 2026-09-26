@@ -522,7 +522,11 @@ pub(super) fn inbox(
         Err(outcome) => return outcome,
     };
     let reader = bus.reader();
-    let resolver = spice::quote::Resolver::from_tape(&paths.tape, &reader);
+    let resolver = spice::quote::Resolver::from_tape_with_agent_presenter(
+        &paths.tape,
+        &reader,
+        super::quote_agent_prose,
+    );
     let mut lanes = Vec::new();
     for lane in &snapshot.residency.body().lanes {
         if selected.is_some_and(|selected| selected != lane.lane) {

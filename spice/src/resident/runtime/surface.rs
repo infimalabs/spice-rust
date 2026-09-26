@@ -85,7 +85,8 @@ async fn start_surface<'a>(
         config.speech.clone(),
     )
     .with_speech_resolver(move |worktree| speech_paths.speech_for_worktree(worktree));
-    let quote_presenter = spice::quote::presenter(paths.tape.clone(), bus.reader());
+    let quote_presenter =
+        spice::quote::presenter(paths.tape.clone(), bus.reader(), quote_agent_prose);
     let (server, control) = canvas::axum::Server::bind_streaming(
         canvas::axum::Binding::new(listen, policy),
         generation,

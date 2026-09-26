@@ -552,6 +552,41 @@ struct PresentedMessageText {
     classifications: Vec<wire::MessageClassification>,
     directive_contexts: Vec<wire::MessageDirective>,
 }
+pub(crate) fn quote_agent_prose(
+    reader: &bus::BusReader,
+    lane: CanonicalUuid,
+    source: CanonicalUuid,
+    ordinal: u32,
+    prose: &listen::Prose,
+) -> Result<String, String> {
+    let keys = steering_keys([prose.text.as_str()]);
+    if keys.is_empty() {
+        return Ok(prose.text.clone());
+    }
+    let rows = load_steering_presentations(reader, &keys).map_err(|error| format!("{error:?}"))?;
+    let directives = PresentationDirectives::from_presentations(&rows)?;
+    let PresentedMessageText {
+        mut text,
+        directive_contexts,
+        ..
+    } = present_steering_acknowledgements(
+        &prose.text,
+        Some(&directives),
+        PresentationEvent {
+            lane,
+            source: Some(source),
+            locus: prose.locus,
+            ordinal,
+        },
+    )
+    .map_err(|error| format!("{error:?}"))?;
+    for context in directive_contexts.iter().rev() {
+        let start = usize::try_from(context.start).expect("wire directive start always fits usize");
+        let end = usize::try_from(context.end).expect("wire directive end always fits usize");
+        text.replace_range(start..end, &context.quote_target.markdown());
+    }
+    Ok(text)
+}
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct PresentationDirectives(BTreeMap<steer::Key, PresentationDirective>);
