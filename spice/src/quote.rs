@@ -528,6 +528,8 @@ fn resolve_tape(
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
 
     #[derive(Default)]
     struct MemoryStore {
@@ -569,47 +571,223 @@ mod tests {
             .expect("canonical UUID")
     }
 
-    #[test]
-    fn source_locus_keeps_predecessor_authorship_after_lane_renewal() {
-        let lane = uuid(1);
-        let source = uuid(2);
-        let predecessor = uuid(3);
-        let successor = uuid(4);
-        let sessions = TranscriptSessions(BTreeMap::from([(
-            (lane, source),
-            vec![
-                TranscriptSession {
-                    member: 1,
-                    offset: 10,
-                    occupant: predecessor,
-                    vendor: "codex".to_owned(),
-                    worktree: PathBuf::from("/worktrees/predecessor"),
-                },
-                TranscriptSession {
-                    member: 1,
-                    offset: 30,
-                    occupant: successor,
-                    vendor: "codex".to_owned(),
-                    worktree: PathBuf::from("/worktrees/successor"),
-                },
-            ],
-        )]));
+    const PREDECESSOR_TEXT: &str = "answer from predecessor";
+    const SUCCESSOR_TEXT: &str = "answer from successor";
 
-        let historical = sessions
-            .at(lane, source, tape::Locus::new(1, 20, 1))
-            .expect("predecessor session covers historical quote");
-        assert_eq!(historical.occupant, predecessor);
+    struct DurableQuoteFixture {
+        root: PathBuf,
+        tape_root: PathBuf,
+        tape: tape::Tape,
+        bus: bus::Bus,
+        lane: CanonicalUuid,
+        source: CanonicalUuid,
+        predecessor_locus: tape::Locus,
+        successor_locus: tape::Locus,
+        end_offset: u64,
+    }
+
+    impl DurableQuoteFixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let root = std::env::temp_dir().join(format!(
+                "spice-quote-source-session-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed),
+            ));
+            let lane = uuid(1);
+            let vendor: wire::Name = "codex".parse().expect("fixture vendor");
+            let tape_root = root.join("tape");
+            let tape_path = tape_root.join(lane.to_string()).join(vendor.as_str());
+            fs::create_dir_all(&tape_path).expect("fixture tape directory exists");
+            let tape = tape::Tape::open(&tape_path).expect("fixture tape opens");
+            for (id, text) in [
+                ("predecessor", PREDECESSOR_TEXT),
+                ("successor", SUCCESSOR_TEXT),
+            ] {
+                tape.tee(
+                    format!(
+                        "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"{id}\",\"type\":\"agent_message\",\"text\":\"{text}\"}}}}\n"
+                    )
+                    .as_bytes(),
+                )
+                .expect("fixture prose is durable");
+            }
+            let scan =
+                listen::scan(&tape_path, listen::Dialect::Codex, None).expect("fixture tape scans");
+            let predecessor_locus = scan.records[0].locus;
+            let successor_locus = scan.records[1].locus;
+            let source = scan
+                .checkpoint
+                .source
+                .as_str()
+                .parse::<CanonicalUuid>()
+                .expect("fixture tape source is canonical");
+            let bus = session_bus(
+                lane,
+                source,
+                vendor,
+                predecessor_locus,
+                successor_locus,
+                scan.checkpoint.next,
+            );
+            Self {
+                root,
+                tape_root,
+                tape,
+                bus,
+                lane,
+                source,
+                predecessor_locus,
+                successor_locus,
+                end_offset: scan.checkpoint.next.offset,
+            }
+        }
+
+        fn target(&self, source: CanonicalUuid, locus: tape::Locus, text: &str) -> QuoteTarget {
+            QuoteTarget::Tape {
+                lane: self.lane,
+                source,
+                locus: wire::MessageLocus {
+                    member: locus.member,
+                    offset: locus.offset,
+                    length: locus.length,
+                    event: 0,
+                },
+                digest: QuoteTarget::text_digest(text),
+            }
+        }
+
+        fn finish(self) {
+            self.bus.shutdown().expect("fixture bus stops");
+            drop(self.tape);
+            fs::remove_dir_all(self.root).expect("fixture cleanup succeeds");
+        }
+    }
+
+    fn session_bus(
+        lane: CanonicalUuid,
+        source: CanonicalUuid,
+        vendor: wire::Name,
+        predecessor: tape::Locus,
+        successor: tape::Locus,
+        end: listen::Position,
+    ) -> bus::Bus {
+        let bus = bus::Bus::start(journal::Journal::in_memory().expect("fixture journal opens"))
+            .expect("fixture bus starts");
+        let mut write = journal::JournalWrite::new(
+            wire::Actor::Spice,
+            format!("lane:{lane}").parse().expect("fixture origin"),
+            wire::Instant::new(jiff::Timestamp::now()).expect("fixture instant"),
+            wire::Producer::ResidentRecognition,
+        );
+        for (occupant, worktree, identity, locus) in [
+            (uuid(3), "/worktrees/predecessor", "session-a", predecessor),
+            (uuid(4), "/worktrees/successor", "session-b", successor),
+        ] {
+            write
+                .fact(
+                    wire::body::LaneSessionDeclared {
+                        lane,
+                        occupant,
+                        worktree: worktree.to_owned(),
+                        vendor: vendor.clone(),
+                        launch: None,
+                        epoch: uuid(5),
+                        stream: "session".to_owned(),
+                        identity: identity.to_owned(),
+                        member: locus.member,
+                        offset: locus.offset,
+                        length: locus.length,
+                    },
+                    journal::FactCause::Root,
+                )
+                .expect("fixture session declaration builds");
+        }
+        let next = wire::body::TranscriptPosition {
+            member: end.member,
+            offset: end.offset,
+        };
+        let ingested = write
+            .fact(
+                wire::body::JournalIngested {
+                    lane,
+                    vendor: vendor.clone(),
+                    stream: "session".to_owned(),
+                    source,
+                    supersedes: None,
+                    from: wire::body::TranscriptPosition {
+                        member: predecessor.member,
+                        offset: predecessor.offset,
+                    },
+                    to: next,
+                    usage: Vec::new(),
+                    non_usage_records: 2,
+                    residue_records: 0,
+                },
+                journal::FactCause::Root,
+            )
+            .expect("fixture ingestion builds");
+        write.transcript_source_head(ingested, move |_| wire::TranscriptSourceHead {
+            lane,
+            vendor,
+            stream: "session".to_owned(),
+            source,
+            next,
+        });
+        assert!(matches!(
+            bus.commit(write).expect("fixture facts commit"),
+            bus::CommitOutcome::Committed(_)
+        ));
+        bus
+    }
+
+    #[test]
+    fn durable_source_loci_resolve_each_session_author_after_lane_renewal() {
+        let fixture = DurableQuoteFixture::new();
+        let reader = fixture.bus.reader();
+        let resolver = Resolver::from_tape(&fixture.tape_root, &reader);
+        for (locus, text, occupant) in [
+            (fixture.predecessor_locus, PREDECESSOR_TEXT, uuid(3)),
+            (fixture.successor_locus, SUCCESSOR_TEXT, uuid(4)),
+        ] {
+            assert_eq!(
+                resolver.resolve(&fixture.target(fixture.source, locus, text).to_string(), 0),
+                QuoteResolution::Resolved(ResolvedQuote {
+                    text: text.to_owned(),
+                    author: QuoteAuthor::Agent {
+                        lane: fixture.lane,
+                        occupant,
+                    },
+                    disposition: None,
+                })
+            );
+        }
+        let sessions = TranscriptSessions::from_snapshot(
+            &fixture.bus.fact_snapshot().expect("fixture facts read"),
+        );
         assert_eq!(
-            sessions.worktree_at(lane, source, tape::Locus::new(1, 20, 1)),
+            sessions.worktree_at(fixture.lane, fixture.source, fixture.predecessor_locus),
             Some(Path::new("/worktrees/predecessor")),
         );
-        assert_eq!(
-            sessions
-                .at(lane, source, tape::Locus::new(1, 40, 1))
-                .expect("successor session covers later quote")
-                .occupant,
-            successor,
-        );
+        for unavailable in [
+            fixture.target(uuid(9), fixture.predecessor_locus, PREDECESSOR_TEXT),
+            fixture.target(
+                fixture.source,
+                tape::Locus::new(fixture.successor_locus.member, fixture.end_offset + 1, 1),
+                SUCCESSOR_TEXT,
+            ),
+        ] {
+            assert!(matches!(
+                resolver.resolve(&unavailable.to_string(), 0),
+                QuoteResolution::Unavailable {
+                    reason: QuoteUnavailable::Unknown,
+                    ..
+                }
+            ));
+        }
+        drop(resolver);
+        drop(reader);
+        fixture.finish();
     }
 
     fn tape_target(text: &str) -> QuoteTarget {
