@@ -840,11 +840,11 @@ pub(super) fn publish_test_historical_receipt(
             "test fixture receipt is not complete".to_owned(),
         ));
     }
-    record.remove_test_symbol_assets(repository)?;
     match version {
         super::MIGRATABLE_RECORD_VERSION
         | super::FORWARD_MIGRATABLE_RECORD_VERSION
         | super::INLINE_ROLLBACK_RECORD_VERSION => {
+            record.remove_test_symbol_assets(repository)?;
             record.remove_test_newer_hook_assets(repository)?;
             if version == super::MIGRATABLE_RECORD_VERSION {
                 record.plan.retirements.clear();
@@ -870,7 +870,19 @@ pub(super) fn publish_test_historical_receipt(
                 }
             }
         }
-        super::PREVIOUS_RECORD_VERSION => {}
+        super::PREVIOUS_RECORD_VERSION => {
+            // Version 15 orders no Canvas history and retires no generation.
+            record.plan.app_predecessors.clear();
+            let kept = record
+                .plan
+                .retirements
+                .iter()
+                .take_while(|retirement| super::app::generation_file(&retirement.path).is_none())
+                .count();
+            record.plan.retirements.truncate(kept);
+            record.retired_parents.truncate(kept);
+            record.restored_retirements.truncate(kept);
+        }
         _ => {
             return Err(InstallError::InvalidRecord(format!(
                 "test receipt schema {version} is not directly upgradable"

@@ -97,7 +97,7 @@ fn validate_optional_tail(plan: &InstallPlan, tail: &[Operation]) -> Result<(), 
     let with_symbols = [Asset::Binary, Asset::SymbolsInfo, Asset::SymbolsDwarf];
     let admitted = tail.is_empty()
         || tail == [Asset::Binary]
-        || (plan.version == PLAN_VERSION && tail == with_symbols);
+        || (matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION) && tail == with_symbols);
     if !admitted {
         return Err(InstallError::InvalidRecord(
             "optional executable and symbols do not close the operation inventory".to_owned(),
@@ -129,7 +129,19 @@ fn app_operation_inventory(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<Vec<Asset>, InstallError> {
+    if plan.app_predecessors.len() > RETAINED_CANVAS_PREDECESSORS
+        || (plan.version != PLAN_VERSION && !plan.app_predecessors.is_empty())
+    {
+        return Err(InstallError::InvalidRecord(
+            "Canvas predecessor inventory exceeds its schema or bound".to_owned(),
+        ));
+    }
     let Some(current) = &plan.app else {
+        if !plan.app_predecessors.is_empty() {
+            return Err(InstallError::InvalidRecord(
+                "Canvas predecessors have no current generation".to_owned(),
+            ));
+        }
         return Ok(Vec::new());
     };
     let mut groups = BTreeMap::<&str, BTreeSet<Asset>>::new();
@@ -182,6 +194,22 @@ fn app_operation_inventory(
     let current_assets = groups.remove(current.as_str()).ok_or_else(|| {
         InstallError::InvalidRecord("install plan omits its current Canvas generation".to_owned())
     })?;
+    // Recency lives only in the ordered inventory; operations keep one
+    // canonical digest order, so the inventory must name exactly the retained
+    // generations, each once.
+    let listed = plan
+        .app_predecessors
+        .iter()
+        .map(Digest::as_str)
+        .collect::<BTreeSet<_>>();
+    if plan.version == PLAN_VERSION
+        && (listed.len() != plan.app_predecessors.len() || !listed.iter().eq(groups.keys()))
+    {
+        return Err(InstallError::InvalidRecord(
+            "Canvas predecessor inventory does not name exactly its retained generations"
+                .to_owned(),
+        ));
+    }
     let expected = groups
         .into_iter()
         .chain([(current.as_str(), current_assets)])
@@ -217,20 +245,31 @@ fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result
             ));
         }
     } else {
+        let retired_generations = if plan.version == PLAN_VERSION {
+            plan.retirements
+                .iter()
+                .rev()
+                .take_while(|retirement| app::generation_file(&retirement.path).is_some())
+                .count()
+        } else {
+            0
+        };
+        let (fixed, retired) = plan
+            .retirements
+            .split_at(plan.retirements.len() - retired_generations);
         let mut expected = vec![RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH];
         if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION) {
             expected.push(RETIRED_FOLD_STORE_PATH);
         }
-        // Only a current plan without symbols may discard a retained bundle.
-        if plan.version == PLAN_VERSION
+        // Only a plan without symbols may discard a retained bundle.
+        if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
             && plan.symbols.is_none()
-            && plan.retirements.len() == expected.len() + symbols::DISCARD_PATHS.len()
+            && fixed.len() == expected.len() + symbols::DISCARD_PATHS.len()
         {
             expected.extend(symbols::DISCARD_PATHS);
         }
-        if plan.retirements.len() != expected.len()
-            || plan
-                .retirements
+        if fixed.len() != expected.len()
+            || fixed
                 .iter()
                 .zip(expected)
                 .any(|(retirement, path)| retirement.path != path)
@@ -239,6 +278,7 @@ fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result
                 "install retirement inventory is not exact and ordered".to_owned(),
             ));
         }
+        validate_retired_generations(plan, retired)?;
     }
     if plan
         .retirements
@@ -276,6 +316,39 @@ fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result
     }
     if let Some(rollback) = plan.staged_rollback_state()? {
         plan.validate_rollback_state(&rollback)?;
+    }
+    Ok(())
+}
+
+/// Out-of-bound generations retire as discards witnessed by their installed
+/// images, in generation then asset order, each bound to withdraw exactly its
+/// own generation directory and none that the plan still publishes.
+fn validate_retired_generations(
+    plan: &InstallPlan,
+    retired: &[Retirement],
+) -> Result<(), InstallError> {
+    let mut prior = None;
+    for retirement in retired {
+        let (generation, file) =
+            app::generation_file(&retirement.path).expect("the tail holds only generation files");
+        let asset = app::asset_file(file).expect("a generation file names an asset");
+        let published = plan
+            .app
+            .iter()
+            .chain(&plan.app_predecessors)
+            .any(|kept| kept.as_str() == generation);
+        if published
+            || generation.parse::<Digest>().is_err()
+            || !retirement.discard
+            || retirement.superseded.is_none()
+            || retirement.parent.missing != generation
+            || prior.is_some_and(|prior| prior >= (generation, asset))
+        {
+            return Err(InstallError::InvalidRecord(
+                "retired Canvas generations are not exact, ordered discards".to_owned(),
+            ));
+        }
+        prior = Some((generation, asset));
     }
     Ok(())
 }
@@ -321,10 +394,11 @@ fn validate_retirement(retirement: &Retirement, plan_version: u16) -> Result<(),
     validate_relative(&retirement.path)?;
     validate_relative(&retirement.destination)?;
     let expected_parent = Path::new(&retirement.parent.ancestor).join(&retirement.parent.missing);
-    let current_discard = (matches!(plan_version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
-        && retirement.path == RETIRED_FOLD_STORE_PATH)
-        || (plan_version == PLAN_VERSION
-            && symbols::DISCARD_PATHS.contains(&retirement.path.as_str()));
+    let manifest_version = matches!(plan_version, PLAN_VERSION | PREVIOUS_RECORD_VERSION);
+    let current_discard = (manifest_version
+        && (retirement.path == RETIRED_FOLD_STORE_PATH
+            || symbols::DISCARD_PATHS.contains(&retirement.path.as_str())))
+        || (plan_version == PLAN_VERSION && app::generation_file(&retirement.path).is_some());
     let invalid_discard = if current_discard {
         !retirement.discard
             || retirement.previous.is_some()

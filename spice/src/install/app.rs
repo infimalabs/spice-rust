@@ -98,11 +98,23 @@ pub(super) fn asset_file(file: &str) -> Option<Asset> {
         .or_else(|| wire::manifest::renderer::File::parse_filename(file).map(Asset::CanvasRenderer))
 }
 
+/// Common-directory root under which every installed Canvas generation lives.
+pub(super) const GENERATIONS_PATH: &str = ".spice-install/app/generations";
+
 pub(super) fn generation_spelling(asset: Asset, path: &str) -> Option<&str> {
-    let (generation, file) = path
-        .strip_prefix(".spice-install/app/generations/")?
-        .split_once('/')?;
+    let (generation, file) = split_generation_path(path)?;
     (asset_file(file) == Some(asset)).then_some(generation)
+}
+
+/// Generation and file named by any installed Canvas generation file path.
+pub(super) fn generation_file(path: &str) -> Option<(&str, &str)> {
+    split_generation_path(path).filter(|(_, file)| asset_file(file).is_some())
+}
+
+fn split_generation_path(path: &str) -> Option<(&str, &str)> {
+    path.strip_prefix(GENERATIONS_PATH)?
+        .strip_prefix('/')?
+        .split_once('/')
 }
 
 pub(super) fn operation_generation(asset: Asset, path: &str) -> Option<Digest> {
@@ -122,9 +134,7 @@ pub(super) fn operation_path(
     let generation = generation.ok_or_else(|| {
         InstallError::InvalidRecord("Canvas operation has no generation identity".to_owned())
     })?;
-    Ok(Some(format!(
-        ".spice-install/app/generations/{generation}/{file}"
-    )))
+    Ok(Some(format!("{GENERATIONS_PATH}/{generation}/{file}")))
 }
 
 fn staged(root: &Path) -> Result<Source, InstallError> {

@@ -79,6 +79,26 @@ pub(super) fn prepare_retirement(
     path.parent_generation()
 }
 
+/// Remove the directories a discarded retirement's binding names as missing,
+/// each only while it is empty.
+///
+/// The binding anchors above those directories, so a directory an earlier
+/// attempt already removed leaves nothing to open and nothing to do.
+pub(super) fn withdraw_parent(
+    repository: &Repository,
+    retirement: &Retirement,
+) -> Result<(), InstallError> {
+    debug_assert!(retirement.discards_payload());
+    let mut path = AdmittedPath::open(
+        repository.common_dir(),
+        &retirement.destination,
+        &retirement.parent,
+        false,
+        Path::new(&retirement.parent.missing).components().count(),
+    )?;
+    path.cleanup_introduced()
+}
+
 fn temporary_collision(
     repository: &Repository,
     retirement: &Retirement,

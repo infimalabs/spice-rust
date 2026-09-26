@@ -60,6 +60,41 @@ impl Fixture {
                 .expect("publish historical fixture receipt");
         loaded
     }
+
+    fn install(&self) -> Digest {
+        let repository = self.repository();
+        let plan = install::plan(&repository, Some(&self.binary())).expect("initial plan");
+        install::apply(&repository, Some(&self.binary()), &plan.digest().unwrap())
+            .expect("initial install");
+        plan.app_generation().unwrap().clone()
+    }
+
+    /// Stage and install one new Canvas generation through the prepared route.
+    fn refresh(&self, label: &[u8]) -> Digest {
+        let repository = self.repository();
+        let current = self.stage(label);
+        let prepared = install::prepare(&repository, Some(&self.binary())).expect("refresh plan");
+        install::apply_prepared(&repository, Some(&self.binary()), prepared)
+            .expect("prepared refresh applies");
+        current
+    }
+
+    fn installed_generations(&self) -> Vec<String> {
+        let store = self
+            .repository()
+            .common_dir()
+            .join(install::app::GENERATIONS_PATH);
+        let mut generations = fs::read_dir(store)
+            .expect("installed app store")
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect::<Vec<_>>();
+        generations.sort();
+        generations
+    }
+
+    fn receipt(&self) -> Vec<u8> {
+        fs::read(record_path(&self.repository()).unwrap()).expect("install receipt")
+    }
 }
 
 impl Drop for Fixture {
@@ -143,4 +178,161 @@ fn canvas_history_exception_does_not_admit_missing_base_assets_or_new_incomplete
         loaded.record.plan.validate_historical_receipt().is_err(),
         "historical generations must still contain every original base asset"
     );
+}
+
+fn sorted(generations: &[&Digest]) -> Vec<String> {
+    let mut names = generations
+        .iter()
+        .map(|generation| generation.as_str().to_owned())
+        .collect::<Vec<_>>();
+    names.sort();
+    names
+}
+
+#[test]
+fn canvas_history_stays_bounded_and_ordered_across_refreshes() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let mut history = vec![fixture.install()];
+    let mut steady = None;
+    for round in 0..3 * install::RETAINED_CANVAS_PREDECESSORS as u8 + 2 {
+        let current = fixture.refresh(&[b'r', round]);
+        install::inspect(&repository).expect("bounded refresh verifies");
+        let retained = &history[history
+            .len()
+            .saturating_sub(install::RETAINED_CANVAS_PREDECESSORS)..];
+        let plan = read_record(&repository).unwrap().unwrap().record.plan;
+        assert_eq!(plan.app_predecessors, retained, "recency order is exact");
+        let live = retained.iter().chain([&current]).collect::<Vec<_>>();
+        assert_eq!(fixture.installed_generations(), sorted(&live));
+        let source =
+            install::installed_canvas_source(&repository, &install::installed_binary(&repository))
+                .expect("installed app is complete");
+        for generation in &history {
+            let route = format!("{}/{generation}/style.css", canvas::APP_GENERATION_ROUTE);
+            assert_eq!(
+                matches!(source.served(&route), Ok(Some(_))),
+                retained.contains(generation),
+                "exactly the retained generations remain served"
+            );
+        }
+        history.push(current);
+        if history.len() > install::RETAINED_CANVAS_PREDECESSORS + 2 {
+            let shape = (
+                plan.operations.len(),
+                plan.retirements.len(),
+                fixture.receipt().len(),
+            );
+            let first = *steady.get_or_insert(shape);
+            assert_eq!((shape.0, shape.1), (first.0, first.1));
+            assert!(shape.2 <= first.2 + 256, "receipt bytes do not grow");
+        }
+    }
+    install::unapply(&repository).expect("a receipt with retired history reverses");
+}
+
+#[test]
+fn version_15_history_migrates_to_its_installed_generation_deterministically() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    let oldest = fixture.install();
+    let installed = fixture.refresh(b"installed");
+    install::publish_test_historical_receipt(&repository, install::PREVIOUS_RECORD_VERSION)
+        .expect("version-15 receipt");
+    let current = fixture.stage(b"current");
+    let plan = install::plan(&repository, Some(&fixture.binary())).unwrap();
+    assert_eq!(
+        plan.digest().unwrap(),
+        install::plan(&repository, Some(&fixture.binary()))
+            .unwrap()
+            .digest()
+            .unwrap()
+    );
+    assert_eq!(plan.app_predecessors, std::slice::from_ref(&installed));
+    assert!(
+        plan.retirements
+            .iter()
+            .filter_map(|retirement| install::app::generation_file(&retirement.path))
+            .all(|(generation, _)| generation == oldest.as_str())
+    );
+    install::apply(
+        &repository,
+        Some(&fixture.binary()),
+        &plan.digest().unwrap(),
+    )
+    .expect("version-15 history retires on refresh");
+    install::inspect(&repository).expect("migrated receipt verifies");
+    assert_eq!(
+        fixture.installed_generations(),
+        sorted(&[&installed, &current])
+    );
+}
+
+#[test]
+fn interrupted_generation_retirement_resumes_to_completion() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    fixture.install();
+    let mut retained = (0..install::RETAINED_CANVAS_PREDECESSORS as u8)
+        .map(|round| fixture.refresh(&[b'r', round]))
+        .collect::<Vec<_>>();
+    let current = fixture.stage(b"current");
+    let plan = install::plan(&repository, Some(&fixture.binary())).unwrap();
+    let first = plan
+        .retirements
+        .iter()
+        .position(|retirement| install::app::generation_file(&retirement.path).is_some())
+        .expect("the oldest generation retires");
+    let digest = plan.digest().unwrap();
+    let interrupted = install::progress::apply_with_interruption(
+        &repository,
+        Some(&fixture.binary()),
+        &digest,
+        Some(plan.operations.len() + first + 1),
+    );
+    assert!(matches!(interrupted, Err(InstallError::Interrupted { .. })));
+    install::apply(&repository, Some(&fixture.binary()), &digest)
+        .expect("the fenced run resumes from any retired file");
+    install::inspect(&repository).expect("resumed receipt verifies");
+    retained.push(current);
+    assert_eq!(
+        fixture.installed_generations(),
+        sorted(&retained.iter().collect::<Vec<_>>())
+    );
+}
+
+#[test]
+fn prepared_install_refuses_changes_after_preview_before_mutating() {
+    let fixture = Fixture::new();
+    let repository = fixture.repository();
+    fixture.install();
+    let binary = fixture.binary();
+    let installed_binary = install::installed_binary(&repository);
+    fixture.stage(b"next");
+    let refused = |mutate: &dyn Fn()| {
+        let prepared = install::prepare(&repository, Some(&binary)).unwrap();
+        mutate();
+        let receipt = fixture.receipt();
+        let executable = fs::read(&installed_binary).unwrap();
+        let generations = fixture.installed_generations();
+        assert!(install::apply_prepared(&repository, Some(&binary), prepared).is_err());
+        assert_eq!(fixture.receipt(), receipt, "the receipt is untouched");
+        assert_eq!(fs::read(&installed_binary).unwrap(), executable);
+        assert_eq!(fixture.installed_generations(), generations);
+    };
+    // Source bytes.
+    refused(&|| fs::write(&binary, b"#!/bin/sh\nexit 1\n").unwrap());
+    fs::write(&binary, b"#!/bin/sh\nexit 0\n").unwrap();
+    // Source generation.
+    refused(&|| {
+        fixture.stage(b"later");
+    });
+    // Receipt: another process applies the same refresh first.
+    refused(&|| {
+        let rival = install::prepare(&repository, Some(&binary)).unwrap();
+        install::apply_prepared(&repository, Some(&binary), rival).unwrap();
+    });
+    // Destination file generation.
+    fixture.stage(b"final");
+    refused(&|| fs::write(&installed_binary, b"drift").unwrap());
 }

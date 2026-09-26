@@ -326,6 +326,14 @@ impl Retirement {
         self.discard
     }
 
+    /// Whether this discard is the last of its planned run over one binding
+    /// that names missing parent directories, which it withdraws once empty.
+    pub(super) fn withdraws_parent(&self, next: Option<&Self>) -> bool {
+        self.discard
+            && !self.parent.missing.is_empty()
+            && next.is_none_or(|next| next.parent != self.parent)
+    }
+
     pub(super) fn rollback_witness(&self) -> Option<&GeneratedImage> {
         if self.discard {
             return None;

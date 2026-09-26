@@ -360,6 +360,22 @@ flowchart TD
 Application requires that plan's exact digest and executes the same resolved
 receipt-owned operations; a moved digest refuses before mutation.
 
+**Invariant —** A process that derives a plan and applies it itself, such as the
+development refresh, may carry that prepared plan into apply instead of deriving
+it again. Before any mutation it still proves the receipt is the exact native
+generation and image the plan was derived from, every published source byte and
+the source Canvas generation, and every destination binding and installed
+image. Any change refuses before effect. Digest-only apply always derives again.
+
+**Invariant —** Installed Canvas history is bounded. A plan publishes its
+current generation and an ordered inventory of at most two predecessors, oldest
+first. A refresh retains the installed current generation and the newest
+installed predecessors within that bound. Every other installed generation
+retires in the same transaction: each file is discarded only while it still
+holds the installed image, and each emptied generation directory is withdrawn.
+A schema-15 receipt orders no history, so its migration retains only its
+installed current generation.
+
 **Invariant —** Preview never invokes maintenance. After apply admits the exact
 digest and bound observations, it may run one bounded pass that reclaims only
 recognized stale install-record publications and unreferenced rollback blobs.
@@ -528,9 +544,9 @@ authenticated by the canonical receipt. Its identity and exact relationship to
 that receipt are validated before it can drive reversal or migration.
 
 **Invariant —** Install support is bounded by receipt schema, not product semantic
-version. The current `dist/VERSION` value `0.0.0` emits schema 14 and directly
-migrates complete schemas 7, 8, 9, and 13; no intermediate package executes.
-Historical schemas 1–6 and 10–12 refuse before receipt-owned mutation and name
+version. The current `dist/VERSION` value `0.0.0` emits schema 16 and directly
+migrates complete schemas 7, 8, 9, and 15; no intermediate package executes.
+Historical schemas 1–6 and 10–14 refuse before receipt-owned mutation and name
 the release change whose executable can unapply them:
 
 | Receipt schema | Current disposition | Retired owner, when unsupported |
@@ -541,11 +557,13 @@ the release change whose executable can unapply them:
 | 4 | Refuse | `INSTALL-1kKQTfBp` |
 | 5 | Refuse | `INSTALL-1kLW2GVN` |
 | 6 | Refuse | `HOOKS-1kMFzkkc` |
-| 7, 8, 9 | Direct migration to 14 | — |
+| 7, 8, 9 | Direct migration to 16 | — |
 | 10, 11 | Refuse | `WRAPPER-1kNYClbf` |
 | 12 | Refuse | `RETIREM-1kSR91Zl` |
-| 13 | Direct migration to 14 | — |
-| 14 | Current | — |
+| 13 | Refuse | `INSTALL-1kSWFBN0` |
+| 14 | Refuse | `SYMBOLS-dSPkcQ47R` |
+| 15 | Direct migration to 16 | — |
+| 16 | Current | — |
 
 Moving a directly migratable schema into the retired set requires adding its
 immutable owner in the same release landing. Release notes derive from that

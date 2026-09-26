@@ -25,6 +25,7 @@ mod model;
 mod path;
 mod progress;
 mod record;
+mod retention;
 mod rollback;
 mod symbol_sample;
 mod symbol_verification;
@@ -38,11 +39,13 @@ pub use error::InstallError;
 use files::{
     cleanup_operation, matches_generated, materialize_generated, observe, observe_bound,
     prepare_retirement, publish_bound, publish_operation, restore_operation, restore_retirement,
-    retire_path,
+    retire_path, withdraw_parent,
 };
 use path::validate_relative;
+pub use progress::PreparedInstall;
 use progress::{
-    apply_with_interruption, unapply_with_interruption, verify_progress, verify_refresh_progress,
+    apply_prepared_with_interruption, apply_with_interruption, unapply_with_interruption,
+    verify_progress,
 };
 use record::{RefreshRecord, read_record, read_record_for_refresh};
 use rollback::{RollbackArchive, RollbackState, rollback_image_matches};
@@ -71,14 +74,22 @@ pub use symbol_verification::{
 };
 pub use symbols::SymbolProvenance;
 
-const PLAN_VERSION: u16 = 15;
-const RECORD_VERSION: u16 = 15;
+const PLAN_VERSION: u16 = 16;
+const RECORD_VERSION: u16 = 16;
 const RETIREMENT_WITNESS_MISMATCH: &str =
     "migration rollback archive does not match its retirement witnesses";
 const MIGRATABLE_RECORD_VERSION: u16 = 7;
 const FORWARD_MIGRATABLE_RECORD_VERSION: u16 = 8;
 const INLINE_ROLLBACK_RECORD_VERSION: u16 = 9;
-const PREVIOUS_RECORD_VERSION: u16 = 14;
+const PREVIOUS_RECORD_VERSION: u16 = 15;
+/// Canvas generations a plan retains immediately before its current one.
+///
+/// A page loaded from a generation keeps fetching that generation's lazily
+/// loaded renderers and styles until it notices the new pointer and reloads.
+/// Two predecessors let such a page survive back-to-back refreshes; anything
+/// older retires with the refresh that pushes it past this bound, so installed
+/// bytes and receipt size stay constant however often the appliance refreshes.
+const RETAINED_CANVAS_PREDECESSORS: usize = 2;
 /// Environment marker exported only by the installed pre-commit launcher.
 pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,7 +99,7 @@ enum ReceiptSupport {
     Retired(&'static str),
 }
 
-const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 15] = [
+const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 16] = [
     (1, ReceiptSupport::Retired("SURFACE-1kJQkpFs")),
     (2, ReceiptSupport::Retired("SURFACE-1kJRGpf2")),
     (3, ReceiptSupport::Retired("HOOKS-1kJQnmG8")),
@@ -102,6 +113,7 @@ const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 15] = [
     (11, ReceiptSupport::Retired("WRAPPER-1kNYClbf")),
     (12, ReceiptSupport::Retired("RETIREM-1kSR91Zl")),
     (13, ReceiptSupport::Retired("INSTALL-1kSWFBN0")),
+    (14, ReceiptSupport::Retired("SYMBOLS-dSPkcQ47R")),
     (PREVIOUS_RECORD_VERSION, ReceiptSupport::Direct),
     (RECORD_VERSION, ReceiptSupport::Current),
 ];
@@ -167,6 +179,9 @@ pub struct InstallPlan {
     operations: Vec<Operation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     app: Option<Digest>,
+    /// Retained Canvas generations before `app`, oldest first.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    app_predecessors: Vec<Digest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     retirements: Vec<Retirement>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -202,7 +217,8 @@ impl InstallPlan {
         self.app.as_ref()
     }
 
-    /// Legacy paths this plan removes only after all live assets publish.
+    /// Legacy paths and out-of-bound Canvas generations this plan removes only
+    /// after all live assets publish.
     #[must_use]
     pub fn retirements(&self) -> &[Retirement] {
         &self.retirements
@@ -423,9 +439,8 @@ impl InstallPlan {
             }
         }
         for retirement in &self.retirements {
-            let current = bind_destination(repository.common_dir(), &retirement.path)?;
-            if current.destination != retirement.destination || current.parent != retirement.parent
-            {
+            let (destination, parent) = retention::retirement_binding(repository, retirement)?;
+            if destination != retirement.destination || parent != retirement.parent {
                 return Err(InstallError::ParentChanged(
                     retirement.destination(repository),
                 ));
@@ -531,69 +546,38 @@ pub fn plan(
     repository: &Repository,
     spice_binary: Option<&Path>,
 ) -> Result<InstallPlan, InstallError> {
-    if let Some(refresh) = read_record_for_refresh(repository)? {
-        return plan_from_refresh(repository, spice_binary, refresh);
-    }
-    build_plan(repository, spice_binary)
+    progress::prepare(repository, spice_binary).map(PreparedInstall::into_plan)
 }
 
-fn plan_from_refresh(
+/// Derive the exact plan [`apply_prepared`] would execute, keeping it for this
+/// process instead of reducing it to a digest.
+pub fn prepare(
     repository: &Repository,
     spice_binary: Option<&Path>,
-    refresh: RefreshRecord,
-) -> Result<InstallPlan, InstallError> {
-    let repairable = refresh.is_repairable();
-    let loaded = refresh.into_loaded();
-    let record = loaded.record;
-    let rollback_record = if record.plan.version == MIGRATABLE_RECORD_VERSION {
-        Some(
-            loaded
-                .image
-                .as_ref()
-                .expect("only a version-7 receipt retains its source image"),
-        )
-    } else {
-        None
-    };
-    let rollback_archive = (record.plan.version != MIGRATABLE_RECORD_VERSION)
-        .then_some(record.plan.rollback_archive.as_ref())
-        .flatten();
-    if record.status == InstallStatus::Uninstalled {
-        verify_progress(repository, &record)?;
-        return build_plan(repository, spice_binary);
-    }
-    if record.status == InstallStatus::Complete
-        && (repairable
-            || current_build_differs(repository, &record.plan, spice_binary)?
-            || hook_activation::topology_changed(repository, &record.plan)?)
-    {
-        // A rebuilt executable over a complete install is a refresh, not a
-        // conflict. The same transaction also carries fixed hooks and the
-        // generated skill across build boundaries. Every receipt-owned
-        // destination must still be intact; only binary drift has the
-        // explicit reconciliation authority described below.
-        let binary_superseded = verify_refresh_progress(repository, &record)?;
-        return build_plan_over(
-            repository,
-            spice_binary,
-            Some(&record.plan),
-            binary_superseded.as_ref(),
-            rollback_record,
-            rollback_archive,
-        );
-    }
-    verify_binary_context(&record.plan, spice_binary)?;
-    verify_progress(repository, &record)?;
-    Ok(record.plan)
+) -> Result<PreparedInstall, InstallError> {
+    progress::prepare(repository, spice_binary)
 }
 
 /// Apply only the exact current plan named by `expected`.
+///
+/// This route trusts nothing from any earlier preview: it derives the plan
+/// from the receipt and sources again and refuses unless that plan has the
+/// named digest.
 pub fn apply(
     repository: &Repository,
     spice_binary: Option<&Path>,
     expected: &Digest,
 ) -> Result<InstallReceipt, InstallError> {
     apply_with_interruption(repository, spice_binary, expected, None)
+}
+
+/// Apply a plan this process prepared, without deriving it a second time.
+pub fn apply_prepared(
+    repository: &Repository,
+    spice_binary: Option<&Path>,
+    prepared: PreparedInstall,
+) -> Result<InstallReceipt, InstallError> {
+    apply_prepared_with_interruption(repository, spice_binary, prepared, None)
 }
 
 /// Reverse the complete current install without touching drifted targets.
@@ -620,7 +604,7 @@ fn append_planned_operations(
     repository: &Repository,
     installed: Option<&InstallPlan>,
     (spice_binary, binary_superseded): (Option<&Path>, Option<&GeneratedImage>),
-    (app, symbols): (Option<&app::Source>, Option<&symbols::Source>),
+    (app, predecessors, symbols): (Option<&app::Source>, &[Digest], Option<&symbols::Source>),
     archiving: bool,
 ) -> Result<(Vec<Operation>, Vec<Option<FileImage>>), InstallError> {
     let mut virtual_directories = BTreeSet::new();
@@ -645,7 +629,7 @@ fn append_planned_operations(
             repository,
             installed,
             &installed_operations,
-            app,
+            (app, predecessors),
             archiving,
             (
                 &mut virtual_directories,
@@ -701,13 +685,16 @@ fn build_plan_over(
         .map(|binary| symbols::Source::resolve(repository, binary))
         .transpose()?
         .flatten();
+    let predecessors = app.as_ref().map_or_else(Vec::new, |app| {
+        retention::predecessors(installed, app.generation())
+    });
     let compacting = rollback_record.is_some();
     let archiving = compacting || rollback_archive.is_some();
     let (operations, observed_operations) = append_planned_operations(
         repository,
         installed,
         (spice_binary, binary_superseded),
-        (app.as_ref(), symbols.as_ref()),
+        (app.as_ref(), &predecessors, symbols.as_ref()),
         archiving,
     )?;
 
@@ -730,8 +717,14 @@ fn build_plan_over(
     )
     .map(|path| retirement(repository, installed, path, archiving))
     .collect::<Result<Vec<_>, _>>()?;
-    let (retirements, rollback_retirements): (Vec<_>, Vec<_>) =
+    let (mut retirements, mut rollback_retirements): (Vec<_>, Vec<_>) =
         planned_retirements.into_iter().unzip();
+    if let Some(app) = &app {
+        let retired =
+            retention::retirements(repository, installed, app.generation(), &predecessors)?;
+        rollback_retirements.resize(rollback_retirements.len() + retired.len(), None);
+        retirements.extend(retired);
+    }
     let hook_activation = spice_binary
         .is_some()
         .then(|| {
@@ -764,6 +757,7 @@ fn build_plan_over(
         record,
         operations,
         app: app.as_ref().map(|app| app.generation().clone()),
+        app_predecessors: predecessors,
         retirements,
         rollback_archive,
         hook_activation,
@@ -971,13 +965,14 @@ struct PlannedAppAsset {
 fn planned_app_assets(
     installed: Option<&InstallPlan>,
     source: &app::Source,
+    predecessors: &[Digest],
 ) -> Result<Vec<PlannedAppAsset>, InstallError> {
     let mut planned = installed
         .into_iter()
         .flat_map(|plan| &plan.operations)
         .filter_map(|operation| {
             let generation = app::operation_generation(operation.asset, &operation.path)?;
-            (generation != *source.generation()).then(|| PlannedAppAsset {
+            predecessors.contains(&generation).then(|| PlannedAppAsset {
                 asset: operation.asset,
                 generation,
                 generated: operation.generated.clone(),
@@ -1052,11 +1047,11 @@ fn append_app_operations(
     repository: &Repository,
     installed: Option<&InstallPlan>,
     installed_operations: &InstalledOperations<'_>,
-    source: &app::Source,
+    (source, predecessors): (&app::Source, &[Digest]),
     archiving: bool,
     (directories, operations, observed_operations): AppPlanState<'_>,
 ) -> Result<(), InstallError> {
-    for planned in planned_app_assets(installed, source)? {
+    for planned in planned_app_assets(installed, source, predecessors)? {
         let (_, path, _) = asset_contract(planned.asset, Some(&planned.generation))?;
         let (bound, observed) = destination_state(repository, Location::CommonGit, &path)?;
         if archiving {

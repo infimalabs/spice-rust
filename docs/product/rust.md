@@ -448,10 +448,12 @@ stored blob. Reversing that migration restores the exact pre-migration assets
 and version-7 receipt as one prior state, rather than running the older shape
 through the current appliance.
 
-The current `0.0.0` product line uses receipt schema 14. Historical install
-support is schema-bounded: complete schemas 7, 8, 9, and 13 migrate directly to
-14, while schemas 1–6 and 10–12 must be unapplied by their named retired owner
-before the current installer proceeds.
+The current `0.0.0` product line uses receipt schema 16. Historical install
+support is schema-bounded: complete schemas 7, 8, 9, and 15 migrate directly to
+16, while schemas 1–6 and 10–14 must be unapplied by their named retired owner
+before the current installer proceeds. Installed Canvas history is bounded to
+the current generation and two ordered predecessors; older generations retire
+inside the refresh transaction.
 
 The compiled CLI exposes the sole Spice command vocabulary. The active harness
 owns task, session, and steering state; an installed Spice bootstrap explicitly

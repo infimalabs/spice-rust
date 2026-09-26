@@ -140,7 +140,7 @@ pub fn audit_appliance(
         return Ok(audit);
     }
     if repairable {
-        super::plan_from_refresh(repository, Some(current_binary), loaded.refresh)?;
+        super::progress::prepare_over(repository, Some(current_binary), loaded.refresh)?;
         return Ok(report(
             ApplianceState::RepairableReceipt,
             format!(
