@@ -105,7 +105,7 @@ pub(super) fn migrate(connection: &Connection) -> Result<(), OpenError> {
                 continued,
                 &mut pending,
                 &mut declarations,
-            );
+            )?;
             current.insert(stream, observed);
         }
     }
@@ -148,9 +148,9 @@ fn bind(
     continued: bool,
     pending: &mut BTreeMap<Stream, Pending>,
     declarations: &mut [Declaration],
-) {
+) -> Result<(), OpenError> {
     let Some(sessions) = pending.get_mut(stream) else {
-        return;
+        return Ok(());
     };
     while let Some((&position, _)) = if continued {
         sessions.range(..batch.to).next()
@@ -160,6 +160,16 @@ fn bind(
         let indexes = sessions
             .remove(&position)
             .expect("observed pending position");
+        if let Some(index) = indexes.iter().copied().find(|&index| {
+            declarations[index]
+                .candidate
+                .is_some_and(|candidate| candidate != batch.source)
+        }) {
+            return Err(invalid(
+                &declarations[index].seq.to_string(),
+                "lane session intersects multiple tape generations; use the release that owns schema 30 to advance this transcript before upgrading",
+            ));
+        }
         for index in indexes {
             declarations[index].source = Some(batch.source);
         }
@@ -167,6 +177,7 @@ fn bind(
     if sessions.is_empty() {
         pending.remove(stream);
     }
+    Ok(())
 }
 
 fn qualify(declaration: &Declaration, source: CanonicalUuid) -> Result<Vec<u8>, OpenError> {
