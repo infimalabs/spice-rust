@@ -343,7 +343,7 @@ fn an_overfull_stable_epoch_falls_back_to_complete_replay() {
 fn older_history_before_a_backfilled_boundary_rests_above_it() {
     let newest = measured("newest", candidates(6, 7));
     let compaction = boundary("compaction", 2);
-    let backfilled = PersistentLanePlane::new(900, &[newest.clone()])
+    let backfilled = PersistentLanePlane::new(900, std::slice::from_ref(&newest))
         .reconcile(900, &[compaction.clone(), newest.clone()]);
     assert_eq!(backfilled.transition(), Transition::Backfill);
     let retained = backfilled.cards()[0].card.clone();
