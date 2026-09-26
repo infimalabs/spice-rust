@@ -304,6 +304,50 @@ fn seed_three_member_frontiers(runtime: &mut CanvasRuntime, session: &Session) {
 }
 
 #[test]
+fn coordinated_history_rejects_duplicate_response_frontiers_before_mutation() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    seed_three_member_frontiers(&mut runtime, &session);
+    let requested = vec![
+        serde_json::json!({
+            "generation": 1,
+            "lane": LANE,
+            "before": {"member": 1, "offset": 100, "length": 20, "event": 0},
+        }),
+        serde_json::json!({
+            "generation": 1,
+            "lane": THIRD_LANE,
+            "before": {"member": 1, "offset": 300, "length": 20, "event": 0},
+        }),
+    ];
+    let duplicate = serde_json::json!({"lane": LANE, "state": "complete"});
+    let response = serde_json::to_vec(&serde_json::json!({
+        "stream": "message-history",
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "requested": requested,
+        "generation": transcript_generation(
+            1,
+            vec![agent_message(LANE, 50, T09, "must not be merged", None)],
+            vec![duplicate.clone(), duplicate],
+        ),
+    }))
+    .expect("duplicate-frontier history serializes");
+
+    assert!(!apply(&mut runtime, &session, &response));
+    assert_eq!(target_offset(&runtime, LANE), Some(100));
+    assert_eq!(target_offset(&runtime, THIRD_LANE), Some(300));
+    assert!(
+        runtime
+            .messages()
+            .iter()
+            .all(|message| message.text != "must not be merged")
+    );
+}
+
+#[test]
 fn empty_open_pages_rearm_only_the_completed_lane_at_the_same_cursor() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
