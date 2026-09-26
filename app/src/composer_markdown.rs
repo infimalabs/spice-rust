@@ -25,6 +25,8 @@ pub(crate) struct RenderedMarkdown {
     pub(crate) diagrams: Vec<String>,
 }
 
+pub(crate) type QuoteAgents = BTreeMap<(wire::CanonicalUuid, wire::CanonicalUuid), String>;
+
 /// Render received text through the one sanitized Markdown path used by cards.
 #[cfg(test)]
 pub(crate) fn render_received(markdown: &str) -> RenderedMarkdown {
@@ -147,7 +149,7 @@ pub(crate) fn render_received_with_quotes(
     markdown: &str,
     classifications: &[MessageClassification],
     quotes: &[wire::QuotePresentation],
-    quote_agents: &BTreeMap<wire::CanonicalUuid, String>,
+    quote_agents: &QuoteAgents,
     quote_tasks: &BTreeMap<String, wire::TaskHandle>,
 ) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
@@ -460,9 +462,19 @@ fn acknowledgement_pill_html(
     label: &str,
     text: &str,
 ) -> String {
+    acknowledgement_pill_html_with_attributes(classification, acknowledgement, label, text, "")
+}
+
+fn acknowledgement_pill_html_with_attributes(
+    classification: &str,
+    acknowledgement: &str,
+    label: &str,
+    text: &str,
+    attributes: &str,
+) -> String {
     format!(
         "<span class=\"message-ack-pill\" data-message-classification=\"{classification}\" \
-         data-acknowledgement=\"{acknowledgement}\" aria-label=\"{label}\">\
+         data-acknowledgement=\"{acknowledgement}\"{attributes} aria-label=\"{label}\">\
          <span class=\"message-ack-label\">{text}</span></span>"
     )
 }

@@ -95,14 +95,16 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
             .lanes
             .iter()
             .flat_map(|team| &team.members)
-            .map(|member| {
-                (
-                    member.lane,
-                    watchband::agent_message_label(&member.worktree, member.name.as_deref())
-                        .to_owned(),
-                )
+            .filter_map(|member| {
+                member.occupant.map(|occupant| {
+                    (
+                        (member.lane, occupant),
+                        watchband::agent_message_label(&member.worktree, member.name.as_deref())
+                            .to_owned(),
+                    )
+                })
             })
-            .collect::<BTreeMap<_, _>>(),
+            .collect::<crate::composer_markdown::QuoteAgents>(),
     );
     let teams = lanes
         .lanes
@@ -160,7 +162,7 @@ pub(super) fn use_team_fleet_right_edge(host: NodeRef, team_count: usize) {
 fn render_compose(
     runtime: &CanvasRuntime,
     team: &crate::runtime::LaneRow,
-    quote_agents: &Rc<BTreeMap<CanonicalUuid, String>>,
+    quote_agents: &Rc<crate::composer_markdown::QuoteAgents>,
     standings: &[Standing],
     epoch: CanonicalUuid,
     topology_revision: u64,
@@ -311,7 +313,7 @@ fn broadcast_targets(
 fn activity_cards(
     runtime: &CanvasRuntime,
     team: &crate::runtime::LaneRow,
-    quote_agents: &Rc<BTreeMap<CanonicalUuid, String>>,
+    quote_agents: &Rc<crate::composer_markdown::QuoteAgents>,
 ) -> Vec<ActivityCard> {
     let mut cards = runtime
         .messages()

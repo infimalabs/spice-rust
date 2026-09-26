@@ -18,7 +18,7 @@ pub(super) enum ActivityCard {
     Agent {
         accent: usize,
         member: crate::runtime::LaneMember,
-        quote_agents: Rc<BTreeMap<CanonicalUuid, String>>,
+        quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
         quote_lane: CanonicalUuid,
         message: Rc<wire::AgentMessage>,
     },
@@ -81,7 +81,7 @@ impl PartialEq for ActivityCard {
 enum ActivityFingerprint {
     Agent {
         worktree: String,
-        quote_agents: Rc<BTreeMap<CanonicalUuid, String>>,
+        quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
         message: Rc<wire::AgentMessage>,
     },
     Lifecycle(crate::runtime::LaneLifecycleBoundary),

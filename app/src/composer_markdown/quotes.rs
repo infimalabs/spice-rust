@@ -1,14 +1,15 @@
 //! Synchronous HTML projection of resident-authenticated quote trees.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 
 use pulldown_cmark::{Event as MarkdownEvent, Tag, TagEnd};
-use wire::{CanonicalUuid, Disposition, QuoteAuthor, QuotePresentation, QuoteTarget, TaskHandle};
+use wire::{Disposition, QuoteAuthor, QuotePresentation, QuoteTarget, TaskHandle};
 
 pub(super) fn expand<'a>(
     events: Vec<MarkdownEvent<'a>>,
     presentations: &[QuotePresentation],
-    agents: &BTreeMap<CanonicalUuid, String>,
+    agents: &super::QuoteAgents,
     tasks: &BTreeMap<String, TaskHandle>,
 ) -> Vec<MarkdownEvent<'a>> {
     if presentations.is_empty() {
@@ -63,7 +64,7 @@ fn presentation_target(presentation: &QuotePresentation) -> &str {
 
 fn render(
     presentation: &QuotePresentation,
-    agents: &BTreeMap<CanonicalUuid, String>,
+    agents: &super::QuoteAgents,
     tasks: &BTreeMap<String, TaskHandle>,
 ) -> String {
     match presentation {
@@ -75,15 +76,15 @@ fn render(
             quotes,
         } => {
             let body = super::render_received_with_quotes(text, &[], quotes, agents, tasks);
+            let disposition = disposition.map(disposition_html).unwrap_or_default();
+            let body = body_with_disposition(&body.html, &disposition);
             format!(
                 "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
-                 data-quote-target=\"{}\"><span class=\"message-quote-header\">{}{}{}</span>\
-                 <div class=\"message-quote-body\">{}</div></div>",
+                 data-quote-target=\"{}\"><div class=\"message-quote-body\">{body}</div>\
+                 <span class=\"message-quote-signoff\">— {}{}</span></div>",
                 super::escape_html_attribute(target),
                 author_html(author, agents),
-                disposition.map(disposition_html).unwrap_or_default(),
                 task_html(target, tasks),
-                body.html,
             )
         }
         QuotePresentation::Unavailable { target, reason } => {
@@ -91,50 +92,106 @@ fn render(
             format!(
                 "<div class=\"message-quote-card message-quote-card--unavailable\" \
                  data-quote-state=\"unavailable\" data-quote-reason=\"{reason}\" \
-                 data-quote-target=\"{}\"><span class=\"message-quote-header\">\
-                 <span class=\"message-quote-author\">Quote unavailable: {reason}</span></span>\
-                 </div>",
+                 data-quote-target=\"{}\"><span class=\"message-quote-unavailable\">\
+                 Quote unavailable: {reason} · authorship unavailable</span></div>",
                 super::escape_html_attribute(target),
             )
         }
     }
 }
 
-fn author_html(author: &QuoteAuthor, agents: &BTreeMap<CanonicalUuid, String>) -> String {
+fn body_with_disposition<'a>(body: &'a str, disposition: &str) -> Cow<'a, str> {
+    if disposition.is_empty() {
+        return Cow::Borrowed(body);
+    }
+    body.strip_prefix("<p>").map_or_else(
+        || Cow::Owned(format!("{disposition}{body}")),
+        |prose| Cow::Owned(format!("<p>{disposition} {prose}")),
+    )
+}
+
+fn author_html(author: &QuoteAuthor, agents: &super::QuoteAgents) -> String {
     match author {
-        QuoteAuthor::Agent { lane, .. } => {
-            let label = agents
-                .get(lane)
-                .map(String::as_str)
-                .unwrap_or(crate::watchband::UNKNOWN_AGENT_LABEL);
+        QuoteAuthor::Agent { lane, occupant } => {
+            if let Some(label) = agents.get(&(*lane, *occupant)) {
+                let label = format!("Agent {label}");
+                return format!(
+                    "<a class=\"message-quote-author\" data-quote-author=\"agent\" \
+                     data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
+                     data-quote-history=\"available\" href=\"#/info\" \
+                     aria-label=\"Open information for {}\">{}</a>",
+                    super::escape_html_attribute(&label),
+                    escape_html_text(&label),
+                );
+            }
+            let label = format!(
+                "Agent {}/{}",
+                crate::watchband::short(*lane),
+                crate::watchband::short(*occupant),
+            );
             format!(
-                "<span class=\"message-quote-author\" data-quote-author=\"agent\">\
-                 Agent: {}</span>",
-                escape_html_text(label),
+                "<span class=\"message-quote-author\" data-quote-author=\"agent\" \
+                 data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
+                 data-quote-history=\"unavailable\" \
+                 aria-label=\"{}; identity history unavailable\">{} \
+                 <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>",
+                super::escape_html_attribute(&label),
+                escape_html_text(&label),
             )
         }
-        QuoteAuthor::Directive { actor } => {
-            let actor = actor.to_string();
-            format!(
-                "<span class=\"message-quote-author\" data-quote-author=\"directive\">\
-                 Directive by {}</span>",
-                escape_html_text(&actor),
-            )
-        }
+        QuoteAuthor::Directive { actor } => match actor {
+            wire::Actor::Operator => available_principal_html("Operator", "operator"),
+            wire::Actor::Spice => available_principal_html("Spice", "spice"),
+            wire::Actor::Lane(lane) => {
+                let label = format!("Agent channel {}", crate::watchband::short(*lane));
+                format!(
+                    "<span class=\"message-quote-author\" data-quote-author=\"directive\" \
+                     data-quote-actor=\"lane:{lane}\" data-quote-history=\"unavailable\" \
+                     aria-label=\"{}; identity history unavailable\">{} \
+                     <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>",
+                    super::escape_html_attribute(&label),
+                    escape_html_text(&label),
+                )
+            }
+        },
     }
 }
 
+fn available_principal_html(label: &str, actor: &str) -> String {
+    format!(
+        "<a class=\"message-quote-author\" data-quote-author=\"directive\" \
+         data-quote-actor=\"{actor}\" data-quote-history=\"available\" href=\"#/info\" \
+         aria-label=\"Open information for {label}\">{label}</a>"
+    )
+}
+
 fn disposition_html(disposition: Disposition) -> String {
-    let (key, class, label) = match disposition {
-        Disposition::Live => ("live", " active", "LIVE"),
-        Disposition::Acked => ("acked", " active", "ACK"),
-        Disposition::Declined => ("nacked", " warning", "NACK"),
-        Disposition::Lapsed => ("lapsed", " warning", "LAPSED"),
-        Disposition::DeadLettered => ("dead-letter", " warning", "DEAD LETTER"),
-        Disposition::Canceled => ("canceled", "", "CANCELED"),
+    let (key, label) = match disposition {
+        Disposition::Live => ("live", "LIVE"),
+        Disposition::Acked => {
+            return super::acknowledgement_pill_html_with_attributes(
+                "ack",
+                "acked",
+                "Acknowledgement classification",
+                "ACK",
+                " data-quote-disposition=\"acked\"",
+            );
+        }
+        Disposition::Declined => {
+            return super::acknowledgement_pill_html_with_attributes(
+                "nack",
+                "declined",
+                "Declined classification",
+                "NACK",
+                " data-quote-disposition=\"nacked\"",
+            );
+        }
+        Disposition::Lapsed => ("lapsed", "LAPSED"),
+        Disposition::DeadLettered => ("dead-letter", "DEAD LETTER"),
+        Disposition::Canceled => ("canceled", "CANCELED"),
     };
     format!(
-        "<span class=\"message-quote-disposition tag{class}\" \
+        "<span class=\"message-quote-disposition\" \
          data-quote-disposition=\"{key}\">{label}</span>"
     )
 }

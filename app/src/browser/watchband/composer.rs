@@ -194,7 +194,7 @@ pub(super) fn focus_after_render(id: String) {
 pub(super) struct AgentMessageCardProps {
     pub(super) accent: usize,
     pub(super) member: crate::runtime::LaneMember,
-    pub(super) quote_agents: Rc<BTreeMap<CanonicalUuid, String>>,
+    pub(super) quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
     pub(super) quote_lane: CanonicalUuid,
     pub(super) message: Rc<wire::AgentMessage>,
     pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
@@ -449,7 +449,7 @@ impl ClassificationMetrics {
 fn agent_message_presentation<'a>(
     member: &crate::runtime::LaneMember,
     message: &'a wire::AgentMessage,
-    quote_agents: &BTreeMap<CanonicalUuid, String>,
+    quote_agents: &crate::composer_markdown::QuoteAgents,
     quote_tasks: &BTreeMap<String, wire::TaskHandle>,
 ) -> AgentMessagePresentation<'a> {
     let attribution = watchband::agent_message_attribution(

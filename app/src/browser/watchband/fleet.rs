@@ -66,7 +66,7 @@ pub(super) struct FleetRender<'a> {
     pub(super) can_arrange_teams: bool,
     pub(super) can_configure: bool,
     pub(super) topology: Vec<(CanonicalUuid, Vec<CanonicalUuid>)>,
-    pub(super) quote_agents: Rc<BTreeMap<CanonicalUuid, String>>,
+    pub(super) quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
     pub(super) sender: &'a SenderHandle,
     pub(super) drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub(super) submissions: &'a SubmissionHandle,
