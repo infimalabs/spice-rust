@@ -244,9 +244,9 @@ fn apply_command_response(
             lane,
             requested,
         } => apply_lane_renewal_response(session, handles, team, lane, requested, bytes)?,
-        PendingKind::Inbox { covered } => CommandApplication::ordinary(apply_inbox_response(
-            session, handles, runtime, &covered, bytes,
-        )?),
+        PendingKind::Inbox { covered } => {
+            apply_inbox_response(session, handles, runtime, &covered, bytes)?
+        }
         PendingKind::LaneSeat => {
             let _admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
                 admit_response(session, bytes)?;
@@ -517,21 +517,28 @@ fn apply_inbox_response(
     runtime: &mut CanvasRuntime,
     covered: &BTreeMap<CanonicalUuid, String>,
     bytes: &[u8],
-) -> Result<bool, String> {
+) -> Result<CommandApplication, String> {
     let admitted: crate::Admitted<Response<wire::intent::InboxAnswer>> =
         admit_response(session, bytes)?;
+    let mut stale = crate::Stale::default();
     let answered = if let wire::Outcome::Reply(reply) = &admitted.get().outcome {
-        handles.submissions.queue.borrow_mut().observe_backend(
+        if handles.submissions.queue.borrow_mut().observe_backend(
             reply.body.lanes.iter().flat_map(|lane| lane.pending.iter()),
             covered,
-        )?;
+        )? {
+            stale.invalidate_lanes();
+        }
         handles.submissions.publish();
         true
     } else {
         false
     };
     runtime.apply_inbox(&admitted);
-    Ok(answered && !handles.submissions.queue.borrow().accepted().is_empty())
+    Ok(CommandApplication {
+        refresh: answered && !handles.submissions.queue.borrow().accepted().is_empty(),
+        lane_authority: false,
+        stale,
+    })
 }
 
 fn apply_submission_response(

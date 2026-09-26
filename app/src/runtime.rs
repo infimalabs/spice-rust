@@ -1302,6 +1302,12 @@ impl Stale {
         });
     }
 
+    /// Force one lane-authority read after a causally newer observation.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn invalidate_lanes(&mut self) {
+        self.lanes = true;
+    }
+
     /// Whether the board read went stale.
     #[must_use]
     pub const fn board(&self) -> bool {
