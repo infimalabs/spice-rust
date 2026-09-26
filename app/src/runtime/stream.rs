@@ -329,7 +329,21 @@ impl CanvasRuntime {
             return StreamApplication::new(vec![StreamDirective::Reconnect], false);
         }
         let mut changed = self.observe_messages(&generation.messages);
-        let next_history = message_history_frontiers(generation.generation, &generation.frontiers);
+        let mut next_history =
+            message_history_frontiers(generation.generation, &generation.frontiers);
+        // A live generation only appends newer work. A lane that has admitted
+        // older pages keeps paging from its deepest cursor, and an unmoved edge
+        // keeps its identity so an in-flight request is not issued again.
+        for (lane, next) in &mut next_history {
+            if let Some(previous) = self.message_history.get(lane)
+                && (self.message_history_completions.contains_key(lane)
+                    || previous.before == next.before)
+            {
+                *next = *previous;
+            }
+        }
+        self.message_history_completions
+            .retain(|lane, _| next_history.contains_key(lane));
         changed |= self.message_history != next_history;
         self.message_history = next_history;
         self.message_generation = Some(generation.generation);
@@ -362,10 +376,11 @@ impl CanvasRuntime {
                 .iter()
                 .any(|message| !requested_lanes.contains(&message.lane));
         if invalid_interval
-            || self.message_generation != Some(generation.generation)
-            || requested
-                .iter()
-                .any(|cursor| self.message_history.get(&cursor.lane) != Some(cursor))
+            || requested.iter().any(|cursor| {
+                self.message_history
+                    .get(&cursor.lane)
+                    .is_none_or(|current| current.before != cursor.before)
+            })
             || !self.message_cards.admits_history(&generation.messages)
         {
             return StreamApplication::new(Vec::new(), false);

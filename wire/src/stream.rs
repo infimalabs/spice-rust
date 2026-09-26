@@ -67,7 +67,8 @@ pub struct MessageLocus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageHistoryCursor {
-    /// Transcript generation whose retained edge owns this cursor.
+    /// Transcript generation that issued this cursor. A located cursor stays
+    /// pageable across later generations; a cold bootstrap does not.
     pub generation: u64,
     /// Independently paged member lane.
     pub lane: CanonicalUuid,

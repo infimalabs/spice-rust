@@ -367,6 +367,60 @@ fn a_nonadvancing_open_page_preserves_the_same_cursor() {
     assert_eq!(target_offset(&runtime, THIRD_LANE), Some(300));
 }
 
+#[test]
+fn a_live_generation_keeps_a_hydrated_lane_paging_from_its_deepest_cursor() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let snapshot = message_snapshot(
+        vec![agent_message(LANE, 100, T12, "retained head", None)],
+        &[LANE],
+    );
+    assert!(apply(&mut runtime, &session, &snapshot));
+    let first = history_page(
+        LANE,
+        100,
+        vec![agent_message(LANE, 50, T10, "first page", None)],
+        true,
+    );
+    assert!(apply(&mut runtime, &session, &first));
+    assert_eq!(target_offset(&runtime, LANE), Some(50));
+
+    let live = message_generation_frame(
+        2,
+        vec![agent_message(LANE, 150, T14, "live work", None)],
+        vec![serde_json::json!({
+            "lane": LANE,
+            "state": "truncated",
+            "before": {"member": 1, "offset": 100, "length": 20, "event": 0},
+        })],
+    );
+    assert!(apply(&mut runtime, &session, &live));
+    assert_eq!(
+        target_offset(&runtime, LANE),
+        Some(50),
+        "the retained edge must not replace the hydrated cursor",
+    );
+
+    // The page requested before the live generation is answered after it.
+    let deeper = history_page(
+        LANE,
+        50,
+        vec![agent_message(LANE, 25, T08, "deeper page", None)],
+        true,
+    );
+    assert!(apply(&mut runtime, &session, &deeper));
+    assert_eq!(target_offset(&runtime, LANE), Some(25));
+    assert_eq!(
+        runtime
+            .messages()
+            .iter()
+            .map(|message| message.text.as_str())
+            .collect::<Vec<_>>(),
+        ["deeper page", "first page", "retained head", "live work"],
+    );
+}
+
 fn interleave_live_work_and_member_pages(runtime: &mut CanvasRuntime, session: &Session) {
     let third_page = history_page(
         THIRD_LANE,
