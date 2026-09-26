@@ -20,10 +20,14 @@ use wire::{CanonicalUuid, TaskHandle};
 
 use crate::runtime::LaneRow;
 
+#[cfg(any(target_arch = "wasm32", test))]
+mod composer_drag;
 mod renewal;
 mod submission;
 mod vendor;
 
+#[cfg(target_arch = "wasm32")]
+pub(crate) use composer_drag::ComposerDragSession;
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
 pub use submission::{SubmissionAuthority, SubmissionTarget};
 pub use vendor::{OmpEmblem, composer_vendor_icon_class, omp_emblem, omp_provider};
@@ -303,129 +307,6 @@ pub fn topology(lanes: &[LaneRow]) -> Vec<(CanonicalUuid, Vec<CanonicalUuid>)> {
         })
         .collect()
 }
-#[cfg(any(target_arch = "wasm32", test))]
-const COMPOSER_DRAG_LIFT_PX: u32 = 6;
-
-#[cfg(any(target_arch = "wasm32", test))]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ComposerDragPointer {
-    pub(crate) source: CanonicalUuid,
-    pub(crate) pointer_id: i32,
-    pub(crate) start_x: i32,
-    pub(crate) start_y: i32,
-    pub(crate) dragging: bool,
-    topology_revision: u64,
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-#[derive(Debug, Default)]
-pub(crate) struct ComposerDragSession {
-    active: Option<ComposerDragPointer>,
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-impl ComposerDragSession {
-    pub(crate) fn begin(
-        &mut self,
-        enabled: bool,
-        source: CanonicalUuid,
-        pointer_id: i32,
-        start_x: i32,
-        start_y: i32,
-        topology_revision: u64,
-    ) -> bool {
-        if !enabled || self.active.is_some() {
-            return false;
-        }
-        self.active = Some(ComposerDragPointer {
-            source,
-            pointer_id,
-            start_x,
-            start_y,
-            dragging: false,
-            topology_revision,
-        });
-        true
-    }
-
-    pub(crate) fn movement(
-        &mut self,
-        source: CanonicalUuid,
-        pointer_id: i32,
-        client_x: i32,
-        client_y: i32,
-        topology_revision: u64,
-    ) -> Option<&mut ComposerDragPointer> {
-        let active = self.active.as_mut().filter(|active| {
-            active.source == source
-                && active.pointer_id == pointer_id
-                && active.topology_revision == topology_revision
-        })?;
-        if !active.dragging
-            && client_x.abs_diff(active.start_x) < COMPOSER_DRAG_LIFT_PX
-            && client_y.abs_diff(active.start_y) < COMPOSER_DRAG_LIFT_PX
-        {
-            return None;
-        }
-        Some(active)
-    }
-
-    pub(crate) fn finish(
-        &mut self,
-        source: CanonicalUuid,
-        pointer_id: i32,
-        topology_revision: u64,
-    ) -> Option<ComposerDragPointer> {
-        self.active
-            .as_ref()
-            .is_some_and(|active| {
-                active.source == source
-                    && active.pointer_id == pointer_id
-                    && active.topology_revision == topology_revision
-            })
-            .then(|| self.active.take())
-            .flatten()
-    }
-
-    pub(crate) fn cancel(&mut self, source: CanonicalUuid, pointer_id: i32) -> bool {
-        if self
-            .active
-            .as_ref()
-            .is_some_and(|active| active.source == source && active.pointer_id == pointer_id)
-        {
-            self.active = None;
-            true
-        } else {
-            false
-        }
-    }
-
-    pub(crate) fn reconcile(&mut self, enabled: bool, topology_revision: Option<u64>) -> bool {
-        if self
-            .active
-            .as_ref()
-            .is_some_and(|active| !enabled || Some(active.topology_revision) != topology_revision)
-        {
-            self.active = None;
-            true
-        } else {
-            false
-        }
-    }
-
-    pub(crate) fn clear(&mut self) -> bool {
-        self.active.take().is_some()
-    }
-    pub(crate) fn source(&self) -> Option<CanonicalUuid> {
-        self.active.map(|active| active.source)
-    }
-
-    pub(crate) fn dragging_source(&self) -> Option<CanonicalUuid> {
-        self.active
-            .filter(|active| active.dragging)
-            .map(|active| active.source)
-    }
-}
 
 /// Swap exactly the two composers named by one drag preview.
 ///
@@ -461,6 +342,35 @@ pub fn swap_members(
     let mut swapped = topology.to_vec();
     swapped[source_team].1.swap(source_at, target_at);
     Some(swapped)
+}
+
+/// Move one agent from its team to the end of another team.
+///
+/// Appending keeps the destination's first agent, its primary composer, in
+/// place, exactly as a join does. The source team keeps its identity and the
+/// order of its remaining agents; a team the move empties leaves the topology,
+/// as a joined team does. A drop on the agent's own team, or on a team no longer
+/// on the surface, states nothing.
+#[must_use]
+pub fn transfer_member(
+    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    member: CanonicalUuid,
+    target: CanonicalUuid,
+) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
+    let source_at = teams
+        .iter()
+        .position(|(_, lanes)| lanes.contains(&member))?;
+    let target_at = teams.iter().position(|(team, _)| *team == target)?;
+    if source_at == target_at {
+        return None;
+    }
+    let mut arranged = teams.to_vec();
+    arranged[source_at].1.retain(|lane| *lane != member);
+    arranged[target_at].1.push(member);
+    if arranged[source_at].1.is_empty() {
+        arranged.remove(source_at);
+    }
+    Some(arranged)
 }
 
 /// The teams in one topology, in the order the canvas drew them.
@@ -1174,11 +1084,11 @@ pub fn truncate(text: &str, budget: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        ComposerDragSession, MAX_TEAM_VISUAL_WEIGHT, MILLIS_PER_DAY, agent_message_attribution,
-        agent_message_label, lane_accent, quote_label, swap_members, task_elapsed_label,
+        MAX_TEAM_VISUAL_WEIGHT, MILLIS_PER_DAY, agent_message_attribution, agent_message_label,
+        lane_accent, quote_label, swap_members, task_elapsed_label,
         task_elapsed_label_deadline_millis, task_remaining_label,
         task_remaining_label_deadline_millis, team_visual_weight, ticker_accessible_label,
-        ticker_chunks, tool_media_description,
+        ticker_chunks, tool_media_description, transfer_member,
     };
 
     fn id(suffix: u8) -> wire::CanonicalUuid {
@@ -1270,38 +1180,31 @@ mod tests {
     }
 
     #[test]
-    fn composer_drag_session_survives_same_topology_and_cancels_stale_context() {
-        let mut session = ComposerDragSession::default();
-        assert!(session.begin(true, id(1), 17, 100, 200, 7));
-        assert!(session.movement(id(1), 17, 105, 205, 7).is_none());
-        assert!(!session.reconcile(true, Some(7)));
+    fn composer_transfer_appends_to_the_destination_and_drops_an_emptied_team() {
+        let topology = vec![
+            (id(10), vec![id(1), id(2), id(3)]),
+            (id(20), vec![id(4), id(5)]),
+            (id(30), vec![id(6)]),
+        ];
 
-        let lifted = session
-            .movement(id(1), 17, 106, 200, 7)
-            .expect("the lift threshold starts the same drag after a rerender");
-        lifted.dragging = true;
-        assert_eq!(session.dragging_source(), Some(id(1)));
-        assert!(!session.reconcile(true, Some(7)));
-        assert!(
-            session
-                .finish(id(1), 17, 7)
-                .expect("the surviving drag finishes")
-                .dragging
+        assert_eq!(
+            transfer_member(&topology, id(1), id(20)),
+            Some(vec![
+                (id(10), vec![id(2), id(3)]),
+                (id(20), vec![id(4), id(5), id(1)]),
+                (id(30), vec![id(6)]),
+            ]),
+            "the destination keeps its first agent and the source its order",
         );
-
-        assert!(session.begin(true, id(1), 18, 0, 0, 7));
-        assert!(session.reconcile(true, Some(8)));
-        assert!(session.finish(id(1), 18, 8).is_none());
-        assert!(session.begin(true, id(1), 19, 0, 0, 8));
-        assert_eq!(session.source(), Some(id(1)));
-        assert!(!session.cancel(id(2), 19));
-        assert!(session.cancel(id(1), 19));
-        assert!(session.begin(true, id(1), 20, 0, 0, 8));
-        assert!(session.clear());
-        assert!(session.begin(true, id(1), 21, 0, 0, 8));
-        assert!(session.reconcile(false, Some(8)));
-        assert_eq!(session.source(), None);
-        assert!(!session.begin(false, id(1), 22, 0, 0, 8));
+        assert_eq!(
+            transfer_member(&topology, id(6), id(10)),
+            Some(vec![
+                (id(10), vec![id(1), id(2), id(3), id(6)]),
+                (id(20), vec![id(4), id(5)]),
+            ]),
+        );
+        assert_eq!(transfer_member(&topology, id(2), id(10)), None);
+        assert_eq!(transfer_member(&topology, id(2), id(99)), None);
     }
 
     #[test]
