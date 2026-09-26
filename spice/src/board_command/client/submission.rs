@@ -397,7 +397,9 @@ fn decode_attachment(
         })
 }
 
-pub(super) fn artifact_operation_failure(error: artifact::Error) -> Outcome<CommandAnswer> {
+pub(in crate::board_command) fn artifact_operation_failure(
+    error: artifact::Error,
+) -> Outcome<CommandAnswer> {
     match error.class() {
         artifact::ErrorClass::Refusal => refusal(
             "artifact::operation-refused",
@@ -411,7 +413,7 @@ pub(super) fn artifact_operation_failure(error: artifact::Error) -> Outcome<Comm
     }
 }
 
-pub(super) fn repository_state_failure(
+pub(in crate::board_command) fn repository_state_failure(
     error: &spice::repository::StateError,
 ) -> Outcome<CommandAnswer> {
     match error {

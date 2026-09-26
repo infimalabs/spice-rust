@@ -245,6 +245,45 @@ pub(super) fn use_focus(
     });
 }
 
+/// Render task-attached images with the same preview and lightbox contract as
+/// message media. An empty task contributes no attachment section.
+pub(super) fn render_media(media: &[wire::Media]) -> Html {
+    if media.is_empty() {
+        return Html::default();
+    }
+    html! {
+        <section class="work-detail-section work-detail-media">
+            <h3>{"Attachments"}</h3>
+            <div class="message-attachments">
+                {for media.iter().map(|media| {
+                    let identity = media
+                        .identity()
+                        .expect("admitted task media has a content identity")
+                        .to_string();
+                    let action = format!("Open {} full size", media.name);
+                    html! {
+                        <button
+                            key={identity.clone()}
+                            type="button"
+                            class="message-image message-image--openable"
+                            title={action.clone()}
+                            aria-label={action}
+                            data-image-preview=""
+                            data-image-name={media.name.clone()}
+                        >
+                            <img
+                                src={media.data_url.clone()}
+                                alt={media.name.clone()}
+                                data-media-identity={identity}
+                            />
+                        </button>
+                    }
+                })}
+            </div>
+        </section>
+    }
+}
+
 /// The one observation composer every surface showing `task` renders, bound
 /// to that task and showing only that task's draft, refusal, and submission.
 pub(super) fn render_note_composer(

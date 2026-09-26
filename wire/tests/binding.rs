@@ -456,6 +456,10 @@ fn task_detail_answer_round_trips_attributed_note_identity() {
         serde_json::from_value(spelled_board_task()).expect("board task fixture decodes");
     let expected = TaskDetailAnswer {
         task,
+        media: vec![
+            wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
+                .expect("fixture media admits"),
+        ],
         notes: vec![TaskDetailNote {
             position: seq(7),
             at: instant("2026-08-01T06:47:19.000Z"),

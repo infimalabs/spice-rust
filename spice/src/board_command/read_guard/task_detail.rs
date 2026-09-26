@@ -1,8 +1,11 @@
+use base64::Engine as _;
+
 use super::*;
 
 /// Read one task and its notes from one immutable journal barrier.
 pub(in crate::board_command) fn read_task_detail(
     bus: &Bus,
+    repository: Option<&Repository>,
     detail: &wire::intent::TaskDetail,
     principal: wire::Actor,
     projects: &ProjectPolicy,
@@ -32,6 +35,10 @@ pub(in crate::board_command) fn read_task_detail(
             "read the board and request one current durable task identity",
         );
     };
+    let media = match task_media(repository, &detail.task) {
+        Ok(media) => media,
+        Err(outcome) => return outcome,
+    };
     let notes = snapshot
         .facts
         .iter()
@@ -47,6 +54,59 @@ pub(in crate::board_command) fn read_task_detail(
         .collect();
     snapshot_reply(
         snapshot.cursor,
-        CommandAnswer::TaskDetail(Box::new(wire::intent::TaskDetailAnswer { task, notes })),
+        CommandAnswer::TaskDetail(Box::new(wire::intent::TaskDetailAnswer {
+            task,
+            media,
+            notes,
+        })),
     )
+}
+
+fn task_media(
+    repository: Option<&Repository>,
+    task: &wire::TaskStamp,
+) -> Result<Vec<wire::Media>, Outcome<CommandAnswer>> {
+    let Some(repository) = repository else {
+        return Ok(Vec::new());
+    };
+    let state = repository
+        .admit_state()
+        .map_err(|error| repository_state_failure(&error))?;
+    let store = artifact::Store::new(state.artifacts(), state.locks().join("task-artifacts.lock"));
+    let mut encoded_bytes = 0_usize;
+    let payloads = store
+        .show_matching(task, |artifact| {
+            let Ok(bytes) = usize::try_from(artifact.bytes) else {
+                return false;
+            };
+            if !artifact.media_type.is_image() || bytes == 0 || bytes > wire::media::MAX_MEDIA_BYTES
+            {
+                return false;
+            }
+            let data_url_bytes =
+                format!("data:{};base64,", artifact.media_type).len() + bytes.div_ceil(3) * 4;
+            let Some(total) = encoded_bytes.checked_add(data_url_bytes) else {
+                return false;
+            };
+            if total > wire::media::MAX_MEDIA_DATA_URL_BYTES {
+                return false;
+            }
+            encoded_bytes = total;
+            true
+        })
+        .map_err(artifact_operation_failure)?;
+    let media = payloads
+        .into_iter()
+        .filter_map(|(artifact, bytes)| {
+            wire::Media::from_base64(
+                artifact.name,
+                artifact.media_type.to_string(),
+                &base64::engine::general_purpose::STANDARD.encode(bytes),
+            )
+            .ok()
+        })
+        .take(wire::media::MAX_MEDIA_ITEMS)
+        .collect::<Vec<_>>();
+    debug_assert!(wire::media::admit_media(&media).is_ok());
+    Ok(media)
 }
