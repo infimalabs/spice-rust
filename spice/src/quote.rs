@@ -91,6 +91,9 @@ impl<'a> QuoteMessage<'a> {
 pub struct Resolver<'a> {
     store: ResidentStore<'a>,
 }
+/// Resident-owned reconstruction of the Canvas prose presented for one tape event.
+pub type AgentProsePresenter =
+    fn(&BusReader, CanonicalUuid, CanonicalUuid, u32, &listen::Prose) -> Result<String, String>;
 
 impl<'a> Resolver<'a> {
     /// Bind quote reads to one admitted tape root and Bus snapshot source.
@@ -103,7 +106,27 @@ impl<'a> Resolver<'a> {
     #[must_use]
     pub const fn from_tape(tape: &'a Path, bus: &'a BusReader) -> Self {
         Self {
-            store: ResidentStore { tape, bus },
+            store: ResidentStore {
+                tape,
+                bus,
+                agent_presenter: None,
+            },
+        }
+    }
+
+    /// Bind quote reads with the resident's authoritative agent-card presentation.
+    #[must_use]
+    pub const fn from_tape_with_agent_presenter(
+        tape: &'a Path,
+        bus: &'a BusReader,
+        agent_presenter: AgentProsePresenter,
+    ) -> Self {
+        Self {
+            store: ResidentStore {
+                tape,
+                bus,
+                agent_presenter: Some(agent_presenter),
+            },
         }
     }
 
@@ -161,12 +184,19 @@ fn present_with(store: &impl QuoteStore, text: &str, depth: u8) -> Vec<QuotePres
 
 /// Bind the resident quote authority into Canvas serialization.
 #[must_use]
-pub fn presenter(tape: PathBuf, bus: BusReader) -> canvas::stream::QuotePresenter {
-    canvas::stream::QuotePresenter::new(move |text| Resolver::from_tape(&tape, &bus).present(text))
+pub fn presenter(
+    tape: PathBuf,
+    bus: BusReader,
+    agent_presenter: AgentProsePresenter,
+) -> canvas::stream::QuotePresenter {
+    canvas::stream::QuotePresenter::new(move |text| {
+        Resolver::from_tape_with_agent_presenter(&tape, &bus, agent_presenter).present(text)
+    })
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SourceQuote {
+    identity: Option<String>,
     text: String,
     author: QuoteAuthor,
     disposition: Option<wire::Disposition>,
@@ -192,6 +222,7 @@ trait QuoteStore {
 struct ResidentStore<'a> {
     tape: &'a Path,
     bus: &'a BusReader,
+    agent_presenter: Option<AgentProsePresenter>,
 }
 
 impl QuoteStore for ResidentStore<'_> {
@@ -220,7 +251,16 @@ impl QuoteStore for ResidentStore<'_> {
             .map(|vendor| vendor.dialect())
             .ok_or(SourceError::Unknown)?;
         let root = self.tape.join(lane.to_string()).join(row.vendor.as_str());
-        resolve_tape(&root, source, locus, dialect, lane, occupant)
+        resolve_tape(
+            &root,
+            source,
+            locus,
+            dialect,
+            lane,
+            occupant,
+            self.bus,
+            self.agent_presenter,
+        )
     }
 
     fn steering(&self, key: &str) -> Result<SourceQuote, SourceError> {
@@ -234,6 +274,7 @@ impl QuoteStore for ResidentStore<'_> {
             return Err(SourceError::Unknown);
         }
         Ok(SourceQuote {
+            identity: None,
             text: head.text.clone(),
             author: QuoteAuthor::Directive {
                 actor: presentation.created().actor.clone(),
@@ -270,7 +311,8 @@ fn resolve_with(store: &impl QuoteStore, target: &str, depth: u8) -> QuoteResolu
         Err(SourceError::Unknown) => return unavailable(target, QuoteUnavailable::Unknown),
         Err(SourceError::Unreadable) => return unavailable(target, QuoteUnavailable::Unreadable),
     };
-    if QuoteTarget::text_digest(&resolved.text) != *parsed.digest() {
+    let identity = resolved.identity.as_deref().unwrap_or(&resolved.text);
+    if QuoteTarget::text_digest(identity) != *parsed.digest() {
         return unavailable(target, QuoteUnavailable::DigestMismatch);
     }
     QuoteResolution::Resolved(ResolvedQuote {
@@ -334,6 +376,8 @@ fn resolve_tape(
     dialect: listen::Dialect,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
+    reader: &BusReader,
+    agent_presenter: Option<AgentProsePresenter>,
 ) -> Result<SourceQuote, SourceError> {
     let tape = tape::Tape::open_existing(root).map_err(|error| match error {
         tape::Error::Io { source, .. } if source.kind() == std::io::ErrorKind::NotFound => {
@@ -368,8 +412,15 @@ fn resolve_tape(
     if prose.role != listen::ProseRole::Assistant {
         return Err(SourceError::Unknown);
     }
+    let text = agent_presenter
+        .map_or_else(
+            || Ok(prose.text.clone()),
+            |present| present(reader, lane, source, locus.event, prose),
+        )
+        .map_err(|_| SourceError::Unreadable)?;
     Ok(SourceQuote {
-        text: prose.text.clone(),
+        identity: Some(prose.text.clone()),
+        text,
         author: QuoteAuthor::Agent { lane, occupant },
         disposition: None,
     })
@@ -474,6 +525,7 @@ mod tests {
         store.tape.insert(
             format!("{}/{}/3/5/8/13", uuid(1), uuid(2)),
             SourceQuote {
+                identity: None,
                 text: "agent text".to_owned(),
                 author: QuoteAuthor::Agent {
                     lane: uuid(1),
@@ -486,6 +538,7 @@ mod tests {
         store.steering.insert(
             "dTVLR0qL0".to_owned(),
             SourceQuote {
+                identity: None,
                 text: "operator text".to_owned(),
                 author: QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
@@ -515,6 +568,60 @@ mod tests {
                 disposition: Some(wire::Disposition::Acked),
             })
         );
+    }
+
+    #[test]
+    fn agent_quote_presentation_carries_authenticated_directive_context() {
+        let mut store = MemoryStore::default();
+        let authored = "ACK dTVLR0qL0: completed";
+        let operator = "inspect the quote chain";
+        let directive = steering_target("dTVLR0qL0", operator);
+        let presented = format!("{}\n\ncompleted", directive.markdown());
+        let tape = tape_target(authored);
+        store.tape.insert(
+            format!("{}/{}/3/5/8/13", uuid(1), uuid(2)),
+            SourceQuote {
+                identity: Some(authored.to_owned()),
+                text: presented.clone(),
+                author: QuoteAuthor::Agent {
+                    lane: uuid(1),
+                    occupant: uuid(3),
+                },
+                disposition: None,
+            },
+        );
+        store.steering.insert(
+            "dTVLR0qL0".to_owned(),
+            SourceQuote {
+                identity: None,
+                text: operator.to_owned(),
+                author: QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                },
+                disposition: Some(wire::Disposition::Acked),
+            },
+        );
+
+        let source = tape.markdown();
+        assert_eq!(
+            expand_with(&store, &source, 0),
+            format!("{operator}\n\ncompleted")
+        );
+        let presentation = present_with(&store, &source, 0);
+        let [QuotePresentation::Resolved { text, quotes, .. }] = presentation.as_slice() else {
+            panic!("agent quote resolves");
+        };
+        assert_eq!(text, &presented);
+        assert!(matches!(
+            quotes.as_slice(),
+            [QuotePresentation::Resolved {
+                author: QuoteAuthor::Directive {
+                    actor: wire::Actor::Operator,
+                },
+                disposition: Some(wire::Disposition::Acked),
+                ..
+            }]
+        ));
     }
 
     #[test]
@@ -552,6 +659,7 @@ mod tests {
         store.steering.insert(
             "dTVLR0qL0".to_owned(),
             SourceQuote {
+                identity: None,
                 text: "forged".to_owned(),
                 author: QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
@@ -576,6 +684,7 @@ mod tests {
             store.steering.insert(
                 key,
                 SourceQuote {
+                    identity: None,
                     text: returned_text,
                     author: QuoteAuthor::Directive {
                         actor: wire::Actor::Operator,
@@ -661,6 +770,7 @@ mod tests {
         store.steering.insert(
             key.to_owned(),
             SourceQuote {
+                identity: None,
                 text: text.to_owned(),
                 author: QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
@@ -701,6 +811,7 @@ mod tests {
         store.steering.insert(
             "dTVLR0qL0".to_owned(),
             SourceQuote {
+                identity: None,
                 text: inner_text.to_owned(),
                 author: QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
@@ -713,6 +824,7 @@ mod tests {
         store.steering.insert(
             "dTVLR0qL1".to_owned(),
             SourceQuote {
+                identity: None,
                 text: outer_text,
                 author: QuoteAuthor::Directive {
                     actor: wire::Actor::Operator,
@@ -744,6 +856,7 @@ mod tests {
             store.steering.insert(
                 key,
                 SourceQuote {
+                    identity: None,
                     text: returned_text,
                     author: QuoteAuthor::Directive {
                         actor: wire::Actor::Operator,

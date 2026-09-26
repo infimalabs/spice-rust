@@ -69,9 +69,9 @@ fn render(presentation: &QuotePresentation, tasks: &BTreeMap<String, TaskHandle>
         } => {
             let body = super::render_received_with_quotes(text, &[], quotes, tasks);
             format!(
-                "<span class=\"message-quote-card\" data-quote-state=\"resolved\" \
+                "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
                  data-quote-target=\"{}\"><span class=\"message-quote-header\">{}{}{}</span>\
-                 <span class=\"message-quote-body\">{}</span></span>",
+                 <div class=\"message-quote-body\">{}</div></div>",
                 super::escape_html_attribute(target),
                 author_html(author),
                 disposition.map(disposition_html).unwrap_or_default(),
@@ -82,11 +82,11 @@ fn render(presentation: &QuotePresentation, tasks: &BTreeMap<String, TaskHandle>
         QuotePresentation::Unavailable { target, reason } => {
             let reason = unavailable_key(*reason);
             format!(
-                "<span class=\"message-quote-card message-quote-card--unavailable\" \
+                "<div class=\"message-quote-card message-quote-card--unavailable\" \
                  data-quote-state=\"unavailable\" data-quote-reason=\"{reason}\" \
                  data-quote-target=\"{}\"><span class=\"message-quote-header\">\
                  <span class=\"message-quote-author\">Quote unavailable: {reason}</span></span>\
-                 <span class=\"message-quote-body\"><code>{}</code></span></span>",
+                 <div class=\"message-quote-body\"><code>{}</code></div></div>",
                 super::escape_html_attribute(target),
                 escape_html_text(target),
             )

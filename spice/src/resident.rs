@@ -190,6 +190,7 @@ use message_surface::AgentMessagePublisher;
 use message_surface::CaptureViews;
 #[cfg(test)]
 use message_surface::MessageState;
+pub(crate) use message_surface::quote_agent_prose;
 use message_surface::{CaptureSurfaces, accept_capture_record};
 use shutdown::{current_residency, drive_shutdown};
 
