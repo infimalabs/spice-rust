@@ -197,6 +197,7 @@ env_names = [
     "SPICE_RUNTIME_PYTHON",
     "SPICE_SELFEXEC_ROOT",
     "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE",
+    "SPICE_SOURCE_STAMP",
     "SPICE_STAGED_PATHS",
     "SPICE_VISIBLE_PROG",
     # Selected-tree tests receive these workspace-test fixture authorities.

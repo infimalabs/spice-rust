@@ -321,6 +321,7 @@ fn board_response(
         ],
         history: None,
         trust: Vec::new(),
+        appliance: wire::manifest::ProductVersion::parse("0.2.0").expect("fixture appliance"),
         residency: wire::intent::Positioned {
             position: seq(3),
             body: wire::ResidencyHead {

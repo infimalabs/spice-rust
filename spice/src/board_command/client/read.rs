@@ -555,6 +555,16 @@ fn requirement_lines(
                     "  - trust-grant required={required} standing={standing} producer={producer} satisfied={satisfied}"
                 ));
             }
+            wire::EnvironmentRequirement::ApplianceVersion { value: required } => {
+                let observation = wire::EnvironmentObservation::ApplianceVersion {
+                    value: board.appliance.clone(),
+                };
+                lines.push(format!(
+                    "  - appliance-version after={required} observed={} satisfied={}",
+                    board.appliance,
+                    requirement.is_satisfied_by(&observation),
+                ));
+            }
         }
     }
     lines
@@ -894,8 +904,7 @@ pub(in crate::board_command) fn task_status(
     // The parked split is shared with the empty-drain readout so the two
     // surfaces cannot disagree on a count.
     let parked = ParkedCounts::measure(&entries, &rows);
-    let (environment_satisfied, environment_blocked, required_schemas, required_trust) =
-        environment_status(&rows, &environment);
+    let status = environment_status(&rows, &environment);
     let ready = rows
         .iter()
         .copied()
@@ -909,15 +918,22 @@ pub(in crate::board_command) fn task_status(
          public task project depth {}..{} dotted segments\n\
          active {active}\nready {ready}\n\
          review {review}\nblocked {blocked}\nwaiting {waiting}\n\
-         environment journal-schema required={required_schemas} observed={} \
-         trust-grant required={required_trust} \
-         satisfied={environment_satisfied} blocked={environment_blocked}\n\
+         environment journal-schema required={} observed={} \
+         trust-grant required={} \
+         appliance-version after={} observed={} \
+         satisfied={} blocked={}\n\
          stale {stale}\noops {oops}",
         board.actor_route.actor,
         actor_route_filter(board),
         board.project_policy.public_min_depth,
         board.project_policy.public_max_depth,
+        status.schemas,
         board.schema,
+        status.trust,
+        status.appliance,
+        board.appliance,
+        status.satisfied,
+        status.blocked,
         active = parked.active,
         blocked = parked.blocked,
         waiting = parked.waiting,
@@ -962,16 +978,22 @@ fn resident_rolls_lease(board: &BoardAnswer, claim: &ClaimHead, lease: &LeaseHea
             .any(|lane| lane.lane == claim.lane && lane.occupant == Some(claim.occupant))
 }
 
-fn environment_status(
-    rows: &[&Entry],
-    environment: &wire::Environment,
-) -> (usize, usize, String, String) {
+struct EnvironmentStatus {
+    satisfied: usize,
+    blocked: usize,
+    schemas: String,
+    trust: String,
+    appliance: String,
+}
+
+fn environment_status(rows: &[&Entry], environment: &wire::Environment) -> EnvironmentStatus {
     let blocked = rows
         .iter()
         .filter(|entry| !board::environment_satisfied(entry, environment))
         .count();
     let mut schemas = Vec::new();
     let mut trust = Vec::new();
+    let mut appliance = Vec::new();
     for requirement in rows
         .iter()
         .flat_map(|entry| entry.statement().requirements.as_slice())
@@ -979,25 +1001,32 @@ fn environment_status(
         match requirement {
             wire::EnvironmentRequirement::JournalSchema { value } => schemas.push(value.get()),
             wire::EnvironmentRequirement::TrustGrant { value } => trust.push(value.to_string()),
+            wire::EnvironmentRequirement::ApplianceVersion { value } => appliance.push(value),
         }
     }
     schemas.sort_unstable();
     schemas.dedup();
     trust.sort();
     trust.dedup();
-    let schemas = if schemas.is_empty() {
+    appliance.sort_by(|left, right| {
+        left.precedence(right)
+            .then_with(|| left.as_str().cmp(right.as_str()))
+    });
+    appliance.dedup();
+    EnvironmentStatus {
+        satisfied: rows.len() - blocked,
+        blocked,
+        schemas: listed(schemas.into_iter().map(|value| value.to_string())),
+        trust: listed(trust.into_iter()),
+        appliance: listed(appliance.into_iter().map(ToString::to_string)),
+    }
+}
+
+fn listed(values: impl Iterator<Item = String>) -> String {
+    let joined = values.collect::<Vec<_>>().join(",");
+    if joined.is_empty() {
         "-".to_owned()
     } else {
-        schemas
-            .into_iter()
-            .map(|value| value.to_string())
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    let trust = if trust.is_empty() {
-        "-".to_owned()
-    } else {
-        trust.join(",")
-    };
-    (rows.len() - blocked, blocked, schemas, trust)
+        joined
+    }
 }

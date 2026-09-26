@@ -92,6 +92,10 @@ fn validated_snapshot_from_with_occupant(
         )
     })?;
     let mut residency = positioned(residency);
+    let appliance = spice::version::running()
+        .map_err(Outcome::Fault)?
+        .product
+        .clone();
     let (entries, tasks) = project_task_rows(observed, projects, &residency.body, selected)?;
     let (recent_cell, review_history) = snapshot_history(observed, &entries, &principal, selected);
     for lane in &mut residency.body.lanes {
@@ -124,6 +128,7 @@ fn validated_snapshot_from_with_occupant(
             offer: Vec::new(),
             history: None,
             trust: positioned_trust(observed),
+            appliance,
             residency,
         },
         entries,

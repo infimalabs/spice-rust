@@ -27,9 +27,22 @@ fn journal_schema_requirements(
     Ok(wire::EnvironmentRequirements::one(requirement))
 }
 
+pub(super) fn appliance_version(
+    written: &str,
+) -> Result<wire::manifest::ProductVersion, Outcome<CommandAnswer>> {
+    wire::manifest::ProductVersion::parse(written).map_err(|_| {
+        refusal(
+            "task::appliance-version-invalid",
+            Some(written.to_owned()),
+            "name one canonical semantic version without a v prefix",
+        )
+    })
+}
+
 pub(super) fn environment_requirements(
     schema: Option<&str>,
     trust: Option<&str>,
+    appliance: Option<wire::manifest::ProductVersion>,
 ) -> Result<wire::EnvironmentRequirements, Outcome<CommandAnswer>> {
     let mut requirements = Vec::new();
     if let Some(written) = schema {
@@ -44,6 +57,9 @@ pub(super) fn environment_requirements(
             )
         })?;
         requirements.push(wire::EnvironmentRequirement::trust_grant(digest));
+    }
+    if let Some(version) = appliance {
+        requirements.push(wire::EnvironmentRequirement::appliance_after(version));
     }
     wire::EnvironmentRequirements::new(requirements).map_err(|error| {
         protocol_fault(
@@ -88,8 +104,8 @@ mod tests {
     #[test]
     fn trust_grant_cli_values_are_canonical_and_join_schema_in_fact_order() {
         let digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let requirements =
-            environment_requirements(Some("18"), Some(digest)).expect("canonical conjunction");
+        let requirements = environment_requirements(Some("18"), Some(digest), None)
+            .expect("canonical conjunction");
         assert!(matches!(
             requirements.as_slice(),
             [
@@ -104,13 +120,39 @@ mod tests {
             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
         ] {
-            let outcome = environment_requirements(None, Some(refused))
+            let outcome = environment_requirements(None, Some(refused), None)
                 .expect_err("noncanonical digest refuses");
             assert!(matches!(
                 outcome,
                 Outcome::Refusal(ref refusal)
                     if refusal.reason() == "task::trust-grant-invalid"
             ));
+        }
+    }
+
+    #[test]
+    fn appliance_version_cli_values_are_canonical_semver_refused_by_reason() {
+        let written = "0.2.0-dev.0.dTYp0bz3B+bin.abc";
+        let version = appliance_version(written).expect("canonical version");
+        assert_eq!(version.as_str(), written);
+        for refused in [
+            "",
+            "v0.2.0",
+            "0.2",
+            "01.2.0",
+            "0.2.0-dev.00",
+            "0.2.0-",
+            "0.2.0+",
+        ] {
+            let outcome = appliance_version(refused).expect_err("noncanonical version refuses");
+            assert!(
+                matches!(
+                    &outcome,
+                    Outcome::Refusal(refusal)
+                        if refusal.reason() == "task::appliance-version-invalid"
+                ),
+                "{refused:?} must refuse by reason"
+            );
         }
     }
 }

@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+
 use wire::manifest::{
     BuildPins, InventoryEntry, JOURNAL_BACKUP_VERSION, JournalBackupManifest, JournalBackupMember,
     PROOF_RECEIPT_VERSION, ProductVersion, ProofEnvironment, ProofReceipt, ProofStanding,
@@ -199,6 +201,36 @@ fn product_versions_have_one_canonical_semantic_spelling() {
     for refused in ["", "v1.2.3", "01.2.3", "1.2", "1.2.3-01", "1.2.3+"] {
         assert!(ProductVersion::parse(refused).is_err(), "{refused}");
     }
+}
+
+#[test]
+fn product_version_precedence_follows_semver_and_ignores_build_metadata() {
+    let ascending = [
+        "0.2.0-dev.0",
+        "0.2.0-dev.0.dTYp0bz3B",
+        "0.2.0-dev.0.dTYpFZV7w",
+        "1.0.0-1",
+        "1.0.0-alpha",
+        "1.0.0-alpha.1",
+        "1.0.0-rc.2",
+        "1.0.0-rc.10",
+        "1.0.0",
+        "1.9.9",
+        "1.10.0",
+    ]
+    .map(|text| ProductVersion::parse(text).expect("canonical version"));
+    for (lower, pair) in ascending.iter().zip(ascending.iter().skip(1)) {
+        assert_eq!(lower.precedence(pair), Ordering::Less, "{lower} < {pair}");
+        assert_eq!(
+            pair.precedence(lower),
+            Ordering::Greater,
+            "{pair} > {lower}"
+        );
+    }
+    let old = ProductVersion::parse("1.2.3-dev.0+bin.old").expect("canonical version");
+    let new = ProductVersion::parse("1.2.3-dev.0+bin.new").expect("canonical version");
+    assert_ne!(old, new);
+    assert_eq!(old.precedence(&new), Ordering::Equal);
 }
 
 #[test]

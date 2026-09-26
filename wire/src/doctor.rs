@@ -80,6 +80,9 @@ pub enum SpiceVariable {
     /// Exact installed Spice executable selected by the agent-shell wrapper route.
     #[serde(rename = "SPICE_RS_WRAPPER_SPICE")] // env-policy: allow
     WrapperSpice,
+    /// Source commit's committer instant sealed into the appliance version as it is built.
+    #[serde(rename = "SPICE_SOURCE_STAMP")] // env-policy: allow
+    SourceStamp,
 }
 
 impl SpiceVariable {
@@ -111,6 +114,7 @@ impl SpiceVariable {
         Self::RtkExecutable,
         Self::Session,
         Self::WrapperSpice,
+        Self::SourceStamp,
     ];
 
     /// Exact process-environment spelling.
@@ -148,6 +152,7 @@ impl SpiceVariable {
             Self::RtkExecutable => "SPICE_RS_RTK_EXECUTABLE", // env-policy: allow
             Self::Session => "SPICE_RS_SESSION", // env-policy: allow
             Self::WrapperSpice => "SPICE_RS_WRAPPER_SPICE", // env-policy: allow
+            Self::SourceStamp => "SPICE_SOURCE_STAMP", // env-policy: allow
         }
     }
 }

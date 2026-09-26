@@ -950,6 +950,41 @@ fn contract_syntax_drives_argument_registration() {
 }
 
 #[test]
+fn a_bare_appliance_after_is_present_without_consuming_a_following_flag() {
+    let parser = command();
+    let appliance = |argv: &[&str]| {
+        let matches = parser
+            .clone()
+            .try_get_matches_from(argv)
+            .unwrap_or_else(|error| panic!("{argv:?} must parse: {error}"));
+        let require = matches
+            .subcommand_matches("task")
+            .and_then(|task| task.subcommand_matches("require"))
+            .expect("task require matches");
+        (
+            require.contains_id("appliance-after"),
+            require.get_one::<String>("appliance-after").cloned(),
+            require.get_flag("clear"),
+        )
+    };
+    let require = ["spice", "task", "require", "TASK"];
+    assert_eq!(appliance(&require), (false, None, false));
+    assert_eq!(
+        appliance(&[&require[..], &["--appliance-after"]].concat()),
+        (true, None, false),
+        "the client then names the version the resident runs"
+    );
+    assert_eq!(
+        appliance(&[&require[..], &["--appliance-after", "0.2.0"]].concat()),
+        (true, Some("0.2.0".to_owned()), false)
+    );
+    assert_eq!(
+        appliance(&[&require[..], &["--appliance-after", "--clear"]].concat()),
+        (true, None, true)
+    );
+}
+
+#[test]
 fn task_trust_grant_requirement_flags_are_registered() {
     let parser = command();
     let digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

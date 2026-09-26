@@ -752,6 +752,8 @@ pub struct BoardAnswer {
     /// Current executable-configuration trust heads in ascending digest order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trust: Vec<Positioned<crate::TrustHead>>,
+    /// Product version of the resident appliance that captured this snapshot.
+    pub appliance: crate::manifest::ProductVersion,
     /// Current resident and lane head used by possession witnesses.
     pub residency: Positioned<crate::ResidencyHead>,
 }
@@ -768,6 +770,7 @@ impl BoardAnswer {
         crate::Environment::journal_schema(self.schema)
             .expect("an admitted board schema is positive")
             .with_trust_heads(self.trust.iter().map(|head| head.body.clone()))
+            .with_appliance(self.appliance.clone())
     }
 }
 

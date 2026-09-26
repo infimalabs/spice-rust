@@ -563,35 +563,46 @@ fn client_require(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    mutate_task_from_board(repository, contract, matches, |_board, task, heads| {
+    let written = match matches
+        .get_one::<String>("appliance-after")
+        .map(|written| requirements::appliance_version(written))
+        .transpose()
+    {
+        Ok(written) => written,
+        Err(refused) => return refused,
+    };
+    mutate_task_from_board(repository, contract, matches, |board, task, heads| {
         let schema = matches.get_one::<String>("journal-schema");
         let trust = matches.get_one::<String>("trust-grant");
+        // A bare `--appliance-after` names the version the resident runs now.
+        let appliance = matches
+            .contains_id("appliance-after")
+            .then(|| written.unwrap_or_else(|| board.appliance.clone()));
         let clear = matches.get_flag("clear");
-        let requirements = match (schema, trust, clear) {
-            (schema, trust, false) if schema.is_some() || trust.is_some() => {
-                wire::intent::TaskRequirementsEdit::Set {
-                    requirements: environment_requirements(
-                        schema.map(String::as_str),
-                        trust.map(String::as_str),
-                    )?,
-                }
-            }
-            (None, None, true) => wire::intent::TaskRequirementsEdit::Clear {},
-            (_, _, true) => {
+        let named = schema.is_some() || trust.is_some() || appliance.is_some();
+        let requirements = match (named, clear) {
+            (true, false) => wire::intent::TaskRequirementsEdit::Set {
+                requirements: environment_requirements(
+                    schema.map(String::as_str),
+                    trust.map(String::as_str),
+                    appliance,
+                )?,
+            },
+            (false, true) => wire::intent::TaskRequirementsEdit::Clear {},
+            (true, true) => {
                 return Err(refusal(
                     "task::require-shape",
                     None,
                     "name environmental requirements or --clear, never both",
                 ));
             }
-            (None, None, false) => {
+            (false, false) => {
                 return Err(refusal(
                     "task::require-shape",
                     None,
-                    "name --journal-schema SCHEMA and/or --trust-grant DIGEST to replace requirements, or --clear to remove them",
+                    "name --journal-schema SCHEMA, --trust-grant DIGEST, and/or --appliance-after [VERSION] to replace requirements, or --clear to remove them",
                 ));
             }
-            _ => unreachable!("requirement shape arms are exhaustive"),
         };
         Ok((
             CommandKind::TaskEdit,

@@ -181,6 +181,15 @@ fn option(parts: &[&'static str]) -> Result<Arg, String> {
 
     match parts {
         [_] => Ok(argument.action(ArgAction::SetTrue)),
+        [_, value] if is_optional(value) => {
+            let value = optional_contents(value)
+                .filter(|value| !value.is_empty() && !value.contains([' ', '[', '.', '|']))
+                .ok_or_else(|| format!("invalid optional option value: {value}"))?;
+            Ok(argument
+                .value_name(value)
+                .num_args(0..=1)
+                .action(ArgAction::Set))
+        }
         [_, value] if !value.starts_with('-') && !is_optional(value) => {
             let (value, repeated) = value
                 .strip_suffix("...")
