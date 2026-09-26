@@ -56,19 +56,6 @@ impl LiveMessages {
         &self.state
     }
 
-    pub(in crate::resident) fn notice(
-        &self,
-        notice: &super::super::supervisor::Notice,
-    ) -> CommandResult<()> {
-        use super::super::supervisor::Notice;
-        match notice {
-            Notice::Record { lane, occupant, .. }
-            | Notice::Exited { lane, occupant }
-            | Notice::Failed { lane, occupant, .. } => self.wake(*lane, *occupant),
-            Notice::Asked { .. } => Ok(()),
-        }
-    }
-
     pub(in crate::resident) fn wake(
         &self,
         lane: CanonicalUuid,
