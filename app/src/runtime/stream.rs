@@ -385,7 +385,25 @@ impl CanvasRuntime {
         {
             return StreamApplication::new(Vec::new(), false);
         }
-        let mut changed = self.message_cards.merge(generation.messages.iter());
+        let mut changed = false;
+        for frontier in &generation.frontiers {
+            let requested = requested
+                .iter()
+                .find(|requested| requested.lane == frontier.lane)
+                .expect("validated history response has one request per frontier");
+            let explicit_resume = frontier.state == wire::TranscriptLaneState::Truncated
+                && frontier.before != requested.before
+                && !generation
+                    .messages
+                    .iter()
+                    .any(|message| message.lane == frontier.lane);
+            if explicit_resume {
+                changed |= self
+                    .message_cards
+                    .rebase_history(frontier.lane, frontier.before);
+            }
+        }
+        changed |= self.message_cards.merge(generation.messages.iter());
         for frontier in &generation.frontiers {
             let previous = self.message_history.get(&frontier.lane).copied();
             if frontier.state == wire::TranscriptLaneState::Truncated {

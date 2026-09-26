@@ -160,6 +160,29 @@ impl MessageCards {
         })
     }
 
+    /// Drop hydrated cards below a resident-named replacement history edge.
+    ///
+    /// A source rebase can invalidate a deep cursor while preserving the live
+    /// retained head. Cards below that head belong to the invalid interval and
+    /// must leave before paging resumes from the replacement edge.
+    pub(super) fn rebase_history(
+        &mut self,
+        lane: CanonicalUuid,
+        before: Option<MessageLocus>,
+    ) -> bool {
+        let floor = before.and_then(|before| {
+            self.entries
+                .iter()
+                .find(|message| message.lane == lane && message.locus == before)
+                .map(|message| message.chronology_key())
+        });
+        let previous = self.entries.len();
+        self.entries.retain(|message| {
+            message.lane != lane || floor.is_some_and(|floor| message.chronology_key() >= floor)
+        });
+        self.entries.len() != previous
+    }
+
     /// Merge live or paged records through the same identity and fingerprint law.
     pub(super) fn merge<'a>(
         &mut self,
