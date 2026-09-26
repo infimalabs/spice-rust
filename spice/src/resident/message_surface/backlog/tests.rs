@@ -345,12 +345,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
 
 fn collect_merged_history_pages(
     fixture: &MergedHistoryFixture,
-) -> (
-    usize,
-    Vec<usize>,
-    Vec<wire::AgentMessage>,
-    wire::AgentMessage,
-) {
+) -> (Vec<usize>, Vec<wire::AgentMessage>, wire::AgentMessage) {
     let source = fixture
         .history
         .lanes
@@ -370,9 +365,7 @@ fn collect_merged_history_pages(
     let mut before = initial_before.clone();
     let mut restored = Vec::new();
     let mut page_lengths = Vec::new();
-    let mut pending_pages = 0;
     let mut prior_tape = before.locus.offset;
-    let session_source = &source.session.as_ref().expect("fixture session").source;
     let mut prior_session = None;
     for _ in 0..128 {
         let page = canvas::stream::MessageHistoryProvider::history(
@@ -383,25 +376,16 @@ fn collect_merged_history_pages(
         )
         .expect("merged history reads")
         .expect("fixture lane is owned");
-        if page.messages.is_empty() {
-            assert!(page.more, "pending authentication keeps history open");
-            let visible = session_source.next();
-            let target = u64::try_from(fixture.session_contents.len())
-                .expect("fixture session length fits u64");
-            assert!(
-                visible == 0 || visible == target,
-                "authentication publishes only zero or the complete source target, found {visible}",
-            );
-            pending_pages += 1;
-            continue;
-        }
-        assert!(!page.messages.is_empty());
+        assert!(
+            !page.messages.is_empty(),
+            "history never answers an open lane with an empty page",
+        );
         assert!(page.messages.len() <= canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
         page_lengths.push(page.messages.len());
         let oldest = page.messages[0].clone();
         restored.splice(0..0, page.messages);
         if !page.more {
-            return (pending_pages, page_lengths, restored, initial_before);
+            return (page_lengths, restored, initial_before);
         }
         before = oldest;
         let continuation = fixture
@@ -418,7 +402,7 @@ fn collect_merged_history_pages(
         if let Some(prior_session) = prior_session {
             assert!(
                 session_next <= prior_session,
-                "session frontier retreats or holds after authentication publishes"
+                "session frontier retreats or holds"
             );
         }
         prior_tape = tape_next;
@@ -822,13 +806,7 @@ fn history_request_stops_at_the_tape_start_without_a_visible_card() {
 #[test]
 fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
     let fixture = merged_history_fixture();
-    let (pending_pages, page_lengths, restored, initial_before) =
-        collect_merged_history_pages(&fixture);
-
-    assert!(
-        pending_pages > 0,
-        "session history waits for authentication"
-    );
+    let (page_lengths, restored, initial_before) = collect_merged_history_pages(&fixture);
     assert!(
         page_lengths
             .iter()

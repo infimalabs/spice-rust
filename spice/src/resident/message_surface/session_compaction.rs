@@ -1,7 +1,7 @@
 //! Structured compaction boundaries recovered from preserved vendor sessions.
 
 #[cfg(test)]
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{self, BufRead as _, BufReader, Read as _, Seek as _, SeekFrom};
@@ -20,8 +20,8 @@ mod presentation;
 use file_stamp::*;
 #[cfg(test)]
 use history_authentication::AFTER_HISTORY_AUTHENTICATION_READ;
+use history_authentication::read_authenticated_history;
 pub(super) use history_authentication::{HistoryCheckpoint, history_checkpoint};
-use history_authentication::{advance_history_authentication, observe_history_source_movement};
 pub(super) use identity::session_member;
 use presentation::publish;
 
@@ -158,7 +158,6 @@ struct PrefixAuthentication {
 thread_local! {
     static VALIDATION_BYTES_READ: Cell<u64> = const { Cell::new(0) };
     static BOOTSTRAP_BYTES_DECODED: Cell<u64> = const { Cell::new(0) };
-    static AFTER_HISTORY_SOURCE_READ: RefCell<Option<Box<dyn FnOnce()>>> = RefCell::new(None);
 }
 
 impl SessionCompactions {
@@ -537,15 +536,8 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
 /// Find the latest durable Codex boundary by paging backward, independently
 /// of the visible Canvas tail. Older context epochs cannot change that boundary.
 fn bootstrap_codex(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<CompactionRecord>> {
-    let checkpoint = cursor
-        .startup_search
-        .clone()
-        .map_or_else(|| history_checkpoint(&cursor.path), Ok)?;
+    let checkpoint = history_checkpoint(&cursor.path)?;
     let page = bootstrap_before(cursor, visible_limit, &checkpoint, HistoryRead::Cursor)?;
-    if page.pending_authentication {
-        cursor.startup_search = Some(checkpoint);
-        return Ok(Vec::new());
-    }
     let latest = page.latest;
     cursor.startup_recovery = latest;
     cursor.startup_search =
@@ -566,9 +558,6 @@ fn advance_codex_startup_search(cursor: &mut Cursor) -> io::Result<Vec<Compactio
         cursor.author,
     );
     let page = bootstrap_before(&mut recovery, 0, &checkpoint, HistoryRead::Page)?;
-    if page.pending_authentication {
-        return Ok(Vec::new());
-    }
     if let Some(boundary) = page.latest {
         cursor.startup_recovery = Some(boundary);
         cursor.startup_search = None;
@@ -586,15 +575,8 @@ fn advance_codex_startup_search(cursor: &mut Cursor) -> io::Result<Vec<Compactio
 /// first ninety-nine prefixes again. Read one fixed newest-record page, retain
 /// its older continuation, and continue live scanning from that snapshot.
 fn bootstrap(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<CompactionRecord>> {
-    let checkpoint = cursor
-        .startup_search
-        .clone()
-        .map_or_else(|| history_checkpoint(&cursor.path), Ok)?;
+    let checkpoint = history_checkpoint(&cursor.path)?;
     let page = bootstrap_before(cursor, visible_limit, &checkpoint, HistoryRead::Cursor)?;
-    if page.pending_authentication {
-        cursor.startup_search = Some(checkpoint);
-        return Ok(Vec::new());
-    }
     cursor.startup_search = None;
     Ok(page.records)
 }
@@ -604,7 +586,6 @@ struct HistoryPage {
     latest: Option<listen::Locus>,
     start: u64,
     work: HistoryWork,
-    pending_authentication: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -665,25 +646,7 @@ fn bootstrap_before(
     read: HistoryRead,
 ) -> io::Result<HistoryPage> {
     let started = Instant::now();
-    let authentication = advance_history_authentication(&cursor.path, checkpoint, started)?;
-    let Some(stamp) = authentication.stamp else {
-        return Ok(HistoryPage {
-            records: Vec::new(),
-            latest: None,
-            start: checkpoint.next(),
-            work: authentication.work,
-            pending_authentication: true,
-        });
-    };
-    let Some(source) = read_history_source(&cursor.path, checkpoint, stamp, started, read)? else {
-        return Ok(HistoryPage {
-            records: Vec::new(),
-            latest: None,
-            start: checkpoint.next(),
-            work: authentication.work,
-            pending_authentication: true,
-        });
-    };
+    let source = read_history_source(&cursor.path, checkpoint, started, read)?;
     let selected = selected_history_start(&source.bytes);
     let seat = source.aligned.saturating_add(selected as u64);
     let start = source.older.saturating_add(selected as u64);
@@ -697,18 +660,6 @@ fn bootstrap_before(
         started,
         &mut work,
     )?;
-    let observed = FileStamp::read(&File::open(&cursor.path)?)?;
-    if observed != source.stamp {
-        observe_history_source_movement(checkpoint, observed)?;
-        reset(cursor);
-        return Ok(HistoryPage {
-            records: Vec::new(),
-            latest: None,
-            start,
-            work,
-            pending_authentication: true,
-        });
-    }
     work.elapsed = started.elapsed();
     if !work.within_limits() {
         return Err(history_budget_exhausted(work));
@@ -721,7 +672,6 @@ fn bootstrap_before(
         latest,
         start,
         work,
-        pending_authentication: false,
     })
 }
 
@@ -750,28 +700,13 @@ enum HistoryAlignment {
 fn read_history_source(
     path: &PathBuf,
     checkpoint: &HistoryCheckpoint,
-    authenticated: FileStamp,
     started: Instant,
     read: HistoryRead,
-) -> io::Result<Option<HistorySource>> {
-    let mut file = File::open(path)?;
-    let stamp = FileStamp::read(&file)?;
-    if stamp != authenticated {
-        observe_history_source_movement(checkpoint, stamp)?;
-        return Ok(None);
-    }
+) -> io::Result<HistorySource> {
     let end = checkpoint.next();
     let source_bytes = end.min(HISTORY_BYTE_BUDGET as u64);
     let source_start = end.saturating_sub(source_bytes);
-    file.seek(SeekFrom::Start(source_start))?;
-    let mut bytes = vec![0; usize::try_from(source_bytes).expect("history budget fits usize")];
-    file.read_exact(&mut bytes)?;
-    #[cfg(test)]
-    AFTER_HISTORY_SOURCE_READ.with(|hook| {
-        if let Some(hook) = hook.borrow_mut().take() {
-            hook();
-        }
-    });
+    let (stamp, mut bytes) = read_authenticated_history(path, checkpoint, source_start, end)?;
     let work = HistoryWork {
         source_bytes,
         decoded_records: 0,
@@ -800,13 +735,13 @@ fn read_history_source(
         .rposition(|byte| *byte == b'\n')
         .map_or(0, |newline| newline + 1);
     bytes.truncate(complete);
-    Ok(Some(HistorySource {
+    Ok(HistorySource {
         stamp,
         aligned,
         older,
         bytes,
         work,
-    }))
+    })
 }
 
 fn align_history_source(bytes: &mut Vec<u8>, source_start: u64, end: u64) -> HistoryAlignment {
@@ -972,7 +907,6 @@ pub(super) struct HistoryScan {
     pub(super) more: bool,
     pub(super) start: u64,
     pub(super) work: HistoryWork,
-    pub(super) pending_authentication: bool,
 }
 
 pub(super) struct HistoryRequest<'a> {
@@ -997,7 +931,6 @@ impl HistoryScan {
         debug_assert!(self.start <= newer.start);
         self.messages.extend(newer.messages);
         self.work = self.work.joined(newer.work);
-        self.pending_authentication |= newer.pending_authentication;
         self
     }
 }
@@ -1021,8 +954,7 @@ pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<Hi
     );
     let mut scan = history_window(&mut cursor, &request, request.end, request.limit)?;
     let mut reads = 1;
-    while !scan.pending_authentication
-        && scan.messages.len() < request.limit
+    while scan.messages.len() < request.limit
         && scan.start > 0
         && reads < HISTORY_WINDOW_LIMIT
         && scan.work.elapsed < HISTORY_DURATION
@@ -1077,7 +1009,6 @@ fn history_window(
         more: collected.dropped || start > 0 || page.start > 0,
         start: page.start,
         work: page.work,
-        pending_authentication: page.pending_authentication,
     })
 }
 

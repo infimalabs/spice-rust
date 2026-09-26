@@ -457,13 +457,7 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
             return Ok(None);
         };
         let continuation = self.continuation(lane, source, before)?;
-        let Some(sources) = self.history_sources(lane, source, before, limit, &continuation)?
-        else {
-            return Ok(Some(canvas::stream::MessageHistoryPage {
-                messages: Vec::new(),
-                more: true,
-            }));
-        };
+        let sources = self.history_sources(lane, source, before, limit, &continuation)?;
         let (messages, more) = sources.page(before, limit);
         if more {
             self.retain_continuation(lane, before, &messages, &sources, &continuation)?;
@@ -480,7 +474,7 @@ impl DurableHistory {
         before: Option<&wire::AgentMessage>,
         limit: usize,
         continuation: &HistoryContinuation,
-    ) -> Result<Option<HistorySources>, String> {
+    ) -> Result<HistorySources, String> {
         let known = self.known_observations()?;
         let session = source
             .session
@@ -502,12 +496,6 @@ impl DurableHistory {
                 .map_err(|error| format!("{error:?}"))
             })
             .transpose()?;
-        if session
-            .as_ref()
-            .is_some_and(|session| session.pending_authentication)
-        {
-            return Ok(None);
-        }
         let tape = if source.tape.is_dir() {
             let newest = match continuation.tape.as_ref() {
                 Some(end) => self.tape_messages(lane, source, before, end, limit)?,
@@ -519,7 +507,7 @@ impl DurableHistory {
         } else {
             None
         };
-        Ok(Some(HistorySources { tape, session }))
+        Ok(HistorySources { tape, session })
     }
 
     fn retain_continuation(
