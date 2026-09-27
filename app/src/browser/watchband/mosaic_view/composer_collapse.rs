@@ -6,7 +6,7 @@
 //! reads as part of the stream. Only Mosaic's own anchor correction, which keeps
 //! cards visually still, is excluded.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use wasm_bindgen::closure::Closure;
@@ -83,6 +83,8 @@ struct Registration {
     _resize: Closure<dyn FnMut(js_sys::Array, ResizeObserver)>,
     scroll: Closure<dyn FnMut(Event)>,
     key: Closure<dyn FnMut(KeyboardEvent)>,
+    _paint: Closure<dyn FnMut(f64)>,
+    frame: FrameScheduler,
 }
 
 fn composer_elements(scroller: &Element) -> Option<(HtmlElement, HtmlElement)> {
@@ -101,20 +103,77 @@ fn composer_elements(scroller: &Element) -> Option<(HtmlElement, HtmlElement)> {
     Some((surface, composer))
 }
 
+/// One direct compositor write per presentation frame. Keeping the changing
+/// values on their owning elements avoids invalidating every card through an
+/// inherited custom property while the plane scrolls.
+#[derive(Clone)]
+struct FrameScheduler {
+    window: web_sys::Window,
+    callback: js_sys::Function,
+    pending: Rc<Cell<Option<i32>>>,
+}
+
+impl FrameScheduler {
+    fn schedule(&self) {
+        if self.pending.get().is_some() {
+            return;
+        }
+        let frame = self
+            .window
+            .request_animation_frame(&self.callback)
+            .expect("Canvas window accepts a composer presentation frame");
+        self.pending.set(Some(frame));
+    }
+
+    fn cancel(&self) {
+        if let Some(frame) = self.pending.take() {
+            let _ = self.window.cancel_animation_frame(frame);
+        }
+    }
+}
+
 impl Registration {
     fn new(scroller: Element, state: SharedCollapse) -> Option<Self> {
+        let scroll_element = scroller.clone().dyn_into::<HtmlElement>().ok()?;
         let (surface, composer) = composer_elements(&scroller)?;
         {
             let mut state = state.borrow_mut();
             state.scroll_top = state.plane_scroll_top(&scroller);
         }
-        sync_metrics(&surface, &composer, &state);
+        sync_metrics(&surface, &composer, &scroll_element, &state);
+
+        let pending = Rc::new(Cell::new(None));
+        let painted_pending = Rc::clone(&pending);
+        let painted_surface = surface.clone();
+        let painted_composer = composer.clone();
+        let painted_scroller = scroll_element.clone();
+        let painted_state = Rc::clone(&state);
+        let paint = Closure::<dyn FnMut(f64)>::new(move |_| {
+            painted_pending.set(None);
+            paint_collapse(
+                &painted_surface,
+                &painted_composer,
+                &painted_scroller,
+                &painted_state,
+            );
+        });
+        let frame = FrameScheduler {
+            window: web_sys::window()?,
+            callback: paint.as_ref().unchecked_ref::<js_sys::Function>().clone(),
+            pending,
+        };
 
         let resized_surface = surface.clone();
         let resized_composer = composer.clone();
+        let resized_scroller = scroll_element.clone();
         let resized_state = Rc::clone(&state);
         let resize = Closure::<dyn FnMut(js_sys::Array, ResizeObserver)>::new(move |_, _| {
-            sync_metrics(&resized_surface, &resized_composer, &resized_state);
+            sync_metrics(
+                &resized_surface,
+                &resized_composer,
+                &resized_scroller,
+                &resized_state,
+            );
         });
         let observer = ResizeObserver::new(resize.as_ref().unchecked_ref()).ok()?;
         observer.observe(&composer);
@@ -122,20 +181,36 @@ impl Registration {
         let scroll_scroller = scroller.clone();
         let scroll_surface = surface.clone();
         let scroll_state = Rc::clone(&state);
+        let scroll_frame = frame.clone();
         let scroll = Closure::<dyn FnMut(Event)>::new(move |_| {
-            follow_scroll(&scroll_surface, &scroll_scroller, &scroll_state);
+            follow_scroll(
+                &scroll_surface,
+                &scroll_scroller,
+                &scroll_state,
+                &scroll_frame,
+            );
         });
         scroller
             .add_event_listener_with_callback("scroll", scroll.as_ref().unchecked_ref())
             .expect("the owned activity plane accepts its scroll listener");
 
+        let key_surface = surface.clone();
+        let key_composer = composer.clone();
+        let key_scroller = scroll_element.clone();
+        let key_state = Rc::clone(&state);
         let key = Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
             let requested = match event.key().as_str() {
                 "Home" => 0.0,
-                "End" => state.borrow().maximum,
+                "End" => key_state.borrow().maximum,
                 _ => return,
             };
-            set_collapse(&surface, &state, requested);
+            set_collapse(
+                &key_surface,
+                &key_composer,
+                &key_scroller,
+                &key_state,
+                requested,
+            );
         });
         scroller
             .add_event_listener_with_callback("keydown", key.as_ref().unchecked_ref())
@@ -147,12 +222,15 @@ impl Registration {
             _resize: resize,
             scroll,
             key,
+            _paint: paint,
+            frame,
         })
     }
 }
 
 impl Drop for Registration {
     fn drop(&mut self) {
+        self.frame.cancel();
         self.observer.disconnect();
         let _ = self
             .scroller
@@ -163,7 +241,12 @@ impl Drop for Registration {
     }
 }
 
-fn follow_scroll(surface: &HtmlElement, scroller: &Element, state: &SharedCollapse) {
+fn follow_scroll(
+    surface: &HtmlElement,
+    scroller: &Element,
+    state: &SharedCollapse,
+    frame: &FrameScheduler,
+) {
     let requested = {
         let mut state = state.borrow_mut();
         let top = state.plane_scroll_top(scroller);
@@ -171,10 +254,17 @@ fn follow_scroll(surface: &HtmlElement, scroller: &Element, state: &SharedCollap
         state.scroll_top = top;
         crate::mosaic::composer_collapse_offset(state.offset, state.maximum, scrolled, top)
     };
-    set_collapse(surface, state, requested);
+    if update_collapse(state, requested) || !surface.has_attribute("data-composer-collapse") {
+        frame.schedule();
+    }
 }
 
-fn sync_metrics(surface: &HtmlElement, composer: &HtmlElement, state: &SharedCollapse) {
+fn sync_metrics(
+    surface: &HtmlElement,
+    composer: &HtmlElement,
+    scroller: &HtmlElement,
+    state: &SharedCollapse,
+) {
     let maximum = f64::from(composer.offset_height());
     surface
         .style()
@@ -191,35 +281,68 @@ fn sync_metrics(surface: &HtmlElement, composer: &HtmlElement, state: &SharedCol
             state.offset.min(maximum)
         }
     };
-    set_collapse(surface, state, requested);
+    set_collapse(surface, composer, scroller, state, requested);
 }
 
-fn set_collapse(surface: &HtmlElement, state: &SharedCollapse, requested: f64) {
-    let (previous, next, maximum) = {
-        let mut state = state.borrow_mut();
-        let previous = state.offset;
-        let next = requested.clamp(0.0, state.maximum);
-        state.offset = next;
-        (previous, next, state.maximum)
-    };
-    if (next - previous).abs() <= f64::EPSILON && surface.has_attribute("data-composer-collapse") {
-        return;
+fn set_collapse(
+    surface: &HtmlElement,
+    composer: &HtmlElement,
+    scroller: &HtmlElement,
+    state: &SharedCollapse,
+    requested: f64,
+) {
+    if update_collapse(state, requested) || !surface.has_attribute("data-composer-collapse") {
+        paint_collapse(surface, composer, scroller, state);
     }
-    surface
+}
+
+fn update_collapse(state: &SharedCollapse, requested: f64) -> bool {
+    let mut state = state.borrow_mut();
+    let next = requested.clamp(0.0, state.maximum);
+    if (next - state.offset).abs() <= f64::EPSILON {
+        return false;
+    }
+    state.offset = next;
+    true
+}
+
+fn paint_collapse(
+    surface: &HtmlElement,
+    composer: &HtmlElement,
+    scroller: &HtmlElement,
+    state: &SharedCollapse,
+) {
+    let (offset, maximum) = {
+        let state = state.borrow();
+        (state.offset, state.maximum)
+    };
+    composer
         .style()
-        .set_property("--team-composer-collapse", &format!("{next}px"))
-        .expect("the composer collapse CSS property is valid");
-    surface
-        .set_attribute("data-composer-collapse", &next.to_string())
-        .expect("the composer collapse diagnostic attribute is valid");
-    surface
-        .set_attribute(
-            "data-composer-fully-collapsed",
-            if maximum > COLLAPSE_EPSILON_PX && next >= maximum - COLLAPSE_EPSILON_PX {
-                "true"
-            } else {
-                "false"
-            },
+        .set_property("transform", &format!("translate3d(0, {}px, 0)", -offset))
+        .expect("the composer transform is valid");
+    scroller
+        .style()
+        .set_property(
+            "scroll-padding-top",
+            &format!("{}px", (maximum - offset).max(0.0)),
         )
-        .expect("the composer collapse state attribute is valid");
+        .expect("the plane scroll padding is valid");
+    surface
+        .set_attribute("data-composer-collapse", &offset.to_string())
+        .expect("the composer collapse diagnostic attribute is valid");
+    let fully_collapsed =
+        if maximum > COLLAPSE_EPSILON_PX && offset >= maximum - COLLAPSE_EPSILON_PX {
+            "true"
+        } else {
+            "false"
+        };
+    if surface
+        .get_attribute("data-composer-fully-collapsed")
+        .as_deref()
+        != Some(fully_collapsed)
+    {
+        surface
+            .set_attribute("data-composer-fully-collapsed", fully_collapsed)
+            .expect("the composer collapse state attribute is valid");
+    }
 }
