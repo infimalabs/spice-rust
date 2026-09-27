@@ -322,6 +322,10 @@ fn activity_cards(
     team: &crate::runtime::LaneRow,
     quote_agents: &Rc<crate::composer_markdown::QuoteAgents>,
 ) -> Vec<ActivityCard> {
+    // A card carries only the agents its quotes name: the roster as a whole
+    // changes whenever any seat's occupancy does, and a card holding all of it
+    // would lose its measurement and re-lay out the whole plane each time.
+    let unquoted = Rc::new(crate::composer_markdown::QuoteAgents::new());
     let mut cards = runtime
         .messages()
         .iter()
@@ -334,7 +338,14 @@ fn activity_cards(
             Some(ActivityCard::Agent {
                 accent: watchband::accent(team.members.len(), position),
                 member: member.clone(),
-                quote_agents: Rc::clone(quote_agents),
+                quote_agents: if message.quotes.is_empty() {
+                    Rc::clone(&unquoted)
+                } else {
+                    Rc::new(crate::composer_markdown::referenced_quote_agents(
+                        &message.quotes,
+                        quote_agents,
+                    ))
+                },
                 quote_lane: crate::composer_drafts::quote_lane(&team.members, message),
                 message: Rc::clone(message),
             })

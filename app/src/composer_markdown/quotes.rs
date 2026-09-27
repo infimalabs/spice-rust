@@ -41,6 +41,39 @@ pub(super) fn expand<'a>(
     expanded
 }
 
+/// The part of `agents` a quote tree can render.
+///
+/// Authors resolve labels only among entries of the lane they name, so a card
+/// rendered from this projection is identical to one rendered from the whole
+/// roster, and a seat elsewhere changing occupancy leaves it untouched.
+pub(crate) fn referenced_quote_agents(
+    presentations: &[QuotePresentation],
+    agents: &super::QuoteAgents,
+) -> super::QuoteAgents {
+    let mut lanes = std::collections::BTreeSet::new();
+    let mut pending = presentations.iter().collect::<Vec<_>>();
+    while let Some(presentation) = pending.pop() {
+        let QuotePresentation::Resolved { author, quotes, .. } = presentation else {
+            continue;
+        };
+        match author {
+            QuoteAuthor::Agent { lane, .. }
+            | QuoteAuthor::Directive {
+                actor: wire::Actor::Lane(lane),
+            } => {
+                lanes.insert(*lane);
+            }
+            QuoteAuthor::Directive { .. } => {}
+        }
+        pending.extend(quotes);
+    }
+    agents
+        .iter()
+        .filter(|((lane, _), _)| lanes.contains(lane))
+        .map(|(key, agent)| (*key, agent.clone()))
+        .collect()
+}
+
 fn structural_quote_target<'event>(events: &'event [MarkdownEvent<'_>]) -> Option<&'event str> {
     match events {
         [

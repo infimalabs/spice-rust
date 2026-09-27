@@ -33,6 +33,8 @@ pub(crate) struct QuoteAgent {
 
 pub(crate) type QuoteAgents = BTreeMap<(wire::CanonicalUuid, wire::CanonicalUuid), QuoteAgent>;
 
+pub(crate) use quotes::referenced_quote_agents;
+
 /// Render received text through the one sanitized Markdown path used by cards.
 #[cfg(test)]
 pub(crate) fn render_received(markdown: &str) -> RenderedMarkdown {
