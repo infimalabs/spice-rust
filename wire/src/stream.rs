@@ -13,6 +13,53 @@ use serde::{Deserialize, Serialize};
 pub const BROADCAST_MARKER: &str = "[BROADCAST]";
 /// Canonical semantic prefix carried by every peer-review steering directive.
 pub const REVIEW_MARKER: &str = "[REVIEW]";
+/// Canonical control prefix carried by resident-generated peer-review feedback.
+pub const REVIEW_FEEDBACK_CONTROL_PREFIX: &str = "review-feedback:";
+
+/// Name the reviewed task and review fact behind one feedback directive.
+#[must_use]
+pub fn review_feedback_control(task: &TaskStamp, reviewed: Seq) -> String {
+    format!("{REVIEW_FEEDBACK_CONTROL_PREFIX}{task}:{reviewed}")
+}
+
+/// Decode the reviewed task and review fact from one feedback control.
+#[must_use]
+pub fn parse_review_feedback_control(control: &str) -> Option<(TaskStamp, Seq)> {
+    let body = control.strip_prefix(REVIEW_FEEDBACK_CONTROL_PREFIX)?;
+    let (task, reviewed) = body.split_once(':')?;
+    let reviewed = reviewed.parse::<u64>().ok().and_then(Seq::new)?;
+    Some((task.parse().ok()?, reviewed))
+}
+
+#[cfg(test)]
+mod review_feedback_control_tests {
+    use super::*;
+
+    #[test]
+    fn feedback_control_round_trips_only_the_canonical_task_and_review_position() {
+        let task: TaskStamp = "1kKRRsDR".parse().expect("fixture task");
+        let reviewed = Seq::new(42).expect("fixture review position");
+        let control = review_feedback_control(&task, reviewed);
+
+        assert_eq!(
+            parse_review_feedback_control(&control),
+            Some((task, reviewed))
+        );
+        for malformed in [
+            "review-feedback:1kKRRsDR:0",
+            "review-feedback:1kKRRsDR:42:extra",
+            "review-feedback:not-a-task:42",
+            "task-generation:1kKRRsDR:42",
+        ] {
+            assert_eq!(
+                parse_review_feedback_control(malformed),
+                None,
+                "{malformed}"
+            );
+        }
+    }
+}
+
 /// Canonical semantic prefix carried by every taste steering directive.
 pub const TASTE_MARKER: &str = "[TASTE]";
 /// Canonical semantic prefix the resident places on every ordinary directive

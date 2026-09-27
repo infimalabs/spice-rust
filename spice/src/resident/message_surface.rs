@@ -796,9 +796,9 @@ fn presents_as_authored_steering(control: Option<&str>) -> bool {
 }
 
 fn is_review_feedback(control: Option<&str>) -> bool {
-    control.is_some_and(|control| {
-        control.starts_with(super::lifecycle::REVIEW_FEEDBACK_CONTROL_PREFIX)
-    })
+    control
+        .and_then(wire::parse_review_feedback_control)
+        .is_some()
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

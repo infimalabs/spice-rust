@@ -28,7 +28,6 @@ mod materialization;
 use materialization::Projection;
 pub(super) mod generation_notices;
 mod review_feedback;
-pub(super) const REVIEW_FEEDBACK_CONTROL_PREFIX: &str = review_feedback::CONTROL_PREFIX;
 mod targets;
 use targets::project_targets;
 #[cfg(test)]

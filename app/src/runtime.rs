@@ -379,6 +379,31 @@ pub struct LaneLifecycleBoundary {
     cause: String,
 }
 
+/// One peer finding the resident delivered back to the phase author.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReviewFeedback {
+    seq: Seq,
+    task: wire::TaskStamp,
+    text: String,
+}
+
+impl ReviewFeedback {
+    #[must_use]
+    pub const fn seq(&self) -> Seq {
+        self.seq
+    }
+
+    #[must_use]
+    pub const fn task(&self) -> &wire::TaskStamp {
+        &self.task
+    }
+
+    #[must_use]
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+}
+
 impl LaneLifecycleBoundary {
     #[must_use]
     pub const fn seq(&self) -> Seq {
@@ -690,6 +715,8 @@ pub struct CanvasRuntime {
     terminal: Option<StreamTerminal>,
     activities: Vec<LaneActivity>,
     lifecycle_boundaries: Vec<LaneLifecycleBoundary>,
+    pending_review_feedback: BTreeMap<wire::TaskStamp, (Seq, String)>,
+    review_feedback: Vec<ReviewFeedback>,
 }
 
 impl CanvasRuntime {
@@ -721,6 +748,8 @@ impl CanvasRuntime {
             terminal: None,
             activities: Vec::new(),
             lifecycle_boundaries: Vec::new(),
+            pending_review_feedback: BTreeMap::new(),
+            review_feedback: Vec::new(),
         }
     }
 
@@ -969,6 +998,12 @@ impl CanvasRuntime {
     #[must_use]
     pub fn lifecycle_boundaries(&self) -> &[LaneLifecycleBoundary] {
         &self.lifecycle_boundaries
+    }
+
+    /// Peer findings delivered to their phase authors, in journal order.
+    #[must_use]
+    pub fn review_feedback(&self) -> &[ReviewFeedback] {
+        &self.review_feedback
     }
 
     /// Newest retained agent-authored transcript messages in creation order.

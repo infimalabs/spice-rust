@@ -80,6 +80,45 @@ fn task_fact(position: u64, cause: Option<u64>) -> serde_json::Value {
     value
 }
 
+fn review_fact(position: u64, verdict: &str, finding: Option<&str>) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "v": 1,
+        "seq": position,
+        "at": "2030-04-12T18:44:09.271Z",
+        "actor": format!("lane:{LANE}"),
+        "origin": "task:1kKRRsDP",
+        "fact": {
+            "kind": "task::reviewed",
+            "task": "1kKRRsDP",
+            "reviewer": format!("lane:{LANE}"),
+            "verdict": verdict,
+        },
+    });
+    if let Some(finding) = finding {
+        value["fact"]["finding"] = serde_json::json!(finding);
+    }
+    value
+}
+
+fn review_feedback_fact(position: u64, reviewed: u64) -> serde_json::Value {
+    serde_json::json!({
+        "v": 1,
+        "seq": position,
+        "at": "2030-04-12T18:44:10.271Z",
+        "actor": "spice",
+        "origin": "resident:018f82d4-6f59-7d06-92e3-bce9131163c3",
+        "fact": {
+            "kind": "steer::sent",
+            "directive": "018f82d4-6f59-7d06-92e3-bce9131163d1",
+            "key": "dTf4nRGvF",
+            "lane": LANE,
+            "text": "[REVIEW] resident delivery instructions",
+            "control": format!("review-feedback:1kKRRsDP:{reviewed}"),
+            "expires": "2030-04-12T18:49:10.271Z",
+        },
+    })
+}
+
 fn packed_frame(
     kind: &str,
     rows: &[serde_json::Value],
@@ -495,6 +534,47 @@ fn stream_application_invalidates_only_observable_runtime_changes() {
     assert!(
         !foreign_runtime.apply_stream_frame(&live).changed(),
         "an admitted frame from another scope does not invalidate the rendered surface"
+    );
+}
+
+#[test]
+fn delivered_review_feedback_becomes_a_system_notice_until_the_task_reviews_clean() {
+    const FINDING: &str = "The negative path is missing.\n\nAdd the refusal fixture.";
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+
+    runtime.apply_stream_frame(&admitted_stream(
+        &session,
+        &fact_frame(review_fact(41, "finding", Some(FINDING))),
+    ));
+    assert!(
+        runtime.review_feedback().is_empty(),
+        "a review that was not delivered to the author is not an operator notice"
+    );
+
+    runtime.apply_stream_frame(&admitted_stream(
+        &session,
+        &fact_frame(review_feedback_fact(42, 41)),
+    ));
+    let feedback = runtime.review_feedback();
+    assert_eq!(feedback.len(), 1);
+    assert_eq!(feedback[0].task().to_string(), "1kKRRsDP");
+    assert_eq!(feedback[0].text(), FINDING);
+    assert!(
+        !feedback[0]
+            .text()
+            .contains("resident delivery instructions"),
+        "Canvas presents the recorded validation, not the lane-only instruction"
+    );
+
+    runtime.apply_stream_frame(&admitted_stream(
+        &session,
+        &fact_frame(review_fact(43, "clean", None)),
+    ));
+    assert!(
+        runtime.review_feedback().is_empty(),
+        "the system notice leaves when the owning task reviews clean"
     );
 }
 
