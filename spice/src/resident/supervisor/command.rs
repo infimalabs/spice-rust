@@ -17,6 +17,7 @@
 //! so far while the command keeps running as a job. The resident reaches the
 //! driver through a datagram signal; the payload remains in journal authority.
 
+use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Write};
@@ -27,7 +28,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use listen::{Decoded, Dialog, Event, ProseRole, TurnMoment};
 use serde::{Deserialize, Serialize};
 use vendor::omp::{JobCall, ShellCall};
-use wire::CanonicalUuid;
+use wire::{CanonicalUuid, Disposition};
 
 use super::super::RuntimePaths;
 use super::terminal::{Control, Handle, Job, Report, Run, Terminal};
@@ -51,6 +52,9 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// resend can say whether it saw a reply at all. Reasoning and tool
     /// arguments are not prose. Cleared with `told`.
     replied: Mutex<BTreeSet<String>>,
+    /// Hidden-reasoning attempts already corrected in this context and pending
+    /// inbox generation. The text itself is never retained.
+    reasoning_reminder: Mutex<ReasoningReminder>,
     /// The confirm dialog each open consent request will answer.
     asks: Mutex<HashMap<CanonicalUuid, String>>,
     /// Where the occupant's commands run, for an occupant that has a shell.
@@ -63,6 +67,20 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
 enum InboxDelivery {
     Update,
     PostCompaction,
+}
+
+#[derive(Default)]
+struct ReasoningReminder {
+    pending: Option<Vec<u8>>,
+    nudged: BTreeSet<steer::Key>,
+}
+
+struct PendingKeys(BTreeSet<steer::Key>);
+
+impl steer::Standing for PendingKeys {
+    fn disposition(&self, key: &steer::Key) -> Option<Disposition> {
+        self.0.contains(key).then_some(Disposition::Live)
+    }
 }
 
 /// What one host tool call asks of the lane.
@@ -127,6 +145,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             delivered: Mutex::new(None),
             told: Mutex::new(BTreeSet::new()),
             replied: Mutex::new(BTreeSet::new()),
+            reasoning_reminder: Mutex::new(ReasoningReminder::default()),
             asks: Mutex::new(HashMap::new()),
             terminal,
             calls: Mutex::new(HashMap::new()),
@@ -241,6 +260,86 @@ impl<W: Write + Send + 'static> Driver<W> {
         self.write(&vendor::omp::steer_request(sequence, message))
     }
 
+    /// Correct attempts to answer pending steering in hidden reasoning.
+    ///
+    /// Detection reuses the prose scanner but consumes none of its outcomes:
+    /// this path writes only a private notice and never reaches journal
+    /// authority. The legacy decline spelling is normalized only for this
+    /// compatibility observation; visible acknowledgment accepts canonical
+    /// markers alone.
+    fn nudge_hidden_acknowledgements(&self, decoded: &Decoded) {
+        if !decoded.events().iter().any(|event| {
+            matches!(
+                event,
+                Event::Reasoning(listen::Reasoning {
+                    content: listen::ReasoningContent::Plain(_),
+                    ..
+                })
+            )
+        }) {
+            return;
+        }
+        let pending = (self.read_inbox)().unwrap_or_default();
+        let Ok(rendered) = std::str::from_utf8(&pending) else {
+            return;
+        };
+        let standing = PendingKeys(
+            steer::inbox::keys(rendered)
+                .filter_map(|key| key.parse().ok())
+                .collect(),
+        );
+        let mut reminder = self
+            .reasoning_reminder
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if reminder.pending.as_deref() != Some(pending.as_slice()) {
+            reminder.pending = Some(pending);
+            reminder.nudged.clear();
+        }
+
+        let mut mentioned = BTreeSet::new();
+        for event in decoded.events() {
+            let Event::Reasoning(listen::Reasoning {
+                content: listen::ReasoningContent::Plain(parts),
+                ..
+            }) = event
+            else {
+                continue;
+            };
+            let prose = match parts.as_slice() {
+                [part] => Cow::Borrowed(part.as_str()),
+                _ => Cow::Owned(parts.join("\n")),
+            };
+            let prose = if prose.contains("NACK") {
+                Cow::Owned(prose.replace("NACK", "NAK"))
+            } else {
+                prose
+            };
+            mentioned.extend(steer::scan(&prose, &standing).into_iter().filter_map(
+                |recognition| match recognition.outcome {
+                    steer::Outcome::Retired { key, .. } => Some(key),
+                    steer::Outcome::Missed { .. } => None,
+                },
+            ));
+        }
+        mentioned.retain(|key| !reminder.nudged.contains(key));
+        if mentioned.is_empty() {
+            return;
+        }
+        let keys = mentioned
+            .iter()
+            .map(steer::Key::as_str)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let message = format!(
+            "<system-notice>\nReasoning is not acknowledgment. Reply in visible assistant prose \
+             with `ACK {keys}: response` or `NAK {keys}: reason`.\n</system-notice>"
+        );
+        if self.steer(&message).is_ok() {
+            reminder.nudged.extend(mentioned);
+        }
+    }
+
     /// Let one decoded record shape delivery, and state the consent request a
     /// confirm dialog raises.
     ///
@@ -304,7 +403,13 @@ impl<W: Write + Send + 'static> Driver<W> {
             delivered.take();
             drop(delivered);
             self.interject(InboxDelivery::PostCompaction);
+            self.reasoning_reminder
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .nudged
+                .clear();
         }
+        self.nudge_hidden_acknowledgements(decoded);
         let completed = decoded
             .context()
             .and_then(|context| context.turn)

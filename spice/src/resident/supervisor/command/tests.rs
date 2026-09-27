@@ -95,9 +95,12 @@ fn make_driver(sink: Sink, scratch: &Scratch, terminal: Option<Terminal>) -> Arc
     )
 }
 
+fn decoded_as(dialect: Dialect, bytes: &[u8]) -> Decoded {
+    listen::decode(dialect, bytes, Locus::new(1, 0, bytes.len() as u64)).expect("matching locus")
+}
+
 fn decoded(bytes: &[u8]) -> Decoded {
-    listen::decode(Dialect::Omp, bytes, Locus::new(1, 0, bytes.len() as u64))
-        .expect("matching locus")
+    decoded_as(Dialect::Omp, bytes)
 }
 
 /// Release a command holding on a line from the fifo. The hold is a `read`,
@@ -366,6 +369,74 @@ const NEWS: &str = "<seal>\ndirective=d1 key=1kJK6N3R stage=new expires=never\n\
                     healthy, and make the ACK or NAK visible before continuing with more tools\n\
                     </seal>\n";
 
+const THREE_PENDING: &str = "<seal>\n\
+    directive=d1 key=1kJK6N3R stage=new expires=never\none\n\
+    directive=d2 key=1kJK6M0V stage=new expires=never\ntwo\n\
+    directive=d3 key=1kJK7Sqy stage=new expires=never\nthree\n\
+    </seal>\n";
+
+const ONE_PENDING: &str =
+    "<seal>\ndirective=d3 key=1kJK7Sqy stage=new expires=never\nthree\n</seal>\n";
+
+#[test]
+fn hidden_ack_attempts_receive_one_private_visible_prose_nudge() {
+    let scratch = Scratch::new("hidden-ack");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, None);
+    scratch.publish(THREE_PENDING);
+    driver.deliver_inbox();
+
+    let attempt = decoded(
+        br#"{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"thinking","thinking":"private details. ACK 1kJK6N3R: done. NACK 1kJK6M0V: declined."}]}}"#,
+    );
+    driver.observe(&attempt);
+    let frames = sink.answered(2);
+    let nudge = frames[1]["message"].as_str().expect("nudge message");
+    assert!(nudge.starts_with("<system-notice>\n"));
+    assert!(nudge.ends_with("\n</system-notice>"));
+    assert!(nudge.contains("visible assistant prose"));
+    assert!(nudge.contains("1kJK6N3R"));
+    assert!(nudge.contains("1kJK6M0V"));
+    assert!(!nudge.contains("1kJK7Sqy"));
+    assert!(!nudge.contains("private details"));
+
+    driver.observe(&attempt);
+    driver.observe(&decoded(
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"1kJK7Sqy bare; `ACK 1kJK7Sqy: quoted`; ACK 1kJKZZZZ: unknown."}]}}"#,
+    ));
+    driver.observe(&decoded_as(
+        Dialect::Claude,
+        br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"redacted_thinking","data":"opaque"}]}}"#,
+    ));
+    assert_eq!(
+        sink.frames().len(),
+        2,
+        "repetition and non-attempts stay silent"
+    );
+
+    scratch.publish(b"");
+    driver.observe(&decoded(
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"ACK 1kJK7Sqy: no longer pending."}]}}"#,
+    ));
+    assert_eq!(sink.frames().len(), 2, "retired keys stay silent");
+
+    scratch.publish(ONE_PENDING);
+    driver.deliver_inbox();
+    let remaining_attempt = decoded(
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"NAK 1kJK7Sqy: declined."}]}}"#,
+    );
+    driver.observe(&remaining_attempt);
+    assert_eq!(sink.answered(4).len(), 4);
+
+    driver.observe(&decoded(br#"{"type":"compaction"}"#));
+    driver.observe(&remaining_attempt);
+    assert_eq!(
+        sink.answered(6).len(),
+        6,
+        "a lost context receives one fresh correction"
+    );
+}
+
 #[test]
 fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_alone() {
     let scratch = Scratch::new("restated");
@@ -454,14 +525,21 @@ fn a_resend_says_whether_any_visible_reply_followed_the_telling() {
     driver.deliver_inbox();
 
     let pointer = |rendering: &str, told| steer::inbox::nudge(rendering, |_| Some(told));
+    let frames = sink.answered(4);
+    assert_eq!(frames[0], steer(1, NEWS));
+    assert!(
+        frames[1]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("1kJK6N3R")),
+        "the hidden attempt receives its private correction: {frames:?}"
+    );
     assert_eq!(
-        sink.answered(3),
-        [
-            steer(1, NEWS),
-            steer(2, &pointer(&reminder, steer::inbox::Told::Silent),),
-            steer(3, &pointer(&again, steer::inbox::Told::Replied)),
-        ],
-        "reasoning is not a reply; visible prose is",
+        frames[2],
+        steer(3, &pointer(&reminder, steer::inbox::Told::Silent))
+    );
+    assert_eq!(
+        frames[3],
+        steer(4, &pointer(&again, steer::inbox::Told::Replied))
     );
 }
 
