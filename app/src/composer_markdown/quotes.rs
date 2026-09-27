@@ -281,7 +281,7 @@ fn quote_author_name_html(
         QuoteAuthor::Directive {
             actor: wire::Actor::Spice,
         } => quote_name_html(
-            "Spice",
+            "🌶️",
             " data-quote-author=\"directive\" data-quote-actor=\"spice\"",
             None,
         ),
