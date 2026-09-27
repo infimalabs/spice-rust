@@ -41,16 +41,23 @@ pub(super) fn expand<'a>(
     expanded
 }
 
-/// The part of `agents` a quote tree can render.
+/// The part of `agents` a card's quotes and directive contexts can render.
 ///
 /// Authors resolve labels only among entries of the lane they name, so a card
 /// rendered from this projection is identical to one rendered from the whole
 /// roster, and a seat elsewhere changing occupancy leaves it untouched.
 pub(crate) fn referenced_quote_agents(
     presentations: &[QuotePresentation],
+    directives: &[wire::MessageDirective],
     agents: &super::QuoteAgents,
 ) -> super::QuoteAgents {
-    let mut lanes = std::collections::BTreeSet::new();
+    let mut lanes = directives
+        .iter()
+        .filter_map(|directive| match directive.actor {
+            wire::Actor::Lane(lane) => Some(lane),
+            wire::Actor::Operator | wire::Actor::Spice => None,
+        })
+        .collect::<std::collections::BTreeSet<_>>();
     let mut pending = presentations.iter().collect::<Vec<_>>();
     while let Some(presentation) = pending.pop() {
         let QuotePresentation::Resolved { author, quotes, .. } = presentation else {
@@ -72,6 +79,20 @@ pub(crate) fn referenced_quote_agents(
         .filter(|((lane, _), _)| lanes.contains(lane))
         .map(|(key, agent)| (*key, agent.clone()))
         .collect()
+}
+
+/// The byline closing quoted words: who authored `target`, and its task.
+pub(super) fn signoff_html(
+    author: &QuoteAuthor,
+    target: &str,
+    agents: &super::QuoteAgents,
+    tasks: &BTreeMap<String, TaskHandle>,
+) -> String {
+    format!(
+        "<span class=\"message-quote-signoff\">— {}{}</span>",
+        author_html(author, agents),
+        task_html(target, tasks),
+    )
 }
 
 fn structural_quote_target<'event>(events: &'event [MarkdownEvent<'_>]) -> Option<&'event str> {
@@ -108,16 +129,15 @@ fn render(
             disposition,
             quotes,
         } => {
-            let body = super::render_received_with_quotes(text, &[], quotes, agents, tasks);
+            let body = super::render_received_with_quotes(text, &[], &[], quotes, agents, tasks);
             let disposition = disposition.map(disposition_html).unwrap_or_default();
             let body = body_with_disposition(&body.html, &disposition);
             format!(
                 "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
                  data-quote-target=\"{}\"><div class=\"message-quote-body\">{body}</div> \
-                 <span class=\"message-quote-signoff\">— {}{}</span></div>",
+                 {}</div>",
                 super::escape_html_attribute(target),
-                author_html(author, agents),
-                task_html(target, tasks),
+                signoff_html(author, target, agents, tasks),
             )
         }
         QuotePresentation::Unavailable { target, reason } => {

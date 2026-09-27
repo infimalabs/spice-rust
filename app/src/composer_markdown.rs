@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 use std::ops::Range;
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, Options, Parser, Tag, TagEnd};
-use wire::{Media, MessageClassification, MessageClassificationKind};
+use wire::{Media, MessageClassification, MessageClassificationKind, MessageDirective};
 
 use crate::watchband;
 
@@ -49,92 +49,113 @@ pub(crate) fn mark_broadcast(markdown: &str) -> String {
         format!("{} {markdown}", wire::stream::BROADCAST_MARKER)
     }
 }
+/// Received Markdown after media expansion, with its annotations remapped.
+pub(crate) struct ExpandedMedia<'a> {
+    pub(crate) markdown: Cow<'a, str>,
+    pub(crate) classifications: Cow<'a, [MessageClassification]>,
+    pub(crate) directives: Cow<'a, [MessageDirective]>,
+}
+
 /// Expand display-only media payloads while preserving exact classification
-/// offsets. A media reference containing an authenticated marker is left
-/// untouched rather than making that marker ambiguous.
+/// and directive-context offsets. A media reference containing an
+/// authenticated marker is left untouched rather than making that marker
+/// ambiguous.
 pub(crate) fn expand_media_payloads<'a>(
     markdown: &'a str,
     media: &[Media],
     classifications: &'a [MessageClassification],
-) -> Result<(Cow<'a, str>, Cow<'a, [MessageClassification]>), wire::MediaError> {
-    let mut projected = Cow::Borrowed(markdown);
-    let mut remapped = Cow::Borrowed(classifications);
+    directives: &'a [MessageDirective],
+) -> Result<ExpandedMedia<'a>, wire::MediaError> {
+    let mut expanded = ExpandedMedia {
+        markdown: Cow::Borrowed(markdown),
+        classifications: Cow::Borrowed(classifications),
+        directives: Cow::Borrowed(directives),
+    };
     if !markdown.contains("](attachment:") {
-        return Ok((projected, remapped));
+        return Ok(expanded);
     }
     for item in media {
         let reference = item.reference_markdown()?;
-        if !projected.contains(&reference) {
+        if !expanded.markdown.contains(&reference) {
             continue;
         }
         let replacement = item.markdown()?;
         let reference_len = reference.len();
-        let starts = projected
+        let starts = expanded
+            .markdown
             .match_indices(&reference)
             .filter_map(|(start, _)| {
                 let end = start + reference_len;
-                let intersects_classification = remapped.iter().any(|classification| {
-                    usize::try_from(classification.start)
-                        .is_ok_and(|classification_start| classification_start < end)
-                        && usize::try_from(classification.end)
-                            .is_ok_and(|classification_end| start < classification_end)
-                });
+                let intersects_classification =
+                    expanded.classifications.iter().any(|classification| {
+                        usize::try_from(classification.start)
+                            .is_ok_and(|classification_start| classification_start < end)
+                            && usize::try_from(classification.end)
+                                .is_ok_and(|classification_end| start < classification_end)
+                    });
                 (!intersects_classification).then_some(start)
             })
             .collect::<Vec<_>>();
         if starts.is_empty() {
             continue;
         }
-        let source = projected.as_ref();
-        let mut expanded = String::with_capacity(
+        let source = expanded.markdown.as_ref();
+        let mut projected = String::with_capacity(
             source
                 .len()
                 .saturating_add(replacement.len().saturating_mul(starts.len())),
         );
         let mut cursor = 0;
         for start in &starts {
-            expanded.push_str(&source[cursor..*start]);
-            expanded.push_str(&replacement);
+            projected.push_str(&source[cursor..*start]);
+            projected.push_str(&replacement);
             cursor = start + reference_len;
         }
-        expanded.push_str(&source[cursor..]);
+        projected.push_str(&source[cursor..]);
 
-        if !remapped.is_empty() {
-            let delta = i64::try_from(replacement.len()).expect("media Markdown length fits i64")
-                - i64::try_from(reference_len).expect("media reference length fits i64");
-            remapped = Cow::Owned(
-                remapped
+        let delta = i64::try_from(replacement.len()).expect("media Markdown length fits i64")
+            - i64::try_from(reference_len).expect("media reference length fits i64");
+        let shift = |offset: u32| {
+            let position = usize::try_from(offset).expect("validated annotation offset fits usize");
+            let preceding = starts
+                .partition_point(|replacement_start| replacement_start + reference_len <= position);
+            let shift = delta
+                .checked_mul(i64::try_from(preceding).expect("media replacement count fits i64"))
+                .expect("media annotation offset shift fits i64");
+            let shifted = i64::from(offset)
+                .checked_add(shift)
+                .expect("media annotation offset shift does not overflow");
+            u32::try_from(shifted).expect("admitted media projection fits annotation offsets")
+        };
+        if !expanded.classifications.is_empty() {
+            expanded.classifications = Cow::Owned(
+                expanded
+                    .classifications
                     .iter()
-                    .map(|classification| {
-                        let start = usize::try_from(classification.start)
-                            .expect("validated classification start fits usize");
-                        let preceding = starts.partition_point(|replacement_start| {
-                            replacement_start + reference_len <= start
-                        });
-                        let shift = delta
-                            .checked_mul(
-                                i64::try_from(preceding).expect("media replacement count fits i64"),
-                            )
-                            .expect("media classification offset shift fits i64");
-                        let mut classification = *classification;
-                        classification.start =
-                            shift_classification_offset(classification.start, shift);
-                        classification.end = shift_classification_offset(classification.end, shift);
-                        classification
+                    .map(|classification| MessageClassification {
+                        start: shift(classification.start),
+                        end: shift(classification.end),
+                        kind: classification.kind,
                     })
                     .collect(),
             );
         }
-        projected = Cow::Owned(expanded);
+        if !expanded.directives.is_empty() {
+            expanded.directives = Cow::Owned(
+                expanded
+                    .directives
+                    .iter()
+                    .map(|directive| MessageDirective {
+                        start: shift(directive.start),
+                        end: shift(directive.end),
+                        ..directive.clone()
+                    })
+                    .collect(),
+            );
+        }
+        expanded.markdown = Cow::Owned(projected);
     }
-    Ok((projected, remapped))
-}
-
-fn shift_classification_offset(offset: u32, shift: i64) -> u32 {
-    let shifted = i64::from(offset)
-        .checked_add(shift)
-        .expect("media classification offset shift does not overflow");
-    u32::try_from(shifted).expect("admitted media projection fits classification offsets")
+    Ok(expanded)
 }
 
 /// Render received text using exact resident-authenticated semantic ranges.
@@ -147,15 +168,18 @@ pub(crate) fn render_received_with_classifications(
         markdown,
         classifications,
         &[],
+        &[],
         &BTreeMap::new(),
         &BTreeMap::new(),
     )
 }
 
-/// Render received text and its resident-resolved structural quote links.
+/// Render received text, its resident-resolved structural quote links, and a
+/// byline closing each directive context the resident quoted into it.
 pub(crate) fn render_received_with_quotes(
     markdown: &str,
     classifications: &[MessageClassification],
+    directives: &[MessageDirective],
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_tasks: &BTreeMap<String, wire::TaskHandle>,
@@ -167,31 +191,57 @@ pub(crate) fn render_received_with_quotes(
         | Options::ENABLE_SMART_PUNCTUATION
         | Options::ENABLE_MATH
         | Options::ENABLE_GFM;
-    let normalized = taste_quotes::normalize(markdown, classifications, options);
+    let normalized = taste_quotes::normalize(markdown, classifications, directives, options);
     let markdown = normalized.markdown;
     let mut remaining = normalized
         .classifications
         .into_iter()
         .map(|classification| (classification.start, classification))
         .collect::<BTreeMap<_, _>>();
+    // The resident writes every directive context as one outermost block
+    // quote beginning exactly at the context's start.
+    let mut contexts = normalized
+        .directives
+        .into_iter()
+        .map(|directive| (directive.start as usize, directive))
+        .collect::<BTreeMap<_, _>>();
+    let mut open_context = None;
+    let mut quote_depth = 0usize;
     let mut skipped_marker = None;
     let mut code_block = false;
-    let events = Parser::new_ext(&markdown, options)
-        .into_offset_iter()
-        .flat_map(|(event, source)| {
-            match &event {
-                MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
-                MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
-                _ => {}
+    let mut events = Vec::new();
+    for (event, source) in Parser::new_ext(&markdown, options).into_offset_iter() {
+        match &event {
+            MarkdownEvent::Start(Tag::CodeBlock(_)) => code_block = true,
+            MarkdownEvent::End(TagEnd::CodeBlock) => code_block = false,
+            MarkdownEvent::Start(Tag::BlockQuote(_)) => {
+                if quote_depth == 0 {
+                    open_context = contexts.remove(&source.start);
+                }
+                quote_depth += 1;
             }
-            let event = sanitize_markdown_event(event);
-            if code_block {
-                vec![event]
-            } else {
-                inline_classification_marker(event, source, &mut remaining, &mut skipped_marker)
+            MarkdownEvent::End(TagEnd::BlockQuote(_)) => {
+                quote_depth -= 1;
+                if quote_depth == 0
+                    && let Some(context) = open_context.take()
+                {
+                    close_directive_context(&mut events, &context, quote_agents, quote_tasks);
+                }
             }
-        })
-        .collect::<Vec<_>>();
+            _ => {}
+        }
+        let event = sanitize_markdown_event(event);
+        if code_block {
+            events.push(event);
+        } else {
+            events.extend(inline_classification_marker(
+                event,
+                source,
+                &mut remaining,
+                &mut skipped_marker,
+            ));
+        }
+    }
     debug_assert!(
         remaining.is_empty(),
         "every resident classification maps to one Markdown text event"
@@ -223,6 +273,31 @@ pub(crate) fn render_received_with_quotes(
         html,
         image_only,
         diagrams,
+    }
+}
+
+/// Sign one directive context before its quote closes, exactly as a quote of
+/// the same directive is signed. A context ending in prose carries the byline
+/// on that prose's line; any other ending gives it a line of its own.
+fn close_directive_context(
+    events: &mut Vec<MarkdownEvent<'_>>,
+    context: &MessageDirective,
+    quote_agents: &QuoteAgents,
+    quote_tasks: &BTreeMap<String, wire::TaskHandle>,
+) {
+    let signoff = quotes::signoff_html(
+        &wire::QuoteAuthor::Directive {
+            actor: context.actor.clone(),
+        },
+        &context.quote_target.to_string(),
+        quote_agents,
+        quote_tasks,
+    );
+    if matches!(events.last(), Some(MarkdownEvent::End(TagEnd::Paragraph))) {
+        let end = events.len() - 1;
+        events.insert(end, MarkdownEvent::InlineHtml(format!(" {signoff}").into()));
+    } else {
+        events.push(MarkdownEvent::Html(format!("<p>{signoff}</p>").into()));
     }
 }
 

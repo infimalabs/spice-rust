@@ -163,9 +163,17 @@ fn media_expansion_remaps_the_exact_repeated_marker_classification() {
     };
 
     let classifications = [classification];
-    let (expanded, remapped) =
-        expand_media_payloads(&markdown, std::slice::from_ref(&media), &classifications)
-            .expect("media expands");
+    let ExpandedMedia {
+        markdown: expanded,
+        classifications: remapped,
+        ..
+    } = expand_media_payloads(
+        &markdown,
+        std::slice::from_ref(&media),
+        &classifications,
+        &[],
+    )
+    .expect("media expands");
     assert!(wire::valid_message_classifications(&expanded, &remapped));
     let rendered = render_received_with_classifications(&expanded, &remapped);
     assert_eq!(
@@ -781,6 +789,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     let rendered = render_received_with_quotes(
         &outer_target.markdown(),
         &[],
+        &[],
         &quotes,
         &agents,
         &BTreeMap::new(),
@@ -834,6 +843,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     let historical = render_received_with_quotes(
         &outer_target.markdown(),
         &[],
+        &[],
         &quotes,
         &historical_agents,
         &BTreeMap::new(),
@@ -885,8 +895,14 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         .parse()
         .expect("fixture task is canonical");
     let tasks = BTreeMap::from([("dTVQdQfLw".to_owned(), handle)]);
-    let rendered =
-        render_received_with_quotes(&markdown.join(" "), &[], &quotes, &BTreeMap::new(), &tasks);
+    let rendered = render_received_with_quotes(
+        &markdown.join(" "),
+        &[],
+        &[],
+        &quotes,
+        &BTreeMap::new(),
+        &tasks,
+    );
 
     for (_, key) in cases {
         assert!(
@@ -1002,6 +1018,7 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
         render_received_with_quotes(
             &outer_target.markdown(),
             &[],
+            &[],
             &quotes,
             agents,
             &BTreeMap::new(),
@@ -1009,14 +1026,14 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
         .html
     };
 
-    let projection = referenced_quote_agents(&quotes, &roster);
+    let projection = referenced_quote_agents(&quotes, &[], &roster);
     assert_eq!(render(&projection), render(&roster));
 
     let mut reseated = roster.clone();
     reseated.remove(&(unrelated, id("2c")));
     reseated.insert((unrelated, id("3c")), agent("unrelated"));
     reseated.insert((arriving, id("3d")), agent("arriving"));
-    assert_eq!(referenced_quote_agents(&quotes, &reseated), projection);
+    assert_eq!(referenced_quote_agents(&quotes, &[], &reseated), projection);
 }
 
 #[test]
@@ -1029,6 +1046,7 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
     }];
     let rendered = render_received_with_quotes(
         &target.markdown(),
+        &[],
         &[],
         &unavailable,
         &BTreeMap::new(),
@@ -1051,4 +1069,99 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
     assert!(ordinary.html.contains("<blockquote>"));
     assert!(ordinary.html.contains("copied words"));
     assert!(!ordinary.html.contains("message-quote-card"));
+}
+
+/// An acknowledgement signs each directive context it quotes once, with the
+/// directive's own author, beside any signoff of a quote nested inside it;
+/// the agent's own prose and block quotes stay unsigned.
+#[test]
+fn acknowledged_directive_contexts_sign_their_author_once() {
+    let directing: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131164ab"
+        .parse()
+        .expect("fixture identity is canonical");
+    let nested_text = "earlier direction";
+    let nested = steering_target("dTVQdQfLw", nested_text);
+    let operator_text = format!("steer from the operator {}", nested.markdown());
+    let lane_text = "steer from a lane";
+    let operator = format!("> {operator_text}");
+    let lane = format!("> {lane_text}");
+    let markdown =
+        format!("{operator}\n\n{lane}\n\nACK dTVQdQfLx dTVQdQfLy: on it.\n\n> my own aside");
+    let context = |start: usize, len: usize, key: &str, text: &str, actor| MessageDirective {
+        start: u32::try_from(start).expect("fixture offset fits"),
+        end: u32::try_from(start + len).expect("fixture offset fits"),
+        quote_target: steering_target(key, text),
+        actor,
+    };
+    let directives = [
+        context(
+            0,
+            operator.len(),
+            "dTVQdQfLx",
+            &operator_text,
+            wire::Actor::Operator,
+        ),
+        context(
+            operator.len() + 2,
+            lane.len(),
+            "dTVQdQfLy",
+            lane_text,
+            wire::Actor::Lane(directing),
+        ),
+    ];
+    let quotes = [wire::QuotePresentation::Resolved {
+        target: nested.to_string(),
+        text: nested_text.to_owned(),
+        author: wire::QuoteAuthor::Directive {
+            actor: wire::Actor::Operator,
+        },
+        disposition: None,
+        quotes: Vec::new(),
+    }];
+    let agents = BTreeMap::from([(
+        (directing, directing),
+        QuoteAgent {
+            team: directing,
+            label: "directing".to_owned(),
+        },
+    )]);
+
+    let html = render_received_with_quotes(
+        &markdown,
+        &[],
+        &directives,
+        &quotes,
+        &agents,
+        &BTreeMap::new(),
+    )
+    .html;
+
+    let blocks = html.split("<blockquote>").skip(1).collect::<Vec<_>>();
+    assert_eq!(blocks.len(), 3, "{html}");
+    let [operator, lane, aside] = blocks.as_slice() else {
+        unreachable!()
+    };
+    let signed = |block: &str, actor: &str| {
+        block
+            .matches(&format!("data-quote-actor=\"{actor}\""))
+            .count()
+    };
+    assert_eq!(
+        (
+            signed(operator, "operator"),
+            operator.matches("message-quote-signoff").count()
+        ),
+        (2, 2),
+        "the nested quote and the context each sign once: {operator}"
+    );
+    assert_eq!(
+        (
+            signed(lane, &format!("lane:{directing}")),
+            lane.matches("message-quote-signoff").count()
+        ),
+        (1, 1),
+        "{lane}"
+    );
+    assert!(lane.contains("Agent directing"), "{lane}");
+    assert!(!aside.contains("message-quote-signoff"), "{aside}");
 }
