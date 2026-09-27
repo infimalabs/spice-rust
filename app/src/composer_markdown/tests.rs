@@ -737,17 +737,77 @@ fn every_image_preview_owns_an_explicit_initial_lifecycle() {
     assert!(malformed.html.contains("data-mosaic-image-state=\"error\""));
 }
 
+fn quote_fixture_id(tail: &str) -> wire::CanonicalUuid {
+    format!("018f82d4-6f59-7d06-92e3-bce9131163{tail}")
+        .parse()
+        .expect("fixture identity is canonical")
+}
+
+fn nested_quote_sources(
+    outer: &wire::QuoteTarget,
+    inner: &wire::QuoteTarget,
+    agent: QuoteAgent,
+) -> QuoteSources {
+    BTreeMap::from([
+        (
+            outer.to_string(),
+            QuoteSource {
+                card_id: "message-agent-outer-source".to_owned(),
+                agent: Some(agent),
+            },
+        ),
+        (
+            inner.to_string(),
+            QuoteSource {
+                card_id: "message-agent-inner-source".to_owned(),
+                agent: None,
+            },
+        ),
+    ])
+}
+
+fn assert_source_author_survives_reseating(
+    outer: &wire::QuoteTarget,
+    quotes: &[wire::QuotePresentation],
+    sources: &QuoteSources,
+    lane: wire::CanonicalUuid,
+    source: wire::CanonicalUuid,
+    team: wire::CanonicalUuid,
+) {
+    let successor = quote_fixture_id("e9");
+    let agents = BTreeMap::from([(
+        (lane, successor),
+        QuoteAgent {
+            team,
+            accent: 4,
+            label: "spice-rust-k".to_owned(),
+        },
+    )]);
+    let rendered = render_received_with_quotes(
+        &outer.markdown(),
+        &[],
+        &[],
+        quotes,
+        &agents,
+        sources,
+        &BTreeMap::new(),
+    );
+    assert!(rendered.html.contains(&format!(
+        "data-quote-agent-occupant=\"{source}\" \
+         data-quote-author-state=\"source\" data-accent=\"3\""
+    )));
+    assert!(rendered.html.contains(">spice-rust-k</span>"));
+    assert!(!rendered.html.contains("history unavailable"));
+    assert!(!rendered.html.contains("data-quote-agent-team="));
+}
+
 #[test]
 fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     let inner_text = "authenticated inner direction";
     let inner_target = steering_target("dTVQdQfLw", inner_text);
     let outer_text = format!("before {} after", inner_target.markdown());
-    let lane = "018f82d4-6f59-7d06-92e3-bce9131163e6"
-        .parse()
-        .expect("fixture lane is canonical");
-    let source = "018f82d4-6f59-7d06-92e3-bce9131163e7"
-        .parse()
-        .expect("fixture source is canonical");
+    let lane = quote_fixture_id("e6");
+    let source = quote_fixture_id("e7");
     let outer_target = wire::QuoteTarget::Tape {
         lane,
         source,
@@ -787,12 +847,22 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
             label: "spice-rust-k".to_owned(),
         },
     )]);
+    let sources = nested_quote_sources(
+        &outer_target,
+        &inner_target,
+        agents
+            .get(&(lane, source))
+            .expect("fixture agent exists")
+            .clone(),
+    );
+    assert_eq!(referenced_quote_sources(&quotes, &[], &sources), sources);
     let rendered = render_received_with_quotes(
         &outer_target.markdown(),
         &[],
         &[],
         &quotes,
         &agents,
+        &sources,
         &BTreeMap::new(),
     );
 
@@ -807,7 +877,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     assert!(rendered.html.contains(&format!(
         "data-quote-agent-team=\"{team}\" \
          data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{source}\" \
-         data-quote-history=\"available\" data-accent=\"3\" \
+         data-quote-author-state=\"current\" data-accent=\"3\" \
          aria-label=\"Open information for spice-rust-k\">spice-rust-k</button>"
     )));
     assert!(
@@ -816,6 +886,15 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         )
     );
     assert!(!rendered.html.contains("history unavailable"));
+    assert_eq!(rendered.html.matches("message-quote-source").count(), 2);
+    assert!(rendered.html.contains(
+        "href=\"#/card/message-agent-outer-source\" \
+         data-quote-source=\"message-agent-outer-source\""
+    ));
+    assert!(rendered.html.contains(
+        "href=\"#/card/message-agent-inner-source\" \
+         data-quote-source=\"message-agent-inner-source\""
+    ));
     assert!(rendered.html.contains(inner_text));
     assert!(rendered.html.contains("data-quote-disposition=\"live\""));
     assert!(!rendered.html.contains("Agent "));
@@ -833,30 +912,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         "the signoff trails authored prose"
     );
 
-    let successor: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e9".parse().unwrap();
-    let historical_agents = BTreeMap::from([(
-        (lane, successor),
-        QuoteAgent {
-            team,
-            accent: 4,
-            label: "spice-rust-k".to_owned(),
-        },
-    )]);
-    let historical = render_received_with_quotes(
-        &outer_target.markdown(),
-        &[],
-        &[],
-        &quotes,
-        &historical_agents,
-        &BTreeMap::new(),
-    );
-    assert!(historical.html.contains(
-        "data-quote-agent-occupant=\"018f82d4-6f59-7d06-92e3-bce9131163e7\" \
-         data-quote-history=\"unavailable\" data-accent=\"4\""
-    ));
-    assert!(historical.html.contains("· history unavailable"));
-    assert!(historical.html.contains(">spice-rust-k "));
-    assert!(!historical.html.contains("data-quote-agent-team="));
+    assert_source_author_survives_reseating(&outer_target, &quotes, &sources, lane, source, team);
 }
 
 #[test]
@@ -914,6 +970,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         &[],
         &[],
         &quotes,
+        &BTreeMap::new(),
         &BTreeMap::new(),
         &tasks,
     );
@@ -1002,6 +1059,7 @@ fn tasked_quote_levels_keep_every_exact_task_at_every_occurrence() {
         &[],
         &[outer.clone(), outer],
         &BTreeMap::new(),
+        &BTreeMap::new(),
         &tasks,
     );
 
@@ -1086,6 +1144,7 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
             &quotes,
             agents,
             &BTreeMap::new(),
+            &BTreeMap::new(),
         )
         .html
     };
@@ -1121,6 +1180,7 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
         &[],
         &[],
         &unavailable,
+        &BTreeMap::new(),
         &BTreeMap::new(),
         &tasks,
     );
@@ -1199,6 +1259,29 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
             label: "directing".to_owned(),
         },
     )]);
+    let sources = BTreeMap::from([
+        (
+            directives[0].quote_target.to_string(),
+            QuoteSource {
+                card_id: "message-agent-operator-source".to_owned(),
+                agent: None,
+            },
+        ),
+        (
+            directives[1].quote_target.to_string(),
+            QuoteSource {
+                card_id: "message-agent-lane-source".to_owned(),
+                agent: None,
+            },
+        ),
+        (
+            nested.to_string(),
+            QuoteSource {
+                card_id: "message-agent-nested-source".to_owned(),
+                agent: None,
+            },
+        ),
+    ]);
 
     let html = render_received_with_quotes(
         &markdown,
@@ -1206,6 +1289,7 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         &directives,
         &quotes,
         &agents,
+        &sources,
         &BTreeMap::new(),
     )
     .html;
@@ -1236,7 +1320,11 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         (1, 1),
         "{lane}"
     );
-    assert!(lane.contains(">directing "), "{lane}");
+    assert!(lane.contains(">directing</span>"), "{lane}");
     assert!(lane.contains("data-accent=\"1\""), "{lane}");
+    assert_eq!(html.matches("message-quote-source").count(), 3, "{html}");
+    assert!(html.contains("href=\"#/card/message-agent-operator-source\""));
+    assert!(html.contains("href=\"#/card/message-agent-lane-source\""));
+    assert!(html.contains("href=\"#/card/message-agent-nested-source\""));
     assert!(!aside.contains("message-quote-signoff"), "{aside}");
 }

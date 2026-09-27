@@ -213,6 +213,13 @@ impl CanvasRoute {
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
+pub(crate) fn card_href(target: &str) -> String {
+    let route = CanvasRoute::card(target.to_owned())
+        .expect("a rendered Canvas card has a canonical route target");
+    format!("#{}", route.path())
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
 fn valid_card_target(target: &str) -> bool {
     !target.is_empty()
         && target

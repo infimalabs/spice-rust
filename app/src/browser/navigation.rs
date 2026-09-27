@@ -82,12 +82,6 @@ pub(super) fn use_destination() -> (Option<CanvasRoute>, Callback<CanvasDestinat
     ((*route).clone(), navigate)
 }
 
-pub(super) fn card_href(target: &str) -> String {
-    let route = CanvasRoute::card(target.to_owned())
-        .expect("a rendered Canvas card has a canonical route target");
-    format!("#{}", route.path())
-}
-
 fn location_route() -> Option<CanvasRoute> {
     let location = web_sys::window()?.location();
     if !location.search().ok()?.is_empty() {

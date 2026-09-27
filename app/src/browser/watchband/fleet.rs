@@ -267,7 +267,7 @@ fn quoted_agent_info_target(
         .dyn_into::<web_sys::Element>()
         .ok()?
         .closest(
-            "button.message-quote-author[data-quote-history=\"available\"]\
+            "button.message-quote-author[data-quote-author-state=\"current\"]\
              [data-quote-agent-team][data-quote-agent-lane][data-quote-agent-occupant]",
         )
         .ok()??;

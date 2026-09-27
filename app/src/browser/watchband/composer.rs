@@ -165,6 +165,53 @@ pub(super) fn agent_message_source_id(message: &wire::AgentMessage) -> String {
         crate::runtime::agent_message_card_identity(message)
     )
 }
+/// Retained source cards for quote targets this open team can navigate to.
+///
+/// History arrives in stages. Rebuilding this projection from the resident
+/// snapshot lets existing quote cards acquire names and links as their source
+/// cards arrive, without treating an absent source as a permanent failure.
+pub(super) fn team_quote_sources(
+    runtime: &CanvasRuntime,
+    team: &crate::runtime::LaneRow,
+) -> crate::composer_markdown::QuoteSources {
+    let mut sources = crate::composer_markdown::QuoteSources::new();
+    for message in runtime.messages().iter().rev() {
+        let Some((position, member)) = team
+            .members
+            .iter()
+            .enumerate()
+            .find(|(_, member)| member.lane == message.lane)
+        else {
+            continue;
+        };
+        let card_id = agent_message_source_id(message);
+        if let Some(target) = &message.quote_target {
+            sources.entry(target.to_string()).or_insert_with(|| {
+                crate::composer_markdown::QuoteSource {
+                    card_id: card_id.clone(),
+                    agent: Some(crate::composer_markdown::QuoteAgent {
+                        team: team.lane,
+                        accent: watchband::accent(team.members.len(), position),
+                        label: watchband::agent_message_label(
+                            &member.worktree,
+                            member.name.as_deref(),
+                        )
+                        .to_owned(),
+                    }),
+                }
+            });
+        }
+        for context in &message.directive_contexts {
+            sources
+                .entry(context.quote_target.to_string())
+                .or_insert_with(|| crate::composer_markdown::QuoteSource {
+                    card_id: card_id.clone(),
+                    agent: None,
+                });
+        }
+    }
+    sources
+}
 
 pub(super) fn focus_after_render(id: String) {
     spawn_local(async move {
@@ -187,6 +234,7 @@ pub(super) struct AgentMessageCardProps {
     pub(super) accent: usize,
     pub(super) member: crate::runtime::LaneMember,
     pub(super) quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
+    pub(super) quote_sources: Rc<crate::composer_markdown::QuoteSources>,
     pub(super) quote_lane: CanonicalUuid,
     pub(super) message: Rc<wire::AgentMessage>,
     pub(super) quote_dispatcher: UseReducerDispatcher<ComposerDrafts>,
@@ -205,6 +253,7 @@ impl PartialEq for AgentMessageCardProps {
             && self.member.name == other.member.name
             && self.member.worktree == other.member.worktree
             && self.quote_agents == other.quote_agents
+            && self.quote_sources == other.quote_sources
             && self.quote_lane == other.quote_lane
             && (Rc::ptr_eq(&self.message, &other.message) || self.message == other.message)
             && self.quote_dispatcher == other.quote_dispatcher
@@ -281,7 +330,13 @@ fn render_agent_message_card(
         image_only,
         card_label,
         classifications,
-    } = agent_message_presentation(member, message, &props.quote_agents, quote_tasks);
+    } = agent_message_presentation(
+        member,
+        message,
+        &props.quote_agents,
+        &props.quote_sources,
+        quote_tasks,
+    );
     let task_click = task_inspector::task_chip_click(inspector.cloned(), source_id.clone());
     let task_keydown = task_inspector::task_chip_keydown(inspector.cloned(), source_id.clone());
     let inspection_open = inspection.is_some_and(|inspection| inspection.open);
@@ -443,6 +498,7 @@ fn agent_message_presentation<'a>(
     member: &crate::runtime::LaneMember,
     message: &'a wire::AgentMessage,
     quote_agents: &crate::composer_markdown::QuoteAgents,
+    quote_sources: &crate::composer_markdown::QuoteSources,
     quote_tasks: &crate::runtime::QuoteTasks,
 ) -> AgentMessagePresentation<'a> {
     let attribution = watchband::agent_message_attribution(
@@ -480,6 +536,7 @@ fn agent_message_presentation<'a>(
         &shown_directives,
         &message.quotes,
         quote_agents,
+        quote_sources,
         quote_tasks,
     );
     let card_label = match message.activity {
@@ -528,7 +585,7 @@ fn render_agent_boundary(message: &wire::AgentMessage, attribution: &str) -> Htm
     let link_label = format!("Link to compacted context from {attribution}");
     let attribution = attribution.to_owned();
     let display_millis = crate::runtime::agent_message_display_millis(message);
-    let href = super::super::navigation::card_href(&agent_message_source_id(message));
+    let href = crate::view::card_href(&agent_message_source_id(message));
     html! {
         <>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
@@ -645,7 +702,7 @@ fn render_agent_message_footer(
     let has_actions = !shown_text.trim().is_empty();
     let producer_label = producer_label.to_owned();
     let attribution = attribution.to_owned();
-    let href = super::super::navigation::card_href(&agent_message_source_id(message));
+    let href = crate::view::card_href(&agent_message_source_id(message));
     let link_label = format!("Link to message from {attribution}");
     let author = message.author.to_string();
     let author_title = format!("Copy agent id\n{author}");
@@ -710,7 +767,7 @@ pub(super) fn render_quote_shards(
                     Some(quote.identity.clone()),
                     drafts.clone(),
                 );
-                let href = super::super::navigation::card_href(&quote.source_id);
+                let href = crate::view::card_href(&quote.source_id);
                 html! {
                     <article
                         key={quote.identity.clone()}

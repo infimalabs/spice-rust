@@ -19,6 +19,7 @@ pub(super) enum ActivityCard {
         accent: usize,
         member: crate::runtime::LaneMember,
         quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
+        quote_sources: Rc<crate::composer_markdown::QuoteSources>,
         quote_lane: CanonicalUuid,
         message: Rc<wire::AgentMessage>,
     },
@@ -37,6 +38,7 @@ impl PartialEq for ActivityCard {
                     accent: left_accent,
                     member: left_member,
                     quote_agents: left_quote_agents,
+                    quote_sources: left_quote_sources,
                     quote_lane: left_quote_lane,
                     message: left_message,
                 },
@@ -44,6 +46,7 @@ impl PartialEq for ActivityCard {
                     accent: right_accent,
                     member: right_member,
                     quote_agents: right_quote_agents,
+                    quote_sources: right_quote_sources,
                     quote_lane: right_quote_lane,
                     message: right_message,
                 },
@@ -53,6 +56,7 @@ impl PartialEq for ActivityCard {
                     && left_member.name == right_member.name
                     && left_member.worktree == right_member.worktree
                     && left_quote_agents == right_quote_agents
+                    && left_quote_sources == right_quote_sources
                     && left_quote_lane == right_quote_lane
                     && (Rc::ptr_eq(left_message, right_message) || left_message == right_message)
             }
@@ -82,6 +86,7 @@ enum ActivityFingerprint {
     Agent {
         worktree: String,
         quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
+        quote_sources: Rc<crate::composer_markdown::QuoteSources>,
         message: Rc<wire::AgentMessage>,
     },
     Lifecycle(crate::runtime::LaneLifecycleBoundary),
@@ -94,16 +99,19 @@ impl PartialEq for ActivityFingerprint {
                 Self::Agent {
                     worktree: left_worktree,
                     quote_agents: left_quote_agents,
+                    quote_sources: left_quote_sources,
                     message: left_message,
                 },
                 Self::Agent {
                     worktree: right_worktree,
                     quote_agents: right_quote_agents,
+                    quote_sources: right_quote_sources,
                     message: right_message,
                 },
             ) => {
                 left_worktree == right_worktree
                     && left_quote_agents == right_quote_agents
+                    && left_quote_sources == right_quote_sources
                     && (Rc::ptr_eq(left_message, right_message)
                         || same_measured_agent_content(left_message, right_message))
             }
@@ -141,12 +149,14 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
         &left.quotes,
         &BTreeMap::new(),
         &BTreeMap::new(),
+        &BTreeMap::new(),
     );
     let right = crate::composer_markdown::render_received_with_quotes(
         &right.text,
         &right.classifications,
         &right.directive_contexts,
         &right.quotes,
+        &BTreeMap::new(),
         &BTreeMap::new(),
         &BTreeMap::new(),
     );
@@ -193,11 +203,13 @@ impl ActivityCard {
             Self::Agent {
                 member,
                 quote_agents,
+                quote_sources,
                 message,
                 ..
             } => ActivityFingerprint::Agent {
                 worktree: member.worktree.clone(),
                 quote_agents: Rc::clone(quote_agents),
+                quote_sources: Rc::clone(quote_sources),
                 message: Rc::clone(message),
             },
             Self::Lifecycle { boundary, .. } => ActivityFingerprint::Lifecycle(boundary.clone()),
@@ -1140,6 +1152,7 @@ fn render_activity_cards(
                     accent,
                     member,
                     quote_agents,
+                    quote_sources,
                     quote_lane,
                     message,
                 } => html! {
@@ -1148,6 +1161,7 @@ fn render_activity_cards(
                         accent={*accent}
                         member={member.clone()}
                         quote_agents={quote_agents.clone()}
+                        quote_sources={quote_sources.clone()}
                         quote_lane={*quote_lane}
                         message={message.clone()}
                         quote_dispatcher={properties.quote_dispatcher.clone()}
@@ -1180,7 +1194,7 @@ fn render_lifecycle_boundary(
         watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned();
     let label = format!("{attribution} lifecycle: {}", boundary.cause());
     let link_label = format!("Link to {label}");
-    let href = super::super::navigation::card_href(key);
+    let href = crate::view::card_href(key);
     html! {
         <article
             key={key.to_owned()}

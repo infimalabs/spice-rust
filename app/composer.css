@@ -446,6 +446,7 @@
   color: var(--muted);
   font-size: .8125em;
   line-height: inherit;
+  text-shadow: 0 1px 1px var(--panel);
 }
 .markdown-body .message-quote-card:has(
   > .message-quote-body > p.message-image-stack:last-child
@@ -508,12 +509,9 @@
   max-width: 100%;
   min-width: 0;
   align-items: center;
-  min-height: 17px;
-  padding: 0 4px;
   overflow: hidden;
   border: 0;
-  border-radius: var(--canvas-radius-compact);
-  background: color-mix(in srgb, var(--message-quote-author-accent) 7%, transparent);
+  background: none;
   color: color-mix(in srgb, var(--message-quote-author-accent) 72%, var(--muted));
   font-weight: 600;
   text-decoration: none;
@@ -531,14 +529,14 @@
 }
 .markdown-body button.message-quote-author:hover,
 .markdown-body button.message-quote-author:focus-visible {
-  background: color-mix(in srgb, var(--message-quote-author-accent) 12%, transparent);
-  text-decoration: none;
+  background: none;
+  color: var(--message-quote-author-accent);
+  text-decoration: underline;
 }
 .markdown-body button.message-quote-author:focus-visible {
   outline: 2px solid var(--message-quote-author-accent);
   outline-offset: 1px;
 }
-.markdown-body .message-quote-history-unavailable { font-weight: 400; }
 .markdown-body .message-quote-disposition {
   display: inline-flex;
   margin-right: .35em;
@@ -548,6 +546,16 @@
   font-weight: 700;
 }
 .markdown-body .message-quote-body .message-ack-pill { margin-right: .35em; }
+.markdown-body .message-quote-source {
+  color: inherit;
+  font-weight: 600;
+  text-decoration: none;
+}
+.markdown-body .message-quote-source:hover,
+.markdown-body .message-quote-source:focus-visible {
+  color: var(--ink);
+  text-decoration: underline;
+}
 .markdown-body .message-quote-task {
   margin-left: auto;
   color: var(--accent);

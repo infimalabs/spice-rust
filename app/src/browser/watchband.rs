@@ -25,7 +25,7 @@ pub(super) use command_preview::use_command_modifier_preview;
 use composer::{
     AgentMessageCard, ComposerTextarea, agent_message_source_id, drop_on_lane, keyboard_submit,
     paste_images, primary_composer_dragging, primary_textarea_id, render_image_indicators,
-    render_quote_shards,
+    render_quote_shards, team_quote_sources,
 };
 pub(super) use composer::{PrimaryComposerDragState, use_primary_composer_drag_state};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
@@ -331,6 +331,8 @@ fn activity_cards(
     // changes whenever any seat's occupancy does, and a card holding all of it
     // would lose its measurement and re-lay out the whole plane each time.
     let unquoted = Rc::new(crate::composer_markdown::QuoteAgents::new());
+    let quote_sources = team_quote_sources(runtime, team);
+    let unquoted_sources = Rc::new(crate::composer_markdown::QuoteSources::new());
     let mut cards = runtime
         .messages()
         .iter()
@@ -351,6 +353,16 @@ fn activity_cards(
                         &message.quotes,
                         &message.directive_contexts,
                         quote_agents,
+                    ))
+                },
+                quote_sources: if message.quotes.is_empty() && message.directive_contexts.is_empty()
+                {
+                    Rc::clone(&unquoted_sources)
+                } else {
+                    Rc::new(crate::composer_markdown::referenced_quote_sources(
+                        &message.quotes,
+                        &message.directive_contexts,
+                        &quote_sources,
                     ))
                 },
                 quote_lane: crate::composer_drafts::quote_lane(&team.members, message),
@@ -1115,7 +1127,7 @@ fn render_composer_heading(
                     "composer-shard-age",
                     status.key(),
                 )}
-                href={super::navigation::card_href(&target)}
+                href={crate::view::card_href(&target)}
                 aria-label={label}
                 data-lane-status={status.key()}
             >{lease_age(display_millis, "composer-shard-age-label", "—")}</a>
