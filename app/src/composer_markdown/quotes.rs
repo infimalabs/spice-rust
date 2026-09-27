@@ -109,6 +109,8 @@ pub(crate) fn referenced_quote_sources(
 }
 
 /// The byline closing quoted words: who authored `target`, and its task.
+///
+/// When the quoted message's card is known, the author's name is the link to it.
 pub(super) fn signoff_html(
     author: &QuoteAuthor,
     target: &str,
@@ -116,10 +118,13 @@ pub(super) fn signoff_html(
     sources: &super::QuoteSources,
     tasks: &crate::runtime::QuoteTasks,
 ) -> String {
+    let author = author_byline(author, target, agents, sources);
+    let author = sources.get(target).map_or_else(
+        || author.html(),
+        |source| author.linked_html(&source.card_id),
+    );
     format!(
-        "<span class=\"message-quote-signoff\">{}{}{}</span>",
-        author_html(author, target, agents, sources),
-        source_html(target, sources),
+        "<span class=\"message-quote-signoff\">{author}{}</span>",
         task_html(target, tasks),
     )
 }
@@ -194,101 +199,172 @@ fn body_with_disposition<'a>(body: &'a str, disposition: &str) -> Cow<'a, str> {
     )
 }
 
-fn author_html(
+/// One byline author: its data attributes, visible label, and accessible name.
+struct Byline {
+    /// Data attributes identifying the author, each with a leading space.
+    data: String,
+    /// Escaped visible label.
+    label: String,
+    /// Plain accessible name.
+    name: String,
+    /// How the author renders without a source link.
+    form: BylineForm,
+}
+
+enum BylineForm {
+    /// Opens the current agent's information.
+    Button,
+    /// Named by its visible label.
+    Text,
+    /// Named by its accessible name, which qualifies a terse label.
+    Labeled,
+    /// Named only by its accessible name, such as an emoji mark.
+    Image,
+}
+
+impl Byline {
+    fn html(&self) -> String {
+        let name = super::escape_html_attribute(&self.name);
+        let Self { data, label, .. } = self;
+        match self.form {
+            BylineForm::Button => format!(
+                "<button type=\"button\" class=\"message-quote-author\"{data} \
+                 aria-label=\"Open information for {name}\">{label}</button>"
+            ),
+            BylineForm::Text => {
+                format!("<span class=\"message-quote-author\"{data}>{label}</span>")
+            }
+            BylineForm::Labeled => format!(
+                "<span class=\"message-quote-author\"{data} \
+                 aria-label=\"{name}\">{label}</span>"
+            ),
+            BylineForm::Image => format!(
+                "<span class=\"message-quote-author\"{data} role=\"img\" \
+                 aria-label=\"{name}\">{label}</span>"
+            ),
+        }
+    }
+
+    fn linked_html(&self, card_id: &str) -> String {
+        format!(
+            "<a class=\"message-quote-author\" href=\"{}\" data-quote-source=\"{}\"{} \
+             aria-label=\"Open message from {}\">{}</a>",
+            super::escape_html_attribute(&crate::view::card_href(card_id)),
+            super::escape_html_attribute(card_id),
+            self.data,
+            super::escape_html_attribute(&self.name),
+            self.label,
+        )
+    }
+}
+
+fn author_byline(
     author: &QuoteAuthor,
     target: &str,
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
-) -> String {
+) -> Byline {
     match author {
         QuoteAuthor::Agent { lane, occupant } => {
             if let Some(agent) = agents.get(&(*lane, *occupant)) {
-                let label = &agent.label;
-                return format!(
-                    "<button type=\"button\" class=\"message-quote-author\" \
-                     data-quote-author=\"agent\" data-quote-agent-team=\"{}\" \
-                     data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
-                     data-quote-author-state=\"current\" data-accent=\"{}\" \
-                     aria-label=\"Open information for {}\">{}</button>",
-                    agent.team,
-                    agent.accent,
-                    super::escape_html_attribute(label),
-                    escape_html_text(label),
-                );
+                return Byline {
+                    data: format!(
+                        " data-quote-author=\"agent\" data-quote-agent-team=\"{}\" \
+                         data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
+                         data-quote-author-state=\"current\" data-accent=\"{}\"",
+                        agent.team, agent.accent,
+                    ),
+                    label: escape_html_text(&agent.label),
+                    name: agent.label.clone(),
+                    form: BylineForm::Button,
+                };
             }
             if let Some(agent) = sources.get(target).and_then(|source| source.agent.as_ref()) {
-                return agent_label_html(*lane, *occupant, agent, "source");
+                return agent_byline(*lane, *occupant, agent, "source");
             }
             if let Some(agent) = agents
                 .iter()
                 .find_map(|((candidate, _), agent)| (*candidate == *lane).then_some(agent))
             {
-                return agent_label_html(*lane, *occupant, agent, "lane");
+                return agent_byline(*lane, *occupant, agent, "lane");
             }
             let label = format!(
                 "{}/{}",
                 crate::watchband::short(*lane),
                 crate::watchband::short(*occupant),
             );
-            format!(
-                "<span class=\"message-quote-author\" data-quote-author=\"agent\" \
-                 data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
-                 data-quote-author-state=\"unresolved\" \
-                 aria-label=\"Agent {label}\">{label}</span>"
-            )
+            Byline {
+                data: format!(
+                    " data-quote-author=\"agent\" data-quote-agent-lane=\"{lane}\" \
+                     data-quote-agent-occupant=\"{occupant}\" \
+                     data-quote-author-state=\"unresolved\""
+                ),
+                name: format!("Agent {label}"),
+                label,
+                form: BylineForm::Labeled,
+            }
         }
         QuoteAuthor::Directive { actor } => match actor {
-            wire::Actor::Operator => principal_html("Operator", "operator"),
-            wire::Actor::Spice => "<span class=\"message-quote-author\" \
-                data-quote-author=\"directive\" data-quote-actor=\"spice\" \
-                role=\"img\" aria-label=\"Spice\">🌶️</span>"
-                .to_owned(),
+            wire::Actor::Operator => Byline {
+                data: " data-quote-author=\"directive\" data-quote-actor=\"operator\"".to_owned(),
+                label: "Operator".to_owned(),
+                name: "Operator".to_owned(),
+                form: BylineForm::Text,
+            },
+            wire::Actor::Spice => Byline {
+                data: " data-quote-author=\"directive\" data-quote-actor=\"spice\"".to_owned(),
+                label: "🌶️".to_owned(),
+                name: "Spice".to_owned(),
+                form: BylineForm::Image,
+            },
             wire::Actor::Lane(lane) => {
                 if let Some(agent) = agents
                     .iter()
                     .find_map(|((candidate, _), agent)| (*candidate == *lane).then_some(agent))
                 {
-                    return format!(
-                        "<span class=\"message-quote-author\" data-quote-author=\"directive\" \
-                         data-quote-actor=\"lane:{lane}\" data-quote-author-state=\"lane\" \
-                         data-accent=\"{}\">{}</span>",
-                        agent.accent,
-                        escape_html_text(&agent.label),
-                    );
+                    return Byline {
+                        data: format!(
+                            " data-quote-author=\"directive\" data-quote-actor=\"lane:{lane}\" \
+                             data-quote-author-state=\"lane\" data-accent=\"{}\"",
+                            agent.accent,
+                        ),
+                        label: escape_html_text(&agent.label),
+                        name: agent.label.clone(),
+                        form: BylineForm::Text,
+                    };
                 }
                 let label = crate::watchband::short(*lane);
-                format!(
-                    "<span class=\"message-quote-author\" data-quote-author=\"directive\" \
-                     data-quote-actor=\"lane:{lane}\" data-quote-author-state=\"unresolved\" \
-                     aria-label=\"Lane {label}\">{label}</span>"
-                )
+                Byline {
+                    data: format!(
+                        " data-quote-author=\"directive\" data-quote-actor=\"lane:{lane}\" \
+                         data-quote-author-state=\"unresolved\""
+                    ),
+                    name: format!("Lane {label}"),
+                    label,
+                    form: BylineForm::Labeled,
+                }
             }
         },
     }
 }
 
-fn agent_label_html(
+fn agent_byline(
     lane: wire::CanonicalUuid,
     occupant: wire::CanonicalUuid,
     agent: &super::QuoteAgent,
     state: &str,
-) -> String {
-    format!(
-        "<span class=\"message-quote-author\" data-quote-author=\"agent\" \
-         data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
-         data-quote-author-state=\"{state}\" data-accent=\"{}\" \
-         aria-label=\"{}\">{}</span>",
-        agent.accent,
-        super::escape_html_attribute(&agent.label),
-        escape_html_text(&agent.label),
-    )
-}
-
-fn principal_html(label: &str, actor: &str) -> String {
-    format!(
-        "<span class=\"message-quote-author\" data-quote-author=\"directive\" \
-         data-quote-actor=\"{actor}\">{label}</span>"
-    )
+) -> Byline {
+    Byline {
+        data: format!(
+            " data-quote-author=\"agent\" data-quote-agent-lane=\"{lane}\" \
+             data-quote-agent-occupant=\"{occupant}\" data-quote-author-state=\"{state}\" \
+             data-accent=\"{}\"",
+            agent.accent,
+        ),
+        label: escape_html_text(&agent.label),
+        name: agent.label.clone(),
+        form: BylineForm::Labeled,
+    }
 }
 
 fn disposition_html(disposition: Disposition) -> String {
@@ -319,18 +395,6 @@ fn disposition_html(disposition: Disposition) -> String {
     format!(
         "<span class=\"message-quote-disposition\" \
          data-quote-disposition=\"{key}\">{label}</span>"
-    )
-}
-
-fn source_html(target: &str, sources: &super::QuoteSources) -> String {
-    let Some(source) = sources.get(target) else {
-        return String::new();
-    };
-    format!(
-        "<a class=\"message-quote-source\" href=\"{}\" \
-         data-quote-source=\"{}\" aria-label=\"Open original message\">Original</a>",
-        super::escape_html_attribute(&crate::view::card_href(&source.card_id)),
-        super::escape_html_attribute(&source.card_id),
     )
 }
 
