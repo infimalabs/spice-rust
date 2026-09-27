@@ -407,7 +407,7 @@
   border-left: 3px solid color-mix(in srgb, var(--accent) 72%, var(--line));
   border-radius: var(--canvas-radius-compact);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
-  color: var(--ink);
+  color: var(--muted);
   font-size: .8125rem;
 }
 .markdown-body .message-quote-card .message-quote-card {
