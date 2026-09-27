@@ -1001,7 +1001,7 @@ html[data-command-modifier-held="true"]
   background: transparent;
   box-shadow: none;
 }
-.team-surface .mosaic-message-card:target {
+.team-surface .mosaic-message-card:is(:target, [data-card-route-selected="true"]) {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   scroll-margin-block: 8px;
