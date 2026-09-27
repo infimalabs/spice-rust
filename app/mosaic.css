@@ -562,7 +562,6 @@
 
 .team-compose {
   --team-composer-block: 0px;
-  --team-composer-collapse: 0px;
   position: relative;
   display: flex;
   flex: 1 1 auto;
@@ -588,12 +587,12 @@
 .team-composer {
   position: absolute; inset: 0 0 auto; z-index: 1;
   border-bottom: var(--canvas-edge); background: var(--panel);
-  transform: translateY(calc(-1 * var(--team-composer-collapse))); will-change: transform;
+  transform: translate3d(0, 0, 0); will-change: transform;
 }
 .team-compose[data-composer-fully-collapsed="true"] .team-composer { pointer-events: none; }
 .team-compose .lane-mosaic-plane {
   padding-top: var(--team-composer-block);
-  scroll-padding-top: calc(var(--team-composer-block) - var(--team-composer-collapse));
+  scroll-padding-top: var(--team-composer-block);
 }
 .team-compose .mosaic-message-empty { margin-top: var(--team-composer-block); }
 
