@@ -503,44 +503,29 @@
   margin-left: 0;
   float: none;
 }
-.markdown-body .message-quote-author {
-  --message-quote-author-accent: var(--muted);
+.markdown-body .message-quote-name {
+  --message-quote-name-accent: var(--muted);
   display: inline-flex;
   max-width: 100%;
   min-width: 0;
   align-items: center;
   overflow: hidden;
-  border: 0;
-  background: none;
-  color: color-mix(in srgb, var(--message-quote-author-accent) 72%, var(--muted));
+  color: color-mix(in srgb, var(--message-quote-name-accent) 72%, var(--muted));
   font-weight: 600;
-  text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.markdown-body a.message-quote-author {
-  text-decoration: underline;
-  text-decoration-thickness: 1px;
-  text-underline-offset: 2px;
+.markdown-body .message-quote-name[data-accent] {
+  --message-quote-name-accent: var(--accent-slot);
 }
-.markdown-body .message-quote-author[data-accent] {
-  --message-quote-author-accent: var(--accent-slot);
+.markdown-body .message-quote-age-slot {
+  display: inline-flex;
+  flex: 0 0 4ch;
+  min-width: 4ch;
 }
-.markdown-body button.message-quote-author {
-  appearance: none;
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
-}
-.markdown-body :is(a, button).message-quote-author:hover,
-.markdown-body :is(a, button).message-quote-author:focus-visible {
-  background: none;
-  color: var(--message-quote-author-accent);
-  text-decoration: underline;
-}
-.markdown-body :is(a, button).message-quote-author:focus-visible {
-  outline: 2px solid var(--message-quote-author-accent);
-  outline-offset: 1px;
+.markdown-body .message-quote-age {
+  color: var(--muted);
+  font-weight: 400;
 }
 .markdown-body .message-quote-disposition {
   display: inline-flex;

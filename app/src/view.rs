@@ -268,7 +268,7 @@ impl CanvasRoute {
     }
 }
 
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(target_arch = "wasm32")]
 pub(crate) fn card_href(target: &str) -> String {
     let route = CanvasRoute::card(target.to_owned())
         .expect("a rendered Canvas card has a canonical route target");

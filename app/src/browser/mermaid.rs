@@ -356,6 +356,13 @@ struct Slot {
     key: yew::virtual_dom::Key,
 }
 
+struct QuoteAgeSlot {
+    authored: i64,
+    source: String,
+    target: web_sys::Element,
+    key: yew::virtual_dom::Key,
+}
+
 fn collect_slots(
     host: &web_sys::Element,
     selector: &str,
@@ -397,18 +404,67 @@ fn collect_slots(
     slots
 }
 
-/// Only producer-authored diagram slots inside this card are portal targets.
-/// Raw user HTML still passes through the shared Markdown sanitizer before this
-/// point. Resident-hydrated classifications are already final inline HTML and
-/// need no post-render slot discovery.
+fn collect_quote_age_slots(
+    host: &web_sys::Element,
+    previous: &[QuoteAgeSlot],
+    counter: &Cell<u64>,
+) -> Vec<QuoteAgeSlot> {
+    let Ok(nodes) = host
+        .query_selector_all(".message-quote-age-slot[data-quote-age-authored][data-quote-source]")
+    else {
+        return Vec::new();
+    };
+    let mut slots = Vec::with_capacity(nodes.length() as usize);
+    for position in 0..nodes.length() {
+        let Some(target) = nodes
+            .item(position)
+            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+        else {
+            continue;
+        };
+        let Some(authored) = target
+            .get_attribute("data-quote-age-authored")
+            .and_then(|authored| authored.parse::<i64>().ok())
+        else {
+            continue;
+        };
+        let Some(source) = target
+            .get_attribute("data-quote-source")
+            .filter(|source| !source.is_empty())
+        else {
+            continue;
+        };
+        let key = previous
+            .iter()
+            .find(|slot| slot.target == target)
+            .map(|slot| slot.key.clone())
+            .unwrap_or_else(|| {
+                counter.set(counter.get().wrapping_add(1));
+                counter.get().into()
+            });
+        slots.push(QuoteAgeSlot {
+            authored,
+            source,
+            target,
+            key,
+        });
+    }
+    slots
+}
+
+/// Producer-authored diagram and quote-age slots inside this card are portal
+/// targets. Raw user HTML still passes through the shared Markdown sanitizer;
+/// only resident-hydrated inline HTML can name either slot kind.
 #[function_component(MarkdownBody)]
 pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let host = use_node_ref();
     let diagram_slots = use_state(Vec::<Slot>::new);
+    let quote_age_slots = use_state(Vec::<QuoteAgeSlot>::new);
     let counter = use_memo((), |()| Cell::new(0_u64));
     use_effect_with((props.html.clone(), props.sources.len()), {
         let host = host.clone();
         let diagram_slots = diagram_slots.clone();
+        let quote_age_slots = quote_age_slots.clone();
         let counter = counter.clone();
         move |(_, source_count)| {
             let Some(host) = host.cast::<web_sys::Element>() else {
@@ -422,6 +478,7 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                 &diagram_slots,
                 &counter,
             ));
+            quote_age_slots.set(collect_quote_age_slots(&host, &quote_age_slots, &counter));
         }
     });
     // Keep the portal list under a stable VDOM parent. Mixing keyed portals
@@ -429,13 +486,25 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     html! {
         <div ref={host} class="message-body markdown-body">
             {Html::from_html_unchecked(props.html.clone())}
-            if !props.sources.is_empty() {
+            if !props.sources.is_empty() || !quote_age_slots.is_empty() {
             <span hidden=true>
             {for diagram_slots.iter().filter_map(|slot| {
                 let source = props.sources.get(slot.index)?.clone();
                 Some(yew::create_portal(html! {
                     <MermaidImage key={slot.key.clone()} {source} final_answer={props.final_answer} />
                 }, slot.target.clone()))
+            })}
+            {for quote_age_slots.iter().map(|slot| {
+                let href = crate::view::card_href(&slot.source);
+                yew::create_portal(html! {
+                    <super::clock::Age
+                        key={slot.key.clone()}
+                        authored={slot.authored}
+                        class={classes!("relative-age", "message-quote-age")}
+                        {href}
+                        label="Link to quoted message"
+                    />
+                }, slot.target.clone())
             })}
             </span>
             }
