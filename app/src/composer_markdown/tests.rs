@@ -1030,7 +1030,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     assert_eq!(html.matches("message-quote-age-slot").count(), 1);
     assert!(html.contains(
         "class=\"message-quote-name\" data-quote-author=\"directive\" \
-         data-quote-actor=\"spice\">🌶️</span>"
+         data-quote-actor=\"spice\" aria-label=\"Spice\">🌶️</span>"
     ));
     assert!(!html.contains(">Spice</span>"));
     assert!(!html.contains(">Operator</span>"));
