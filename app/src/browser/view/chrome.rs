@@ -46,12 +46,18 @@ pub(super) struct CommandBarRender<'a> {
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let surface = render.surface.read();
     let runtime = surface.as_ref();
+    let status = crate::view::canvas_notice(
+        render.connection.stage(),
+        runtime.is_some(),
+        runtime.is_some_and(|runtime| runtime.lanes().is_some()),
+    );
     let task_pills = task_pills(render.work);
     let connection_label: AttrValue = render.connection.label().into();
     html! {
         <header class="commandbar commandbar--mosaic">
             <div
                 class="canvas-disclosure"
+                data-transient-status={status.is_some().to_string()}
                 data-expanded={(**render.menu_open).to_string()}
             >
                 <nav class="task-pill-strip" aria-label="Open task projects">
@@ -94,7 +100,16 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                         }
                     })}
                 </nav>
-                <span class="visually-hidden" role="status">{connection_label.clone()}</span>
+                if let Some(status) = status {
+                    <span
+                        class="canvas-global-status"
+                        role="status"
+                        aria-live="polite"
+                        data-connection={render.connection.indicator_state()}
+                    >{status.label()}</span>
+                } else {
+                    <span class="visually-hidden" role="status">{connection_label.clone()}</span>
+                }
                 {render_canvas_menu(&render, runtime, &connection_label)}
             </div>
         </header>

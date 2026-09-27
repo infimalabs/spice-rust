@@ -151,6 +151,62 @@ impl CanvasDestination {
     }
 }
 
+/// Connection phase relevant to persistent Canvas chrome.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ConnectionStage {
+    Starting,
+    Connecting,
+    Online,
+    Offline,
+}
+
+/// Notice shown beside the global Spice control while the Canvas cannot yet
+/// present a current admitted lane snapshot.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CanvasNotice {
+    LoadingCanvas,
+    OpeningResident,
+    Reconnecting,
+    LoadingAgents,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl CanvasNotice {
+    #[must_use]
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::LoadingCanvas => "Loading Canvas",
+            Self::OpeningResident => "Opening resident",
+            Self::Reconnecting => "Reconnecting",
+            Self::LoadingAgents => "Loading agents",
+        }
+    }
+}
+
+/// Select the one global notice that owns pre-lane and reconnect state.
+///
+/// Connectivity wins over hydration because a retained runtime may remain on
+/// screen through an outage. Online Canvas yields the slot only after both its
+/// runtime and its lane snapshot have been admitted.
+#[cfg(any(target_arch = "wasm32", test))]
+#[must_use]
+pub(crate) const fn canvas_notice(
+    connection: ConnectionStage,
+    runtime_admitted: bool,
+    lanes_admitted: bool,
+) -> Option<CanvasNotice> {
+    match connection {
+        ConnectionStage::Starting => Some(CanvasNotice::LoadingCanvas),
+        ConnectionStage::Connecting => Some(CanvasNotice::OpeningResident),
+        ConnectionStage::Offline => Some(CanvasNotice::Reconnecting),
+        ConnectionStage::Online if !runtime_admitted => Some(CanvasNotice::LoadingCanvas),
+        ConnectionStage::Online if !lanes_admitted => Some(CanvasNotice::LoadingAgents),
+        ConnectionStage::Online => None,
+    }
+}
+
 #[cfg(any(target_arch = "wasm32", test))]
 const CARD_TARGET_PATH_PREFIX: &str = "/card/";
 
@@ -229,7 +285,7 @@ fn valid_card_target(target: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CanvasDestination, CanvasRoute};
+    use super::{CanvasDestination, CanvasNotice, CanvasRoute, ConnectionStage, canvas_notice};
 
     #[test]
     fn card_routes_refine_chat_and_round_trip_the_exact_target() {
@@ -257,5 +313,30 @@ mod tests {
                 "{path:?} unexpectedly named a card"
             );
         }
+    }
+
+    #[test]
+    fn global_notice_yields_only_to_an_online_admitted_lane_snapshot() {
+        assert_eq!(
+            canvas_notice(ConnectionStage::Starting, true, true),
+            Some(CanvasNotice::LoadingCanvas)
+        );
+        assert_eq!(
+            canvas_notice(ConnectionStage::Connecting, true, true),
+            Some(CanvasNotice::OpeningResident)
+        );
+        assert_eq!(
+            canvas_notice(ConnectionStage::Offline, true, true),
+            Some(CanvasNotice::Reconnecting)
+        );
+        assert_eq!(
+            canvas_notice(ConnectionStage::Online, false, false),
+            Some(CanvasNotice::LoadingCanvas)
+        );
+        assert_eq!(
+            canvas_notice(ConnectionStage::Online, true, false),
+            Some(CanvasNotice::LoadingAgents)
+        );
+        assert_eq!(canvas_notice(ConnectionStage::Online, true, true), None);
     }
 }

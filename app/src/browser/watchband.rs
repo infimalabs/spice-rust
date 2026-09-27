@@ -68,10 +68,10 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
     } = render;
     let surface = surface.read();
     let Some(runtime) = surface.as_ref() else {
-        return empty("No admitted live team is available.");
+        return Html::default();
     };
     let Some(lanes) = runtime.lanes() else {
-        return empty("No agent snapshot is available.");
+        return Html::default();
     };
     let waiting = runtime
         .inbox()

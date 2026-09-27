@@ -495,6 +495,15 @@ impl Connection {
         matches!(self, Self::Online { .. })
     }
 
+    const fn stage(&self) -> crate::view::ConnectionStage {
+        match self {
+            Self::Starting => crate::view::ConnectionStage::Starting,
+            Self::Connecting => crate::view::ConnectionStage::Connecting,
+            Self::Online { .. } => crate::view::ConnectionStage::Online,
+            Self::Offline(_) => crate::view::ConnectionStage::Offline,
+        }
+    }
+
     fn indicator_state(&self) -> &'static str {
         match self {
             Self::Online { .. } => "online",
