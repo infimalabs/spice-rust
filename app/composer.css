@@ -486,6 +486,7 @@
   > p:last-child > .message-quote-signoff
 ):not(:has(> p:last-child img)) > :nth-last-child(2):has(img) {
   flex: 1 1 0;
+  min-width: min(100%, var(--mosaic-image-size));
 }
 .markdown-body blockquote:has(img):has(
   > p:last-child > .message-quote-signoff
