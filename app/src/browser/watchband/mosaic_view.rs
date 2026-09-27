@@ -905,6 +905,14 @@ async fn measure_unknown(
     if canceled.get() {
         return None;
     }
+    let _trace = crate::browser::diagnostics::span("layout.measure", || {
+        crate::browser::diagnostics::Metadata {
+            cards: Some(unknown.len()),
+            items: Some(unknown.len()),
+            width_px: Some(width),
+            ..crate::browser::diagnostics::Metadata::default()
+        }
+    });
     let host = host.cast::<web_sys::Element>()?;
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
     let mut pending = Vec::with_capacity(unknown.len());

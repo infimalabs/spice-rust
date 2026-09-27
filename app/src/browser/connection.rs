@@ -246,6 +246,10 @@ async fn apply_incoming_frame(
         .ok_or_else(|| "resident closed the socket".to_owned())?
         .map_err(websocket_error)?;
     let bytes = binary_message(frame)?;
+    diagnostics::instant("frame.received", || diagnostics::Metadata {
+        frame_bytes: Some(bytes.len()),
+        ..diagnostics::Metadata::default()
+    });
     let application = handle_incoming(session, handles, data, actions, &bytes, publish)?;
     relay_directives(principal, writer, application.directives).await?;
     send_after_frame(

@@ -42,6 +42,7 @@ mod canvas_menu;
 mod card_target;
 mod clock;
 mod connection;
+mod diagnostics;
 mod image_viewer;
 mod mermaid;
 mod message_task_inspector;
@@ -606,6 +607,15 @@ struct CanvasAppState {
 
 impl CanvasAppState {
     fn render(self) -> Html {
+        let _trace = diagnostics::span("render.canvas", || diagnostics::Metadata {
+            cards: self
+                .surface
+                .read()
+                .as_ref()
+                .map_or(0, |runtime| runtime.messages().len())
+                .into(),
+            ..diagnostics::Metadata::default()
+        });
         let surface_view = self.surface.read();
         let work = project_work(surface_view.as_ref());
         let retry_relations = task_relations::retry_callback(
@@ -1464,6 +1474,7 @@ fn state_from_select(state: UseStateHandle<String>) -> Callback<Event> {
 
 #[wasm_bindgen(start)]
 pub fn start() {
+    diagnostics::install();
     let root = web_sys::window()
         .expect("browser window")
         .document()

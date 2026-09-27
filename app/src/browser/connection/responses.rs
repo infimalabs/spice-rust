@@ -20,13 +20,27 @@ fn handle_stream_frame(
     bytes: &[u8],
     publish: bool,
 ) -> Result<FrameApplication, String> {
+    let decode = diagnostics::span("frame.decode.stream", || diagnostics::Metadata {
+        frame_bytes: Some(bytes.len()),
+        ..diagnostics::Metadata::default()
+    });
     let admitted = session
         .admit_stream(bytes)
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))?;
+    drop(decode);
     if matches!(admitted.get(), wire::StreamFrame::Pong { .. }) {
         return Ok(FrameApplication::default());
     }
     let mut stale = stale_reads(&admitted);
+    let apply = diagnostics::span("state.apply.stream", || diagnostics::Metadata {
+        frame_bytes: Some(bytes.len()),
+        cards: data
+            .read()
+            .as_ref()
+            .map_or(0, |runtime| runtime.messages().len())
+            .into(),
+        ..diagnostics::Metadata::default()
+    });
     let (directives, changed) = {
         let mut data = data.write();
         let runtime = data
@@ -44,7 +58,17 @@ fn handle_stream_frame(
         stale.resolve_work_history(runtime, changed);
         (application.into_directives(), changed)
     };
+    drop(apply);
     if changed && publish {
+        let _publication = diagnostics::span("state.publish", || diagnostics::Metadata {
+            frame_bytes: Some(bytes.len()),
+            cards: data
+                .read()
+                .as_ref()
+                .map_or(0, |runtime| runtime.messages().len())
+                .into(),
+            ..diagnostics::Metadata::default()
+        });
         surface.set(data.publication());
     }
     Ok(FrameApplication {
@@ -62,11 +86,21 @@ pub(super) fn handle_incoming(
     bytes: &[u8],
     publish: bool,
 ) -> Result<FrameApplication, String> {
+    let classify = diagnostics::span("frame.decode.classify", || diagnostics::Metadata {
+        frame_bytes: Some(bytes.len()),
+        ..diagnostics::Metadata::default()
+    });
     let crossing: serde_json::Value = wire::decode(bytes).map_err(|error| error.to_string())?;
+    drop(classify);
     if crossing.get("stream").is_some() {
         return handle_stream_frame(session, &handles.surface, data, bytes, publish);
     }
+    let identity_decode = diagnostics::span("frame.decode.identity", || diagnostics::Metadata {
+        frame_bytes: Some(bytes.len()),
+        ..diagnostics::Metadata::default()
+    });
     let identity: ResponseIdentity = wire::decode(bytes).map_err(|error| error.to_string())?;
+    drop(identity_decode);
     let ordinary_kind = actions.settle_pending(identity.id);
     let topology_kind = actions
         .map_in_flight_topology(identity.id, topology_pending_kind)
@@ -94,7 +128,12 @@ pub(super) fn handle_incoming(
     let runtime = runtime_slot
         .as_mut()
         .ok_or_else(|| "response arrived before runtime acceptance".to_owned())?;
+    let apply = diagnostics::span("state.apply.response", || diagnostics::Metadata {
+        frame_bytes: Some(bytes.len()),
+        ..diagnostics::Metadata::default()
+    });
     let application = apply_command_response(session, handles, runtime, identity.id, kind, bytes)?;
+    drop(apply);
     if !topology && application.lane_authority {
         actions.observe_topology_authority();
     }
@@ -113,6 +152,15 @@ pub(super) fn handle_incoming(
     });
     drop(runtime_slot);
     if publish {
+        let _publication = diagnostics::span("state.publish", || diagnostics::Metadata {
+            frame_bytes: Some(bytes.len()),
+            cards: data
+                .read()
+                .as_ref()
+                .map_or(0, |runtime| runtime.messages().len())
+                .into(),
+            ..diagnostics::Metadata::default()
+        });
         handles.surface.set(data.publication());
     }
     Ok(FrameApplication {
