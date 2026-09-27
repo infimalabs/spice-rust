@@ -124,7 +124,7 @@ impl Context {
         self.request_detail.emit(task);
     }
 
-    /// The Work of every direction `message` quotes, and nothing else.
+    /// Every task caused by the directions `message` quotes, and nothing else.
     pub fn message_quote_tasks(&self, message: &wire::AgentMessage) -> crate::runtime::QuoteTasks {
         crate::composer_markdown::referenced_quote_tasks(
             &message.quotes,

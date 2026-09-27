@@ -107,8 +107,8 @@ pub(crate) fn referenced_quote_sources(
     referenced
 }
 
-/// The Work caused by the directions one card's quotes and directive contexts
-/// name, so a card holds only its own slice of the board's origin index.
+/// The task badges caused by the directions one card's quotes and directive
+/// contexts name, so a card holds only its own slice of the board's origin index.
 pub(crate) fn referenced_quote_tasks(
     presentations: &[QuotePresentation],
     directives: &[wire::MessageDirective],
@@ -138,12 +138,12 @@ pub(crate) fn referenced_quote_tasks(
     referenced
 }
 
-/// The tail of quoted words: associated work, an explicit non-Operator author
-/// name, and the source message's live relative age.
+/// The tail of quoted words: associated task badges, an explicit non-Operator
+/// author name, and the source message's live relative age.
 ///
-/// Work arrives after the card renders, so the HTML never depends on it: a
-/// steering quote's signoff names its key, and the card body fills in that
-/// key's Work links in place. A sourceless signoff stays empty until then.
+/// Task provenance arrives after the card renders, so the HTML never depends
+/// on it: a steering quote's signoff names its key, and the card body fills in
+/// that key's badges in place. A sourceless signoff stays empty until then.
 pub(super) fn signoff_html(
     author: &QuoteAuthor,
     target: &str,

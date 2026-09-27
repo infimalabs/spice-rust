@@ -364,7 +364,7 @@ struct QuoteAgeSlot {
     key: yew::virtual_dom::Key,
 }
 
-/// A steering quote's signoff. Its Work links lead its raw name and age, so
+/// A steering quote's signoff. Its task badges lead its raw name and age, so
 /// they mount before the first raw child the signoff had when collected.
 struct QuoteTaskSlot {
     steering: String,
