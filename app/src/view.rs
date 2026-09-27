@@ -6,6 +6,9 @@
 //! set is closed for the same reason the command registry is: a match over it
 //! is exhaustive.
 
+#[cfg(any(target_arch = "wasm32", test))]
+use std::borrow::Cow;
+
 /// The complete view vocabulary.
 ///
 /// Each axis is a question one Canvas destination answers.
@@ -144,6 +147,108 @@ impl CanvasDestination {
             Self::Info => "Info about resident teams, agents, capabilities, and possession",
             Self::Work => "Work across tasks, claims, deferrals, and reviews",
             Self::Chat => "Chat across persistent team agents",
+        }
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+const CARD_TARGET_PATH_PREFIX: &str = "/card/";
+
+/// One admitted Canvas URL state.
+///
+/// Global destinations remain the complete navigation vocabulary. A card
+/// target refines Chat rather than becoming a fourth destination, so opening a
+/// permalink cannot select an impossible global view.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CanvasRoute {
+    destination: CanvasDestination,
+    card_target: Option<String>,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl CanvasRoute {
+    #[must_use]
+    pub(crate) const fn destination(destination: CanvasDestination) -> Self {
+        Self {
+            destination,
+            card_target: None,
+        }
+    }
+
+    pub(crate) fn card(target: String) -> Option<Self> {
+        valid_card_target(&target).then_some(Self {
+            destination: CanvasDestination::Chat,
+            card_target: Some(target),
+        })
+    }
+
+    #[must_use]
+    pub(crate) fn from_path(path: &str) -> Option<Self> {
+        CanvasDestination::from_path(path)
+            .map(Self::destination)
+            .or_else(|| {
+                let target = path.strip_prefix(CARD_TARGET_PATH_PREFIX)?;
+                Self::card(target.to_owned())
+            })
+    }
+
+    #[must_use]
+    pub(crate) const fn canvas_destination(&self) -> CanvasDestination {
+        self.destination
+    }
+
+    #[must_use]
+    pub(crate) fn card_target(&self) -> Option<&str> {
+        self.card_target.as_deref()
+    }
+
+    #[must_use]
+    pub(crate) fn path(&self) -> Cow<'_, str> {
+        self.card_target.as_ref().map_or_else(
+            || Cow::Borrowed(self.destination.path()),
+            |target| Cow::Owned(format!("{CARD_TARGET_PATH_PREFIX}{target}")),
+        )
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn valid_card_target(target: &str) -> bool {
+    !target.is_empty()
+        && target
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CanvasDestination, CanvasRoute};
+
+    #[test]
+    fn card_routes_refine_chat_and_round_trip_the_exact_target() {
+        let path = "/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1";
+        let route = CanvasRoute::from_path(path).expect("canonical card route parses");
+
+        assert_eq!(route.canvas_destination(), CanvasDestination::Chat);
+        assert_eq!(
+            route.card_target(),
+            Some("message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1")
+        );
+        assert_eq!(route.path(), path);
+    }
+
+    #[test]
+    fn card_routes_refuse_missing_or_noncanonical_targets() {
+        for path in [
+            "/card/",
+            "/card/message/agent",
+            "/card/message_agent",
+            "/card/message-agent?copy=true",
+        ] {
+            assert!(
+                CanvasRoute::from_path(path).is_none(),
+                "{path:?} unexpectedly named a card"
+            );
         }
     }
 }

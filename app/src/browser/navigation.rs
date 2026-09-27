@@ -9,6 +9,7 @@ use wire::TaskStamp;
 use yew::prelude::*;
 
 use super::SurfaceData;
+use crate::view::CanvasRoute;
 use crate::work::{WorkProjection, WorkScope};
 use crate::{CanvasDestination, CanvasRuntime};
 
@@ -57,16 +58,16 @@ pub(super) fn intent_callback(
 }
 
 #[hook]
-pub(super) fn use_destination() -> (Option<CanvasDestination>, Callback<CanvasDestination>) {
+pub(super) fn use_destination() -> (Option<CanvasRoute>, Callback<CanvasDestination>) {
     let history = use_state(HashHistory::new);
-    let destination = use_state(location_destination);
+    let route = use_state(location_route);
 
     {
         let history = (*history).clone();
-        let destination = destination.clone();
+        let route = route.clone();
         use_effect_with((), move |()| {
             let listener = history.listen(move || {
-                destination.set(location_destination());
+                route.set(location_route());
             });
             move || drop(listener)
         });
@@ -74,18 +75,24 @@ pub(super) fn use_destination() -> (Option<CanvasDestination>, Callback<CanvasDe
 
     let history = (*history).clone();
     let navigate = Callback::from(move |destination: CanvasDestination| {
-        if location_destination() != Some(destination) {
+        if location_route() != Some(CanvasRoute::destination(destination)) {
             history.push(destination.path());
         }
     });
-    (*destination, navigate)
+    ((*route).clone(), navigate)
 }
 
-fn location_destination() -> Option<CanvasDestination> {
+pub(super) fn card_href(target: &str) -> String {
+    let route = CanvasRoute::card(target.to_owned())
+        .expect("a rendered Canvas card has a canonical route target");
+    format!("#{}", route.path())
+}
+
+fn location_route() -> Option<CanvasRoute> {
     let location = web_sys::window()?.location();
     if !location.search().ok()?.is_empty() {
         return None;
     }
     let hash = location.hash().ok()?;
-    CanvasDestination::from_path(hash.strip_prefix('#')?)
+    CanvasRoute::from_path(hash.strip_prefix('#')?)
 }

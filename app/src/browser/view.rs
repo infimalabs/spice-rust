@@ -72,6 +72,7 @@ pub(super) struct CanvasRender<'a> {
     pub connection: &'a UseStateHandle<Connection>,
     pub surface: &'a UseStateHandle<SurfaceData>,
     pub destination: CanvasDestination,
+    pub card_target_notice: Option<String>,
     pub navigate: &'a Callback<navigation::Intent>,
     pub canvas_menu_open: &'a UseStateHandle<bool>,
     pub work_scope: &'a UseStateHandle<WorkScope>,
@@ -144,6 +145,14 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
             }
             if let Some(issue) = &**render.action_issue {
                 <p class="form-refusal" role="alert">{issue}</p>
+            }
+            if let Some(notice) = &render.card_target_notice {
+                <p
+                    class="visually-hidden"
+                    role="status"
+                    aria-live="polite"
+                    data-card-target-status=""
+                >{notice.clone()}</p>
             }
             if let SpeechStatus::Failed(issue) = &**render.speech_status {
                 <p class="form-refusal" role="alert">{issue}</p>
