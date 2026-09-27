@@ -908,7 +908,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     let handle: wire::TaskHandle = "QUOTE-dTVQdQfLw"
         .parse()
         .expect("fixture task is canonical");
-    let tasks = BTreeMap::from([("dTVQdQfLw".to_owned(), handle)]);
+    let tasks = BTreeMap::from([("dTVQdQfLw".to_owned(), vec![handle])]);
     let rendered = render_received_with_quotes(
         &markdown.join(" "),
         &[],
@@ -955,6 +955,82 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     assert_eq!(html.matches("class=\"message-quote-task\"").count(), 1);
     assert!(html.contains("data-task-handle=\"QUOTE-dTVQdQfLw\""));
     assert!(html.contains("aria-label=\"Open task QUOTE-dTVQdQfLw in Work\""));
+}
+
+#[test]
+fn tasked_quote_levels_keep_every_exact_task_at_every_occurrence() {
+    let inner_text = "nested direction";
+    let inner_target = steering_target("dTVQdQfLx", inner_text);
+    let outer_text = format!("outer direction {}", inner_target.markdown());
+    let outer_target = steering_target("dTVQdQfLw", &outer_text);
+    let inner = wire::QuotePresentation::Resolved {
+        target: inner_target.to_string(),
+        text: inner_text.to_owned(),
+        author: wire::QuoteAuthor::Directive {
+            actor: wire::Actor::Operator,
+        },
+        disposition: None,
+        quotes: Vec::new(),
+    };
+    let outer = wire::QuotePresentation::Resolved {
+        target: outer_target.to_string(),
+        text: outer_text,
+        author: wire::QuoteAuthor::Directive {
+            actor: wire::Actor::Operator,
+        },
+        disposition: None,
+        quotes: vec![inner],
+    };
+    let outer_tasks = [
+        "FIRST-dTZQjKHhG"
+            .parse()
+            .expect("fixture task is canonical"),
+        "SECOND-dTZRfCQ43"
+            .parse()
+            .expect("fixture task is canonical"),
+    ];
+    let inner_task: wire::TaskHandle = "INNER-dTZRdv3bF"
+        .parse()
+        .expect("fixture task is canonical");
+    let tasks = BTreeMap::from([
+        ("dTVQdQfLw".to_owned(), outer_tasks.to_vec()),
+        ("dTVQdQfLx".to_owned(), vec![inner_task.clone()]),
+    ]);
+    let rendered = render_received_with_quotes(
+        &format!("{} {}", outer_target.markdown(), outer_target.markdown()),
+        &[],
+        &[],
+        &[outer.clone(), outer],
+        &BTreeMap::new(),
+        &tasks,
+    );
+
+    assert_eq!(
+        rendered
+            .html
+            .matches("class=\"message-quote-task\"")
+            .count(),
+        6,
+        "two outer occurrences each keep both tasks and their nested task"
+    );
+    for handle in outer_tasks {
+        assert_eq!(
+            rendered
+                .html
+                .matches(&format!("data-task-handle=\"{handle}\""))
+                .count(),
+            2,
+            "{handle} renders once for each occurrence of its own level"
+        );
+    }
+    assert_eq!(
+        rendered
+            .html
+            .matches(&format!("data-task-handle=\"{inner_task}\""))
+            .count(),
+        2,
+        "the nested task renders once within each repeated outer quote"
+    );
 }
 
 /// A card keeps the agents its quotes can render and nothing else: rendering
@@ -1032,19 +1108,28 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
         target: target_text.clone(),
         reason: wire::QuoteUnavailable::DepthExceeded,
     }];
+    let tasks = BTreeMap::from([(
+        "dTVQdQfLw".to_owned(),
+        vec![
+            "QUOTE-dTVQdQfLw"
+                .parse()
+                .expect("fixture task is canonical"),
+        ],
+    )]);
     let rendered = render_received_with_quotes(
         &target.markdown(),
         &[],
         &[],
         &unavailable,
         &BTreeMap::new(),
-        &BTreeMap::new(),
+        &tasks,
     );
 
     assert!(rendered.html.contains("Quote unavailable: depth-exceeded"));
     assert!(rendered.html.contains("authorship unavailable"));
     assert!(!rendered.html.contains("message-quote-signoff"));
     assert!(!rendered.html.contains("<a "));
+    assert!(!rendered.html.contains("message-quote-task"));
     assert!(
         rendered
             .html

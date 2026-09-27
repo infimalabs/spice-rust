@@ -183,7 +183,7 @@ pub(crate) fn render_received_with_quotes(
     directives: &[MessageDirective],
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
-    quote_tasks: &BTreeMap<String, wire::TaskHandle>,
+    quote_tasks: &crate::runtime::QuoteTasks,
 ) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -284,7 +284,7 @@ fn close_directive_context(
     events: &mut Vec<MarkdownEvent<'_>>,
     context: &MessageDirective,
     quote_agents: &QuoteAgents,
-    quote_tasks: &BTreeMap<String, wire::TaskHandle>,
+    quote_tasks: &crate::runtime::QuoteTasks,
 ) {
     let signoff = quotes::signoff_html(
         &wire::QuoteAuthor::Directive {

@@ -1,16 +1,16 @@
 //! Synchronous HTML projection of resident-authenticated quote trees.
 
 use std::borrow::Cow;
-use std::collections::BTreeMap;
+use std::fmt::Write as _;
 
 use pulldown_cmark::{Event as MarkdownEvent, Tag, TagEnd};
-use wire::{Disposition, QuoteAuthor, QuotePresentation, QuoteTarget, TaskHandle};
+use wire::{Disposition, QuoteAuthor, QuotePresentation, QuoteTarget};
 
 pub(super) fn expand<'a>(
     events: Vec<MarkdownEvent<'a>>,
     presentations: &[QuotePresentation],
     agents: &super::QuoteAgents,
-    tasks: &BTreeMap<String, TaskHandle>,
+    tasks: &crate::runtime::QuoteTasks,
 ) -> Vec<MarkdownEvent<'a>> {
     if presentations.is_empty() {
         return events;
@@ -86,7 +86,7 @@ pub(super) fn signoff_html(
     author: &QuoteAuthor,
     target: &str,
     agents: &super::QuoteAgents,
-    tasks: &BTreeMap<String, TaskHandle>,
+    tasks: &crate::runtime::QuoteTasks,
 ) -> String {
     format!(
         "<span class=\"message-quote-signoff\">{}{}</span>",
@@ -119,7 +119,7 @@ fn presentation_target(presentation: &QuotePresentation) -> &str {
 fn render(
     presentation: &QuotePresentation,
     agents: &super::QuoteAgents,
-    tasks: &BTreeMap<String, TaskHandle>,
+    tasks: &crate::runtime::QuoteTasks,
 ) -> String {
     match presentation {
         QuotePresentation::Resolved {
@@ -284,20 +284,24 @@ fn disposition_html(disposition: Disposition) -> String {
     )
 }
 
-fn task_html(target: &str, tasks: &BTreeMap<String, TaskHandle>) -> String {
+fn task_html(target: &str, tasks: &crate::runtime::QuoteTasks) -> String {
     let Ok(QuoteTarget::Steering { key, .. }) = target.parse() else {
         return String::new();
     };
-    let Some(handle) = tasks.get(&key) else {
-        return String::new();
-    };
-    let handle = handle.to_string();
-    format!(
-        "<span class=\"message-quote-task\" role=\"button\" tabindex=\"0\" \
-         data-task-handle=\"{}\" aria-label=\"Open task {} in Work\">Work</span>",
-        super::escape_html_attribute(&handle),
-        super::escape_html_attribute(&handle),
-    )
+    tasks.get(&key).map_or_else(String::new, |handles| {
+        let mut html = String::new();
+        for handle in handles {
+            let handle = super::escape_html_attribute(handle.as_str());
+            write!(
+                html,
+                "<span class=\"message-quote-task\" role=\"button\" tabindex=\"0\" \
+                 data-task-handle=\"{handle}\" aria-label=\"Open task {handle} in Work\">\
+                 Work</span>"
+            )
+            .expect("writing HTML to a String cannot fail");
+        }
+        html
+    })
 }
 
 const fn unavailable_key(reason: wire::QuoteUnavailable) -> &'static str {

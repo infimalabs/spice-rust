@@ -443,7 +443,7 @@ fn agent_message_presentation<'a>(
     member: &crate::runtime::LaneMember,
     message: &'a wire::AgentMessage,
     quote_agents: &crate::composer_markdown::QuoteAgents,
-    quote_tasks: &BTreeMap<String, wire::TaskHandle>,
+    quote_tasks: &crate::runtime::QuoteTasks,
 ) -> AgentMessagePresentation<'a> {
     let attribution = watchband::agent_message_attribution(
         message.author,

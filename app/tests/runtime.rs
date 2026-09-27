@@ -367,24 +367,34 @@ fn admitted_board_answer(
 }
 
 #[test]
-fn directive_quote_navigation_uses_the_task_acknowledgement_origin() {
+fn directive_quote_navigation_keeps_every_task_from_the_acknowledgement_origin() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
+    let response = board_response(&session, "Hidden correction");
+    let wire::Outcome::Reply(reply) = &response.get().outcome else {
+        panic!("board fixture is a reply");
+    };
+    let mut answer = reply.body.clone();
+    answer.tasks.push(board_task(
+        "PUBLIC-work2",
+        NEXT_CAPABILITY,
+        "Second task from the same direction",
+        "app.followup",
+        Some("ack:1kQwPZtK"),
+        wire::EnvironmentRequirements::default(),
+    ));
     let mut runtime = CanvasRuntime::new(&accepted);
-    runtime.apply_board(&board_response(&session, "Hidden correction"));
+    runtime.apply_board(&admitted_board_answer(&session, answer));
     let board = runtime.board().expect("board snapshot");
-    let task = board
+    let mut expected = board
         .tasks
         .iter()
-        .find(|task| task.statement.body.project == "board.visibility")
-        .expect("public task");
-    let links = board.quote_tasks();
+        .filter(|task| task.statement.body.provenance.as_str() == "ack:1kQwPZtK")
+        .map(|task| task.statement.body.handle.clone())
+        .collect::<Vec<_>>();
+    expected.sort();
 
-    assert_eq!(links.get("1kQwPZtK"), Some(&task.statement.body.handle));
-    assert_eq!(
-        links.get(task.statement.body.born.as_str()),
-        Some(&task.statement.body.handle)
-    );
+    assert_eq!(board.quote_tasks().get("1kQwPZtK"), Some(&expected));
 }
 
 /// One admitted safe lane roster, one row per `(lane, team, occupant, bound)` tuple.
