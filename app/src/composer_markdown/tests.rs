@@ -791,15 +791,8 @@ fn assert_historical_agent_name_survives_reseating(
             label: "spice-rust-k".to_owned(),
         },
     )]);
-    let rendered = render_received_with_quotes(
-        &outer.markdown(),
-        &[],
-        &[],
-        quotes,
-        &agents,
-        sources,
-        &BTreeMap::new(),
-    );
+    let rendered =
+        render_received_with_quotes(&outer.markdown(), &[], &[], quotes, &agents, sources);
     assert!(rendered.html.contains(&format!(
         "class=\"message-quote-name\" data-quote-agent-lane=\"{lane}\" \
          data-quote-agent-occupant=\"{source}\" data-quote-author-state=\"historical\" \
@@ -869,7 +862,6 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         &quotes,
         &agents,
         &sources,
-        &BTreeMap::new(),
     );
 
     assert_eq!(
@@ -932,9 +924,9 @@ fn assert_sourceless_quote_has_no_fabricated_byline(
         quotes,
         agents,
         &BTreeMap::new(),
-        &BTreeMap::new(),
     );
-    assert!(!sourceless.html.contains("message-quote-signoff"));
+    assert!(!sourceless.html.contains("message-quote-name"));
+    assert!(!sourceless.html.contains("message-quote-age-slot"));
     assert!(!sourceless.html.contains("data-quote-source="));
 }
 
@@ -984,10 +976,6 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         disposition: None,
         quotes: Vec::new(),
     });
-    let handle: wire::TaskHandle = "QUOTE-dTVQdQfLw"
-        .parse()
-        .expect("fixture task is canonical");
-    let tasks = BTreeMap::from([("dTVQdQfLw".to_owned(), vec![handle])]);
     let sources = BTreeMap::from([(
         spice_target.to_string(),
         quote_source("message-agent-spice-source", 3_000),
@@ -999,7 +987,6 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         &quotes,
         &BTreeMap::new(),
         &sources,
-        &tasks,
     );
     let html = rendered.html;
 
@@ -1024,11 +1011,15 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         acknowledgement < acknowledged_prose,
         "the acknowledgement precedes its directive prose"
     );
-    assert_eq!(
-        html.matches("class=\"message-quote-signoff\"").count(),
-        2,
-        "the tasked sourceless Operator quote and sourced Spice quote have tails"
-    );
+    for key in keys {
+        assert!(
+            html.contains(&format!(
+                "<span class=\"message-quote-signoff\" data-quote-tasks=\"{key}\"></span>"
+            )),
+            "a sourceless Operator quote's tail holds only its Work slot: {html}"
+        );
+    }
+    assert!(html.contains("<span class=\"message-quote-signoff\" data-quote-tasks=\"dTVQdQfMC\">"));
     assert_eq!(html.matches("message-quote-age-slot").count(), 1);
     assert!(html.contains(
         "class=\"message-quote-name\" data-quote-author=\"directive\" \
@@ -1038,13 +1029,10 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     assert!(!html.contains("history unavailable"));
     assert!(!html.contains("Directive by"));
     assert!(!html.contains("class=\"message-quote-disposition tag"));
-    assert_eq!(html.matches("class=\"message-quote-task\"").count(), 1);
-    assert!(html.contains("data-task-handle=\"QUOTE-dTVQdQfLw\""));
-    assert!(html.contains("aria-label=\"Open task QUOTE-dTVQdQfLw in Work\""));
 }
 
 #[test]
-fn tasked_quote_levels_keep_every_exact_task_at_every_occurrence() {
+fn quote_levels_name_their_own_work_at_every_occurrence() {
     let inner_text = "nested direction";
     let inner_target = steering_target("dTVQdQfLx", inner_text);
     let outer_text = format!("outer direction {}", inner_target.markdown());
@@ -1067,21 +1055,6 @@ fn tasked_quote_levels_keep_every_exact_task_at_every_occurrence() {
         disposition: None,
         quotes: vec![inner],
     };
-    let outer_tasks = [
-        "FIRST-dTZQjKHhG"
-            .parse()
-            .expect("fixture task is canonical"),
-        "SECOND-dTZRfCQ43"
-            .parse()
-            .expect("fixture task is canonical"),
-    ];
-    let inner_task: wire::TaskHandle = "INNER-dTZRdv3bF"
-        .parse()
-        .expect("fixture task is canonical");
-    let tasks = BTreeMap::from([
-        ("dTVQdQfLw".to_owned(), outer_tasks.to_vec()),
-        ("dTVQdQfLx".to_owned(), vec![inner_task.clone()]),
-    ]);
     let sources = BTreeMap::from([
         (
             outer_target.to_string(),
@@ -1099,35 +1072,18 @@ fn tasked_quote_levels_keep_every_exact_task_at_every_occurrence() {
         &[outer.clone(), outer],
         &BTreeMap::new(),
         &sources,
-        &tasks,
     );
 
-    assert_eq!(
-        rendered
-            .html
-            .matches("class=\"message-quote-task\"")
-            .count(),
-        6,
-        "two outer occurrences each keep both tasks and their nested task"
-    );
-    for handle in outer_tasks {
+    for (key, level) in [("dTVQdQfLw", "outer"), ("dTVQdQfLx", "nested")] {
         assert_eq!(
             rendered
                 .html
-                .matches(&format!("data-task-handle=\"{handle}\""))
+                .matches(&format!("data-quote-tasks=\"{key}\""))
                 .count(),
             2,
-            "{handle} renders once for each occurrence of its own level"
+            "each {level} occurrence names its own Work"
         );
     }
-    assert_eq!(
-        rendered
-            .html
-            .matches(&format!("data-task-handle=\"{inner_task}\""))
-            .count(),
-        2,
-        "the nested task renders once within each repeated outer quote"
-    );
     assert_eq!(
         rendered
             .html
@@ -1144,24 +1100,6 @@ fn tasked_quote_levels_keep_every_exact_task_at_every_occurrence() {
         2,
         "each nested level keeps its source time"
     );
-    let outer_work = rendered
-        .html
-        .find("data-task-handle=\"FIRST-dTZQjKHhG\"")
-        .expect("outer work action renders");
-    let outer_age = rendered
-        .html
-        .find("data-quote-age-authored=\"1000\"")
-        .expect("outer age slot renders");
-    assert!(outer_work < outer_age, "outer Work precedes its age");
-    let inner_work = rendered
-        .html
-        .find("data-task-handle=\"INNER-dTZRdv3bF\"")
-        .expect("inner work action renders");
-    let inner_age = rendered
-        .html
-        .find("data-quote-age-authored=\"2000\"")
-        .expect("inner age slot renders");
-    assert!(inner_work < inner_age, "nested Work precedes its age");
 }
 
 /// A card keeps the agents its quotes can render and nothing else: rendering
@@ -1216,7 +1154,6 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
             &quotes,
             agents,
             &BTreeMap::new(),
-            &BTreeMap::new(),
         )
         .html
     };
@@ -1239,14 +1176,6 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
         target: target_text.clone(),
         reason: wire::QuoteUnavailable::DepthExceeded,
     }];
-    let tasks = BTreeMap::from([(
-        "dTVQdQfLw".to_owned(),
-        vec![
-            "QUOTE-dTVQdQfLw"
-                .parse()
-                .expect("fixture task is canonical"),
-        ],
-    )]);
     let rendered = render_received_with_quotes(
         &target.markdown(),
         &[],
@@ -1254,14 +1183,13 @@ fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_pros
         &unavailable,
         &BTreeMap::new(),
         &BTreeMap::new(),
-        &tasks,
     );
 
     assert!(rendered.html.contains("Quote unavailable: depth-exceeded"));
     assert!(rendered.html.contains("authorship unavailable"));
     assert!(!rendered.html.contains("message-quote-signoff"));
     assert!(!rendered.html.contains("<a "));
-    assert!(!rendered.html.contains("message-quote-task"));
+    assert!(!rendered.html.contains("data-quote-tasks"));
     assert!(
         rendered
             .html
@@ -1345,16 +1273,8 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         ),
     ]);
 
-    let html = render_received_with_quotes(
-        &markdown,
-        &[],
-        &directives,
-        &quotes,
-        &agents,
-        &sources,
-        &BTreeMap::new(),
-    )
-    .html;
+    let html =
+        render_received_with_quotes(&markdown, &[], &directives, &quotes, &agents, &sources).html;
 
     let blocks = html.split("<blockquote>").skip(1).collect::<Vec<_>>();
     assert_eq!(blocks.len(), 3, "{html}");

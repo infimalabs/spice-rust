@@ -124,7 +124,7 @@ impl Context {
         self.request_detail.emit(task);
     }
 
-    pub fn quote_tasks(&self) -> &crate::runtime::QuoteTasks {
+    pub fn quote_tasks(&self) -> &Rc<crate::runtime::QuoteTasks> {
         &self.quote_tasks
     }
 

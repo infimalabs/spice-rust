@@ -180,7 +180,6 @@ pub(crate) fn render_received_with_classifications(
         &[],
         &BTreeMap::new(),
         &BTreeMap::new(),
-        &BTreeMap::new(),
     )
 }
 
@@ -193,7 +192,6 @@ pub(crate) fn render_received_with_quotes(
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-    quote_tasks: &crate::runtime::QuoteTasks,
 ) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
@@ -236,13 +234,7 @@ pub(crate) fn render_received_with_quotes(
                 if quote_depth == 0
                     && let Some(context) = open_context.take()
                 {
-                    close_directive_context(
-                        &mut events,
-                        &context,
-                        quote_agents,
-                        quote_sources,
-                        quote_tasks,
-                    );
+                    close_directive_context(&mut events, &context, quote_agents, quote_sources);
                 }
             }
             _ => {}
@@ -264,7 +256,7 @@ pub(crate) fn render_received_with_quotes(
         "every resident classification maps to one Markdown text event"
     );
     let events = coalesce_text_events(events);
-    let events = quotes::expand(events, quotes, quote_agents, quote_sources, quote_tasks);
+    let events = quotes::expand(events, quotes, quote_agents, quote_sources);
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
     let image_only = markdown_is_image_only(&events, has_diagrams);
@@ -301,7 +293,6 @@ fn close_directive_context(
     context: &MessageDirective,
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
-    quote_tasks: &crate::runtime::QuoteTasks,
 ) {
     let signoff = quotes::signoff_html(
         &wire::QuoteAuthor::Directive {
@@ -310,13 +301,14 @@ fn close_directive_context(
         &context.quote_target.to_string(),
         quote_agents,
         quote_sources,
-        quote_tasks,
     );
     if matches!(events.last(), Some(MarkdownEvent::End(TagEnd::Paragraph))) {
         let end = events.len() - 1;
         events.insert(end, MarkdownEvent::InlineHtml(signoff.into()));
     } else {
-        events.push(MarkdownEvent::Html(format!("<p>{signoff}</p>").into()));
+        events.push(MarkdownEvent::Html(
+            format!("<p class=\"message-quote-signoff-line\">{signoff}</p>").into(),
+        ));
     }
 }
 

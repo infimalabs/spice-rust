@@ -149,14 +149,12 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
         &left.quotes,
         &BTreeMap::new(),
         &BTreeMap::new(),
-        &BTreeMap::new(),
     );
     let right = crate::composer_markdown::render_received_with_quotes(
         &right.text,
         &right.classifications,
         &right.directive_contexts,
         &right.quotes,
-        &BTreeMap::new(),
         &BTreeMap::new(),
         &BTreeMap::new(),
     );
