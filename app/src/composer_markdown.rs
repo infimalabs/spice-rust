@@ -27,7 +27,6 @@ pub(crate) struct RenderedMarkdown {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QuoteAgent {
-    pub(crate) team: wire::CanonicalUuid,
     pub(crate) accent: usize,
     pub(crate) label: String,
 }
@@ -37,6 +36,7 @@ pub(crate) type QuoteAgents = BTreeMap<(wire::CanonicalUuid, wire::CanonicalUuid
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QuoteSource {
     pub(crate) card_id: String,
+    pub(crate) display_millis: i64,
     pub(crate) agent: Option<QuoteAgent>,
 }
 

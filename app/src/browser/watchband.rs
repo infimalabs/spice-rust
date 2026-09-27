@@ -104,7 +104,6 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
                             (
                                 (member.lane, occupant),
                                 crate::composer_markdown::QuoteAgent {
-                                    team: team.lane,
                                     accent: watchband::accent(members, position),
                                     label: watchband::agent_message_label(
                                         &member.worktree,

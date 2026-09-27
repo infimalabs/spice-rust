@@ -185,12 +185,13 @@ pub(super) fn team_quote_sources(
             continue;
         };
         let card_id = agent_message_source_id(message);
+        let display_millis = crate::runtime::agent_message_display_millis(message);
         if let Some(target) = &message.quote_target {
             sources.entry(target.to_string()).or_insert_with(|| {
                 crate::composer_markdown::QuoteSource {
                     card_id: card_id.clone(),
+                    display_millis,
                     agent: Some(crate::composer_markdown::QuoteAgent {
-                        team: team.lane,
                         accent: watchband::accent(team.members.len(), position),
                         label: watchband::agent_message_label(
                             &member.worktree,
@@ -206,6 +207,7 @@ pub(super) fn team_quote_sources(
                 .entry(context.quote_target.to_string())
                 .or_insert_with(|| crate::composer_markdown::QuoteSource {
                     card_id: card_id.clone(),
+                    display_millis,
                     agent: None,
                 });
         }

@@ -743,6 +743,14 @@ fn quote_fixture_id(tail: &str) -> wire::CanonicalUuid {
         .expect("fixture identity is canonical")
 }
 
+fn quote_source(card_id: &str, display_millis: i64) -> QuoteSource {
+    QuoteSource {
+        card_id: card_id.to_owned(),
+        display_millis,
+        agent: None,
+    }
+}
+
 fn nested_quote_sources(
     outer: &wire::QuoteTarget,
     inner: &wire::QuoteTarget,
@@ -753,6 +761,7 @@ fn nested_quote_sources(
             outer.to_string(),
             QuoteSource {
                 card_id: "message-agent-outer-source".to_owned(),
+                display_millis: 1_000,
                 agent: Some(agent),
             },
         ),
@@ -760,25 +769,24 @@ fn nested_quote_sources(
             inner.to_string(),
             QuoteSource {
                 card_id: "message-agent-inner-source".to_owned(),
+                display_millis: 2_000,
                 agent: None,
             },
         ),
     ])
 }
 
-fn assert_source_author_survives_reseating(
+fn assert_historical_agent_name_survives_reseating(
     outer: &wire::QuoteTarget,
     quotes: &[wire::QuotePresentation],
     sources: &QuoteSources,
     lane: wire::CanonicalUuid,
     source: wire::CanonicalUuid,
-    team: wire::CanonicalUuid,
 ) {
     let successor = quote_fixture_id("e9");
     let agents = BTreeMap::from([(
         (lane, successor),
         QuoteAgent {
-            team,
             accent: 4,
             label: "spice-rust-k".to_owned(),
         },
@@ -793,12 +801,12 @@ fn assert_source_author_survives_reseating(
         &BTreeMap::new(),
     );
     assert!(rendered.html.contains(&format!(
-        "data-quote-agent-occupant=\"{source}\" \
-         data-quote-author-state=\"source\" data-accent=\"3\""
+        "class=\"message-quote-name\" data-quote-agent-lane=\"{lane}\" \
+         data-quote-agent-occupant=\"{source}\" data-quote-author-state=\"historical\" \
+         data-accent=\"3\">spice-rust-k</span>"
     )));
-    assert!(rendered.html.contains(">spice-rust-k</a>"));
+    assert!(rendered.html.contains("data-quote-age-authored=\"1000\""));
     assert!(!rendered.html.contains("history unavailable"));
-    assert!(!rendered.html.contains("data-quote-agent-team="));
 }
 
 #[test]
@@ -838,11 +846,9 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         }],
     }];
 
-    let team: wire::CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163e8".parse().unwrap();
     let agents = BTreeMap::from([(
         (lane, source),
         QuoteAgent {
-            team,
             accent: 3,
             label: "spice-rust-k".to_owned(),
         },
@@ -874,44 +880,42 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         2
     );
     assert!(rendered.html.contains(&format!(
-        "<a class=\"message-quote-author\" href=\"#/card/message-agent-outer-source\" \
+        "<span class=\"message-quote-age-slot\" data-quote-age-authored=\"1000\" \
          data-quote-source=\"message-agent-outer-source\" data-quote-author=\"agent\" \
-         data-quote-agent-team=\"{team}\" \
          data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{source}\" \
-         data-quote-author-state=\"current\" data-accent=\"3\" \
-         aria-label=\"Open message from spice-rust-k\">spice-rust-k</a>"
+         data-quote-author-state=\"current\" data-accent=\"3\"></span>"
     )));
     assert!(rendered.html.contains(
-        "<a class=\"message-quote-author\" href=\"#/card/message-agent-inner-source\" \
+        "<span class=\"message-quote-age-slot\" data-quote-age-authored=\"2000\" \
          data-quote-source=\"message-agent-inner-source\" data-quote-author=\"directive\" \
-         data-quote-actor=\"operator\" aria-label=\"Open message from Operator\">Operator</a>"
+         data-quote-actor=\"operator\"></span>"
     ));
+    assert!(!rendered.html.contains("message-quote-name"));
     assert!(!rendered.html.contains("history unavailable"));
     assert_eq!(rendered.html.matches("data-quote-source=").count(), 2);
     assert!(!rendered.html.contains("Original"));
     assert!(rendered.html.contains(inner_text));
     assert!(rendered.html.contains("data-quote-disposition=\"live\""));
-    assert!(!rendered.html.contains("Agent "));
-    assert!(!rendered.html.contains("Directive by"));
     let outer_body = rendered
         .html
         .find("before ")
         .expect("outer authenticated prose renders");
     let outer_signoff = rendered
         .html
-        .rfind("spice-rust-k</a>")
+        .rfind("data-quote-age-authored=\"1000\"")
         .expect("outer signoff renders");
     assert!(
         outer_body < outer_signoff,
         "the signoff trails authored prose"
     );
 
-    assert_source_author_survives_reseating(&outer_target, &quotes, &sources, lane, source, team);
-    assert_sourceless_author_opens_information(&outer_target, &quotes, &agents);
+    assert_historical_agent_name_survives_reseating(&outer_target, &quotes, &sources, lane, source);
+    assert_sourceless_quote_has_no_fabricated_byline(&outer_target, &quotes, &agents);
 }
 
-/// Without a known source card, the current agent's name opens its information.
-fn assert_sourceless_author_opens_information(
+/// Without source chronology, no current timestamp or author name substitutes
+/// for the missing evidence.
+fn assert_sourceless_quote_has_no_fabricated_byline(
     outer: &wire::QuoteTarget,
     quotes: &[wire::QuotePresentation],
     agents: &QuoteAgents,
@@ -925,11 +929,7 @@ fn assert_sourceless_author_opens_information(
         &BTreeMap::new(),
         &BTreeMap::new(),
     );
-    assert!(
-        sourceless
-            .html
-            .contains("aria-label=\"Open information for spice-rust-k\">spice-rust-k</button>")
-    );
+    assert!(!sourceless.html.contains("message-quote-signoff"));
     assert!(!sourceless.html.contains("data-quote-source="));
 }
 
@@ -1015,15 +1015,13 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         acknowledgement < acknowledged_prose,
         "the acknowledgement precedes its directive prose"
     );
-    assert_eq!(html.matches("class=\"message-quote-signoff\"").count(), 7);
     assert_eq!(
-        html.matches("data-quote-actor=\"operator\">Operator</span>")
-            .count(),
-        6
+        html.matches("class=\"message-quote-signoff\"").count(),
+        1,
+        "only the task-backed sourceless quote needs a tail"
     );
-    assert!(
-        html.contains("data-quote-actor=\"spice\" role=\"img\" aria-label=\"Spice\">🌶️</span>")
-    );
+    assert!(!html.contains("message-quote-age-slot"));
+    assert!(!html.contains("message-quote-name"));
     assert!(!html.contains("history unavailable"));
     assert!(!html.contains("Directive by"));
     assert!(!html.contains("class=\"message-quote-disposition tag"));
@@ -1071,13 +1069,23 @@ fn tasked_quote_levels_keep_every_exact_task_at_every_occurrence() {
         ("dTVQdQfLw".to_owned(), outer_tasks.to_vec()),
         ("dTVQdQfLx".to_owned(), vec![inner_task.clone()]),
     ]);
+    let sources = BTreeMap::from([
+        (
+            outer_target.to_string(),
+            quote_source("message-agent-tasked-outer", 1_000),
+        ),
+        (
+            inner_target.to_string(),
+            quote_source("message-agent-tasked-inner", 2_000),
+        ),
+    ]);
     let rendered = render_received_with_quotes(
         &format!("{} {}", outer_target.markdown(), outer_target.markdown()),
         &[],
         &[],
         &[outer.clone(), outer],
         &BTreeMap::new(),
-        &BTreeMap::new(),
+        &sources,
         &tasks,
     );
 
@@ -1107,6 +1115,40 @@ fn tasked_quote_levels_keep_every_exact_task_at_every_occurrence() {
         2,
         "the nested task renders once within each repeated outer quote"
     );
+    assert_eq!(
+        rendered
+            .html
+            .matches("data-quote-age-authored=\"1000\"")
+            .count(),
+        2,
+        "each repeated outer level keeps its source time"
+    );
+    assert_eq!(
+        rendered
+            .html
+            .matches("data-quote-age-authored=\"2000\"")
+            .count(),
+        2,
+        "each nested level keeps its source time"
+    );
+    let outer_work = rendered
+        .html
+        .find("data-task-handle=\"FIRST-dTZQjKHhG\"")
+        .expect("outer work action renders");
+    let outer_age = rendered
+        .html
+        .find("data-quote-age-authored=\"1000\"")
+        .expect("outer age slot renders");
+    assert!(outer_work < outer_age, "outer Work precedes its age");
+    let inner_work = rendered
+        .html
+        .find("data-task-handle=\"INNER-dTZRdv3bF\"")
+        .expect("inner work action renders");
+    let inner_age = rendered
+        .html
+        .find("data-quote-age-authored=\"2000\"")
+        .expect("inner age slot renders");
+    assert!(inner_work < inner_age, "nested Work precedes its age");
 }
 
 /// A card keeps the agents its quotes can render and nothing else: rendering
@@ -1145,7 +1187,6 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
         }],
     }];
     let agent = |label: &str| QuoteAgent {
-        team: id("ff"),
         accent: 2,
         label: label.to_owned(),
     };
@@ -1272,7 +1313,6 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     let agents = BTreeMap::from([(
         (directing, directing),
         QuoteAgent {
-            team: directing,
             accent: 1,
             label: "directing".to_owned(),
         },
@@ -1280,24 +1320,15 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     let sources = BTreeMap::from([
         (
             directives[0].quote_target.to_string(),
-            QuoteSource {
-                card_id: "message-agent-operator-source".to_owned(),
-                agent: None,
-            },
+            quote_source("message-agent-operator-source", 1_000),
         ),
         (
             directives[1].quote_target.to_string(),
-            QuoteSource {
-                card_id: "message-agent-lane-source".to_owned(),
-                agent: None,
-            },
+            quote_source("message-agent-lane-source", 2_000),
         ),
         (
             nested.to_string(),
-            QuoteSource {
-                card_id: "message-agent-nested-source".to_owned(),
-                agent: None,
-            },
+            quote_source("message-agent-nested-source", 3_000),
         ),
     ]);
 
@@ -1338,11 +1369,10 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         (1, 1),
         "{lane}"
     );
-    assert!(lane.contains(">directing</a>"), "{lane}");
-    assert!(lane.contains("data-accent=\"1\""), "{lane}");
+    assert!(!html.contains("message-quote-name"), "{html}");
     assert_eq!(html.matches("data-quote-source=").count(), 3, "{html}");
-    assert!(html.contains("href=\"#/card/message-agent-operator-source\""));
-    assert!(html.contains("href=\"#/card/message-agent-lane-source\""));
-    assert!(html.contains("href=\"#/card/message-agent-nested-source\""));
+    assert!(html.contains("data-quote-age-authored=\"1000\""));
+    assert!(html.contains("data-quote-age-authored=\"2000\""));
+    assert!(html.contains("data-quote-age-authored=\"3000\""));
     assert!(!aside.contains("message-quote-signoff"), "{aside}");
 }
