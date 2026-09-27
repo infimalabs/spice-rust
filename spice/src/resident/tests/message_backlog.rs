@@ -316,6 +316,151 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
     fs::remove_dir_all(root).expect("backlog fixture cleanup");
 }
 
+#[test]
+fn startup_fills_the_visible_floor_across_a_sparse_tool_horizon() {
+    let (root, paths) = resident_fixture("message-backlog-sparse-startup");
+    let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
+        .expect("backlog bus starts");
+    let epoch = test_uuid(49);
+    let lane = test_uuid(50);
+    let empty_lane = test_uuid(51);
+    let author = test_uuid(52);
+    seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+        .expect("the sparse backlog tape opens");
+    write_sparse_startup_history(&tape);
+    let mut ingest_diagnostic = Vec::new();
+    ingest_transcripts(
+        &bus,
+        &paths,
+        Some(lane),
+        lane::ingest::Bound::IMMEDIATE,
+        lane::ingest::Coalescing::new(),
+        &mut ingest_diagnostic,
+    )
+    .expect("sparse tape is accounted");
+    assert!(ingest_diagnostic.is_empty());
+
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let publisher = source.message_publisher();
+    let bus_reader = bus.reader();
+    let mut reader = message_surface::BacklogReader::indexed();
+    let mut diagnostic = Vec::new();
+    let residency = current_residency(&bus, epoch).expect("residency reads");
+    message_surface::restore_agent_messages_indexed(
+        &bus_reader,
+        &paths,
+        residency.body(),
+        &publisher,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("sparse backlog restores");
+    assert!(
+        diagnostic.is_empty(),
+        "restore diagnosed: {}",
+        String::from_utf8_lossy(&diagnostic),
+    );
+
+    let accepted = wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    };
+    let generation = message_snapshot(&source, &accepted, epoch, test_uuid(53));
+    let prose = generation
+        .messages
+        .iter()
+        .filter(|message| message.activity.is_prose())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        prose.len(),
+        wire::MESSAGE_FLOOR,
+        "hidden JSONL records spend startup bytes without shrinking the shown-card floor",
+    );
+    assert_eq!(
+        prose.last().map(|message| message.text.as_str()),
+        Some("current epoch"),
+    );
+    assert!(
+        generation.messages.iter().any(|message| {
+            message.activity == wire::AgentActivityKind::Compaction
+                && message.text == "Context compacted"
+        }),
+        "the current epoch keeps its preceding compaction boundary",
+    );
+    assert!(
+        generation
+            .messages
+            .iter()
+            .all(|message| message.lane == lane),
+        "the empty sibling contributes no borrowed history",
+    );
+    assert_bootstrap(&generation, empty_lane);
+    let reconnected = message_snapshot(&source, &accepted, epoch, test_uuid(54));
+    assert_eq!(
+        reconnected, generation,
+        "every cold reader receives the same authoritative retained window",
+    );
+
+    drop(source);
+    bus.shutdown().expect("backlog bus stops");
+    fs::remove_dir_all(root).expect("backlog fixture cleanup");
+}
+
+fn write_sparse_startup_history(tape: &tape::Tape) {
+    let mut history = Vec::new();
+    for index in 0..30 {
+        history.extend_from_slice(
+            format!(
+                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"message-{index}\",\"type\":\"agent_message\",\"text\":\"message {index}\"}}}}\n"
+            )
+            .as_bytes(),
+        );
+    }
+    history.extend_from_slice(CODEX_COMPACTION_WITHOUT_TIME);
+    let filler = "x".repeat(1_800);
+    for index in 0..640 {
+        history.extend_from_slice(
+            format!(
+                "{{\"type\":\"item.started\",\"item\":{{\"id\":\"call-{index}\",\"type\":\"command_execution\",\"command\":\"echo {filler}\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}}}\n"
+            )
+            .as_bytes(),
+        );
+    }
+    history.extend_from_slice(
+        br#"{"type":"item.completed","item":{"id":"current","type":"agent_message","text":"current epoch"}}
+"#,
+    );
+    tape.tee(&history).expect("sparse history is durable");
+}
+
+fn message_snapshot(
+    source: &canvas::stream::Source,
+    accepted: &wire::Accepted,
+    epoch: wire::CanonicalUuid,
+    request: wire::CanonicalUuid,
+) -> wire::TranscriptGeneration {
+    let (_, frames) = source
+        .begin(
+            accepted,
+            &wire::StreamRequest::Subscribe {
+                v: wire::WireVersion::CURRENT,
+                id: request,
+                epoch,
+                subjects: vec![wire::ViewSubject::Messages],
+                after: None,
+            },
+        )
+        .expect("Canvas subscription begins");
+    let wire::StreamFrame::Messages { generation, .. } =
+        frames.into_iter().next().expect("message frame exists")
+    else {
+        panic!("expected message snapshot")
+    };
+    generation
+}
+
 /// An older page carries the real observation time, not the synthetic one.
 ///
 /// Startup hydrates only the window it scanned, so a record older than that
