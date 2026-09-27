@@ -65,6 +65,8 @@ fn acknowledgement_preflight_uses_the_canonical_clause_grammar() {
         "If I ACK 1kJK6N3R: hypothetical.",
         "The example ACK 1kJK6N3R: narrated.",
         "I emitted ACK 1kJK6N3R: narration about prior prose.",
+        "The parser recognizes ACK 1kJK6N3R: as protocol.",
+        "This sentence contains ACK 1kJK6N3R: as an example.",
         "src/ack.rs:12: ACK 1kJK6N3R: rendered source context.",
     ] {
         assert!(!has_acknowledgement(prose), "accepted {prose:?}");
