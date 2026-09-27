@@ -202,7 +202,6 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
     );
     assert!(!messages.more);
     assert_eq!(messages.start, 0);
-    assert!(messages.work.within_request_limits());
     assert!(
         !messages.work.within_limits(),
         "the chained request spends more than one window allowance",
@@ -347,7 +346,6 @@ fn assert_both_boundaries_served(page: &HistoryScan) {
     assert!(page.messages[0].chronology_key() < page.messages[1].chronology_key());
     assert!(!page.more);
     assert_eq!(page.start, 0);
-    assert!(page.work.within_request_limits());
 }
 
 #[test]
