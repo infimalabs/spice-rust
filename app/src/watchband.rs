@@ -715,12 +715,8 @@ pub(crate) const fn agent_activity_name(activity: wire::AgentActivityKind) -> &'
     }
 }
 
-/// Widest string [`elapsed_label`] can return, counted in characters.
-///
-/// This is a layout contract, not a hint. A ticking age sits in a slot sized
-/// once from this number, so the slot can only stay still if the label can
-/// never outgrow it — see `age_labels_never_outgrow_the_slot`.
-pub const AGE_LABEL_WIDTH: usize = 4;
+/// Exact displayed width of every relative-time slot, in CSS `ch` units.
+pub const AGE_SLOT_WIDTH: usize = 3;
 
 /// Days past which the label stops counting and says only that it is more.
 const AGE_LABEL_MAX_DAYS: i64 = 99;

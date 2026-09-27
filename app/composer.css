@@ -525,8 +525,10 @@
 }
 .markdown-body .message-quote-age-slot {
   display: inline-flex;
-  flex: 0 0 4ch;
-  min-width: 4ch;
+  flex: 0 0 3ch;
+  width: 3ch;
+  min-width: 3ch;
+  max-width: 3ch;
 }
 .markdown-body .message-quote-age {
   color: var(--muted);
