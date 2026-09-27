@@ -128,6 +128,25 @@ pub(in crate::resident) fn lock_state(
         .map_err(|error| store_fault("canvas::message-state-unavailable", &error.to_string()))
 }
 
+/// Name a card Canvas refused instead of raising it: Canvas is a projection
+/// of durable tapes, so its refusal is a diagnostic, never a resident fault.
+pub(in crate::resident) fn canvas_diagnostic(
+    presented: CommandResult<()>,
+    diagnostic: &mut dyn io::Write,
+) -> CommandResult<()> {
+    match presented {
+        Err(Outcome::Fault(fault)) => {
+            let _ = writeln!(
+                diagnostic,
+                "canvas message unavailable: {}: {}",
+                fault.reason, fault.detail
+            );
+            Ok(())
+        }
+        outcome => outcome,
+    }
+}
+
 #[derive(Debug)]
 struct ProseState {
     published: wire::AgentMessage,

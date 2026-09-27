@@ -228,7 +228,7 @@ pub(super) fn present<P: AgentMessagePublisher>(
     worktree: Option<&Path>,
     views: &mut CaptureViews<'_>,
 ) -> CommandResult<()> {
-    match publish_agent_messages_in(
+    let presented = publish_agent_messages_in(
         surfaces.publisher,
         record,
         &mut *lock_state(views.state)?,
@@ -236,16 +236,6 @@ pub(super) fn present<P: AgentMessagePublisher>(
         worktree,
         None,
         None,
-    ) {
-        Ok(()) => Ok(()),
-        Err(Outcome::Fault(fault)) => {
-            let _ = writeln!(
-                views.diagnostic,
-                "canvas message unavailable: {}: {}",
-                fault.reason, fault.detail
-            );
-            Ok(())
-        }
-        Err(outcome) => Err(outcome),
-    }
+    );
+    canvas_diagnostic(presented, views.diagnostic)
 }

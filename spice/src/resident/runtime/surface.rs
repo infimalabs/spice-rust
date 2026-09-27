@@ -1207,18 +1207,7 @@ fn settle_spoken_acknowledgements(
         message_surface::settle_pending_presentations(bus, &batch, message_state)?;
         commit_message_batch(batch)
     })();
-    match settled {
-        Ok(()) => Ok(()),
-        Err(Outcome::Fault(fault)) => {
-            let _ = writeln!(
-                diagnostic,
-                "canvas message unavailable: {}: {}",
-                fault.reason, fault.detail
-            );
-            Ok(())
-        }
-        Err(outcome) => Err(outcome),
-    }
+    message_surface::canvas_diagnostic(settled, diagnostic)
 }
 
 fn request_lifecycle_reconciliation(
