@@ -32,6 +32,7 @@ mod work_history;
 pub(crate) use publication::CanvasSurface;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
 pub use work_history::{WorkHistoryRequest, WorkHistoryState, work_history_completion_cutoff};
+pub(crate) type QuoteTasks = BTreeMap<String, Vec<wire::TaskHandle>>;
 
 /// Whether a topology mutation response leaves Canvas owing an authoritative read.
 ///
@@ -92,41 +93,28 @@ impl BoardView {
             .are_satisfied_by(&self.environment)
     }
 
-    /// Resolve quoted steering keys to current task handles.
+    /// Resolve every quoted steering key to the tasks caused by that direction.
     ///
-    /// A task's birth stamp remains an exact identity route. A unique
-    /// `ack:<key>` provenance additionally links the directive that caused the
-    /// task; repeated provenance is ambiguous and therefore exposes no route.
+    /// One direction may intentionally produce several independently actionable
+    /// tasks. Stable handle ordering keeps their adjacent Work actions
+    /// deterministic without discarding that one-to-many provenance.
     #[must_use]
-    pub fn quote_tasks(&self) -> BTreeMap<String, wire::TaskHandle> {
-        let mut tasks = self
-            .tasks
-            .iter()
-            .map(|task| {
-                (
-                    task.statement.body.born.to_string(),
-                    task.statement.body.handle.clone(),
-                )
-            })
-            .collect::<BTreeMap<_, _>>();
-        let mut origins = BTreeMap::<&str, Option<&wire::TaskHandle>>::new();
+    pub fn quote_tasks(&self) -> QuoteTasks {
+        let mut origins = QuoteTasks::new();
         for task in &self.tasks {
             let Some(key) = task.statement.body.provenance.as_str().strip_prefix("ack:") else {
                 continue;
             };
             origins
-                .entry(key)
-                .and_modify(|handle| *handle = None)
-                .or_insert(Some(&task.statement.body.handle));
+                .entry(key.to_owned())
+                .or_default()
+                .push(task.statement.body.handle.clone());
         }
-        for (key, handle) in origins {
-            if let Some(handle) = handle {
-                tasks
-                    .entry(key.to_owned())
-                    .or_insert_with(|| handle.clone());
-            }
+        for handles in origins.values_mut() {
+            handles.sort();
+            handles.dedup();
         }
-        tasks
+        origins
     }
 }
 

@@ -16,7 +16,7 @@ pub(super) struct Context {
     request_detail: Callback<TaskStamp>,
     return_focus_to: Callback<web_sys::Element>,
     navigate: Callback<navigation::Intent>,
-    quote_tasks: Rc<BTreeMap<String, TaskHandle>>,
+    quote_tasks: Rc<crate::runtime::QuoteTasks>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -124,7 +124,7 @@ impl Context {
         self.request_detail.emit(task);
     }
 
-    pub fn quote_tasks(&self) -> &BTreeMap<String, TaskHandle> {
+    pub fn quote_tasks(&self) -> &crate::runtime::QuoteTasks {
         &self.quote_tasks
     }
 
@@ -132,7 +132,12 @@ impl Context {
         let Ok(task) = handle.born() else {
             return;
         };
-        if self.quote_tasks.contains_key(&task.to_string()) {
+        if self
+            .quote_tasks
+            .values()
+            .flatten()
+            .any(|candidate| candidate == &handle)
+        {
             self.navigate.emit(navigation::Intent::Task(task));
         }
     }
