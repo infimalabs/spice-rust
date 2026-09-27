@@ -4,9 +4,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use listen::{
-    Checkpoint, Dialect, EventKind, Position, RecordPayload, Scan, ScanError, Span, TailBudget,
-    scan, scan_before, scan_tail,
+    Checkpoint, Dialect, EventKind, Position, Record, RecordPayload, Scan, ScanError, Span,
+    TailBudget, scan, scan_before, scan_tail, search_tail,
 };
+use std::ops::ControlFlow;
 use tape::{Locus, Tape};
 
 const PROSE: &[u8] =
@@ -877,5 +878,116 @@ fn event_ordinals_distinguish_events_sharing_the_same_record_spans() {
         vec![(0, EventKind::Prose), (1, EventKind::Tool)]
     );
     assert_eq!(events[0].spans, events[1].spans);
+    scratch.remove();
+}
+
+const NEEDLE: &str = "needle-7Qx";
+/// Active-member bytes one backward search read covers.
+const SEARCH_CHUNK_BYTES: usize = 1024 * 1024;
+
+fn needle_prose(label: &str) -> Vec<u8> {
+    format!(r#"{{"type":"item.completed","item":{{"id":"item-1","type":"agent_message","text":"{NEEDLE} {label}"}}}}"#)
+        .into_bytes()
+}
+
+/// One complete residue record of exactly `bytes` bytes, delimiter included.
+fn filler(bytes: usize) -> Vec<u8> {
+    let mut filler = vec![b' '; bytes - 3];
+    filler.extend_from_slice(b"{}\n");
+    filler
+}
+
+fn search_budget(window_bytes: u64) -> TailBudget {
+    TailBudget::new(
+        window_bytes,
+        64 * 1024 * 1024,
+        16,
+        64,
+        Duration::from_secs(10),
+    )
+    .expect("positive search budget")
+}
+
+fn prose_text(record: &Record) -> String {
+    let RecordPayload::Events(events) = &record.payload else {
+        panic!("a matching record became residue");
+    };
+    events[0].event.prose().expect("prose").text.clone()
+}
+
+#[test]
+fn search_decodes_only_needle_records_newest_first_across_chunks_and_seals() {
+    let scratch = Scratch::new("search-needles");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    tape.tee(&line(&needle_prose("one"))).expect("oldest match");
+    let crossing = line(&needle_prose("two"));
+    let split = crossing.len() - 12;
+    assert!(
+        crossing[..split].ends_with(b"needle"),
+        "the seal splits the needle"
+    );
+    tape.tee(&crossing[..split]).expect("needle prefix");
+    tape.seal().expect("member seals inside the needle");
+    tape.tee(&crossing[split..]).expect("needle suffix");
+    tape.tee(&filler(64 * 1024)).expect("older filler");
+    let chunked = line(&needle_prose("three"));
+    let at = chunked
+        .windows(NEEDLE.len())
+        .position(|window| window == NEEDLE.as_bytes())
+        .unwrap();
+    let unterminated = needle_prose("tail");
+    tape.tee(&chunked).expect("chunk-straddling match");
+    tape.tee(&filler(
+        SEARCH_CHUNK_BYTES + 2 + at - chunked.len() - unterminated.len(),
+    ))
+    .expect("newer filler");
+    tape.tee(&unterminated).expect("unterminated match");
+
+    let mut visited = Vec::new();
+    let search = search_tail(
+        scratch.path(),
+        Dialect::Codex,
+        NEEDLE.as_bytes(),
+        search_budget(16 * 1024 * 1024),
+        |record| {
+            visited.push(prose_text(&record));
+            ControlFlow::Continue(())
+        },
+    )
+    .expect("bounded search completes");
+
+    assert_eq!(
+        visited,
+        [
+            format!("{NEEDLE} three"),
+            format!("{NEEDLE} two"),
+            format!("{NEEDLE} one")
+        ]
+    );
+    assert_eq!(search.work.records, 3, "only matching records are decoded");
+    assert_eq!(search.start, Position::start());
+    scratch.remove();
+}
+
+#[test]
+fn search_window_stops_before_older_history() {
+    let scratch = Scratch::new("search-window");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    tape.tee(&line(&needle_prose("old"))).expect("older match");
+    for _ in 0..32 {
+        tape.tee(&filler(64 * 1024)).expect("newer filler");
+    }
+
+    let search = search_tail(
+        scratch.path(),
+        Dialect::Codex,
+        NEEDLE.as_bytes(),
+        search_budget(4 * 1024),
+        |_| panic!("a match beyond the window is visited"),
+    )
+    .expect("bounded search stops");
+
+    assert!(search.start > Position::start());
+    assert!(search.work.source_bytes <= SEARCH_CHUNK_BYTES as u64 + 64 * 1024);
     scratch.remove();
 }

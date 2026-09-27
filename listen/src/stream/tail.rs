@@ -65,7 +65,7 @@ impl TailBudget {
         })
     }
 
-    fn decode_window(self) -> u64 {
+    pub(super) const fn decode_window(self) -> u64 {
         self.window_bytes.get()
     }
 }
@@ -246,7 +246,7 @@ pub fn scan_before(
     })
 }
 
-struct WorkTracker {
+pub(super) struct WorkTracker {
     budget: TailBudget,
     started: Instant,
     source_bytes: u64,
@@ -255,7 +255,7 @@ struct WorkTracker {
 }
 
 impl WorkTracker {
-    fn new(budget: TailBudget) -> Self {
+    pub(super) fn new(budget: TailBudget) -> Self {
         Self {
             budget,
             started: Instant::now(),
@@ -265,7 +265,7 @@ impl WorkTracker {
         }
     }
 
-    fn read(&mut self, bytes: u64) -> Result<(), ScanError> {
+    pub(super) fn read(&mut self, bytes: u64) -> Result<(), ScanError> {
         self.check_duration()?;
         self.pass()?;
         self.source(bytes)
@@ -314,7 +314,7 @@ impl WorkTracker {
         Ok(())
     }
 
-    fn check_duration(&self) -> Result<(), ScanError> {
+    pub(super) fn check_duration(&self) -> Result<(), ScanError> {
         let elapsed = self.started.elapsed();
         if elapsed > self.budget.duration {
             return Err(ScanError::WorkLimit {
@@ -327,7 +327,7 @@ impl WorkTracker {
         Ok(())
     }
 
-    fn complete(&self) -> Result<TailWork, ScanError> {
+    pub(super) fn complete(&self) -> Result<TailWork, ScanError> {
         self.check_duration()?;
         Ok(self.work())
     }
@@ -365,10 +365,10 @@ impl WorkTracker {
 /// The boundary search already paid for every byte from `start` up to
 /// `paid`, the candidate it retreated from, so the window pays once.
 #[derive(Clone, Copy)]
-struct Window {
-    start: Position,
-    paid: Position,
-    end: Option<Position>,
+pub(super) struct Window {
+    pub(super) start: Position,
+    pub(super) paid: Position,
+    pub(super) end: Option<Position>,
 }
 
 impl Window {
@@ -386,7 +386,7 @@ impl Window {
     }
 }
 
-fn scan_window(
+pub(super) fn scan_window(
     tape: &Tape,
     dialect: Dialect,
     source: &SourceId,
@@ -548,7 +548,10 @@ fn preceding_boundary(
     Ok(Position::start())
 }
 
-fn bounded_extents(tape: &Tape, tracker: &mut WorkTracker) -> Result<Vec<Extent>, ScanError> {
+pub(super) fn bounded_extents(
+    tape: &Tape,
+    tracker: &mut WorkTracker,
+) -> Result<Vec<Extent>, ScanError> {
     tracker.pass()?;
     let bytes = tracker.remaining_source_bytes();
     let extents = tracker.remaining_passes();
@@ -579,14 +582,18 @@ fn bounded_extents(tape: &Tape, tracker: &mut WorkTracker) -> Result<Vec<Extent>
     }
 }
 
-fn tape_error(path: &Path, source: tape::Error) -> ScanError {
+pub(super) fn tape_error(path: &Path, source: tape::Error) -> ScanError {
     ScanError::Tape {
         path: PathBuf::from(path),
         source,
     }
 }
 
-fn bounded_read(tape: &Tape, locus: Locus, extent: Extent) -> Result<Vec<u8>, ScanError> {
+pub(super) fn bounded_read(
+    tape: &Tape,
+    locus: Locus,
+    extent: Extent,
+) -> Result<Vec<u8>, ScanError> {
     let maximum = if extent.sealed {
         extent.length
     } else {

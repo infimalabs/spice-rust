@@ -13,7 +13,10 @@ use tape::{Locus, SourceId, Tape};
 
 use crate::{Decoded, Dialect, Event, LocusLengthError, RecordContext, Residue, decode};
 
+mod search;
 mod tail;
+
+pub use search::{TailSearch, search_tail};
 
 pub use tail::{
     BOUNDARY_CHUNK_BYTES, TailBudget, TailBudgetError, TailScan, TailWork, scan_before, scan_tail,

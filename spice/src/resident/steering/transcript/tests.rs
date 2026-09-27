@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::{SEARCH_SOURCE_BYTES, SEARCH_WINDOW_BYTES, TranscriptEvidence, transcript_recognition};
+use super::{TranscriptEvidence, transcript_recognition};
 use crate::resident::RuntimePaths;
 use steer::Outcome as ScanOutcome;
 use wire::{CanonicalUuid, Disposition};
@@ -108,39 +108,31 @@ fn the_newest_placed_answer_wins_within_the_recent_window() {
 }
 
 #[test]
-fn bounded_evidence_does_not_replay_older_tape_history() {
-    let fixture = Fixture::new(&[]);
-    let tape =
-        tape::Tape::open_existing(fixture.paths.tape.join(lane().to_string()).join("claude"))
-            .unwrap();
-    // Enough complete large records to put the older answer outside the window.
-    tape.tee(LEADING_HEADER).unwrap();
-    let mut padding = vec![b' '; 16 * 1024 - 3];
-    padding.extend_from_slice(b"{}\n");
-    for _ in 0..(SEARCH_WINDOW_BYTES as usize / padding.len() + 2) {
-        tape.tee(&padding).unwrap();
-    }
-    let evidence = TranscriptEvidence::read(&fixture.paths, lane(), &vendor(), KEY)
-        .unwrap_or_else(|error| panic!("{error:?}"));
-    assert!(evidence.tail.start.next > listen::Position::start());
-    assert!(evidence.tail.work.source_bytes <= SEARCH_SOURCE_BYTES);
-    assert!(
-        matches!(evidence.recognize(KEY, None, &LiveKey), Err(wire::Outcome::Refusal(refusal)) if refusal.reason() == "steer::transcript-search-limited")
-    );
-    let newest = tape.tee(LEADING_HEADER).unwrap();
+fn an_answer_behind_multi_megabyte_records_is_still_recognized() {
+    let mut oversized = vec![b' '; 3 * 1024 * 1024];
+    oversized.extend_from_slice(b"{}\n");
+    let fixture = Fixture::new(&[
+        TOOL_RESULT,
+        LEADING_HEADER,
+        &oversized,
+        &oversized,
+        ACK_CALL,
+    ]);
     let recognition =
         transcript_recognition(&fixture.paths, lane(), &vendor(), KEY, None, &LiveKey)
             .unwrap_or_else(|error| panic!("{error:?}"));
-    assert_eq!(recognition.locus.offset, newest.offset);
+    assert!(matches!(
+        recognition.outcome,
+        ScanOutcome::Retired {
+            disposition: Disposition::Acked,
+            ..
+        }
+    ));
+    assert_eq!(recognition.locus.offset, TOOL_RESULT.len() as u64);
 }
 
 #[test]
-fn oversized_or_unfinished_records_cannot_supply_unbounded_evidence() {
-    let oversized = vec![b'x'; SEARCH_SOURCE_BYTES as usize + 1];
-    let fixture = Fixture::new(&[LEADING_HEADER, &oversized]);
-    assert!(
-        matches!(transcript_recognition(&fixture.paths, lane(), &vendor(), KEY, None, &LiveKey), Err(wire::Outcome::Refusal(refusal)) if refusal.reason() == "steer::transcript-search-limited")
-    );
+fn an_unfinished_record_cannot_supply_evidence() {
     let unfinished = Fixture::new(&[&LEADING_HEADER[..LEADING_HEADER.len() - 1]]);
     assert!(
         matches!(transcript_recognition(&unfinished.paths, lane(), &vendor(), KEY, None, &LiveKey), Err(wire::Outcome::Refusal(refusal)) if refusal.reason() == "steer::transcript-evidence-absent")

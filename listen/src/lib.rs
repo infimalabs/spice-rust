@@ -30,8 +30,8 @@ pub use residue::{
 };
 pub use stream::{
     BOUNDARY_CHUNK_BYTES, Checkpoint, Position, Record, RecordPayload, Scan, ScanError,
-    SourcedEvent, SourcedResidue, Span, TailBudget, TailBudgetError, TailScan, TailWork, scan,
-    scan_before, scan_tail,
+    SourcedEvent, SourcedResidue, Span, TailBudget, TailBudgetError, TailScan, TailSearch,
+    TailWork, scan, scan_before, scan_tail, search_tail,
 };
 pub use surface::{
     Mode, Observation, RetroSelector, StreamOutcome, SurfaceError, SurfaceEvent, SurfaceReasoning,
