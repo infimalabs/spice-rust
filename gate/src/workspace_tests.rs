@@ -31,7 +31,7 @@ mod proof;
 mod selection;
 mod source_reach;
 
-use compile_time::compile_time_authorities;
+use compile_time::{CompileTimeSourceAnalysis, compile_time_authorities};
 use coordinator::{
     Coordinator, RunPolicy, captured_excerpt, completion_name, output_error, process_spec,
     target_arguments,

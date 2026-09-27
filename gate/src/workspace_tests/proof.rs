@@ -203,11 +203,13 @@ pub fn plan_cargo_gate_shards_at(
         inventory.retain_removed_target_ownership(root, &base_inventory, base, changed_sources)?;
     }
 
+    let mut source_analysis = CompileTimeSourceAnalysis::default();
     let mut typechecks = typecheck_shards(
         &inventory,
         root,
         changed_sources,
         selected_paths,
+        &mut source_analysis,
         external_source.as_ref(),
     )?;
 
@@ -235,6 +237,7 @@ pub fn plan_cargo_gate_shards_at(
                     package,
                     selected_paths,
                     &test_sources,
+                    &mut source_analysis,
                     external_source.as_ref(),
                 )
             })
@@ -253,6 +256,7 @@ fn typecheck_shards(
     root: &Path,
     changed_sources: &[String],
     selected_paths: &[String],
+    source_analysis: &mut CompileTimeSourceAnalysis,
     external_source: Option<&CargoExternalSourceAuthority>,
 ) -> Result<Vec<CargoGateShard>, WorkspaceTestError> {
     let reach = selection::cargo_check_selections(inventory, root, changed_sources)?;
@@ -291,6 +295,7 @@ fn typecheck_shards(
                 sources
                     .get(&(check.name.clone(), target.identity.clone()))
                     .map_or(&[], Vec::as_slice),
+                source_analysis,
                 external_source,
             )?;
             shards.push(CargoGateShard {
@@ -337,6 +342,7 @@ fn test_shard(
     package: &PackageInventory,
     selected_paths: &[String],
     test_sources: &BTreeMap<String, Vec<String>>,
+    source_analysis: &mut CompileTimeSourceAnalysis,
     external_source: Option<&CargoExternalSourceAuthority>,
 ) -> Result<CargoGateShard, WorkspaceTestError> {
     let mut argv = vec![
@@ -387,6 +393,7 @@ fn test_shard(
         &package.name,
         selected_paths,
         &provenance,
+        source_analysis,
         external_source,
     )?;
     Ok(CargoGateShard {
@@ -417,6 +424,7 @@ fn package_input_authority(
     package_name: &str,
     selected_paths: &[String],
     changed_sources: &[String],
+    source_analysis: &mut CompileTimeSourceAnalysis,
     external_source: Option<&CargoExternalSourceAuthority>,
 ) -> Result<CargoPackageInputAuthority, WorkspaceTestError> {
     let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -444,6 +452,7 @@ fn package_input_authority(
         selected_paths,
         &mut inputs,
         &producers,
+        source_analysis,
         CompileTimeExternal {
             local_dependencies: &external_local_dependencies,
             source: external_source,
@@ -505,6 +514,7 @@ fn compile_time_reuse(
     selected_paths: &[String],
     paths: &mut BTreeSet<String>,
     producers: &[CargoCompileTimeProducer],
+    source_analysis: &mut CompileTimeSourceAnalysis,
     external: CompileTimeExternal<'_>,
 ) -> (Vec<CargoCompileTimeAuthority>, CargoShardReuse) {
     let mut unsafe_authorities = producers
@@ -537,7 +547,14 @@ fn compile_time_reuse(
         )
     }));
     if unsafe_authorities.is_empty() {
-        match compile_time_authorities(inventory, canonical_root, roots, selected_paths, paths) {
+        match compile_time_authorities(
+            inventory,
+            canonical_root,
+            roots,
+            selected_paths,
+            paths,
+            source_analysis,
+        ) {
             Ok(authorities) => (authorities, CargoShardReuse::Reusable),
             Err(error) => (
                 Vec::new(),
@@ -706,5 +723,139 @@ pub fn run_cargo_gate_shard_at(
             shard.action_id,
             completion_name(completion),
         ))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn generated_outputs(plan: &CargoGateShardPlan) -> BTreeSet<String> {
+        plan.typechecks()
+            .iter()
+            .flat_map(|shard| &shard.compile_time_authorities)
+            .flat_map(|authority| &authority.generated_outputs)
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the Cargo planning fixture captures its own test environment"
+    )]
+    fn plan_source_analysis_is_unique_equivalent_and_source_version_bound() {
+        let fixture = crate::test_repository::Fixture::repository("cargo-plan-source-analysis");
+        fixture.write(
+            "Cargo.toml",
+            concat!(
+                "[package]\n",
+                "name = \"plan-source-analysis\"\n",
+                "version = \"0.1.0\"\n",
+                "edition = \"2024\"\n",
+                "build = \"build.rs\"\n\n",
+                "[[bin]]\n",
+                "name = \"plan-source-analysis\"\n",
+                "path = \"src/main.rs\"\n\n",
+                "[package.metadata.spice.cargo-proof]\n",
+                "version = 1\n",
+                "complete = true\n",
+            ),
+        );
+        fixture.write(
+            "Cargo.lock",
+            concat!(
+                "# This file is automatically @generated by Cargo.\n",
+                "version = 4\n\n",
+                "[[package]]\n",
+                "name = \"plan-source-analysis\"\n",
+                "version = \"0.1.0\"\n",
+            ),
+        );
+        fixture.write(
+            "build.rs",
+            "fn main() { println!(\"cargo::rerun-if-changed=build.rs\"); }\n",
+        );
+        fixture.write(
+            "src/lib.rs",
+            "include!(concat!(env!(\"OUT_DIR\"), \"/generated.rs\"));\n",
+        );
+        fixture.write("src/main.rs", "fn main() {}\n");
+        let selected_paths = [
+            "Cargo.lock",
+            "Cargo.toml",
+            "build.rs",
+            "src/lib.rs",
+            "src/main.rs",
+        ]
+        .map(str::to_owned);
+        let changed_sources = ["src/lib.rs".to_owned(), "src/main.rs".to_owned()];
+        let environment =
+            Environment::new(std::env::vars_os()).expect("ambient test environment is valid");
+        let plan = || {
+            plan_cargo_gate_shards_at(CargoGateShardPlanning {
+                root: fixture.path(),
+                base: None,
+                source: wire::Digest::compute(wire::Domain::GateTree, b"source-a"),
+                changed_sources: &changed_sources,
+                selected_paths: &selected_paths,
+                environment: environment.clone(),
+                cargo: OsStr::new("cargo"),
+                external_source: None,
+                include_tests: false,
+            })
+        };
+
+        super::super::compile_time::reset_source_parse_count();
+        let first = plan().expect("plan fixture Cargo shards");
+        let first_parses = super::super::compile_time::source_parse_count();
+        let unique_sources = selected_paths
+            .iter()
+            .filter(|path| path.ends_with(".rs"))
+            .count();
+        let repeated_traversal_parses = first.typechecks().len() * unique_sources;
+
+        assert_eq!(first.typechecks().len(), 2);
+        assert!(first.tests().is_empty());
+        assert_eq!(first_parses, unique_sources);
+        assert_eq!(repeated_traversal_parses, 6);
+        eprintln!(
+            "compile-time source parses: repeated traversal {repeated_traversal_parses}, plan-scoped analysis {first_parses}"
+        );
+
+        super::super::compile_time::reset_source_parse_count();
+        let equivalent = plan().expect("replan equivalent Cargo shards");
+        assert_eq!(
+            super::super::compile_time::source_parse_count(),
+            unique_sources
+        );
+        assert_eq!(equivalent, first);
+
+        fixture.write(
+            "src/lib.rs",
+            "include!(concat!(env!(\"OUT_DIR\"), \"/changed.rs\"));\n",
+        );
+        super::super::compile_time::reset_source_parse_count();
+        let changed = plan().expect("replan changed Cargo source");
+        assert_eq!(
+            super::super::compile_time::source_parse_count(),
+            unique_sources
+        );
+        assert_eq!(
+            generated_outputs(&first),
+            BTreeSet::from(["generated.rs".to_owned()])
+        );
+        assert_eq!(
+            generated_outputs(&changed),
+            BTreeSet::from(["changed.rs".to_owned()])
+        );
+
+        fixture.write("src/lib.rs", "pub fn malformed( {\n");
+        let malformed = plan().expect_err("malformed changed source must be refused");
+        let malformed = malformed.to_string();
+        assert!(
+            malformed.contains("parse") && malformed.contains("src/lib.rs"),
+            "unexpected malformed-source refusal: {malformed}"
+        );
     }
 }

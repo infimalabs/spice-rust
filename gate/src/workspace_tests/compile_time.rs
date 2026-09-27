@@ -15,6 +15,68 @@ use call_authority::{builtin_derive, builtin_derives_unshadowed};
 
 const AUTHORITY_VERSION: u64 = 1;
 
+#[cfg(test)]
+std::thread_local! {
+    static SOURCE_PARSE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+pub(super) fn reset_source_parse_count() {
+    SOURCE_PARSE_COUNT.set(0);
+}
+
+#[cfg(test)]
+pub(super) fn source_parse_count() -> usize {
+    SOURCE_PARSE_COUNT.get()
+}
+
+/// Rust source facts captured once for the lifetime of one Cargo shard plan.
+#[derive(Default)]
+pub(super) struct CompileTimeSourceAnalysis {
+    packages: BTreeMap<PathBuf, PackageSourceFacts>,
+    sources: BTreeMap<PathBuf, syn::File>,
+}
+
+struct PackageSourceFacts {
+    generated_outputs: Vec<String>,
+    scans: BTreeMap<TargetIdentity, CompileTimeScan>,
+}
+
+impl CompileTimeSourceAnalysis {
+    fn package(
+        &mut self,
+        package: &PackageInventory,
+    ) -> Result<&PackageSourceFacts, WorkspaceTestError> {
+        if !self.packages.contains_key(&package.root) {
+            let generated_outputs = package_generated_outputs(package, &mut self.sources)?;
+            let mut scans = BTreeMap::new();
+            if package.compile_time_authority.is_some() {
+                for target in package
+                    .declared_targets
+                    .iter()
+                    .filter(|target| compile_time_kind(target).is_some())
+                {
+                    scans.insert(
+                        target.clone(),
+                        scan_target(package, target, &mut self.sources)?,
+                    );
+                }
+            }
+            self.packages.insert(
+                package.root.clone(),
+                PackageSourceFacts {
+                    generated_outputs,
+                    scans,
+                },
+            );
+        }
+        Ok(self
+            .packages
+            .get(&package.root)
+            .expect("package source facts were inserted"))
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawAuthority {
@@ -91,6 +153,7 @@ pub(super) fn compile_time_authorities(
     reached_roots: &BTreeSet<PathBuf>,
     selected_paths: &[String],
     input_paths: &mut BTreeSet<String>,
+    source_analysis: &mut CompileTimeSourceAnalysis,
 ) -> Result<Vec<CargoCompileTimeAuthority>, WorkspaceTestError> {
     let selected = selected_paths
         .iter()
@@ -107,9 +170,9 @@ pub(super) fn compile_time_authorities(
             .iter()
             .filter(|target| compile_time_kind(target).is_some())
             .collect::<Vec<_>>();
-        let generated_outputs = package_generated_outputs(package)?;
+        let source_facts = source_analysis.package(package)?;
         if executable_targets.is_empty() {
-            if !generated_outputs.is_empty() {
+            if !source_facts.generated_outputs.is_empty() {
                 return Err(non_cacheable(format!(
                     "Cargo package {:?} consumes OUT_DIR generated inputs without a custom-build producer",
                     package.name,
@@ -132,13 +195,16 @@ pub(super) fn compile_time_authorities(
             .collect::<BTreeSet<_>>();
         let mut scans = Vec::new();
         for target in &executable_targets {
-            let scan = scan_target(package, target)?;
+            let scan = source_facts
+                .scans
+                .get(*target)
+                .expect("executable target source facts were captured");
             declared_files.extend(scan.rerun_files.iter().cloned());
             declared_environment.extend(scan.rerun_environment.iter().cloned());
             scans.push((*target, scan));
         }
 
-        if !generated_outputs.is_empty()
+        if !source_facts.generated_outputs.is_empty()
             && !executable_targets
                 .iter()
                 .any(|target| compile_time_kind(target) == Some("custom-build"))
@@ -183,7 +249,7 @@ pub(super) fn compile_time_authorities(
                 input_paths: relative_files.iter().cloned().collect(),
                 environment: declared_environment.iter().cloned().collect(),
                 generated_outputs: if compile_time_kind(target) == Some("custom-build") {
-                    generated_outputs.clone()
+                    source_facts.generated_outputs.clone()
                 } else {
                     Vec::new()
                 },
@@ -209,9 +275,10 @@ fn compile_time_kind(target: &TargetIdentity) -> Option<&'static str> {
 fn scan_target(
     package: &PackageInventory,
     target: &TargetIdentity,
+    sources: &mut BTreeMap<PathBuf, syn::File>,
 ) -> Result<CompileTimeScan, WorkspaceTestError> {
     let mut scan = CompileTimeScan::default();
-    let root = parse_compile_time_source(package, &target.source)?;
+    let root = parse_rust_source(package, &target.source, sources, SourcePurpose::CompileTime)?;
     let exported_macros = exported_macro_rules(&root.items);
     let root_scope = package.namespace_context.root_scope(&root.attrs);
     let calls = &package
@@ -226,7 +293,7 @@ fn scan_target(
     scan_compile_time_source(
         package,
         &target.source,
-        &root,
+        root,
         root_scope,
         true,
         authority,
@@ -242,13 +309,13 @@ fn scan_target(
                 )
             })
     }) {
-        let syntax = parse_compile_time_source(package, &source.path)?;
+        let syntax = parse_rust_source(package, &source.path, sources, SourcePurpose::CompileTime)?;
         for inherited in &source.scopes {
             if visited.insert((source.path.clone(), inherited.clone())) {
                 scan_compile_time_source(
                     package,
                     &source.path,
-                    &syntax,
+                    syntax,
                     inherited.scope.clone(),
                     inherited.crate_root,
                     authority,
@@ -260,24 +327,54 @@ fn scan_target(
     Ok(scan)
 }
 
-fn parse_compile_time_source(
+#[derive(Clone, Copy)]
+enum SourcePurpose {
+    CompileTime,
+    GeneratedOutput,
+}
+
+fn parse_rust_source<'a>(
     package: &PackageInventory,
     source: &Path,
-) -> Result<syn::File, WorkspaceTestError> {
-    let document = fs::read_to_string(source).map_err(|error| {
-        non_cacheable(format!(
-            "read Cargo package {:?} compile-time source {}: {error}",
-            package.name,
-            source.display(),
-        ))
-    })?;
-    syn::parse_file(&document).map_err(|error| {
-        non_cacheable(format!(
-            "parse Cargo package {:?} compile-time source {}: {error}",
-            package.name,
-            source.display(),
-        ))
-    })
+    sources: &'a mut BTreeMap<PathBuf, syn::File>,
+    purpose: SourcePurpose,
+) -> Result<&'a syn::File, WorkspaceTestError> {
+    if !sources.contains_key(source) {
+        let document = fs::read_to_string(source).map_err(|error| {
+            non_cacheable(match purpose {
+                SourcePurpose::CompileTime => format!(
+                    "read Cargo package {:?} compile-time source {}: {error}",
+                    package.name,
+                    source.display(),
+                ),
+                SourcePurpose::GeneratedOutput => format!(
+                    "read Cargo package {:?} source {} for OUT_DIR authority: {error}",
+                    package.name,
+                    source.display(),
+                ),
+            })
+        })?;
+        let syntax = syn::parse_file(&document).map_err(|error| {
+            non_cacheable(match purpose {
+                SourcePurpose::CompileTime => format!(
+                    "parse Cargo package {:?} compile-time source {}: {error}",
+                    package.name,
+                    source.display(),
+                ),
+                SourcePurpose::GeneratedOutput => format!(
+                    "parse Cargo package {:?} source {} for OUT_DIR authority: {error}",
+                    package.name,
+                    source.display(),
+                ),
+            })
+        })?;
+        #[cfg(test)]
+        SOURCE_PARSE_COUNT.set(SOURCE_PARSE_COUNT.get() + 1);
+        sources.insert(source.to_path_buf(), syntax);
+    }
+    Ok(sources
+        .get(source)
+        .expect("successfully parsed Rust source was retained"))
 }
 
 #[derive(Clone, Copy)]
@@ -763,8 +860,10 @@ fn cargo_derived_environment(name: &str) -> bool {
 
 fn package_generated_outputs(
     package: &PackageInventory,
+    parsed_sources: &mut BTreeMap<PathBuf, syn::File>,
 ) -> Result<Vec<String>, WorkspaceTestError> {
     let mut outputs = BTreeSet::new();
+    let mut visited = BTreeSet::new();
     for target in &package.declared_targets {
         if compile_time_kind(target).is_some() {
             continue;
@@ -778,26 +877,21 @@ fn package_generated_outputs(
                 .map(|source| source.path.clone()),
         );
         for source in sources {
-            let document = fs::read_to_string(&source).map_err(|error| {
-                non_cacheable(format!(
-                    "read Cargo package {:?} source {} for OUT_DIR authority: {error}",
-                    package.name,
-                    source.display(),
-                ))
-            })?;
-            let syntax = syn::parse_file(&document).map_err(|error| {
-                non_cacheable(format!(
-                    "parse Cargo package {:?} source {} for OUT_DIR authority: {error}",
-                    package.name,
-                    source.display(),
-                ))
-            })?;
+            if !visited.insert(source.clone()) {
+                continue;
+            }
+            let syntax = parse_rust_source(
+                package,
+                &source,
+                parsed_sources,
+                SourcePurpose::GeneratedOutput,
+            )?;
             let mut visitor = GeneratedOutputVisitor {
                 source: &source,
                 outputs: &mut outputs,
                 error: None,
             };
-            visitor.visit_file(&syntax);
+            visitor.visit_file(syntax);
             if let Some(error) = visitor.error {
                 return Err(error);
             }
