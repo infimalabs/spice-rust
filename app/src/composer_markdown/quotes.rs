@@ -174,8 +174,8 @@ fn author_html(author: &QuoteAuthor, agents: &super::QuoteAgents) -> String {
             unavailable_agent_html(*lane, *occupant, &label)
         }
         QuoteAuthor::Directive { actor } => match actor {
-            wire::Actor::Operator => unavailable_principal_html("Operator", "operator"),
-            wire::Actor::Spice => unavailable_principal_html("Spice", "spice"),
+            wire::Actor::Operator => principal_html("Operator", "operator"),
+            wire::Actor::Spice => principal_html("Spice", "spice"),
             wire::Actor::Lane(lane) => {
                 let label = agents
                     .iter()
@@ -212,12 +212,10 @@ fn unavailable_agent_html(
     )
 }
 
-fn unavailable_principal_html(label: &str, actor: &str) -> String {
+fn principal_html(label: &str, actor: &str) -> String {
     format!(
         "<span class=\"message-quote-author\" data-quote-author=\"directive\" \
-         data-quote-actor=\"{actor}\" data-quote-history=\"unavailable\" \
-         aria-label=\"{label}; identity history unavailable\">{label} \
-         <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>"
+         data-quote-actor=\"{actor}\">{label}</span>"
     )
 }
 
