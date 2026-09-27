@@ -942,3 +942,63 @@ fn large_claude_transcript_with_pending(fill: char, records: usize) -> String {
 fn uuid(value: &str) -> CanonicalUuid {
     value.parse().expect("canonical fixture UUID")
 }
+
+/// A resumed thread's boundary that Canvas already retains under an earlier
+/// occupant is refused as a diagnostic, and the lane keeps publishing.
+#[test]
+fn resumed_thread_boundary_refused_by_canvas_is_a_diagnostic() {
+    const THREAD: &str = "018f7777-7777-7444-8888-999999999999";
+    let scratch = Scratch::new("codex-resume");
+    let transcript = scratch
+        .0
+        .join("sessions")
+        .join(format!("rollout-{THREAD}.jsonl"));
+    fs::create_dir_all(transcript.parent().expect("transcript parent"))
+        .expect("Codex session directory exists");
+    fs::write(
+        &transcript,
+        b"{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n",
+    )
+    .expect("Codex boundary is written");
+    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163e5");
+    let previous = uuid("018f82d4-6f59-7d06-92e3-bce9131163ef");
+    let resumed = uuid("018f82d4-6f59-7d06-92e3-bce9131163ee");
+    let publisher = Messages::default();
+    let mut state = observed_state(lane);
+    let mut diagnostic = Vec::new();
+    let mut earlier = SessionCompactions::new(codex_environment(&scratch.0));
+    let seated = session_residency_for(lane, previous, THREAD, "codex");
+    for _ in 0..8 {
+        earlier
+            .synchronize_display_only(&seated, &publisher, &mut state, &mut diagnostic)
+            .expect("the earlier occupant publishes its boundary");
+    }
+    assert_eq!(publisher.0.lock().expect("message lock").len(), 1);
+
+    let mut resumed_residency = session_residency_for(lane, resumed, THREAD, "codex");
+    resumed_residency.lanes[0].lineage = vec![previous, resumed];
+    let mut restarted = SessionCompactions::new(codex_environment(&scratch.0));
+    for _ in 0..8 {
+        restarted
+            .synchronize_display_only(&resumed_residency, &publisher, &mut state, &mut diagnostic)
+            .expect("a refused boundary never faults the resident");
+    }
+    assert!(
+        String::from_utf8_lossy(&diagnostic).contains("canvas::message-publish-failed"),
+        "{}",
+        String::from_utf8_lossy(&diagnostic)
+    );
+
+    append(
+        &transcript,
+        b"{\"timestamp\":\"2030-04-12T19:44:09.271Z\",\"type\":\"compacted\",\"payload\":{}}\n",
+    );
+    for _ in 0..8 {
+        restarted
+            .synchronize_display_only(&resumed_residency, &publisher, &mut state, &mut diagnostic)
+            .expect("the resumed occupant publishes its own boundary");
+    }
+    let messages = publisher.0.lock().expect("message lock");
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[1].author, resumed);
+}

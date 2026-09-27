@@ -285,7 +285,7 @@ impl SessionCompactions {
                         if dialect == listen::Dialect::Codex && startup_recovery.is_none() {
                             recover(lane, author, &thread, record.locus())?;
                         }
-                        present(record, lane, author, &worktree)?;
+                        canvas_diagnostic(present(record, lane, author, &worktree), diagnostic)?;
                     }
                 }
                 ScanAttempt::Latched => {}
