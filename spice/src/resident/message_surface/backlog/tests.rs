@@ -81,7 +81,7 @@ fn codex_completed_turn_materializes_history_as_one_final_card() {
     )
     .expect("final history is durable");
     let scan = listen::scan(&root, listen::Dialect::Codex, None).expect("final history scans");
-    let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
+    let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT, None);
     let mut reader = BacklogReader::default();
     let mut diagnostic = Vec::new();
     publish_scan(
@@ -149,7 +149,7 @@ fn assert_replay_boundary(label: &str, dialect: listen::Dialect, contents: &str)
     tape.tee(contents.as_bytes())
         .expect("compacted turn sequence is durable");
     let scan = listen::scan(&root, dialect, None).expect("turn sequence scans");
-    let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT);
+    let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT, None);
     let mut reader = BacklogReader::default();
     let mut diagnostic = Vec::new();
     publish_scan(
@@ -263,10 +263,11 @@ fn merged_history_fixture() -> MergedHistoryFixture {
                     dialect: listen::Dialect::Codex,
                     thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
                     source: session_source,
+                    cards: Mutex::default(),
                 }),
             },
         )]),
-        continuations: Mutex::new(HashMap::new()),
+        progress: HistoryProgress::default(),
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
@@ -331,8 +332,6 @@ fn collect_merged_history_pages(
     let mut before = initial_before.clone();
     let mut restored = Vec::new();
     let mut page_lengths = Vec::new();
-    let mut prior_tape = before.locus.offset;
-    let mut prior_session = None;
     for _ in 0..128 {
         let page = canvas::stream::MessageHistoryProvider::history(
             &fixture.history,
@@ -354,28 +353,9 @@ fn collect_merged_history_pages(
             return (page_lengths, restored, initial_before);
         }
         before = oldest;
-        let continuation = fixture
-            .history
-            .continuations
-            .lock()
-            .expect("continuation lock")
-            .get(&(fixture.lane, Some(before.locus)))
-            .cloned()
-            .expect("oldest returned locus owns continuation");
-        let tape_next = continuation.tape.expect("tape continuation").next.offset;
-        let session_next = continuation.session.expect("session continuation").next();
-        assert!(tape_next < prior_tape, "tape frontier strictly retreats");
-        if let Some(prior_session) = prior_session {
-            assert!(
-                session_next <= prior_session,
-                "session frontier retreats or holds"
-            );
-        }
-        prior_tape = tape_next;
-        prior_session = Some(session_next);
     }
     panic!(
-        "merged history did not exhaust after {} visible page(s) and {} restored rows; tape frontier {prior_tape}, session frontier {prior_session:?}; last page lengths {:?}",
+        "merged history did not exhaust after {} visible page(s) and {} restored rows; last page lengths {:?}",
         page_lengths.len(),
         restored.len(),
         &page_lengths[page_lengths.len().saturating_sub(8)..],
@@ -456,7 +436,7 @@ fn season_history(root: &Path) -> (DurableHistory, CanonicalUuid, listen::Checkp
                 session: None,
             },
         )]),
-        continuations: Mutex::new(HashMap::new()),
+        progress: HistoryProgress::default(),
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
@@ -723,18 +703,6 @@ fn historical_page_wades_through_a_sparse_tool_horizon_to_fill_the_page() {
     assert_eq!(page.messages.len(), limit);
     assert!(page.more);
     let oldest = page.messages[0].clone();
-    let continuation = history
-        .continuations
-        .lock()
-        .expect("continuation lock")
-        .get(&(lane, Some(oldest.locus)))
-        .cloned()
-        .expect("the served page keeps its continuation");
-    assert_eq!(
-        continuation.tape.expect("tape continuation").next.offset,
-        oldest.locus.offset,
-        "the next request resumes at the oldest served card, not behind the horizon",
-    );
     let older =
         canvas::stream::MessageHistoryProvider::history(&history, lane, Some(&oldest), limit)
             .expect("older history reads")
@@ -821,6 +789,108 @@ fn merged_history_pages_retreat_both_sources_without_gaps_or_rescans() {
     fs::remove_dir_all(&fixture.root).expect("merged fixture cleanup");
 }
 
+/// One visible card authored `second` seconds into a fixed minute.
+fn card_at(member: u64, second: usize) -> wire::AgentMessage {
+    wire::AgentMessage {
+        lane: "018f82d4-6f59-7d06-92e3-bce9131163e5"
+            .parse()
+            .expect("card lane"),
+        author: "018f82d4-6f59-7d06-92e3-bce9131163ef"
+            .parse()
+            .expect("card author"),
+        locus: wire::MessageLocus {
+            member,
+            offset: second as u64,
+            length: 1,
+            event: 0,
+        },
+        authored: format!("2030-04-12T18:40:{second:02}.000Z")
+            .parse()
+            .expect("card instant"),
+        authored_synthetic: false,
+        observed: None,
+        activity: wire::AgentActivityKind::Prose,
+        final_answer: false,
+        text: format!("card {second}"),
+        classifications: Vec::new(),
+        quote_target: None,
+        directive_contexts: Vec::new(),
+        quotes: Vec::new(),
+        automatic_speech: None,
+        unavailable_tool_terminals: Vec::new(),
+        boundary: None,
+        media: Vec::new(),
+    }
+}
+
+#[test]
+fn a_page_keeps_only_cards_every_unfinished_source_has_proven() {
+    let tape = [card_at(1, 10), card_at(1, 20)];
+    let session = [card_at(2, 30), card_at(2, 40)];
+    let merged = || tape.iter().chain(&session).cloned().collect::<Vec<_>>();
+    let seconds = |visible: &[wire::AgentMessage]| {
+        visible
+            .iter()
+            .map(|card| card.locus.offset)
+            .collect::<Vec<_>>()
+    };
+
+    // Below the session's oldest card, older session cards may still await
+    // the tape cards there, so only the proven range is served.
+    let mut visible = merged();
+    retain_covered(&mut visible, [(true, &tape[..]), (true, &session[..])]);
+    assert_eq!(seconds(&visible), [30, 40]);
+
+    // A finished source proves everything it holds.
+    let mut visible = merged();
+    retain_covered(&mut visible, [(true, &tape[..]), (false, &session[..])]);
+    assert_eq!(seconds(&visible), [10, 20, 30, 40]);
+
+    // An unfinished source that found nothing proves nothing: serving the
+    // tape's cards would step the anchor past whatever it has yet to read.
+    let mut visible = tape.to_vec();
+    retain_covered(&mut visible, [(true, &tape[..]), (true, &[][..])]);
+    assert!(visible.is_empty());
+}
+
+#[test]
+fn a_tape_continuation_resumes_from_physical_progress_not_the_anchor() {
+    let at = |member, offset| listen::Checkpoint {
+        source: "018f82d4-6f59-7d06-92e3-bce9131163aa"
+            .parse()
+            .expect("fixture source"),
+        next: listen::Position { member, offset },
+    };
+    let scan = |messages: Vec<wire::AgentMessage>, complete| TapeHistoryScan {
+        messages,
+        more: true,
+        complete,
+        start: at(0, 5),
+        end: at(1, 90),
+        work: listen::TailWork {
+            source_bytes: 0,
+            records: 0,
+            passes: 0,
+            duration: std::time::Duration::ZERO,
+        },
+    };
+    let anchor = card_at(1, 10);
+
+    // The page took every card the scan found, so nothing visible lies
+    // between where the scan began and the anchor.
+    let taken = scan(vec![card_at(1, 10), card_at(1, 20)], true);
+    assert_eq!(tape_continuation(&taken, &anchor), at(0, 5));
+    let empty = scan(Vec::new(), true);
+    assert_eq!(tape_continuation(&empty, &anchor), at(0, 5));
+
+    // Cards the scan dropped, or kept but the page did not serve, lie
+    // behind the anchor and must be read again.
+    let dropped = scan(vec![card_at(1, 10), card_at(1, 20)], false);
+    assert_eq!(tape_continuation(&dropped, &anchor), at(1, 10));
+    let unserved = scan(vec![card_at(1, 7), card_at(1, 10)], true);
+    assert_eq!(tape_continuation(&unserved, &anchor), at(1, 10));
+}
+
 /// Season a preserved Codex session whose newest `groups` compactions each sit
 /// behind five near 1.9 KiB assistant records, so a page of compaction cards
 /// spans more source bytes than one history window.
@@ -878,10 +948,11 @@ fn season_session_horizon(root: &Path, groups: usize) -> (DurableHistory, Canoni
                     dialect: listen::Dialect::Codex,
                     thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
                     source: session_source,
+                    cards: Mutex::default(),
                 }),
             },
         )]),
-        continuations: Mutex::new(HashMap::new()),
+        progress: HistoryProgress::default(),
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
@@ -1070,10 +1141,11 @@ fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::A
                     dialect: listen::Dialect::Omp,
                     thread: "01a0a807-666f-7524-be0d-2ee476b6c15c".to_owned(),
                     source: session_source,
+                    cards: Mutex::default(),
                 }),
             },
         )]),
-        continuations: Mutex::new(HashMap::new()),
+        progress: HistoryProgress::default(),
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),

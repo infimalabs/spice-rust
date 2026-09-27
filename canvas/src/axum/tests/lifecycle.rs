@@ -892,6 +892,7 @@ fn host_and_origin_must_name_the_published_endpoint() {
         app: app.source(),
         speech: SpeechResolver::new(|_| Ok(speech())),
         speech_slot: Semaphore::new(1),
+        history: super::super::history::HistoryLimits::new(),
         admission: Mutex::new(Admission::Open),
         admission_changed: watch::channel(Admission::Open).0,
         commands: control::channel(1).0,

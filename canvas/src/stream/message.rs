@@ -203,11 +203,15 @@ impl MessageFeed {
         if lanes.len() != requested.len() {
             return Err(MessagePublishError::InvalidHistoryCursor);
         }
+        // Only the requested lanes' cards: a page never reads another lane's.
         let retained = self
             .retained
             .lock()
             .map_err(|_| MessagePublishError::Unavailable)?
-            .clone();
+            .iter()
+            .filter(|message| lanes.contains(&message.lane))
+            .cloned()
+            .collect::<VecDeque<_>>();
         let frontiers = self
             .frontiers(&retained, Some(&lanes))?
             .into_iter()

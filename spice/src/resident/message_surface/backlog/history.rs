@@ -38,8 +38,9 @@ impl DurableHistory {
 impl TapeHistoryScan {
     /// Join `newer`, the window read immediately after this one, onto it.
     ///
-    /// `more` stays as this older window judged it: the newer window only
-    /// claimed more because this one had not been read yet.
+    /// `more` and `complete` stay as this older window judged them: the newer
+    /// window was only chained onto because it held every card it found and
+    /// only claimed more because this one had not been read yet.
     fn extend_newer(mut self, newer: Self) -> Self {
         debug_assert!(self.end.next <= newer.start.next);
         self.messages.extend(newer.messages);
@@ -98,7 +99,15 @@ impl HistorySources {
             visible.extend(session.messages.clone());
             more |= session.more;
         }
-        retain_covered(&mut visible, self.tape.as_ref(), self.session.as_ref());
+        let tape = self
+            .tape
+            .as_ref()
+            .map(|scan| (scan.more, scan.messages.as_slice()));
+        let session = self
+            .session
+            .as_ref()
+            .map(|scan| (scan.more, scan.messages.as_slice()));
+        retain_covered(&mut visible, tape.into_iter().chain(session));
         visible.sort_by_key(wire::AgentMessage::chronology_key);
         visible.dedup_by(|right, left| right.locus == left.locus);
         reconcile_boundaries(&mut visible);
@@ -118,33 +127,32 @@ fn reconcile_boundaries(visible: &mut Vec<wire::AgentMessage>) {
     }
 }
 
-fn retain_covered(
+/// Keep only cards every source with more to read has proven complete.
+///
+/// A source proves the range from its oldest card up to the anchor. One that
+/// still has more to read yet found no card proves nothing, so the page stays
+/// empty and the next request resumes from both sources' progress instead of
+/// letting the other source's older cards step past it.
+pub(super) fn retain_covered<'a>(
     visible: &mut Vec<wire::AgentMessage>,
-    tape: Option<&TapeHistoryScan>,
-    session: Option<&session_compaction::HistoryScan>,
+    sources: impl IntoIterator<Item = (bool, &'a [wire::AgentMessage])>,
 ) {
-    let floors = [
-        tape.and_then(|scan| {
-            scan.more.then(|| {
-                scan.messages
-                    .iter()
-                    .map(wire::AgentMessage::chronology_key)
-                    .min()
-            })
-        }),
-        session.and_then(|scan| {
-            scan.more.then(|| {
-                scan.messages
-                    .iter()
-                    .map(wire::AgentMessage::chronology_key)
-                    .min()
-            })
-        }),
-    ];
-    if floors.iter().any(Option::is_some) {
-        match floors.into_iter().flatten().flatten().max() {
-            Some(floor) => visible.retain(|message| message.chronology_key() >= floor),
-            None => visible.clear(),
+    let mut floor = None;
+    for (more, messages) in sources {
+        if !more {
+            continue;
         }
+        let Some(proven) = messages
+            .iter()
+            .map(wire::AgentMessage::chronology_key)
+            .min()
+        else {
+            visible.clear();
+            return;
+        };
+        floor = floor.max(Some(proven));
+    }
+    if let Some(floor) = floor {
+        visible.retain(|message| message.chronology_key() >= floor);
     }
 }
