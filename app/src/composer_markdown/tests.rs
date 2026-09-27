@@ -745,7 +745,15 @@ fn quote_fixture_id(tail: &str) -> wire::CanonicalUuid {
 
 fn quote_source(card_id: &str, display_millis: i64) -> QuoteSource {
     QuoteSource {
-        card_id: card_id.to_owned(),
+        card_id: Some(card_id.to_owned()),
+        display_millis,
+        agent: None,
+    }
+}
+
+fn directive_quote_source(display_millis: i64) -> QuoteSource {
+    QuoteSource {
+        card_id: None,
         display_millis,
         agent: None,
     }
@@ -760,7 +768,7 @@ fn nested_quote_sources(
         (
             outer.to_string(),
             QuoteSource {
-                card_id: "message-agent-outer-source".to_owned(),
+                card_id: Some("message-agent-outer-source".to_owned()),
                 display_millis: 1_000,
                 agent: Some(agent),
             },
@@ -768,7 +776,7 @@ fn nested_quote_sources(
         (
             inner.to_string(),
             QuoteSource {
-                card_id: "message-agent-inner-source".to_owned(),
+                card_id: None,
                 display_millis: 2_000,
                 agent: None,
             },
@@ -887,8 +895,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     )));
     assert!(rendered.html.contains(
         "<span class=\"message-quote-age-slot\" data-quote-age-authored=\"2000\" \
-         data-quote-source=\"message-agent-inner-source\" data-quote-author=\"directive\" \
-         data-quote-actor=\"operator\"></span>"
+         data-quote-author=\"directive\" data-quote-actor=\"operator\"></span>"
     ));
     assert!(rendered.html.contains(&format!(
         "<span class=\"message-quote-name\" data-quote-agent-lane=\"{lane}\" \
@@ -897,7 +904,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     )));
     assert_eq!(rendered.html.matches("message-quote-name").count(), 1);
     assert!(!rendered.html.contains("history unavailable"));
-    assert_eq!(rendered.html.matches("data-quote-source=").count(), 2);
+    assert_eq!(rendered.html.matches("data-quote-source=").count(), 1);
     assert!(!rendered.html.contains("Original"));
     assert!(rendered.html.contains(inner_text));
     assert!(rendered.html.contains("data-quote-disposition=\"live\""));
@@ -1292,12 +1299,14 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     let lane = format!("> {lane_text}");
     let markdown =
         format!("{operator}\n\n{lane}\n\nACK dTVQdQfLx dTVQdQfLy: on it.\n\n> my own aside");
-    let context = |start: usize, len: usize, key: &str, text: &str, actor| MessageDirective {
-        start: u32::try_from(start).expect("fixture offset fits"),
-        end: u32::try_from(start + len).expect("fixture offset fits"),
-        quote_target: steering_target(key, text),
-        actor,
-    };
+    let context =
+        |start: usize, len: usize, key: &str, text: &str, actor, authored: &str| MessageDirective {
+            start: u32::try_from(start).expect("fixture offset fits"),
+            end: u32::try_from(start + len).expect("fixture offset fits"),
+            quote_target: steering_target(key, text),
+            actor,
+            authored: authored.parse().expect("fixture instant"),
+        };
     let directives = [
         context(
             0,
@@ -1305,6 +1314,7 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
             "dTVQdQfLx",
             &operator_text,
             wire::Actor::Operator,
+            "1970-01-01T00:00:01.000Z",
         ),
         context(
             operator.len() + 2,
@@ -1312,6 +1322,7 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
             "dTVQdQfLy",
             lane_text,
             wire::Actor::Lane(directing),
+            "1970-01-01T00:00:02.000Z",
         ),
     ];
     let quotes = [wire::QuotePresentation::Resolved {
@@ -1333,16 +1344,13 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     let sources = BTreeMap::from([
         (
             directives[0].quote_target.to_string(),
-            quote_source("message-agent-operator-source", 1_000),
+            QuoteSource::directive(&directives[0]),
         ),
         (
             directives[1].quote_target.to_string(),
-            quote_source("message-agent-lane-source", 2_000),
+            QuoteSource::directive(&directives[1]),
         ),
-        (
-            nested.to_string(),
-            quote_source("message-agent-nested-source", 3_000),
-        ),
+        (nested.to_string(), directive_quote_source(3_000)),
     ]);
 
     let html = render_received_with_quotes(
@@ -1389,7 +1397,7 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         crate::watchband::short(directing),
     )));
     assert!(!operator.contains(">Operator</span>"), "{operator}");
-    assert_eq!(html.matches("data-quote-source=").count(), 3, "{html}");
+    assert_eq!(html.matches("data-quote-source=").count(), 0, "{html}");
     assert!(html.contains("data-quote-age-authored=\"1000\""));
     assert!(html.contains("data-quote-age-authored=\"2000\""));
     assert!(html.contains("data-quote-age-authored=\"3000\""));

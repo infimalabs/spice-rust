@@ -7,6 +7,12 @@ fn quote_target(key: &str, text: &str) -> wire::QuoteTarget {
     }
 }
 
+fn published(millis: u16) -> wire::Instant {
+    format!("2030-04-12T18:44:09.{millis:03}Z")
+        .parse()
+        .expect("fixture publication instant")
+}
+
 fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
     PresentationDirectives(
         rows.iter()
@@ -15,6 +21,7 @@ fn directives(rows: &[(&str, &str)]) -> PresentationDirectives {
                     key.parse::<steer::Key>().expect("fixture key parses"),
                     PresentationDirective {
                         actor: wire::Actor::Operator,
+                        published: published(1),
                         lane: lane(),
                         text: (*text).to_owned(),
                         authored: true,
@@ -171,6 +178,7 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
+            published: published(1),
             lane: lane(),
             text: concat!(
                 "[REVIEW] Peer feedback for CANVAS-1kKRRsDR:\n\n",
@@ -584,6 +592,7 @@ fn system_acknowledgment_hides_framing_and_earns_no_authored_context() {
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
+            published: published(1),
             lane: lane(),
             text: "Accepted lane renewal context.".to_owned(),
             authored: false,
@@ -629,6 +638,7 @@ fn system_acknowledgment_badge_reaches_canvas_without_speech_eligibility() {
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
+            published: published(1),
             lane: lane(),
             text: "Accepted lane renewal context.".to_owned(),
             authored: false,
@@ -807,6 +817,7 @@ fn repeated_acknowledgement_keeps_context_without_reearning_speech() {
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
+            published: published(1),
             lane: lane(),
             text: "Keep the original response context.".to_owned(),
             authored: true,
@@ -872,6 +883,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
             historical,
             PresentationDirective {
                 actor: wire::Actor::Operator,
+                published: published(1),
                 lane: lane(),
                 text: "Continue".to_owned(),
                 authored: true,
@@ -886,6 +898,7 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
             current,
             PresentationDirective {
                 actor: wire::Actor::Operator,
+                published: published(2),
                 lane: lane(),
                 text: "[TASTE] fallbacks: Keep one deterministic path.".to_owned(),
                 authored: true,
@@ -905,14 +918,24 @@ fn mixed_current_and_historical_keys_present_every_known_context() {
         "only."
     );
 
+    let presented = present_steering_acknowledgements(text, Some(&directives), event())
+        .expect("mixed historical and current keys present");
     assert_eq!(
-        presented_text(text, &directives, event())
-            .expect("mixed historical and current keys present"),
+        presented.text,
         concat!(
             "> [ACK] Continue\n\n",
             "> [TASTE] fallbacks: Keep one deterministic path.\n\n",
             "Continuing with the explicit two-context contract only."
         ),
+    );
+    assert_eq!(
+        presented
+            .directive_contexts
+            .iter()
+            .map(|context| context.authored)
+            .collect::<Vec<_>>(),
+        [published(1), published(2)],
+        "each context keeps its directive's publication instant"
     );
     assert_eq!(
         message_badges(text, Some(&directives), event()),
@@ -949,6 +972,7 @@ fn current_system_and_taste_ack_hide_one_shared_protocol_header() {
             system,
             PresentationDirective {
                 actor: wire::Actor::Operator,
+                published: published(1),
                 lane: lane(),
                 text: "Accepted lane renewal context.".to_owned(),
                 authored: false,
@@ -963,6 +987,7 @@ fn current_system_and_taste_ack_hide_one_shared_protocol_header() {
             taste,
             PresentationDirective {
                 actor: wire::Actor::Operator,
+                published: published(2),
                 lane: lane(),
                 text: "[TASTE] compatibility: Keep one tested path.".to_owned(),
                 authored: true,
@@ -1019,6 +1044,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
             system,
             PresentationDirective {
                 actor: wire::Actor::Operator,
+                published: published(1),
                 lane: lane(),
                 text: "Accepted lane renewal context.".to_owned(),
                 authored: false,
@@ -1033,6 +1059,7 @@ fn inline_current_control_and_retained_direction_share_classification() {
             retained,
             PresentationDirective {
                 actor: wire::Actor::Operator,
+                published: published(2),
                 lane: lane(),
                 text: "Keep retained direction readable.".to_owned(),
                 authored: true,
@@ -1076,6 +1103,7 @@ fn acknowledged_context_survives_transcript_source_replacement() {
         key,
         PresentationDirective {
             actor: wire::Actor::Operator,
+            published: published(1),
             lane: lane(),
             text: "Keep the original response context.".to_owned(),
             authored: true,

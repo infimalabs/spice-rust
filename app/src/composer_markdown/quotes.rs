@@ -300,11 +300,15 @@ fn quote_age_slot_html(
         write!(data, " data-accent=\"{}\"", agent.accent)
             .expect("writing HTML to a String cannot fail");
     }
+    let source_data = source.card_id.as_ref().map_or_else(String::new, |card_id| {
+        format!(
+            " data-quote-source=\"{}\"",
+            super::escape_html_attribute(card_id)
+        )
+    });
     format!(
-        "<span class=\"message-quote-age-slot\" data-quote-age-authored=\"{}\" \
-         data-quote-source=\"{}\"{data}></span>",
+        "<span class=\"message-quote-age-slot\" data-quote-age-authored=\"{}\"{source_data}{data}></span>",
         source.display_millis,
-        super::escape_html_attribute(&source.card_id),
     )
 }
 
