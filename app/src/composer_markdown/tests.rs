@@ -1023,7 +1023,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
             html.contains(&format!(
                 "<span class=\"message-quote-signoff\" data-quote-tasks=\"{key}\"></span>"
             )),
-            "a sourceless Operator quote's tail holds only its Work slot: {html}"
+            "a sourceless Operator quote's tail holds only its task-badge slot: {html}"
         );
     }
     assert!(html.contains("<span class=\"message-quote-signoff\" data-quote-tasks=\"dTVQdQfMC\">"));
@@ -1039,7 +1039,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
 }
 
 #[test]
-fn quote_levels_name_their_own_work_at_every_occurrence() {
+fn quote_levels_name_their_own_task_badges_at_every_occurrence() {
     let inner_text = "nested direction";
     let inner_target = steering_target("dTVQdQfLx", inner_text);
     let outer_text = format!("outer direction {}", inner_target.markdown());
@@ -1088,7 +1088,7 @@ fn quote_levels_name_their_own_work_at_every_occurrence() {
                 .matches(&format!("data-quote-tasks=\"{key}\""))
                 .count(),
             2,
-            "each {level} occurrence names its own Work"
+            "each {level} occurrence names its own task badges"
         );
     }
     assert_eq!(

@@ -96,8 +96,8 @@ impl BoardView {
     /// Resolve every quoted steering key to the tasks caused by that direction.
     ///
     /// One direction may intentionally produce several independently actionable
-    /// tasks. Stable handle ordering keeps their adjacent Work actions
-    /// deterministic without discarding that one-to-many provenance.
+    /// tasks. Stable handle ordering keeps their adjacent badges deterministic
+    /// without discarding that one-to-many provenance.
     #[must_use]
     pub fn quote_tasks(&self) -> QuoteTasks {
         let mut origins = QuoteTasks::new();
