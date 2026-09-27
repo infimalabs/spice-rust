@@ -419,6 +419,15 @@ fn write_sparse_startup_history(tape: &tape::Tape) {
         );
     }
     history.extend_from_slice(CODEX_COMPACTION_WITHOUT_TIME);
+    append_hidden_tool_horizon(&mut history);
+    history.extend_from_slice(
+        br#"{"type":"item.completed","item":{"id":"current","type":"agent_message","text":"current epoch"}}
+"#,
+    );
+    tape.tee(&history).expect("sparse history is durable");
+}
+
+fn append_hidden_tool_horizon(history: &mut Vec<u8>) {
     let filler = "x".repeat(1_800);
     for index in 0..640 {
         history.extend_from_slice(
@@ -428,11 +437,6 @@ fn write_sparse_startup_history(tape: &tape::Tape) {
             .as_bytes(),
         );
     }
-    history.extend_from_slice(
-        br#"{"type":"item.completed","item":{"id":"current","type":"agent_message","text":"current epoch"}}
-"#,
-    );
-    tape.tee(&history).expect("sparse history is durable");
 }
 
 fn message_snapshot(
@@ -889,6 +893,12 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
         .tee(CODEX_DISTRIBUTED_ACK)
         .expect("distributed acknowledgements are captured");
     let record = mixed_acknowledgement_record(lane, author, locus);
+    // Keep the acknowledgement outside the fixed startup scan. The initial
+    // server page must hydrate keys discovered by its wider history scan.
+    let mut hidden = Vec::new();
+    append_hidden_tool_horizon(&mut hidden);
+    tape.tee(&hidden)
+        .expect("the hidden startup horizon is captured");
     let pending = concat!(
         "> [ACK PENDING] First direction.\n\n",
         "Nope 1kQwPZtM: One response.\n",
@@ -1051,8 +1061,12 @@ fn assert_mixed_acknowledgement_message(
     let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
         panic!("expected message snapshot")
     };
-    let messages = &generation.messages;
-    assert_eq!(messages.len(), 1, "one event remains one card");
+    let messages = generation
+        .messages
+        .iter()
+        .filter(|message| message.activity.is_prose())
+        .collect::<Vec<_>>();
+    assert_eq!(messages.len(), 1, "one prose event remains one card");
     assert_eq!(messages[0].text, expected);
     assert!(!messages[0].text.contains("ACK 1kQwPZtK"));
     assert!(!messages[0].text.contains("NACK 1kQwPZtL"));

@@ -616,6 +616,11 @@ impl DurableHistory {
         let work = tail.work;
         let messages = CollectedMessages::new(limit);
         let scan = tail.scan;
+        let mut steering = self.steering.clone();
+        if let Some(bus) = &self.bus {
+            hydrate_steering_presentations(bus, &scan, &mut steering)
+                .map_err(|error| format!("{error:?}"))?;
+        }
         let mut reader = BacklogReader {
             cursors: BTreeMap::new(),
             startup_work: StartupWork::default(),
@@ -623,7 +628,7 @@ impl DurableHistory {
                 observations: self.window_observations(lane, &scan)?,
                 ..MessageState::default()
             },
-            steering: self.steering.clone(),
+            steering,
             sessions: self.sessions.clone(),
         };
         let mut diagnostic = Vec::new();
@@ -876,12 +881,7 @@ fn restore_lane(
     let scan = tail.scan;
     if let Some(bus) = bus {
         hydrate_observations(bus, row.lane, &scan, reader)?;
-        let keys = scan_steering_keys(&scan);
-        let rows = load_steering_presentations(bus, &keys)?;
-        reader
-            .steering
-            .extend_presentations(&rows)
-            .map_err(|error| store_fault("canvas::message-steering-invalid", &error))?;
+        hydrate_steering_presentations(bus, &scan, &mut reader.steering)?;
     }
     publish_scan(
         scan,
@@ -1017,6 +1017,21 @@ fn scan_steering_keys(scan: &listen::Scan) -> BTreeSet<steer::Key> {
             _ => Vec::new(),
         }
     }))
+}
+
+fn hydrate_steering_presentations(
+    bus: &bus::BusReader,
+    scan: &listen::Scan,
+    steering: &mut PresentationDirectives,
+) -> CommandResult<()> {
+    let keys = scan_steering_keys(scan)
+        .into_iter()
+        .filter(|key| !steering.0.contains_key(key))
+        .collect::<BTreeSet<_>>();
+    let rows = load_steering_presentations(bus, &keys)?;
+    steering
+        .extend_presentations(&rows)
+        .map_err(|error| store_fault("canvas::message-steering-invalid", &error))
 }
 
 fn tape_available(tape: &Path, lane: CanonicalUuid, diagnostic: &mut dyn io::Write) -> bool {
