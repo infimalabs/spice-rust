@@ -15,13 +15,17 @@ use super::*;
 
 mod file_stamp;
 mod history_authentication;
+mod history_cards;
 mod identity;
 mod presentation;
 use file_stamp::*;
 #[cfg(test)]
 use history_authentication::AFTER_HISTORY_AUTHENTICATION_READ;
-use history_authentication::read_authenticated_history;
 pub(super) use history_authentication::{HistoryCheckpoint, history_checkpoint};
+use history_authentication::{admit_history_source, read_authenticated_history};
+#[cfg(test)]
+use history_cards::history_window;
+pub(super) use history_cards::{HistoryRequest, HistoryScan, SessionCards, retained_messages};
 pub(super) use identity::session_member;
 use presentation::publish;
 
@@ -900,173 +904,6 @@ fn history_record_exceeds_budget(work: HistoryWork) -> io::Error {
             oversized_record: true,
         },
     )
-}
-
-pub(super) struct HistoryScan {
-    pub(super) messages: Vec<wire::AgentMessage>,
-    pub(super) more: bool,
-    pub(super) start: u64,
-    pub(super) work: HistoryWork,
-}
-
-pub(super) struct HistoryRequest<'a> {
-    pub(super) path: PathBuf,
-    pub(super) worktree: PathBuf,
-    pub(super) dialect: listen::Dialect,
-    pub(super) thread: String,
-    pub(super) lane: CanonicalUuid,
-    pub(super) author: CanonicalUuid,
-    pub(super) observations: &'a MessageObservations,
-    pub(super) before: Option<&'a wire::AgentMessage>,
-    pub(super) end: &'a HistoryCheckpoint,
-    pub(super) limit: usize,
-}
-
-impl HistoryScan {
-    /// Join `newer`, the window read immediately after this one, onto it.
-    ///
-    /// `more` stays as this older window judged it: the newer window only
-    /// claimed more because this one had not been read yet.
-    fn extend_newer(mut self, newer: Self) -> Self {
-        debug_assert!(self.start <= newer.start);
-        self.messages.extend(newer.messages);
-        self.work = self.work.joined(newer.work);
-        self
-    }
-}
-
-/// Chain older windows behind the request checkpoint until the page holds
-/// `limit` cards or the preserved session begins.
-///
-/// One window is bounded the way the live scan is, so a lane whose
-/// boundaries sit far apart cannot promise a page from one read. The request
-/// keeps reading the way the tape half does, bounded by
-/// [`HISTORY_WINDOW_LIMIT`] windows and [`HISTORY_DURATION`] of scan time; a
-/// page still short keeps `more` and its continuation so the next request
-/// resumes where this one stopped.
-pub(super) fn retained_messages(request: HistoryRequest<'_>) -> CommandResult<HistoryScan> {
-    let mut cursor = Cursor::new(
-        request.thread.clone(),
-        request.path.clone(),
-        request.worktree.clone(),
-        request.dialect,
-        request.author,
-    );
-    let mut scan = history_window(&mut cursor, &request, request.end, request.limit)?;
-    let mut reads = 1;
-    while scan.messages.len() < request.limit
-        && scan.start > 0
-        && reads < HISTORY_WINDOW_LIMIT
-        && scan.work.elapsed < HISTORY_DURATION
-    {
-        let end = request.end.retreat(scan.start);
-        let remaining = request.limit - scan.messages.len();
-        let older = history_window(&mut cursor, &request, &end, remaining)?;
-        reads += 1;
-        scan = older.extend_newer(scan);
-    }
-    Ok(scan)
-}
-
-/// Read one window ending at `end` and keep its newest `limit` cards.
-fn history_window(
-    cursor: &mut Cursor,
-    request: &HistoryRequest<'_>,
-    end: &HistoryCheckpoint,
-    limit: usize,
-) -> CommandResult<HistoryScan> {
-    let page = bootstrap_before(cursor, 0, end, HistoryRead::Page)
-        .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
-    let messages = HistoryMessages::new(limit);
-    let mut state = MessageState {
-        observations: request.observations.clone(),
-        ..MessageState::default()
-    };
-    for record in page.records {
-        publish(
-            record,
-            request.lane,
-            request.author,
-            &request.worktree,
-            &messages,
-            &mut state,
-        )?;
-    }
-    let collected = messages.inner.into_inner().map_err(|_| {
-        store_fault(
-            "canvas::message-history-unavailable",
-            "history lock poisoned",
-        )
-    })?;
-    let mut messages = collected.messages;
-    if let Some(before) = request.before {
-        messages.retain(|message| message.chronology_key() < before.chronology_key());
-    }
-    let start = messages.len().saturating_sub(limit);
-    let selected = messages.split_off(start);
-    Ok(HistoryScan {
-        messages: selected,
-        more: collected.dropped || start > 0 || page.start > 0,
-        start: page.start,
-        work: page.work,
-    })
-}
-
-struct HistoryMessages {
-    limit: usize,
-    inner: std::sync::Mutex<HistoryCollection>,
-}
-
-#[derive(Default)]
-struct HistoryCollection {
-    messages: Vec<wire::AgentMessage>,
-    dropped: bool,
-}
-
-impl HistoryMessages {
-    fn new(limit: usize) -> Self {
-        Self {
-            limit,
-            inner: std::sync::Mutex::new(HistoryCollection::default()),
-        }
-    }
-}
-
-impl AgentMessagePublisher for HistoryMessages {
-    fn publish(
-        &self,
-        message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
-        let mut collected = self
-            .inner
-            .lock()
-            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?;
-        collected.messages.push(message);
-        if collected.messages.len() > self.limit {
-            collected.messages.remove(0);
-            collected.dropped = true;
-        }
-        Ok(true)
-    }
-
-    fn revise_final(
-        &self,
-        message: wire::AgentMessage,
-    ) -> Result<bool, canvas::stream::MessagePublishError> {
-        let mut collected = self
-            .inner
-            .lock()
-            .map_err(|_| canvas::stream::MessagePublishError::Unavailable)?;
-        let Some(existing) = collected
-            .messages
-            .iter_mut()
-            .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
-        else {
-            return Err(canvas::stream::MessagePublishError::IdentityConflict);
-        };
-        *existing = message;
-        Ok(true)
-    }
 }
 
 fn decode_record(

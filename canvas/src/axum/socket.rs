@@ -849,8 +849,20 @@ async fn route_stream(
         return SessionFlow::Continue;
     };
     if matches!(request, wire::StreamRequest::MessageHistory { .. }) {
+        let Some(demand) = state.history.admit() else {
+            let refusal =
+                crate::stream::Failure::Refusal(wire::Refusal::bare(wire::RefusalDiagnostic::new(
+                    "stream::message-history-busy",
+                    Some("canvas".to_owned()),
+                    Some("capacity for another history request".to_owned()),
+                    Some("every history slot awaiting an answer".to_owned()),
+                )));
+            send_encoded(socket, &refusal.frame(state.epoch, Some(request.id()))).await;
+            return SessionFlow::Continue;
+        };
         histories.push(Box::pin(message_history_off_runtime(
             source.clone(),
+            demand,
             accepted.clone(),
             request,
         )));
@@ -933,21 +945,24 @@ fn pong(
 /// The provider behind [`crate::stream::Source::message_history`] may chain
 /// several multi-megabyte tape windows and hold its thread for seconds. The
 /// surface runtime is one thread shared by every socket, live publication,
-/// and the resident loop, so each read leaves it independently. The session
-/// keeps receiving requests while these joins race to completion.
+/// and the resident loop, so each read leaves it, waiting its turn among the
+/// surface's bounded read slots. The session keeps receiving requests while
+/// these joins race to completion.
 async fn message_history_off_runtime(
     source: crate::stream::Source,
+    demand: super::history::HistoryDemand,
     accepted: wire::Accepted,
     request: wire::StreamRequest,
 ) -> HistoryCompletion {
     let id = request.id();
-    let result = tokio::task::spawn_blocking(move || source.message_history(&accepted, &request))
+    let result = demand
+        .run(move || source.message_history(&accepted, &request))
         .await
-        .unwrap_or_else(|error| {
+        .unwrap_or_else(|detail| {
             Err(crate::stream::Failure::Fault(wire::Fault {
                 class: wire::FaultClass::Environment,
                 reason: "stream::message-history-abandoned".to_owned(),
-                detail: error.to_string(),
+                detail,
             }))
         });
     (id, result)

@@ -460,3 +460,57 @@ async fn one_socket_starts_lane_history_reads_concurrently() {
         .expect("server stops");
     bus.shutdown().expect("bus shuts down");
 }
+
+#[tokio::test(flavor = "current_thread")]
+async fn history_reads_hold_their_slot_until_the_scan_returns() {
+    let limits = super::super::history::HistoryLimits::with(1, 2);
+    let first = limits.admit().expect("first request is admitted");
+    let second = limits.admit().expect("second request is admitted");
+    assert!(
+        limits.admit().is_none(),
+        "demand beyond the surface bound is refused",
+    );
+
+    let (entered, observed) = std::sync::mpsc::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let first_entered = entered.clone();
+    let held = tokio::spawn(first.run(move || {
+        first_entered.send(1).expect("entry reports");
+        released.recv().expect("release arrives");
+    }));
+    let waiting = tokio::spawn(second.run(move || entered.send(2).expect("entry reports")));
+    let entry = |expected, attempts| {
+        let observed = &observed;
+        async move {
+            for _ in 0..attempts {
+                if let Ok(lane) = observed.try_recv() {
+                    return Some(lane == expected);
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            None
+        }
+    };
+    assert_eq!(entry(1, 400).await, Some(true), "the first scan starts");
+
+    // The closing socket drops its future, but the scan it started runs on.
+    held.abort();
+    assert!(held.await.expect_err("aborted").is_cancelled());
+    assert_eq!(
+        entry(2, 20).await,
+        None,
+        "no second scan while the first runs"
+    );
+
+    release.send(()).expect("scan released");
+    assert_eq!(
+        entry(2, 400).await,
+        Some(true),
+        "the queued scan starts next"
+    );
+    waiting
+        .await
+        .expect("queued read joins")
+        .expect("queued read completes");
+    assert!(limits.admit().is_some(), "answered demand frees its place",);
+}

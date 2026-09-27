@@ -30,6 +30,7 @@ use tokio_util::sync::CancellationToken;
 use crate::Discovery;
 
 mod control;
+mod history;
 mod listener;
 mod socket;
 
@@ -291,6 +292,7 @@ struct SurfaceState {
     app: crate::AppSource,
     speech: SpeechResolver,
     speech_slot: Semaphore,
+    history: history::HistoryLimits,
     admission: Mutex<Admission>,
     admission_changed: watch::Sender<Admission>,
     commands: control::Sender<ControlRequest>,
@@ -778,6 +780,7 @@ impl Server {
                     app,
                     speech,
                     speech_slot: Semaphore::new(1),
+                    history: history::HistoryLimits::new(),
                     admission: Mutex::new(Admission::Open),
                     admission_changed,
                     commands,

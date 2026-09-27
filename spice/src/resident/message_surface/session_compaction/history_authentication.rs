@@ -97,6 +97,22 @@ pub(super) fn read_authenticated_history(
     authentication.read(path, checkpoint.length, start, end)
 }
 
+/// Admit the source as the one the checkpoint froze, possibly grown, without
+/// reading a byte: cards decoded earlier stay servable only while it is.
+pub(super) fn admit_history_source(
+    path: &PathBuf,
+    checkpoint: &HistoryCheckpoint,
+) -> io::Result<()> {
+    let mut authentication = checkpoint.authentication.lock().map_err(|_| {
+        io::Error::other("preserved session history authentication lock is poisoned")
+    })?;
+    if let Some(fault) = &authentication.fault {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, fault.clone()));
+    }
+    let observed = FileStamp::read(&File::open(path)?)?;
+    authentication.admit(observed, checkpoint.length).map(drop)
+}
+
 impl HistoryAuthentication {
     fn read(
         &mut self,

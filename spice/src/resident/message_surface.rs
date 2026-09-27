@@ -185,6 +185,17 @@ impl MessageObservations {
         self.0.append(&mut observations.0);
     }
 
+    /// The batches one lane's reads can match, without every other lane's.
+    fn for_lane(&self, lane: CanonicalUuid) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|observation| observation.lane == lane)
+                .cloned()
+                .collect(),
+        )
+    }
+
     fn extend(&mut self, observations: Vec<super::TranscriptObservation>) {
         for observation in observations {
             self.push(&observation.batch, observation.at);

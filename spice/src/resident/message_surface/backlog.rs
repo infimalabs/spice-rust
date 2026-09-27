@@ -10,9 +10,13 @@ use super::*;
 use spice::quote::TranscriptSessions;
 
 mod history;
+mod progress;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+use history::retain_covered;
 use history::{HistorySources, history_newest, history_tail, history_tail_error};
+use progress::{FlightKey, HistoryProgress};
 
 /// Fixed newest-record window for reconstructing live projection state.
 ///
@@ -324,7 +328,7 @@ fn initial_history_pages(
 #[derive(Debug)]
 struct DurableHistory {
     lanes: BTreeMap<CanonicalUuid, DurableLane>,
-    continuations: Mutex<HashMap<(CanonicalUuid, Option<wire::MessageLocus>), HistoryContinuation>>,
+    progress: HistoryProgress,
     hydration: Mutex<Hydration>,
     bus: Option<bus::BusReader>,
     steering: PresentationDirectives,
@@ -370,12 +374,8 @@ struct DurableSession {
     dialect: listen::Dialect,
     thread: String,
     source: session_compaction::HistoryCheckpoint,
-}
-
-#[derive(Clone, Debug)]
-struct HistoryContinuation {
-    tape: Option<listen::Checkpoint>,
-    session: Option<session_compaction::HistoryCheckpoint>,
+    /// Compaction cards decoded from `source`, shared by every consumer.
+    cards: Mutex<session_compaction::SessionCards>,
 }
 
 impl DurableHistory {
@@ -410,6 +410,7 @@ impl DurableHistory {
                             dialect,
                             thread: session.identity.clone(),
                             source,
+                            cards: Mutex::default(),
                         })
                     })
                 });
@@ -431,7 +432,7 @@ impl DurableHistory {
             .collect();
         Self {
             lanes,
-            continuations: Mutex::new(HashMap::new()),
+            progress: HistoryProgress::default(),
             hydration: Mutex::new(Hydration {
                 observations: reader.state.observations.clone(),
                 walks: HashMap::new(),
@@ -453,48 +454,55 @@ impl canvas::stream::MessageHistoryProvider for DurableHistory {
         let Some(source) = self.lanes.get(&lane) else {
             return Ok(None);
         };
-        let continuation = self.continuation(lane, source, before)?;
-        let sources = self.history_sources(lane, source, before, limit, &continuation)?;
-        let (messages, more) = sources.page(before, limit);
-        if more {
-            self.retain_continuation(lane, before, &messages, &sources, &continuation)?;
-        }
-        Ok(Some(canvas::stream::MessageHistoryPage { messages, more }))
+        let tape = self.progress.tape_start(lane, source, before)?;
+        let key = FlightKey {
+            lane,
+            anchor: before.map(|message| message.locus),
+            limit,
+            tape: tape.clone(),
+        };
+        self.progress
+            .single_flight(key, || {
+                self.read_page(lane, source, before, limit, tape.as_ref())
+                    .inspect_err(|_| self.progress.forget_tape(lane))
+            })
+            .map(Some)
     }
 }
 
 impl DurableHistory {
+    fn read_page(
+        &self,
+        lane: CanonicalUuid,
+        source: &DurableLane,
+        before: Option<&wire::AgentMessage>,
+        limit: usize,
+        tape: Option<&listen::Checkpoint>,
+    ) -> Result<canvas::stream::MessageHistoryPage, String> {
+        let sources = self.history_sources(lane, source, before, limit, tape)?;
+        let (messages, more) = sources.page(before, limit);
+        if more && let (Some(scan), Some(anchor)) = (&sources.tape, messages.first().or(before)) {
+            self.progress
+                .remember_tape(lane, anchor, tape_continuation(scan, anchor))?;
+        }
+        Ok(canvas::stream::MessageHistoryPage { messages, more })
+    }
+
     fn history_sources(
         &self,
         lane: CanonicalUuid,
         source: &DurableLane,
         before: Option<&wire::AgentMessage>,
         limit: usize,
-        continuation: &HistoryContinuation,
+        tape: Option<&listen::Checkpoint>,
     ) -> Result<HistorySources, String> {
-        let known = self.known_observations()?;
         let session = source
             .session
             .as_ref()
-            .zip(continuation.session.as_ref())
-            .map(|(session, end)| {
-                session_compaction::retained_messages(session_compaction::HistoryRequest {
-                    path: session.path.clone(),
-                    worktree: session.worktree.clone(),
-                    dialect: session.dialect,
-                    thread: session.thread.clone(),
-                    lane,
-                    author: source.author,
-                    observations: &known,
-                    before,
-                    end,
-                    limit,
-                })
-                .map_err(|error| format!("{error:?}"))
-            })
+            .map(|session| self.session_messages(lane, source.author, session, before, limit))
             .transpose()?;
         let tape = if source.tape.is_dir() {
-            let newest = match continuation.tape.as_ref() {
+            let newest = match tape {
                 Some(end) => self.tape_messages(lane, source, before, end, limit)?,
                 None => self.initial_tape_messages(lane, source, before, limit)?,
             };
@@ -507,76 +515,41 @@ impl DurableHistory {
         Ok(HistorySources { tape, session })
     }
 
-    fn retain_continuation(
+    /// Select this page's preserved boundaries from the lane's shared cards,
+    /// decoding older windows only when the cards decoded so far run short.
+    fn session_messages(
         &self,
         lane: CanonicalUuid,
+        author: CanonicalUuid,
+        session: &DurableSession,
         before: Option<&wire::AgentMessage>,
-        messages: &[wire::AgentMessage],
-        sources: &HistorySources,
-        continuation: &HistoryContinuation,
-    ) -> Result<(), String> {
-        let anchor = messages.first().or(before);
-        let next = HistoryContinuation {
-            tape: sources
-                .tape
-                .as_ref()
-                .map(|tape| tape_continuation(tape, anchor)),
-            session: sources.session.as_ref().and_then(|session| {
-                session_continuation(session, continuation.session.as_ref(), anchor)
-            }),
-        };
-        let mut retained = self
-            .continuations
+        limit: usize,
+    ) -> Result<session_compaction::HistoryScan, String> {
+        let mut cards = session
+            .cards
             .lock()
-            .map_err(|_| "durable history continuation is unavailable".to_owned())?;
-        retained.retain(|(known_lane, _), _| *known_lane != lane);
-        retained.insert((lane, anchor.map(|message| message.locus)), next);
-        Ok(())
-    }
-    fn continuation(
-        &self,
-        lane: CanonicalUuid,
-        source: &DurableLane,
-        before: Option<&wire::AgentMessage>,
-    ) -> Result<HistoryContinuation, String> {
-        if let Some(continuation) = self
-            .continuations
-            .lock()
-            .map_err(|_| "durable history continuation is unavailable".to_owned())?
-            .remove(&(lane, before.map(|message| message.locus)))
-        {
-            return Ok(continuation);
+            .map_err(|_| "durable session history is unavailable".to_owned())?;
+        let prior_bytes = cards.bytes();
+        let scan = session_compaction::retained_messages(
+            session_compaction::HistoryRequest {
+                path: session.path.clone(),
+                worktree: session.worktree.clone(),
+                dialect: session.dialect,
+                thread: session.thread.clone(),
+                lane,
+                author,
+                before,
+                end: &session.source,
+                limit,
+            },
+            &mut cards,
+        );
+        if scan.is_err() {
+            cards.clear();
         }
-        let session_member = source
-            .session
-            .as_ref()
-            .map(|session| session_compaction::session_member(&session.thread));
-        let tape = source.source.as_ref().map(|source_end| {
-            if before.is_some_and(|before| session_member == Some(before.locus.member)) {
-                source_end.clone()
-            } else {
-                before.map_or_else(
-                    || source_end.clone(),
-                    |before| listen::Checkpoint {
-                        source: source_end.source.clone(),
-                        next: listen::Position {
-                            member: before.locus.member,
-                            offset: before.locus.offset,
-                        },
-                    },
-                )
-            }
-        });
-        let session = source.session.as_ref().map(|session| {
-            if before.is_some_and(|before| session_member == Some(before.locus.member)) {
-                session
-                    .source
-                    .retreat(before.expect("checked session member").locus.offset)
-            } else {
-                session.source.clone()
-            }
-        });
-        Ok(HistoryContinuation { tape, session })
+        self.progress
+            .bound_session_cards(self, lane, &mut cards, prior_bytes);
+        scan.map_err(|error| format!("{error:?}"))
     }
 
     fn tape_messages(
@@ -614,7 +587,7 @@ impl DurableHistory {
         let source_start = tail.start;
         let end = tail.scan.checkpoint.clone();
         let work = tail.work;
-        let messages = CollectedMessages::new(limit);
+        let messages = CollectedMessages::new(limit, before);
         let scan = tail.scan;
         let mut steering = self.steering.clone();
         if let Some(bus) = &self.bus {
@@ -655,25 +628,15 @@ impl DurableHistory {
         }
         let selection_start = messages.len().saturating_sub(limit);
         let selected = messages.split_off(selection_start);
+        let complete = !collected.dropped && selection_start == 0;
         Ok(TapeHistoryScan {
             messages: selected,
-            more: collected.dropped
-                || selection_start > 0
-                || source_start.next != listen::Position::start(),
+            more: !complete || source_start.next != listen::Position::start(),
+            complete,
             start: source_start,
             end,
             work,
         })
-    }
-
-    /// Observation times known right now, without reading the journal.
-    fn known_observations(&self) -> Result<MessageObservations, String> {
-        Ok(self
-            .hydration
-            .lock()
-            .map_err(|_| "durable history observations are unavailable".to_owned())?
-            .observations
-            .clone())
     }
 
     /// Observation times covering one window's records, reading only what the
@@ -697,12 +660,12 @@ impl DurableHistory {
             .lock()
             .map_err(|_| "durable history observations are unavailable".to_owned())?;
         let (Some(bus), Some(oldest)) = (self.bus.as_ref(), oldest_scan_locus(scan)) else {
-            return Ok(hydration.observations.clone());
+            return Ok(hydration.observations.for_lane(lane));
         };
         if hydration.observations.covers(lane, oldest)
             || matches!(hydration.walks.get(&lane), Some(LaneWalk::Exhausted))
         {
-            return Ok(hydration.observations.clone());
+            return Ok(hydration.observations.for_lane(lane));
         }
         let source = scan_source(scan).map_err(|error| format!("{error:?}"))?;
         let resume = match hydration.walks.get(&lane) {
@@ -715,40 +678,47 @@ impl DurableHistory {
             .walks
             .insert(lane, walk.resume.map_or(LaneWalk::Exhausted, LaneWalk::At));
         hydration.observations.append(walk.observations);
-        Ok(hydration.observations.clone())
+        Ok(hydration.observations.for_lane(lane))
     }
 }
 
 /// Visible cards one history request collected from the tape.
 ///
 /// `start` is the oldest boundary any chained window reached and `end` the
-/// newest, while `work` sums every window read for the request.
+/// newest, while `work` sums every window read for the request. `complete`
+/// says `messages` holds every visible card older than the anchor between
+/// them, so nothing the page left behind lies physically after `start`.
 struct TapeHistoryScan {
     messages: Vec<wire::AgentMessage>,
     more: bool,
+    complete: bool,
     start: listen::Checkpoint,
     end: listen::Checkpoint,
     work: listen::TailWork,
 }
 
-fn tape_continuation(
-    scan: &TapeHistoryScan,
-    before: Option<&wire::AgentMessage>,
-) -> listen::Checkpoint {
+fn tape_continuation(scan: &TapeHistoryScan, before: &wire::AgentMessage) -> listen::Checkpoint {
     const WIDEST_SOURCE_BYTES: u64 = history_source_bytes(WIDEST_DIALECT);
     debug_assert!(scan.work.source_bytes <= WIDEST_SOURCE_BYTES * HISTORY_READ_LIMIT as u64);
     debug_assert!(scan.work.records <= TAIL_RECORD_LIMIT * HISTORY_READ_LIMIT);
     debug_assert!(scan.work.passes <= tail_passes(WIDEST_SOURCE_BYTES) * HISTORY_READ_LIMIT);
     let end = scan.end.clone();
-    if scan.messages.is_empty() {
+    let anchor = before.chronology_key();
+    // Physical progress, not the anchor, is what the next page resumes from:
+    // a complete scan whose every card the page already took proved the whole
+    // range behind the anchor empty down to `start`.
+    if scan.complete
+        && scan
+            .messages
+            .iter()
+            .all(|message| message.chronology_key() >= anchor)
+    {
         return scan.start.clone();
     }
     let boundary = scan
         .messages
         .iter()
-        .filter(|message| {
-            before.is_some_and(|before| message.chronology_key() >= before.chronology_key())
-        })
+        .filter(|message| message.chronology_key() >= anchor)
         .min_by_key(|message| message.chronology_key());
     let Some(message) = boundary else {
         return end;
@@ -762,30 +732,15 @@ fn tape_continuation(
     }
 }
 
-fn session_continuation(
-    scan: &session_compaction::HistoryScan,
-    end: Option<&session_compaction::HistoryCheckpoint>,
-    before: Option<&wire::AgentMessage>,
-) -> Option<session_compaction::HistoryCheckpoint> {
-    debug_assert!(scan.work.within_request_limits());
-    let end = end?;
-    if scan.messages.is_empty() {
-        return Some(end.retreat(scan.start));
-    }
-    let next = scan
-        .messages
-        .iter()
-        .filter(|message| {
-            before.is_some_and(|before| message.chronology_key() >= before.chronology_key())
-        })
-        .min_by_key(|message| message.chronology_key())
-        .map_or(end.next(), |message| message.locus.offset);
-    Some(end.retreat(next))
-}
-
+/// Visible cards older than the page anchor, newest `limit` kept.
+///
+/// The anchor filters before the limit does: a window whose newest cards
+/// all stand at or after the anchor must not crowd out the older ones this
+/// page exists to serve.
 #[derive(Debug)]
 struct CollectedMessages {
     limit: usize,
+    before: Option<(i64, CanonicalUuid, u64, u64, u64, u32)>,
     inner: Mutex<CollectedHistory>,
 }
 
@@ -796,11 +751,17 @@ struct CollectedHistory {
 }
 
 impl CollectedMessages {
-    fn new(limit: usize) -> Self {
+    fn new(limit: usize, before: Option<&wire::AgentMessage>) -> Self {
         Self {
             limit,
+            before: before.map(wire::AgentMessage::chronology_key),
             inner: Mutex::new(CollectedHistory::default()),
         }
+    }
+
+    fn precedes_anchor(&self, message: &wire::AgentMessage) -> bool {
+        self.before
+            .is_none_or(|before| message.chronology_key() < before)
     }
 }
 
@@ -809,7 +770,7 @@ impl AgentMessagePublisher for CollectedMessages {
         &self,
         message: wire::AgentMessage,
     ) -> Result<bool, canvas::stream::MessagePublishError> {
-        if !visible_message(&message) {
+        if !visible_message(&message) || !self.precedes_anchor(&message) {
             return Ok(true);
         }
         let mut collected = self
@@ -837,6 +798,10 @@ impl AgentMessagePublisher for CollectedMessages {
             .iter_mut()
             .find(|existing| existing.lane == message.lane && existing.locus == message.locus)
         else {
+            // A card at or after the anchor was never collected.
+            if !self.precedes_anchor(&message) {
+                return Ok(true);
+            }
             return Err(canvas::stream::MessagePublishError::IdentityConflict);
         };
         *existing = message;

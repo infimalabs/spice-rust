@@ -135,7 +135,6 @@ fn page_boundary_marker() -> wire::AgentMessage {
 
 fn retained_history_request<'a>(
     transcript: &Path,
-    observations: &'a MessageObservations,
     before: &'a wire::AgentMessage,
     end: &'a HistoryCheckpoint,
 ) -> HistoryRequest<'a> {
@@ -146,7 +145,6 @@ fn retained_history_request<'a>(
         thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
         lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
-        observations,
         before: Some(before),
         end,
         limit: canvas::stream::MESSAGE_CAPACITY,
@@ -185,16 +183,13 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
     let transcript = scratch.transcript();
     let end = write_retained_horizon(&transcript);
     let before = page_boundary_marker();
-    let observations = MessageObservations::default();
 
     let messages = (0..8)
         .find_map(|_| {
-            let page = retained_messages(retained_history_request(
-                &transcript,
-                &observations,
-                &before,
-                &end,
-            ))
+            let page = retained_messages(
+                retained_history_request(&transcript, &before, &end),
+                &mut SessionCards::default(),
+            )
             .expect("retained compaction history reads");
             (!page.messages.is_empty()).then_some(page)
         })
@@ -224,13 +219,56 @@ fn on_demand_history_recovers_boundaries_across_the_retained_horizon() {
 }
 
 #[test]
+fn consumers_at_different_anchors_share_one_decoded_suffix() {
+    let scratch = Scratch::new("retained-history-shared");
+    let transcript = scratch.transcript();
+    let end = write_retained_horizon(&transcript);
+    let marker = page_boundary_marker();
+    let mut cards = SessionCards::default();
+    let newest = (0..8)
+        .find_map(|_| {
+            let mut request = retained_history_request(&transcript, &marker, &end);
+            request.limit = 1;
+            let page = retained_messages(request, &mut cards).expect("newest boundary reads");
+            (!page.messages.is_empty()).then_some(page)
+        })
+        .expect("retained authentication settles before the page is requested");
+    assert_eq!(newest.messages.len(), 1);
+    assert!(newest.more);
+
+    let deep = retained_messages(
+        retained_history_request(&transcript, &marker, &end),
+        &mut cards,
+    )
+    .expect("a deeper consumer extends the shared suffix");
+    assert_eq!(deep.messages.len(), 4);
+    assert!(!deep.more);
+
+    let behind = &newest.messages[0];
+    let shallow = retained_messages(
+        retained_history_request(&transcript, behind, &end),
+        &mut cards,
+    )
+    .expect("a consumer behind the newest boundary reads");
+    assert_eq!(
+        shallow.work.source_bytes, 0,
+        "a region another consumer decoded is not decoded again",
+    );
+    assert_eq!(
+        shallow.messages,
+        deep.messages[..3],
+        "each consumer selects its own page before its own anchor",
+    );
+    assert!(!shallow.more);
+}
+
+#[test]
 fn each_history_window_stays_inside_its_fixed_allowances() {
     let scratch = Scratch::new("retained-history-window");
     let transcript = scratch.transcript();
     let end = write_retained_horizon(&transcript);
     let before = page_boundary_marker();
-    let observations = MessageObservations::default();
-    let request = retained_history_request(&transcript, &observations, &before, &end);
+    let request = retained_history_request(&transcript, &before, &end);
     let mut cursor = Cursor::new(
         request.thread.clone(),
         request.path.clone(),
@@ -241,7 +279,7 @@ fn each_history_window_stays_inside_its_fixed_allowances() {
 
     let newest = (0..8)
         .find_map(|_| {
-            let window = history_window(&mut cursor, &request, request.end, request.limit)
+            let window = history_window(&mut cursor, &request, request.end)
                 .expect("newest history window reads");
             (!window.messages.is_empty()).then_some(window)
         })
@@ -259,15 +297,12 @@ fn each_history_window_stays_inside_its_fixed_allowances() {
     assert!(newest.work.source_bytes <= HISTORY_BYTE_BUDGET as u64);
     assert!(newest.work.decoded_records <= HISTORY_RECORD_BUDGET as u32);
     let older_end = end.retreat(newest.start);
-    let older = history_window(&mut cursor, &request, &older_end, request.limit)
-        .expect("older history window reads");
+    let older =
+        history_window(&mut cursor, &request, &older_end).expect("older history window reads");
     assert_eq!(older.messages.len(), 1);
     assert!(older.work.within_limits());
     assert_eq!(older.work.passes, HISTORY_PASS_BUDGET);
     assert!(older.work.source_bytes <= HISTORY_BYTE_BUDGET as u64);
-    let joined = older.extend_newer(newest);
-    assert_eq!(joined.messages.len(), 4);
-    assert_eq!(joined.work.passes, 2 * HISTORY_PASS_BUDGET);
 }
 
 /// Write two Claude boundaries around one assistant record of `record_bytes`
@@ -285,15 +320,12 @@ fn page_around_oversized_record(scratch: &Scratch, record_bytes: usize) -> Histo
     fs::write(&transcript, contents).expect("transcript with an oversized record is written");
     let end = history_checkpoint(&transcript).expect("oversized transcript checkpoint reads");
     let before = page_boundary_marker();
-    let observations = MessageObservations::default();
     (0..8)
         .find_map(|_| {
-            let page = retained_messages(retained_history_request(
-                &transcript,
-                &observations,
-                &before,
-                &end,
-            ))
+            let page = retained_messages(
+                retained_history_request(&transcript, &before, &end),
+                &mut SessionCards::default(),
+            )
             .expect("the page is served around the oversized record");
             (!page.messages.is_empty()).then_some(page)
         })
