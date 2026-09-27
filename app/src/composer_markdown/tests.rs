@@ -783,6 +783,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         (lane, source),
         QuoteAgent {
             team,
+            accent: 3,
             label: "spice-rust-k".to_owned(),
         },
     )]);
@@ -806,8 +807,8 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     assert!(rendered.html.contains(&format!(
         "data-quote-agent-team=\"{team}\" \
          data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{source}\" \
-         data-quote-history=\"available\" \
-         aria-label=\"Open information for Agent spice-rust-k\">Agent spice-rust-k</button>"
+         data-quote-history=\"available\" data-accent=\"3\" \
+         aria-label=\"Open information for spice-rust-k\">spice-rust-k</button>"
     )));
     assert!(
         rendered.html.contains(
@@ -817,7 +818,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     assert!(!rendered.html.contains("history unavailable"));
     assert!(rendered.html.contains(inner_text));
     assert!(rendered.html.contains("data-quote-disposition=\"live\""));
-    assert!(!rendered.html.contains("Agent:"));
+    assert!(!rendered.html.contains("Agent "));
     assert!(!rendered.html.contains("Directive by"));
     let outer_body = rendered
         .html
@@ -825,7 +826,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         .expect("outer authenticated prose renders");
     let outer_signoff = rendered
         .html
-        .rfind("Agent spice-rust-k</button>")
+        .rfind("spice-rust-k</button>")
         .expect("outer signoff renders");
     assert!(
         outer_body < outer_signoff,
@@ -837,6 +838,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         (lane, successor),
         QuoteAgent {
             team,
+            accent: 4,
             label: "spice-rust-k".to_owned(),
         },
     )]);
@@ -850,10 +852,10 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     );
     assert!(historical.html.contains(
         "data-quote-agent-occupant=\"018f82d4-6f59-7d06-92e3-bce9131163e7\" \
-         data-quote-history=\"unavailable\""
+         data-quote-history=\"unavailable\" data-accent=\"4\""
     ));
     assert!(historical.html.contains("· history unavailable"));
-    assert!(historical.html.contains("Agent spice-rust-k"));
+    assert!(historical.html.contains(">spice-rust-k "));
     assert!(!historical.html.contains("data-quote-agent-team="));
 }
 
@@ -1007,6 +1009,7 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
     }];
     let agent = |label: &str| QuoteAgent {
         team: id("ff"),
+        accent: 2,
         label: label.to_owned(),
     };
     let roster = BTreeMap::from([
@@ -1122,6 +1125,7 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         (directing, directing),
         QuoteAgent {
             team: directing,
+            accent: 1,
             label: "directing".to_owned(),
         },
     )]);
@@ -1162,6 +1166,7 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         (1, 1),
         "{lane}"
     );
-    assert!(lane.contains("Agent directing"), "{lane}");
+    assert!(lane.contains(">directing "), "{lane}");
+    assert!(lane.contains("data-accent=\"1\""), "{lane}");
     assert!(!aside.contains("message-quote-signoff"), "{aside}");
 }

@@ -89,7 +89,7 @@ pub(super) fn signoff_html(
     tasks: &BTreeMap<String, TaskHandle>,
 ) -> String {
     format!(
-        "<span class=\"message-quote-signoff\">— {}{}</span>",
+        "<span class=\"message-quote-signoff\">{}{}</span>",
         author_html(author, agents),
         task_html(target, tasks),
     )
@@ -167,45 +167,50 @@ fn author_html(author: &QuoteAuthor, agents: &super::QuoteAgents) -> String {
     match author {
         QuoteAuthor::Agent { lane, occupant } => {
             if let Some(agent) = agents.get(&(*lane, *occupant)) {
-                let label = format!("Agent {}", agent.label);
+                let label = &agent.label;
                 return format!(
                     "<button type=\"button\" class=\"message-quote-author\" \
                      data-quote-author=\"agent\" data-quote-agent-team=\"{}\" \
                      data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
-                     data-quote-history=\"available\" \
+                     data-quote-history=\"available\" data-accent=\"{}\" \
                      aria-label=\"Open information for {}\">{}</button>",
                     agent.team,
-                    super::escape_html_attribute(&label),
-                    escape_html_text(&label),
+                    agent.accent,
+                    super::escape_html_attribute(label),
+                    escape_html_text(label),
                 );
             }
-            let label = agents
+            let (label, accent) = agents
                 .iter()
                 .find_map(|((candidate, _), agent)| {
-                    (*candidate == *lane).then(|| format!("Agent {}", agent.label))
+                    (*candidate == *lane).then(|| (agent.label.clone(), Some(agent.accent)))
                 })
                 .unwrap_or_else(|| {
-                    format!(
-                        "Agent {}/{}",
-                        crate::watchband::short(*lane),
-                        crate::watchband::short(*occupant),
+                    (
+                        format!(
+                            "{}/{}",
+                            crate::watchband::short(*lane),
+                            crate::watchband::short(*occupant),
+                        ),
+                        None,
                     )
                 });
-            unavailable_agent_html(*lane, *occupant, &label)
+            unavailable_agent_html(*lane, *occupant, &label, accent)
         }
         QuoteAuthor::Directive { actor } => match actor {
             wire::Actor::Operator => principal_html("Operator", "operator"),
             wire::Actor::Spice => principal_html("Spice", "spice"),
             wire::Actor::Lane(lane) => {
-                let label = agents
+                let (label, accent) = agents
                     .iter()
                     .find_map(|((candidate, _), agent)| {
-                        (*candidate == *lane).then(|| format!("Agent {}", agent.label))
+                        (*candidate == *lane).then(|| (agent.label.clone(), Some(agent.accent)))
                     })
-                    .unwrap_or_else(|| format!("Agent channel {}", crate::watchband::short(*lane)));
+                    .unwrap_or_else(|| (crate::watchband::short(*lane), None));
+                let accent = accent_html_attribute(accent);
                 format!(
                     "<span class=\"message-quote-author\" data-quote-author=\"directive\" \
-                     data-quote-actor=\"lane:{lane}\" data-quote-history=\"unavailable\" \
+                     data-quote-actor=\"lane:{lane}\" data-quote-history=\"unavailable\"{accent} \
                      aria-label=\"{}; identity history unavailable\">{} \
                      <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>",
                     super::escape_html_attribute(&label),
@@ -220,16 +225,22 @@ fn unavailable_agent_html(
     lane: wire::CanonicalUuid,
     occupant: wire::CanonicalUuid,
     label: &str,
+    accent: Option<usize>,
 ) -> String {
+    let accent = accent_html_attribute(accent);
     format!(
         "<span class=\"message-quote-author\" data-quote-author=\"agent\" \
          data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
-         data-quote-history=\"unavailable\" \
+         data-quote-history=\"unavailable\"{accent} \
          aria-label=\"{}; identity history unavailable\">{} \
          <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>",
         super::escape_html_attribute(label),
         escape_html_text(label),
     )
+}
+
+fn accent_html_attribute(accent: Option<usize>) -> String {
+    accent.map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""))
 }
 
 fn principal_html(label: &str, actor: &str) -> String {

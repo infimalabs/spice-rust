@@ -28,6 +28,7 @@ pub(crate) struct RenderedMarkdown {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QuoteAgent {
     pub(crate) team: wire::CanonicalUuid,
+    pub(crate) accent: usize,
     pub(crate) label: String,
 }
 
@@ -276,9 +277,9 @@ pub(crate) fn render_received_with_quotes(
     }
 }
 
-/// Sign one directive context before its quote closes, exactly as a quote of
-/// the same directive is signed. A context ending in prose carries the byline
-/// on that prose's line; any other ending gives it a line of its own.
+/// Append one directive author marker before its quote closes. CSS keeps that
+/// marker at the content tail, sharing the last line when it fits and moving
+/// it onto a final line when it does not.
 fn close_directive_context(
     events: &mut Vec<MarkdownEvent<'_>>,
     context: &MessageDirective,
@@ -295,7 +296,7 @@ fn close_directive_context(
     );
     if matches!(events.last(), Some(MarkdownEvent::End(TagEnd::Paragraph))) {
         let end = events.len() - 1;
-        events.insert(end, MarkdownEvent::InlineHtml(format!(" {signoff}").into()));
+        events.insert(end, MarkdownEvent::InlineHtml(signoff.into()));
     } else {
         events.push(MarkdownEvent::Html(format!("<p>{signoff}</p>").into()));
     }
