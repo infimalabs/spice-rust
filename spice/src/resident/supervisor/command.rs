@@ -59,6 +59,12 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     calls: Mutex<HashMap<String, Handle>>,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum InboxDelivery {
+    Update,
+    PostCompaction,
+}
+
 /// What one host tool call asks of the lane.
 enum Work {
     Shell(ShellCall),
@@ -140,7 +146,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// or exactly what the agent already received. Every call being answered
     /// is interrupted before unheard direction is written.
     pub(in crate::resident) fn deliver_inbox(&self) {
-        self.interject(true);
+        self.interject(InboxDelivery::Update);
     }
 
     fn deliver_narration(&self, prod: &wire::body::NarrationProdded) {
@@ -171,9 +177,9 @@ impl<W: Write + Send + 'static> Driver<W> {
     ///
     /// Direction the lane has not heard interrupts the calls in flight, so the
     /// agent sees it as early as it can; a rendering that only restates what
-    /// the lane heard waits for the turn's next boundary. After a compaction
-    /// nothing is news.
-    fn interject(&self, news: bool) {
+    /// the lane heard waits for the turn's next boundary. After a compaction,
+    /// the replay carries one authenticated recovery instruction.
+    fn interject(&self, delivery: InboxDelivery) {
         let Some(rendered) = (self.read_inbox)() else {
             return;
         };
@@ -189,9 +195,16 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
         let message =
             std::str::from_utf8(&rendered).expect("the in-memory inbox renderer produces UTF-8");
+        let post_compaction;
+        let message = if delivery == InboxDelivery::PostCompaction {
+            post_compaction = steer::inbox::post_compaction(message);
+            post_compaction.as_str()
+        } else {
+            message
+        };
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
         let unheard = steer::inbox::keys(message).any(|key| !told.contains(key));
-        if news && unheard {
+        if delivery == InboxDelivery::Update && unheard {
             for handle in self
                 .calls
                 .lock()
@@ -290,7 +303,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             drop(told);
             delivered.take();
             drop(delivered);
-            self.interject(false);
+            self.interject(InboxDelivery::PostCompaction);
         }
         let completed = decoded
             .context()
