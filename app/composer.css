@@ -399,7 +399,7 @@
 .markdown-body .message-quote-card {
   display: block;
   margin: 7px 0;
-  padding: 7px 8px;
+  padding: 7px 8px 7px var(--mosaic-quote-inline);
   border: var(--canvas-edge);
   border-left: 3px solid color-mix(in srgb, var(--accent) 72%, var(--line));
   border-radius: var(--canvas-radius-compact);
@@ -408,7 +408,6 @@
   font-size: .8125rem;
 }
 .markdown-body .message-quote-card .message-quote-card {
-  margin-inline-start: 8px;
   border-left-color: color-mix(in srgb, var(--accent) 88%, white);
 }
 .markdown-body .message-quote-signoff {
