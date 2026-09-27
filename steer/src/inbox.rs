@@ -91,28 +91,38 @@ pub enum Told {
     Replied,
 }
 
+const NUDGE_PREFIX: &str = "[NUDGE] key=";
+const SILENT_BEFORE_ACK: &str =
+    " still pending; no visible reply. Thinking/tool calls do not count. Lead visible prose: `ACK ";
+const REPLIED_BEFORE_ACK: &str =
+    " still pending; visible prose did not retire it. Lead visible prose: `ACK ";
+const ACK_TO_NACK: &str = ": <one clause>` or `NACK ";
+const SILENT_AFTER_NACK: &str = ": <one clause>`.";
+const REPLIED_AFTER_NACK: &str = ": <one clause>`.";
+
 impl Told {
-    /// The pointer that replaces a telling the occupant still holds.
-    #[must_use]
-    pub const fn pointer(self) -> &'static str {
-        match self {
-            Self::Silent => NUDGE_SILENT,
-            Self::Replied => NUDGE_REPLIED,
-        }
+    fn pointer_len(self, key: &str) -> usize {
+        let (before_ack, after_nack) = match self {
+            Self::Silent => (SILENT_BEFORE_ACK, SILENT_AFTER_NACK),
+            Self::Replied => (REPLIED_BEFORE_ACK, REPLIED_AFTER_NACK),
+        };
+        NUDGE_PREFIX.len() + before_ack.len() + ACK_TO_NACK.len() + after_nack.len() + key.len() * 3
+    }
+
+    fn push_pointer(self, rendered: &mut String, key: &str) {
+        let (before_ack, after_nack) = match self {
+            Self::Silent => (SILENT_BEFORE_ACK, SILENT_AFTER_NACK),
+            Self::Replied => (REPLIED_BEFORE_ACK, REPLIED_AFTER_NACK),
+        };
+        rendered.push_str(NUDGE_PREFIX);
+        rendered.push_str(key);
+        rendered.push_str(before_ack);
+        rendered.push_str(key);
+        rendered.push_str(ACK_TO_NACK);
+        rendered.push_str(key);
+        rendered.push_str(after_nack);
     }
 }
-
-/// Pointer for a held directive after which no visible reply was observed.
-///
-/// Reasoning never reaches the transcript as a reply, which is the usual way
-/// an occupant believes it answered when it did not.
-pub const NUDGE_SILENT: &str =
-    "[NUDGE] unanswered, no visible reply yet (thinking is not one); ACK or NACK this key";
-
-/// Pointer for a held directive after which visible replies did not answer it.
-pub const NUDGE_REPLIED: &str =
-    "[NUDGE] unanswered; no visible line since led with ACK or NACK this key";
-
 /// Condenses every directive the occupant was already told into a pointer.
 ///
 /// A resend exists to say a directive is still unanswered, not to say the
@@ -127,7 +137,7 @@ pub const NUDGE_REPLIED: &str =
 pub fn nudge(rendered: &str, told: impl Fn(&str) -> Option<Told>) -> String {
     let mut condensed = String::with_capacity(rendered.len());
     let mut body = String::new();
-    let mut held = None;
+    let mut held: Option<(Told, &str)> = None;
     let mut lines = rendered.split_inclusive('\n').peekable();
     while let Some(line) = lines.next() {
         if lines.peek().is_none() {
@@ -140,7 +150,7 @@ pub fn nudge(rendered: &str, told: impl Fn(&str) -> Option<Told>) -> String {
         if let Some(key) = header_key(line) {
             push_body(&mut condensed, &body, held);
             body.clear();
-            held = told(key);
+            held = told(key).map(|state| (state, key));
             condensed.push_str(line);
         } else {
             body.push_str(line);
@@ -162,15 +172,45 @@ fn header_key(line: &str) -> Option<&str> {
 
 /// Spend the body, or the pointer when the occupant holds the body already
 /// and the pointer is the cheaper of the two.
-fn push_body(condensed: &mut String, body: &str, held: Option<Told>) {
+fn push_body(condensed: &mut String, body: &str, held: Option<(Told, &str)>) {
     // What the pointer itself costs, its own line ending included.
-    match held.map(Told::pointer) {
-        Some(pointer) if body.len() > pointer.len() + "\n".len() => {
-            condensed.push_str(pointer);
+    match held {
+        Some((state, key)) if body.len() > state.pointer_len(key) + "\n".len() => {
+            state.push_pointer(condensed, key);
             condensed.push('\n');
         }
         _ => condensed.push_str(body),
     }
+}
+
+/// Add one authenticated recovery instruction to a replay after compaction.
+///
+/// The instruction sits inside the existing seal and names every key from the
+/// rendering. An empty or malformed rendering remains unchanged.
+#[must_use]
+pub fn post_compaction(rendered: &str) -> String {
+    let mut pending = keys(rendered);
+    let Some(first) = pending.next() else {
+        return rendered.to_owned();
+    };
+    let Some((seal, body)) = rendered.split_once('\n') else {
+        return rendered.to_owned();
+    };
+    let mut replayed = String::with_capacity(rendered.len() + 192);
+    replayed.push_str(seal);
+    replayed.push_str("\n[POST-COMPACTION] Pending keys: ");
+    replayed.push_str(first);
+    for key in pending {
+        replayed.push(' ');
+        replayed.push_str(key);
+    }
+    replayed.push_str(
+        ". Before more tools, lead visible assistant prose with \
+         `ACK <key> [<key> ...]: <one clause>` or \
+         `NACK <key>: <one clause>` for every key.\n",
+    );
+    replayed.push_str(body);
+    replayed
 }
 
 fn render_directive_body(directive: &Directive) -> String {
@@ -204,7 +244,7 @@ fn render_body(
 
 #[cfg(test)]
 mod tests {
-    use super::{NUDGE_REPLIED, NUDGE_SILENT, Told, keys, nudge};
+    use super::{Told, keys, nudge, post_compaction};
 
     #[test]
     fn a_rendering_names_its_keys_in_order_and_nothing_else() {
@@ -235,10 +275,10 @@ mod tests {
         let first = delivered("published");
         let again = delivered("reminded");
 
-        // What a pointer is allowed to cost against the telling it replaces.
-        const SHARE: usize = 10;
+        // Exact recovery syntax may cost at most one eighth of the telling.
+        const SHARE: usize = 8;
 
-        for (since, pointer) in [(Told::Silent, NUDGE_SILENT), (Told::Replied, NUDGE_REPLIED)] {
+        for since in [Told::Silent, Told::Replied] {
             let resent = nudge(&again, |key| (key == "dSvXD9bv3").then_some(since));
             assert!(
                 resent.len() * SHARE < first.len(),
@@ -252,8 +292,8 @@ mod tests {
                 "the pointer must still name the directive and why it arrived: {resent}",
             );
             assert!(
-                resent.contains(pointer),
-                "the pointer must say what it saw: {resent}"
+                resent.contains("[NUDGE] key=dSvXD9bv3 still pending"),
+                "the pointer must name the exact unanswered key: {resent}"
             );
             assert!(
                 !resent.contains("measure the cost"),
@@ -277,19 +317,54 @@ mod tests {
             "the two observations must read differently"
         );
         assert!(
-            silent.contains("no visible reply") && silent.contains("thinking"),
-            "an occupant that only thought its answer must learn that: {silent}",
+            silent.contains("no visible reply")
+                && silent.contains("Thinking/tool calls do not count"),
+            "an occupant that only thought or called tools must learn neither was visible prose: \
+             {silent}",
         );
         assert!(
-            !replied.contains("no visible reply"),
+            replied.contains("visible prose did not retire it")
+                && !replied.contains("no visible reply"),
             "an occupant that replied must not be told it was silent: {replied}",
         );
+        for reminder in [&silent, &replied] {
+            assert!(
+                reminder.contains("`ACK dSvXD9bv3: <one clause>`")
+                    && reminder.contains("`NACK dSvXD9bv3: <one clause>`"),
+                "the reminder must supply valid visible-line syntax for its exact key: {reminder}",
+            );
+        }
+    }
+
+    #[test]
+    fn a_post_compaction_replay_authenticates_one_instruction_for_every_pending_key() {
+        let rendered = "<seal>\n\
+                        directive=d1 key=1kJK6N3R stage=published expires=never\nfirst\n\
+                        directive=d2 key=1kJK6M0V stage=reminded expires=never\nsecond\n\
+                        </seal>\n";
+        let replayed = post_compaction(rendered);
+
+        assert!(
+            replayed.starts_with("<seal>\n[POST-COMPACTION] Pending keys: 1kJK6N3R 1kJK6M0V. ")
+        );
+        assert_eq!(replayed.matches("[POST-COMPACTION]").count(), 1);
+        assert!(
+            replayed.contains(
+                "Before more tools, lead visible assistant prose with \
+                 `ACK <key> [<key> ...]: <one clause>` or \
+                 `NACK <key>: <one clause>` for every key."
+            ),
+            "{replayed}",
+        );
+        assert!(replayed.ends_with("</seal>\n"), "{replayed}");
+        assert_eq!(post_compaction(""), "");
     }
 
     #[test]
     fn a_telling_this_context_never_heard_is_spent_in_full() {
         let held = "hold the line while the suite runs, and say so when it finishes running \
-                    along with what it reported";
+                    along with what it reported. "
+            .repeat(3);
         let rendering = format!(
             "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{held}\n{}",
             &delivered("published")["<Qk8zdj5rQ>\n".len()..],
@@ -299,7 +374,7 @@ mod tests {
         });
 
         assert!(
-            !resent.contains(held),
+            !resent.contains(&held),
             "the key this context holds is pointed at, not repeated: {resent}",
         );
         assert!(

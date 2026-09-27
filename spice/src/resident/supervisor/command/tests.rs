@@ -163,13 +163,21 @@ fn the_inbox_is_interjected_once_per_change_and_again_after_a_compaction() {
     scratch.publish(b"");
     driver.deliver_inbox();
     assert_eq!(driver.interjections(), 0);
+    driver.observe(&decoded(
+        br#"{"type":"auto_compaction_end","result":{"summary":"empty"},"aborted":false}"#,
+    ));
+    assert_eq!(
+        driver.interjections(),
+        0,
+        "compaction invents no guidance for an empty inbox"
+    );
 
-    scratch.publish(b"<key>\ndirective=d1\nstop\n</key>\n");
+    scratch.publish(b"<key>\ndirective=d1 key=1kJK6N3R stage=new expires=never\nstop\n</key>\n");
     driver.deliver_inbox();
     driver.deliver_inbox();
     assert_eq!(driver.interjections(), 1);
 
-    scratch.publish(b"<key>\ndirective=d2\ngo\n</key>\n");
+    scratch.publish(b"<key>\ndirective=d2 key=1kJK6M0V stage=new expires=never\ngo\n</key>\n");
     driver.deliver_inbox();
     assert_eq!(driver.interjections(), 2);
 
@@ -187,9 +195,20 @@ fn the_inbox_is_interjected_once_per_change_and_again_after_a_compaction() {
         sink.frames(),
         [
             serde_json::json!({"id": "spice-state", "type": "get_state"}),
-            steer(1, "<key>\ndirective=d1\nstop\n</key>\n"),
-            steer(2, "<key>\ndirective=d2\ngo\n</key>\n"),
-            steer(3, "<key>\ndirective=d2\ngo\n</key>\n"),
+            steer(
+                1,
+                "<key>\ndirective=d1 key=1kJK6N3R stage=new expires=never\nstop\n</key>\n"
+            ),
+            steer(
+                2,
+                "<key>\ndirective=d2 key=1kJK6M0V stage=new expires=never\ngo\n</key>\n"
+            ),
+            steer(
+                3,
+                &steer::inbox::post_compaction(
+                    "<key>\ndirective=d2 key=1kJK6M0V stage=new expires=never\ngo\n</key>\n"
+                ),
+            ),
         ]
     );
 }
@@ -339,12 +358,13 @@ fn a_withdrawn_call_and_a_drain_end_the_commands_they_cover() {
     settled(&scratch);
 }
 
-/// A rendering carrying one directive the lane has not heard, as long as a
-/// short operator sentence: a telling shorter than the pointer that would
-/// replace it is simply said again.
+/// A rendering carrying one directive the lane has not heard, long enough for
+/// the exact-key recovery pointer to replace its body on a reminder.
 const NEWS: &str = "<seal>\ndirective=d1 key=1kJK6N3R stage=new expires=never\n\
                     look at this and answer it before the next call, because the operator is \
-                    waiting on the answer\n</seal>\n";
+                    waiting on the answer; include the exact outcome, keep the running command \
+                    healthy, and make the ACK or NACK visible before continuing with more tools\n\
+                    </seal>\n";
 
 #[test]
 fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_alone() {
@@ -370,10 +390,7 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
     let reminder = NEWS.replace("stage=new", "stage=reminded");
     scratch.publish(&reminder);
     driver.deliver_inbox();
-    let pointer = format!(
-        "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{}\n</seal>\n",
-        steer::inbox::NUDGE_SILENT,
-    );
+    let pointer = steer::inbox::nudge(&reminder, |_| Some(steer::inbox::Told::Silent));
     let frames = sink.answered(2);
     assert_eq!(frames, [steer(1, NEWS), steer(2, &pointer)]);
     assert!(
@@ -397,11 +414,9 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
     );
     scratch.publish(&more);
     driver.deliver_inbox();
-    let told = format!(
-        "<seal>\ndirective=d1 key=1kJK6N3R stage=reminded expires=never\n{}\n\
-         directive=d2 key=1kJK6M0V stage=new expires=never\ngo\n</seal>\n",
-        steer::inbox::NUDGE_SILENT,
-    );
+    let told = steer::inbox::nudge(&more, |key| {
+        (key == "1kJK6N3R").then_some(steer::inbox::Told::Silent)
+    });
     let frames = sink.answered(4);
     assert!(frames.contains(&steer(3, &told)), "{frames:?}");
     assert!(
@@ -438,25 +453,13 @@ fn a_resend_says_whether_any_visible_reply_followed_the_telling() {
     scratch.publish(&again);
     driver.deliver_inbox();
 
-    let pointer = |header: &str, nudge: &str| format!("<seal>\n{header}\n{nudge}\n</seal>\n");
+    let pointer = |rendering: &str, told| steer::inbox::nudge(rendering, |_| Some(told));
     assert_eq!(
         sink.answered(3),
         [
             steer(1, NEWS),
-            steer(
-                2,
-                &pointer(
-                    "directive=d1 key=1kJK6N3R stage=reminded expires=never",
-                    steer::inbox::NUDGE_SILENT,
-                ),
-            ),
-            steer(
-                3,
-                &pointer(
-                    "directive=d1 key=1kJK6N3R stage=reminded expires=later",
-                    steer::inbox::NUDGE_REPLIED,
-                ),
-            ),
+            steer(2, &pointer(&reminder, steer::inbox::Told::Silent),),
+            steer(3, &pointer(&again, steer::inbox::Told::Replied)),
         ],
         "reasoning is not a reply; visible prose is",
     );
@@ -473,8 +476,11 @@ fn a_compaction_spends_the_telling_again_because_the_context_lost_it() {
     let frames = sink.answered(2);
     assert_eq!(
         frames,
-        [steer(1, NEWS), steer(2, NEWS)],
-        "a context that dropped the telling is told again in full",
+        [
+            steer(1, NEWS),
+            steer(2, &steer::inbox::post_compaction(NEWS))
+        ],
+        "a context that dropped the telling gets the full telling plus recovery syntax",
     );
 }
 
