@@ -1004,7 +1004,7 @@ html[data-command-modifier-held="true"]
   display: grid;
   align-self: end;
   align-items: center;
-  grid-template-columns: 4ch minmax(0, 1fr);
+  grid-template-columns: 3ch minmax(0, 1fr);
   gap: 8px; min-height: 32px;
   min-width: 0;
   width: 100%;
@@ -1020,7 +1020,7 @@ html[data-command-modifier-held="true"]
 .team-surface .message-footer-left {
   display: flex;
   gap: 6px;
-  width: 4ch;
+  width: 3ch;
 }
 .team-surface .mosaic-message-card .message-footer:has(.message-badges) {
   grid-template-columns: max-content minmax(0, 1fr);
@@ -1040,9 +1040,9 @@ html[data-command-modifier-held="true"]
 }
 .relative-age {
   display: block;
-  width: 4ch;
-  min-width: 4ch;
-  max-width: 4ch;
+  width: 3ch;
+  min-width: 3ch;
+  max-width: 3ch;
   overflow: hidden;
   color: var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;

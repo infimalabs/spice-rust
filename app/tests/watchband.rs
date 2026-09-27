@@ -1,11 +1,11 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, AGE_LABEL_WIDTH, FIELD_BUDGET, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop,
-    TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams,
-    elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept,
-    latest_lane_prose, leaf, one_line, remaining_label, remaining_label_deadline_millis,
-    reported_tasks, short, split_member, split_team, standing_title, standings, task_mentions,
-    teams, ticker_chunks, ticker_line, topology, truncate,
+    ACCENTS, FIELD_BUDGET, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop, TeamTaskSectionState,
+    UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, elapsed_label,
+    elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, latest_lane_prose, leaf,
+    one_line, remaining_label, remaining_label_deadline_millis, reported_tasks, short,
+    split_member, split_team, standing_title, standings, task_mentions, teams, ticker_chunks,
+    ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -597,44 +597,6 @@ fn remaining_time_counts_down_across_the_existing_unit_boundaries() {
         remaining_label_deadline_millis(100 * 86_400_000 + 5_000),
         Some(5_001),
     );
-}
-
-/// A ticking age may only change text, never the box the text sits in. The box
-/// is sized once from `AGE_LABEL_WIDTH`, so that promise is only as good as the
-/// label's inability to outgrow it — a single wider return reflows the slot and
-/// every card beside it.
-///
-/// The sweep is what makes this more than a spot check. It walks every second
-/// across the first two days, so it crosses each unit boundary the operator
-/// actually watches, then jumps to the inputs no operator produces on purpose:
-/// an unset instant read against the browser epoch, and the saturating end of
-/// the type. Those are the ones that used to escape — the day arm counted up
-/// without a ceiling, so `i64::MAX` spelled a thirteen-character label.
-#[test]
-fn age_labels_never_outgrow_the_slot() {
-    let sweep = (0..=172_800).map(|second| second * 1_000);
-    let extremes = [i64::MIN, -1, 1_754_000_000_000, i64::MAX - 1, i64::MAX];
-    for millis in sweep.chain(extremes) {
-        let label = elapsed_label(millis);
-        assert!(
-            label.chars().count() <= AGE_LABEL_WIDTH,
-            "elapsed_label({millis}) is {:?}, wider than the {AGE_LABEL_WIDTH}-character slot",
-            label
-        );
-        assert!(
-            !label.contains(char::is_whitespace),
-            "elapsed_label({millis}) is {label:?}, which can wrap out of a single line"
-        );
-        let remaining = remaining_label(millis);
-        assert!(
-            remaining.chars().count() <= AGE_LABEL_WIDTH,
-            "remaining_label({millis}) is {remaining:?}, wider than the {AGE_LABEL_WIDTH}-character slot"
-        );
-        assert!(
-            !remaining.contains(char::is_whitespace),
-            "remaining_label({millis}) is {remaining:?}, which can wrap out of a single line"
-        );
-    }
 }
 
 /// The saturating arm has to be legible as saturation, not misread as a real

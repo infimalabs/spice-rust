@@ -583,7 +583,7 @@ fn lease_age(instant: Option<i64>, class: &'static str, vacant: &'static str) ->
         None => html! {
             <span
                 class={class}
-                data-age-slot={watchband::AGE_LABEL_WIDTH.to_string()}
+                data-age-slot={watchband::AGE_SLOT_WIDTH.to_string()}
             >{vacant}</span>
         },
     }
@@ -596,7 +596,7 @@ fn lease_countdown(expiry: Option<i64>, class: &'static str, vacant: &'static st
         None => html! {
             <span
                 class={class}
-                data-age-slot={watchband::AGE_LABEL_WIDTH.to_string()}
+                data-age-slot={watchband::AGE_SLOT_WIDTH.to_string()}
                 data-age-clock="countdown"
             >{vacant}</span>
         },

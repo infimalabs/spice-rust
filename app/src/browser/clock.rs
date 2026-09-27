@@ -25,7 +25,7 @@ use wasm_bindgen::JsValue;
 use yew::prelude::*;
 
 use crate::watchband::{
-    AGE_LABEL_WIDTH, elapsed_label, elapsed_label_deadline_millis, remaining_label,
+    AGE_SLOT_WIDTH, elapsed_label, elapsed_label_deadline_millis, remaining_label,
     remaining_label_deadline_millis, task_elapsed_label, task_elapsed_label_deadline_millis,
     task_remaining_label, task_remaining_label_deadline_millis,
 };
@@ -148,10 +148,9 @@ enum RelativeClock {
 
 /// One relative age, advancing at its next visible deadline.
 ///
-/// The rendered span is a fixed-width slot: `data-age-slot` carries the
-/// character budget the label is bounded to, and the stylesheet sizes the box
-/// from it once. Because the box never depends on the text, a tick replaces the
-/// text node and leaves every neighbouring layout box exactly where it was.
+/// The rendered span is an exact fixed-width slot: `data-age-slot` carries that
+/// width and the stylesheet owns its geometry. A tick replaces only the text
+/// node and leaves every neighboring layout box where it was.
 #[function_component(Age)]
 pub(super) fn age(props: &AgeProps) -> Html {
     let slot = use_node_ref();
@@ -184,7 +183,7 @@ pub(super) fn age(props: &AgeProps) -> Html {
                 title={props.title.clone()}
                 href={href.clone()}
                 aria-label={props.label.clone()}
-                data-age-slot={AGE_LABEL_WIDTH.to_string()}
+                data-age-slot={AGE_SLOT_WIDTH.to_string()}
                 data-age-authored={props.authored.to_string()}
                 data-age-clock="deadline"
             >{text}</a>
@@ -195,7 +194,7 @@ pub(super) fn age(props: &AgeProps) -> Html {
                 ref={slot}
                 class={props.class.clone()}
                 title={props.title.clone()}
-                data-age-slot={AGE_LABEL_WIDTH.to_string()}
+                data-age-slot={AGE_SLOT_WIDTH.to_string()}
                 data-age-authored={props.authored.to_string()}
                 data-age-clock="deadline"
             >{text}</span>
@@ -232,7 +231,7 @@ pub(super) fn countdown(props: &CountdownProps) -> Html {
             ref={slot}
             class={props.class.clone()}
             title={props.title.clone()}
-            data-age-slot={AGE_LABEL_WIDTH.to_string()}
+            data-age-slot={AGE_SLOT_WIDTH.to_string()}
             data-expiry={props.expiry.to_string()}
             data-age-clock="countdown"
         >{remaining_label(props.expiry.saturating_sub(now))}</span>
