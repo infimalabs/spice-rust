@@ -95,21 +95,26 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
             .lanes
             .iter()
             .flat_map(|team| {
-                team.members.iter().filter_map(|member| {
-                    member.occupant.map(|occupant| {
-                        (
-                            (member.lane, occupant),
-                            crate::composer_markdown::QuoteAgent {
-                                team: team.lane,
-                                label: watchband::agent_message_label(
-                                    &member.worktree,
-                                    member.name.as_deref(),
-                                )
-                                .to_owned(),
-                            },
-                        )
+                let members = team.members.len();
+                team.members
+                    .iter()
+                    .enumerate()
+                    .filter_map(move |(position, member)| {
+                        member.occupant.map(|occupant| {
+                            (
+                                (member.lane, occupant),
+                                crate::composer_markdown::QuoteAgent {
+                                    team: team.lane,
+                                    accent: watchband::accent(members, position),
+                                    label: watchband::agent_message_label(
+                                        &member.worktree,
+                                        member.name.as_deref(),
+                                    )
+                                    .to_owned(),
+                                },
+                            )
+                        })
                     })
-                })
             })
             .collect::<crate::composer_markdown::QuoteAgents>(),
     );
