@@ -1059,9 +1059,10 @@ pub fn ticker_chunks(class: &str, detail: &str, budget: usize) -> (String, Strin
     let detail = one_line(detail);
     if class == "tool" {
         let line = truncate(&detail, budget);
-        return line.split_once(' ').map_or_else(
-            || (line.clone(), String::new()),
-            |(prefix, detail)| (prefix.to_owned(), detail.to_owned()),
+        let (prefix, detail) = line.split_once(' ').unwrap_or((line.as_str(), ""));
+        return (
+            prefix.strip_suffix(':').unwrap_or(prefix).to_owned(),
+            detail.to_owned(),
         );
     }
     let (prefix, detail) = (class, detail.as_str());
@@ -1302,6 +1303,7 @@ mod tests {
                 "cargo",
                 "test:all --url https://host:443",
             ),
+            ("shell: command", "shell", "command"),
             ("https://host:443/run now", "https://host:443/run", "now"),
             ("src/main.rs:42:7 changed", "src/main.rs:42:7", "changed"),
             (
