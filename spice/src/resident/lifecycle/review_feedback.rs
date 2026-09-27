@@ -8,9 +8,6 @@ use wire::{Actor, CanonicalUuid, Seq, TaskStamp};
 
 use super::*;
 
-/// Prefix identifying resident-authored peer-review feedback directives.
-pub(super) const CONTROL_PREFIX: &str = "review-feedback:";
-
 #[derive(Clone, Copy)]
 struct ClaimAuthor {
     lane: CanonicalUuid,
@@ -55,7 +52,7 @@ pub(super) fn reconcile(
             let Some(feedback) = feedback(observed, envelope, &reviewed, authors)? else {
                 continue;
             };
-            let control = control(&feedback.task, feedback.reviewed);
+            let control = wire::review_feedback_control(&feedback.task, feedback.reviewed);
             let directive = identity(&control);
             if super::super::steering::control_standing(bus, directive, feedback.lane, &control)?
                 .is_some()
@@ -301,10 +298,6 @@ fn feedback_text(handle: &wire::TaskHandle, finding: &str) -> String {
          it raises are already on the board, so there is nothing to capture or act on now! \
          Keep working your current task; do not re-file what the system already filed."
     )
-}
-
-fn control(task: &TaskStamp, reviewed: Seq) -> String {
-    format!("{CONTROL_PREFIX}{task}:{reviewed}")
 }
 
 fn identity(control: &str) -> CanonicalUuid {

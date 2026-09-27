@@ -140,6 +140,7 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
                 submissions: &render.submissions.status,
                 team_controls: render.team_controls,
             })}
+            {render_review_feedback(surface.as_ref(), &render.select_task)}
             if let Some(notice) = &**render.work_scope_notice {
                 <p class="visually-hidden" role="status" aria-live="polite">{notice}</p>
             }
@@ -160,6 +161,56 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
             {render_workspace(&render, work)}
             {render_task_detail(&render, work)}
         </div>
+    }
+}
+
+fn render_review_feedback(
+    runtime: Option<&CanvasRuntime>,
+    select_task: &Callback<wire::TaskStamp>,
+) -> Html {
+    let Some(runtime) = runtime else {
+        return Html::default();
+    };
+    if runtime.review_feedback().is_empty() {
+        return Html::default();
+    }
+    html! {
+        <section class="review-feedback-list" aria-live="polite" aria-label="Peer review feedback">
+            {for runtime.review_feedback().iter().rev().map(|feedback| {
+                let task = feedback.task().clone();
+                let task_label = runtime
+                    .board()
+                    .and_then(|board| {
+                        board.tasks.iter().find(|candidate| {
+                            candidate.statement.body.born == task
+                        })
+                    })
+                    .map_or_else(|| task.to_string(), |task| task.statement.body.handle.to_string());
+                let open = {
+                    let select_task = select_task.clone();
+                    Callback::from(move |_| select_task.emit(task.clone()))
+                };
+                html! {
+                    <article
+                        class="review-feedback-notice"
+                        data-review-fact={feedback.seq().to_string()}
+                        data-review-task={feedback.task().to_string()}
+                    >
+                        <header>
+                            <strong class="review-feedback-source" title="Spice">{"🌶️"}</strong>
+                            <span class="review-feedback-verdict">{"Peer review"}</span>
+                            <button
+                                type="button"
+                                class="review-feedback-task"
+                                aria-label={format!("Open {task_label} details")}
+                                onclick={open}
+                            >{task_label}</button>
+                        </header>
+                        <blockquote><p>{feedback.text().to_owned()}</p></blockquote>
+                    </article>
+                }
+            })}
+        </section>
     }
 }
 
