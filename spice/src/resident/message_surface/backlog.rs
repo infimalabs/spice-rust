@@ -14,10 +14,10 @@ mod history;
 mod tests;
 use history::{HistorySources, history_newest, history_tail, history_tail_error};
 
-/// Fixed newest-record window for one startup tape read.
+/// Fixed newest-record window for reconstructing live projection state.
 ///
-/// Startup seeds every current lane before discovery is published, so each
-/// lane reads one window and the pageable history below fills the rest.
+/// Hidden JSONL activity may fill this window without producing shown cards,
+/// so the initial visible page is backfilled separately through durable history.
 const STARTUP_WINDOW_BYTES: u64 = 1024 * 1024;
 /// Newest-record window for one historical tape read.
 ///
@@ -180,7 +180,7 @@ impl StartupWork {
 ///
 /// Live capture and restart replay both cross [`publish_agent_event`]. A record
 /// captured during startup is replayed or queued live, then deduplicated.
-/// Startup work remains independently bounded from pageable history.
+/// Fixed-tail reconstruction and durable-page reads keep independent bounds.
 #[cfg(test)]
 pub(in crate::resident) fn restore_agent_messages(
     paths: &RuntimePaths,
@@ -246,6 +246,24 @@ fn restore_agent_messages_with(
         .filter(|lane| available.contains(lane))
         .copied()
         .collect::<Vec<_>>();
+    for (lane, page) in initial_history_pages(&history, &history_open) {
+        match page {
+            Ok(Some(page)) => {
+                for message in page.messages {
+                    generation.publish(message).map_err(|error| {
+                        store_fault("canvas::message-publish-failed", &error.to_string())
+                    })?;
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                let _ = writeln!(
+                    diagnostic,
+                    "canvas backlog unavailable for lane {lane}: {error}",
+                );
+            }
+        }
+    }
     publisher
         .set_history_provider(history)
         .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
@@ -259,6 +277,48 @@ fn restore_agent_messages_with(
         .bound_initial_history()
         .map_err(|error| store_fault("canvas::message-history-unavailable", &error.to_string()))?;
     Ok(())
+}
+
+/// Read every admitted lane's newest durable card page before Canvas readiness.
+///
+/// The fixed startup tape tail bounds reconstruction work but can contain only
+/// hidden tool records. Durable history already owns the wider bounded walk
+/// needed to find shown cards. Reading lanes concurrently preserves that bound
+/// per lane without making a sparse sibling delay every other initial view.
+fn initial_history_pages(
+    history: &Arc<DurableHistory>,
+    lanes: &[CanonicalUuid],
+) -> Vec<(
+    CanonicalUuid,
+    Result<Option<canvas::stream::MessageHistoryPage>, String>,
+)> {
+    std::thread::scope(|scope| {
+        let reads = lanes
+            .iter()
+            .copied()
+            .map(|lane| {
+                let history = Arc::clone(history);
+                let read = scope.spawn(move || {
+                    canvas::stream::MessageHistoryProvider::history(
+                        history.as_ref(),
+                        lane,
+                        None,
+                        canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT,
+                    )
+                });
+                (lane, read)
+            })
+            .collect::<Vec<_>>();
+        reads
+            .into_iter()
+            .map(|(lane, read)| {
+                let page = read.join().unwrap_or_else(|_| {
+                    Err("the durable history reader stopped before answering".to_owned())
+                });
+                (lane, page)
+            })
+            .collect()
+    })
 }
 
 #[derive(Debug)]
