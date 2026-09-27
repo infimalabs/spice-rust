@@ -143,14 +143,12 @@ body:has(.shell--mosaic),
   --canvas-menu-accent: var(--warning);
 }
 .canvas-menu > summary:not([data-connection="online"]) .canvas-menu-pepper { filter: grayscale(1); }
-.canvas-menu-trigger--fast .canvas-menu-flame::before { opacity: .82; }
-.canvas-menu-trigger--fast .canvas-menu-flame::before,
+.canvas-menu-trigger--fast .canvas-menu-flame::before { opacity: 1; }
 .canvas-menu > summary:is([data-connection="starting"], [data-connection="connecting"], [data-connection="reconnecting"]) .canvas-menu-pepper {
   animation: canvas-fast-mode-pulse 5s ease-in-out infinite;
 }
 @keyframes canvas-fast-mode-pulse { 0%, 100% { opacity: 0; } 45% { opacity: .92; } }
 @media (prefers-reduced-motion: reduce) {
-  .canvas-menu-trigger--fast .canvas-menu-flame::before,
   .canvas-menu > summary:is([data-connection="starting"], [data-connection="connecting"], [data-connection="reconnecting"]) .canvas-menu-pepper {
     animation: none;
   }
