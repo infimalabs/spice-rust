@@ -105,11 +105,11 @@ requires it. Actual browser interaction evidence is disposable feedback, not a
 reusable browser-shard receipt. No separate slow-test classification command or
 JavaScript test package remains.
 
-## Browser evidence defaults to the operator's dark theme
+## Browser evidence follows the host system theme
 
 Use the repository-owned `launchCanvasBrowser` helper for disposable Canvas
-browser checks. It creates a headless Playwright browser, context, and page with
-`prefers-color-scheme: dark`; callers do not repeat theme setup:
+browser checks. It detects the host appearance and gives the headless context
+the matching `prefers-color-scheme`; callers do not repeat theme setup:
 
 ```js
 import { chromium } from "playwright";
@@ -124,10 +124,12 @@ try {
 }
 ```
 
-An intentional theme-matrix check overrides
-`contextOptions.colorScheme`; ordinary screenshots and visual checks retain the
-dark default. This browser default never changes an explicit Canvas preference:
-a stored `spice:canvas-theme` still wins.
+An intentional theme-matrix check overrides `contextOptions.colorScheme`.
+Ordinary screenshots and visual checks retain the system default. The returned
+`colorScheme` and `colorSchemeSource` report the selected value and whether it
+came from `"system"` detection or `"explicit"` configuration. This browser
+preference never changes an explicit Canvas preference: a stored
+`spice:canvas-theme` still wins.
 
 ```js
 const lightCanvas = await launchCanvasBrowser(chromium, {
