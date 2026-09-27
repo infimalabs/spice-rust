@@ -893,6 +893,18 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
             quotes: Vec::new(),
         });
     }
+    let spice_text = "direction from Spice";
+    let spice_target = steering_target("dTVQdQfMC", spice_text);
+    markdown.push(spice_target.markdown());
+    quotes.push(wire::QuotePresentation::Resolved {
+        target: spice_target.to_string(),
+        text: spice_text.to_owned(),
+        author: wire::QuoteAuthor::Directive {
+            actor: wire::Actor::Spice,
+        },
+        disposition: None,
+        quotes: Vec::new(),
+    });
     let handle: wire::TaskHandle = "QUOTE-dTVQdQfLw"
         .parse()
         .expect("fixture task is canonical");
@@ -905,71 +917,44 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         &BTreeMap::new(),
         &tasks,
     );
+    let html = rendered.html;
 
     for (_, key) in cases {
         assert!(
-            rendered
-                .html
-                .contains(&format!("data-quote-disposition=\"{key}\"")),
-            "{key}: {}",
-            rendered.html
+            html.contains(&format!("data-quote-disposition=\"{key}\"")),
+            "{key}: {html}"
         );
     }
     assert_eq!(
-        rendered.html.matches("class=\"message-ack-pill\"").count(),
+        html.matches("class=\"message-ack-pill\"").count(),
         2,
         "ACK and NACK reuse the canonical acknowledgement pill"
     );
-    let acknowledgement = rendered
-        .html
+    let acknowledgement = html
         .find("data-quote-disposition=\"acked\"")
         .expect("acknowledged state renders");
-    let acknowledged_prose = rendered
-        .html
+    let acknowledged_prose = html
         .find("direction dTVQdQfLx")
         .expect("acknowledged prose renders");
     assert!(
         acknowledgement < acknowledged_prose,
         "the acknowledgement precedes its directive prose"
     );
+    assert_eq!(html.matches("class=\"message-quote-signoff\"").count(), 7);
     assert_eq!(
-        rendered
-            .html
-            .matches("class=\"message-quote-signoff\"")
+        html.matches("data-quote-actor=\"operator\">Operator</span>")
             .count(),
         6
     );
-    assert_eq!(
-        rendered
-            .html
-            .matches("data-quote-actor=\"operator\">Operator</span>")
-            .count(),
-        6
-    );
-    assert!(!rendered.html.contains("history unavailable"));
-    assert!(!rendered.html.contains("Directive by"));
     assert!(
-        !rendered
-            .html
-            .contains("class=\"message-quote-disposition tag")
+        html.contains("data-quote-actor=\"spice\" role=\"img\" aria-label=\"Spice\">🌶️</span>")
     );
-    assert_eq!(
-        rendered
-            .html
-            .matches("class=\"message-quote-task\"")
-            .count(),
-        1
-    );
-    assert!(
-        rendered
-            .html
-            .contains("data-task-handle=\"QUOTE-dTVQdQfLw\"")
-    );
-    assert!(
-        rendered
-            .html
-            .contains("aria-label=\"Open task QUOTE-dTVQdQfLw in Work\"")
-    );
+    assert!(!html.contains("history unavailable"));
+    assert!(!html.contains("Directive by"));
+    assert!(!html.contains("class=\"message-quote-disposition tag"));
+    assert_eq!(html.matches("class=\"message-quote-task\"").count(), 1);
+    assert!(html.contains("data-task-handle=\"QUOTE-dTVQdQfLw\""));
+    assert!(html.contains("aria-label=\"Open task QUOTE-dTVQdQfLw in Work\""));
 }
 
 /// A card keeps the agents its quotes can render and nothing else: rendering

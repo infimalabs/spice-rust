@@ -199,7 +199,10 @@ fn author_html(author: &QuoteAuthor, agents: &super::QuoteAgents) -> String {
         }
         QuoteAuthor::Directive { actor } => match actor {
             wire::Actor::Operator => principal_html("Operator", "operator"),
-            wire::Actor::Spice => principal_html("Spice", "spice"),
+            wire::Actor::Spice => "<span class=\"message-quote-author\" \
+                data-quote-author=\"directive\" data-quote-actor=\"spice\" \
+                role=\"img\" aria-label=\"Spice\">🌶️</span>"
+                .to_owned(),
             wire::Actor::Lane(lane) => {
                 let (label, accent) = agents
                     .iter()
