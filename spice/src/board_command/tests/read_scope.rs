@@ -67,6 +67,18 @@ fn push_terminal_task(
     creation: &body::TaskCreationContext,
     fixture: TerminalTaskFixture,
 ) -> TaskStamp {
+    push_task(write, origin, creation, fixture, "completed")
+}
+
+/// One task head whose workflow is `status`; only `pending` stays unsettled.
+fn push_task(
+    write: &mut JournalWrite,
+    origin: &wire::Origin,
+    creation: &body::TaskCreationContext,
+    fixture: TerminalTaskFixture,
+    status: &str,
+) -> TaskStamp {
+    let pending = status == "pending";
     let task = TaskStamp::for_micros(fixture.micros).expect("fixture task stamp");
     let phase: wire::Phase = "todo".parse().expect("fixture phase");
     let flow = vec![phase.clone()];
@@ -107,14 +119,15 @@ fn push_terminal_task(
         revision: position,
     });
     let workflow_task = task.clone();
+    let status = status.to_owned();
     write.workflow_head(workflow_task, added, move |_| WorkflowHead {
         flow,
         phase,
-        status: "completed".to_owned(),
-        review: "clean".to_owned(),
+        status,
+        review: if pending { "unassigned" } else { "clean" }.to_owned(),
         assignment: None,
         deferral: None,
-        completion: Some(fixture.completion),
+        completion: (!pending).then_some(fixture.completion),
         generation: 0,
     });
     task
@@ -268,6 +281,50 @@ fn at_born(answer: &BoardAnswer, born: &TaskStamp) -> TaskHandle {
         .body
         .handle
         .clone()
+}
+
+/// A direction's Work outlives the open board: open reads index every task an
+/// acknowledgement caused, open or settled, until that task is deleted.
+#[test]
+fn open_reads_index_the_work_each_direction_caused_until_it_is_deleted() {
+    let (root, bus, epoch, _seats) = fixture("open-origin-index", 0);
+    let ack: wire::Origin = "ack:dTVQdQfLw".parse().expect("ack fixture origin");
+    let unrelated: wire::Origin = "fixture:unrelated".parse().expect("fixture origin");
+    let at = Instant::new(jiff::Timestamp::now()).expect("current fixture instant");
+    let creation = body::TaskCreationContext::legacy_unavailable();
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        unrelated.clone(),
+        at,
+        Producer::CommandDoor,
+    );
+    let mut push = |micros: i64, origin: &wire::Origin, status: &str| {
+        let fixture = TerminalTaskFixture {
+            micros,
+            title: format!("Origin fixture {micros}"),
+            description: None,
+            project: "board.test".to_owned(),
+            completion: at,
+        };
+        push_task(&mut write, origin, &creation, fixture, status)
+    };
+    let open = push(300_000_000_000, &ack, "pending");
+    let completed = push(300_000_000_001, &ack, "completed");
+    push(300_000_000_002, &ack, "deleted");
+    push(300_000_000_003, &unrelated, "completed");
+    assert!(matches!(
+        bus.commit(write).expect("origin fixture reaches writer"),
+        CommitOutcome::Committed(_)
+    ));
+
+    let answer = scoped(&bus, epoch, Actor::Operator, BoardRead::Open);
+    let mut caused = [open, completed].map(|task| TaskHandle::for_project("board.test", &task));
+    caused.sort();
+    assert_eq!(
+        answer.origins,
+        std::collections::BTreeMap::from([("dTVQdQfLw".to_owned(), caused.to_vec())])
+    );
+    clean(&root, bus);
 }
 #[test]
 fn open_read_excludes_large_history_and_cursor_pages_cover_it_once() {

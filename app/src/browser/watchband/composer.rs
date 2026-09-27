@@ -310,10 +310,12 @@ fn render_agent_message_card(
 ) -> Html {
     let inspector = card_inspector.context.as_ref();
     let inspection = card_inspector.inspection.as_ref();
-    let quote_tasks = inspector.map_or_else(Rc::default, |context| context.quote_tasks().clone());
     let member = &props.member;
     let quote_lane = props.quote_lane;
     let message = &props.message;
+    let quote_tasks = Rc::new(inspector.map_or_else(Default::default, |context| {
+        context.message_quote_tasks(message)
+    }));
     let layout = &props.layout;
     let AgentMessagePresentation {
         source_id,

@@ -285,6 +285,7 @@ fn board_response(
         allocation_band: 2,
         recent_cell: None,
         offer: Vec::new(),
+        origins: Default::default(),
         schema: 1,
         cursor: seq(4),
         principal: wire::Actor::Operator,
@@ -364,37 +365,6 @@ fn admitted_board_answer(
     session
         .admit_frame(&bytes)
         .expect("board answer is admitted")
-}
-
-#[test]
-fn directive_quote_navigation_keeps_every_task_from_the_acknowledgement_origin() {
-    let session = session(OPERATOR, EPOCH);
-    let accepted = acceptance(&session, "operator", EPOCH);
-    let response = board_response(&session, "Hidden correction");
-    let wire::Outcome::Reply(reply) = &response.get().outcome else {
-        panic!("board fixture is a reply");
-    };
-    let mut answer = reply.body.clone();
-    answer.tasks.push(board_task(
-        "PUBLIC-work2",
-        NEXT_CAPABILITY,
-        "Second task from the same direction",
-        "app.followup",
-        Some("ack:1kQwPZtK"),
-        wire::EnvironmentRequirements::default(),
-    ));
-    let mut runtime = CanvasRuntime::new(&accepted);
-    runtime.apply_board(&admitted_board_answer(&session, answer));
-    let board = runtime.board().expect("board snapshot");
-    let mut expected = board
-        .tasks
-        .iter()
-        .filter(|task| task.statement.body.provenance.as_str() == "ack:1kQwPZtK")
-        .map(|task| task.statement.body.handle.clone())
-        .collect::<Vec<_>>();
-    expected.sort();
-
-    assert_eq!(board.quote_tasks().get("1kQwPZtK"), Some(&expected));
 }
 
 /// One admitted safe lane roster, one row per `(lane, team, occupant, bound)` tuple.

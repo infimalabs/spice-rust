@@ -1109,6 +1109,53 @@ fn quote_levels_name_their_own_work_at_every_occurrence() {
     );
 }
 
+/// A card holds the Work of every direction it quotes, at any depth or as a
+/// directive context, and no other entry of the board's origin index.
+#[test]
+fn a_cards_quote_tasks_follow_only_the_directions_it_quotes() {
+    let inner_text = "nested direction";
+    let inner = steering_target("dTVQdQfLx", inner_text);
+    let outer_text = format!("outer direction {}", inner.markdown());
+    let outer = steering_target("dTVQdQfLw", &outer_text);
+    let context = steering_target("dTVQdQfLy", "acknowledged direction");
+    let resolved =
+        |target: &wire::QuoteTarget, text: &str, quotes| wire::QuotePresentation::Resolved {
+            target: target.to_string(),
+            text: text.to_owned(),
+            author: wire::QuoteAuthor::Directive {
+                actor: wire::Actor::Operator,
+            },
+            disposition: None,
+            quotes,
+        };
+    let quotes = [resolved(
+        &outer,
+        &outer_text,
+        vec![resolved(&inner, inner_text, Vec::new())],
+    )];
+    let directives = [MessageDirective {
+        start: 0,
+        end: 1,
+        quote_target: context,
+        actor: wire::Actor::Operator,
+        authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
+    }];
+    let work = |handle: &str| vec![handle.parse::<wire::TaskHandle>().expect("fixture task")];
+    let index = BTreeMap::from([
+        ("dTVQdQfLw".to_owned(), work("OUTER-dTZQjKHhG")),
+        ("dTVQdQfLx".to_owned(), work("INNER-dTZRdv3bF")),
+        ("dTVQdQfLy".to_owned(), work("CONTEXT-dTZRfCQ43")),
+        ("dTVQdQfLz".to_owned(), work("ELSEWHERE-dTZRjCd3s")),
+    ]);
+
+    let mut expected = index.clone();
+    expected.remove("dTVQdQfLz");
+    assert_eq!(
+        referenced_quote_tasks(&quotes, &directives, &index),
+        expected
+    );
+}
+
 /// A card keeps the agents its quotes can render and nothing else: rendering
 /// from that projection matches rendering from the whole roster, and a seat the
 /// quotes never name changing occupancy leaves the card's projection, and so

@@ -742,6 +742,11 @@ pub struct BoardAnswer {
     /// fixed across steps. Empty for every other read.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub offer: Vec<crate::TaskStamp>,
+    /// Every steering key whose direction caused non-deleted work, mapped to
+    /// that work's handles in stable order. Open reads carry the whole index,
+    /// so a quoted direction keeps its Work after that work settles.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub origins: std::collections::BTreeMap<String, Vec<crate::TaskHandle>>,
     /// Terminal-page metadata, present only for [`BoardRead::History`].
     #[serde(
         default,

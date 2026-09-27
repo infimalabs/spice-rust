@@ -52,7 +52,9 @@ impl QuoteSource {
 
 pub(crate) type QuoteSources = BTreeMap<String, QuoteSource>;
 
-pub(crate) use quotes::{referenced_quote_agents, referenced_quote_sources};
+pub(crate) use quotes::{
+    referenced_quote_agents, referenced_quote_sources, referenced_quote_tasks,
+};
 
 /// Render received text through the one sanitized Markdown path used by cards.
 #[cfg(test)]

@@ -707,6 +707,7 @@ mod tests {
             cursor: seq(100),
             tasks,
             offer: Vec::new(),
+            quote_tasks: std::rc::Rc::default(),
             resident: wire::ResidentState::Seated,
             environment: Environment::journal_schema(1).expect("fixture schema"),
         }
