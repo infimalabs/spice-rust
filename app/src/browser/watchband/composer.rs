@@ -77,16 +77,118 @@ pub(super) struct ComposerTextareaProps {
     pub(super) onpaste: Callback<Event>,
 }
 
+#[hook]
+fn use_composer_diagnostics(root: NodeRef, trace_instance: u64, trace_kind: &'static str) {
+    use_effect_with((), move |()| {
+        let registration = (trace_instance != 0)
+            .then(|| root.cast::<web_sys::HtmlTextAreaElement>())
+            .flatten()
+            .map(|textarea| {
+                crate::browser::diagnostics::instant("composer.textarea.mount", || {
+                    crate::browser::diagnostics::Metadata {
+                        instance: Some(trace_instance),
+                        kind: Some(trace_kind),
+                        focused: textarea.matches(":focus").ok(),
+                        selection_start: textarea.selection_start().ok().flatten(),
+                        selection_end: textarea.selection_end().ok().flatten(),
+                        ..crate::browser::diagnostics::Metadata::default()
+                    }
+                });
+                let composing = Rc::new(Cell::new(false));
+                let listeners = [
+                    "beforeinput",
+                    "input",
+                    "compositionstart",
+                    "compositionupdate",
+                    "compositionend",
+                    "select",
+                ]
+                .into_iter()
+                .map(|event_name| {
+                    let callback_textarea = textarea.clone();
+                    let composing = composing.clone();
+                    let callback = Closure::<dyn FnMut(Event)>::new(move |_event: Event| {
+                        if event_name == "compositionstart" {
+                            composing.set(true);
+                        } else if event_name == "compositionend" {
+                            composing.set(false);
+                        }
+                        crate::browser::diagnostics::instant("composer.input", || {
+                            crate::browser::diagnostics::Metadata {
+                                instance: Some(trace_instance),
+                                kind: Some(trace_kind),
+                                event: Some(event_name),
+                                focused: callback_textarea.matches(":focus").ok(),
+                                composing: Some(composing.get()),
+                                selection_start: callback_textarea.selection_start().ok().flatten(),
+                                selection_end: callback_textarea.selection_end().ok().flatten(),
+                                ..crate::browser::diagnostics::Metadata::default()
+                            }
+                        });
+                    });
+                    textarea
+                        .add_event_listener_with_callback(
+                            event_name,
+                            callback.as_ref().unchecked_ref(),
+                        )
+                        .expect("composer textarea accepts its diagnostics listener");
+                    (event_name, callback)
+                })
+                .collect::<Vec<_>>();
+                (textarea, listeners)
+            });
+        move || {
+            let Some((textarea, listeners)) = registration else {
+                return;
+            };
+            for (event_name, callback) in listeners {
+                let _ = textarea.remove_event_listener_with_callback(
+                    event_name,
+                    callback.as_ref().unchecked_ref(),
+                );
+            }
+            crate::browser::diagnostics::instant("composer.textarea.unmount", || {
+                crate::browser::diagnostics::Metadata {
+                    instance: Some(trace_instance),
+                    kind: Some(trace_kind),
+                    focused: textarea.matches(":focus").ok(),
+                    selection_start: textarea.selection_start().ok().flatten(),
+                    selection_end: textarea.selection_end().ok().flatten(),
+                    ..crate::browser::diagnostics::Metadata::default()
+                }
+            });
+        }
+    });
+}
+
 #[function_component(ComposerTextarea)]
 pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
     let root = use_node_ref();
+    let trace_instance = *use_mut_ref(crate::browser::diagnostics::instance).borrow();
+    let trace_kind = if properties.primary_target.is_some() {
+        "primary"
+    } else {
+        "quote"
+    };
     {
         let root = root.clone();
         use_effect_with(properties.onkeydown.clone(), move |onkeydown| {
             let registration = root.cast::<web_sys::HtmlTextAreaElement>().map(|textarea| {
                 let onkeydown = onkeydown.clone();
+                let trace_textarea = textarea.clone();
                 let callback =
                     Closure::<dyn FnMut(KeyboardEvent)>::new(move |event: KeyboardEvent| {
+                        let _trace = crate::browser::diagnostics::span("composer.keydown", || {
+                            crate::browser::diagnostics::Metadata {
+                                instance: Some(trace_instance),
+                                kind: Some(trace_kind),
+                                event: Some("keydown"),
+                                focused: trace_textarea.matches(":focus").ok(),
+                                selection_start: trace_textarea.selection_start().ok().flatten(),
+                                selection_end: trace_textarea.selection_end().ok().flatten(),
+                                ..crate::browser::diagnostics::Metadata::default()
+                            }
+                        });
                         onkeydown.emit(event);
                     });
                 textarea
@@ -104,6 +206,7 @@ pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
             }
         });
     }
+    use_composer_diagnostics(root.clone(), trace_instance, trace_kind);
     {
         let root = root.clone();
         let drafts = properties.drafts.clone();
