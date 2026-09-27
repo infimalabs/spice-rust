@@ -197,8 +197,8 @@ fn render_review_feedback(
                         data-review-task={feedback.task().to_string()}
                     >
                         <header>
-                            <strong class="review-feedback-source" title="Spice">{"🌶️"}</strong>
-                            <span class="review-feedback-verdict">{"Peer review"}</span>
+                            <strong class="review-feedback-source" aria-label="Spice">{"🌶️"}</strong>
+                            <span class="review-feedback-verdict">{"Peer review finding"}</span>
                             <button
                                 type="button"
                                 class="review-feedback-task"
