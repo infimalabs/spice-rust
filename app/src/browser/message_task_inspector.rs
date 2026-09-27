@@ -160,9 +160,10 @@ impl Context {
         }
     }
 
-    /// Replace the card-local quick view with the shared task detail layer.
-    fn open_detail(&self, task: TaskStamp) {
-        let return_target = (*self.inspection).as_ref().and_then(return_target);
+    /// Replace the card-local quick view, when present, with the shared task
+    /// detail layer. Both the inspector arrow and direct chip navigation cross
+    /// this one state transition.
+    pub fn open_detail(&self, task: TaskStamp, return_target: Option<web_sys::Element>) {
         self.inspection.set(None);
         self.navigate.emit(navigation::Intent::Task(task));
         if let Some(return_target) = return_target {
@@ -210,7 +211,10 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
     let open_detail = {
         let context = properties.context.clone();
         let task = properties.inspection.task.clone();
-        Callback::from(move |_| context.open_detail(task.clone()))
+        Callback::from(move |_| {
+            let focus_target = (*context.inspection).as_ref().and_then(return_target);
+            context.open_detail(task.clone(), focus_target);
+        })
     };
     html! {
         <section

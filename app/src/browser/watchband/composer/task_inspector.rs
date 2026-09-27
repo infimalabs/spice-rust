@@ -146,13 +146,20 @@ pub(super) fn task_chip_click(inspector: Option<Context>, card: String) -> Callb
             }
             return;
         }
-        let Some(handle) = task_handle_from_target(event.target(), ".message-task-chip") else {
+        let Some((chip, handle)) = task_control_from_target(event.target(), ".message-task-chip")
+        else {
             return;
         };
         event.prevent_default();
         event.stop_propagation();
         if let Some(inspector) = inspector.as_ref() {
-            inspector.inspect(card.clone(), handle);
+            if event.meta_key() {
+                if let Ok(task) = handle.born() {
+                    inspector.open_detail(task, Some(chip));
+                }
+            } else {
+                inspector.inspect(card.clone(), handle);
+            }
         }
     })
 }
@@ -184,15 +191,24 @@ pub(super) fn task_chip_keydown(
     })
 }
 
+fn task_control_from_target(
+    target: Option<web_sys::EventTarget>,
+    selector: &str,
+) -> Option<(web_sys::Element, wire::TaskHandle)> {
+    let control = target
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest(selector).ok().flatten())?;
+    let handle = control
+        .get_attribute("data-task-handle")
+        .and_then(|handle| handle.parse().ok())?;
+    Some((control, handle))
+}
+
 fn task_handle_from_target(
     target: Option<web_sys::EventTarget>,
     selector: &str,
 ) -> Option<wire::TaskHandle> {
-    target
-        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .and_then(|target| target.closest(selector).ok().flatten())?
-        .get_attribute("data-task-handle")
-        .and_then(|handle| handle.parse().ok())
+    task_control_from_target(target, selector).map(|(_, handle)| handle)
 }
 
 pub(super) fn close_inspector(inspector: Option<Context>) -> Callback<MouseEvent> {
