@@ -413,6 +413,27 @@
 .markdown-body .message-quote-card .message-quote-card {
   border-left-color: color-mix(in srgb, var(--accent) 88%, white);
 }
+.markdown-body .message-quote-card:has(
+  > .message-quote-body > p.message-image-stack:last-child
+) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  column-gap: 4px;
+}
+.markdown-body .message-quote-card:has(
+  > .message-quote-body > p.message-image-stack:last-child
+) > .message-quote-body > :not(:last-child) {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+.markdown-body .message-quote-card:has(
+  > .message-quote-body > p.message-image-stack:last-child
+) > .message-quote-body > p.message-image-stack:last-child {
+  display: flex;
+  flex: 1 1 0;
+  min-width: 0;
+}
 .markdown-body .message-quote-signoff {
   display: inline-flex;
   max-width: 100%;
@@ -425,6 +446,60 @@
   color: var(--muted);
   font-size: .8125em;
   line-height: inherit;
+}
+.markdown-body .message-quote-card:has(
+  > .message-quote-body > p.message-image-stack:last-child
+) > .message-quote-signoff {
+  flex: 0 0 auto;
+  margin-left: auto;
+  float: none;
+}
+.markdown-body blockquote
+  > p:has(> .message-image):has(> .message-quote-signoff) {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.markdown-body blockquote
+  > p:has(> .message-image)
+  > .message-quote-signoff {
+  flex: 0 0 auto;
+  align-self: flex-end;
+  margin-left: auto;
+  float: none;
+}
+.markdown-body blockquote:has(img):has(
+  > p:last-child > .message-quote-signoff
+):not(:has(> p:last-child img)) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  column-gap: 4px;
+}
+.markdown-body blockquote:has(img):has(
+  > p:last-child > .message-quote-signoff
+):not(:has(> p:last-child img)) > :not(:last-child) {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+.markdown-body blockquote:has(img):has(
+  > p:last-child > .message-quote-signoff
+):not(:has(> p:last-child img)) > :nth-last-child(2):has(img) {
+  flex: 1 1 0;
+}
+.markdown-body blockquote:has(img):has(
+  > p:last-child > .message-quote-signoff
+):not(:has(> p:last-child img)) > p:last-child {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  margin: 0 0 0 auto;
+}
+.markdown-body blockquote:has(img):has(
+  > p:last-child > .message-quote-signoff
+):not(:has(> p:last-child img)) > p:last-child > .message-quote-signoff {
+  margin-left: 0;
+  float: none;
 }
 .markdown-body .message-quote-author {
   --message-quote-author-accent: var(--muted);
