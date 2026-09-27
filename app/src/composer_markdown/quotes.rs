@@ -108,8 +108,8 @@ pub(crate) fn referenced_quote_sources(
     referenced
 }
 
-/// The tail of quoted words: associated work, an exceptional historical
-/// agent name, and the source message's live relative age.
+/// The tail of quoted words: associated work, an explicit non-Operator author
+/// name, and the source message's live relative age.
 pub(super) fn signoff_html(
     author: &QuoteAuthor,
     target: &str,
@@ -125,7 +125,7 @@ pub(super) fn signoff_html(
             format!("<span class=\"message-quote-signoff\">{task}</span>")
         };
     };
-    let name = historical_agent_name_html(author, agents, source);
+    let name = quote_author_name_html(author, agents, source);
     let age = quote_age_slot_html(author, agents, source);
     format!("<span class=\"message-quote-signoff\">{task}{name}{age}</span>")
 }
@@ -200,26 +200,71 @@ fn body_with_disposition<'a>(body: &'a str, disposition: &str) -> Cow<'a, str> {
     )
 }
 
-fn historical_agent_name_html(
+fn quote_author_name_html(
     author: &QuoteAuthor,
     agents: &super::QuoteAgents,
     source: &super::QuoteSource,
 ) -> String {
-    let QuoteAuthor::Agent { lane, occupant } = author else {
-        return String::new();
-    };
-    if agents.contains_key(&(*lane, *occupant)) {
-        return String::new();
+    match author {
+        QuoteAuthor::Agent { lane, occupant } => {
+            let (agent, state) = agents
+                .get(&(*lane, *occupant))
+                .map(|agent| (Some(agent), "current"))
+                .or_else(|| {
+                    source
+                        .agent
+                        .as_ref()
+                        .map(|agent| (Some(agent), "historical"))
+                })
+                .unwrap_or((None, "unresolved"));
+            let label = agent.map_or_else(
+                || {
+                    Cow::Owned(format!(
+                        "{}/{}",
+                        crate::watchband::short(*lane),
+                        crate::watchband::short(*occupant),
+                    ))
+                },
+                |agent| Cow::Borrowed(agent.label.as_str()),
+            );
+            quote_name_html(
+                &label,
+                &format!(
+                    " data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
+                     data-quote-author-state=\"{state}\""
+                ),
+                agent.map(|agent| agent.accent),
+            )
+        }
+        QuoteAuthor::Directive {
+            actor: wire::Actor::Operator,
+        } => String::new(),
+        QuoteAuthor::Directive {
+            actor: wire::Actor::Spice,
+        } => quote_name_html(
+            "Spice",
+            " data-quote-author=\"directive\" data-quote-actor=\"spice\"",
+            None,
+        ),
+        QuoteAuthor::Directive {
+            actor: wire::Actor::Lane(lane),
+        } => quote_name_html(
+            &format!("lane {}", crate::watchband::short(*lane)),
+            &format!(
+                " data-quote-author=\"directive\" data-quote-actor=\"lane:{lane}\" \
+                 data-quote-author-state=\"lane\""
+            ),
+            None,
+        ),
     }
-    source.agent.as_ref().map_or_else(String::new, |agent| {
-        format!(
-            "<span class=\"message-quote-name\" data-quote-agent-lane=\"{lane}\" \
-             data-quote-agent-occupant=\"{occupant}\" data-quote-author-state=\"historical\" \
-             data-accent=\"{}\">{}</span>",
-            agent.accent,
-            escape_html_text(&agent.label),
-        )
-    })
+}
+
+fn quote_name_html(label: &str, data: &str, accent: Option<usize>) -> String {
+    let accent = accent.map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""));
+    format!(
+        "<span class=\"message-quote-name\"{data}{accent}>{}</span>",
+        escape_html_text(label),
+    )
 }
 
 fn quote_age_slot_html(

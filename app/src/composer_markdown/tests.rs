@@ -890,7 +890,12 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
          data-quote-source=\"message-agent-inner-source\" data-quote-author=\"directive\" \
          data-quote-actor=\"operator\"></span>"
     ));
-    assert!(!rendered.html.contains("message-quote-name"));
+    assert!(rendered.html.contains(&format!(
+        "<span class=\"message-quote-name\" data-quote-agent-lane=\"{lane}\" \
+         data-quote-agent-occupant=\"{source}\" data-quote-author-state=\"current\" \
+         data-accent=\"3\">spice-rust-k</span>"
+    )));
+    assert_eq!(rendered.html.matches("message-quote-name").count(), 1);
     assert!(!rendered.html.contains("history unavailable"));
     assert_eq!(rendered.html.matches("data-quote-source=").count(), 2);
     assert!(!rendered.html.contains("Original"));
@@ -983,13 +988,17 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
         .parse()
         .expect("fixture task is canonical");
     let tasks = BTreeMap::from([("dTVQdQfLw".to_owned(), vec![handle])]);
+    let sources = BTreeMap::from([(
+        spice_target.to_string(),
+        quote_source("message-agent-spice-source", 3_000),
+    )]);
     let rendered = render_received_with_quotes(
         &markdown.join(" "),
         &[],
         &[],
         &quotes,
         &BTreeMap::new(),
-        &BTreeMap::new(),
+        &sources,
         &tasks,
     );
     let html = rendered.html;
@@ -1017,11 +1026,15 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     );
     assert_eq!(
         html.matches("class=\"message-quote-signoff\"").count(),
-        1,
-        "only the task-backed sourceless quote needs a tail"
+        2,
+        "the tasked sourceless Operator quote and sourced Spice quote have tails"
     );
-    assert!(!html.contains("message-quote-age-slot"));
-    assert!(!html.contains("message-quote-name"));
+    assert_eq!(html.matches("message-quote-age-slot").count(), 1);
+    assert!(html.contains(
+        "class=\"message-quote-name\" data-quote-author=\"directive\" \
+         data-quote-actor=\"spice\">Spice</span>"
+    ));
+    assert!(!html.contains(">Operator</span>"));
     assert!(!html.contains("history unavailable"));
     assert!(!html.contains("Directive by"));
     assert!(!html.contains("class=\"message-quote-disposition tag"));
@@ -1348,14 +1361,14 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     let [operator, lane, aside] = blocks.as_slice() else {
         unreachable!()
     };
-    let signed = |block: &str, actor: &str| {
+    let attributed = |block: &str, actor: &str| {
         block
             .matches(&format!("data-quote-actor=\"{actor}\""))
             .count()
     };
     assert_eq!(
         (
-            signed(operator, "operator"),
+            attributed(operator, "operator"),
             operator.matches("message-quote-signoff").count()
         ),
         (2, 2),
@@ -1363,13 +1376,19 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     );
     assert_eq!(
         (
-            signed(lane, &format!("lane:{directing}")),
+            attributed(lane, &format!("lane:{directing}")),
             lane.matches("message-quote-signoff").count()
         ),
-        (1, 1),
+        (2, 1),
         "{lane}"
     );
-    assert!(!html.contains("message-quote-name"), "{html}");
+    assert_eq!(html.matches("message-quote-name").count(), 1, "{html}");
+    assert!(lane.contains(&format!(
+        "class=\"message-quote-name\" data-quote-author=\"directive\" \
+         data-quote-actor=\"lane:{directing}\" data-quote-author-state=\"lane\">lane {}</span>",
+        crate::watchband::short(directing),
+    )));
+    assert!(!operator.contains(">Operator</span>"), "{operator}");
     assert_eq!(html.matches("data-quote-source=").count(), 3, "{html}");
     assert!(html.contains("data-quote-age-authored=\"1000\""));
     assert!(html.contains("data-quote-age-authored=\"2000\""));
