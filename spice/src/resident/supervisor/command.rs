@@ -17,7 +17,6 @@
 //! so far while the command keeps running as a job. The resident reaches the
 //! driver through a datagram signal; the payload remains in journal authority.
 
-use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Write};
@@ -264,9 +263,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     ///
     /// Detection reuses the prose scanner but consumes none of its outcomes:
     /// this path writes only a private notice and never reaches journal
-    /// authority. The legacy decline spelling is normalized only for this
-    /// compatibility observation; visible acknowledgment accepts canonical
-    /// markers alone.
+    /// authority.
     fn nudge_hidden_acknowledgements(&self, decoded: &Decoded) {
         let acknowledgement_prose = decoded
             .events()
@@ -279,17 +276,10 @@ impl<W: Write + Send + 'static> Driver<W> {
                 else {
                     return None;
                 };
-                let prose = match parts.as_slice() {
-                    [part] => Cow::Borrowed(part.as_str()),
-                    _ => Cow::Owned(parts.join("\n")),
-                };
-                let prose = if prose.contains("NACK") {
-                    Cow::Owned(prose.replace("NACK", "NAK"))
-                } else {
-                    prose
-                };
-                steer::has_acknowledgement(&prose).then_some(prose)
+                Some(parts.as_slice())
             })
+            .flatten()
+            .filter(|prose| steer::has_acknowledgement(prose))
             .collect::<Vec<_>>();
         if acknowledgement_prose.is_empty() {
             return;
@@ -314,12 +304,14 @@ impl<W: Write + Send + 'static> Driver<W> {
 
         let mut mentioned = BTreeSet::new();
         for prose in acknowledgement_prose {
-            mentioned.extend(steer::scan(&prose, &standing).into_iter().filter_map(
-                |recognition| match recognition.outcome {
-                    steer::Outcome::Retired { key, .. } => Some(key),
-                    steer::Outcome::Missed { .. } => None,
-                },
-            ));
+            mentioned.extend(
+                steer::scan(prose, &standing).into_iter().filter_map(
+                    |recognition| match recognition.outcome {
+                        steer::Outcome::Retired { key, .. } => Some(key),
+                        steer::Outcome::Missed { .. } => None,
+                    },
+                ),
+            );
         }
         mentioned.retain(|key| !reminder.nudged.contains(key));
         if mentioned.is_empty() {

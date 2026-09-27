@@ -387,7 +387,7 @@ fn hidden_ack_attempts_receive_one_private_visible_prose_nudge() {
     driver.deliver_inbox();
 
     let attempt = decoded(
-        br#"{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"thinking","thinking":"private details. ACK 1kJK6N3R: done. NACK 1kJK6M0V: declined."}]}}"#,
+        br#"{"type":"message_end","message":{"role":"assistant","stopReason":"toolUse","content":[{"type":"thinking","thinking":"private details. ACK 1kJK6N3R: done. NAK 1kJK6M0V: declined."}]}}"#,
     );
     driver.observe(&attempt);
     let frames = sink.answered(2);
