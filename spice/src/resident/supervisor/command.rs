@@ -268,15 +268,30 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// compatibility observation; visible acknowledgment accepts canonical
     /// markers alone.
     fn nudge_hidden_acknowledgements(&self, decoded: &Decoded) {
-        if !decoded.events().iter().any(|event| {
-            matches!(
-                event,
-                Event::Reasoning(listen::Reasoning {
-                    content: listen::ReasoningContent::Plain(_),
+        let acknowledgement_prose = decoded
+            .events()
+            .iter()
+            .filter_map(|event| {
+                let Event::Reasoning(listen::Reasoning {
+                    content: listen::ReasoningContent::Plain(parts),
                     ..
-                })
-            )
-        }) {
+                }) = event
+                else {
+                    return None;
+                };
+                let prose = match parts.as_slice() {
+                    [part] => Cow::Borrowed(part.as_str()),
+                    _ => Cow::Owned(parts.join("\n")),
+                };
+                let prose = if prose.contains("NACK") {
+                    Cow::Owned(prose.replace("NACK", "NAK"))
+                } else {
+                    prose
+                };
+                steer::has_acknowledgement(&prose).then_some(prose)
+            })
+            .collect::<Vec<_>>();
+        if acknowledgement_prose.is_empty() {
             return;
         }
         let pending = (self.read_inbox)().unwrap_or_default();
@@ -298,23 +313,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
 
         let mut mentioned = BTreeSet::new();
-        for event in decoded.events() {
-            let Event::Reasoning(listen::Reasoning {
-                content: listen::ReasoningContent::Plain(parts),
-                ..
-            }) = event
-            else {
-                continue;
-            };
-            let prose = match parts.as_slice() {
-                [part] => Cow::Borrowed(part.as_str()),
-                _ => Cow::Owned(parts.join("\n")),
-            };
-            let prose = if prose.contains("NACK") {
-                Cow::Owned(prose.replace("NACK", "NAK"))
-            } else {
-                prose
-            };
+        for prose in acknowledgement_prose {
             mentioned.extend(steer::scan(&prose, &standing).into_iter().filter_map(
                 |recognition| match recognition.outcome {
                     steer::Outcome::Retired { key, .. } => Some(key),
