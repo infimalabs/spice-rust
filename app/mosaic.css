@@ -1048,7 +1048,11 @@ html[data-command-modifier-held="true"]
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
   text-overflow: clip;
-  white-space: pre; text-decoration: underline; text-underline-offset: 2px;
+  white-space: pre;
+}
+a.relative-age {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .team-surface .message-badges {
   display: inline-flex;
