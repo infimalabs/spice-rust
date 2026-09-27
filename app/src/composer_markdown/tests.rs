@@ -800,16 +800,12 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
          data-quote-history=\"available\" \
          aria-label=\"Open information for Agent spice-rust-k\">Agent spice-rust-k</button>"
     )));
-    assert!(rendered.html.contains("data-quote-author=\"directive\""));
     assert!(
-        rendered
-            .html
-            .contains("data-quote-actor=\"operator\" data-quote-history=\"unavailable\"")
+        rendered.html.contains(
+            "data-quote-author=\"directive\" data-quote-actor=\"operator\">Operator</span>"
+        )
     );
-    assert!(rendered.html.contains(
-        ">Operator \
-         <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>"
-    ));
+    assert!(!rendered.html.contains("history unavailable"));
     assert!(rendered.html.contains(inner_text));
     assert!(rendered.html.contains("data-quote-disposition=\"live\""));
     assert!(!rendered.html.contains("Agent:"));
@@ -846,6 +842,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         "data-quote-agent-occupant=\"018f82d4-6f59-7d06-92e3-bce9131163e7\" \
          data-quote-history=\"unavailable\""
     ));
+    assert!(historical.html.contains("· history unavailable"));
     assert!(historical.html.contains("Agent spice-rust-k"));
     assert!(!historical.html.contains("data-quote-agent-team="));
 }
@@ -927,10 +924,11 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     assert_eq!(
         rendered
             .html
-            .matches("data-quote-actor=\"operator\" data-quote-history=\"unavailable\"")
+            .matches("data-quote-actor=\"operator\">Operator</span>")
             .count(),
         6
     );
+    assert!(!rendered.html.contains("history unavailable"));
     assert!(!rendered.html.contains("Directive by"));
     assert!(
         !rendered
