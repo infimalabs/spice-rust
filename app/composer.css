@@ -401,11 +401,11 @@
 }
 .markdown-body .message-quote-card {
   display: flow-root;
-  margin: 7px 0;
-  padding: 7px 8px 7px var(--mosaic-quote-inline);
-  border: var(--canvas-edge);
-  border-left: 3px solid color-mix(in srgb, var(--accent) 72%, var(--line));
-  border-radius: var(--canvas-radius-compact);
+  margin: var(--mosaic-quote-pad-block) 0;
+  padding: var(--mosaic-quote-pad-block) var(--mosaic-quote-inline);
+  border: 0;
+  border-left: var(--mosaic-quote-rail) solid color-mix(in srgb, var(--accent) 72%, var(--line));
+  border-radius: var(--mosaic-quote-radius);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--muted);
   font-size: .8125rem;
