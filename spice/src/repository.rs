@@ -55,7 +55,7 @@
 //!   `spice-rust.toml` plus common-root `.spice-rs/config.toml`; Python owns
 //!   tracked `spice.toml` and its own `.spice` configuration.
 //! * **Steering** has no worktree-content authority. Directives and their ACK or
-//!   NACK dispositions are facts in the common-root journal. Hook media is
+//!   NAK dispositions are facts in the common-root journal. Hook media is
 //!   projected beneath the Git-common `.spice-rs` root and partitioned by lane,
 //!   so an advertised path is stable and directly readable. A tracked
 //!   `<worktree>/.spice-rs` lookalike is ordinary repository content that

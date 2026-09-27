@@ -223,9 +223,9 @@ fn render_hook_document(publication: &HookPublication) -> Result<Option<Vec<u8>>
         context.push_str(concat!(
             "Rust Spice steering is pending. Handle every listed key before other work. ",
             "Speak one line of visible assistant text, `ACK <key> [<key> ...]: <one clause>` or ",
-            "`NACK <key> [<key> ...]: <one clause>`, then retire every listed key immediately ",
+            "`NAK <key> [<key> ...]: <one clause>`, then retire every listed key immediately ",
             "after that line by running each printed `ack <key>` command in the same message; ",
-            "append `--decline` for a NACK. The header itself must be durably present as ",
+            "append `--decline` for a NAK. The header itself must be durably present as ",
             "assistant text; reasoning and tool arguments cannot supply a missing key or disposition."
         ));
     }

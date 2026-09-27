@@ -244,7 +244,7 @@ the four retained presentation stages above:
 stateDiagram-v2
   [*] --> live : publication accepted
   live --> acked : agent ACK
-  live --> declined : agent NACK
+  live --> declined : agent NAK
   live --> canceled : operator cancel
   live --> lapsed : lapse transaction accepted
   live --> deadlettered : PendingInbox automatic wake is Unstarted or terminal-class failed

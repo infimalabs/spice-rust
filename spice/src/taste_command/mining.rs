@@ -716,7 +716,7 @@ fn description(
             correction.excerpt,
         ));
         if let Some(reason) = &correction.decline_reason {
-            description.push_str(&format!("; NACK reason: {reason:?}"));
+            description.push_str(&format!("; NAK reason: {reason:?}"));
         }
         description.push('\n');
     }
@@ -764,13 +764,13 @@ fn headline(message: &str) -> String {
 fn evidence_fault(error: EvidenceError) -> Outcome<TasteMiningReport> {
     let detail = match error {
         EvidenceError::AnswerWithoutSent(directive) => {
-            format!("ACK/NACK references unavailable operator steering directive {directive}")
+            format!("ACK/NAK references unavailable operator steering directive {directive}")
         }
         EvidenceError::AnswerMismatch(directive) => {
-            format!("ACK/NACK key or lane contradicts steering directive {directive}")
+            format!("ACK/NAK key or lane contradicts steering directive {directive}")
         }
         EvidenceError::DuplicateAnswer(directive) => {
-            format!("steering directive {directive} has more than one ACK/NACK disposition")
+            format!("steering directive {directive} has more than one ACK/NAK disposition")
         }
         EvidenceError::TooMany(count) => format!(
             "{count} operator steering directives exceed the bounded mining limit {MAX_AUTHORED_CORRECTIONS}"

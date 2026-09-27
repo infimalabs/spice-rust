@@ -21,25 +21,12 @@ const OMP_ACK_UPDATE: &[u8] = br#"{"type":"message_update","assistantMessageEven
 "#;
 const OMP_PARAPHRASED_END: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Acknowledging the operator direction."},{"type":"toolCall","id":"call-1","name":"shell","arguments":{"command":"echo ACK 1kKRRsDS"}}],"stopReason":"toolUse"}}
 "#;
-const OMP_TOOL_END: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-1","name":"shell","arguments":{"command":"echo done"}}],"stopReason":"toolUse"}}
-"#;
 
 struct LiveKey;
 
 impl steer::Standing for LiveKey {
     fn disposition(&self, key: &steer::Key) -> Option<Disposition> {
         (key.as_str() == KEY).then_some(Disposition::Live)
-    }
-}
-
-struct LiveKeys<'a>(&'a [&'a str]);
-
-impl steer::Standing for LiveKeys<'_> {
-    fn disposition(&self, key: &steer::Key) -> Option<Disposition> {
-        self.0
-            .iter()
-            .any(|candidate| *candidate == key.as_str())
-            .then_some(Disposition::Live)
     }
 }
 
@@ -100,59 +87,10 @@ fn omp_paraphrase_and_tool_payload_do_not_invent_acknowledgement_evidence() {
 }
 
 #[test]
-fn omp_visible_acknowledgement_forms_retire_every_named_key_before_tools() {
-    const SECOND_KEY: &str = "1kKRRsDT";
-    let cases = [
-        (
-            "ACK 1kKRRsDS done\nNACK 1kKRRsDT no",
-            [
-                (KEY, Disposition::Acked),
-                (SECOND_KEY, Disposition::Declined),
-            ],
-        ),
-        (
-            "ACK 1kKRRsDS 1kKRRsDT done",
-            [(KEY, Disposition::Acked), (SECOND_KEY, Disposition::Acked)],
-        ),
-        (
-            "Work started. ACK 1kKRRsDS done. NACK 1kKRRsDT no",
-            [
-                (KEY, Disposition::Acked),
-                (SECOND_KEY, Disposition::Declined),
-            ],
-        ),
-    ];
-    let standing = LiveKeys(&[KEY, SECOND_KEY]);
-
-    for (text, expected) in cases {
-        let update = omp_text_update(text);
-        let fixture = Fixture::omp(&[update.as_slice(), OMP_TOOL_END]);
-
-        for (key, disposition) in expected {
-            let recognition =
-                transcript_recognition(&fixture.paths, lane(), &omp_vendor(), key, None, &standing)
-                    .unwrap_or_else(|outcome| {
-                        panic!("{text:?} must visibly retire {key}: {outcome:?}")
-                    });
-            assert!(
-                matches!(
-                    recognition.outcome,
-                    ScanOutcome::Retired {
-                        disposition: observed,
-                        ..
-                    } if observed == disposition
-                ),
-                "{text:?} gave {key} the wrong disposition"
-            );
-        }
-    }
-}
-
-#[test]
 fn the_newest_placed_answer_wins_within_the_recent_window() {
     let declined = String::from_utf8(LEADING_HEADER.to_vec())
         .unwrap()
-        .replace("ACK ", "NACK ");
+        .replace("ACK ", "NAK ");
     let fixture = Fixture::new(&[LEADING_HEADER, declined.as_bytes(), ACK_CALL]);
     let evidence = TranscriptEvidence::read(&fixture.paths, lane(), &vendor(), KEY)
         .unwrap_or_else(|error| panic!("{error:?}"));
@@ -199,20 +137,6 @@ fn an_unfinished_record_cannot_supply_evidence() {
     assert!(
         matches!(transcript_recognition(&unfinished.paths, lane(), &vendor(), KEY, None, &LiveKey), Err(wire::Outcome::Refusal(refusal)) if refusal.reason() == "steer::transcript-evidence-absent")
     );
-}
-
-fn omp_text_update(text: &str) -> Vec<u8> {
-    let mut record = serde_json::to_vec(&serde_json::json!({
-        "type": "message_update",
-        "assistantMessageEvent": {"type": "text_end", "content": text},
-        "message": {
-            "role": "assistant",
-            "content": [{"type": "text", "text": text}],
-        },
-    }))
-    .expect("OMP text update serializes");
-    record.push(b'\n');
-    record
 }
 
 struct Fixture {

@@ -17,7 +17,7 @@ ACK 1kJK6N3R: fenced, so it is an example.
 `ACK 1kJK6N3R: quoted inline.`
 
 ```rust
-NACK 1kJK6N3R: fenced under a language tag, still an example.
+NAK 1kJK6N3R: fenced under a language tag, still an example.
 ```
 
-Déjà vu — ACK 1kJK6M0V: buried behind multi-byte prose.
+For example, ACK 1kJK6M0V: narrated rather than spoken.

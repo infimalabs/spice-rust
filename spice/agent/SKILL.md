@@ -24,7 +24,7 @@ durable task from this skill invocation.
 
 When steering keys are pending, lead the next working message with a line of
 visible assistant text, `ACK <key> [<key> ...]: <one clause>` or
-`NACK <key>: <one clause>`. For interjected steering, including OMP, that prose
+`NAK <key>: <one clause>`. For interjected steering, including OMP, that prose
 is the acknowledgment: the resident retires the key as the text lands. Do not
 run an acknowledgment command or wait for a separate confirmation before
 continuing. Shell-hook vendors instead print acknowledgment commands for

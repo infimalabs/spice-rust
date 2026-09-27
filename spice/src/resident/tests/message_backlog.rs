@@ -12,7 +12,7 @@ const CODEX_COMPACTION_WITHOUT_TIME: &[u8] = br#"{"type":"compacted"}
 "#;
 const CODEX_APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
 "#;
-const CODEX_DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"item.completed","item":{"id":"item-acks","type":"agent_message","text":"ACK\t1kQwPZtK nope 1kQwPZtM: One response.\nNACK\t1kQwPZtL: Unsafe."}}
+const CODEX_DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"item.completed","item":{"id":"item-acks","type":"agent_message","text":"ACK\t1kQwPZtK nope 1kQwPZtM: One response.\nNAK\t1kQwPZtL: Unsafe."}}
 "#;
 
 #[test]
@@ -902,13 +902,13 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     let pending = concat!(
         "> [ACK PENDING] First direction.\n\n",
         "Nope 1kQwPZtM: One response.\n",
-        "> [NACK] Second direction.\n\n",
+        "> [NAK] Second direction.\n\n",
         "Unsafe."
     );
     let acknowledged = concat!(
         "> [ACK] First direction.\n\n",
         "Nope 1kQwPZtM: One response.\n",
-        "> [NACK] Second direction.\n\n",
+        "> [NAK] Second direction.\n\n",
         "Unsafe."
     );
 
@@ -998,7 +998,7 @@ fn mixed_acknowledgement_record(
                 role: listen::ProseRole::Assistant,
                 text: concat!(
                     "ACK\t1kQwPZtK nope 1kQwPZtM: One response.\n",
-                    "NACK\t1kQwPZtL: Unsafe."
+                    "NAK\t1kQwPZtL: Unsafe."
                 )
                 .to_owned(),
                 phase: None,
@@ -1069,7 +1069,7 @@ fn assert_mixed_acknowledgement_message(
     assert_eq!(messages.len(), 1, "one prose event remains one card");
     assert_eq!(messages[0].text, expected);
     assert!(!messages[0].text.contains("ACK 1kQwPZtK"));
-    assert!(!messages[0].text.contains("NACK 1kQwPZtL"));
+    assert!(!messages[0].text.contains("NAK 1kQwPZtL"));
     assert_eq!(
         messages[0]
             .text
@@ -1080,7 +1080,7 @@ fn assert_mixed_acknowledgement_message(
     assert_eq!(
         messages[0]
             .text
-            .matches("> [NACK] Second direction.")
+            .matches("> [NAK] Second direction.")
             .count(),
         1
     );

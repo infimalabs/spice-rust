@@ -12,12 +12,12 @@ pub(super) struct TranscriptRecognition {
     pub(super) outcome: ScanOutcome,
 }
 
-/// Repair when the lane wrote no leading header as durable assistant text.
-const COMMAND_HEADER_REPAIR: &str = "emit an ACK or NACK header as the first line of visible assistant text, ensure that line \
+/// Repair when the lane wrote no authored header as durable assistant text.
+const COMMAND_HEADER_REPAIR: &str = "emit an ACK or NAK header in visible assistant prose, ensure it \
      is durably present on the transcript, then invoke ack";
 
 /// OMP retires interjected steering from prose itself, without an ack command.
-const INTERJECTED_HEADER_REPAIR: &str = "send the ACK or NACK header as the first line of visible assistant text and let that \
+const INTERJECTED_HEADER_REPAIR: &str = "send the ACK or NAK header in visible assistant prose and let that \
      message land; the durable assistant text must name the key and disposition";
 
 fn header_repair(vendor: &wire::Name) -> &'static str {

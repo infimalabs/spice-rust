@@ -363,7 +363,7 @@ fn a_withdrawn_call_and_a_drain_end_the_commands_they_cover() {
 const NEWS: &str = "<seal>\ndirective=d1 key=1kJK6N3R stage=new expires=never\n\
                     look at this and answer it before the next call, because the operator is \
                     waiting on the answer; include the exact outcome, keep the running command \
-                    healthy, and make the ACK or NACK visible before continuing with more tools\n\
+                    healthy, and make the ACK or NAK visible before continuing with more tools\n\
                     </seal>\n";
 
 #[test]

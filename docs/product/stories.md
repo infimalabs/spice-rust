@@ -54,7 +54,7 @@ precedes delivery, and survives a crash on either side.
 `acked`, `declined`, and `canceled` remain distinct.
 
 *As the agent, I want decline to be as reachable as acknowledgement, so I am not
-forced to fake agreement.* — A reasoned NACK is recorded as the first-class
+forced to fake agreement.* — A reasoned NAK is recorded as the first-class
 terminal `declined` disposition and surfaced wherever ACK is.
 
 *As the operator, I want silence to escalate rather than pass as consent.* —
@@ -130,7 +130,7 @@ the top, same-frame compensation preserves the visible anchor.
 
 *As the reader, I want to know what was asked without leaving the answer.* —
 Steering renders as a quote inside the reply that answers it through ACK or
-NACK/decline.
+NAK/decline.
 
 *As the reader, I want to hear what arrives while I am looking elsewhere.* —
 Speech is a third channel, best-effort, and never blocks the record.

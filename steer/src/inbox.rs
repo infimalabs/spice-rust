@@ -96,31 +96,31 @@ const SILENT_BEFORE_ACK: &str =
     " still pending; no visible reply. Thinking/tool calls do not count. Lead visible prose: `ACK ";
 const REPLIED_BEFORE_ACK: &str =
     " still pending; visible prose did not retire it. Lead visible prose: `ACK ";
-const ACK_TO_NACK: &str = ": <one clause>` or `NACK ";
-const SILENT_AFTER_NACK: &str = ": <one clause>`.";
-const REPLIED_AFTER_NACK: &str = ": <one clause>`.";
+const ACK_TO_NAK: &str = ": <one clause>` or `NAK ";
+const SILENT_AFTER_NAK: &str = ": <one clause>`.";
+const REPLIED_AFTER_NAK: &str = ": <one clause>`.";
 
 impl Told {
     fn pointer_len(self, key: &str) -> usize {
-        let (before_ack, after_nack) = match self {
-            Self::Silent => (SILENT_BEFORE_ACK, SILENT_AFTER_NACK),
-            Self::Replied => (REPLIED_BEFORE_ACK, REPLIED_AFTER_NACK),
+        let (before_ack, after_nak) = match self {
+            Self::Silent => (SILENT_BEFORE_ACK, SILENT_AFTER_NAK),
+            Self::Replied => (REPLIED_BEFORE_ACK, REPLIED_AFTER_NAK),
         };
-        NUDGE_PREFIX.len() + before_ack.len() + ACK_TO_NACK.len() + after_nack.len() + key.len() * 3
+        NUDGE_PREFIX.len() + before_ack.len() + ACK_TO_NAK.len() + after_nak.len() + key.len() * 3
     }
 
     fn push_pointer(self, rendered: &mut String, key: &str) {
-        let (before_ack, after_nack) = match self {
-            Self::Silent => (SILENT_BEFORE_ACK, SILENT_AFTER_NACK),
-            Self::Replied => (REPLIED_BEFORE_ACK, REPLIED_AFTER_NACK),
+        let (before_ack, after_nak) = match self {
+            Self::Silent => (SILENT_BEFORE_ACK, SILENT_AFTER_NAK),
+            Self::Replied => (REPLIED_BEFORE_ACK, REPLIED_AFTER_NAK),
         };
         rendered.push_str(NUDGE_PREFIX);
         rendered.push_str(key);
         rendered.push_str(before_ack);
         rendered.push_str(key);
-        rendered.push_str(ACK_TO_NACK);
+        rendered.push_str(ACK_TO_NAK);
         rendered.push_str(key);
-        rendered.push_str(after_nack);
+        rendered.push_str(after_nak);
     }
 }
 /// Condenses every directive the occupant was already told into a pointer.
@@ -207,7 +207,7 @@ pub fn post_compaction(rendered: &str) -> String {
     replayed.push_str(
         ". Before more tools, lead visible assistant prose with \
          `ACK <key> [<key> ...]: <one clause>` or \
-         `NACK <key>: <one clause>` for every key.\n",
+         `NAK <key>: <one clause>` for every key.\n",
     );
     replayed.push_str(body);
     replayed
@@ -330,7 +330,7 @@ mod tests {
         for reminder in [&silent, &replied] {
             assert!(
                 reminder.contains("`ACK dSvXD9bv3: <one clause>`")
-                    && reminder.contains("`NACK dSvXD9bv3: <one clause>`"),
+                    && reminder.contains("`NAK dSvXD9bv3: <one clause>`"),
                 "the reminder must supply valid visible-line syntax for its exact key: {reminder}",
             );
         }
@@ -352,7 +352,7 @@ mod tests {
             replayed.contains(
                 "Before more tools, lead visible assistant prose with \
                  `ACK <key> [<key> ...]: <one clause>` or \
-                 `NACK <key>: <one clause>` for every key."
+                 `NAK <key>: <one clause>` for every key."
             ),
             "{replayed}",
         );

@@ -226,7 +226,7 @@ becomes a directive-lifecycle transition.
 stateDiagram-v2
   [*] --> live: journal transaction accepted
   live --> acked: agent acknowledgement
-  live --> declined: agent NACK
+  live --> declined: agent NAK
   live --> canceled: operator cancellation
   live --> lapsed: lapse transaction accepted
   live --> deadlettered: PendingInbox automatic wake is Unstarted or terminal-class failed
@@ -410,7 +410,7 @@ double-counts an item.
 
 **Invariant —** Acceptance crosses into the separate journal-owned steering
 lifecycle (`live`, `acked`, `declined`, `lapsed`, `deadlettered`, or `canceled`).
-Agent prose is evidence from which ACK or NACK may be recognized and committed;
+Agent prose is evidence from which ACK or NAK may be recognized and committed;
 retained messages are never the sole semantic authority.
 
 ### Message card

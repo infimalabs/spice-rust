@@ -365,11 +365,11 @@ fn disposition_html(disposition: Disposition) -> String {
         }
         Disposition::Declined => {
             return super::acknowledgement_pill_html_with_attributes(
-                "nack",
+                "nak",
                 "declined",
                 "Declined classification",
-                "NACK",
-                " data-quote-disposition=\"nacked\"",
+                "NAK",
+                " data-quote-disposition=\"declined\"",
             );
         }
         Disposition::Lapsed => ("lapsed", "LAPSED"),

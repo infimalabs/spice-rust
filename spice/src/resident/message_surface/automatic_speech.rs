@@ -1,7 +1,7 @@
 //! Reference-equivalent automatic Speak classification for Canvas messages.
 //!
 //! `spice-z` speaks a vendor-final answer or the bodies of positively parsed
-//! ACK packets. It keeps commentary, NACK-only prose, tool activity, history,
+//! ACK packets. It keeps commentary, NAK-only prose, tool activity, history,
 //! and replay silent. Final answers use their first and last visible
 //! paragraphs; ACK messages use every eligible packet body. This module makes
 //! that selection once at the resident boundary so the browser never guesses
@@ -534,7 +534,7 @@ mod tests {
                 concat!(
                     "ordinary preamble\n\n",
                     "ACK 1kJK6N3R: applied [first](https://example.test)\n\n",
-                    "NACK 1kJK7Sqy: unsafe\n\n",
+                    "NAK 1kJK7Sqy: unsafe\n\n",
                     "ACK 1kJK8Abc: applied last",
                 ),
                 None,
@@ -548,12 +548,12 @@ mod tests {
     }
 
     #[test]
-    fn commentary_malformed_ack_and_nack_only_prose_stay_silent() {
+    fn commentary_malformed_ack_and_nak_only_prose_stay_silent() {
         let known = directives(&["1kJK6N3R"]);
         for text in [
             "ordinary progress",
             "ACK not-a-key: discussed",
-            "NACK 1kJK6N3R: unsafe",
+            "NAK 1kJK6N3R: unsafe",
         ] {
             assert_eq!(classify(&prose(text, None), Some(&known), event()), None);
         }

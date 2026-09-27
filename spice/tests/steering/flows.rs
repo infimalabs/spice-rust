@@ -112,7 +112,7 @@ fn operator_record_cannot_ack(fixture: &Fixture, lane: wire::CanonicalUuid) -> E
         fixture,
         lane,
         &format!(
-            "NACK {}: restated by the operator, not spoken by the lane",
+            "NAK {}: restated by the operator, not spoken by the lane",
             sent.key
         ),
     );

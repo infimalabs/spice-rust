@@ -1140,7 +1140,7 @@ fn emitted_reminders_ack_decline_escalate_and_expire_as_ordinary_steering() {
             locus: reminders[1].locus,
             reason: "not applicable".to_owned(),
         }))
-        .expect("semantic NACK retires reminder");
+        .expect("semantic NAK retires reminder");
     assert_eq!(
         disposed.disposition(&reminders[0].key.parse().expect("key")),
         Some(Disposition::Acked)

@@ -2,8 +2,8 @@
 //!
 //! Acknowledgment is a narrow protocol at the assistant-output boundary, not an
 //! interpretation of what a turn seems to have meant. A clause retires a
-//! directive only when it begins a placed clause, spells a marker, names a
-//! key-shaped token, and that key belongs to a directive still live. Everything else —
+//! directive only when it spells a marker in authored prose, names a key-shaped
+//! token, and that key belongs to a directive still live. Everything else —
 //! unknown, malformed, quoted, or historical — alters nothing and is reported
 //! by name, because a silent non-recognition and a refusal look identical to an
 //! operator waiting on an answer.
@@ -18,12 +18,6 @@ use std::ops::ControlFlow;
 use wire::Disposition;
 
 use crate::ack::keys::{Key, MARKERS, Marker};
-
-/// The characters that quote a clause instead of speaking it.
-///
-/// Emphasis is not among them because it decorates a protocol header without
-/// quoting it.
-const QUOTING: [char; 4] = ['`', '"', '\'', '>'];
 
 /// Where in the scanned prose a recognition sits.
 ///
@@ -47,11 +41,10 @@ impl fmt::Display for Locus {
 /// Why a clause named a key without retiring anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Miss {
-    /// The clause did not lead its line, so it is prose about acknowledgment
-    /// rather than an acknowledgment.
+    /// Retained diagnostic spelling for historical missed-recognition facts.
     Buried,
-    /// The clause sat inside quoting or a fenced block, where a key is shown
-    /// rather than spoken.
+    /// The clause sat inside quoting, code, or rendered source context, where a
+    /// key is shown rather than spoken.
     Quoted,
     /// The token is not spelled as a key.
     Malformed,
@@ -110,11 +103,10 @@ impl Outcome {
         }
     }
 
-    /// Whether the clause naming this token led its line.
+    /// Whether the clause naming this token was authored protocol prose.
     ///
     /// A retirement is always placed, and so is a miss judged on the key
-    /// itself; only a clause that sat inside quoting or behind other prose
-    /// was never in the position to speak.
+    /// itself; quoted clauses and retained buried diagnostics did not speak.
     #[must_use]
     pub const fn placed(&self) -> bool {
         !matches!(
@@ -170,13 +162,11 @@ pub fn scan(prose: &str, standing: &impl Standing) -> Vec<Recognition> {
 
 /// The recognition that decides `token` in one assistant prose.
 ///
-/// A placed clause outranks a quoted or buried mention of the same token
-/// wherever the two sit in the prose. The header is the marker an operator
-/// reads; a later citation of it in backticks or mid-sentence is the prose
-/// talking about the header, not a retraction of it. Between clauses of the
-/// same rank the later one decides, so a prose that places the key twice is
-/// judged by its last header and one that only mentions it reports its last
-/// mention. `None` when nothing in the prose names the token.
+/// An authored clause outranks a quoted mention of the same token wherever the
+/// two sit in the prose. The header is the marker an operator reads; a later
+/// citation of it in backticks is prose about the header, not a retraction of
+/// it. Between clauses of the same rank the later one decides. `None` when
+/// nothing in the prose names the token.
 #[must_use]
 pub fn decisive(prose: &str, token: &str, standing: &impl Standing) -> Option<Recognition> {
     scan(prose, standing)
@@ -189,17 +179,17 @@ pub fn decisive(prose: &str, token: &str, standing: &impl Standing) -> Option<Re
 
 /// Reads acknowledgment packets with their source header boundaries.
 ///
-/// A packet may lead a line or follow sentence punctuation. The latter is the
-/// compact form agents use when several independently keyed responses share
-/// one physical line. Markers buried in ordinary narration remain misses.
+/// A packet may appear anywhere in authored prose. Markers in quoted, code, or
+/// rendered source context remain misses, while explicit negation,
+/// hypothetical phrasing, and narration about protocol markers stay silent.
 pub fn scan_acknowledgements(prose: &str, standing: &impl Standing) -> Vec<Acknowledgement> {
     let mut acknowledgements = Vec::new();
-    let _ = visit_acknowledgement_clauses(prose, |line, line_start, clause| {
+    let _ = visit_acknowledgement_clauses(prose, |lines, clause| {
         let mut recognitions = Vec::new();
-        clause.judge(line, standing, &mut recognitions);
+        clause.judge(prose, lines, standing, &mut recognitions);
         acknowledgements.push(Acknowledgement {
-            start: line_start + clause.start,
-            end: line_start + clause.end,
+            start: clause.start,
+            end: clause.end,
             separator: clause.separator,
             recognitions,
         });
@@ -208,14 +198,14 @@ pub fn scan_acknowledgements(prose: &str, standing: &impl Standing) -> Vec<Ackno
     acknowledgements
 }
 
-/// Whether prose contains a placed acknowledgement attempt.
+/// Whether prose contains an authored acknowledgement attempt.
 ///
 /// This is the standing-independent preflight for callers that need to load
-/// standing before they can run [`scan`]. It deliberately shares the canonical
-/// clause parser, including horizontal whitespace, quoting, and fence rules.
+/// standing before they can run [`scan`]. It shares the canonical parser,
+/// including multiline headers and every quoted-context exclusion.
 #[must_use]
 pub fn has_acknowledgement(prose: &str) -> bool {
-    visit_acknowledgement_clauses(prose, |_, _, clause| {
+    visit_acknowledgement_clauses(prose, |_, clause| {
         if clause.position == Position::Placed {
             ControlFlow::Break(())
         } else {
@@ -227,28 +217,49 @@ pub fn has_acknowledgement(prose: &str) -> bool {
 
 fn visit_acknowledgement_clauses(
     prose: &str,
-    mut visit: impl FnMut(usize, usize, Clause) -> ControlFlow<()>,
+    mut visit: impl FnMut(&SourceLines, Clause) -> ControlFlow<()>,
 ) -> ControlFlow<()> {
-    let mut fence = None;
-    let mut line_start = 0;
-    for (index, terminated) in prose.split_inclusive('\n').enumerate() {
-        let line = terminated.strip_suffix('\n').unwrap_or(terminated);
-        if fence.is_some_and(|open: Fence| open.closes(line)) {
-            fence = None;
-            line_start += terminated.len();
+    let lines = SourceLines::read(prose);
+    for (start, _) in prose.char_indices() {
+        let Some(marker) = marker_at(prose, start) else {
+            continue;
+        };
+        let decorated_start = emphasis_start(prose, start);
+        let quoted = lines.suppressed(start) || inline_quoted(prose, start, &lines);
+        if !quoted && guarded_context(prose, start) {
             continue;
         }
-        if fence.is_none()
-            && let Some(open) = Fence::opens(line)
+        let Some(header) = tokens_after(prose, start + marker.as_str().len()) else {
+            continue;
+        };
+        if !header
+            .tokens
+            .iter()
+            .any(|&(token_start, token_end)| intended_token(&prose[token_start..token_end]))
         {
-            fence = Some(open);
-            line_start += terminated.len();
             continue;
         }
-        for clause in Clause::read_all(line, fence.is_some()) {
-            visit(index + 1, line_start, clause)?;
-        }
-        line_start += terminated.len();
+        let position = if quoted
+            || header
+                .tokens
+                .iter()
+                .any(|&(token_start, _)| lines.suppressed(token_start))
+        {
+            Position::Quoted
+        } else {
+            Position::Placed
+        };
+        visit(
+            &lines,
+            Clause {
+                marker,
+                position,
+                start: decorated_start,
+                end: header.end,
+                separator: header.separator,
+                tokens: header.tokens,
+            },
+        )?;
     }
     ControlFlow::Continue(())
 }
@@ -293,71 +304,121 @@ fn fence_run(line: &str) -> Option<(u8, usize, usize)> {
     (length >= 3).then_some((marker, length, indentation + length))
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SourceLine {
+    start: usize,
+    suppressed: bool,
+}
+
+struct SourceLines(Vec<SourceLine>);
+
+impl SourceLines {
+    fn read(prose: &str) -> Self {
+        let mut lines = Vec::new();
+        let mut fence: Option<Fence> = None;
+        let mut start = 0;
+        for terminated in prose.split_inclusive('\n') {
+            let line = terminated.strip_suffix('\n').unwrap_or(terminated);
+            let line = line.strip_suffix('\r').unwrap_or(line);
+            let fence_line = Fence::opens(line);
+            let suppressed = fence.is_some()
+                || fence_line.is_some()
+                || markdown_quote(line)
+                || indentation_width(
+                    line.get(..line.len() - line.trim_start().len())
+                        .unwrap_or_default(),
+                ) >= 4
+                || rendered_source_context(line);
+            if let Some(open) = fence {
+                if open.closes(line) {
+                    fence = None;
+                }
+            } else if let Some(open) = fence_line {
+                fence = Some(open);
+            }
+            lines.push(SourceLine { start, suppressed });
+            start += terminated.len();
+        }
+        Self(lines)
+    }
+
+    fn line(&self, offset: usize) -> Option<(usize, SourceLine)> {
+        let index = self
+            .0
+            .partition_point(|line| line.start <= offset)
+            .checked_sub(1)?;
+        Some((index, self.0[index]))
+    }
+
+    fn suppressed(&self, offset: usize) -> bool {
+        self.line(offset).is_some_and(|(_, line)| line.suppressed)
+    }
+
+    fn locus(&self, offset: usize) -> Locus {
+        let (index, line) = self
+            .line(offset)
+            .expect("token offset belongs to source line");
+        Locus {
+            line: index + 1,
+            column: offset - line.start + 1,
+        }
+    }
+}
+
+fn markdown_quote(line: &str) -> bool {
+    let indentation = line.bytes().take_while(|byte| *byte == b' ').count();
+    indentation <= 3 && line.as_bytes().get(indentation) == Some(&b'>')
+}
+
+fn rendered_source_context(line: &str) -> bool {
+    let stripped = line.trim_start();
+    let Some((path, rest)) = stripped.split_once(':') else {
+        return false;
+    };
+    if path.is_empty()
+        || !path
+            .chars()
+            .all(|character| character.is_alphanumeric() || "._/-".contains(character))
+    {
+        return false;
+    }
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    digits > 0 && rest.as_bytes().get(digits) == Some(&b':')
+}
+
 /// Where a clause sat, which decides whether it speaks at all.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Position {
-    /// Leading its line, so it speaks.
+    /// Authored prose, so it speaks.
     Placed,
-    /// Inside quoting or a fenced block.
+    /// Inside quoting, code, or rendered source context.
     Quoted,
-    /// Behind other prose on its line.
-    Buried,
 }
 
-/// One well-formed `MARKER key[ key...][separator]` clause found on a line.
+/// One well-formed `MARKER key[ key...][separator]` clause.
 struct Clause {
     marker: Marker,
     position: Position,
     start: usize,
     end: usize,
     separator: Option<char>,
-    /// Each named token with the byte offset it begins at.
-    tokens: Vec<(usize, String)>,
+    /// Each named token as a half-open byte range in the complete prose.
+    tokens: Vec<(usize, usize)>,
 }
 
 impl Clause {
-    /// Reads every clause on a line that is an acknowledgment attempt.
-    ///
-    /// A clause is an attempt when it leads its line or names something
-    /// key-shaped. Leading is how an acknowledgment is written; a key-shaped
-    /// token is how a misplaced or quoted one still gets diagnosed. Prose that
-    /// merely uses the word does neither, so it stays silent instead of
-    /// reporting every colon-terminated sentence as a missed acknowledgment.
-    fn read_all(line: &str, fenced: bool) -> Vec<Self> {
-        let mut clauses = Vec::new();
-        for start in 0..line.len() {
-            let Some(marker) = marker_at(line, start) else {
-                continue;
-            };
-            let decorated_start = emphasis_start(line, start);
-            let Some(header) = tokens_after(line, start + marker.as_str().len()) else {
-                continue;
-            };
-            let position = position(line, decorated_start, fenced);
-            let keylike = header.tokens.iter().any(|(_, token)| keylike(token));
-            if position == Position::Placed || keylike {
-                clauses.push(Self {
-                    marker,
-                    position,
-                    start: decorated_start,
-                    end: header.end,
-                    separator: header.separator,
-                    tokens: header.tokens,
-                });
-            }
-        }
-        clauses
-    }
-
     /// Judges every token this clause named.
-    fn judge(&self, line: usize, standing: &impl Standing, into: &mut Vec<Recognition>) {
-        for (offset, token) in &self.tokens {
-            let locus = Locus {
-                line,
-                column: offset + 1,
-            };
+    fn judge(
+        &self,
+        prose: &str,
+        lines: &SourceLines,
+        standing: &impl Standing,
+        into: &mut Vec<Recognition>,
+    ) {
+        for &(start, end) in &self.tokens {
+            let token = &prose[start..end];
             into.push(Recognition {
-                locus,
+                locus: lines.locus(start),
                 outcome: self.outcome(token, standing),
             });
         }
@@ -369,10 +430,8 @@ impl Clause {
             token: token.to_owned(),
             miss,
         };
-        match self.position {
-            Position::Quoted => return missed(Miss::Quoted),
-            Position::Buried => return missed(Miss::Buried),
-            Position::Placed => {}
+        if self.position == Position::Quoted {
+            return missed(Miss::Quoted);
         }
         let Ok(key) = token.parse::<Key>() else {
             return missed(Miss::Malformed);
@@ -389,8 +448,8 @@ impl Clause {
 }
 
 /// The marker beginning at this offset, if a whole word begins there.
-fn marker_at(line: &str, start: usize) -> Option<Marker> {
-    let leading = line.get(..start)?;
+fn marker_at(prose: &str, start: usize) -> Option<Marker> {
+    let leading = prose.get(..start)?;
     if leading
         .bytes()
         .next_back()
@@ -398,22 +457,22 @@ fn marker_at(line: &str, start: usize) -> Option<Marker> {
     {
         return None;
     }
-    let rest = line.get(start..)?;
+    let rest = prose.get(start..)?;
     MARKERS
         .into_iter()
         .find(|marker| rest.starts_with(marker.as_str()))
 }
 
 struct Header {
-    tokens: Vec<(usize, String)>,
+    tokens: Vec<(usize, usize)>,
     end: usize,
     separator: Option<char>,
 }
 
-/// The leading key run and optional separator after one marker.
-fn tokens_after(line: &str, marker_end: usize) -> Option<Header> {
-    let marker_boundary = skip_emphasis(line, marker_end);
-    let mut cursor = skip_horizontal(line, marker_boundary);
+/// The key run and optional separator after one marker.
+fn tokens_after(prose: &str, marker_end: usize) -> Option<Header> {
+    let marker_boundary = skip_emphasis(prose, marker_end);
+    let mut cursor = skip_header_space(prose, marker_boundary);
     if cursor == marker_boundary {
         return None;
     }
@@ -421,17 +480,17 @@ fn tokens_after(line: &str, marker_end: usize) -> Option<Header> {
     let mut tokens = Vec::new();
     let mut header_end = cursor;
     loop {
-        let token_start = skip_emphasis(line, cursor);
-        let Some(end) = key_token_end(line, token_start, !tokens.is_empty()) else {
+        let token_start = skip_emphasis(prose, cursor);
+        let Some(end) = key_token_end(prose, token_start, !tokens.is_empty()) else {
             break;
         };
-        tokens.push((token_start, line[token_start..end].to_owned()));
-        header_end = skip_emphasis(line, end);
-        cursor = skip_horizontal(line, header_end);
+        tokens.push((token_start, end));
+        header_end = skip_emphasis(prose, end);
+        cursor = skip_header_space(prose, header_end);
         // A comma between keys lists them; before anything else it separates.
-        if line.as_bytes().get(cursor) == Some(&b',') {
-            let listed = skip_horizontal(line, cursor + 1);
-            if key_token_end(line, skip_emphasis(line, listed), true).is_some() {
+        if prose.as_bytes().get(cursor) == Some(&b',') {
+            let listed = skip_header_space(prose, cursor + 1);
+            if key_token_end(prose, skip_emphasis(prose, listed), true).is_some() {
                 cursor = listed;
             }
         }
@@ -440,9 +499,9 @@ fn tokens_after(line: &str, marker_end: usize) -> Option<Header> {
         return None;
     }
 
-    let mut probe = skip_emphasis(line, header_end);
-    probe = skip_horizontal(line, probe);
-    let separator = line.get(probe..)?.chars().next().filter(|character| {
+    let mut probe = skip_emphasis(prose, header_end);
+    probe = skip_header_space(prose, probe);
+    let separator = prose.get(probe..)?.chars().next().filter(|character| {
         matches!(
             character,
             ':' | '.' | ',' | ';' | '!' | '?' | '\u{2013}' | '\u{2014}'
@@ -450,9 +509,7 @@ fn tokens_after(line: &str, marker_end: usize) -> Option<Header> {
     });
     if let Some(separator) = separator {
         probe += separator.len_utf8();
-        probe = skip_emphasis(line, probe);
-        header_end = probe;
-    } else if probe != cursor {
+        probe = skip_emphasis(prose, probe);
         header_end = probe;
     }
 
@@ -463,10 +520,10 @@ fn tokens_after(line: &str, marker_end: usize) -> Option<Header> {
     })
 }
 
-fn key_token_end(line: &str, start: usize, current_shape: bool) -> Option<usize> {
+fn key_token_end(prose: &str, start: usize, current_shape: bool) -> Option<usize> {
     for width in [Key::WIDTH, Key::LEGACY_WIDTH] {
         let end = start.checked_add(width)?;
-        let Some(token) = line.get(start..end) else {
+        let Some(token) = prose.get(start..end) else {
             continue;
         };
         let accepted = if current_shape {
@@ -480,7 +537,7 @@ fn key_token_end(line: &str, start: usize, current_shape: bool) -> Option<usize>
             Key::admitted(token)
         };
         if accepted
-            && !line
+            && !prose
                 .as_bytes()
                 .get(end)
                 .is_some_and(u8::is_ascii_alphanumeric)
@@ -491,11 +548,11 @@ fn key_token_end(line: &str, start: usize, current_shape: bool) -> Option<usize>
     None
 }
 
-fn skip_horizontal(line: &str, mut cursor: usize) -> usize {
-    while line
+fn skip_header_space(prose: &str, mut cursor: usize) -> usize {
+    while prose
         .as_bytes()
         .get(cursor)
-        .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+        .is_some_and(|byte| matches!(byte, b' ' | b'\t' | b'\r' | b'\n'))
     {
         cursor += 1;
     }
@@ -503,9 +560,9 @@ fn skip_horizontal(line: &str, mut cursor: usize) -> usize {
 }
 
 /// Markdown emphasis touching the front of a protocol header.
-fn emphasis_start(line: &str, marker_start: usize) -> usize {
+fn emphasis_start(prose: &str, marker_start: usize) -> usize {
     let mut start = marker_start;
-    while line
+    while prose
         .as_bytes()
         .get(start.wrapping_sub(1))
         .is_some_and(|byte| matches!(byte, b'*' | b'_'))
@@ -515,8 +572,8 @@ fn emphasis_start(line: &str, marker_start: usize) -> usize {
     start
 }
 
-fn skip_emphasis(line: &str, mut cursor: usize) -> usize {
-    while line
+fn skip_emphasis(prose: &str, mut cursor: usize) -> usize {
+    while prose
         .as_bytes()
         .get(cursor)
         .is_some_and(|byte| matches!(byte, b'*' | b'_'))
@@ -526,51 +583,209 @@ fn skip_emphasis(line: &str, mut cursor: usize) -> usize {
     cursor
 }
 
-/// Whether a token is worth diagnosing as an intended key.
-///
-/// This is deliberately narrower than the grammar in [`Key`]. It decides only
-/// whether a misplaced clause is an acknowledgment attempt worth reporting, and
-/// an eight-letter English word is far more often prose than a key: `protocol`
-/// spells a key perfectly well by grammar. Requiring a digit or a capital keeps
-/// ordinary sentences from each producing a diagnostic.
-///
-/// Nothing is lost by the narrowing. A clause that leads its line is an attempt
-/// on position alone, which is where acknowledgments are actually written, so
-/// this never decides whether a key retires — only whether a key that did not
-/// retire gets named.
-fn keylike(token: &str) -> bool {
-    Key::shaped(token)
-        && token
-            .bytes()
-            .any(|byte| byte.is_ascii_digit() || byte.is_ascii_uppercase())
+fn intended_token(token: &str) -> bool {
+    token
+        .bytes()
+        .any(|byte| byte.is_ascii_digit() || byte.is_ascii_uppercase())
 }
 
-/// Where a clause beginning at this offset sits on its line.
-fn position(line: &str, start: usize, fenced: bool) -> Position {
-    if fenced {
-        return Position::Quoted;
-    }
-    let leading = line.get(..start).unwrap_or(line);
-    let line_leading = line.trim_start();
-    let indentation = line
-        .get(..line.len() - line_leading.len())
-        .unwrap_or_default();
-    if line_leading.starts_with(QUOTING) || indentation_width(indentation) >= 4 {
-        return Position::Quoted;
-    }
-    let trimmed = leading.trim();
-    if trimmed.is_empty() {
-        Position::Placed
-    } else if trimmed
-        .chars()
-        .all(|character| QUOTING.contains(&character))
+fn inline_quoted(prose: &str, marker_start: usize, lines: &SourceLines) -> bool {
+    let Some((_, line)) = lines.line(marker_start) else {
+        return false;
+    };
+    let prefix = &prose[line.start..marker_start];
+    if prefix
+        .trim_end_matches([' ', '\t'])
+        .ends_with(['`', '"', '\''])
     {
-        Position::Quoted
-    } else if trimmed.ends_with(['.', '!', '?']) {
-        Position::Placed
-    } else {
-        Position::Buried
+        return true;
     }
+    ['`', '"'].into_iter().any(|quote| {
+        prefix
+            .chars()
+            .filter(|character| *character == quote)
+            .count()
+            % 2
+            == 1
+    })
+}
+
+const CONTEXT_WINDOW: usize = 6;
+const NEGATION_WORDS: &[&str] = &[
+    "can't", "cannot", "cant", "not", "refuse", "refused", "refuses", "refusing", "will-not",
+    "won't", "wont",
+];
+const PROHIBITION_WORDS: &[&str] = &[
+    "avoid",
+    "avoided",
+    "avoiding",
+    "avoids",
+    "ban",
+    "banned",
+    "banning",
+    "bans",
+    "delete",
+    "deleted",
+    "deletes",
+    "deleting",
+    "eliminate",
+    "eliminated",
+    "eliminates",
+    "eliminating",
+    "forbid",
+    "forbids",
+    "forbidden",
+    "forbidding",
+    "prevent",
+    "prevented",
+    "preventing",
+    "prevents",
+    "remove",
+    "removed",
+    "removes",
+    "removing",
+];
+const RELATION_BREAK_WORDS: &[&str] = &["by", "through", "using", "via", "with"];
+const TURNING_WORDS: &[&str] = &["but", "hence", "so", "therefore", "thus"];
+const HYPOTHETICAL_WORDS: &[&str] = &[
+    "could",
+    "hypothetically",
+    "if",
+    "should",
+    "whether",
+    "would",
+];
+const NARRATION_WORDS: &[&str] = &[
+    "cite",
+    "cited",
+    "emit",
+    "emits",
+    "emitted",
+    "emitting",
+    "example",
+    "examples",
+    "form",
+    "literal",
+    "mention",
+    "mentioned",
+    "mentions",
+    "narrated",
+    "phrase",
+    "quote",
+    "quoted",
+    "said",
+    "say",
+    "saying",
+    "string",
+    "token",
+    "write",
+    "writes",
+    "writing",
+    "wrote",
+];
+
+fn guarded_context(prose: &str, marker_start: usize) -> bool {
+    let words = RecentWords::before(prose, marker_start);
+    words.contains_any(NEGATION_WORDS)
+        || words.contains_pair("instead", "of")
+        || words.contains("instead-of")
+        || ["refuse", "refused", "refuses", "refusing"]
+            .into_iter()
+            .any(|word| words.contains_pair(word, "to"))
+        || words.direct_prohibition()
+        || words.contains_any(HYPOTHETICAL_WORDS)
+        || words.contains_any(NARRATION_WORDS)
+}
+
+struct RecentWords<'a> {
+    words: [&'a str; CONTEXT_WINDOW],
+    len: usize,
+}
+
+impl<'a> RecentWords<'a> {
+    fn before(prose: &'a str, marker_start: usize) -> Self {
+        let clause_start = prose[..marker_start]
+            .rfind(['\r', '\n', '.', '!', '?', ';'])
+            .map_or(0, |index| index + 1);
+        let prefix = &prose[clause_start..marker_start];
+        let mut words = Self {
+            words: [""; CONTEXT_WINDOW],
+            len: 0,
+        };
+        let mut cursor = 0;
+        while cursor < prefix.len() {
+            let Some(character) = prefix[cursor..].chars().next() else {
+                break;
+            };
+            if !character.is_alphanumeric() {
+                cursor += character.len_utf8();
+                continue;
+            }
+            let start = cursor;
+            cursor += character.len_utf8();
+            while cursor < prefix.len() {
+                let Some(character) = prefix[cursor..].chars().next() else {
+                    break;
+                };
+                if !(character.is_alphanumeric() || matches!(character, '\'' | '-')) {
+                    break;
+                }
+                cursor += character.len_utf8();
+            }
+            words.push(&prefix[start..cursor]);
+        }
+        words
+    }
+
+    fn push(&mut self, word: &'a str) {
+        if contains_word(TURNING_WORDS, word) {
+            self.len = 0;
+            return;
+        }
+        if self.len < CONTEXT_WINDOW {
+            self.words[self.len] = word;
+            self.len += 1;
+        } else {
+            self.words.rotate_left(1);
+            self.words[CONTEXT_WINDOW - 1] = word;
+        }
+    }
+
+    fn contains(&self, expected: &str) -> bool {
+        self.words[..self.len]
+            .iter()
+            .any(|word| word.eq_ignore_ascii_case(expected))
+    }
+
+    fn contains_any(&self, expected: &[&str]) -> bool {
+        self.words[..self.len]
+            .iter()
+            .any(|word| contains_word(expected, word))
+    }
+
+    fn contains_pair(&self, first: &str, second: &str) -> bool {
+        self.words[..self.len]
+            .windows(2)
+            .any(|pair| pair[0].eq_ignore_ascii_case(first) && pair[1].eq_ignore_ascii_case(second))
+    }
+
+    fn direct_prohibition(&self) -> bool {
+        let words = &self.words[..self.len];
+        for index in (0..words.len()).rev() {
+            if contains_word(PROHIBITION_WORDS, words[index]) {
+                return !words[index + 1..]
+                    .iter()
+                    .any(|word| contains_word(RELATION_BREAK_WORDS, word));
+            }
+        }
+        false
+    }
+}
+
+fn contains_word(words: &[&str], candidate: &str) -> bool {
+    words
+        .iter()
+        .any(|word| candidate.eq_ignore_ascii_case(word))
 }
 
 /// Markdown indentation columns, with a tab advancing to the next four-column stop.

@@ -9,7 +9,7 @@ use crate::resident::ingest_vendor;
 
 /// Retire every live directive the ended occupant answered in its transcript.
 ///
-/// An agent that ends its turn on an ACK or NACK header exits before anything
+/// An agent that ends its turn on an ACK or NAK header exits before anything
 /// can run the ack command, so its answer sits in the transcript alone until
 /// a successor wakes to cite it. The exit reads that transcript under the
 /// rules the ack command applies, journals the disposition the successor

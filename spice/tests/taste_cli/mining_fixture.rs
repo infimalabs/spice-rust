@@ -77,7 +77,7 @@ fn assert_initial_mining_result(
     assert!(description.contains("Recurrence count: 3"), "{description}");
     assert!(description.contains("\"Do not use grep for repository searches; use rg instead.\""));
     assert!(description.contains("(declined)"), "{description}");
-    assert!(description.contains("NACK reason"), "{description}");
+    assert!(description.contains("NAK reason"), "{description}");
     for key in ["1kMine01", "1kMine02", "1kMine03"] {
         assert!(description.contains(key), "{description}");
     }
