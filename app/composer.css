@@ -253,7 +253,17 @@
     transform var(--canvas-motion-settle) var(--canvas-ease-standard);
 }
 .team-surface .mosaic-message-card.final > .mosaic-message-task-layer {
-  inset-block-start: var(--message-final-highlight-width);
+  inset-block-start: 0;
+}
+.team-surface .mosaic-message-card.final.mosaic-message-card--inspecting-task::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  box-sizing: border-box;
+  border-radius: inherit;
+  border-block-start: var(--message-final-highlight-width) solid var(--accent-1);
+  content: "";
+  pointer-events: none;
 }
 .team-surface .mosaic-message-layers[data-task-panel-state="open"] .mosaic-message-normal {
   opacity: 0;
