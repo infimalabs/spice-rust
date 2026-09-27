@@ -445,7 +445,7 @@
   margin-left: 4px;
   color: var(--muted);
   font-size: .8125em;
-  line-height: inherit;
+  line-height: 1.5;
   text-shadow: 0 1px 1px var(--panel);
 }
 .markdown-body .message-quote-card:has(
@@ -517,6 +517,11 @@
   text-decoration: none;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.markdown-body a.message-quote-author {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
 }
 .markdown-body .message-quote-author[data-accent] {
   --message-quote-author-accent: var(--accent-slot);
