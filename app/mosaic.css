@@ -67,7 +67,7 @@
   padding-inline: var(--mosaic-quote-nested-inline)
     calc(var(--mosaic-quote-nested-inline) + var(--mosaic-quote-rail));
   font-size: inherit;
-  border-left-color: color-mix(in srgb, var(--accent) 88%, white); background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-left-color: color-mix(in srgb, var(--accent) 88%, white);
 }
 .markdown-body blockquote p { margin: 0 0 6px; }
 .markdown-body blockquote p:last-child { margin-bottom: 0; }
