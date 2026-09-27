@@ -10,6 +10,7 @@ pub(super) fn expand<'a>(
     events: Vec<MarkdownEvent<'a>>,
     presentations: &[QuotePresentation],
     agents: &super::QuoteAgents,
+    sources: &super::QuoteSources,
     tasks: &BTreeMap<String, TaskHandle>,
 ) -> Vec<MarkdownEvent<'a>> {
     if presentations.is_empty() {
@@ -33,7 +34,7 @@ pub(super) fn expand<'a>(
             continue;
         };
         expanded.push(MarkdownEvent::InlineHtml(
-            render(node, agents, tasks).into(),
+            render(node, agents, sources, tasks).into(),
         ));
         event += 3;
         presentation += 1;
@@ -81,16 +82,44 @@ pub(crate) fn referenced_quote_agents(
         .collect()
 }
 
+/// The source cards referenced by one card's quotes and directive contexts.
+pub(crate) fn referenced_quote_sources(
+    presentations: &[QuotePresentation],
+    directives: &[wire::MessageDirective],
+    sources: &super::QuoteSources,
+) -> super::QuoteSources {
+    let mut referenced = super::QuoteSources::new();
+    for directive in directives {
+        let target = directive.quote_target.to_string();
+        if let Some(source) = sources.get(&target) {
+            referenced.insert(target, source.clone());
+        }
+    }
+    let mut pending = presentations.iter().collect::<Vec<_>>();
+    while let Some(presentation) = pending.pop() {
+        let QuotePresentation::Resolved { target, quotes, .. } = presentation else {
+            continue;
+        };
+        if let Some(source) = sources.get(target) {
+            referenced.insert(target.clone(), source.clone());
+        }
+        pending.extend(quotes);
+    }
+    referenced
+}
+
 /// The byline closing quoted words: who authored `target`, and its task.
 pub(super) fn signoff_html(
     author: &QuoteAuthor,
     target: &str,
     agents: &super::QuoteAgents,
+    sources: &super::QuoteSources,
     tasks: &BTreeMap<String, TaskHandle>,
 ) -> String {
     format!(
-        "<span class=\"message-quote-signoff\">{}{}</span>",
-        author_html(author, agents),
+        "<span class=\"message-quote-signoff\">{}{}{}</span>",
+        author_html(author, target, agents, sources),
+        source_html(target, sources),
         task_html(target, tasks),
     )
 }
@@ -119,6 +148,7 @@ fn presentation_target(presentation: &QuotePresentation) -> &str {
 fn render(
     presentation: &QuotePresentation,
     agents: &super::QuoteAgents,
+    sources: &super::QuoteSources,
     tasks: &BTreeMap<String, TaskHandle>,
 ) -> String {
     match presentation {
@@ -129,7 +159,8 @@ fn render(
             disposition,
             quotes,
         } => {
-            let body = super::render_received_with_quotes(text, &[], &[], quotes, agents, tasks);
+            let body =
+                super::render_received_with_quotes(text, &[], &[], quotes, agents, sources, tasks);
             let disposition = disposition.map(disposition_html).unwrap_or_default();
             let body = body_with_disposition(&body.html, &disposition);
             format!(
@@ -137,7 +168,7 @@ fn render(
                  data-quote-target=\"{}\"><div class=\"message-quote-body\">{body}</div> \
                  {}</div>",
                 super::escape_html_attribute(target),
-                signoff_html(author, target, agents, tasks),
+                signoff_html(author, target, agents, sources, tasks),
             )
         }
         QuotePresentation::Unavailable { target, reason } => {
@@ -163,7 +194,12 @@ fn body_with_disposition<'a>(body: &'a str, disposition: &str) -> Cow<'a, str> {
     )
 }
 
-fn author_html(author: &QuoteAuthor, agents: &super::QuoteAgents) -> String {
+fn author_html(
+    author: &QuoteAuthor,
+    target: &str,
+    agents: &super::QuoteAgents,
+    sources: &super::QuoteSources,
+) -> String {
     match author {
         QuoteAuthor::Agent { lane, occupant } => {
             if let Some(agent) = agents.get(&(*lane, *occupant)) {
@@ -172,7 +208,7 @@ fn author_html(author: &QuoteAuthor, agents: &super::QuoteAgents) -> String {
                     "<button type=\"button\" class=\"message-quote-author\" \
                      data-quote-author=\"agent\" data-quote-agent-team=\"{}\" \
                      data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
-                     data-quote-history=\"available\" data-accent=\"{}\" \
+                     data-quote-author-state=\"current\" data-accent=\"{}\" \
                      aria-label=\"Open information for {}\">{}</button>",
                     agent.team,
                     agent.accent,
@@ -180,22 +216,26 @@ fn author_html(author: &QuoteAuthor, agents: &super::QuoteAgents) -> String {
                     escape_html_text(label),
                 );
             }
-            let (label, accent) = agents
+            if let Some(agent) = sources.get(target).and_then(|source| source.agent.as_ref()) {
+                return agent_label_html(*lane, *occupant, agent, "source");
+            }
+            if let Some(agent) = agents
                 .iter()
-                .find_map(|((candidate, _), agent)| {
-                    (*candidate == *lane).then(|| (agent.label.clone(), Some(agent.accent)))
-                })
-                .unwrap_or_else(|| {
-                    (
-                        format!(
-                            "{}/{}",
-                            crate::watchband::short(*lane),
-                            crate::watchband::short(*occupant),
-                        ),
-                        None,
-                    )
-                });
-            unavailable_agent_html(*lane, *occupant, &label, accent)
+                .find_map(|((candidate, _), agent)| (*candidate == *lane).then_some(agent))
+            {
+                return agent_label_html(*lane, *occupant, agent, "lane");
+            }
+            let label = format!(
+                "{}/{}",
+                crate::watchband::short(*lane),
+                crate::watchband::short(*occupant),
+            );
+            format!(
+                "<span class=\"message-quote-author\" data-quote-author=\"agent\" \
+                 data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
+                 data-quote-author-state=\"unresolved\" \
+                 aria-label=\"Agent {label}\">{label}</span>"
+            )
         }
         QuoteAuthor::Directive { actor } => match actor {
             wire::Actor::Operator => principal_html("Operator", "operator"),
@@ -204,46 +244,44 @@ fn author_html(author: &QuoteAuthor, agents: &super::QuoteAgents) -> String {
                 role=\"img\" aria-label=\"Spice\">🌶️</span>"
                 .to_owned(),
             wire::Actor::Lane(lane) => {
-                let (label, accent) = agents
+                if let Some(agent) = agents
                     .iter()
-                    .find_map(|((candidate, _), agent)| {
-                        (*candidate == *lane).then(|| (agent.label.clone(), Some(agent.accent)))
-                    })
-                    .unwrap_or_else(|| (crate::watchband::short(*lane), None));
-                let accent = accent_html_attribute(accent);
+                    .find_map(|((candidate, _), agent)| (*candidate == *lane).then_some(agent))
+                {
+                    return format!(
+                        "<span class=\"message-quote-author\" data-quote-author=\"directive\" \
+                         data-quote-actor=\"lane:{lane}\" data-quote-author-state=\"lane\" \
+                         data-accent=\"{}\">{}</span>",
+                        agent.accent,
+                        escape_html_text(&agent.label),
+                    );
+                }
+                let label = crate::watchband::short(*lane);
                 format!(
                     "<span class=\"message-quote-author\" data-quote-author=\"directive\" \
-                     data-quote-actor=\"lane:{lane}\" data-quote-history=\"unavailable\"{accent} \
-                     aria-label=\"{}; identity history unavailable\">{} \
-                     <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>",
-                    super::escape_html_attribute(&label),
-                    escape_html_text(&label),
+                     data-quote-actor=\"lane:{lane}\" data-quote-author-state=\"unresolved\" \
+                     aria-label=\"Lane {label}\">{label}</span>"
                 )
             }
         },
     }
 }
 
-fn unavailable_agent_html(
+fn agent_label_html(
     lane: wire::CanonicalUuid,
     occupant: wire::CanonicalUuid,
-    label: &str,
-    accent: Option<usize>,
+    agent: &super::QuoteAgent,
+    state: &str,
 ) -> String {
-    let accent = accent_html_attribute(accent);
     format!(
         "<span class=\"message-quote-author\" data-quote-author=\"agent\" \
          data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{occupant}\" \
-         data-quote-history=\"unavailable\"{accent} \
-         aria-label=\"{}; identity history unavailable\">{} \
-         <span class=\"message-quote-history-unavailable\">· history unavailable</span></span>",
-        super::escape_html_attribute(label),
-        escape_html_text(label),
+         data-quote-author-state=\"{state}\" data-accent=\"{}\" \
+         aria-label=\"{}\">{}</span>",
+        agent.accent,
+        super::escape_html_attribute(&agent.label),
+        escape_html_text(&agent.label),
     )
-}
-
-fn accent_html_attribute(accent: Option<usize>) -> String {
-    accent.map_or_else(String::new, |accent| format!(" data-accent=\"{accent}\""))
 }
 
 fn principal_html(label: &str, actor: &str) -> String {
@@ -281,6 +319,18 @@ fn disposition_html(disposition: Disposition) -> String {
     format!(
         "<span class=\"message-quote-disposition\" \
          data-quote-disposition=\"{key}\">{label}</span>"
+    )
+}
+
+fn source_html(target: &str, sources: &super::QuoteSources) -> String {
+    let Some(source) = sources.get(target) else {
+        return String::new();
+    };
+    format!(
+        "<a class=\"message-quote-source\" href=\"{}\" \
+         data-quote-source=\"{}\" aria-label=\"Open original message\">Original</a>",
+        super::escape_html_attribute(&crate::view::card_href(&source.card_id)),
+        super::escape_html_attribute(&source.card_id),
     )
 }
 

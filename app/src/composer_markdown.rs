@@ -34,7 +34,15 @@ pub(crate) struct QuoteAgent {
 
 pub(crate) type QuoteAgents = BTreeMap<(wire::CanonicalUuid, wire::CanonicalUuid), QuoteAgent>;
 
-pub(crate) use quotes::referenced_quote_agents;
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct QuoteSource {
+    pub(crate) card_id: String,
+    pub(crate) agent: Option<QuoteAgent>,
+}
+
+pub(crate) type QuoteSources = BTreeMap<String, QuoteSource>;
+
+pub(crate) use quotes::{referenced_quote_agents, referenced_quote_sources};
 
 /// Render received text through the one sanitized Markdown path used by cards.
 #[cfg(test)]
@@ -172,6 +180,7 @@ pub(crate) fn render_received_with_classifications(
         &[],
         &BTreeMap::new(),
         &BTreeMap::new(),
+        &BTreeMap::new(),
     )
 }
 
@@ -183,6 +192,7 @@ pub(crate) fn render_received_with_quotes(
     directives: &[MessageDirective],
     quotes: &[wire::QuotePresentation],
     quote_agents: &QuoteAgents,
+    quote_sources: &QuoteSources,
     quote_tasks: &BTreeMap<String, wire::TaskHandle>,
 ) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
@@ -226,7 +236,13 @@ pub(crate) fn render_received_with_quotes(
                 if quote_depth == 0
                     && let Some(context) = open_context.take()
                 {
-                    close_directive_context(&mut events, &context, quote_agents, quote_tasks);
+                    close_directive_context(
+                        &mut events,
+                        &context,
+                        quote_agents,
+                        quote_sources,
+                        quote_tasks,
+                    );
                 }
             }
             _ => {}
@@ -248,7 +264,7 @@ pub(crate) fn render_received_with_quotes(
         "every resident classification maps to one Markdown text event"
     );
     let events = coalesce_text_events(events);
-    let events = quotes::expand(events, quotes, quote_agents, quote_tasks);
+    let events = quotes::expand(events, quotes, quote_agents, quote_sources, quote_tasks);
     let (events, diagrams) = diagrams::extract(events);
     let has_diagrams = !diagrams.is_empty();
     let image_only = markdown_is_image_only(&events, has_diagrams);
@@ -284,6 +300,7 @@ fn close_directive_context(
     events: &mut Vec<MarkdownEvent<'_>>,
     context: &MessageDirective,
     quote_agents: &QuoteAgents,
+    quote_sources: &QuoteSources,
     quote_tasks: &BTreeMap<String, wire::TaskHandle>,
 ) {
     let signoff = quotes::signoff_html(
@@ -292,6 +309,7 @@ fn close_directive_context(
         },
         &context.quote_target.to_string(),
         quote_agents,
+        quote_sources,
         quote_tasks,
     );
     if matches!(events.last(), Some(MarkdownEvent::End(TagEnd::Paragraph))) {
