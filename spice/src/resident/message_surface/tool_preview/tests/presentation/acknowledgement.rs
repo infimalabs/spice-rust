@@ -127,7 +127,7 @@ fn message_badges_require_authenticated_positive_directive_evidence() {
         },
     );
     assert_eq!(
-        message_badges("NACK 1kQnrzNZ: unsafe.", Some(&directives), event()),
+        message_badges("NAK 1kQnrzNZ: unsafe.", Some(&directives), event()),
         ClassificationCounts {
             declines: 1,
             ..ClassificationCounts::default()
@@ -136,7 +136,7 @@ fn message_badges_require_authenticated_positive_directive_evidence() {
     );
     for text in [
         "ACK not-a-key: prose only.",
-        "NACK not-a-key: prose only.",
+        "NAK not-a-key: prose only.",
         "Ordinary prose mentions ACK without a key.",
     ] {
         assert!(
@@ -161,7 +161,7 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
             declines: 0,
         },
     );
-    assert!(message_badges("NACK 1kQnrzNZ: refused.", Some(&directives), event()).is_empty());
+    assert!(message_badges("NAK 1kQnrzNZ: refused.", Some(&directives), event()).is_empty());
 }
 
 #[test]
@@ -285,13 +285,13 @@ fn shared_acknowledgement_prose_renders_once_after_every_context() {
 #[test]
 fn non_key_text_after_a_recognized_header_remains_response_prose() {
     let directives = directives(&[("1kQwPZtK", "Keep the recognized direction visible.")]);
-    for marker in ["ACK", "NACK"] {
+    for marker in ["ACK", "NAK"] {
         let text = format!(
             "{marker} 1kQwPZtK nope 1kQwPZtM: Shared prose remains attached to the attempt."
         );
         let context = match marker {
             "ACK" => "> [ACK PENDING] Keep the recognized direction visible.",
-            _ => "> [NACK] Keep the recognized direction visible.",
+            _ => "> [NAK] Keep the recognized direction visible.",
         };
         let expected =
             format!("{context}\n\nNope 1kQwPZtM: Shared prose remains attached to the attempt.");
@@ -315,14 +315,14 @@ fn mixed_acknowledgement_dispositions_keep_their_own_keys_and_contexts() {
     ]);
     assert_eq!(
         presented_text(
-            "ACK 1kQwPZtK: Applied.\nNACK 1kQwPZtL: Unsafe.",
+            "ACK 1kQwPZtK: Applied.\nNAK 1kQwPZtL: Unsafe.",
             &directives,
             event(),
         )
         .expect("mixed acknowledgments present"),
         concat!(
             "> [ACK PENDING] Apply the current path.\n\nApplied.\n",
-            "> [NACK] Remove the safety check.\n\nUnsafe."
+            "> [NAK] Remove the safety check.\n\nUnsafe."
         ),
     );
 }
@@ -506,7 +506,7 @@ fn quoted_history_keeps_its_pills_at_every_level_without_live_credit() {
         concat!(
             "> > [ACK] Button should close the drawer\n",
             "> >\n",
-            "> > > [NACK] Keep the old drawer\n",
+            "> > > [NAK] Keep the old drawer\n",
             "> > ![[ACK] card](https://example.test/card.png)\n",
             ">\n",
             "> Quoted reply\n",

@@ -77,7 +77,7 @@ flowchart LR
   P -- yes --> R["deliver readout, with suppression"]
   P -- no --> N["nothing"]
   R --> O["delivery observation only;<br/>journal lifecycle unchanged"]
-  O --> A["agent may ACK or NACK<br/>(decline) in prose"]
+  O --> A["agent may ACK or NAK<br/>(decline) in prose"]
 ```
 
 **Invariant —** Delivery becomes eligible after a non-shell tool call, at its
@@ -290,12 +290,12 @@ operator can read it.
 
 ```mermaid
 flowchart TD
-  H["ACK or NACK header"] --> W{"where does it reach the tape?"}
+  H["ACK or NAK header"] --> W{"where does it reach the tape?"}
   W -- "interjected vendor assistant text" --> M["resident retires the key<br/>as prose lands; no command"]
   W -- "shell-hook vendor assistant text" --> C["printed ack command finds the record;<br/>the key retires mid-turn"]
   W -- "tool input or reasoning only" --> A["not acknowledgment evidence;<br/>the key stays live"]
   W -- "assistant text ending the turn" --> X["retired on landing or at exit<br/>from the final transcript"]
-  W -- "quoted or buried in assistant text" --> Q["steer::ack-missed names the miss;<br/>the key stays live"]
+  W -- "quoted or narrated in assistant text" --> Q["quoted mentions produce steer::ack-missed;<br/>the key stays live"]
   A --> N["speak the header as visible text,<br/>or let the turn end on it"]
   Q --> N
 ```

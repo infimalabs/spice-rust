@@ -284,7 +284,7 @@ fn lease_boundaries_are_strict_and_renewal_transitions_speak_once() {
                 assert!(line.contains("run spice task free METER-00000001, then spice task next"));
             }
             assert!(!line.contains(" ACK"));
-            assert!(!line.contains(" NACK"));
+            assert!(!line.contains(" NAK"));
         }
     }
 

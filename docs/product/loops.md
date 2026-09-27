@@ -144,7 +144,7 @@ browser-local queued or sent prediction remains ephemeral.
 stateDiagram-v2
   [*] --> live: journal publication accepted
   live --> acked: agent ACK
-  live --> declined: agent NACK
+  live --> declined: agent NAK
   live --> canceled: operator cancellation
   live --> lapsed: lapse transaction accepted
   live --> deadlettered: PendingInbox automatic wake is Unstarted or terminal-class failed

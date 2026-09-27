@@ -7,10 +7,10 @@ use wire::Disposition;
 use super::*;
 
 /// The prose a lane speaks when it declines and then explains itself by
-/// citing the header it wrote, once mid-sentence and once leading a line.
+/// citing the header it wrote twice.
 fn declined_then_cited(key: &str) -> String {
     format!(
-        "NACK {key}: Verified on the tape; the direction names a lane this worktree does not hold.\n\n\
+        "NAK {key}: Verified on the tape; the direction names a lane this worktree does not hold.\n\n\
          I emitted `ACK {key}: Carrying it forward now` as prose before checking, and\n\
          `ACK {key}: Carrying it forward now` is the header the operator saw."
     )
@@ -31,7 +31,7 @@ fn a_placed_header_retires_its_key_when_the_same_prose_later_cites_it() {
         ..
     }) = outcome
     else {
-        panic!("the placed NACK header retires the key: {outcome:?}");
+        panic!("the placed NAK header retires the key: {outcome:?}");
     };
     assert_eq!(answer.directive, direction.directive);
     assert_eq!(answer.disposition, Disposition::Declined);
@@ -46,7 +46,7 @@ fn a_placed_header_retires_its_key_when_the_same_prose_later_cites_it() {
         .expect("the decline is journaled");
     assert_eq!(
         (declined.locus.line, declined.locus.column),
-        (1, 6),
+        (1, 5),
         "the journaled locus cites the header, not the citation"
     );
     assert_eq!(effects.inbox_delivery, Some(direction.lane));
@@ -60,65 +60,51 @@ fn a_placed_header_retires_its_key_when_the_same_prose_later_cites_it() {
     direction.finish();
 }
 
-/// A mention that only quotes or buries a live key names its own miss.
+/// A mention that only quotes a live key names its own miss.
 ///
-/// The lane's shell cites the live directive its inbox shows, and that
-/// witness holds: nothing about the directive moved, the prose missed. The
-/// refusal therefore names the miss the lane can repair by speaking a header,
-/// and journals it, instead of sending the lane to reread a snapshot that
-/// would show it the same live key.
+/// The lane's shell cites the live directive its inbox shows, and that witness
+/// holds: nothing about the directive moved, the prose quoted it. The refusal
+/// names the miss the lane can repair by speaking an unquoted header and
+/// journals it instead of sending the lane to reread the same live key.
 #[test]
-fn a_quoted_or_buried_mention_against_a_live_witness_names_its_miss() {
+fn a_quoted_mention_against_a_live_witness_names_its_miss() {
     let direction = Direction::new("ack-mention-miss");
     let key = direction.key.clone();
     let before = direction.fact_kinds().len();
+    let spoken =
+        format!("`ACK {key}: Carrying it forward now` is the header I will emit after the check.");
 
-    for (spoken, miss, column) in [
-        (
-            format!(
-                "`ACK {key}: Carrying it forward now` is the header I will emit once the check lands."
-            ),
-            wire::body::AcknowledgmentMiss::Quoted,
-            6,
-        ),
-        (
-            format!("I emitted ACK {key}: Carrying it forward now, but only as narration."),
-            wire::body::AcknowledgmentMiss::Buried,
-            15,
-        ),
-    ] {
-        direction.speak(&spoken);
-        let (outcome, effects) = direction.ack(Disposition::Acked, direction.live_witness());
-        let Outcome::Refusal(refusal) = outcome else {
-            panic!("a {miss:?} mention retires nothing: {outcome:?}");
-        };
-        assert_eq!(refusal.reason(), "steer::ack-missed", "{spoken:?}");
-        let diagnostic = refusal.diagnostic().expect("a miss carries its diagnostic");
-        assert_eq!(
-            diagnostic.observed(),
-            Some(format!("{key}:{}", format!("{miss:?}").to_lowercase()).as_str())
-        );
-        assert_eq!(
-            diagnostic.detail(),
-            Some(
-                "lead a new assistant prose line with the ACK or NACK header; \
-                 a quoted or buried mention of the key acknowledges nothing"
-            )
-        );
-        assert!(effects.inbox_delivery.is_none());
-        let missed = direction
-            .last_fact::<wire::body::SteerMissed>()
-            .expect("the miss is journaled");
-        assert_eq!(missed.key, key);
-        assert_eq!(missed.lane, direction.lane);
-        assert_eq!(missed.epoch, direction.epoch);
-        assert_eq!(missed.miss, miss);
-        assert_eq!((missed.locus.line, missed.locus.column), (1, column));
-        assert_eq!(direction.head().disposition, Disposition::Live);
-    }
+    direction.speak(&spoken);
+    let (outcome, effects) = direction.ack(Disposition::Acked, direction.live_witness());
+    let Outcome::Refusal(refusal) = outcome else {
+        panic!("a quoted mention retires nothing: {outcome:?}");
+    };
+    assert_eq!(refusal.reason(), "steer::ack-missed");
+    let diagnostic = refusal.diagnostic().expect("a miss carries its diagnostic");
+    assert_eq!(
+        diagnostic.observed(),
+        Some(format!("{key}:quoted").as_str())
+    );
+    assert_eq!(
+        diagnostic.detail(),
+        Some(
+            "write the ACK or NAK header in unquoted assistant prose; \
+             a quoted mention of the key acknowledges nothing"
+        )
+    );
+    assert!(effects.inbox_delivery.is_none());
+    let missed = direction
+        .last_fact::<wire::body::SteerMissed>()
+        .expect("the miss is journaled");
+    assert_eq!(missed.key, key);
+    assert_eq!(missed.lane, direction.lane);
+    assert_eq!(missed.epoch, direction.epoch);
+    assert_eq!(missed.miss, wire::body::AcknowledgmentMiss::Quoted);
+    assert_eq!((missed.locus.line, missed.locus.column), (1, 6));
+    assert_eq!(direction.head().disposition, Disposition::Live);
     assert_eq!(
         direction.fact_kinds()[before..],
-        [wire::FactKind::SteerMissed, wire::FactKind::SteerMissed]
+        [wire::FactKind::SteerMissed]
     );
     direction.finish();
 }

@@ -862,7 +862,7 @@ fn decline_path(fixture: &Fixture, lane: wire::CanonicalUuid) -> ExpectedRecogni
     let locus = record_reply(
         fixture,
         lane.parse().expect("lane UUID"),
-        &format!("NACK {}: cannot apply", sent.key),
+        &format!("NAK {}: cannot apply", sent.key),
         &sent.key,
     );
     let mismatched = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);

@@ -526,7 +526,7 @@ fn acknowledgement_receipts_keep_one_stable_measured_shape() {
         },
     );
     let declined = render(
-        "[NACK]",
+        "[NAK]",
         TestClassifications {
             declines: 1,
             ..TestClassifications::default()
@@ -539,7 +539,7 @@ fn acknowledgement_receipts_keep_one_stable_measured_shape() {
     assert!(same_measured_shape(&pending, &retired));
     assert!(
         !same_measured_shape(&pending, &declined),
-        "NACK carries distinct measured text"
+        "NAK carries distinct measured text"
     );
     assert_eq!(
         pending.html.matches("class=\"message-ack-pill\"").count(),
@@ -942,7 +942,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     let cases = [
         (wire::Disposition::Live, "live"),
         (wire::Disposition::Acked, "acked"),
-        (wire::Disposition::Declined, "nacked"),
+        (wire::Disposition::Declined, "declined"),
         (wire::Disposition::Lapsed, "lapsed"),
         (wire::Disposition::Canceled, "canceled"),
         (wire::Disposition::DeadLettered, "dead-letter"),
@@ -1006,7 +1006,7 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     assert_eq!(
         html.matches("class=\"message-ack-pill\"").count(),
         2,
-        "ACK and NACK reuse the canonical acknowledgement pill"
+        "ACK and NAK reuse the canonical acknowledgement pill"
     );
     let acknowledgement = html
         .find("data-quote-disposition=\"acked\"")

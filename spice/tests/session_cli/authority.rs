@@ -495,7 +495,7 @@ fn short_run_processes_share_suppression_and_boundary_changes_speak() {
     assert!(!first_boundary.contains("task free"));
     assert!(!first_boundary.contains("Claim lease warning:"));
     assert!(!first_boundary.contains(" ACK"));
-    assert!(!first_boundary.contains(" NACK"));
+    assert!(!first_boundary.contains(" NAK"));
     assert!(
         second.err.is_empty(),
         "same boundary band is durably suppressed"
@@ -511,7 +511,7 @@ fn short_run_processes_share_suppression_and_boundary_changes_speak() {
     assert!(!next_boundary.contains("task free"));
     assert!(!next_boundary.contains("Claim lease urgent:"));
     assert!(!next_boundary.contains(" ACK"));
-    assert!(!next_boundary.contains(" NACK"));
+    assert!(!next_boundary.contains(" NAK"));
     assert_eq!(fact_count(&authority), next_boundary_generation_facts);
 
     scratch.remove();

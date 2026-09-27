@@ -254,11 +254,11 @@ pub enum Marker {
     /// The directive was heard and acted on.
     Ack,
     /// The directive was refused with a reason.
-    Nack,
+    Nak,
 }
 
 /// Every marker, in the order the protocol states them.
-pub const MARKERS: [Marker; 2] = [Marker::Nack, Marker::Ack];
+pub const MARKERS: [Marker; 2] = [Marker::Nak, Marker::Ack];
 
 impl Marker {
     /// The marker this word spells, if it spells one.
@@ -272,7 +272,7 @@ impl Marker {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Ack => "ACK",
-            Self::Nack => "NACK",
+            Self::Nak => "NAK",
         }
     }
 
@@ -281,7 +281,7 @@ impl Marker {
     pub const fn disposition(self) -> Disposition {
         match self {
             Self::Ack => Disposition::Acked,
-            Self::Nack => Disposition::Declined,
+            Self::Nak => Disposition::Declined,
         }
     }
 }
@@ -499,9 +499,9 @@ mod tests {
     #[test]
     fn each_marker_names_the_disposition_it_retires_into() {
         assert_eq!(Marker::read("ACK"), Some(Marker::Ack));
-        assert_eq!(Marker::read("NACK"), Some(Marker::Nack));
+        assert_eq!(Marker::read("NAK"), Some(Marker::Nak));
         assert_eq!(Marker::read("ack"), None);
         assert_eq!(Marker::Ack.disposition(), Disposition::Acked);
-        assert_eq!(Marker::Nack.disposition(), Disposition::Declined);
+        assert_eq!(Marker::Nak.disposition(), Disposition::Declined);
     }
 }

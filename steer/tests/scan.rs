@@ -43,27 +43,29 @@ fn a_leading_clause_retires_every_key_it_names() {
     );
 }
 
-/// Standing is loaded only when the canonical grammar sees a placed attempt;
-/// the preflight must therefore make the same whitespace and quoting choices
-/// as the scanner that consumes that standing.
+/// Standing is loaded only when the canonical grammar sees an authored
+/// attempt; preflight and scanning must share multiline and context guards.
 #[test]
 fn acknowledgement_preflight_uses_the_canonical_clause_grammar() {
     for prose in [
         "ACK 1kJK6N3R: spaced.",
         "ACK\t1kJK6N3R: tabbed.",
-        "NACK\t1kJK7Sqy: declined.",
-        "ACK 1kJK6N3R. period separated.",
-        "ACK 1kJK6N3R separatorless.",
-        "**ACK 1kJK6N3R:** emphasized.",
+        "NAK\t1kJK7Sqy: declined.",
+        "Progress follows: ACK 1kJK6N3R. applied.",
+        "ACK\n1kJK6N3R\n: cross-line.",
+        "**ACK** **1kJK6N3R**:** emphasized.",
     ] {
         assert!(has_acknowledgement(prose), "missed {prose:?}");
     }
 
     for prose in [
         "> ACK\t1kJK6N3R: quoted.",
-        "    NACK\t1kJK7Sqy: code.",
-        "Earlier ACK\t1kJK6N3R: buried.",
-        "ACK\n1kJK6N3R: no horizontal separator.",
+        "    NAK\t1kJK7Sqy: code.",
+        "I do not ACK 1kJK6N3R: negated.",
+        "If I ACK 1kJK6N3R: hypothetical.",
+        "The example ACK 1kJK6N3R: narrated.",
+        "I emitted ACK 1kJK6N3R: narration about prior prose.",
+        "src/ack.rs:12: ACK 1kJK6N3R: rendered source context.",
     ] {
         assert!(!has_acknowledgement(prose), "accepted {prose:?}");
     }
@@ -98,11 +100,42 @@ fn current_header_forms_share_one_packet_grammar() {
     }
 }
 
+/// Marker, key list, and separator line breaks remain part of one packet. The
+/// packet ranges are what presentation uses to attribute each multiline body.
+#[test]
+fn multiline_headers_preserve_exact_loci_and_body_boundaries() {
+    let prose = concat!(
+        "Before.\nACK\n1kJK6N3R\n1kJK6M0V\n:\nApplied together.\n",
+        "NAK\n1kJK7Sqy\n\u{2014}\nUnsafe.",
+    );
+    let packets = scan_acknowledgements(prose, &board());
+
+    assert_eq!(packets.len(), 2);
+    assert_eq!(
+        &prose[packets[0].start..packets[0].end],
+        "ACK\n1kJK6N3R\n1kJK6M0V\n:"
+    );
+    assert_eq!(
+        report(&packets[0].recognitions),
+        ["3:1 1kJK6N3R acked", "4:1 1kJK6M0V acked"]
+    );
+    assert_eq!(
+        &prose[packets[0].end..packets[1].start],
+        "\nApplied together.\n"
+    );
+    assert_eq!(
+        &prose[packets[1].start..packets[1].end],
+        "NAK\n1kJK7Sqy\n\u{2014}"
+    );
+    assert_eq!(report(&packets[1].recognitions), ["8:1 1kJK7Sqy declined"]);
+    assert_eq!(&prose[packets[1].end..], "\nUnsafe.");
+}
+
 /// Every prose boundary ends the key list for both dispositions. The Unicode
 /// dashes are multi-byte separators, while a bare space remains an unconsumed
 /// boundary rather than punctuation owned by the packet.
 #[test]
-fn ack_and_nack_key_lists_stop_at_every_prose_delimiter() {
+fn ack_and_nak_key_lists_stop_at_every_prose_delimiter() {
     for (delimiter, separator) in [
         (":", Some(':')),
         (".", Some('.')),
@@ -116,7 +149,7 @@ fn ack_and_nack_key_lists_stop_at_every_prose_delimiter() {
     ] {
         for (marker, key, column, disposition) in [
             ("ACK", "1kJK6N3R", 5, "acked"),
-            ("NACK", "1kJK7Sqy", 6, "declined"),
+            ("NAK", "1kJK7Sqy", 5, "declined"),
         ] {
             let prose = format!("{marker} {key}{delimiter}ordinary response prose");
             let packets = scan_acknowledgements(&prose, &board());
@@ -247,12 +280,12 @@ fn a_refusal_retires_the_directive_as_declined() {
 
     assert_eq!(
         report(&scan(REFUSED, &board)),
-        vec!["1:6 1kJK7Sqy declined".to_owned()]
+        vec!["1:5 1kJK7Sqy declined".to_owned()]
     );
 }
 
-/// Unknown, quoted, historical, and buried keys alter nothing and are each
-/// reported by name. A malformed non-key is not a packet and remains silent.
+/// Unknown, quoted, and historical keys alter nothing and are reported by
+/// name. Guarded narration is ignored; a malformed non-key stays silent.
 #[test]
 fn every_way_a_clause_fails_to_land_is_reported_by_name() {
     let board = board();
@@ -263,11 +296,9 @@ fn every_way_a_clause_fails_to_land_is_reported_by_name() {
             "5:5 1kJKZZZZ unknown".to_owned(),
             "7:5 1kJK8KcW historical".to_owned(),
             "9:7 1kJK6N3R quoted".to_owned(),
-            "11:21 1kJK6N3R buried".to_owned(),
             "14:5 1kJK6N3R quoted".to_owned(),
             "17:6 1kJK6N3R quoted".to_owned(),
-            "20:6 1kJK6N3R quoted".to_owned(),
-            "23:19 1kJK6M0V buried".to_owned(),
+            "20:5 1kJK6N3R quoted".to_owned(),
         ]
     );
 }
@@ -342,16 +373,17 @@ fn a_leading_clause_stops_before_non_key_response_prose() {
     );
 }
 
-/// A marker buried in the first response remains diagnostic prose.
+/// Every unguarded marker starts another authentic packet, even when ordinary
+/// response prose precedes it on the same line.
 #[test]
-fn an_unseparated_second_clause_on_a_line_remains_buried() {
+fn an_unseparated_second_clause_on_a_line_also_speaks() {
     let board = board();
 
     assert_eq!(
         report(&scan("ACK 1kJK6N3R: and then ACK 1kJK6M0V: again.", &board)),
         vec![
             "1:5 1kJK6N3R acked".to_owned(),
-            "1:28 1kJK6M0V buried".to_owned(),
+            "1:28 1kJK6M0V acked".to_owned(),
         ]
     );
 }
@@ -373,17 +405,10 @@ fn sentence_delimited_packets_on_one_line_each_speak() {
     );
 }
 
-/// A key from the retired base-62 mint retires where acknowledgments are
-/// written, and goes unreported only where one was misplaced.
-///
-/// This is the entire cost of parsing being wider than recognition, stated as
-/// behaviour rather than as a comment. A placed clause judges its tokens by the
-/// grammar, which admits the old alphabet; a buried one is diagnosed only when a
-/// token looks like something the current mint would write. The same sentence is
-/// scanned twice with only the key changed, so what silences the first is the
-/// alphabet and nothing else about the line.
+/// Retained-alphabet keys remain valid wherever authored ACK prose appears;
+/// explicit narration about such a header remains silent.
 #[test]
-fn a_retired_alphabet_key_retires_when_placed_and_is_unreported_when_buried() {
+fn a_retired_alphabet_key_retires_anywhere_in_authored_prose() {
     let retired = Board(
         [("YTVtQvOX", Disposition::Live)]
             .into_iter()
@@ -397,33 +422,26 @@ fn a_retired_alphabet_key_retires_when_placed_and_is_unreported_when_buried() {
     );
 
     assert_eq!(
-        report(&scan("ACK YTVtQvOX: heard.", &retired)),
-        vec!["1:5 YTVtQvOX acked".to_owned()]
+        report(&scan("Handled inline: ACK YTVtQvOX: heard.", &retired)),
+        vec!["1:21 YTVtQvOX acked".to_owned()]
     );
     assert!(
         scan("I mentioned ACK YTVtQvOX: earlier.", &retired).is_empty(),
-        "a buried pre-cutover key was diagnosed"
-    );
-    assert_eq!(
-        report(&scan("I mentioned ACK 1kJK6N3R: earlier.", &board())),
-        vec!["1:17 1kJK6N3R buried".to_owned()]
+        "narrated protocol prose must not retire the key"
     );
 }
 
 /// The header an operator reads decides the key, however the prose goes on
 /// to talk about it.
 ///
-/// A lane that declines and then explains itself by citing the header it
-/// wrote earlier has still declined: the citation in backticks is prose about
-/// a header, not a retraction of the one placed above it, whether it sits
-/// mid-sentence and reads as buried or leads its line and reads as quoted.
-/// The scan still reports each mention by name, so nothing is hidden from a
-/// diagnostic that wants every clause; only the decision ignores them.
+/// A lane that declines and then explains itself by quoting the header it
+/// wrote earlier has still declined. The scan reports quoted mentions by name,
+/// so diagnostics retain context while the authored header remains decisive.
 #[test]
 fn a_placed_header_decides_its_key_over_a_later_quoted_mention() {
     let board = board();
     let prose = concat!(
-        "NACK 1kJK7Sqy: Verified on the tape; the direction names another lane.\n\n",
+        "NAK 1kJK7Sqy: Verified on the tape; the direction names another lane.\n\n",
         "I emitted `ACK 1kJK7Sqy: Carrying it forward now` as prose before checking.\n",
         "`ACK 1kJK7Sqy: Carrying it forward now` is the header the operator saw.",
     );
@@ -431,19 +449,19 @@ fn a_placed_header_decides_its_key_over_a_later_quoted_mention() {
     assert_eq!(
         report(&scan(prose, &board)),
         vec![
-            "1:6 1kJK7Sqy declined".to_owned(),
-            "3:16 1kJK7Sqy buried".to_owned(),
+            "1:5 1kJK7Sqy declined".to_owned(),
+            "3:16 1kJK7Sqy quoted".to_owned(),
             "4:6 1kJK7Sqy quoted".to_owned(),
         ]
     );
     assert_eq!(
         decided(prose, "1kJK7Sqy", &board),
-        Some("1:6 1kJK7Sqy declined".to_owned())
+        Some("1:5 1kJK7Sqy declined".to_owned())
     );
 }
 
-/// Rank first, then recency: a placed clause wins over any misplaced mention,
-/// and among clauses of one rank the later one speaks.
+/// Authored clauses outrank quoted mentions, and among authored clauses the
+/// later one speaks.
 #[test]
 fn the_decisive_recognition_is_the_last_of_the_highest_rank() {
     let board = board();
@@ -454,12 +472,12 @@ fn the_decisive_recognition_is_the_last_of_the_highest_rank() {
             Some("2:5 1kJK6N3R acked"),
         ),
         (
-            "ACK 1kJK6N3R: first thought.\nNACK 1kJK6N3R: on reflection, no.",
-            Some("2:6 1kJK6N3R declined"),
+            "ACK 1kJK6N3R: first thought.\nNAK 1kJK6N3R: on reflection, no.",
+            Some("2:5 1kJK6N3R declined"),
         ),
         (
-            "> ACK 1kJK6N3R: quoted\nI said ACK 1kJK6N3R: buried",
-            Some("2:12 1kJK6N3R buried"),
+            "> ACK 1kJK6N3R: quoted\nI said ACK 1kJK6N3R: narrated",
+            Some("1:7 1kJK6N3R quoted"),
         ),
         ("ACK 1kJK6M0V: another key entirely.", None),
     ] {

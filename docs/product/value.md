@@ -74,12 +74,12 @@ fire-and-hope, and the operator becomes the durable store.
 ```mermaid
 flowchart LR
   I["steering item"] --> A["ACK, taken"]
-  I --> N["NACK, declined, with reason"]
+  I --> N["NAK, declined, with reason"]
   A --> R[retired]
   N --> R
 ```
 
-Both dispositions retire the item; NACK records `declined`. Decline is
+Both dispositions retire the item; NAK records `declined`. Decline is
 taught beside ACK in the agent-facing readouts and worktree skill. In Canvas,
 the resident consumes the marker before publication and the message carries no
 disposition styling, so both render as ordinary Markdown with the lane accent.
@@ -567,14 +567,14 @@ content-driven pill may resize as digit widths change.
 
 ```mermaid
 flowchart TD
-  A["assistant message"] --> Q["ACK / NACK quote block<br/>(what was asked)"]
+  A["assistant message"] --> Q["ACK / NAK quote block<br/>(what was asked)"]
   Q --> B["the response to it"]
-  B --> NextQuote["next ACK / NACK quote"]
+  B --> NextQuote["next ACK / NAK quote"]
   NextQuote --> NextResponse["its response"]
 ```
 
 Messages lay out in the agent's own order: leading prose, then each recognized
-ACK or NACK as its steering quote followed by that attempt's response. The
+ACK or NAK as its steering quote followed by that attempt's response. The
 resident consumes the marker before publication, and the browser message DTO
 carries no disposition; both paths therefore render as ordinary Markdown with
 the lane accent rather than a distinct decline colour.

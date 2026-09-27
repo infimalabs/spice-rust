@@ -783,8 +783,8 @@ fn miss_witness(
 const fn miss_repair(miss: Miss) -> &'static str {
     match miss {
         Miss::Quoted | Miss::Buried => {
-            "lead a new assistant prose line with the ACK or NACK header; \
-             a quoted or buried mention of the key acknowledges nothing"
+            "write the ACK or NAK header in unquoted assistant prose; \
+             a quoted mention of the key acknowledges nothing"
         }
         Miss::Malformed | Miss::Unknown | Miss::Historical => {
             "read the current inbox and acknowledge a live key in new assistant prose"

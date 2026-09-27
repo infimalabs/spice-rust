@@ -413,7 +413,7 @@ sequenceDiagram
   ST-->>HK: one readout
   alt readout is new
     HK->>AG: deliver
-    AG->>TR: ACK or NACK in prose
+    AG->>TR: ACK or NAK in prose
   else readout would repeat
     HK-->>AG: suppress delivery
   end

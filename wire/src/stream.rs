@@ -27,7 +27,7 @@ pub const ACK_PENDING_MARKER: &str = "[ACK PENDING]";
 /// agent declined. A decline answers the operator as surely as credit does, so
 /// the quoted context carries its own marker instead of reading as prose the
 /// lane never answered.
-pub const NACK_MARKER: &str = "[NACK]";
+pub const NAK_MARKER: &str = "[NAK]";
 
 /// Newest messages every surface keeps for each agent, whatever else it drops.
 ///
@@ -257,7 +257,7 @@ impl MessageClassificationKind {
         match self {
             Self::Acknowledgement => ACK_MARKER,
             Self::AcknowledgementPending => ACK_PENDING_MARKER,
-            Self::Decline => NACK_MARKER,
+            Self::Decline => NAK_MARKER,
             Self::Taste => TASTE_MARKER,
             Self::Broadcast => BROADCAST_MARKER,
             Self::Review => REVIEW_MARKER,

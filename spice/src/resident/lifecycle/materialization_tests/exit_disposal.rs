@@ -20,7 +20,7 @@ const NARRATION: &[u8] = br#"{"type":"assistant","message":{"type":"message","ro
 "#;
 const TURN_ENDING_ACK: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: Resumed and finished the request."}]}}
 "#;
-const TURN_ENDING_NACK: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"NACK 1kKRRsDS: The request names a lane this worktree does not hold."}]}}
+const TURN_ENDING_NAK: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"NAK 1kKRRsDS: The request names a lane this worktree does not hold."}]}}
 "#;
 const TURN_ENDING_SILENCE: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"Finished without answering the direction."}]}}
 "#;
@@ -82,8 +82,8 @@ fn a_turn_ending_ack_in_the_final_transcript_retires_the_key_when_the_exit_is_ac
 }
 
 #[test]
-fn a_turn_ending_nack_in_the_final_transcript_declines_the_key_when_the_exit_is_accounted() {
-    let fixture = ExitFixture::new("declined", &[NARRATION, TURN_ENDING_NACK]);
+fn a_turn_ending_nak_in_the_final_transcript_declines_the_key_when_the_exit_is_accounted() {
+    let fixture = ExitFixture::new("declined", &[NARRATION, TURN_ENDING_NAK]);
     let before = fact_kinds(&fixture.bus);
     let mut diagnostic = Vec::new();
 

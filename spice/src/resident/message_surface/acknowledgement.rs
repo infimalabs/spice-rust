@@ -246,7 +246,7 @@ fn skip_horizontal_space(text: &str, mut cursor: usize) -> usize {
 fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str, String> {
     match disposition {
         wire::Disposition::Acked => Ok("ACK"),
-        wire::Disposition::Declined => Ok("NACK"),
+        wire::Disposition::Declined => Ok("NAK"),
         wire::Disposition::Live
         | wire::Disposition::Lapsed
         | wire::Disposition::DeadLettered
@@ -262,7 +262,7 @@ fn acknowledgement_marker(disposition: wire::Disposition) -> Result<&'static str
 /// canonical ACK marker so Canvas can badge it inline; while the journal still
 /// holds its key pending it carries the pending marker instead, so a spoken
 /// acknowledgment never reads as credit before steer::acked lands. A declined
-/// directive carries the NACK marker, because a refusal is an answer the
+/// directive carries the NAK marker, because a refusal is an answer the
 /// operator must be able to see at a glance. A taste, broadcast, or review
 /// directive already opens with its own flavor marker, and merely historical
 /// context earns no badge.
@@ -273,7 +273,7 @@ fn acknowledged_context_text(
     let marker = match state {
         ContextState::Acknowledged => wire::stream::ACK_MARKER,
         ContextState::Pending => wire::stream::ACK_PENDING_MARKER,
-        ContextState::Declined => wire::stream::NACK_MARKER,
+        ContextState::Declined => wire::stream::NAK_MARKER,
         ContextState::Unmarked => return Cow::Borrowed(&directive.text),
     };
     if !is_ordinary(directive) {

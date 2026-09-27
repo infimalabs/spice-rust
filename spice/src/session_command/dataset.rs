@@ -978,8 +978,8 @@ fn classify_message(side: &str, phase: &str, text: &str) -> (String, Vec<String>
         }
         if text.trim_start().starts_with("ACK ") {
             tags.push("steering_ack".to_owned());
-        } else if text.trim_start().starts_with("NACK ") {
-            tags.push("steering_nack".to_owned());
+        } else if text.trim_start().starts_with("NAK ") {
+            tags.push("steering_nak".to_owned());
         }
         return (flavor.to_owned(), dedupe(tags), dedupe(cues));
     }

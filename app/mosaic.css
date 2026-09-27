@@ -1157,7 +1157,7 @@ a.relative-age {
   text-overflow: ellipsis;
 }
 /* One badge, one metric. The label cell is exactly the width ACK occupies in
-   the pill's monospace face, so ACK, NACK and the pending form share a box to
+   the pill's monospace face, so ACK, NAK and the pending form share a box to
    the pixel and the operator's quoted words never shift when a state settles.
    A longer word is condensed into that cell rather than widening it. Pending
    spends no word of its own: it is a transient the reader cannot act on, so it

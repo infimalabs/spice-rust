@@ -150,7 +150,7 @@ fn validate_request(add: &TasteProposalAdd) -> Result<(), Outcome<CommandAnswer>
         return Err(refusal(
             "taste::proposal-evidence-sensitive",
             None,
-            "exclude secret-bearing excerpts and NACK reasons before filing review evidence",
+            "exclude secret-bearing excerpts and NAK reasons before filing review evidence",
         ));
     }
     let described_finding = description_value(&add.description, "Finding identity: ")

@@ -427,7 +427,7 @@ fn classification_pill_html(kind: MessageClassificationKind) -> String {
             "ACK",
         ),
         MessageClassificationKind::Decline => {
-            acknowledgement_pill_html("nack", "declined", "Declined classification", "NACK")
+            acknowledgement_pill_html("nak", "declined", "Declined classification", "NAK")
         }
     }
 }
@@ -588,7 +588,7 @@ fn acknowledgement_pill_html_with_attributes(
 ///
 /// Pending-to-acknowledged settlement changes only attributes on the same
 /// fixed-width ACK pill. Normalize that state transition while retaining every
-/// geometry-bearing distinction, including a declined NACK label.
+/// geometry-bearing distinction, including a declined NAK label.
 pub(crate) fn same_measured_shape(left: &RenderedMarkdown, right: &RenderedMarkdown) -> bool {
     measured_html(&left.html) == measured_html(&right.html)
         && left.image_only == right.image_only

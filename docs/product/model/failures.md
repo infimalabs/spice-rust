@@ -99,7 +99,7 @@ sequenceDiagram
   B->>F: allocator hands out
   F->>F: lifecycle launches occupants as needed
   O->>F: steer mid-flight
-  F-->>O: ACK / NACK inside the reply
+  F-->>O: ACK / NAK inside the reply
   F->>B: land phases
   B->>F: review goes to a peer
   F-->>O: turns end, lanes become vacant
@@ -121,7 +121,7 @@ sequenceDiagram
   T->>A: review phase to a peer
   A-->>T: clean or findings
   A-->>T: task completion publishes in journal and board
-  Note over S,T: ack:key remains immutable provenance<br/>steering standing changes only through its own typed ACK / NACK / cancel path
+  Note over S,T: ack:key remains immutable provenance<br/>steering standing changes only through its own typed ACK / NAK / cancel path
 ```
 
 ### Renewal
@@ -190,8 +190,8 @@ The vocabulary is deliberate. These words carry contracts.
 | **mosaic** | the placed, newest-first message lattice | a feed |
 | **shard** | one member's concrete send address | a broadcast |
 | **lifetime** | autonomy policy: Steer, Drive, Drain | a filter |
-| **steering** | durable operator intent requiring a typed answer — ACK or NACK/decline | a chat message |
-| **ACK / NACK** | typed agent dispositions, `acked` or `declined` | a read receipt or operator cancellation |
+| **steering** | durable operator intent requiring a typed answer — ACK or NAK/decline | a chat message |
+| **ACK / NAK** | typed agent dispositions, `acked` or `declined` | a read receipt or operator cancellation |
 | **claim** | exclusive, leased possession of a task | an assignment |
 | **phase** | a slot in a task's flow; advancing publishes | a status field |
 | **origin** | why a task exists, carried as open nonempty `class:value`; `ack:`, `task:`, `gate:`, and `doc:` are conventions, not a closed realm enum | who filed it |
