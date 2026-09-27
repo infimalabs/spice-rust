@@ -11,7 +11,6 @@ pub(super) fn expand<'a>(
     presentations: &[QuotePresentation],
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
-    tasks: &crate::runtime::QuoteTasks,
 ) -> Vec<MarkdownEvent<'a>> {
     if presentations.is_empty() {
         return events;
@@ -34,7 +33,7 @@ pub(super) fn expand<'a>(
             continue;
         };
         expanded.push(MarkdownEvent::InlineHtml(
-            render(node, agents, sources, tasks).into(),
+            render(node, agents, sources).into(),
         ));
         event += 3;
         presentation += 1;
@@ -110,24 +109,35 @@ pub(crate) fn referenced_quote_sources(
 
 /// The tail of quoted words: associated work, an explicit non-Operator author
 /// name, and the source message's live relative age.
+///
+/// Work arrives after the card renders, so the HTML never depends on it: a
+/// steering quote's signoff names its key, and the card body fills in that
+/// key's Work links in place. A sourceless signoff stays empty until then.
 pub(super) fn signoff_html(
     author: &QuoteAuthor,
     target: &str,
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
-    tasks: &crate::runtime::QuoteTasks,
 ) -> String {
-    let task = task_html(target, tasks);
+    let tasks = match target.parse() {
+        Ok(QuoteTarget::Steering { key, .. }) => {
+            format!(
+                " data-quote-tasks=\"{}\"",
+                super::escape_html_attribute(&key)
+            )
+        }
+        _ => String::new(),
+    };
     let Some(source) = sources.get(target) else {
-        return if task.is_empty() {
+        return if tasks.is_empty() {
             String::new()
         } else {
-            format!("<span class=\"message-quote-signoff\">{task}</span>")
+            format!("<span class=\"message-quote-signoff\"{tasks}></span>")
         };
     };
     let name = quote_author_name_html(author, agents, source);
     let age = quote_age_slot_html(author, agents, source);
-    format!("<span class=\"message-quote-signoff\">{task}{name}{age}</span>")
+    format!("<span class=\"message-quote-signoff\"{tasks}>{name}{age}</span>")
 }
 
 fn structural_quote_target<'event>(events: &'event [MarkdownEvent<'_>]) -> Option<&'event str> {
@@ -155,7 +165,6 @@ fn render(
     presentation: &QuotePresentation,
     agents: &super::QuoteAgents,
     sources: &super::QuoteSources,
-    tasks: &crate::runtime::QuoteTasks,
 ) -> String {
     match presentation {
         QuotePresentation::Resolved {
@@ -165,8 +174,7 @@ fn render(
             disposition,
             quotes,
         } => {
-            let body =
-                super::render_received_with_quotes(text, &[], &[], quotes, agents, sources, tasks);
+            let body = super::render_received_with_quotes(text, &[], &[], quotes, agents, sources);
             let disposition = disposition.map(disposition_html).unwrap_or_default();
             let body = body_with_disposition(&body.html, &disposition);
             format!(
@@ -174,7 +182,7 @@ fn render(
                  data-quote-target=\"{}\"><div class=\"message-quote-body\">{body}</div> \
                  {}</div>",
                 super::escape_html_attribute(target),
-                signoff_html(author, target, agents, sources, tasks),
+                signoff_html(author, target, agents, sources),
             )
         }
         QuotePresentation::Unavailable { target, reason } => {
@@ -341,26 +349,6 @@ fn disposition_html(disposition: Disposition) -> String {
         "<span class=\"message-quote-disposition\" \
          data-quote-disposition=\"{key}\">{label}</span>"
     )
-}
-
-fn task_html(target: &str, tasks: &crate::runtime::QuoteTasks) -> String {
-    let Ok(QuoteTarget::Steering { key, .. }) = target.parse() else {
-        return String::new();
-    };
-    tasks.get(&key).map_or_else(String::new, |handles| {
-        let mut html = String::new();
-        for handle in handles {
-            let handle = super::escape_html_attribute(handle.as_str());
-            write!(
-                html,
-                "<span class=\"message-quote-task\" role=\"button\" tabindex=\"0\" \
-                 data-task-handle=\"{handle}\" aria-label=\"Open task {handle} in Work\">\
-                 Work</span>"
-            )
-            .expect("writing HTML to a String cannot fail");
-        }
-        html
-    })
 }
 
 const fn unavailable_key(reason: wire::QuoteUnavailable) -> &'static str {

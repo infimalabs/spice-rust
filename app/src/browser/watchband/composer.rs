@@ -310,8 +310,7 @@ fn render_agent_message_card(
 ) -> Html {
     let inspector = card_inspector.context.as_ref();
     let inspection = card_inspector.inspection.as_ref();
-    let empty_quote_tasks = BTreeMap::new();
-    let quote_tasks = inspector.map_or(&empty_quote_tasks, |context| context.quote_tasks());
+    let quote_tasks = inspector.map_or_else(Rc::default, |context| context.quote_tasks().clone());
     let member = &props.member;
     let quote_lane = props.quote_lane;
     let message = &props.message;
@@ -497,7 +496,7 @@ fn agent_message_presentation<'a>(
     message: &'a wire::AgentMessage,
     quote_agents: &crate::composer_markdown::QuoteAgents,
     quote_sources: &crate::composer_markdown::QuoteSources,
-    quote_tasks: &crate::runtime::QuoteTasks,
+    quote_tasks: Rc<crate::runtime::QuoteTasks>,
 ) -> AgentMessagePresentation<'a> {
     let attribution = watchband::agent_message_attribution(
         message.author,
@@ -535,7 +534,6 @@ fn agent_message_presentation<'a>(
         &message.quotes,
         quote_agents,
         quote_sources,
-        quote_tasks,
     );
     let card_label = match message.activity {
         wire::AgentActivityKind::Turn => unreachable!("turn events are not message cards"),
@@ -569,6 +567,7 @@ fn agent_message_presentation<'a>(
                 html={AttrValue::from(rendered_markdown.html)}
                 sources={Rc::new(rendered_markdown.diagrams.into_iter().map(AttrValue::from).collect::<Vec<_>>())}
                 final_answer={message.final_answer}
+                {quote_tasks}
             />
         },
         unlinked_media,

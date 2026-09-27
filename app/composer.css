@@ -396,7 +396,7 @@
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
-.markdown-body blockquote:has(.message-quote-signoff) {
+.markdown-body blockquote:has(.message-quote-signoff:not(:empty)) {
   display: flow-root;
 }
 .markdown-body .message-quote-card {
@@ -448,6 +448,11 @@
   line-height: 1.5;
   text-shadow: 0 1px 1px var(--panel);
 }
+/* A sourceless quote's signoff waits empty for Work links. */
+.markdown-body .message-quote-signoff:empty,
+.markdown-body .message-quote-signoff-line:has(> .message-quote-signoff:empty) {
+  display: none;
+}
 .markdown-body .message-quote-card:has(
   > .message-quote-body > p.message-image-stack:last-child
 ) > .message-quote-signoff {
@@ -456,7 +461,7 @@
   float: none;
 }
 .markdown-body blockquote
-  > p:has(> .message-image):has(> .message-quote-signoff) {
+  > p:has(> .message-image):has(> .message-quote-signoff:not(:empty)) {
   display: flex;
   align-items: flex-end;
   flex-wrap: wrap;
@@ -470,7 +475,7 @@
   float: none;
 }
 .markdown-body blockquote:has(img):has(
-  > p:last-child > .message-quote-signoff
+  > p:last-child > .message-quote-signoff:not(:empty)
 ):not(:has(> p:last-child img)) {
   display: flex;
   flex-wrap: wrap;
@@ -478,19 +483,19 @@
   column-gap: 4px;
 }
 .markdown-body blockquote:has(img):has(
-  > p:last-child > .message-quote-signoff
+  > p:last-child > .message-quote-signoff:not(:empty)
 ):not(:has(> p:last-child img)) > :not(:last-child) {
   flex: 0 0 100%;
   min-width: 0;
 }
 .markdown-body blockquote:has(img):has(
-  > p:last-child > .message-quote-signoff
+  > p:last-child > .message-quote-signoff:not(:empty)
 ):not(:has(> p:last-child img)) > :nth-last-child(2):has(img) {
   flex: 1 1 0;
   min-width: min(100%, var(--mosaic-image-size));
 }
 .markdown-body blockquote:has(img):has(
-  > p:last-child > .message-quote-signoff
+  > p:last-child > .message-quote-signoff:not(:empty)
 ):not(:has(> p:last-child img)) > p:last-child {
   display: flex;
   flex: 0 0 auto;
@@ -498,7 +503,7 @@
   margin: 0 0 0 auto;
 }
 .markdown-body blockquote:has(img):has(
-  > p:last-child > .message-quote-signoff
+  > p:last-child > .message-quote-signoff:not(:empty)
 ):not(:has(> p:last-child img)) > p:last-child > .message-quote-signoff {
   margin-left: 0;
   float: none;

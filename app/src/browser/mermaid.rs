@@ -348,6 +348,7 @@ pub(super) struct MarkdownBodyProps {
     pub(super) html: AttrValue,
     pub(super) sources: Rc<Vec<AttrValue>>,
     pub(super) final_answer: bool,
+    pub(super) quote_tasks: Rc<crate::runtime::QuoteTasks>,
 }
 
 struct Slot {
@@ -360,6 +361,15 @@ struct QuoteAgeSlot {
     authored: i64,
     source: Option<String>,
     target: web_sys::Element,
+    key: yew::virtual_dom::Key,
+}
+
+/// A steering quote's signoff. Its Work links lead its raw name and age, so
+/// they mount before the first raw child the signoff had when collected.
+struct QuoteTaskSlot {
+    steering: String,
+    target: web_sys::Element,
+    before: Option<web_sys::Node>,
     key: yew::virtual_dom::Key,
 }
 
@@ -448,19 +458,81 @@ fn collect_quote_age_slots(
     slots
 }
 
-/// Producer-authored diagram and quote-age slots inside this card are portal
-/// targets. Raw user HTML still passes through the shared Markdown sanitizer;
-/// only resident-hydrated inline HTML can name either slot kind.
+fn collect_quote_task_slots(
+    host: &web_sys::Element,
+    previous: &[QuoteTaskSlot],
+    counter: &Cell<u64>,
+) -> Vec<QuoteTaskSlot> {
+    let Ok(nodes) = host.query_selector_all(".message-quote-signoff[data-quote-tasks]") else {
+        return Vec::new();
+    };
+    let mut slots = Vec::with_capacity(nodes.length() as usize);
+    for position in 0..nodes.length() {
+        let Some(target) = nodes
+            .item(position)
+            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+        else {
+            continue;
+        };
+        let Some(steering) = target.get_attribute("data-quote-tasks") else {
+            continue;
+        };
+        let key = previous
+            .iter()
+            .find(|slot| slot.target == target)
+            .map(|slot| slot.key.clone())
+            .unwrap_or_else(|| {
+                counter.set(counter.get().wrapping_add(1));
+                counter.get().into()
+            });
+        slots.push(QuoteTaskSlot {
+            steering,
+            before: target.first_child(),
+            target,
+            key,
+        });
+    }
+    slots
+}
+
+#[derive(Properties, PartialEq)]
+struct QuoteTaskLinksProps {
+    handles: Vec<wire::TaskHandle>,
+}
+
+#[function_component(QuoteTaskLinks)]
+fn quote_task_links(props: &QuoteTaskLinksProps) -> Html {
+    html! {
+        <>
+        {for props.handles.iter().map(|handle| html! {
+            <span
+                class="message-quote-task"
+                role="button"
+                tabindex="0"
+                data-task-handle={handle.as_str().to_owned()}
+                aria-label={format!("Open task {} in Work", handle.as_str())}
+            >{"Work"}</span>
+        })}
+        </>
+    }
+}
+/// Producer-authored diagram, quote-age, and quote-task slots inside this card
+/// are portal targets. Raw user HTML still passes through the shared Markdown
+/// sanitizer; only resident-hydrated inline HTML can name these slot kinds.
+/// Board work fills task slots in place, so a quote gaining Work never
+/// replaces the card's raw nodes or reloads its images.
 #[function_component(MarkdownBody)]
 pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let host = use_node_ref();
     let diagram_slots = use_state(Vec::<Slot>::new);
     let quote_age_slots = use_state(Vec::<QuoteAgeSlot>::new);
+    let quote_task_slots = use_state(Vec::<QuoteTaskSlot>::new);
     let counter = use_memo((), |()| Cell::new(0_u64));
     use_effect_with((props.html.clone(), props.sources.len()), {
         let host = host.clone();
         let diagram_slots = diagram_slots.clone();
         let quote_age_slots = quote_age_slots.clone();
+        let quote_task_slots = quote_task_slots.clone();
         let counter = counter.clone();
         move |(_, source_count)| {
             let Some(host) = host.cast::<web_sys::Element>() else {
@@ -475,6 +547,7 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                 &counter,
             ));
             quote_age_slots.set(collect_quote_age_slots(&host, &quote_age_slots, &counter));
+            quote_task_slots.set(collect_quote_task_slots(&host, &quote_task_slots, &counter));
         }
     });
     // Keep the portal list under a stable VDOM parent. Mixing keyed portals
@@ -482,7 +555,7 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     html! {
         <div ref={host} class="message-body markdown-body">
             {Html::from_html_unchecked(props.html.clone())}
-            if !props.sources.is_empty() || !quote_age_slots.is_empty() {
+            if !props.sources.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() {
             <span hidden=true>
             {for diagram_slots.iter().filter_map(|slot| {
                 let source = props.sources.get(slot.index)?.clone();
@@ -506,6 +579,14 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                         {label}
                     />
                 }, slot.target.clone())
+            })}
+            {for quote_task_slots.iter().filter_map(|slot| {
+                let handles = props.quote_tasks.get(&slot.steering)?.clone();
+                Some(Html::from(yew::virtual_dom::VPortal::new_before(
+                    html! { <QuoteTaskLinks key={slot.key.clone()} {handles} /> },
+                    slot.target.clone(),
+                    slot.before.clone(),
+                )))
             })}
             </span>
             }
