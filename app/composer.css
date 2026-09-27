@@ -406,7 +406,7 @@
   border: var(--canvas-edge);
   border-left: 3px solid color-mix(in srgb, var(--accent) 72%, var(--line));
   border-radius: var(--canvas-radius-compact);
-  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--ink);
   font-size: .8125rem;
 }
