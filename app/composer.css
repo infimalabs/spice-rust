@@ -402,12 +402,11 @@
   border-left-color: color-mix(in srgb, var(--accent) 88%, white);
 }
 .markdown-body .message-quote-signoff {
-  display: flex;
+  display: inline-flex;
   min-width: 0;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 4px;
-  margin-top: 5px;
   color: var(--muted);
   font-size: .92em;
   line-height: 1.3;
@@ -452,13 +451,10 @@
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
-.markdown-body .message-quote-body {
-  display: block;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
+.markdown-body .message-quote-body { display: contents; }
 .markdown-body .message-quote-body > :first-child { margin-top: 0; }
 .markdown-body .message-quote-body > :last-child { margin-bottom: 0; }
+.markdown-body .message-quote-body > p:last-child { display: inline; }
 .markdown-body .message-quote-unavailable { color: var(--muted); }
 .markdown-body .message-quote-card--unavailable {
   border-left-color: var(--warning);

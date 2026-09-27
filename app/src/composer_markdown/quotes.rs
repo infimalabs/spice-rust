@@ -80,7 +80,7 @@ fn render(
             let body = body_with_disposition(&body.html, &disposition);
             format!(
                 "<div class=\"message-quote-card\" data-quote-state=\"resolved\" \
-                 data-quote-target=\"{}\"><div class=\"message-quote-body\">{body}</div>\
+                 data-quote-target=\"{}\"><div class=\"message-quote-body\">{body}</div> \
                  <span class=\"message-quote-signoff\">— {}{}</span></div>",
                 super::escape_html_attribute(target),
                 author_html(author, agents),
