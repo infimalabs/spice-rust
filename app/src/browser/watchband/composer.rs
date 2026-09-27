@@ -189,7 +189,7 @@ pub(super) fn team_quote_sources(
         if let Some(target) = &message.quote_target {
             sources.entry(target.to_string()).or_insert_with(|| {
                 crate::composer_markdown::QuoteSource {
-                    card_id: card_id.clone(),
+                    card_id: Some(card_id.clone()),
                     display_millis,
                     agent: Some(crate::composer_markdown::QuoteAgent {
                         accent: watchband::accent(team.members.len(), position),
@@ -205,11 +205,7 @@ pub(super) fn team_quote_sources(
         for context in &message.directive_contexts {
             sources
                 .entry(context.quote_target.to_string())
-                .or_insert_with(|| crate::composer_markdown::QuoteSource {
-                    card_id: card_id.clone(),
-                    display_millis,
-                    agent: None,
-                });
+                .or_insert_with(|| crate::composer_markdown::QuoteSource::directive(context));
         }
     }
     sources

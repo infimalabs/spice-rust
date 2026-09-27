@@ -399,6 +399,12 @@ mod tests {
             .expect("fixture lane")
     }
 
+    fn published() -> wire::Instant {
+        "2030-04-12T18:44:09.001Z"
+            .parse()
+            .expect("fixture publication instant")
+    }
+
     fn event() -> PresentationEvent {
         PresentationEvent {
             lane: lane(),
@@ -433,6 +439,7 @@ mod tests {
                 key.parse().expect("fixture steering key"),
                 PresentationDirective {
                     actor: wire::Actor::Operator,
+                    published: published(),
                     lane: lane(),
                     text,
                     authored: true,

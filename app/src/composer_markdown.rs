@@ -35,9 +35,19 @@ pub(crate) type QuoteAgents = BTreeMap<(wire::CanonicalUuid, wire::CanonicalUuid
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QuoteSource {
-    pub(crate) card_id: String,
+    pub(crate) card_id: Option<String>,
     pub(crate) display_millis: i64,
     pub(crate) agent: Option<QuoteAgent>,
+}
+
+impl QuoteSource {
+    pub(crate) fn directive(context: &MessageDirective) -> Self {
+        Self {
+            card_id: None,
+            display_millis: context.authored.get().as_millisecond(),
+            agent: None,
+        }
+    }
 }
 
 pub(crate) type QuoteSources = BTreeMap<String, QuoteSource>;

@@ -852,6 +852,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
                     digest: wire::QuoteTarget::text_digest("settled directive"),
                 },
                 actor: wire::Actor::Operator,
+                authored: at("2030-04-12T18:44:08.000Z"),
             }],
             quotes: Vec::new(),
             automatic_speech: None,

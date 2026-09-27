@@ -205,6 +205,8 @@ pub struct MessageDirective {
     pub quote_target: QuoteTarget,
     /// Actor on the directive's creating fact.
     pub actor: crate::Actor,
+    /// Journal instant at which the quoted directive was published.
+    pub authored: Instant,
 }
 
 impl MessageDirective {

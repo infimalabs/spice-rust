@@ -358,7 +358,7 @@ struct Slot {
 
 struct QuoteAgeSlot {
     authored: i64,
-    source: String,
+    source: Option<String>,
     target: web_sys::Element,
     key: yew::virtual_dom::Key,
 }
@@ -409,8 +409,7 @@ fn collect_quote_age_slots(
     previous: &[QuoteAgeSlot],
     counter: &Cell<u64>,
 ) -> Vec<QuoteAgeSlot> {
-    let Ok(nodes) = host
-        .query_selector_all(".message-quote-age-slot[data-quote-age-authored][data-quote-source]")
+    let Ok(nodes) = host.query_selector_all(".message-quote-age-slot[data-quote-age-authored]")
     else {
         return Vec::new();
     };
@@ -428,12 +427,9 @@ fn collect_quote_age_slots(
         else {
             continue;
         };
-        let Some(source) = target
+        let source = target
             .get_attribute("data-quote-source")
-            .filter(|source| !source.is_empty())
-        else {
-            continue;
-        };
+            .filter(|source| !source.is_empty());
         let key = previous
             .iter()
             .find(|slot| slot.target == target)
@@ -495,14 +491,19 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                 }, slot.target.clone()))
             })}
             {for quote_age_slots.iter().map(|slot| {
-                let href = crate::view::card_href(&slot.source);
+                let href = slot
+                    .source
+                    .as_deref()
+                    .map(crate::view::card_href)
+                    .map(AttrValue::from);
+                let label = AttrValue::from("Link to quoted message");
                 yew::create_portal(html! {
                     <super::clock::Age
                         key={slot.key.clone()}
                         authored={slot.authored}
                         class={classes!("relative-age", "message-quote-age")}
                         {href}
-                        label="Link to quoted message"
+                        {label}
                     />
                 }, slot.target.clone())
             })}
