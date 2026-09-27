@@ -1,6 +1,7 @@
 //! Durable transcript record decoding for acknowledgment evidence.
 
 use super::*;
+use std::ops::ControlFlow;
 use std::time::{Duration, Instant as Clock};
 
 #[cfg(test)]
@@ -33,9 +34,9 @@ const QUOTED_LINE: usize = 80;
 /// The shape of the newest assistant message on the tape.
 ///
 /// The message is every assistant record newer than the newest operator
-/// prose or tool result. It is read newest record first while the scan finds
-/// no assistant prose recognizing the token, so the refusal names the record
-/// the lane actually wrote instead of the header it did not.
+/// prose or tool result. It is read from a small newest window only when no
+/// record names the token, so the refusal names the record the lane actually
+/// wrote instead of the header it did not.
 #[derive(Default)]
 struct NewestMessage {
     text: Option<(tape::Locus, String)>,
@@ -130,17 +131,24 @@ fn quoted_line(text: &str) -> String {
     quoted
 }
 
-/// One recent window, shared by every pending key in a lane's recovery sweep.
-/// Work limits include boundary discovery, decoding, and evidence matching.
-const SEARCH_WINDOW_BYTES: u64 = 1024 * 1024;
-const SEARCH_SOURCE_BYTES: u64 = 2 * 1024 * 1024;
+/// How far back from the tape end a key is searched. Only records carrying the
+/// key are decoded, so the reach costs byte comparisons, not parses.
+const SEARCH_WINDOW_BYTES: u64 = 256 * 1024 * 1024;
+/// Window plus room to decode the matching records the window enters.
+const SEARCH_SOURCE_BYTES: u64 = SEARCH_WINDOW_BYTES + 64 * 1024 * 1024;
 const SEARCH_RECORDS: usize = 4096;
-const SEARCH_PASSES: usize = 256;
+const SEARCH_PASSES: usize = 4096;
+/// Shared by every key one recovery sweep reads.
 const SEARCH_DURATION: Duration = Duration::from_secs(1);
 
+/// The newest records a refusal describes when the key appears nowhere.
+const NEWEST_WINDOW_BYTES: u64 = 1024 * 1024;
+const NEWEST_SOURCE_BYTES: u64 = 2 * 1024 * 1024;
+const NEWEST_PASSES: usize = 256;
+
 pub(super) struct TranscriptEvidence {
-    tail: listen::TailScan,
-    source: CanonicalUuid,
+    path: std::path::PathBuf,
+    dialect: listen::Dialect,
     deadline: Clock,
     repair: &'static str,
 }
@@ -186,34 +194,9 @@ impl TranscriptEvidence {
                 typed_protocol_fault("steer::transcript-vendor-invalid", vendor.as_str())
             })?
             .dialect();
-        let budget = listen::TailBudget::new(
-            SEARCH_WINDOW_BYTES,
-            SEARCH_SOURCE_BYTES,
-            SEARCH_RECORDS,
-            SEARCH_PASSES,
-            SEARCH_DURATION,
-        )
-        .expect("steering evidence allowances are positive");
-        let tail = listen::scan_tail(&path, dialect, budget).map_err(|error| match error {
-            listen::ScanError::WorkLimit { .. }
-            | listen::ScanError::Tape {
-                source: tape::Error::Refused(tape::Refusal::MemberReadLimit { .. }),
-                ..
-            } => search_limited(token, &error.to_string(), repair),
-            _ => typed_store_fault("steer::transcript-tape-unreadable", &error.to_string()),
-        })?;
-        let source = tail
-            .scan
-            .checkpoint
-            .source
-            .as_str()
-            .parse::<CanonicalUuid>()
-            .map_err(|error| {
-                typed_protocol_fault("steer::transcript-source-invalid", &error.to_string())
-            })?;
         Ok(Self {
-            tail,
-            source,
+            path,
+            dialect,
             deadline,
             repair,
         })
@@ -223,53 +206,114 @@ impl TranscriptEvidence {
         Clock::now() >= self.deadline
     }
 
-    /// Search newest records and events first; a later citation does not erase
-    /// an older placed answer within the admitted window.
+    fn budget(&self, window: u64, source: u64, passes: usize) -> Option<listen::TailBudget> {
+        let remaining = self.deadline.saturating_duration_since(Clock::now());
+        listen::TailBudget::new(window, source, SEARCH_RECORDS, passes, remaining).ok()
+    }
+
+    /// Search the records that carry the key, newest first; a later citation
+    /// does not erase an older placed answer within the searched window.
     pub(super) fn recognize(
         &self,
         token: &str,
         disposition: Option<Disposition>,
         standing: &impl steer::Standing,
     ) -> Result<TranscriptRecognition, Outcome<CommandAnswer>> {
-        let mut newest = NewestMessage::default();
+        let Some(budget) = self.budget(SEARCH_WINDOW_BYTES, SEARCH_SOURCE_BYTES, SEARCH_PASSES)
+        else {
+            return Err(search_limited(
+                token,
+                "the evidence search reached its time limit",
+                self.repair,
+            ));
+        };
+        let mut failure = None;
+        let mut retired = None;
         let mut latest_miss = None;
-        for record in self.tail.scan.records.iter().rev() {
-            if self.exhausted() {
-                return Err(search_limited(
-                    token,
-                    "the evidence search reached its time limit",
-                    self.repair,
-                ));
-            }
-            if let Some(recognition) =
-                scan_record(record, token, disposition, standing, &mut newest)?
-            {
-                let recognition = TranscriptRecognition {
-                    locus: TranscriptLocus {
-                        source: Some(self.source),
-                        member: record.locus.member,
-                        offset: record.locus.offset,
-                        length: record.locus.length,
-                        event: recognition.event,
-                        line: recognition.line,
-                        column: recognition.column,
-                    },
-                    outcome: recognition.outcome,
-                };
-                if matches!(recognition.outcome, ScanOutcome::Retired { .. }) {
-                    return Ok(recognition);
+        let search = listen::search_tail(
+            &self.path,
+            self.dialect,
+            token.as_bytes(),
+            budget,
+            |record| match scan_record(&record, token, disposition, standing) {
+                Err(outcome) => {
+                    failure = Some(outcome);
+                    ControlFlow::Break(())
                 }
-                latest_miss.get_or_insert(recognition);
-            }
+                Ok(Some(recognition))
+                    if matches!(recognition.outcome, ScanOutcome::Retired { .. }) =>
+                {
+                    retired = Some((record.locus, recognition));
+                    ControlFlow::Break(())
+                }
+                Ok(Some(recognition)) => {
+                    latest_miss.get_or_insert((record.locus, recognition));
+                    ControlFlow::Continue(())
+                }
+                Ok(None) => ControlFlow::Continue(()),
+            },
+        )
+        .map_err(|error| scan_failure(token, &error, self.repair))?;
+        if let Some(outcome) = failure {
+            return Err(outcome);
         }
-        if self.tail.start.next > listen::Position::start() {
+        let source = search
+            .source
+            .as_str()
+            .parse::<CanonicalUuid>()
+            .map_err(|error| {
+                typed_protocol_fault("steer::transcript-source-invalid", &error.to_string())
+            })?;
+        if let Some((locus, recognition)) = retired {
+            return Ok(recognition.placed(source, locus));
+        }
+        if search.start > listen::Position::start() {
             return Err(search_limited(
                 token,
                 "no placed answer in the bounded recent transcript window",
                 self.repair,
             ));
         }
-        latest_miss.ok_or_else(|| newest.evidence_absent(token, self.repair))
+        match latest_miss {
+            Some((locus, recognition)) => Ok(recognition.placed(source, locus)),
+            None => Err(self.newest_message().map_or_else(
+                || {
+                    evidence_refusal(
+                        token,
+                        "no assistant text on the tape names the key",
+                        self.repair,
+                    )
+                },
+                |newest| newest.evidence_absent(token, self.repair),
+            )),
+        }
+    }
+
+    /// The newest assistant message, when a bounded recent window holds it.
+    fn newest_message(&self) -> Option<NewestMessage> {
+        let budget = self.budget(NEWEST_WINDOW_BYTES, NEWEST_SOURCE_BYTES, NEWEST_PASSES)?;
+        let tail = listen::scan_tail(&self.path, self.dialect, budget).ok()?;
+        let mut newest = NewestMessage::default();
+        for record in tail.scan.records.iter().rev() {
+            let listen::RecordPayload::Events(events) = &record.payload else {
+                continue;
+            };
+            for sourced in events.iter().rev() {
+                newest.observe(&sourced.event, record.locus);
+            }
+        }
+        Some(newest)
+    }
+}
+
+fn scan_failure(token: &str, error: &listen::ScanError, repair: &str) -> Outcome<CommandAnswer> {
+    match error {
+        listen::ScanError::WorkLimit { .. }
+        | listen::ScanError::Tape {
+            source: tape::Error::Refused(tape::Refusal::MemberReadLimit { .. }),
+            ..
+        } => search_limited(token, &error.to_string(), repair),
+        _ => typed_store_fault("steer::transcript-tape-unreadable", &error.to_string()),
     }
 }
 
@@ -282,7 +326,7 @@ fn search_limited(token: &str, detail: &str, repair: &str) -> Outcome<CommandAns
     )
 }
 
-/// Search a bounded recent transcript window, newest evidence first.
+/// Search the transcript records that carry the key, newest first.
 pub(super) fn transcript_recognition(
     paths: &RuntimePaths,
     lane: CanonicalUuid,
@@ -301,21 +345,35 @@ struct RecordRecognition {
     outcome: ScanOutcome,
 }
 
+impl RecordRecognition {
+    fn placed(self, source: CanonicalUuid, locus: tape::Locus) -> TranscriptRecognition {
+        TranscriptRecognition {
+            locus: TranscriptLocus {
+                source: Some(source),
+                member: locus.member,
+                offset: locus.offset,
+                length: locus.length,
+                event: self.event,
+                line: self.line,
+                column: self.column,
+            },
+            outcome: self.outcome,
+        }
+    }
+}
+
 fn scan_record(
     record: &listen::Record,
     token: &str,
     disposition: Option<Disposition>,
     standing: &impl steer::Standing,
-    newest: &mut NewestMessage,
 ) -> Result<Option<RecordRecognition>, Outcome<CommandAnswer>> {
     let listen::RecordPayload::Events(events) = &record.payload else {
         return Ok(None);
     };
     let mut latest_miss = None;
     for (event_index, sourced) in events.iter().enumerate().rev() {
-        let event = &sourced.event;
-        newest.observe(event, record.locus);
-        let Some(prose) = event.prose() else {
+        let Some(prose) = sourced.event.prose() else {
             continue;
         };
         // Only the occupant answers for the lane. Operator input reaches
