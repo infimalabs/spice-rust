@@ -4,6 +4,32 @@ pub(super) fn task_steering_origin_token(origin: &wire::Origin) -> Option<&str> 
     origin.as_str().strip_prefix("ack:")
 }
 
+/// Every steering key that caused non-deleted work, with that work's handles.
+///
+/// Open reads select only unsettled rows, yet a direction's Work outlives its
+/// completion, so the index spans the whole task snapshot.
+pub(super) fn steering_origins(
+    observed: &bus::TaskSnapshot,
+) -> std::collections::BTreeMap<String, Vec<wire::TaskHandle>> {
+    let mut origins = std::collections::BTreeMap::<String, Vec<wire::TaskHandle>>::new();
+    for heads in observed.tasks() {
+        if heads.workflow().body().status == "deleted" {
+            continue;
+        }
+        let statement = heads.statement().body();
+        if let Some(key) = task_steering_origin_token(&statement.provenance) {
+            origins
+                .entry(key.to_owned())
+                .or_default()
+                .push(TaskHandle::for_project(&statement.project, &statement.born));
+        }
+    }
+    for handles in origins.values_mut() {
+        handles.sort();
+    }
+    origins
+}
+
 pub(super) fn task_steering_origin_output(
     bus: &Bus,
     origin: &wire::Origin,

@@ -76,6 +76,33 @@ pub(super) fn selected_tasks(
     }
 }
 
+/// Keep only one upper-case task family's rows, refusing any other family name.
+pub(super) fn retain_family(
+    tasks: &mut Vec<wire::intent::BoardTask>,
+    family: &str,
+) -> Result<(), Outcome<CommandAnswer>> {
+    if family.is_empty()
+        || !family
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+    {
+        return Err(refusal(
+            "board::family-invalid",
+            Some(family.to_owned()),
+            "name one upper-case task family",
+        ));
+    }
+    tasks.retain(|task| {
+        task.statement
+            .body
+            .handle
+            .as_str()
+            .split_once('-')
+            .is_some_and(|(stem, _)| stem == family)
+    });
+    Ok(())
+}
+
 fn context_tasks(
     observed: &bus::TaskSnapshot,
     tasks: &[wire::TaskStamp],

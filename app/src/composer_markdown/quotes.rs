@@ -107,6 +107,37 @@ pub(crate) fn referenced_quote_sources(
     referenced
 }
 
+/// The Work caused by the directions one card's quotes and directive contexts
+/// name, so a card holds only its own slice of the board's origin index.
+pub(crate) fn referenced_quote_tasks(
+    presentations: &[QuotePresentation],
+    directives: &[wire::MessageDirective],
+    tasks: &crate::runtime::QuoteTasks,
+) -> crate::runtime::QuoteTasks {
+    let mut referenced = crate::runtime::QuoteTasks::new();
+    let mut take = |target: &QuoteTarget| {
+        if let QuoteTarget::Steering { key, .. } = target
+            && let Some(handles) = tasks.get(key)
+        {
+            referenced.insert(key.clone(), handles.clone());
+        }
+    };
+    for directive in directives {
+        take(&directive.quote_target);
+    }
+    let mut pending = presentations.iter().collect::<Vec<_>>();
+    while let Some(presentation) = pending.pop() {
+        let QuotePresentation::Resolved { target, quotes, .. } = presentation else {
+            continue;
+        };
+        if let Ok(target) = target.parse() {
+            take(&target);
+        }
+        pending.extend(quotes);
+    }
+    referenced
+}
+
 /// The tail of quoted words: associated work, an explicit non-Operator author
 /// name, and the source message's live relative age.
 ///

@@ -55,7 +55,7 @@ pub(super) fn use_controls(
     let quote_tasks = runtime
         .as_ref()
         .and_then(|runtime| runtime.board())
-        .map(|board| board.quote_tasks())
+        .map(|board| Rc::clone(&board.quote_tasks))
         .unwrap_or_default();
     Controls {
         context: Context {
@@ -63,7 +63,7 @@ pub(super) fn use_controls(
             request_detail: task.request.clone(),
             return_focus_to: task.return_focus_to.clone(),
             navigate: navigate.clone(),
-            quote_tasks: Rc::new(quote_tasks),
+            quote_tasks,
         },
         detail: DetailContext {
             detail,
@@ -124,8 +124,13 @@ impl Context {
         self.request_detail.emit(task);
     }
 
-    pub fn quote_tasks(&self) -> &Rc<crate::runtime::QuoteTasks> {
-        &self.quote_tasks
+    /// The Work of every direction `message` quotes, and nothing else.
+    pub fn message_quote_tasks(&self, message: &wire::AgentMessage) -> crate::runtime::QuoteTasks {
+        crate::composer_markdown::referenced_quote_tasks(
+            &message.quotes,
+            &message.directive_contexts,
+            &self.quote_tasks,
+        )
     }
 
     pub fn open_quote_task(&self, handle: TaskHandle) {

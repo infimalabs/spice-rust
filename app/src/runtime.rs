@@ -56,6 +56,8 @@ pub struct BoardView {
     pub tasks: Vec<BoardTask>,
     /// Resident allocation order: the task offered next comes first.
     pub offer: Vec<wire::TaskStamp>,
+    /// Resident steering-key origin index: the Work each quoted direction caused.
+    pub(crate) quote_tasks: Rc<QuoteTasks>,
     /// Complete environment observed at the same board snapshot barrier.
     pub(crate) environment: wire::Environment,
     /// Current resident state.
@@ -72,6 +74,7 @@ impl From<&BoardAnswer> for BoardView {
             cursor: answer.cursor,
             tasks,
             offer,
+            quote_tasks: Rc::new(answer.origins.clone()),
             environment,
             resident: answer.residency.body.state,
         }
@@ -91,30 +94,6 @@ impl BoardView {
             .body
             .requirements
             .are_satisfied_by(&self.environment)
-    }
-
-    /// Resolve every quoted steering key to the tasks caused by that direction.
-    ///
-    /// One direction may intentionally produce several independently actionable
-    /// tasks. Stable handle ordering keeps their adjacent Work actions
-    /// deterministic without discarding that one-to-many provenance.
-    #[must_use]
-    pub fn quote_tasks(&self) -> QuoteTasks {
-        let mut origins = QuoteTasks::new();
-        for task in &self.tasks {
-            let Some(key) = task.statement.body.provenance.as_str().strip_prefix("ack:") else {
-                continue;
-            };
-            origins
-                .entry(key.to_owned())
-                .or_default()
-                .push(task.statement.body.handle.clone());
-        }
-        for handles in origins.values_mut() {
-            handles.sort();
-            handles.dedup();
-        }
-        origins
     }
 }
 

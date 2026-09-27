@@ -12,7 +12,7 @@ pub(super) use task_relations::read_task_relations;
 mod task_selection;
 #[cfg(test)]
 pub(in crate::board_command) use task_selection::history_cursor_order;
-use task_selection::{TaskSelection, selected_tasks};
+use task_selection::{TaskSelection, retain_family, selected_tasks};
 
 pub(super) fn phase(name: &str) -> wire::Phase {
     name.parse()
@@ -126,6 +126,7 @@ fn validated_snapshot_from_with_occupant(
             recent_cell,
             tasks,
             offer: Vec::new(),
+            origins: Default::default(),
             history: None,
             trust: positioned_trust(observed),
             appliance,
@@ -953,6 +954,7 @@ pub(super) fn read_board(
     };
     if matches!(read, BoardRead::Open) {
         snapshot.answer.offer = board_offer(&snapshot.entries, &snapshot.answer);
+        snapshot.answer.origins = steering_origins(&observed);
         snapshot
             .answer
             .tasks
@@ -961,26 +963,9 @@ pub(super) fn read_board(
     if let BoardRead::All {
         family: Some(family),
     } = read
+        && let Err(outcome) = retain_family(&mut snapshot.answer.tasks, family)
     {
-        if family.is_empty()
-            || !family
-                .bytes()
-                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
-        {
-            return refusal(
-                "board::family-invalid",
-                Some(family.clone()),
-                "name one upper-case task family",
-            );
-        }
-        snapshot.answer.tasks.retain(|task| {
-            task.statement
-                .body
-                .handle
-                .as_str()
-                .split_once('-')
-                .is_some_and(|(stem, _)| stem == family)
-        });
+        return outcome;
     }
     if history.is_some() {
         snapshot.answer.tasks.sort_by(|left, right| {
