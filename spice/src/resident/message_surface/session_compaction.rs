@@ -609,16 +609,6 @@ impl HistoryWork {
             && self.elapsed <= HISTORY_WALL_BUDGET
     }
 
-    /// One request chains at most [`HISTORY_WINDOW_LIMIT`] windows, each
-    /// inside its own allowances, and reads no further once
-    /// [`HISTORY_DURATION`] has elapsed.
-    pub(super) fn within_request_limits(self) -> bool {
-        self.source_bytes <= (HISTORY_BYTE_BUDGET * HISTORY_WINDOW_LIMIT) as u64
-            && self.decoded_records <= (HISTORY_RECORD_BUDGET * HISTORY_WINDOW_LIMIT) as u32
-            && self.passes <= HISTORY_PASS_BUDGET * HISTORY_WINDOW_LIMIT as u32
-            && self.elapsed <= HISTORY_DURATION.saturating_add(HISTORY_WALL_BUDGET)
-    }
-
     fn sampled(mut self, started: Instant) -> Self {
         self.elapsed = started.elapsed();
         self
