@@ -851,6 +851,7 @@ fn agent_message_samples(first_id: CanonicalUuid, second_id: CanonicalUuid) -> [
                     key: "amberfern".to_owned(),
                     digest: wire::QuoteTarget::text_digest("settled directive"),
                 },
+                actor: wire::Actor::Operator,
             }],
             quotes: Vec::new(),
             automatic_speech: None,

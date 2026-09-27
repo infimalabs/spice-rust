@@ -192,7 +192,8 @@ impl MessageClassification {
 ///
 /// The range identifies the exact rendered context the quote action belongs to;
 /// the target authenticates the original journal text independently of marker
-/// presentation.
+/// presentation, and the actor attributes it exactly as a quote of that target
+/// would.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MessageDirective {
@@ -202,6 +203,8 @@ pub struct MessageDirective {
     pub end: u32,
     /// Canonical steering target supplied by the resident.
     pub quote_target: QuoteTarget,
+    /// Actor on the directive's creating fact.
+    pub actor: crate::Actor,
 }
 
 impl MessageDirective {

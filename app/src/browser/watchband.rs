@@ -338,11 +338,13 @@ fn activity_cards(
             Some(ActivityCard::Agent {
                 accent: watchband::accent(team.members.len(), position),
                 member: member.clone(),
-                quote_agents: if message.quotes.is_empty() {
+                quote_agents: if message.quotes.is_empty() && message.directive_contexts.is_empty()
+                {
                     Rc::clone(&unquoted)
                 } else {
                     Rc::new(crate::composer_markdown::referenced_quote_agents(
                         &message.quotes,
+                        &message.directive_contexts,
                         quote_agents,
                     ))
                 },

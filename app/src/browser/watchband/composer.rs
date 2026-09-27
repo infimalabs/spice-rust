@@ -463,15 +463,21 @@ fn agent_message_presentation<'a>(
     let media_description = (is_tool && !message.text.trim().is_empty())
         .then(|| watchband::tool_media_description(&message.text));
     let shown_text = if is_tool { "" } else { message.text.as_str() };
-    let (shown_text, shown_classifications) = crate::composer_markdown::expand_media_payloads(
+    let crate::composer_markdown::ExpandedMedia {
+        markdown: shown_text,
+        classifications: shown_classifications,
+        directives: shown_directives,
+    } = crate::composer_markdown::expand_media_payloads(
         shown_text,
         &message.media,
         &message.classifications,
+        &message.directive_contexts,
     )
     .expect("message media passed admission before browser rendering");
     let rendered_markdown = crate::composer_markdown::render_received_with_quotes(
         &shown_text,
         &shown_classifications,
+        &shown_directives,
         &message.quotes,
         quote_agents,
         quote_tasks,

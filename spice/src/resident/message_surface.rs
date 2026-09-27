@@ -594,6 +594,8 @@ struct PresentationDirective {
     review: bool,
     disposition: wire::Disposition,
     quote_target: wire::QuoteTarget,
+    /// Actor on the creating fact, which a quote of this directive names.
+    actor: wire::Actor,
     retirement: Option<wire::body::TranscriptLocus>,
 }
 
@@ -601,6 +603,22 @@ impl PresentationDirectives {
     #[cfg(test)]
     fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, String> {
         let steering = steer::Ledger::from_snapshot(snapshot).map_err(|error| error.to_string())?;
+        let creators = snapshot
+            .facts()
+            .iter()
+            .map(|envelope| (envelope.seq, &envelope.actor))
+            .collect::<BTreeMap<_, _>>();
+        let actors = steer::Ledger::authority_index(snapshot)
+            .map_err(|error| error.to_string())?
+            .heads()
+            .iter()
+            .map(|head| {
+                let actor = creators.get(&head.body().created).ok_or_else(|| {
+                    format!("directive {} lost its creating fact", head.body().key)
+                })?;
+                Ok((head.body().directive, (*actor).clone()))
+            })
+            .collect::<Result<BTreeMap<_, _>, String>>()?;
         let mut retirements = BTreeMap::new();
         let mut tastes = BTreeSet::new();
         for envelope in snapshot.facts() {
@@ -644,6 +662,10 @@ impl PresentationDirectives {
                         key: key.to_string(),
                         digest: wire::QuoteTarget::text_digest(directive.text()),
                     };
+                    let actor = actors
+                        .get(&directive.directive())
+                        .cloned()
+                        .ok_or_else(|| format!("directive {key} has no creating actor"))?;
                     Ok((
                         key,
                         PresentationDirective {
@@ -660,6 +682,7 @@ impl PresentationDirectives {
                             disposition: directive.disposition(),
                             retirement,
                             quote_target,
+                            actor,
                         },
                     ))
                 })
@@ -711,6 +734,7 @@ impl PresentationDirectives {
                     disposition: head.disposition,
                     retirement,
                     quote_target,
+                    actor: row.created().actor.clone(),
                 },
             );
         }
@@ -964,6 +988,7 @@ fn hydrate_directive_contexts(
                 end: u32::try_from(context.range.end)
                     .map_err(|_| "directive context end exceeds the wire range".to_owned())?,
                 quote_target: directive.quote_target.clone(),
+                actor: directive.actor.clone(),
             })
         })
         .collect()

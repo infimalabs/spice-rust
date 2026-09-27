@@ -4,12 +4,13 @@ use std::borrow::Cow;
 use std::ops::Range;
 
 use pulldown_cmark::{Event as MarkdownEvent, Options, Parser, Tag, TagEnd};
-use wire::{MessageClassification, MessageClassificationKind};
+use wire::{MessageClassification, MessageClassificationKind, MessageDirective};
 
-/// Markdown plus exact classifications after structural quote normalization.
+/// Markdown plus exact annotations after structural quote normalization.
 pub(super) struct Normalized<'a> {
     pub(super) markdown: Cow<'a, str>,
     pub(super) classifications: Vec<MessageClassification>,
+    pub(super) directives: Vec<MessageDirective>,
 }
 
 /// Promote each authenticated taste paragraph to one quote level.
@@ -23,6 +24,7 @@ pub(super) struct Normalized<'a> {
 pub(super) fn normalize<'a>(
     markdown: &'a str,
     classifications: &[MessageClassification],
+    directives: &[MessageDirective],
     options: Options,
 ) -> Normalized<'a> {
     if !classifications
@@ -32,6 +34,7 @@ pub(super) fn normalize<'a>(
         return Normalized {
             markdown: Cow::Borrowed(markdown),
             classifications: classifications.to_vec(),
+            directives: directives.to_vec(),
         };
     }
     let taste_offsets = classifications
@@ -78,6 +81,7 @@ pub(super) fn normalize<'a>(
         return Normalized {
             markdown: Cow::Borrowed(markdown),
             classifications: classifications.to_vec(),
+            directives: directives.to_vec(),
         };
     }
     let mut normalized = String::with_capacity(markdown.len());
@@ -96,9 +100,18 @@ pub(super) fn normalize<'a>(
             kind: classification.kind,
         })
         .collect();
+    let directives = directives
+        .iter()
+        .map(|directive| MessageDirective {
+            start: remap_offset(directive.start, &prefixes),
+            end: remap_offset(directive.end, &prefixes),
+            ..directive.clone()
+        })
+        .collect();
     Normalized {
         markdown: Cow::Owned(normalized),
         classifications,
+        directives,
     }
 }
 
