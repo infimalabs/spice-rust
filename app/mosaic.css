@@ -184,7 +184,7 @@
 .mosaic-compaction-agent {
   flex: 1 1 auto;
 }
-.mosaic-compaction-age { color: var(--muted); font-weight: 500; }
+.mosaic-compaction-age { color: var(--muted); font-weight: 500; text-decoration: underline; text-underline-offset: 2px; }
 
 .message-image {
   --message-image-size: var(--mosaic-image-size);
@@ -1055,7 +1055,7 @@ html[data-command-modifier-held="true"]
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-variant-numeric: tabular-nums;
   text-overflow: clip;
-  white-space: pre;
+  white-space: pre; text-decoration: underline; text-underline-offset: 2px;
 }
 .team-surface .message-badges {
   display: inline-flex;

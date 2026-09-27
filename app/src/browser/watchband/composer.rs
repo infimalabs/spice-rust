@@ -299,6 +299,7 @@ fn render_agent_message_card(
                 inspection.is_some().then_some("mosaic-message-card--inspecting-task"),
             )}
             aria-label={card_label}
+            tabindex="-1"
             data-card-kind={if is_boundary { "compaction" } else { "agent-message" }}
             data-message-role="agent"
             data-mosaic-card-key={source_id}
@@ -518,13 +519,20 @@ fn agent_message_presentation<'a>(
 }
 
 fn render_agent_boundary(message: &wire::AgentMessage, attribution: &str) -> Html {
+    let link_label = format!("Link to compacted context from {attribution}");
     let attribution = attribution.to_owned();
     let display_millis = crate::runtime::agent_message_display_millis(message);
+    let href = super::super::navigation::card_href(&agent_message_source_id(message));
     html! {
         <>
             <span class="mosaic-compaction-rule" aria-hidden="true"></span>
             <span class="mosaic-compaction-label">
-                <Age authored={display_millis} class="mosaic-compaction-age" />
+                <Age
+                    authored={display_millis}
+                    class="mosaic-compaction-age"
+                    {href}
+                    label={link_label}
+                />
                 <span class="mosaic-compaction-context">
                     <span class="mosaic-compaction-agent" title={attribution.clone()}>{attribution}</span>
                     <span class="message-key">{"compacted context"}</span>
@@ -547,6 +555,7 @@ fn agent_message_correspondent(
     let quote = message.quote_target.clone().map(|target| {
         let lane = quote_lane.to_string();
         let identity = target.to_string();
+        let source_id = agent_message_source_id(message);
         let focus_identity = identity.clone();
         let focus_lane = lane.clone();
         let dispatcher = quote_dispatcher.clone();
@@ -558,6 +567,7 @@ fn agent_message_correspondent(
             dispatcher.dispatch(ComposerAction::AddQuote {
                 lane: lane.clone(),
                 target: target.clone(),
+                source_id: source_id.clone(),
                 order,
                 display_millis,
                 preview: preview.clone(),
@@ -629,6 +639,8 @@ fn render_agent_message_footer(
     let has_actions = !shown_text.trim().is_empty();
     let producer_label = producer_label.to_owned();
     let attribution = attribution.to_owned();
+    let href = super::super::navigation::card_href(&agent_message_source_id(message));
+    let link_label = format!("Link to message from {attribution}");
     let author = message.author.to_string();
     let author_title = format!("Copy agent id\n{author}");
     let copy_author = Callback::from(move |_| view::chrome::copy_text(&author));
@@ -646,7 +658,13 @@ fn render_agent_message_footer(
     html! {
         <footer class="message-footer">
             <div class="message-footer-left">
-                <Age authored={display_millis} class="relative-age" title={locus} />
+                <Age
+                    authored={display_millis}
+                    class="relative-age"
+                    title={locus}
+                    {href}
+                    label={link_label}
+                />
                 {message_badges::render(message)}
             </div>
             <div class="message-footer-right">
@@ -686,6 +704,7 @@ pub(super) fn render_quote_shards(
                     Some(quote.identity.clone()),
                     drafts.clone(),
                 );
+                let href = super::super::navigation::card_href(&quote.source_id);
                 html! {
                     <article
                         key={quote.identity.clone()}
@@ -697,19 +716,20 @@ pub(super) fn render_quote_shards(
                         data-quote-target-id={lane_key.to_owned()}
                     >
                         <header class="composer-shard-heading">
-                            <span
+                            <a
                                 class={classes!(
                                     "composer-shard-link",
                                     "composer-shard-age",
                                     status.key(),
                                 )}
-                                aria-label={format!("Quoted source: {shown}")}
+                                {href}
+                                aria-label={format!("Jump to quoted source: {shown}")}
                                 data-lane-status={status.key()}
                             >{lease_age(
                                 Some(quote.display_millis),
                                 "composer-shard-age-label",
                                 "—",
-                            )}</span>
+                            )}</a>
                             <strong class="composer-shard-prose" title={shown.to_owned()}>{shown}</strong>
                             {render_image_indicators(
                                 lane_key,

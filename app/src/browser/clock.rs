@@ -42,6 +42,12 @@ pub(super) struct AgeProps {
     /// Hover text, which carries the exact instants the label rounds away.
     #[prop_or_default]
     pub(super) title: AttrValue,
+    /// Canonical card permalink. Absent ages remain plain text.
+    #[prop_or_default]
+    pub(super) href: Option<AttrValue>,
+    /// Accessible action label for a linked age.
+    #[prop_or_default]
+    pub(super) label: AttrValue,
 }
 
 #[derive(Properties, PartialEq)]
@@ -169,15 +175,31 @@ pub(super) fn age(props: &AgeProps) -> Html {
         });
     }
     let now = now_millis();
-    html! {
-        <span
-            ref={slot}
-            class={props.class.clone()}
-            title={props.title.clone()}
-            data-age-slot={AGE_LABEL_WIDTH.to_string()}
-            data-age-authored={props.authored.to_string()}
-            data-age-clock="deadline"
-        >{elapsed_label(now.saturating_sub(props.authored))}</span>
+    let text = elapsed_label(now.saturating_sub(props.authored));
+    if let Some(href) = &props.href {
+        html! {
+            <a
+                ref={slot}
+                class={props.class.clone()}
+                title={props.title.clone()}
+                href={href.clone()}
+                aria-label={props.label.clone()}
+                data-age-slot={AGE_LABEL_WIDTH.to_string()}
+                data-age-authored={props.authored.to_string()}
+                data-age-clock="deadline"
+            >{text}</a>
+        }
+    } else {
+        html! {
+            <span
+                ref={slot}
+                class={props.class.clone()}
+                title={props.title.clone()}
+                data-age-slot={AGE_LABEL_WIDTH.to_string()}
+                data-age-authored={props.authored.to_string()}
+                data-age-clock="deadline"
+            >{text}</span>
+        }
     }
 }
 

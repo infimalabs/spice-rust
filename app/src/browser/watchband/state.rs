@@ -18,6 +18,7 @@ pub(in crate::browser) enum ComposerAction {
     AddQuote {
         lane: String,
         target: wire::QuoteTarget,
+        source_id: String,
         order: u64,
         display_millis: i64,
         preview: String,
@@ -77,12 +78,13 @@ impl Reducible for ComposerDrafts {
             ComposerAction::AddQuote {
                 lane,
                 target,
+                source_id,
                 order,
                 display_millis,
                 preview,
             } => {
                 next.0
-                    .add_quote(lane, target, order, display_millis, preview);
+                    .add_quote(lane, target, source_id, order, display_millis, preview);
             }
             ComposerAction::RemoveQuote { lane, identity } => {
                 next.0.remove_quote(lane, &identity);

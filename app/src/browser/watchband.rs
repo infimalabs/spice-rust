@@ -376,6 +376,7 @@ fn render_activity(
     html! {
         <div
             id={format!("team-stream-{}", team.lane)}
+            tabindex="-1"
             class="team-activity-grid"
             aria-live="polite"
             aria-label="Live agent activity"
@@ -1096,7 +1097,7 @@ fn render_composer_heading(
                     "composer-shard-age",
                     status.key(),
                 )}
-                href={format!("#{target}")}
+                href={super::navigation::card_href(&target)}
                 aria-label={label}
                 data-lane-status={status.key()}
             >{lease_age(display_millis, "composer-shard-age-label", "—")}</a>

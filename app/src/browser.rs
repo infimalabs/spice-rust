@@ -39,6 +39,7 @@ use crate::{
 };
 
 mod canvas_menu;
+mod card_target;
 mod clock;
 mod connection;
 mod image_viewer;
@@ -541,15 +542,17 @@ fn use_composer_drag(surface: &SurfaceData) -> watchband::PrimaryComposerDragSta
 
 #[function_component(CanvasRouter)]
 fn canvas_router() -> Html {
-    let (destination, navigate) = navigation::use_destination();
-    if let Some(destination) = destination {
-        html! { <CanvasApp {destination} {navigate} /> }
+    let (route, navigate) = navigation::use_destination();
+    if let Some(route) = route {
+        let destination = route.canvas_destination();
+        let card_target = route.card_target().map(str::to_owned);
+        html! { <CanvasApp {destination} {card_target} {navigate} /> }
     } else {
         html! {
             <main class="shell">
                 <section class="empty" role="alert" data-route-unavailable="true">
                     <h1>{"Canvas route unavailable"}</h1>
-                    <p>{"Use #/, #/work, or #/info."}</p>
+                    <p>{"Use #/, #/work, #/info, or a card permalink."}</p>
                 </section>
             </main>
         }
@@ -559,6 +562,7 @@ fn canvas_router() -> Html {
 #[derive(Properties, PartialEq)]
 struct CanvasAppProperties {
     destination: CanvasDestination,
+    card_target: Option<String>,
     navigate: Callback<CanvasDestination>,
 }
 
@@ -567,6 +571,8 @@ struct CanvasAppState {
     surface: UseStateHandle<SurfaceData>,
     canvas_menu_open: UseStateHandle<bool>,
     destination: CanvasDestination,
+    card_target: Option<String>,
+    card_target_status: UseStateHandle<Option<card_target::Status>>,
     navigate: Callback<navigation::Intent>,
     work_scope: UseStateHandle<WorkScope>,
     work_scope_notice: UseStateHandle<Option<String>>,
@@ -598,11 +604,22 @@ impl CanvasAppState {
             self.work_detail.selected.clone(),
             self.work_map.clone(),
         );
+        let card_target_notice = (*self.card_target_status)
+            .as_ref()
+            .filter(|status| self.card_target.as_deref() == Some(status.target.as_str()))
+            .map(|status| {
+                if status.available {
+                    "Linked card focused.".to_owned()
+                } else {
+                    "Linked card is unavailable in retained message history.".to_owned()
+                }
+            });
         let canvas = render_canvas(
             CanvasRender {
                 connection: &self.connection,
                 surface: &self.surface,
                 destination: self.destination,
+                card_target_notice,
                 navigate: &self.navigate,
                 canvas_menu_open: &self.canvas_menu_open,
                 work_scope: &self.work_scope,
@@ -644,6 +661,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
     let canvas_menu_open = use_state(|| false);
+    let card_target_status = use_state(|| None::<card_target::Status>);
     let work_scope = use_state(WorkScope::default);
     let work_scope_notice = use_state(|| None::<String>);
     let work_arrangement = use_state(WorkArrangement::default);
@@ -699,6 +717,8 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
             surface,
             canvas_menu_open,
             destination: properties.destination,
+            card_target: properties.card_target.clone(),
+            card_target_status,
             navigate,
             work_scope,
             work_scope_notice,
@@ -748,6 +768,12 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
     use_team_speech_abandonment(&state.surface, speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime);
     let chat_visible = state.destination == CanvasDestination::Chat;
+    card_target::use_target(
+        state.card_target.clone(),
+        &state.surface,
+        state.card_target_status.clone(),
+        chat_visible,
+    );
     use_mosaic_root_scroll(chat_visible);
     canvas_menu::use_dismissal(state.canvas_menu_open.clone());
     message_task_inspector::use_surface_lifetime(&state.task_inspector, chat_visible);

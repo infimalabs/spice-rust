@@ -26,6 +26,7 @@ pub(crate) struct ComposerDraft {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QuoteDraft {
     pub(crate) identity: String,
+    pub(crate) source_id: String,
     pub(crate) preview: String,
     pub(crate) display_millis: i64,
     pub(crate) body: String,
@@ -71,6 +72,7 @@ impl DraftStore {
         &mut self,
         lane: String,
         quote_target: QuoteTarget,
+        source_id: String,
         order: u64,
         display_millis: i64,
         preview: String,
@@ -86,6 +88,7 @@ impl DraftStore {
         }
         draft.quotes.push(QuoteDraft {
             identity,
+            source_id,
             preview,
             display_millis,
             body: String::new(),
@@ -331,6 +334,10 @@ mod tests {
         target(key).to_string()
     }
 
+    fn source_id(key: &str) -> String {
+        format!("message-{key}")
+    }
+
     #[test]
     fn target_keys_preserve_one_draft_per_member_across_reordering() {
         let mut store = DraftStore::default();
@@ -465,6 +472,7 @@ mod tests {
             store.add_quote(
                 "agent-a".to_owned(),
                 target("message-old"),
+                source_id("message-old"),
                 10,
                 1_000,
                 "Old quote".to_owned(),
@@ -475,6 +483,7 @@ mod tests {
             store.add_quote(
                 "agent-a".to_owned(),
                 target("message-new"),
+                source_id("message-new"),
                 30,
                 3_000,
                 "New quote".to_owned(),
@@ -485,6 +494,7 @@ mod tests {
             store.add_quote(
                 "agent-a".to_owned(),
                 target("message-old"),
+                source_id("message-old"),
                 10,
                 1_000,
                 "Changed preview is ignored".to_owned(),
@@ -503,6 +513,16 @@ mod tests {
             identities,
             [identity("message-old"), identity("message-new")]
         );
+        assert_eq!(
+            store
+                .get("agent-a")
+                .unwrap()
+                .quotes
+                .iter()
+                .map(|quote| quote.source_id.as_str())
+                .collect::<Vec<_>>(),
+            ["message-message-old", "message-message-new"]
+        );
 
         store.remove_quote("agent-a".to_owned(), &identity("message-old"));
         assert_eq!(store.get("agent-a").unwrap().quotes.len(), 1);
@@ -517,6 +537,7 @@ mod tests {
         store.add_quote(
             "agent-a".to_owned(),
             target("message"),
+            source_id("message"),
             1,
             1_000,
             "Quoted source".to_owned(),
@@ -578,6 +599,7 @@ mod tests {
         store.add_quote(
             "agent-a".to_owned(),
             target("sent-quote"),
+            source_id("sent-quote"),
             1,
             1_000,
             "Sent quote".to_owned(),
@@ -608,6 +630,7 @@ mod tests {
         store.add_quote(
             "agent-a".to_owned(),
             target("sent-quote"),
+            source_id("sent-quote"),
             2,
             2_000,
             "Sent quote".to_owned(),
@@ -627,6 +650,7 @@ mod tests {
         store.add_quote(
             "agent-a".to_owned(),
             target("newer-quote"),
+            source_id("newer-quote"),
             3,
             3_000,
             "Newer quote".to_owned(),
@@ -675,6 +699,7 @@ mod tests {
         store.add_quote(
             "agent-a".to_owned(),
             target("quote"),
+            source_id("quote"),
             1,
             1_000,
             "Quoted source".to_owned(),
@@ -756,6 +781,7 @@ mod tests {
         store.add_quote(
             "agent-a".to_owned(),
             target("source"),
+            source_id("source"),
             1,
             1_000,
             "Quoted source".to_owned(),
@@ -772,6 +798,7 @@ mod tests {
         store.add_quote(
             "agent-a".to_owned(),
             target("source"),
+            source_id("source"),
             1,
             1_000,
             "Quoted source".to_owned(),

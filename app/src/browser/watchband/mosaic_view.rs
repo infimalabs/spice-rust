@@ -1177,6 +1177,8 @@ fn render_lifecycle_boundary(
     let attribution =
         watchband::agent_message_label(&member.worktree, member.name.as_deref()).to_owned();
     let label = format!("{attribution} lifecycle: {}", boundary.cause());
+    let link_label = format!("Link to {label}");
+    let href = super::super::navigation::card_href(key);
     html! {
         <article
             key={key.to_owned()}
@@ -1188,6 +1190,7 @@ fn render_lifecycle_boundary(
                 layout.lifecycle.as_str(),
             )}
             aria-label={label}
+            tabindex="-1"
             data-card-kind="lifecycle"
             data-message-role="system"
             data-mosaic-card-key={key.to_owned()}
@@ -1218,6 +1221,8 @@ fn render_lifecycle_boundary(
                 <Age
                     authored={boundary.observed().get().as_millisecond()}
                     class="mosaic-compaction-age"
+                    {href}
+                    label={link_label}
                 />
                 <span class="mosaic-compaction-context">
                     <span class="mosaic-compaction-agent" title={attribution.clone()}>{attribution}</span>
