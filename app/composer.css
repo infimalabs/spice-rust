@@ -543,16 +543,6 @@
   font-weight: 700;
 }
 .markdown-body .message-quote-body .message-ack-pill { margin-right: .35em; }
-.markdown-body .message-quote-task {
-  margin-left: auto;
-  color: var(--accent);
-  cursor: pointer;
-  font-weight: 650;
-}
-.markdown-body .message-quote-task:focus-visible {
-  outline: 2px solid var(--ink);
-  outline-offset: 2px;
-}
 .markdown-body .message-quote-body { display: contents; }
 .markdown-body .message-quote-body > :first-child { margin-top: 0; }
 .markdown-body .message-quote-body > :last-child { margin-bottom: 0; }

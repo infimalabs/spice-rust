@@ -496,22 +496,25 @@ fn collect_quote_task_slots(
 }
 
 #[derive(Properties, PartialEq)]
-struct QuoteTaskLinksProps {
+struct QuoteTaskChipsProps {
     handles: Vec<wire::TaskHandle>,
 }
 
-#[function_component(QuoteTaskLinks)]
-fn quote_task_links(props: &QuoteTaskLinksProps) -> Html {
+#[function_component(QuoteTaskChips)]
+fn quote_task_chips(props: &QuoteTaskChipsProps) -> Html {
     html! {
         <>
         {for props.handles.iter().map(|handle| html! {
             <span
-                class="message-quote-task"
+                class="message-task-chip"
                 role="button"
                 tabindex="0"
                 data-task-handle={handle.as_str().to_owned()}
-                aria-label={format!("Open task {} in Work", handle.as_str())}
-            >{"Work"}</span>
+                aria-label={format!("Inspect task {}", handle.as_str())}
+                title={format!("Inspect {}", handle.as_str())}
+            >
+                <span class="message-task-chip-label">{handle.as_str()}</span>
+            </span>
         })}
         </>
     }
@@ -519,7 +522,7 @@ fn quote_task_links(props: &QuoteTaskLinksProps) -> Html {
 /// Producer-authored diagram, quote-age, and quote-task slots inside this card
 /// are portal targets. Raw user HTML still passes through the shared Markdown
 /// sanitizer; only resident-hydrated inline HTML can name these slot kinds.
-/// Board work fills task slots in place, so a quote gaining Work never
+/// Board work fills task slots in place, so a quote gaining task badges never
 /// replaces the card's raw nodes or reloads its images.
 #[function_component(MarkdownBody)]
 pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
@@ -583,7 +586,7 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
             {for quote_task_slots.iter().filter_map(|slot| {
                 let handles = props.quote_tasks.get(&slot.steering)?.clone();
                 Some(Html::from(yew::virtual_dom::VPortal::new_before(
-                    html! { <QuoteTaskLinks key={slot.key.clone()} {handles} /> },
+                    html! { <QuoteTaskChips key={slot.key.clone()} {handles} /> },
                     slot.target.clone(),
                     slot.before.clone(),
                 )))

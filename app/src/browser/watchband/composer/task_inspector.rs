@@ -138,14 +138,6 @@ fn use_focus_departure(card: &str, context: &Option<Context>, open: bool) {
 
 pub(super) fn task_chip_click(inspector: Option<Context>, card: String) -> Callback<MouseEvent> {
     Callback::from(move |event: MouseEvent| {
-        if let Some(handle) = task_handle_from_target(event.target(), ".message-quote-task") {
-            event.prevent_default();
-            event.stop_propagation();
-            if let Some(inspector) = inspector.as_ref() {
-                inspector.open_quote_task(handle);
-            }
-            return;
-        }
         let Some((chip, handle)) = task_control_from_target(event.target(), ".message-task-chip")
         else {
             return;
@@ -170,14 +162,6 @@ pub(super) fn task_chip_keydown(
 ) -> Callback<KeyboardEvent> {
     Callback::from(move |event: KeyboardEvent| {
         if event.key() != "Enter" && event.key() != " " {
-            return;
-        }
-        if let Some(handle) = task_handle_from_target(event.target(), ".message-quote-task") {
-            event.prevent_default();
-            event.stop_propagation();
-            if let Some(inspector) = inspector.as_ref() {
-                inspector.open_quote_task(handle);
-            }
             return;
         }
         let Some(handle) = task_handle_from_target(event.target(), ".message-task-chip") else {

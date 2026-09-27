@@ -133,20 +133,6 @@ impl Context {
         )
     }
 
-    pub fn open_quote_task(&self, handle: TaskHandle) {
-        let Ok(task) = handle.born() else {
-            return;
-        };
-        if self
-            .quote_tasks
-            .values()
-            .flatten()
-            .any(|candidate| candidate == &handle)
-        {
-            self.navigate.emit(navigation::Intent::Task(task));
-        }
-    }
-
     /// Begin closing the open view once; the card ends it when its layer's
     /// slide completes, or at once when nothing animates.
     pub fn close(&self, return_focus: bool) {
