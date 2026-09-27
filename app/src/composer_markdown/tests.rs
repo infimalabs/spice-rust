@@ -956,6 +956,71 @@ fn directive_quote_cards_cover_every_disposition_and_board_backed_navigation() {
     );
 }
 
+/// A card keeps the agents its quotes can render and nothing else: rendering
+/// from that projection matches rendering from the whole roster, and a seat the
+/// quotes never name changing occupancy leaves the card's projection, and so
+/// its measurement, untouched.
+#[test]
+fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
+    let id = |suffix: &str| -> wire::CanonicalUuid {
+        format!("018f82d4-6f59-7d06-92e3-bce9131164{suffix}")
+            .parse()
+            .expect("fixture identity is canonical")
+    };
+    let (quoted, directing, unrelated, arriving) = (id("0a"), id("0b"), id("0c"), id("0d"));
+    let (departed, successor) = (id("1a"), id("1b"));
+    let inner_text = "direction from a lane";
+    let inner_target = steering_target("dTVQdQfLw", inner_text);
+    let outer_text = format!("before {} after", inner_target.markdown());
+    let outer_target = tape_target(&outer_text);
+    let quotes = vec![wire::QuotePresentation::Resolved {
+        target: outer_target.to_string(),
+        text: outer_text,
+        author: wire::QuoteAuthor::Agent {
+            lane: quoted,
+            occupant: departed,
+        },
+        disposition: None,
+        quotes: vec![wire::QuotePresentation::Resolved {
+            target: inner_target.to_string(),
+            text: inner_text.to_owned(),
+            author: wire::QuoteAuthor::Directive {
+                actor: wire::Actor::Lane(directing),
+            },
+            disposition: Some(wire::Disposition::Live),
+            quotes: Vec::new(),
+        }],
+    }];
+    let agent = |label: &str| QuoteAgent {
+        team: id("ff"),
+        label: label.to_owned(),
+    };
+    let roster = BTreeMap::from([
+        ((quoted, successor), agent("quoted")),
+        ((directing, id("2b")), agent("directing")),
+        ((unrelated, id("2c")), agent("unrelated")),
+    ]);
+    let render = |agents: &QuoteAgents| {
+        render_received_with_quotes(
+            &outer_target.markdown(),
+            &[],
+            &quotes,
+            agents,
+            &BTreeMap::new(),
+        )
+        .html
+    };
+
+    let projection = referenced_quote_agents(&quotes, &roster);
+    assert_eq!(render(&projection), render(&roster));
+
+    let mut reseated = roster.clone();
+    reseated.remove(&(unrelated, id("2c")));
+    reseated.insert((unrelated, id("3c")), agent("unrelated"));
+    reseated.insert((arriving, id("3d")), agent("arriving"));
+    assert_eq!(referenced_quote_agents(&quotes, &reseated), projection);
+}
+
 #[test]
 fn unavailable_quote_cards_keep_the_target_structural_without_showing_it_as_prose() {
     let target = steering_target("dTVQdQfLw", "missing");
