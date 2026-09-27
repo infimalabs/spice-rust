@@ -796,7 +796,7 @@ fn assert_source_author_survives_reseating(
         "data-quote-agent-occupant=\"{source}\" \
          data-quote-author-state=\"source\" data-accent=\"3\""
     )));
-    assert!(rendered.html.contains(">spice-rust-k</span>"));
+    assert!(rendered.html.contains(">spice-rust-k</a>"));
     assert!(!rendered.html.contains("history unavailable"));
     assert!(!rendered.html.contains("data-quote-agent-team="));
 }
@@ -873,28 +873,22 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
             .count(),
         2
     );
-    assert!(rendered.html.contains("data-quote-author=\"agent\""));
     assert!(rendered.html.contains(&format!(
-        "data-quote-agent-team=\"{team}\" \
+        "<a class=\"message-quote-author\" href=\"#/card/message-agent-outer-source\" \
+         data-quote-source=\"message-agent-outer-source\" data-quote-author=\"agent\" \
+         data-quote-agent-team=\"{team}\" \
          data-quote-agent-lane=\"{lane}\" data-quote-agent-occupant=\"{source}\" \
          data-quote-author-state=\"current\" data-accent=\"3\" \
-         aria-label=\"Open information for spice-rust-k\">spice-rust-k</button>"
+         aria-label=\"Open message from spice-rust-k\">spice-rust-k</a>"
     )));
-    assert!(
-        rendered.html.contains(
-            "data-quote-author=\"directive\" data-quote-actor=\"operator\">Operator</span>"
-        )
-    );
+    assert!(rendered.html.contains(
+        "<a class=\"message-quote-author\" href=\"#/card/message-agent-inner-source\" \
+         data-quote-source=\"message-agent-inner-source\" data-quote-author=\"directive\" \
+         data-quote-actor=\"operator\" aria-label=\"Open message from Operator\">Operator</a>"
+    ));
     assert!(!rendered.html.contains("history unavailable"));
-    assert_eq!(rendered.html.matches("message-quote-source").count(), 2);
-    assert!(rendered.html.contains(
-        "href=\"#/card/message-agent-outer-source\" \
-         data-quote-source=\"message-agent-outer-source\""
-    ));
-    assert!(rendered.html.contains(
-        "href=\"#/card/message-agent-inner-source\" \
-         data-quote-source=\"message-agent-inner-source\""
-    ));
+    assert_eq!(rendered.html.matches("data-quote-source=").count(), 2);
+    assert!(!rendered.html.contains("Original"));
     assert!(rendered.html.contains(inner_text));
     assert!(rendered.html.contains("data-quote-disposition=\"live\""));
     assert!(!rendered.html.contains("Agent "));
@@ -905,7 +899,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         .expect("outer authenticated prose renders");
     let outer_signoff = rendered
         .html
-        .rfind("spice-rust-k</button>")
+        .rfind("spice-rust-k</a>")
         .expect("outer signoff renders");
     assert!(
         outer_body < outer_signoff,
@@ -913,6 +907,30 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     );
 
     assert_source_author_survives_reseating(&outer_target, &quotes, &sources, lane, source, team);
+    assert_sourceless_author_opens_information(&outer_target, &quotes, &agents);
+}
+
+/// Without a known source card, the current agent's name opens its information.
+fn assert_sourceless_author_opens_information(
+    outer: &wire::QuoteTarget,
+    quotes: &[wire::QuotePresentation],
+    agents: &QuoteAgents,
+) {
+    let sourceless = render_received_with_quotes(
+        &outer.markdown(),
+        &[],
+        &[],
+        quotes,
+        agents,
+        &BTreeMap::new(),
+        &BTreeMap::new(),
+    );
+    assert!(
+        sourceless
+            .html
+            .contains("aria-label=\"Open information for spice-rust-k\">spice-rust-k</button>")
+    );
+    assert!(!sourceless.html.contains("data-quote-source="));
 }
 
 #[test]
@@ -1320,9 +1338,9 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         (1, 1),
         "{lane}"
     );
-    assert!(lane.contains(">directing</span>"), "{lane}");
+    assert!(lane.contains(">directing</a>"), "{lane}");
     assert!(lane.contains("data-accent=\"1\""), "{lane}");
-    assert_eq!(html.matches("message-quote-source").count(), 3, "{html}");
+    assert_eq!(html.matches("data-quote-source=").count(), 3, "{html}");
     assert!(html.contains("href=\"#/card/message-agent-operator-source\""));
     assert!(html.contains("href=\"#/card/message-agent-lane-source\""));
     assert!(html.contains("href=\"#/card/message-agent-nested-source\""));
