@@ -144,21 +144,32 @@ fn push_optional(rows: &mut Vec<Html>, label: &'static str, value: Option<&str>)
 }
 
 fn render_limit(limit: &wire::QuotaLimit) -> Html {
-    let used = limit.amount.used.as_deref().unwrap_or("unknown");
-    let remaining = limit.amount.remaining.as_deref().unwrap_or("unknown");
-    let maximum = limit.amount.limit.as_deref().unwrap_or("unknown");
+    let used = format_amount(limit.amount.used.as_deref(), &limit.amount.unit);
+    let remaining = format_amount(limit.amount.remaining.as_deref(), &limit.amount.unit);
+    let maximum = format_amount(limit.amount.limit.as_deref(), &limit.amount.unit);
     html! {
         <section class="quota-limit">
             <header><strong>{limit.label.clone()}</strong><span>{limit.status.clone().unwrap_or_else(|| "reported".to_owned())}</span></header>
             <dl>
-                <div><dt>{"Used"}</dt><dd>{format!("{used} {}", limit.amount.unit)}</dd></div>
-                <div><dt>{"Remaining"}</dt><dd>{format!("{remaining} {}", limit.amount.unit)}</dd></div>
-                <div><dt>{"Limit"}</dt><dd>{format!("{maximum} {}", limit.amount.unit)}</dd></div>
+                <div><dt>{"Used"}</dt><dd>{used}</dd></div>
+                <div><dt>{"Remaining"}</dt><dd>{remaining}</dd></div>
+                <div><dt>{"Limit"}</dt><dd>{maximum}</dd></div>
                 if let Some(window) = &limit.window {
                     <div><dt>{"Reset"}</dt><dd>{render_reset(window)}</dd></div>
                 }
             </dl>
         </section>
+    }
+}
+
+fn format_amount(value: Option<&str>, unit: &str) -> String {
+    let Some(value) = value else {
+        return "unknown".to_owned();
+    };
+    if unit.eq_ignore_ascii_case("percent") {
+        format!("{value}%")
+    } else {
+        format!("{value} {unit}")
     }
 }
 
