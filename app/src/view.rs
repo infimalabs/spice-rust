@@ -115,7 +115,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Info => "Info",
+            Self::Info => "Team",
             Self::Work => "Work",
             Self::Chat => "Chat",
         }
@@ -144,7 +144,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
-            Self::Info => "Info about resident teams, agents, capabilities, and possession",
+            Self::Info => "Team topology, agents, capabilities, and possession",
             Self::Work => "Work across tasks, claims, deferrals, and reviews",
             Self::Chat => "Chat across persistent team agents",
         }

@@ -52,7 +52,7 @@ fn render_axis(
         ),
         Axis::Topology => (
             "teams",
-            "Info connects resident teams, seats, capabilities, and current ownership.",
+            "Team covers resident teams, seats, capabilities, and current ownership.",
         ),
     };
     html! {
