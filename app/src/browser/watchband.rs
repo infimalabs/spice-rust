@@ -205,7 +205,7 @@ fn render_compose(
     let ready = control.pending_life.is_none()
         && team.members.iter().any(|member| {
             authority
-                .target(member.occupant, member.bound, epoch)
+                .target(member.occupant, member.wakeable, epoch)
                 .is_some()
         });
     let cards = activity_cards(runtime, team, quote_agents);
@@ -896,7 +896,7 @@ fn render_agent_composer(
     let AgentTeamActions { split, leave } = actions;
     let lane_key = lane_id.to_string();
     let draft = drafts.get(&lane_key).cloned().unwrap_or_default();
-    let target = authority.target(member.occupant, member.bound, epoch);
+    let target = authority.target(member.occupant, member.wakeable, epoch);
     let wake = target == Some(SubmissionTarget::Wake);
     let command_submit_eligible = target.is_some();
     let broadcast_target_eligible = broadcast_targets
@@ -1306,7 +1306,7 @@ fn submit_team_callback(
     let targets = members
         .iter()
         .map(|member| {
-            let target = authority.target(member.occupant, member.bound, epoch);
+            let target = authority.target(member.occupant, member.wakeable, epoch);
             (member.lane, target, member.lane.to_string())
         })
         .collect::<Vec<_>>();

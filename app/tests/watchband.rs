@@ -72,11 +72,13 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         disposition: "seated".to_owned(),
         liveness: wire::intent::LaneLiveness::Working,
         // A seat that has run: `bound` records that a resumable session was once
-        // declared for it, which is true of every lane this fixture builds
-        // because each one is occupied. No standing reads the field, so the
-        // value is the fixture's stance rather than anything asserted below --
-        // spelled out because a bare `true` reads as load-bearing when it is not.
+        // declared for it, and a bound seat is `wakeable`, which is true of every
+        // lane this fixture builds because each one is occupied. No standing
+        // reads either field, so the values are the fixture's stance rather than
+        // anything asserted below -- spelled out because bare `true`s read as
+        // load-bearing when they are not.
         bound: true,
+        wakeable: true,
         jobs: Vec::new(),
     }
 }

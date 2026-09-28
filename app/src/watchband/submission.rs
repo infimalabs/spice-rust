@@ -57,21 +57,22 @@ impl SubmissionAuthority {
     /// Where one member's draft goes, or nowhere.
     ///
     /// A seated member is steered when sending is authorised; a vacant member
-    /// is woken when waking is and a session was ever declared for the seat.
+    /// is woken when waking is and the resident can seat it, which a seat that
+    /// was never started always can.
     /// A member the authority cannot reach has no target, and a draft with no
     /// target stays in its composer.
     #[must_use]
     pub fn target(
         self,
         occupant: Option<CanonicalUuid>,
-        bound: bool,
+        wakeable: bool,
         epoch: CanonicalUuid,
     ) -> Option<SubmissionTarget> {
         match occupant {
             Some(occupant) => self
                 .send
                 .then_some(SubmissionTarget::Resident { occupant, epoch }),
-            None => (self.wake && bound).then_some(SubmissionTarget::Wake),
+            None => (self.wake && wakeable).then_some(SubmissionTarget::Wake),
         }
     }
 }
@@ -129,7 +130,7 @@ mod tests {
         assert_eq!(
             online.target(None, false, epoch()),
             None,
-            "an unbound seat cannot wake"
+            "a started seat without a session cannot wake"
         );
     }
 

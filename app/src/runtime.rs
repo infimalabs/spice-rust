@@ -163,6 +163,10 @@ pub struct LaneMember {
     pub liveness: LaneLiveness,
     /// Whether a resumable session was ever declared for this seat.
     pub bound: bool,
+    /// Whether the resident can seat an occupant here on an operator wake:
+    /// a seat with a declared session resumes it, and a seat that was never
+    /// started launches fresh. A started seat that lost its session cannot.
+    pub wakeable: bool,
     /// Commands the lane started that it has yet to hear the ending of.
     pub jobs: Vec<wire::intent::LaneJob>,
 }
@@ -299,6 +303,7 @@ impl From<&LaneAnswer> for LaneView {
                 disposition: lane.disposition.clone(),
                 liveness: lane.liveness,
                 bound: lane.bound,
+                wakeable: lane.bound || lane.lineage.is_empty(),
                 jobs: lane.jobs.clone(),
             };
             if let Some(team) = teams.iter_mut().find(|team| team.lane == lane.team) {
