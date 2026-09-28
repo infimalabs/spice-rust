@@ -95,6 +95,73 @@ fn current_header_forms_hide_framing_and_capitalize_response_prose() {
 }
 
 #[test]
+fn decorative_brackets_and_unicode_dashes_do_not_frame_presented_context() {
+    let directives = directives(&[("1kQnrzNZ", "Keep the current path.")]);
+    for text in [
+        "[ACK 1kQnrzNZ] applied.",
+        "[ACK 1kQnrzNZ] – applied.",
+        "[ACK 1kQnrzNZ] — applied.",
+        "— [ACK 1kQnrzNZ] — applied.",
+    ] {
+        assert_eq!(
+            presented_text(text, &directives, event()).expect("acknowledgment presents"),
+            "> [ACK PENDING] Keep the current path.\n\nApplied.",
+            "wrong presentation for {text:?}",
+        );
+    }
+    assert_eq!(
+        presented_text(
+            "Context [kept] — ACK 1kQnrzNZ: applied.",
+            &directives,
+            event(),
+        )
+        .expect("acknowledgment after ordinary prose presents"),
+        concat!(
+            "Context [kept] —\n",
+            "> [ACK PENDING] Keep the current path.\n\n",
+            "Applied."
+        ),
+    );
+}
+
+#[test]
+fn framing_trim_preserves_response_punctuation_and_structural_ranges() {
+    let directives = directives(&[
+        ("1kQwPZtK", "Apply the current path."),
+        ("1kQwPZtL", "Keep the safety check."),
+    ]);
+    let presented = present_steering_acknowledgements(
+        concat!(
+            "[ACK 1kQwPZtK] — applied [within scope] – keep — these.\n",
+            "[NAK 1kQwPZtL] – unsafe [without review] — retained."
+        ),
+        Some(&directives),
+        event(),
+    )
+    .expect("framed acknowledgments present");
+
+    assert_eq!(
+        presented.text,
+        concat!(
+            "> [ACK PENDING] Apply the current path.\n\n",
+            "Applied [within scope] – keep — these.\n",
+            "> [NAK] Keep the safety check.\n\n",
+            "Unsafe [without review] — retained."
+        ),
+    );
+    assert!(
+        presented
+            .classifications
+            .iter()
+            .all(|classification| classification.is_valid_for(&presented.text))
+    );
+    assert!(wire::valid_message_directives(
+        &presented.text,
+        &presented.directive_contexts
+    ));
+}
+
+#[test]
 fn presented_response_prose_normalizes_only_a_terminal_colon() {
     let directives = directives(&[("1kQnrzNZ", "Keep the current path.")]);
     for (body, presented) in [
@@ -315,7 +382,7 @@ fn mixed_acknowledgement_dispositions_keep_their_own_keys_and_contexts() {
     ]);
     assert_eq!(
         presented_text(
-            "ACK 1kQwPZtK: Applied.\nNAK 1kQwPZtL: Unsafe.",
+            "[ACK 1kQwPZtK] — Applied.\n[NAK 1kQwPZtL] – Unsafe.",
             &directives,
             event(),
         )
@@ -570,7 +637,7 @@ fn quoted_history_keeps_its_pills_at_every_level_without_live_credit() {
 
 #[test]
 fn unknown_key_preserves_the_original_message_across_replay() {
-    let text = "ACK 1kQwPZtK: No directive owns this key.";
+    let text = "[ACK 1kQwPZtK] — No directive owns this key.";
     let directives = PresentationDirectives::default();
     let first = presented_text(text, &directives, event()).expect("unknown key remains visible");
     let replayed =
