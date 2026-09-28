@@ -14,22 +14,25 @@ pub(super) fn render_dash(runtime: Option<&CanvasRuntime>) -> Html {
             data-quota-state={presentation.condition.key()}
         >
             <div class="section-heading">
-                <div>
-                    <h2 id="provider-quota-heading">{"Provider quota"}</h2>
-                    <p class="dash-overview-section-copy">{"Redacted account usage sampled by the resident; quota never controls allocation or routing."}</p>
-                </div>
-                <span class="section-count">{format!("Generation {}", generation.generation)}</span>
-            </div>
-            <div class="quota-status" role="status" aria-live="polite">
-                <strong>{presentation.condition.label()}</strong>
-                <span>{presentation.detail}</span>
-                if let Some(sampled_at) = presentation.sampled_at_ms {
-                    <span>{"Sample age "}<Age authored={sampled_at} class={classes!("dash-overview-quota-age")} title="Age of retained successful quota data" /></span>
+                <h2 id="provider-quota-heading">{"Provider quota"}</h2>
+                if snapshot.is_some() {
+                    <p class="quota-capacity" title="Weekly plan-weighted estimate across accounts · Free 0.2× · $20 plans 1× · Pro/Max 5× or explicit 20×">
+                        <strong>{crate::quota::capacity_summary(generation)}</strong>
+                        {" weekly"}
+                    </p>
                 }
             </div>
+            if !presentation.fresh {
+                <div class="quota-status" role="status" aria-live="polite">
+                    <strong>{presentation.condition.label()}</strong>
+                    <span>{presentation.detail}</span>
+                    if let Some(sampled_at) = presentation.sampled_at_ms {
+                        <span>{"Sample age "}<Age authored={sampled_at} class={classes!("dash-overview-quota-age")} title="Age of retained successful quota data" /></span>
+                    }
+                </div>
+            }
             {render_attempt(generation.latest_attempt.as_ref())}
             if let Some(snapshot) = snapshot {
-                {render_capacity(generation)}
                 {render_reports(&snapshot.reports)}
                 {render_accounts_without_usage(&snapshot.accounts_without_usage)}
                 {render_disabled(&snapshot.disabled_credentials)}
@@ -65,29 +68,6 @@ fn render_attempt(attempt: Option<&wire::QuotaAttempt>) -> Html {
             <Age authored={i64::try_from(*finished_at_ms).unwrap_or(i64::MAX)} class={classes!("dash-overview-quota-age")} title="Age of latest failed quota attempt" />
             {" ago"}
         </p>
-    }
-}
-
-fn render_capacity(generation: &wire::QuotaGeneration) -> Html {
-    let snapshot = generation
-        .last_good
-        .as_deref()
-        .expect("capacity renders only with a retained quota snapshot");
-    html! {
-        <section class="quota-detail-group" aria-labelledby="quota-capacity-heading">
-            <h3 id="quota-capacity-heading">{"Remaining provider quota"}</h3>
-            if snapshot.reports.is_empty() {
-                <p class="quota-empty">{"No account usage reports were returned."}</p>
-            } else {
-                <dl class="quota-capacity-grid">
-                    <div>
-                        <dt>{"Total across all account capacity"}</dt>
-                        <dd><strong>{crate::quota::capacity_summary(generation)}</strong></dd>
-                        <dd>{"Weekly plan-weighted estimate · Free 0.2× · $20 plans 1× · Pro/Max 5× or explicit 20×"}</dd>
-                    </div>
-                </dl>
-            }
-        </section>
     }
 }
 

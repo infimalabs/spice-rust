@@ -666,7 +666,9 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   font-size: .68rem;
   line-height: 1.2;
 }
-.dash-overview-quota-section .section-heading { align-items: end; }
+.dash-overview-quota-section .section-heading { align-items: baseline; }
+.quota-capacity { margin: 0; color: var(--muted); font-size: .78rem; }
+.quota-capacity strong { color: var(--ink); font-size: .9rem; }
 .quota-status {
   display: flex;
   align-items: baseline;
@@ -689,21 +691,12 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .quota-detail-group { margin-top: 18px; }
 .quota-detail-group > h3 { margin: 0 0 9px; font-size: .86rem; }
 .quota-empty { margin: 0; color: var(--muted); font-size: .76rem; }
-.quota-capacity-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
-  gap: 8px;
-  margin: 0;
-}
-.quota-capacity-grid > div,
 .quota-simple-list li {
   padding: 10px 12px;
   border: var(--canvas-edge);
   border-radius: var(--canvas-radius-element);
   background: var(--panel);
 }
-.quota-capacity-grid dt { color: var(--muted); font-size: .65rem; }
-.quota-capacity-grid dd { margin: 3px 0 0; font-size: .76rem; }
 .quota-account-list {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(24rem, 100%), 1fr));
