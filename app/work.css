@@ -598,7 +598,7 @@
 }
 .work-note-card header { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .68rem; }
 .work-note-card p { margin: 7px 0 0; white-space: pre-wrap; }
-.work-note-composer { margin-top: 14px; padding-top: 14px; border-top: var(--canvas-edge-soft); }
+.work-note-composer { margin-top: 14px; padding-top: 14px; border: var(--canvas-edge-soft); }
 .work-note-composer textarea { min-height: 88px; }
 .work-note-pending,
 .work-note-capability { margin: 8px 0 0; color: var(--muted); font-size: .74rem; }
