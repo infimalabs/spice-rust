@@ -100,7 +100,6 @@ impl CanvasRuntime {
                 {
                     return StreamApplication::new(Vec::new(), settings_changed);
                 }
-                self.observe_review_feedback(fact);
                 self.observe_lifecycle_boundary(fact);
                 self.resume = Some(StreamCursor {
                     epoch,
@@ -177,7 +176,6 @@ impl CanvasRuntime {
             );
         }
         for row in &packed.rows {
-            self.observe_review_feedback(row);
             self.observe_lifecycle_boundary(row);
         }
         self.resume = Some(StreamCursor {
@@ -214,60 +212,6 @@ impl CanvasRuntime {
             );
         }
         changed
-    }
-
-    fn observe_review_feedback(&mut self, row: &wire::StreamFact) {
-        if let Some(reviewed) = row.read::<wire::body::TaskReviewed>() {
-            match reviewed.verdict {
-                wire::body::Verdict::Finding => {
-                    if let Some(finding) = reviewed.finding.filter(|finding| !finding.is_empty()) {
-                        self.pending_review_feedback
-                            .insert(reviewed.task, (row.seq(), finding));
-                    }
-                }
-                wire::body::Verdict::Clean => {
-                    self.pending_review_feedback.remove(&reviewed.task);
-                    self.review_feedback
-                        .retain(|feedback| feedback.task != reviewed.task);
-                }
-            }
-            return;
-        }
-        let Some(sent) = row.read::<wire::body::SteerSent>() else {
-            return;
-        };
-        let Some((task, reviewed)) = sent
-            .control
-            .as_deref()
-            .and_then(wire::parse_review_feedback_control)
-        else {
-            return;
-        };
-        let Some((pending, finding)) = self.pending_review_feedback.get(&task) else {
-            return;
-        };
-        if *pending != reviewed {
-            return;
-        }
-        let finding = finding.clone();
-        self.pending_review_feedback.remove(&task);
-        let feedback = ReviewFeedback {
-            seq: row.seq(),
-            task: task.clone(),
-            text: finding,
-        };
-        if let Some(current) = self
-            .review_feedback
-            .iter_mut()
-            .find(|current| current.task == task)
-        {
-            if current.seq < feedback.seq {
-                *current = feedback;
-            }
-        } else {
-            self.review_feedback.push(feedback);
-        }
-        self.review_feedback.sort_by_key(ReviewFeedback::seq);
     }
 
     fn observe_lifecycle_boundary(&mut self, row: &wire::StreamFact) {

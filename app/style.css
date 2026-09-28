@@ -126,53 +126,6 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: var(--panel);
 }
 
-.review-feedback-list {
-  display: grid;
-  flex: 0 0 auto;
-  gap: 6px;
-  padding: 0 18px 8px;
-}
-.review-feedback-notice {
-  min-width: 0;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in srgb, var(--accent-1) 32%, var(--line-soft));
-  border-left: 3px solid var(--accent-1);
-  border-radius: var(--canvas-radius-compact);
-  background: color-mix(in srgb, var(--accent-1) 6%, var(--panel));
-}
-.review-feedback-notice header {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-width: 0;
-}
-.review-feedback-source { line-height: 1; }
-.review-feedback-verdict {
-  color: var(--accent-1);
-  font-size: .72rem;
-  font-weight: 750;
-  text-transform: uppercase;
-}
-.review-feedback-task {
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: .72rem;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.review-feedback-notice blockquote {
-  margin: 6px 0 0;
-  padding-left: 9px;
-  border-left: 2px solid color-mix(in srgb, var(--accent-1) 55%, transparent);
-  color: var(--ink);
-  white-space: pre-wrap;
-}
-.review-feedback-notice blockquote p { margin: 0; }
-
 .bar-meta {
   flex: 0 0 auto;
   color: var(--muted);
