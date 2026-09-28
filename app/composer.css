@@ -593,6 +593,7 @@
 }
 :root[data-operator-identity] .markdown-body .message-quote-name[data-quote-actor="operator"] {
   display: inline-flex;
+  color: var(--ink);
 }
 :root[data-operator-identity] .markdown-body .message-quote-name[data-quote-actor="operator"]::before {
   content: var(--operator-initials);
