@@ -52,7 +52,7 @@ impl Axis {
 /// their closed, scoped subset through `TeamMode` in the browser shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CanvasDestination {
-    Info,
+    Team,
     Work,
     Chat,
 }
@@ -64,20 +64,20 @@ pub enum CanvasDestination {
 /// explicit scoped variant and mapping here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TeamDestination {
-    Info,
+    Team,
     Work,
     Chat,
 }
 
 impl TeamDestination {
     /// Every team-scoped destination, left to right.
-    pub const ALL: [Self; 3] = [Self::Info, Self::Work, Self::Chat];
+    pub const ALL: [Self; 3] = [Self::Team, Self::Work, Self::Chat];
 
     /// Corresponding destination in the global Canvas vocabulary.
     #[must_use]
     pub const fn canvas(self) -> CanvasDestination {
         match self {
-            Self::Info => CanvasDestination::Info,
+            Self::Team => CanvasDestination::Team,
             Self::Work => CanvasDestination::Work,
             Self::Chat => CanvasDestination::Chat,
         }
@@ -92,12 +92,12 @@ impl TeamDestination {
 
 impl CanvasDestination {
     /// Every global destination, left to right.
-    pub const ALL: [Self; 3] = [Self::Info, Self::Work, Self::Chat];
+    pub const ALL: [Self; 3] = [Self::Team, Self::Work, Self::Chat];
     /// Exact hash-history path for this destination.
     #[must_use]
     pub const fn path(self) -> &'static str {
         match self {
-            Self::Info => "/info",
+            Self::Team => "/team",
             Self::Work => "/work",
             Self::Chat => "/",
         }
@@ -115,7 +115,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Info => "Team",
+            Self::Team => "Team",
             Self::Work => "Work",
             Self::Chat => "Chat",
         }
@@ -125,7 +125,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn for_axis(axis: Axis) -> Self {
         match axis {
-            Axis::Topology => Self::Info,
+            Axis::Topology => Self::Team,
             Axis::Flow => Self::Work,
         }
     }
@@ -134,7 +134,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn axis(self) -> Option<Axis> {
         match self {
-            Self::Info => Some(Axis::Topology),
+            Self::Team => Some(Axis::Topology),
             Self::Work => Some(Axis::Flow),
             Self::Chat => None,
         }
@@ -144,7 +144,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
-            Self::Info => "Team topology, agents, capabilities, and possession",
+            Self::Team => "Team topology, agents, capabilities, and possession",
             Self::Work => "Work across tasks, claims, deferrals, and reviews",
             Self::Chat => "Chat across persistent team agents",
         }

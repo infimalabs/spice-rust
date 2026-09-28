@@ -34,7 +34,7 @@ pub(super) fn carries_team(transfer: &web_sys::DataTransfer) -> bool {
 /// The three one-click views of one live team.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::browser) enum TeamMode {
-    Info,
+    Team,
     Work,
     #[default]
     Chat,
@@ -43,7 +43,7 @@ pub(in crate::browser) enum TeamMode {
 impl TeamMode {
     pub(super) const fn key(self) -> &'static str {
         match self {
-            Self::Info => "Info",
+            Self::Team => "Team",
             Self::Work => "Work",
             Self::Chat => "Chat",
         }
@@ -51,7 +51,7 @@ impl TeamMode {
 
     const fn from_destination(destination: TeamDestination) -> Self {
         match destination {
-            TeamDestination::Info => Self::Info,
+            TeamDestination::Team => Self::Team,
             TeamDestination::Work => Self::Work,
             TeamDestination::Chat => Self::Chat,
         }
@@ -116,7 +116,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_>) -> H
                             empty("No teams are assigned. Open Import agent to create an agent.")
                         }
                         TeamMode::Work => render_tasks(render.runtime, &empty_team, &[]),
-                        TeamMode::Info => {
+                        TeamMode::Team => {
                             render_details(&empty_team, &[], mode)
                         }
                     }}
@@ -216,7 +216,7 @@ pub(super) fn render_populated_fleet(
                                             team,
                                             &team_standings,
                                         ),
-                        TeamMode::Info => render_details(
+                        TeamMode::Team => render_details(
                                             team,
                                             &team_standings,
                                             mode,
@@ -583,7 +583,7 @@ fn mode_badge(mode: TeamMode, standings: &[Standing]) -> Option<String> {
             .iter()
             .filter(|standing| standing.handle.is_some())
             .count(),
-        TeamMode::Info => standings.len(),
+        TeamMode::Team => standings.len(),
     };
     watchband::badge(count)
 }

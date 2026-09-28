@@ -23,7 +23,7 @@ pub(super) fn render(
     context: &Context<'_>,
 ) -> Html {
     match destination {
-        CanvasDestination::Info => render_axis(
+        CanvasDestination::Team => render_axis(
             Axis::Topology,
             axis_count(Axis::Topology, runtime),
             runtime,

@@ -24,9 +24,9 @@ fn descend_axes() -> Vec<Axis> {
 /// Every global Canvas destination, independent of its convenience registry.
 fn descend_canvas_destinations() -> Vec<CanvasDestination> {
     std::iter::successors(
-        Some(CanvasDestination::Info),
+        Some(CanvasDestination::Team),
         |destination| match destination {
-            CanvasDestination::Info => Some(CanvasDestination::Work),
+            CanvasDestination::Team => Some(CanvasDestination::Work),
             CanvasDestination::Work => Some(CanvasDestination::Chat),
             CanvasDestination::Chat => None,
         },
@@ -42,7 +42,7 @@ fn the_axis_registry_lists_every_axis_that_exists() {
 #[test]
 fn every_global_destination_has_one_exact_hash_route() {
     let routes = [
-        (CanvasDestination::Info, "/info"),
+        (CanvasDestination::Team, "/team"),
         (CanvasDestination::Work, "/work"),
         (CanvasDestination::Chat, "/"),
     ];
@@ -63,7 +63,9 @@ fn unrecognized_route_paths_are_refused() {
         "/chat",
         "/unknown",
         "/work/",
+        "/info",
         "/info/",
+        "/team/",
         "/work?scope=all",
     ] {
         assert_eq!(

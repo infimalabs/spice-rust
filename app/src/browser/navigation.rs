@@ -15,7 +15,7 @@ use crate::{CanvasDestination, CanvasRuntime};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Intent {
-    Info,
+    Team,
     Work(WorkScope),
     /// Open this exact durable task over the current global destination.
     Task(TaskStamp),
@@ -33,7 +33,7 @@ pub(super) fn intent_callback(
     surface: UseStateHandle<SurfaceData>,
 ) -> Callback<Intent> {
     Callback::from(move |intent| match intent {
-        Intent::Info => push.emit(CanvasDestination::Info),
+        Intent::Team => push.emit(CanvasDestination::Team),
         Intent::Work(scope) => {
             work_scope.set(scope);
             work_scope_notice.set(None);
