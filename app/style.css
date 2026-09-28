@@ -689,58 +689,67 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .quota-detail-group { margin-top: 18px; }
 .quota-detail-group > h3 { margin: 0 0 9px; font-size: .86rem; }
 .quota-empty { margin: 0; color: var(--muted); font-size: .76rem; }
-.quota-capacity-grid,
-.quota-account-metadata,
-.quota-limit dl {
+.quota-capacity-grid {
   display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr));
   gap: 8px;
   margin: 0;
 }
-.quota-capacity-grid { grid-template-columns: repeat(auto-fit, minmax(min(14rem, 100%), 1fr)); }
 .quota-capacity-grid > div,
-.quota-limit,
 .quota-simple-list li {
   padding: 10px 12px;
   border: var(--canvas-edge);
   border-radius: var(--canvas-radius-element);
   background: var(--panel);
 }
-.quota-capacity-grid dt,
-.quota-account-metadata dt,
-.quota-limit dt { color: var(--muted); font-size: .65rem; }
-.quota-capacity-grid dd,
-.quota-account-metadata dd,
-.quota-limit dd { margin: 3px 0 0; font-size: .76rem; }
-.quota-account-list { display: grid; gap: 10px; }
+.quota-capacity-grid dt { color: var(--muted); font-size: .65rem; }
+.quota-capacity-grid dd { margin: 3px 0 0; font-size: .76rem; }
+.quota-account-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(24rem, 100%), 1fr));
+  align-items: start;
+  gap: 10px;
+}
 .quota-account {
-  padding: 13px 14px;
+  padding: 9px 12px 10px;
   border: var(--canvas-edge);
   border-radius: var(--canvas-radius-surface);
   background: var(--panel);
 }
-.quota-account > header,
-.quota-limit > header {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 12px;
-}
-.quota-account h4 { margin: 3px 0 0; font-size: .9rem; }
+.quota-account > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 10px; }
+.quota-account > header .dash-overview-quota-age { margin-left: auto; color: var(--muted); font-size: .7rem; }
+.quota-account h4 { margin: 0; font-size: .84rem; }
 .quota-provider {
   color: var(--accent);
   font: 650 .6rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   letter-spacing: .07em;
   text-transform: uppercase;
 }
-.quota-account-metadata {
-  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  margin-top: 10px;
+.quota-account-metadata { display: flex; flex-wrap: wrap; gap: 2px 10px; margin: 0; color: var(--muted); font-size: .68rem; }
+.quota-account-metadata div { display: flex; gap: 4px; }
+.quota-account-metadata dt { opacity: .75; }
+.quota-account-metadata dd { margin: 0; }
+.quota-limit-list {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) minmax(3rem, 1fr) max-content max-content;
+  align-items: center;
+  gap: 5px 10px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: .74rem;
 }
-.quota-limit-list { display: grid; gap: 8px; margin-top: 12px; }
-.quota-limit > header span { color: var(--muted); font-size: .68rem; }
-.quota-limit dl { grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); margin-top: 8px; }
-.quota-reset-credits { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 10px; font-size: .72rem; }
-.quota-reset-credits ul { flex-basis: 100%; margin: 0; padding-left: 18px; }
+.quota-limit { display: contents; }
+.quota-limit strong { font-weight: 600; overflow-wrap: anywhere; }
+.quota-limit-status { margin-left: 6px; color: var(--triage); font-size: .64rem; font-weight: 650; text-transform: uppercase; }
+.quota-meter { display: block; width: 100%; height: 6px; }
+.quota-meter-track { fill: color-mix(in srgb, var(--muted) 22%, transparent); }
+.quota-meter-used { fill: var(--accent); }
+.quota-limit[data-limit-status] .quota-meter-used { fill: var(--triage); }
+.quota-limit-used { font-variant-numeric: tabular-nums; text-align: right; }
+.quota-limit-reset { color: var(--muted); }
+.quota-reset-credits { display: flex; flex-wrap: wrap; gap: 3px 10px; margin: 8px 0 0; color: var(--muted); font-size: .7rem; }
+.quota-reset-credits strong { color: var(--ink); }
 .quota-simple-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
 .quota-simple-list li { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: .74rem; }
 .quota-simple-list span { color: var(--muted); }
