@@ -1,4 +1,4 @@
-//! Build-qualified product identity shared by native version surfaces.
+//! Product identity shared by native version surfaces.
 
 use std::fs::File;
 use std::sync::LazyLock;
@@ -15,7 +15,7 @@ const SOURCE_STAMP: Option<&str> = option_env!("SPICE_SOURCE_STAMP"); // env-pol
 pub struct Running {
     /// Digest of the executable bytes.
     pub binary: Digest,
-    /// Tracked release version, stamped and qualified by `binary`.
+    /// Tracked release version, extended by the source stamp.
     pub product: ProductVersion,
 }
 
@@ -46,33 +46,30 @@ fn capture() -> Result<Running, Fault> {
         &dist::current_product_version()
             .expect("the compiled product version is repository-validated"),
         stamp.as_ref(),
-        &binary,
     );
     Ok(Running { binary, product })
 }
 
-/// Extend a pre-release with the source stamp, then name the artifact in
-/// build metadata.
+/// Extend a pre-release with the source stamp.
 ///
 /// A release version is ordered by its core alone: a stamp would make it a
 /// pre-release of itself, so a stamp extends only an existing pre-release.
-fn qualify(version: &ProductVersion, stamp: Option<&TaskStamp>, binary: &Digest) -> ProductVersion {
-    let (base, build) = version
-        .as_str()
+/// The executable digest stays out of the version; `Running::binary` carries it.
+fn qualify(version: &ProductVersion, stamp: Option<&TaskStamp>) -> ProductVersion {
+    let text = version.as_str();
+    let (base, build) = text
         .split_once('+')
-        .map_or((version.as_str(), None), |(base, build)| {
-            (base, Some(build))
-        });
-    let base = match stamp {
-        Some(stamp) if base.contains('-') => format!("{base}.{stamp}"),
-        _ => base.to_owned(),
+        .map_or((text, None), |(base, build)| (base, Some(build)));
+    let Some(stamp) = stamp.filter(|_| base.contains('-')) else {
+        return version.clone();
     };
-    let build = build.map_or_else(
-        || format!("bin.{binary}"),
-        |build| format!("{build}.bin.{binary}"),
-    );
-    ProductVersion::parse(&format!("{base}+{build}"))
-        .expect("a canonical version, source stamp, and artifact digest form a canonical version")
+    let mut qualified = format!("{base}.{stamp}");
+    if let Some(build) = build {
+        qualified.push('+');
+        qualified.push_str(build);
+    }
+    ProductVersion::parse(&qualified)
+        .expect("a canonical version extended by a source stamp stays canonical")
 }
 
 /// Hash the executable without consulting a repository or retaining its bytes.
@@ -106,23 +103,19 @@ mod tests {
 
     #[test]
     fn a_source_stamp_orders_prereleases_and_never_demotes_a_release() {
-        let binary = Digest::compute(Domain::DistArtifact, b"build");
         let earlier = TaskStamp::for_micros(1_790_000_000_000_000).expect("stamp");
         let later = TaskStamp::for_micros(1_790_000_001_000_000).expect("stamp");
         let dev = version("0.2.0-dev.0+vendor.01");
-        let unbound = qualify(&dev, None, &binary);
-        let first = qualify(&dev, Some(&earlier), &binary);
-        let second = qualify(&dev, Some(&later), &binary);
-        assert_eq!(
-            first.as_str(),
-            format!("0.2.0-dev.0.{earlier}+vendor.01.bin.{binary}")
-        );
+        let unbound = qualify(&dev, None);
+        let first = qualify(&dev, Some(&earlier));
+        let second = qualify(&dev, Some(&later));
+        assert_eq!(first.as_str(), format!("0.2.0-dev.0.{earlier}+vendor.01"));
         assert_eq!(unbound.precedence(&first), Ordering::Less);
         assert_eq!(first.precedence(&second), Ordering::Less);
 
         let release = version("0.2.0");
-        let stamped = qualify(&release, Some(&later), &binary);
-        assert_eq!(stamped.as_str(), format!("0.2.0+bin.{binary}"));
+        let stamped = qualify(&release, Some(&later));
+        assert_eq!(stamped.as_str(), "0.2.0");
         assert_eq!(second.precedence(&stamped), Ordering::Less);
     }
 }
