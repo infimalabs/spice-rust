@@ -299,7 +299,9 @@ pub(crate) fn render_received_with_quotes(
 
 /// Append one directive author marker before its quote closes. CSS keeps that
 /// marker at the content tail, sharing the last line when it fits and moving
-/// it onto a final line when it does not.
+/// it onto a final line when it does not. An image-only final paragraph stays
+/// an image stack, so the marker takes its own line beside that row rather
+/// than joining it and breaking the adjacent-stack pairing.
 fn close_directive_context(
     events: &mut Vec<MarkdownEvent<'_>>,
     context: &MessageDirective,
@@ -314,13 +316,21 @@ fn close_directive_context(
         quote_agents,
         quote_sources,
     );
-    if matches!(events.last(), Some(MarkdownEvent::End(TagEnd::Paragraph))) {
-        let end = events.len() - 1;
-        events.insert(end, MarkdownEvent::InlineHtml(signoff.into()));
-    } else {
-        events.push(MarkdownEvent::Html(
+    let final_paragraph = matches!(events.last(), Some(MarkdownEvent::End(TagEnd::Paragraph)))
+        .then(|| {
+            events
+                .iter()
+                .rposition(|event| matches!(event, MarkdownEvent::Start(Tag::Paragraph)))
+        })
+        .flatten();
+    match final_paragraph {
+        Some(start) if !paragraph_is_image_stack(&events[start + 1..]) => {
+            let end = events.len() - 1;
+            events.insert(end, MarkdownEvent::InlineHtml(signoff.into()));
+        }
+        _ => events.push(MarkdownEvent::Html(
             format!("<p class=\"message-quote-signoff-line\">{signoff}</p>").into(),
-        ));
+        )),
     }
 }
 

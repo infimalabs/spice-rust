@@ -1375,3 +1375,48 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     assert!(html.contains("data-quote-age-authored=\"3000\""));
     assert!(!aside.contains("message-quote-signoff"), "{aside}");
 }
+
+#[test]
+fn directive_context_ending_in_images_keeps_its_image_stacks_pairable() {
+    let text = "phase colors please";
+    let quoted = format!("> {text}\n>\n> ![first](a.png)\n>\n> ![second](b.png)");
+    let directives = [MessageDirective {
+        start: 0,
+        end: u32::try_from(quoted.len()).expect("fixture offset fits"),
+        quote_target: steering_target("dTVQdQfLx", text),
+        actor: wire::Actor::Operator,
+        authored: "1970-01-01T00:00:01.000Z".parse().expect("fixture instant"),
+    }];
+
+    let html = render_received_with_quotes(
+        &format!("{quoted}\n\nACK dTVQdQfLx: on it."),
+        &[],
+        &directives,
+        &[],
+        &QuoteAgents::new(),
+        &QuoteSources::new(),
+    )
+    .html;
+
+    // Adjacent image stacks are what CSS pairs onto one row; a signoff inside
+    // the last one would demote it to prose and wrap the second image.
+    let tail = html
+        .split("<blockquote>")
+        .nth(1)
+        .expect("the directive quote renders");
+    let first = tail
+        .find("<p class=\"message-image-stack\">")
+        .expect("first image stack");
+    let second = tail[first + 1..]
+        .find("<p class=\"message-image-stack\">")
+        .map(|offset| first + 1 + offset)
+        .expect("second image paragraph stays a stack");
+    let signoff = tail
+        .find("<p class=\"message-quote-signoff-line\"><span class=\"message-quote-signoff\"")
+        .expect("the signoff takes its own line");
+    assert!(second < signoff, "{html}");
+    assert!(
+        !tail[second..signoff].contains("message-quote-signoff"),
+        "{html}"
+    );
+}

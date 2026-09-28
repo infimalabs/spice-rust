@@ -508,6 +508,12 @@
   margin-left: 0;
   float: none;
 }
+/* A paired image row keeps the gap its image sizing reserves. */
+.markdown-body blockquote:has(> p.message-image-stack + p.message-image-stack):has(
+  > p:last-child > .message-quote-signoff:not(:empty)
+) {
+  column-gap: 7px;
+}
 .markdown-body .message-quote-name {
   --message-quote-name-accent: var(--muted);
   display: inline-flex;
