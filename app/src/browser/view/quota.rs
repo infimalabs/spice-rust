@@ -1,5 +1,5 @@
 use super::*;
-use crate::browser::clock::Age;
+use crate::browser::clock::{Age, Countdown};
 
 pub(super) fn render_dash(runtime: Option<&CanvasRuntime>) -> Html {
     let Some(generation) = runtime.and_then(CanvasRuntime::quota) else {
@@ -108,81 +108,112 @@ fn render_reports(reports: &[wire::QuotaReport]) -> Html {
 
 fn render_report(index: usize, report: &wire::QuotaReport) -> Html {
     let heading = format!("quota-account-{index}");
+    let label = crate::quota::account_label(&report.account);
     html! {
         <article class="quota-account" aria-labelledby={heading.clone()}>
             <header>
-                <div>
-                    <span class="quota-provider">{report.provider.clone()}</span>
-                    <h4 id={heading}>{crate::quota::account_label(&report.account)}</h4>
-                </div>
+                <span class="quota-provider">{report.provider.clone()}</span>
+                <h4 id={heading}>{label.clone()}</h4>
+                {render_account_metadata(&report.account, &label)}
                 <Age authored={report.fetched_at_ms} class={classes!("dash-overview-quota-age")} title="Age of this provider report" />
             </header>
-            {render_account_metadata(&report.account)}
-            <div class="quota-limit-list">
+            <ul class="quota-limit-list">
                 {for report.limits.iter().map(render_limit)}
-            </div>
+            </ul>
             {render_reset_credits(report.reset_credits.as_ref())}
         </article>
     }
 }
 
-fn render_account_metadata(account: &wire::QuotaAccount) -> Html {
-    let mut rows = Vec::new();
-    push_optional(&mut rows, "Email", account.email.as_deref());
-    push_optional(&mut rows, "Account", account.account_id.as_deref());
-    push_optional(&mut rows, "Project", account.project_id.as_deref());
-    push_optional(&mut rows, "Organization", account.org_id.as_deref());
-    push_optional(&mut rows, "Organization name", account.org_name.as_deref());
-    push_optional(&mut rows, "Plan", account.plan_type.as_deref());
-    html! { <dl class="quota-account-metadata">{for rows}</dl> }
-}
-
-fn push_optional(rows: &mut Vec<Html>, label: &'static str, value: Option<&str>) {
-    if let Some(value) = value {
-        rows.push(html! { <div><dt>{label}</dt><dd>{value.to_owned()}</dd></div> });
+/// Identity facts beyond the one already spelled by the heading.
+fn render_account_metadata(account: &wire::QuotaAccount, heading: &str) -> Html {
+    let facts = [
+        ("Email", account.email.as_deref()),
+        ("Account", account.account_id.as_deref()),
+        ("Project", account.project_id.as_deref()),
+        ("Org", account.org_id.as_deref()),
+        ("Org name", account.org_name.as_deref()),
+        ("Plan", account.plan_type.as_deref()),
+    ];
+    html! {
+        <dl class="quota-account-metadata">
+            {for facts.into_iter().filter_map(|(label, value)| {
+                let value = value.filter(|value| *value != heading)?;
+                Some(html! { <div><dt>{label}</dt><dd>{value.to_owned()}</dd></div> })
+            })}
+        </dl>
     }
 }
 
 fn render_limit(limit: &wire::QuotaLimit) -> Html {
-    let used = format_amount(limit.amount.used.as_deref(), &limit.amount.unit);
-    let remaining = format_amount(limit.amount.remaining.as_deref(), &limit.amount.unit);
-    let maximum = format_amount(limit.amount.limit.as_deref(), &limit.amount.unit);
+    let status = limit
+        .status
+        .as_deref()
+        .filter(|status| !status.eq_ignore_ascii_case("ok"));
+    let used = crate::quota::limit_remaining_fraction(limit).map(|remaining| 1.0 - remaining);
     html! {
-        <section class="quota-limit">
-            <header><strong>{limit.label.clone()}</strong><span>{limit.status.clone().unwrap_or_else(|| "reported".to_owned())}</span></header>
-            <dl>
-                <div><dt>{"Used"}</dt><dd>{used}</dd></div>
-                <div><dt>{"Remaining"}</dt><dd>{remaining}</dd></div>
-                <div><dt>{"Limit"}</dt><dd>{maximum}</dd></div>
-                if let Some(window) = &limit.window {
-                    <div><dt>{"Reset"}</dt><dd>{render_reset(window)}</dd></div>
+        <li class="quota-limit" data-limit-status={status.map(str::to_owned)}>
+            <strong>
+                {limit.label.clone()}
+                if let Some(status) = status {
+                    <span class="quota-limit-status">{status.to_owned()}</span>
                 }
-            </dl>
-        </section>
+            </strong>
+            {render_meter(used)}
+            <span class="quota-limit-used">{usage_text(&limit.amount)}</span>
+            <span class="quota-limit-reset">{render_reset(limit.window.as_ref())}</span>
+        </li>
     }
 }
 
-fn format_amount(value: Option<&str>, unit: &str) -> String {
-    let Some(value) = value else {
-        return "unknown".to_owned();
+/// Used share drawn as SVG geometry: the canvas CSP refuses inline styles.
+fn render_meter(used: Option<f64>) -> Html {
+    let Some(used) = used else {
+        return html! { <span class="quota-meter" aria-hidden="true"></span> };
     };
-    if unit.eq_ignore_ascii_case("percent") {
-        format!("{value}%")
-    } else {
-        format!("{value} {unit}")
+    html! {
+        <svg class="quota-meter" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true">
+            <rect class="quota-meter-track" width="100" height="6" rx="3" />
+            <rect class="quota-meter-used" width={format!("{:.1}", used * 100.0)} height="6" rx="3" />
+        </svg>
     }
 }
 
-fn render_reset(window: &wire::QuotaWindow) -> Html {
-    match (window.reset_label.as_ref(), window.resets_at) {
-        (Some(label), Some(at)) => {
-            html! { <>{label.clone()}{" · "}<time data-epoch-millis={at.to_string()}>{iso_time(at)}</time></> }
+/// The amount the operator acts on; a percent limit is always 100, so it and
+/// the complementary remainder are not repeated.
+fn usage_text(amount: &wire::QuotaAmount) -> String {
+    let percent = amount.unit.eq_ignore_ascii_case("percent");
+    let quantity = |value: &str| {
+        if percent {
+            format!("{value}%")
+        } else {
+            format!("{value} {}", amount.unit)
         }
-        (Some(label), None) => html! { {label.clone()} },
-        (None, Some(at)) => {
-            html! { <time data-epoch-millis={at.to_string()}>{iso_time(at)}</time> }
+    };
+    match (
+        amount.used.as_deref(),
+        amount.remaining.as_deref(),
+        amount.limit.as_deref(),
+    ) {
+        (Some(used), _, Some(limit)) if !percent => format!("{used} / {}", quantity(limit)),
+        (Some(used), _, _) => format!("{} used", quantity(used)),
+        (None, Some(remaining), Some(limit)) if !percent => {
+            format!("{remaining} / {} left", quantity(limit))
         }
-        (None, None) => html! { {"Not reported"} },
+        (None, Some(remaining), _) => format!("{} left", quantity(remaining)),
+        (None, None, _) => "usage unknown".to_owned(),
+    }
+}
+
+fn render_reset(window: Option<&wire::QuotaWindow>) -> Html {
+    let label = window.and_then(|window| window.reset_label.clone());
+    match window.and_then(|window| window.resets_at) {
+        Some(at) => {
+            let exact = iso_time(at);
+            let title = label.map_or_else(|| exact.clone(), |label| format!("{label} · {exact}"));
+            html! { <>{"resets "}<Countdown expiry={at} class={classes!("dash-overview-quota-age")} title={title} /></> }
+        }
+        None => html! { {label.unwrap_or_default()} },
     }
 }
 
@@ -198,18 +229,23 @@ fn render_reset_credits(credits: Option<&wire::QuotaResetCredits>) -> Html {
         return Html::default();
     };
     html! {
-        <div class="quota-reset-credits">
+        <p class="quota-reset-credits">
             <strong>{"Reset credits"}</strong>
             <span>{format!("{} available", credits.available_count)}</span>
             if let Some(redeemable) = credits.redeemable_count {
                 <span>{format!("{redeemable} redeemable")}</span>
             }
-            if !credits.credits.is_empty() {
-                <ul>{for credits.credits.iter().map(|credit| html! {
-                    <li>{credit.title.clone().or_else(|| credit.program.clone()).unwrap_or_else(|| "Reset credit".to_owned())}{credit.remaining_count.map(|count| format!(" · {count} remaining")).unwrap_or_default()}</li>
-                })}</ul>
-            }
-        </div>
+            {for credits.credits.iter().filter_map(|credit| {
+                let title = credit.title.as_ref().or(credit.program.as_ref());
+                let text = match (title, credit.remaining_count) {
+                    (Some(title), Some(count)) => format!("{title} ({count} remaining)"),
+                    (Some(title), None) => title.clone(),
+                    (None, Some(count)) => format!("{count} remaining"),
+                    (None, None) => return None,
+                };
+                Some(html! { <span class="quota-reset-credit">{text}</span> })
+            })}
+        </p>
     }
 }
 

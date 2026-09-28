@@ -168,7 +168,7 @@ fn is_weekly_id(id: &str) -> bool {
         .any(|candidate| id.eq_ignore_ascii_case(candidate))
 }
 
-fn limit_remaining_fraction(limit: &wire::QuotaLimit) -> Option<f64> {
+pub(crate) fn limit_remaining_fraction(limit: &wire::QuotaLimit) -> Option<f64> {
     let amount = &limit.amount;
     parse_quantity(amount.remaining_fraction.as_ref())
         .or_else(|| parse_quantity(amount.used_fraction.as_ref()).map(|used| 1.0 - used))
