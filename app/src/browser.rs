@@ -1453,10 +1453,6 @@ fn empty(message: &'static str) -> Html {
     html! { <div class="empty">{message}</div> }
 }
 
-fn short(value: &str) -> String {
-    value.get(..8).unwrap_or(value).to_owned()
-}
-
 fn phase_class(status: &str) -> Classes {
     if matches!(status, "completed" | "deleted") {
         classes!("tag")

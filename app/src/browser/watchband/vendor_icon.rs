@@ -7,7 +7,7 @@ use yew::prelude::*;
 
 use crate::watchband::{self, OmpEmblem, Standing};
 
-pub(super) fn render_composer_vendor_icon(standing: &Standing) -> Html {
+pub(in crate::browser) fn render_composer_vendor_icon(standing: &Standing) -> Html {
     let Some(class) = watchband::composer_vendor_icon_class(&standing.vendor) else {
         return Html::default();
     };
