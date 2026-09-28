@@ -495,7 +495,7 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
     let Some(runtime) = surface.as_ref() else {
         return empty("No admitted topology is available.");
     };
-    let operator = render_operator_info(runtime.settings());
+    let operator = render_operator(runtime.settings());
     let Some(lanes) = runtime.lanes() else {
         return html! {
             <>
@@ -530,16 +530,16 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
         .map(|member| member.vendor.as_str())
         .collect::<std::collections::BTreeSet<_>>()
         .len();
-    let quota = quota::render_info(Some(runtime));
+    let quota = quota::render_team(Some(runtime));
     html! {
         <>
             {operator}
             {quota}
-            <section class="section info-topology-section">
+            <section class="section team-overview-topology-section">
             <div class="section-heading">
                 <div>
                     <h2>{"Resident topology"}</h2>
-                    <p class="info-section-copy">
+                    <p class="team-overview-section-copy">
                         {"Resident groups contain independently steerable agent lanes."}
                     </p>
                 </div>
@@ -551,7 +551,7 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
                     )
                 }</span>
             </div>
-            <div class="info-summary" aria-label="Resident topology totals">
+            <div class="team-overview-summary" aria-label="Resident topology totals">
                 {topology_stat(group_count, "Group", "Groups")}
                 {topology_stat(agent_count, "Agent lane", "Agent lanes")}
                 {topology_stat(occupant_count, "Occupant", "Occupants")}
@@ -561,7 +561,7 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
             if lanes.lanes.is_empty() {
                 {empty("No agent lanes are connected.")}
             } else {
-                <div class="info-topology-groups">
+                <div class="team-overview-topology-groups">
                     {for lanes.lanes.iter().map(render_topology_group)}
                 </div>
             }
@@ -570,7 +570,7 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
     }
 }
 
-fn render_operator_info(settings: Option<&wire::intent::GlobalSettingsAnswer>) -> Html {
+fn render_operator(settings: Option<&wire::intent::GlobalSettingsAnswer>) -> Html {
     let Some(settings) = settings else {
         return empty("Operator identity is loading.");
     };
@@ -586,22 +586,22 @@ fn render_operator_info(settings: Option<&wire::intent::GlobalSettingsAnswer>) -
         "Git user.email"
     };
     html! {
-        <section class="section info-operator-section" data-operator-member="">
+        <section class="section team-overview-operator-section" data-operator-member="">
             <div class="section-heading">
                 <div>
                     <h2>{"You"}</h2>
-                    <p class="info-section-copy">
+                    <p class="team-overview-section-copy">
                         {"The operator is the human member of this resident team."}
                     </p>
                 </div>
                 <span class="section-count">{"Operator"}</span>
             </div>
-            <article class="info-operator">
+            <article class="team-overview-operator">
                 {render_operator_avatar(operator)}
-                <div class="info-operator-identity">
+                <div class="team-overview-operator-identity">
                     <h3>{operator.name.as_deref().unwrap_or("Operator")}</h3>
                     <p>{operator.email.as_deref().unwrap_or("No email configured")}</p>
-                    <dl class="info-agent-facts">
+                    <dl class="team-overview-agent-facts">
                         <div>
                             <dt>{"Badge"}</dt>
                             <dd>{operator.initials.as_deref().unwrap_or("Not available")}</dd>
@@ -649,7 +649,7 @@ fn topology_count(count: usize, singular: &str, plural: &str) -> String {
 
 fn topology_stat(count: usize, singular: &str, plural: &str) -> Html {
     html! {
-        <div class="info-stat">
+        <div class="team-overview-stat">
             <strong>{count}</strong>
             <span>{if count == 1 { singular } else { plural }}</span>
         </div>
@@ -672,28 +672,28 @@ fn render_topology_group(team: &crate::runtime::LaneRow) -> Html {
     };
     html! {
         <article
-            class="info-topology-group"
+            class="team-overview-topology-group"
             data-topology-group={identity.clone()}
             data-group-kind={if teamed { "team" } else { "independent" }}
         >
-            <header class="info-group-heading">
+            <header class="team-overview-group-heading">
                 <div>
-                    <span class="info-group-kind">
+                    <span class="team-overview-group-kind">
                         {if teamed { "Team" } else { "Independent lane" }}
                     </span>
                     <h3>{heading}</h3>
                     <code
-                        class="info-identity"
+                        class="team-overview-identity"
                         title={identity.clone()}
                         aria-label={format!("Group identity {identity}")}
                         tabindex="0"
                     >{format!("Group {}", short(&identity))}</code>
                 </div>
-                <span class="info-group-count">
+                <span class="team-overview-group-count">
                     {topology_count(team.members.len(), "agent lane", "agent lanes")}
                 </span>
             </header>
-            <div class="info-agent-list">
+            <div class="team-overview-agent-list">
                 {for team.members.iter().map(render_topology_agent)}
             </div>
         </article>
@@ -722,27 +722,27 @@ fn render_topology_agent(member: &crate::runtime::LaneMember) -> Html {
     );
     html! {
         <section
-            class="info-agent"
+            class="team-overview-agent"
             data-agent-lane={lane.clone()}
             data-lane-status={status.key()}
         >
-            <header class="info-agent-heading">
+            <header class="team-overview-agent-heading">
                 <div>
-                    <span class="info-agent-kind">{"Agent"}</span>
+                    <span class="team-overview-agent-kind">{"Agent"}</span>
                     <h4>{label}</h4>
                 </div>
-                <span class={classes!("info-agent-standing", status.key())}>
+                <span class={classes!("team-overview-agent-standing", status.key())}>
                     {status.label()}
                 </span>
             </header>
-            <p class="info-agent-worktree" title={member.worktree.clone()}>
+            <p class="team-overview-agent-worktree" title={member.worktree.clone()}>
                 {member.worktree.clone()}
             </p>
-            <dl class="info-agent-facts">
+            <dl class="team-overview-agent-facts">
                 <div>
                     <dt>{"Agent lane"}</dt>
                     <dd><code
-                        class="info-identity"
+                        class="team-overview-identity"
                         title={lane.clone()}
                         aria-label={format!("Agent lane identity {lane}")}
                         tabindex="0"
@@ -751,7 +751,7 @@ fn render_topology_agent(member: &crate::runtime::LaneMember) -> Html {
                 <div>
                     <dt>{"Occupant"}</dt>
                     <dd><code
-                        class="info-identity"
+                        class="team-overview-identity"
                         title={occupant_title.clone()}
                         aria-label={format!("Occupant {occupant_title}")}
                         tabindex="0"

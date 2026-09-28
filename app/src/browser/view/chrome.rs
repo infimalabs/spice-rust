@@ -128,7 +128,7 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                 let menu_open = render.menu_open.clone();
                 let selected = destination == render.destination;
                 let intent = match destination {
-                    CanvasDestination::Info => navigation::Intent::Info,
+                    CanvasDestination::Team => navigation::Intent::Team,
                     CanvasDestination::Work => navigation::Intent::Work(WorkScope::AllOpen),
                     CanvasDestination::Chat => navigation::Intent::Chat,
                 };

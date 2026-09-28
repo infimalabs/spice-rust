@@ -562,7 +562,7 @@ fn canvas_router() -> Html {
             <main class="shell">
                 <section class="empty" role="alert" data-route-unavailable="true">
                     <h1>{"Canvas route unavailable"}</h1>
-                    <p>{"Use #/ (Chat), #/work (Work), #/info (Team), or a card permalink."}</p>
+                    <p>{"Use #/ (Chat), #/work (Work), #/team (Team), or a card permalink."}</p>
                 </section>
             </main>
         }

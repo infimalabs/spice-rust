@@ -463,7 +463,7 @@ impl TeamControls {
         self.teams.retain(|team, _| live_teams.contains(team));
         self.closed.retain(|team| live_teams.contains(team));
 
-        // A seat submitted from the empty Info view must keep that view when
+        // A seat submitted from the empty Team view must keep that view when
         // its first real surface arrives. The resident's authoritative
         // subscription order resolves the transition: its first team
         // inherits the empty selection exactly once, and every sibling keeps
