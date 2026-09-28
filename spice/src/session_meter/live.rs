@@ -264,10 +264,7 @@ fn collect_lane(
     actor: &ProcessActor,
     prior_active: Option<AuthorityKey>,
 ) -> Result<BoardObservation, journal::GuardError> {
-    let pending_inbox_count = crate::steering_read::pending(read, Some(lane.lane))?
-        .into_iter()
-        .filter(|head| counts_as_authored_inbox(head.body().control.as_deref()))
-        .count();
+    let pending_inbox_count = crate::steering_read::pending(read, Some(lane.lane))?.len();
     let mut subscriptions = residency
         .body()
         .subscriptions
@@ -373,10 +370,6 @@ fn open_prod(
 
 const NARRATION_PAGE_ROWS: usize = 64;
 const NARRATION_PAGE_BYTES: usize = 64 * 1024;
-
-fn counts_as_authored_inbox(control: Option<&str>) -> bool {
-    !control.is_some_and(|control| control.starts_with(super::TASK_GENERATION_CONTROL_PREFIX))
-}
 
 fn current_owner(
     heads: &journal::TaskHeads,

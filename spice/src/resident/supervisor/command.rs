@@ -32,8 +32,8 @@ use wire::{CanonicalUuid, Disposition};
 use super::super::RuntimePaths;
 use super::terminal::{Control, Handle, Job, Report, Run, Terminal};
 
-/// Bytes one kick datagram may carry, including an occupant-scoped narration prod.
-const KICK_BYTES: usize = 256;
+/// Bytes one kick datagram may carry, including private occupant-scoped notices.
+const KICK_BYTES: usize = 1024;
 
 /// One child's command stream and what has already been said on it.
 type InboxReader = Box<dyn Fn() -> Option<Vec<u8>> + Send + Sync>;
@@ -54,6 +54,8 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Hidden-reasoning attempts already corrected in this context and pending
     /// inbox generation. The text itself is never retained.
     reasoning_reminder: Mutex<ReasoningReminder>,
+    /// Latest claimed-task generation privately delivered to this occupant.
+    task_generation: Mutex<Option<(String, u64, u64)>>,
     /// The confirm dialog each open consent request will answer.
     asks: Mutex<HashMap<CanonicalUuid, String>>,
     /// Where the occupant's commands run, for an occupant that has a shell.
@@ -107,8 +109,23 @@ pub(in crate::resident) enum Kick {
     },
     /// A committed progress reminder for this exact occupant.
     Narration(wire::body::NarrationProdded),
+    /// A claimed task changed after this occupant's claim acknowledged it.
+    TaskGeneration(TaskGenerationNotice),
     /// The lane is being drained: interrupt the turn and end the input.
     Abort,
+}
+
+/// One private task-authority reminder, scoped to the claim's exact occupant.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(in crate::resident) struct TaskGenerationNotice {
+    pub(in crate::resident) occupant: CanonicalUuid,
+    pub(in crate::resident) task: String,
+    pub(in crate::resident) claim: u64,
+    pub(in crate::resident) generation: u64,
+    pub(in crate::resident) change: String,
+    pub(in crate::resident) editor: String,
+    pub(in crate::resident) position: u64,
 }
 impl<W: Write + Send + 'static> Driver<W> {
     /// Own a child's stdin, authenticated resident discovery, lane identity,
@@ -145,6 +162,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             told: Mutex::new(BTreeSet::new()),
             replied: Mutex::new(BTreeSet::new()),
             reasoning_reminder: Mutex::new(ReasoningReminder::default()),
+            task_generation: Mutex::new(None),
             asks: Mutex::new(HashMap::new()),
             terminal,
             calls: Mutex::new(HashMap::new()),
@@ -189,6 +207,53 @@ impl<W: Write + Send + 'static> Driver<W> {
             prod.moments, prod.count,
         );
         let _sent = self.steer(&message);
+    }
+
+    fn deliver_task_generation(&self, notice: &TaskGenerationNotice) {
+        let previous = {
+            let mut delivered = self
+                .task_generation
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if delivered.as_ref().is_some_and(|(task, claim, generation)| {
+                task == &notice.task && *claim == notice.claim && *generation >= notice.generation
+            }) {
+                return;
+            }
+            delivered.replace((notice.task.clone(), notice.claim, notice.generation))
+        };
+        for handle in self
+            .calls
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+        {
+            handle.interrupt();
+        }
+        let message = format!(
+            "<system-notice>\nTask {} changed after this claim last acknowledged it: \
+             generation {} is {} by {} at position {}. Run `spice task reclaim {}` \
+             to take the current task before continuing. Completion and review remain \
+             refused until the reclaim succeeds. This is a private authority reminder; \
+             no acknowledgment key or visible ACK/NAK is required.\n</system-notice>",
+            notice.task,
+            notice.generation,
+            notice.change,
+            notice.editor,
+            notice.position,
+            notice.task,
+        );
+        if self.steer(&message).is_err() {
+            let mut delivered = self
+                .task_generation
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            if delivered.as_ref().is_some_and(|(task, claim, generation)| {
+                task == &notice.task && *claim == notice.claim && *generation == notice.generation
+            }) {
+                *delivered = previous;
+            }
+        }
     }
 
     /// Interject the journal-backed inbox once per rendering.
@@ -646,6 +711,15 @@ pub(in crate::resident) fn answer(
     send(paths, lane, &Kick::Answer { request, confirmed });
 }
 
+/// Privately notify the exact claimant occupant that its task authority moved.
+pub(in crate::resident) fn task_generation(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    notice: TaskGenerationNotice,
+) {
+    send(paths, lane, &Kick::TaskGeneration(notice));
+}
+
 /// Interrupt the driver listening at `door`, if one does.
 ///
 /// A lane without a command-driven occupant has no door, and a door whose
@@ -716,6 +790,10 @@ pub(in crate::resident) fn listen_for_kicks(
                             driver.deliver_narration(&prod);
                         }
                         Ok(Kick::Narration(_)) => {}
+                        Ok(Kick::TaskGeneration(notice)) if notice.occupant == occupant => {
+                            driver.deliver_task_generation(&notice);
+                        }
+                        Ok(Kick::TaskGeneration(_)) => {}
                         Ok(Kick::Abort) => driver.abort(),
                         Err(_) => {}
                     }

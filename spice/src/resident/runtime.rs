@@ -549,6 +549,9 @@ fn up_from_with(
         Ok(bus) => bus,
         Err(error) => return store_fault("bus::start-failed", &error.to_string()),
     };
+    if let Err(outcome) = steering::migrate_task_generation_notices(&bus, epoch) {
+        return outcome;
+    }
     let startup = match commit_startup(&bus, &repository, &startup_surface.trust, epoch, migration)
     {
         Ok(startup) => startup,

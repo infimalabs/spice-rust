@@ -145,12 +145,7 @@ fn dispose_pending(
     };
     let mut pending = pending
         .iter()
-        .filter(|head| {
-            reading.answered(&head.body().key)
-                && !super::super::lifecycle::generation_notices::is_notice(
-                    head.body().control.as_deref(),
-                )
-        })
+        .filter(|head| reading.answered(&head.body().key))
         .peekable();
     let Some(first) = pending.peek() else {
         return;

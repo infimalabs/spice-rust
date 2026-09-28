@@ -685,6 +685,9 @@ impl PresentationDirectives {
             steering
                 .directives()
                 .into_iter()
+                .filter(|directive| {
+                    !super::steering::is_legacy_task_generation_control(directive.control())
+                })
                 .map(|directive| {
                     let key = directive.key().clone();
                     let retirement = retirements.get(&key).copied();
@@ -708,7 +711,7 @@ impl PresentationDirectives {
                             )
                             .map_err(|error| error.to_string())?
                             .into_owned(),
-                            authored: presents_as_authored_steering(directive.control()),
+                            authored: true,
                             taste,
                             review,
                             disposition: directive.disposition(),
@@ -727,6 +730,9 @@ impl PresentationDirectives {
         let mut directives = BTreeMap::new();
         for row in rows {
             let head = row.head().body();
+            if super::steering::is_legacy_task_generation_control(head.control.as_deref()) {
+                continue;
+            }
             let key = head
                 .key
                 .parse::<steer::Key>()
@@ -761,7 +767,7 @@ impl PresentationDirectives {
                     text: wire::media::with_media_payloads(&head.text, &head.attachments)
                         .map_err(|error| error.to_string())?
                         .into_owned(),
-                    authored: presents_as_authored_steering(head.control.as_deref()),
+                    authored: true,
                     taste,
                     review: is_review_feedback(head.control.as_deref()),
                     disposition: head.disposition,
@@ -798,12 +804,6 @@ fn steering_keys<'a>(texts: impl IntoIterator<Item = &'a str>) -> BTreeSet<steer
             steer::Outcome::Missed { .. } => None,
         })
         .collect()
-}
-
-fn presents_as_authored_steering(control: Option<&str>) -> bool {
-    !control.is_some_and(|control| {
-        control.starts_with(spice::session_meter::TASK_GENERATION_CONTROL_PREFIX)
-    })
 }
 
 fn is_review_feedback(control: Option<&str>) -> bool {

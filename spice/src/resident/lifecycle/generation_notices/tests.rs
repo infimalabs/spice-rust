@@ -1,246 +1,169 @@
 use super::*;
-use crate::resident::CommandEffects;
 use crate::resident::lane_surface::{AdvisoryRtkFixture, seed_task_claim};
 use bus::CommitOutcome;
 use journal::{Journal, JournalWrite};
-use wire::intent::{CommandAnswer, PendingDirective};
-use wire::{Command, CommandKind, Disposition, LaneResidency, Origin, Producer, ResidentState};
+use wire::{LaneResidency, Origin, Producer, ResidentState};
 
 #[test]
-fn a_control_is_the_whole_notice_identity() {
-    let authority = NoticeAuthority {
-        task: "1kKRRsDP".parse().expect("task stamp"),
-        claim: Seq::new(33).expect("claim"),
-        generation: 2,
-    };
-    let control = authority.control();
-    assert_eq!(
-        notice_authority(Some(&control)),
-        Ok(Some(authority.clone()))
-    );
-    assert_eq!(notice_authority(Some("lane-renewal-context")), Ok(None));
-    for malformed in [
-        "task-generation:1kKRRsDP:33",
-        "task-generation:1kKRRsDP:33:0",
-    ] {
-        assert!(notice_authority(Some(malformed)).is_err(), "{malformed}");
-    }
-    let successor = NoticeAuthority {
-        claim: Seq::new(34).expect("claim"),
-        ..authority.clone()
-    };
-    assert_ne!(
-        identity(&control),
-        identity(&successor.control()),
-        "a successor claim never inherits its predecessor's notice"
-    );
-}
-
-#[test]
-fn a_current_holder_acknowledges_its_own_change_but_a_trailing_holder_does_not() {
+fn trailing_generations_project_private_claimant_notices_without_steering() {
     let fixture = AdvisoryRtkFixture::new();
     let (bus, task) = claimed_fixture(&fixture);
     note(&bus, &task, Actor::Lane(fixture.lane));
     note(&bus, &task, Actor::Operator);
     note(&bus, &task, Actor::Lane(fixture.lane));
-    let before = bus.task_snapshot().expect("noted snapshot reads").tasks()[0].clone();
+    let snapshot = bus.task_snapshot().expect("noted snapshot reads");
+    let claim = snapshot.tasks()[0].claim().expect("claim head").body();
 
-    let cursor = bus.cursor().expect("cursor reads");
-    assert!(
-        pass(&fixture, &bus, cursor),
-        "a pass after the change still delivers it"
-    );
-    assert!(
-        !pass(&fixture, &bus, None),
-        "a repeated pass publishes nothing new"
-    );
-
-    let notices = notices(&fixture, &bus);
+    let projected = notices(&bus, &snapshot).expect("private notices project");
     assert_eq!(
-        notices
+        projected
             .iter()
-            .map(|notice| authority(notice).generation)
+            .map(|(_, notice)| notice.generation)
             .collect::<Vec<_>>(),
         [2, 3],
-        "the claimant's current change at generation 1 was acknowledged, but its trailing change was not"
+        "the holder's current change was acknowledged, but changes after it trailed were not",
     );
-    let handle = TaskHandle::for_project("task.claim", &task);
-    for notice in &notices {
-        let authority = authority(notice);
-        assert_eq!(authority.task, task);
-        assert_eq!(
-            authority.claim,
-            before.claim().expect("claim head").body().claimed
-        );
-        assert!(notice.text.contains(&handle.to_string()));
-        assert!(
-            notice
-                .text
-                .contains(&format!("spice task reclaim {handle}"))
-        );
-    }
-    assert!(notices[0].text.contains("by operator"));
-    assert!(notices[1].text.contains("by lane:"));
-    let rendered = steer::inbox::render_pending(&steer::Key::for_identity(fixture.lane), &notices);
-    assert!(rendered.contains(&format!("spice task reclaim {handle}")));
-    assert!(notices.iter().all(|notice| rendered.contains(&notice.key)));
-    let after = bus.task_snapshot().expect("post-notice snapshot reads");
-    assert_eq!(after.tasks()[0].claim(), before.claim());
-    assert_eq!(after.tasks()[0].lease(), before.lease());
+    let handle = TaskHandle::for_project("task.claim", &task).to_string();
+    let lane_editor = Actor::Lane(fixture.lane).to_string();
+    assert_eq!(
+        projected
+            .iter()
+            .map(|(lane, notice)| (
+                *lane,
+                notice.occupant,
+                notice.task.as_str(),
+                notice.claim,
+                notice.editor.as_str(),
+            ))
+            .collect::<Vec<_>>(),
+        [
+            (
+                fixture.lane,
+                fixture.occupant,
+                handle.as_str(),
+                claim.claimed.get(),
+                "operator",
+            ),
+            (
+                fixture.lane,
+                fixture.occupant,
+                handle.as_str(),
+                claim.claimed.get(),
+                lane_editor.as_str(),
+            ),
+        ],
+    );
+    assert_eq!(
+        notices(&bus, &snapshot).expect("duplicate observation projects"),
+        projected,
+        "the occupant driver can deduplicate a stable authority identity",
+    );
+    assert!(
+        !reconcile(
+            &bus,
+            &fixture.paths,
+            fixture.epoch,
+            &snapshot,
+            bus.cursor().expect("cursor reads"),
+            Duration::from_secs(3_600),
+        )
+        .expect("private notice reconciliation succeeds"),
+        "private delivery does not mutate durable authority",
+    );
+    assert!(
+        bus.read(move |read| crate::steering_read::pending(read, Some(fixture.lane)))
+            .expect("steering index reads")
+            .is_empty(),
+        "task authority reminders never enter the steering inbox",
+    );
     finish(bus);
 }
 
 #[test]
-fn a_reclaim_retires_exactly_the_notices_it_acknowledges() {
+fn reclaim_clears_prior_generations_and_a_later_edit_gets_a_new_identity() {
     let fixture = AdvisoryRtkFixture::new();
     let (bus, task) = claimed_fixture(&fixture);
     note(&bus, &task, Actor::Operator);
     note(&bus, &task, Actor::Operator);
-    assert!(pass(&fixture, &bus, None));
-    let published = notices(&fixture, &bus);
-    assert_eq!(published.len(), 2);
+    let before = bus.task_snapshot().expect("changed snapshot reads");
+    let prior = notices(&bus, &before).expect("prior notices project");
+    assert_eq!(prior.len(), 2);
 
     reclaim(&bus, &task);
-    note(&bus, &task, Actor::Operator);
-    assert!(pass(&fixture, &bus, None));
-
-    assert_eq!(
-        notices(&fixture, &bus)
-            .iter()
-            .map(|notice| authority(notice).generation)
-            .collect::<Vec<_>>(),
-        [3],
-        "the reclaim acknowledged generation 2; the later change is new"
-    );
-    for notice in &published {
-        assert_eq!(disposition(&bus, notice.directive), Disposition::Canceled);
-    }
-    finish(bus);
-}
-
-#[test]
-fn expiry_does_not_retire_a_notice_its_claim_still_trails() {
-    let fixture = AdvisoryRtkFixture::new();
-    let (bus, task) = claimed_fixture(&fixture);
-    note(&bus, &task, Actor::Operator);
-    assert!(pass(&fixture, &bus, None));
-    let [notice] = notices(&fixture, &bus).try_into().expect("one notice");
-    let lapse = crate::resident::steering::SteeringDeadline {
-        directive: notice.directive,
-        key: notice.key.parse().expect("notice key"),
-        lane: fixture.lane,
-        expires: notice.expires,
-        transition: crate::resident::steering::DeadlineTransition::Lapse,
-    };
+    let reclaimed = bus.task_snapshot().expect("reclaimed snapshot reads");
     assert!(
-        crate::resident::steering::apply_deadline(&bus, &lapse, notice.expires)
-            .expect("the notice lapses")
+        notices(&bus, &reclaimed)
+            .expect("reclaimed notices project")
+            .is_empty(),
+        "successful reclaim retires every acknowledged reminder",
     );
-    assert!(notices(&fixture, &bus).is_empty());
 
-    assert!(pass(&fixture, &bus, None));
-    let [recovered] = notices(&fixture, &bus).try_into().expect("one notice");
-    assert_eq!(recovered.key, notice.key, "the notice keeps its identity");
-    assert_eq!(disposition(&bus, notice.directive), Disposition::Live);
-    assert!(!pass(&fixture, &bus, None));
-    finish(bus);
-}
-
-#[test]
-fn a_notice_stays_bound_to_the_claim_that_trailed() {
-    let fixture = AdvisoryRtkFixture::new();
-    let (bus, task) = claimed_fixture(&fixture);
     note(&bus, &task, Actor::Operator);
-    carry_claim(&bus, &task);
-    assert!(pass(&fixture, &bus, None));
-    let [carried] = notices(&fixture, &bus).try_into().expect("one notice");
+    let changed = bus.task_snapshot().expect("later snapshot reads");
+    let [(_, later)] = notices(&bus, &changed)
+        .expect("later notice projects")
+        .try_into()
+        .expect("one later notice");
+    assert!(
+        prior
+            .iter()
+            .all(|(_, notice)| notice.generation != later.generation),
+        "a later generation has a new delivery identity",
+    );
 
     end_claim(&bus, &task);
-    note(&bus, &task, Actor::Operator);
-    assert!(pass(&fixture, &bus, None));
-    assert!(notices(&fixture, &bus).is_empty());
-    assert_eq!(disposition(&bus, carried.directive), Disposition::Canceled);
+    let released = bus.task_snapshot().expect("released snapshot reads");
+    assert!(
+        notices(&bus, &released)
+            .expect("released notices project")
+            .is_empty(),
+        "a released claim receives no authority reminder",
+    );
     finish(bus);
 }
 
 #[test]
-fn answering_a_notice_key_cannot_retire_it() {
+fn retired_steering_notices_are_migrated_once_before_runtime_startup() {
     let fixture = AdvisoryRtkFixture::new();
-    let (bus, task) = claimed_fixture(&fixture);
-    note(&bus, &task, Actor::Operator);
-    assert!(pass(&fixture, &bus, None));
-    let [notice] = notices(&fixture, &bus).try_into().expect("one notice");
-
-    let dispose = wire::intent::SteerDispose {
-        token: notice.key.clone(),
-        disposition: Disposition::Acked,
-    };
-    let command = Command {
-        v: wire::WireVersion::CURRENT,
-        id: CanonicalUuid::new(uuid::Uuid::from_u128(0xAC4)),
-        epoch: fixture.epoch,
-        kind: CommandKind::SteerDispose,
-        expected: Vec::new(),
-        body: serde_json::to_value(&dispose).expect("ack request encodes"),
-    }
-    .admit(&wire::Accepted {
-        wire: wire::WireVersion::CURRENT,
-        actor: Actor::Lane(fixture.lane),
-        epoch: fixture.epoch,
-    })
-    .expect("lane ack admits");
-    let outcome = crate::resident::steering::dispose(
+    let (bus, _) = claimed_fixture(&fixture);
+    let control = "task-generation:1kKRRsDQ:33:4".to_owned();
+    let (mut proposal, published) =
+        crate::resident::steering::internal_write(fixture.epoch).expect("internal write builds");
+    crate::resident::steering::append_internal_directive(
         &bus,
-        &fixture.paths,
+        &mut proposal,
         fixture.epoch,
-        &command,
-        &dispose,
-        &mut CommandEffects::default(),
-    );
-
-    let Outcome::<CommandAnswer>::Refusal(refusal) = outcome else {
-        panic!("a notice key is not an acknowledgment: {outcome:?}");
-    };
-    assert_eq!(refusal.reason(), "steer::reclaim-required");
-    assert_eq!(disposition(&bus, notice.directive), Disposition::Live);
-    finish(bus);
-}
-
-fn pass(fixture: &AdvisoryRtkFixture, bus: &Bus, cursor: Option<Seq>) -> bool {
-    let snapshot = bus.task_snapshot().expect("snapshot reads");
-    reconcile(
-        bus,
-        &fixture.paths,
-        fixture.epoch,
-        &snapshot,
-        cursor,
-        Duration::from_secs(3_600),
+        crate::resident::steering::InternalDirective {
+            directive: crate::resident::new_uuid(),
+            lane: fixture.lane,
+            text: "retired keyed reminder".to_owned(),
+            control,
+            lifetime: Duration::from_secs(3_600),
+            cause: FactCause::Root,
+            published,
+        },
     )
-    .expect("generation notices reconcile")
-}
+    .expect("legacy directive builds");
+    committed(bus.commit(proposal).expect("legacy directive commits"));
 
-fn notices(fixture: &AdvisoryRtkFixture, bus: &Bus) -> Vec<PendingDirective> {
-    let facts = bus.fact_snapshot().expect("steering facts read");
-    let ledger = steer::Ledger::from_snapshot(&facts).expect("steering facts replay");
-    let snapshot = bus.task_snapshot().expect("snapshot reads");
-    let notices =
-        crate::resident::steering::pending_presentations(&ledger, fixture.lane, snapshot.tasks())
-            .expect("pending presentations");
-    notices
-}
-
-fn authority(notice: &PendingDirective) -> NoticeAuthority {
-    notice_authority(notice.control.as_deref())
-        .expect("notice control admits")
-        .expect("pending direction is a generation notice")
-}
-
-fn disposition(bus: &Bus, directive: CanonicalUuid) -> Disposition {
-    bus.read(move |read| read.steering_head(directive))
-        .expect("steering index reads")
-        .expect("the notice is indexed")
-        .body()
-        .disposition
+    assert_eq!(
+        bus.read(move |read| crate::steering_read::pending(read, Some(fixture.lane)))
+            .expect("steering index reads")
+            .len(),
+        1,
+        "predecessor evidence starts live",
+    );
+    crate::resident::steering::migrate_task_generation_notices(&bus, fixture.epoch)
+        .expect("startup migration succeeds");
+    crate::resident::steering::migrate_task_generation_notices(&bus, fixture.epoch)
+        .expect("completed migration is inert");
+    assert!(
+        bus.read(move |read| crate::steering_read::pending(read, Some(fixture.lane)))
+            .expect("steering index reads")
+            .is_empty(),
+        "legacy reminder is durably canceled",
+    );
+    finish(bus);
 }
 
 fn claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
@@ -298,7 +221,6 @@ fn claimed_fixture(fixture: &AdvisoryRtkFixture) -> (Bus, TaskStamp) {
     (bus, task)
 }
 
-/// One task change from `actor`, in its own transaction.
 fn note(bus: &Bus, task: &TaskStamp, actor: Actor) {
     let mut write = JournalWrite::new(actor, task_origin(task), now(), Producer::CommandDoor);
     write
@@ -313,7 +235,6 @@ fn note(bus: &Bus, task: &TaskStamp, actor: Actor) {
     committed(bus.commit(write).expect("task note commits"));
 }
 
-/// Renew the claim as `spice task reclaim` does, acknowledging the task.
 fn reclaim(bus: &Bus, task: &TaskStamp) {
     let snapshot = bus.task_snapshot().expect("pre-reclaim snapshot reads");
     let heads = &snapshot.tasks()[0];
@@ -374,39 +295,6 @@ fn end_claim(bus: &Bus, task: &TaskStamp) {
         ..claim
     });
     committed(bus.commit(write).expect("claim release commits"));
-}
-
-fn carry_claim(bus: &Bus, task: &TaskStamp) {
-    let snapshot = bus.task_snapshot().expect("pre-carry snapshot reads");
-    let claim = snapshot.tasks()[0]
-        .claim()
-        .expect("claim head")
-        .body()
-        .clone();
-    let mut write = JournalWrite::new(
-        Actor::Spice,
-        task_origin(task),
-        now(),
-        Producer::ResidentRecognition,
-    );
-    let carried = write
-        .fact(
-            wire::body::ClaimCarried {
-                task: task.clone(),
-                lane: claim.lane,
-                occupant: claim.occupant,
-                ancestor: claim.occupant,
-                epoch: claim.epoch,
-                source: wire::body::SourceBoundary::unrecorded(),
-            },
-            FactCause::Existing(claim.claimed),
-        )
-        .expect("claim carry fact builds");
-    write.claim_head(task.clone(), carried, move |position| wire::ClaimHead {
-        fact: position,
-        ..claim
-    });
-    committed(bus.commit(write).expect("claim carry commits"));
 }
 
 fn task_origin(task: &TaskStamp) -> Origin {

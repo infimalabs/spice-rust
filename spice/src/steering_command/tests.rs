@@ -243,26 +243,6 @@ fn sequential_duplicate_content_publishes_each_new_key_without_replaying_text() 
 }
 
 #[test]
-fn task_generation_notice_is_ordinary_inline_steering_naming_the_reclaim() {
-    let scratch = HookScratch::new();
-    let answer = generation_answer();
-    let CommandAnswer::Inbox(inbox) = &answer else {
-        panic!("fixture answer is an inbox");
-    };
-    assert_eq!(inbox.lanes[0].pending.len(), 1);
-
-    let document = deliver(&scratch, &answer).expect("generation direction publishes");
-    let context = additional_context(&document);
-    assert!(context.starts_with("Rust Spice steering is pending."));
-    assert!(context.contains(KEY));
-    assert!(context.contains("Task SPICE-1kKRRsDP changed"));
-    assert!(context.contains("task reclaim SPICE-1kKRRsDP`"));
-    assert!(context.contains("ack 1kL5y53c"));
-    assert!(!context.contains("TASK GENERATION"));
-    assert_eq!(deliver(&scratch, &answer), None);
-}
-
-#[test]
 fn content_only_delivery_state_migrates_to_key_tracking_once() {
     let scratch = HookScratch::new();
     let first = inbox_answer(
@@ -725,28 +705,6 @@ fn inbox_answer(
         }],
     }))
     .expect("hook inbox fixture admits");
-    CommandAnswer::Inbox(inbox)
-}
-
-fn generation_answer() -> CommandAnswer {
-    let inbox: InboxAnswer = serde_json::from_value(serde_json::json!({
-        "epoch": EPOCH,
-        "lanes": [{
-            "lane": LANE,
-            "occupant": OCCUPANT,
-            "compaction": 1,
-            "pending": [{
-                "directive": DIRECTIVE,
-                "key": KEY,
-                "text": "Task SPICE-1kKRRsDP changed after this claim last acknowledged it. Run `spice task reclaim SPICE-1kKRRsDP` to take the current task before continuing. Answering this key does not retire the notice.",
-                "control": "task-generation:1kKRRsDP:33:4",
-                "authored": "2026-08-30T09:00:00.000Z",
-                "stage": "published",
-                "expires": "2026-08-30T10:00:00.000Z",
-            }],
-        }],
-    }))
-    .expect("generation hook inbox fixture admits");
     CommandAnswer::Inbox(inbox)
 }
 

@@ -31,6 +31,13 @@ use transcript::transcript_recognition;
 use transitions::evidence_refusal;
 pub(super) use transitions::{cancel, dispose, recover, resend, send};
 
+const LEGACY_TASK_GENERATION_CONTROL_PREFIX: &str = "task-generation:";
+
+/// Whether retained steering evidence belongs to the predecessor task notifier.
+pub(super) fn is_legacy_task_generation_control(control: Option<&str>) -> bool {
+    control.is_some_and(|control| control.starts_with(LEGACY_TASK_GENERATION_CONTROL_PREFIX))
+}
+
 pub(super) struct InternalDirective {
     pub(super) directive: CanonicalUuid,
     pub(super) lane: CanonicalUuid,
@@ -158,48 +165,6 @@ pub(super) fn append_control_cancellation(
     Ok(Some(pending))
 }
 
-/// Return one lapsed or dead-lettered resident control directive to live
-/// standing for another `lifetime`, keeping its identity and text.
-pub(super) fn append_control_recovery(
-    bus: &Bus,
-    proposal: &mut JournalWrite,
-    directive: CanonicalUuid,
-    at: Instant,
-    lifetime: std::time::Duration,
-) -> CommandResult<PendingFact> {
-    let head = bus
-        .read(move |read| read.steering_head(directive))
-        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?
-        .ok_or_else(|| store_fault("steer::recovery-missing", "the control directive vanished"))?;
-    let body = head.body();
-    let key: steer::Key = body
-        .key
-        .parse()
-        .map_err(|_| store_fault("steer::index-invalid", "indexed steering key is admitted"))?;
-    proposal.guard(recovery_guard(
-        directive,
-        head.position(),
-        key,
-        body.lane,
-        body.expires,
-        body.disposition,
-    ));
-    let recovered = wire::body::SteerRecovered {
-        directive,
-        key: body.key.clone(),
-        lane: body.lane,
-        lapsed_at: body.expires,
-        expires: expiry(at, lifetime).map_err(unit_outcome)?,
-    };
-    let pending = proposal
-        .fact(recovered.clone(), FactCause::Existing(body.created))
-        .map_err(|error| store_fault("steer::fact-invalid", &error.to_string()))?;
-    let next = steer::Ledger::transition_head(body, steer::Steering::Recovered(&recovered), at)
-        .map_err(|error| store_fault("steer::index-invalid", &error.to_string()))?;
-    proposal.steering_head(pending, move |_| next);
-    Ok(pending)
-}
-
 /// Admit or rebuild the bounded steering authority before the bus accepts work.
 pub(super) fn admit_index(journal: &mut journal::Journal) -> CommandResult<()> {
     if journal
@@ -216,6 +181,46 @@ pub(super) fn admit_index(journal: &mut journal::Journal) -> CommandResult<()> {
     journal
         .rebuild_steering_index(snapshot.horizon(), index.heads(), index.misses())
         .map_err(|error| store_fault("steer::index-unwritable", &error.to_string()))
+}
+
+/// Migrate steering-backed task reminders into current task authority once.
+///
+/// The claim generation already retains every reminder's semantic state. A
+/// cancellation preserves the retired directive as evidence while preventing
+/// the old delivery mechanism from becoming an executable runtime arm.
+pub(super) fn migrate_task_generation_notices(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+) -> CommandResult<()> {
+    let pending = bus
+        .read(|read| crate::steering_read::pending(read, None))
+        .map_err(|error| store_fault("steer::index-unreadable", &error.to_string()))?;
+    let legacy = pending
+        .iter()
+        .filter_map(|head| {
+            is_legacy_task_generation_control(head.body().control.as_deref()).then_some(head.body())
+        })
+        .collect::<Vec<_>>();
+    if legacy.is_empty() {
+        return Ok(());
+    }
+    let (mut proposal, published) = internal_write(epoch)?;
+    for body in legacy {
+        let control = body
+            .control
+            .as_deref()
+            .expect("a classified legacy control is present");
+        append_control_cancellation(
+            bus,
+            &mut proposal,
+            body.directive,
+            body.lane,
+            control,
+            published,
+        )?;
+    }
+    commit(bus, proposal)?;
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -545,13 +550,7 @@ pub(super) fn inbox(
             }
             None => None,
         };
-        let mut pending =
-            match pending_presentations(&snapshot.ledger, lane.lane, snapshot.authority.tasks()) {
-                Ok(presentations) => presentations,
-                Err(error) => {
-                    return typed_store_fault("task-generation::control-invalid", &error);
-                }
-            };
+        let mut pending = pending_presentations(&snapshot.ledger, lane.lane);
         for directive in &mut pending {
             directive.text = resolver.expand(&directive.text);
             directive.preview = directive_preview(&directive.text);
@@ -738,30 +737,15 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
     }
 }
 
-/// Project every pending directive onto the one ordinary inline steering path,
-/// validating resident-authored task generation controls along the way.
+/// Project every pending directive onto the ordinary inline steering path.
 pub(super) fn pending_presentations(
     ledger: &steer::Ledger,
     lane: CanonicalUuid,
-    tasks: &[journal::TaskHeads],
-) -> Result<Vec<PendingDirective>, String> {
+) -> Vec<PendingDirective> {
     ledger
         .pending(lane)
         .into_iter()
-        .map(|directive| {
-            if let Some(authority) =
-                super::lifecycle::generation_notices::notice_authority(directive.control())?
-                && tasks
-                    .binary_search_by(|heads| heads.statement().body().born.cmp(&authority.task))
-                    .is_err()
-            {
-                return Err(format!(
-                    "task-generation notice names unknown task {}",
-                    authority.task
-                ));
-            }
-            Ok(pending_directive(directive))
-        })
+        .map(pending_directive)
         .collect()
 }
 
