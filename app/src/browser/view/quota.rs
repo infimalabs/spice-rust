@@ -57,7 +57,7 @@ pub(super) fn render_info(runtime: Option<&CanvasRuntime>) -> Html {
             </div>
             {render_attempt(generation.latest_attempt.as_ref())}
             if let Some(snapshot) = snapshot {
-                {render_capacity(snapshot)}
+                {render_capacity(generation)}
                 {render_reports(&snapshot.reports)}
                 {render_accounts_without_usage(&snapshot.accounts_without_usage)}
                 {render_disabled(&snapshot.disabled_credentials)}
@@ -96,21 +96,23 @@ fn render_attempt(attempt: Option<&wire::QuotaAttempt>) -> Html {
     }
 }
 
-fn render_capacity(snapshot: &wire::QuotaSnapshot) -> Html {
+fn render_capacity(generation: &wire::QuotaGeneration) -> Html {
+    let snapshot = generation
+        .last_good
+        .as_deref()
+        .expect("capacity renders only with a retained quota snapshot");
     html! {
         <section class="quota-detail-group" aria-labelledby="quota-capacity-heading">
-            <h3 id="quota-capacity-heading">{"Remaining account-equivalent capacity"}</h3>
+            <h3 id="quota-capacity-heading">{"Remaining provider quota"}</h3>
             if snapshot.capacity.is_empty() {
                 <p class="quota-empty">{"No aggregate provider capacity was reported."}</p>
             } else {
                 <dl class="quota-capacity-grid">
-                    {for snapshot.capacity.iter().flat_map(|provider| provider.windows.iter().map(move |window| html! {
-                        <div>
-                            <dt>{format!("{} · {}", provider.provider, window.window)}</dt>
-                            <dd><strong>{window.remaining_accounts.clone()}</strong>{" remaining of "}{window.accounts}{" accounts"}</dd>
-                            <dd>{format!("{} used account-equivalents", window.used_accounts)}</dd>
-                        </div>
-                    }))}
+                    <div>
+                        <dt>{"Total across all account capacity"}</dt>
+                        <dd><strong>{crate::quota::capacity_summary(generation)}</strong></dd>
+                        <dd>{"Weighted by account-equivalent capacity across provider windows"}</dd>
+                    </div>
                 </dl>
             }
         </section>
