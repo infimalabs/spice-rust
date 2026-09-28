@@ -121,6 +121,16 @@ pub(crate) fn capacity_summary(generation: &QuotaGeneration) -> String {
     let Some(snapshot) = generation.last_good.as_ref() else {
         return present(generation).condition.label().to_owned();
     };
+    weekly_remaining(snapshot).map_or_else(
+        || "No provider capacity reported".to_owned(),
+        |remaining| format!("{:.0}% remaining", remaining * 100.0),
+    )
+}
+
+/// Weekly remaining capacity across every account as one fraction in
+/// `0..=1`, each account weighted by its plan capacity; `None` when no
+/// account reports a weekly window.
+pub(crate) fn weekly_remaining(snapshot: &wire::QuotaSnapshot) -> Option<f64> {
     let (remaining, capacity) = snapshot
         .reports
         .iter()
@@ -132,11 +142,7 @@ pub(crate) fn capacity_summary(generation: &QuotaGeneration) -> String {
         .fold((0.0, 0.0), |(remaining, capacity), account| {
             (remaining + account.0, capacity + account.1)
         });
-    if capacity == 0.0 {
-        return "No provider capacity reported".to_owned();
-    }
-    let percentage = (remaining * 100.0 / capacity).clamp(0.0, 100.0);
-    format!("{percentage:.0}% remaining")
+    (capacity > 0.0).then(|| (remaining / capacity).clamp(0.0, 1.0))
 }
 
 fn binding_remaining_fraction(report: &wire::QuotaReport) -> Option<f64> {
