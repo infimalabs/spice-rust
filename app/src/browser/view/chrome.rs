@@ -248,8 +248,7 @@ impl QuotaLevel {
         let depth = format!("{:.1}", self.percentage);
         html! {
             <svg class="canvas-menu-quota" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
-                <rect class="canvas-menu-quota-fluid" x="0" y={surface.clone()} width="100" height={depth}></rect>
-                <line class="canvas-menu-quota-surface" x1="0" x2="100" y1={surface.clone()} y2={surface}></line>
+                <rect class="canvas-menu-quota-fluid" x="0" y={surface} width="100" height={depth}></rect>
             </svg>
         }
     }
