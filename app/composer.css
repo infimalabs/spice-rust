@@ -587,19 +587,35 @@
 .markdown-body .message-quote-name[data-accent] {
   --message-quote-name-accent: var(--accent-slot);
 }
-/* The operator's byline is an emblem, shown only when bootstrap named one. */
+/* The operator's byline is an emblem, shown only when bootstrap named one.
+   Its small inline anchor preserves signoff layout; the visible sticker is
+   enlarged outside flow so compact quotes do not gain another line. */
 .markdown-body .message-quote-name[data-quote-actor="operator"] {
   display: none;
 }
 :root[data-operator-emblem] .markdown-body .message-quote-name[data-quote-actor="operator"] {
   display: inline-block;
+  position: relative;
   flex: 0 0 1.2em;
   align-self: center;
   width: 1.2em;
   height: 1.2em;
+  overflow: visible;
+}
+:root[data-operator-emblem] .markdown-body .message-quote-name[data-quote-actor="operator"]::before {
+  position: absolute;
+  top: 90%;
+  right: calc(-3ch - 9px);
+  width: 2.4em;
+  height: 2.4em;
   border-radius: 50%;
   background: var(--operator-emblem) center / cover no-repeat;
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--muted) 40%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--muted) 40%, transparent),
+    0 2px 5px color-mix(in srgb, #000 24%, transparent);
+  content: "";
+  pointer-events: none;
+  transform: translateY(-50%);
 }
 .markdown-body .message-quote-age-slot {
   display: inline-flex;
@@ -607,6 +623,13 @@
   width: 3ch;
   min-width: 3ch;
   max-width: 3ch;
+}
+:root[data-operator-emblem] .markdown-body
+  .message-quote-signoff:has(> .message-quote-name[data-quote-actor="operator"])
+  > .message-quote-age-slot {
+  position: relative;
+  z-index: 1;
+  text-shadow: 0 1px 2px var(--panel), 0 0 3px var(--panel);
 }
 .markdown-body .message-quote-age {
   color: var(--muted);
