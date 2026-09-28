@@ -128,10 +128,13 @@ body:has(.shell--mosaic),
   border-radius: var(--canvas-radius-pill); background: var(--page);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-accent) 12%, transparent);
 }
-.canvas-menu-pepper { grid-area: 1 / 1; position: relative; z-index: 1; font-size: 15px; line-height: 1; }
+.canvas-menu-pepper {
+  --canvas-pepper-halo: drop-shadow(0 0 .75px var(--page)) drop-shadow(0 0 .75px var(--page)) drop-shadow(0 .5px 1.5px color-mix(in srgb, var(--canvas-menu-accent) 55%, transparent));
+  grid-area: 1 / 1; position: relative; z-index: 1; font-size: 15px; line-height: 1; filter: var(--canvas-pepper-halo);
+}
 .canvas-menu-quota { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 .canvas-menu-quota-fluid { fill: color-mix(in srgb, var(--canvas-menu-accent) 22%, var(--page)); }
-.canvas-menu-quota-surface { stroke: var(--canvas-menu-accent); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
+.canvas-menu-quota-surface { stroke: color-mix(in srgb, var(--canvas-menu-accent) 62%, var(--page)); stroke-width: 1.5px; vector-effect: non-scaling-stroke; }
 .canvas-menu > summary[data-quota-stale] .canvas-menu-quota-fluid { fill: color-mix(in srgb, var(--muted) 18%, var(--page)); }
 .canvas-menu > summary[data-quota-stale] .canvas-menu-quota-surface { stroke: var(--muted); }
 .canvas-menu > summary.canvas-menu-trigger--fast { --canvas-menu-accent: var(--warning); --canvas-menu-surface: color-mix(in srgb, var(--control) 82%, var(--warning) 18%); }
@@ -142,7 +145,7 @@ body:has(.shell--mosaic),
 .canvas-menu > summary[data-connection="reconnecting"] {
   --canvas-menu-accent: var(--warning);
 }
-.canvas-menu > summary:not([data-connection="online"]) .canvas-menu-pepper { filter: grayscale(1); }
+.canvas-menu > summary:not([data-connection="online"]) .canvas-menu-pepper { filter: grayscale(1) var(--canvas-pepper-halo); }
 .canvas-menu > summary:is([data-connection="starting"], [data-connection="connecting"], [data-connection="reconnecting"]) .canvas-menu-pepper {
   animation: canvas-fast-mode-pulse 5s ease-in-out infinite;
 }
