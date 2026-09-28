@@ -182,7 +182,12 @@ fn render_canvas_menu(
         (None, true) => "Open Spice Canvas menu - fast mode on",
         (None, false) => "Open Spice Canvas menu",
     };
-    let trigger_label: AttrValue = format!("{trigger_label} - {connection_label}").into();
+    let quota = quota_level(runtime);
+    let trigger_label: AttrValue = match &quota {
+        Some(quota) => format!("{trigger_label} - {connection_label} - {}", quota.label),
+        None => format!("{trigger_label} - {connection_label}"),
+    }
+    .into();
     let toggle = Callback::from(move |event: MouseEvent| {
         event.prevent_default();
         menu_open.set(!*menu_open);
@@ -195,6 +200,8 @@ fn render_canvas_menu(
                     update.is_some().then_some("canvas-menu-trigger--update"),
                 )}
                 data-connection={render.connection.indicator_state()}
+                data-quota={quota.as_ref().map(|quota| quota.state)}
+                style={quota.as_ref().map(|quota| quota.style.clone())}
                 aria-label={trigger_label.clone()}
                 aria-haspopup="menu"
                 aria-expanded={(**render.menu_open).to_string()}
@@ -223,6 +230,32 @@ fn render_canvas_menu(
             </div>
         </details>
     }
+}
+
+/// Consolidated weekly quota drawn as the Spice button's fill level.
+struct QuotaLevel {
+    state: &'static str,
+    style: AttrValue,
+    label: String,
+}
+
+fn quota_level(runtime: Option<&CanvasRuntime>) -> Option<QuotaLevel> {
+    let generation = runtime.and_then(CanvasRuntime::quota)?;
+    let remaining = crate::quota::weekly_remaining(generation.last_good.as_deref()?)?;
+    let condition = crate::quota::present(generation).condition;
+    let percentage = remaining * 100.0;
+    let label = match condition {
+        crate::quota::Condition::Current => format!("weekly quota {percentage:.0}% remaining"),
+        stale => format!(
+            "weekly quota {percentage:.0}% remaining ({})",
+            stale.label()
+        ),
+    };
+    Some(QuotaLevel {
+        state: condition.key(),
+        style: format!("--canvas-quota-level: {percentage:.1}%").into(),
+        label,
+    })
 }
 
 fn task_pills(work: Option<&WorkProjection<'_>>) -> Vec<TaskPill> {
