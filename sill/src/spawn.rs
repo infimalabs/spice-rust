@@ -997,6 +997,19 @@ impl Drop for Running {
 }
 
 #[cfg(unix)]
+fn fail_capture(context: &FailureContext) {
+    if context.failed.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    if let Err(error) = abort_process(context)
+        && let Ok(mut completion) = context.process.completion.lock()
+    {
+        completion.cleanup_failure = Some(error);
+    }
+    let _wake_result = context.wake.send(WAKE_BYTE);
+}
+
+#[cfg(unix)]
 fn fail_observation(
     context: &FailureContext,
     observer: &Arc<dyn RecordObserver>,

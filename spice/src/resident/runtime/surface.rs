@@ -188,6 +188,7 @@ pub(super) async fn run_surface(
     let residency = current_residency(bus, epoch)?;
     let timer_commits = bus.reader().subscribe();
     let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
+    let quota = quota::Runtime::start(config.omp_binary.clone());
     let mut lifecycle = lifecycle::Runtime::new(&config.lane);
     let mut taste_adjudication = if config.judge_enabled {
         Some(taste_surface::start_adjudication()?)
@@ -282,6 +283,7 @@ pub(super) async fn run_surface(
         supervisor_reports,
         progress,
         timers,
+        quota,
         timer_commits,
         lifecycle,
         inbox_deliveries,
@@ -499,6 +501,7 @@ async fn drive_surface(
     mut supervisor_reports: capture::SupervisorReports,
     diagnostic: &mut dyn io::Write,
     mut timers: timers::Runtime,
+    mut quota: quota::Runtime,
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
     mut inbox_deliveries: InboxDeliveries,
@@ -576,6 +579,7 @@ async fn drive_surface(
                 bus, seats, command_surface, &mut lifecycle, &mut supervisor_reports,
                 diagnostic, &mut timers, &mut lifecycle_reconciliation, timer,
             )?,
+            completed = quota.recv() => quota.accept(completed),
             committed = timer_commits.recv() => accept_commit_turn(
                 bus, seats, command_surface, &message_publisher, &mut lifecycle,
                 &mut supervisor_reports, message_state.as_ref(), diagnostic, &mut timers,

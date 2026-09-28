@@ -112,6 +112,7 @@ pub(super) fn start_capture<R>(
     mut reader: R,
     limit: usize,
     retention: CaptureRetention,
+    abort_on_limit: bool,
     worker: CaptureWorker,
 ) -> CaptureHandle
 where
@@ -135,16 +136,7 @@ where
             .expect("capture interruption descriptors are created before the worker");
         (Some(sender), Some(receiver))
     };
-    let state = Arc::new(Mutex::new(CaptureState {
-        output: CapturedOutput {
-            bytes: Vec::with_capacity(limit.min(8 * 1024)),
-            truncated: false,
-            complete: false,
-            retains_suffix: retention == CaptureRetention::Suffix,
-        },
-        failure: None,
-        observer_complete: !selected,
-    }));
+    let state = new_capture_state(limit, retention, selected);
     let worker_state = Arc::clone(&state);
     let worker = std::thread::spawn(move || {
         let mut framer = observation.map(|observation| {
@@ -188,8 +180,16 @@ where
                     return;
                 }
                 Ok(read) => {
-                    if let Ok(mut state) = worker_state.lock() {
-                        retain(&mut state.output, &buffer[..read], limit, retention);
+                    let overflow = retain_chunk(
+                        &worker_state,
+                        &buffer[..read],
+                        limit,
+                        retention,
+                        abort_on_limit,
+                    );
+                    if overflow {
+                        super::fail_capture(&failure);
+                        return;
                     }
                     if let Some(framer) = &mut framer
                         && !framer.push(&buffer[..read])
@@ -223,6 +223,40 @@ where
         // deliberately prevent it from bounding process cleanup.
         worker: (!selected).then_some(worker),
     }
+}
+
+fn new_capture_state(
+    limit: usize,
+    retention: CaptureRetention,
+    selected: bool,
+) -> Arc<Mutex<CaptureState>> {
+    Arc::new(Mutex::new(CaptureState {
+        output: CapturedOutput {
+            bytes: Vec::with_capacity(limit.min(8 * 1024)),
+            truncated: false,
+            complete: false,
+            retains_suffix: retention == CaptureRetention::Suffix,
+        },
+        failure: None,
+        observer_complete: !selected,
+    }))
+}
+
+fn retain_chunk(
+    state: &Mutex<CaptureState>,
+    bytes: &[u8],
+    limit: usize,
+    retention: CaptureRetention,
+    abort_on_limit: bool,
+) -> bool {
+    state.lock().is_ok_and(|mut state| {
+        retain(&mut state.output, bytes, limit, retention);
+        if abort_on_limit && state.output.truncated {
+            state.output.complete = true;
+            return true;
+        }
+        false
+    })
 }
 
 fn retain(output: &mut CapturedOutput, bytes: &[u8], limit: usize, retention: CaptureRetention) {
