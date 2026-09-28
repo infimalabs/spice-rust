@@ -670,7 +670,13 @@ fn team_agents<'a>(
     )
 }
 
+/// Widest topology grid, in tile columns; `app/style.css` steps the grid down
+/// from here as the section narrows.
+const TOPOLOGY_COLUMNS: usize = 4;
+
 /// One team, or every independent lane together, as a titled run of tiles.
+/// The group spans one grid column per tile up to the grid's width, so small
+/// groups share a row instead of leaving it empty.
 fn render_topology_group(
     heading: String,
     team: Option<CanonicalUuid>,
@@ -681,6 +687,7 @@ fn render_topology_group(
             class="dash-overview-topology-group"
             data-topology-group={team.map(|team| team.to_string())}
             data-group-kind={if team.is_some() { "team" } else { "independent" }}
+            data-span={agents.len().clamp(1, TOPOLOGY_COLUMNS).to_string()}
         >
             <h3 title={team.map(|team| format!("Group {team}"))}>
                 {heading}
