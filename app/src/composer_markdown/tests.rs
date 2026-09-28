@@ -39,6 +39,53 @@ fn quoted<'a>(values: &'a [(String, &'a str)]) -> Vec<QuotedReply<'a>> {
 }
 
 #[test]
+fn tex_and_dollar_math_delimiters_reach_the_canonical_renderer_slots() {
+    let rendered = render_received(
+        "Inline \\(x^2 + y^2\\) and $z^2$.\n\n\
+         \\[100 \\times \\frac{\\sum \\text{remaining}}{\\sum \\text{capacity}}\\]\n\n\
+         $$\\sum_{i=1}^{n} i$$",
+    );
+
+    assert_eq!(
+        rendered.html.matches("class=\"math math-inline\"").count(),
+        2
+    );
+    assert_eq!(
+        rendered.html.matches("class=\"math math-display\"").count(),
+        2
+    );
+    assert!(
+        rendered
+            .html
+            .contains(r#"100 \times \frac{\sum \text{remaining}}{\sum \text{capacity}}"#)
+    );
+}
+
+#[test]
+fn math_aliases_preserve_code_escaped_literals_and_authenticated_ranges() {
+    let literals = render_received(
+        "Prices are $5 and $10, escaped \\$9, and code is `\\(x\\) $$y$$`.\n\n\
+         ```text\n\
+         \\[not math\\] and $$still code$$\n\
+         ```\n\n\
+         Escaped \\\\[brackets\\\\] remain prose.",
+    );
+    assert!(!literals.html.contains("class=\"math "));
+    assert!(literals.html.contains("<code>\\(x\\) $$y$$</code>"));
+    assert!(literals.html.contains("\\[not math\\]"));
+
+    let quoted = render_received_with_fixture_classifications(
+        "> \\[x^2\\]\n>\n> [ACK] Keep the current path.",
+        TestClassifications {
+            acknowledgements: 1,
+            ..TestClassifications::default()
+        },
+    );
+    assert!(quoted.html.contains("class=\"math math-display\""));
+    assert_eq!(quoted.html.matches("class=\"message-ack-pill\"").count(), 1);
+}
+
+#[test]
 fn composed_markdown_emits_canonical_target_links_in_visible_shard_order() {
     assert_eq!(compose("  body only  ", &[], &[]), "body only");
     let tape = tape_target("agent source text");

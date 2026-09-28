@@ -14,7 +14,7 @@ use super::service::{Job, Render, Service, Shared};
 const OUTPUT_BYTES: usize = 8 * 1024 * 1024;
 const ERROR_UNITS: u32 = 500;
 const IMAGE_PREFIX: &str = "data:image/svg+xml;base64,";
-const PROTOCOL: f64 = 2.0;
+const PROTOCOL: f64 = 3.0;
 
 pub(super) struct Frame {
     parent: web_sys::Window,
@@ -34,8 +34,8 @@ impl Frame {
         element.set_attribute("sandbox", "allow-scripts")?;
         element.set_attribute("aria-hidden", "true")?;
         element.set_attribute("tabindex", "-1")?;
-        element.set_attribute("title", "Isolated diagram renderer")?;
-        element.set_attribute("data-canvas-mermaid-renderer", generation)?;
+        element.set_attribute("title", "Isolated Canvas renderer")?;
+        element.set_attribute("data-canvas-renderer", generation)?;
         // Hidden but measurable. display:none breaks Mermaid's text geometry.
         for (name, value) in [
             ("position", "fixed"),
@@ -87,6 +87,7 @@ impl Frame {
         for (name, value) in [
             ("type", JsValue::from_str("render")),
             ("protocol", JsValue::from_f64(PROTOCOL)),
+            ("kind", JsValue::from_str(job.key.kind.as_str())),
             ("generation", JsValue::from_str(&job.key.generation)),
             ("channel", JsValue::from_str(channel)),
             (
@@ -171,6 +172,7 @@ fn receive(shared: &Shared, event: web_sys::MessageEvent) {
     };
     if job.decoding.is_some()
         || !matches(&data, "channel", &service.channel)
+        || !matches(&data, "kind", job.key.kind.as_str())
         || !matches(&data, "requestId", &format!("render-{}", job.id))
         || property(&data, "revision") != JsValue::from_f64(f64::from(job.id))
         || !matches(&data, "theme", job.key.theme.as_str())
@@ -182,11 +184,11 @@ fn receive(shared: &Shared, event: web_sys::MessageEvent) {
     let interested = Service::has_subscribers(job);
     drop(service);
     if !interested {
-        Service::finish(shared, id, Err("Superseded diagram".into()));
+        Service::finish(shared, id, Err("Superseded render".into()));
     } else if matches(&data, "type", "error") {
         let error = bounded_string(property(&data, "error"), ERROR_UNITS)
             .filter(|error| !error.is_empty())
-            .unwrap_or_else(|| "Invalid diagram renderer error response".to_owned());
+            .unwrap_or_else(|| "Invalid renderer error response".to_owned());
         Service::finish(shared, id, Err(error.into()));
     } else if matches(&data, "type", "rendered") {
         let result = response_geometry(&data, &node_ids)

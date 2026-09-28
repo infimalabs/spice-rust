@@ -16,6 +16,7 @@ use wire::{Media, MessageClassification, MessageClassificationKind, MessageDirec
 use crate::watchband;
 
 mod diagrams;
+mod math;
 mod quotes;
 mod taste_quotes;
 
@@ -212,7 +213,13 @@ pub(crate) fn render_received_with_quotes(
         | Options::ENABLE_SMART_PUNCTUATION
         | Options::ENABLE_MATH
         | Options::ENABLE_GFM;
-    let normalized = taste_quotes::normalize(markdown, classifications, directives, options);
+    let math = math::normalize(markdown, classifications, directives, options);
+    let normalized = taste_quotes::normalize(
+        &math.markdown,
+        &math.classifications,
+        &math.directives,
+        options,
+    );
     let markdown = normalized.markdown;
     let mut remaining = normalized
         .classifications
