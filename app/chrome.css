@@ -57,6 +57,15 @@ body:has(.shell--mosaic),
 }
 .canvas-disclosure[data-expanded="true"] {
   z-index: 20;
+  contain: none;
+}
+.canvas-disclosure[data-expanded="true"]::before {
+  content: "";
+  position: fixed;
+  z-index: 1;
+  inset: 0;
+  background: var(--overlay-veil);
+  backdrop-filter: var(--overlay-frost);
 }
 
 .task-pill-strip {
@@ -105,6 +114,7 @@ body:has(.shell--mosaic),
 }
 .canvas-global-status[data-connection="reconnecting"] { color: var(--triage); }
 .canvas-menu { position: static; grid-row: 1; grid-column: -2; }
+.canvas-menu[open] { z-index: 2; }
 .canvas-menu > summary {
   --canvas-menu-accent: var(--accent);
   --canvas-menu-surface: color-mix(in srgb, var(--control-surface-soft) 88%, var(--accent) 12%);
