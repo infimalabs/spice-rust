@@ -121,23 +121,26 @@ pub(crate) fn capacity_summary(generation: &QuotaGeneration) -> String {
     let Some(snapshot) = generation.last_good.as_ref() else {
         return present(generation).condition.label().to_owned();
     };
-    let rows = snapshot
+    let Some((remaining, accounts)) = snapshot
         .capacity
         .iter()
-        .flat_map(|provider| {
-            provider.windows.iter().map(|window| {
-                format!(
-                    "{} {}: {} remaining",
-                    provider.provider, window.window, window.remaining_accounts
-                )
-            })
+        .flat_map(|provider| &provider.windows)
+        .try_fold((0.0, 0_u64), |(remaining, accounts), window| {
+            let window_remaining = window.remaining_accounts.parse::<f64>().ok()?;
+            if !window_remaining.is_finite() {
+                return None;
+            }
+            Some((
+                remaining + window_remaining,
+                accounts.checked_add(window.accounts)?,
+            ))
         })
-        .collect::<Vec<_>>();
-    if rows.is_empty() {
-        "No provider capacity reported".to_owned()
-    } else {
-        rows.join(" · ")
-    }
+        .filter(|(_, accounts)| *accounts > 0)
+    else {
+        return "No provider capacity reported".to_owned();
+    };
+    let percentage = (remaining * 100.0 / accounts as f64).clamp(0.0, 100.0);
+    format!("{percentage:.0}% remaining")
 }
 
 #[cfg(test)]
@@ -176,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_provider_capacity_names_every_provider_window() {
+    fn mixed_provider_capacity_is_weighted_by_account_equivalents() {
         let generation = QuotaGeneration {
             generation: 4,
             refreshing: false,
@@ -187,10 +190,7 @@ mod tests {
                 exit_code: None,
             }),
         };
-        assert_eq!(
-            capacity_summary(&generation),
-            "anthropic five-hour: 1.5 remaining · openai-codex seven-day: 0.25 remaining"
-        );
+        assert_eq!(capacity_summary(&generation), "80% remaining");
         assert_eq!(present(&generation).condition, Condition::StaleLastGood);
     }
 
@@ -203,23 +203,23 @@ mod tests {
             capacity: vec![
                 wire::QuotaProviderCapacity {
                     provider: "anthropic".to_owned(),
-                    windows: vec![capacity("five-hour", "1.5")],
+                    windows: vec![capacity("five-hour", 1, "0.5", "0.5")],
                 },
                 wire::QuotaProviderCapacity {
                     provider: "openai-codex".to_owned(),
-                    windows: vec![capacity("seven-day", "0.25")],
+                    windows: vec![capacity("seven-day", 3, "0.3", "2.7")],
                 },
             ],
         }
     }
 
-    fn capacity(window: &str, remaining: &str) -> wire::QuotaCapacity {
+    fn capacity(window: &str, accounts: u64, used: &str, remaining: &str) -> wire::QuotaCapacity {
         wire::QuotaCapacity {
             window: window.to_owned(),
             duration_ms: None,
             meter: None,
-            accounts: 2,
-            used_accounts: "0.5".to_owned(),
+            accounts,
+            used_accounts: used.to_owned(),
             remaining_accounts: remaining.to_owned(),
         }
     }
