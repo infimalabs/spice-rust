@@ -251,15 +251,24 @@ fn render_analytics(
     active_axis: Axis,
     work: Option<&WorkProjection<'_>>,
 ) -> Html {
+    let (summary, body) = match active_axis {
+        Axis::Flow => (
+            work.map(|work| flow_summary(work, render.work_scope)),
+            render_flow(render, work),
+        ),
+        Axis::Topology => render_topology(render),
+    };
     html! {
         <>
             <div class="page-heading">
                 <div>
                     <h1>{analytics_heading(active_axis, work, render.work_scope)}</h1>
-                    <p>{analytics_summary(active_axis, work, render.work_scope)}</p>
+                    if let Some(summary) = summary {
+                        <p>{summary}</p>
+                    }
                 </div>
             </div>
-            {render_axis(active_axis, render, work)}
+            {body}
         </>
     }
 }
@@ -280,10 +289,7 @@ fn analytics_heading(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &Work
         )
 }
 
-fn analytics_summary(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &WorkScope) -> String {
-    let Some(work) = work.filter(|_| axis == Axis::Flow) else {
-        return axis.question().to_owned();
-    };
+fn flow_summary(work: &WorkProjection<'_>, scope: &WorkScope) -> String {
     let counts = work.scope_counts(scope);
     format!(
         "{} open: {} ready, {} active, {} blocked, {} deferred",
@@ -400,17 +406,6 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
     }
 }
 
-pub(super) fn render_axis(
-    axis: Axis,
-    render: &CanvasRender<'_>,
-    work: Option<&WorkProjection<'_>>,
-) -> Html {
-    match axis {
-        Axis::Flow => render_flow(render, work),
-        Axis::Topology => render_topology(render),
-    }
-}
-
 pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_>>) -> Html {
     let Some(work) = work else {
         return match &**render.connection {
@@ -490,19 +485,22 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
     })
 }
 
-pub(super) fn render_topology(render: &CanvasRender<'_>) -> Html {
+/// The Dash body and, once agent standings are held, the page summary over
+/// the same standings the topology section renders.
+fn render_topology(render: &CanvasRender<'_>) -> (Option<String>, Html) {
     let surface = render.surface.read();
     let Some(runtime) = surface.as_ref() else {
-        return empty("No admitted topology is available.");
+        return (None, empty("No admitted topology is available."));
     };
     let operator = render_operator(runtime.settings());
     let Some(lanes) = runtime.lanes() else {
-        return html! {
+        let body = html! {
             <>
                 {operator}
                 {empty("No agent snapshot is available.")}
             </>
         };
+        return (None, body);
     };
     // The same join the chat's lane tiles read, over answers already held.
     let waiting = runtime
@@ -530,6 +528,11 @@ pub(super) fn render_topology(render: &CanvasRender<'_>) -> Html {
         .map(|standing| standing.pending)
         .sum::<usize>();
     let (teams, solos): (Vec<_>, Vec<_>) = lanes.lanes.iter().partition(|team| team.teamed());
+    let summary = format!(
+        "{}: {live} live, {}, {pending} pending",
+        topology_count(standings.len(), "agent", "agents"),
+        topology_count(holding, "holding a task", "holding tasks"),
+    );
     let totals = [
         topology_count(standings.len(), "agent", "agents"),
         topology_count(teams.len(), "team", "teams"),
@@ -539,7 +542,7 @@ pub(super) fn render_topology(render: &CanvasRender<'_>) -> Html {
     ]
     .join(" · ");
     let quota = quota::render_dash(Some(runtime));
-    html! {
+    let body = html! {
         <>
             {operator}
             <section class="section dash-overview-topology-section" aria-labelledby="resident-topology-heading">
@@ -573,7 +576,8 @@ pub(super) fn render_topology(render: &CanvasRender<'_>) -> Html {
             </section>
             {quota}
         </>
-    }
+    };
+    (Some(summary), body)
 }
 
 fn render_operator(settings: Option<&wire::intent::GlobalSettingsAnswer>) -> Html {
