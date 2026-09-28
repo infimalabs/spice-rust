@@ -340,7 +340,7 @@ fn render_lane(
     clusters: &[WorkCluster<'_, '_>],
     cards: &Cards<'_>,
 ) -> Html {
-    let key = availability_key(availability);
+    let key = availability.key();
     let label = availability_label(availability);
     let heading = format!("work-lane-{key}");
     let count = clusters
@@ -417,7 +417,7 @@ fn render_card(task: &WorkTask<'_>, cards: &Cards<'_>) -> Html {
                 is_selected.then_some("work-card--selected"),
                 is_pinned.then_some("work-card--mapped"),
             )}
-            data-work-availability={availability_key(availability)}
+            data-work-availability={availability.key()}
             data-work-disposition={
                 (availability == WorkAvailability::Terminal).then(|| workflow.status.clone())
             }
@@ -640,16 +640,6 @@ const fn clustering_key(clustering: WorkClustering) -> &'static str {
         WorkClustering::None => "none",
         WorkClustering::Project => "project",
         WorkClustering::Phase => "phase",
-    }
-}
-
-const fn availability_key(availability: WorkAvailability) -> &'static str {
-    match availability {
-        WorkAvailability::InFlight => "in-flight",
-        WorkAvailability::Ready => "ready",
-        WorkAvailability::Blocked => "blocked",
-        WorkAvailability::Deferred => "deferred",
-        WorkAvailability::Terminal => "terminal",
     }
 }
 

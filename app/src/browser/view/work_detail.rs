@@ -110,6 +110,7 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                         relations: render.relations,
                         can_read_relations: render.can_read_relations,
                         retry: render.retry_relations.clone(),
+                        work: render.work,
                     })}
                 </div>
             </aside>
