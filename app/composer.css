@@ -429,10 +429,62 @@
 }
 .markdown-body .message-quote-card:has(
   > .message-quote-body > p.message-image-stack:last-child
-) > .message-quote-body > p.message-image-stack:last-child {
+):not(:has(
+  > .message-quote-body > p.message-image-stack + p.message-image-stack,
+  > .message-quote-body > p.message-image-stack > .message-image + .message-image
+)) > .message-quote-body > p.message-image-stack:last-child {
   display: flex;
   flex: 1 1 0;
   min-width: 0;
+}
+/* Every quote layer holding two images lays them out as one row sized from
+   that layer's own width; its other content and signoff wrap around the row. */
+.markdown-body blockquote:has(
+  > p.message-image-stack + p.message-image-stack,
+  > p.message-image-stack > .message-image + .message-image
+),
+.markdown-body .message-quote-card:has(
+  > .message-quote-body > p.message-image-stack + p.message-image-stack,
+  > .message-quote-body > p.message-image-stack > .message-image + .message-image
+) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 7px;
+}
+.markdown-body :is(blockquote, .message-quote-body):has(
+  > p.message-image-stack + p.message-image-stack,
+  > p.message-image-stack > .message-image + .message-image
+) > :not(.message-image-stack) {
+  flex: 0 0 100%;
+  min-width: 0;
+}
+.markdown-body :is(blockquote, .message-quote-body):has(
+  > p.message-image-stack + p.message-image-stack,
+  > p.message-image-stack > .message-image + .message-image
+) > p.message-image-stack {
+  display: contents;
+}
+.markdown-body :is(blockquote, .message-quote-body):has(
+  > p.message-image-stack + p.message-image-stack,
+  > p.message-image-stack > .message-image + .message-image
+) > p.message-image-stack > .message-image {
+  --message-image-size: min(var(--mosaic-image-size), calc((100% - 7px) / 2));
+}
+.markdown-body :is(blockquote, .message-quote-body):has(
+  > p.message-image-stack + p.message-image-stack,
+  > p.message-image-stack > .message-image + .message-image
+) > p.message-image-stack > .message-image > img {
+  max-width: 100%;
+  max-height: 100%;
+}
+.markdown-body .message-quote-card:has(
+  > .message-quote-body > p.message-image-stack + p.message-image-stack,
+  > .message-quote-body > p.message-image-stack > .message-image + .message-image
+) > .message-quote-signoff {
+  flex: 0 0 auto;
+  margin-left: auto;
+  float: none;
 }
 .markdown-body .message-quote-signoff {
   display: inline-flex;
@@ -488,9 +540,14 @@
   flex: 0 0 100%;
   min-width: 0;
 }
+/* A lone image may share the signoff row; a layer sizing a pair from its own
+   width keeps the full row so its images never grow back when the signoff wraps. */
 .markdown-body blockquote:has(img):has(
   > p:last-child > .message-quote-signoff:not(:empty)
-):not(:has(> p:last-child img)) > :nth-last-child(2):has(img) {
+):not(:has(> p:last-child img)) > :nth-last-child(2):has(img):not(:has(
+  p.message-image-stack + p.message-image-stack,
+  .message-image + .message-image
+)) {
   flex: 1 1 0;
   min-width: min(100%, var(--mosaic-image-size));
 }
@@ -509,9 +566,10 @@
   float: none;
 }
 /* A paired image row keeps the gap its image sizing reserves. */
-.markdown-body blockquote:has(> p.message-image-stack + p.message-image-stack):has(
-  > p:last-child > .message-quote-signoff:not(:empty)
-) {
+.markdown-body blockquote:has(
+  > p.message-image-stack + p.message-image-stack,
+  > p.message-image-stack > .message-image + .message-image
+):has(> p:last-child > .message-quote-signoff:not(:empty)) {
   column-gap: 7px;
 }
 .markdown-body .message-quote-name {
