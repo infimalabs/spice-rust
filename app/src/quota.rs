@@ -117,29 +117,6 @@ pub(crate) fn account_label(account: &wire::QuotaAccount) -> String {
         .unwrap_or_else(|| "Redacted account".to_owned())
 }
 
-pub(crate) fn capacity_summary(generation: &QuotaGeneration) -> String {
-    let Some(snapshot) = generation.last_good.as_ref() else {
-        return present(generation).condition.label().to_owned();
-    };
-    let rows = snapshot
-        .capacity
-        .iter()
-        .flat_map(|provider| {
-            provider.windows.iter().map(|window| {
-                format!(
-                    "{} {}: {} remaining",
-                    provider.provider, window.window, window.remaining_accounts
-                )
-            })
-        })
-        .collect::<Vec<_>>();
-    if rows.is_empty() {
-        "No provider capacity reported".to_owned()
-    } else {
-        rows.join(" · ")
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -173,25 +150,6 @@ mod tests {
 
         generation.latest_attempt = Some(QuotaAttempt::Succeeded { finished_at_ms: 30 });
         assert_eq!(present(&generation).condition, Condition::Current);
-    }
-
-    #[test]
-    fn mixed_provider_capacity_names_every_provider_window() {
-        let generation = QuotaGeneration {
-            generation: 4,
-            refreshing: false,
-            last_good: Some(Arc::new(snapshot())),
-            latest_attempt: Some(QuotaAttempt::Failed {
-                finished_at_ms: 40,
-                kind: QuotaFailureKind::Timeout,
-                exit_code: None,
-            }),
-        };
-        assert_eq!(
-            capacity_summary(&generation),
-            "anthropic five-hour: 1.5 remaining · openai-codex seven-day: 0.25 remaining"
-        );
-        assert_eq!(present(&generation).condition, Condition::StaleLastGood);
     }
 
     fn snapshot() -> wire::QuotaSnapshot {

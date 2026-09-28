@@ -100,7 +100,6 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                         }
                     })}
                 </nav>
-                {super::quota::render_chrome(runtime)}
                 if let Some(status) = status {
                     <span
                         class="canvas-global-status"
