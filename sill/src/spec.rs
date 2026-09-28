@@ -426,6 +426,10 @@ pub enum StreamPolicy {
     Capture {
         limit: usize,
     },
+    /// Terminate the process group once the bounded prefix fills.
+    CaptureBounded {
+        limit: usize,
+    },
     /// Drain the whole stream while retaining only its bounded suffix.
     CaptureTail {
         limit: usize,

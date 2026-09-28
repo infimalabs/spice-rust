@@ -43,6 +43,7 @@ pub(super) struct SurfaceConfig {
     pub(super) allocation: board::NextConfig,
     pub(super) projects: board::ProjectPolicy,
     pub(super) lane: lane::Config,
+    omp_binary: String,
 }
 
 struct SurfaceLaunch<'a> {
@@ -106,6 +107,14 @@ fn startup_surface_from_loaded(loaded: &spice::config::Loaded) -> StartupSurface
             allocation: *loaded.resolved().root().board().next(),
             projects: loaded.resolved().root().tasks().project_policy(),
             lane: loaded.resolved().root().lane().clone(),
+            omp_binary: loaded
+                .resolved()
+                .root()
+                .vendor()
+                .omp()
+                .binary()
+                .as_str()
+                .to_owned(),
         },
         trust: crate::trust_command::Surface::from_loaded(loaded),
     }

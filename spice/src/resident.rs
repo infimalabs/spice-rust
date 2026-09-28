@@ -171,6 +171,7 @@ mod log;
 mod message_surface;
 mod narration;
 mod policy_surface;
+mod quota;
 mod read_materializations;
 mod settings_surface;
 mod shutdown;

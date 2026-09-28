@@ -443,6 +443,7 @@ fn opaque_capture_interrupts_and_joins_before_foreign_writer_eof() {
             reader,
             64,
             CaptureRetention::Prefix,
+            false,
             CaptureWorker {
                 stream,
                 observation: None,
@@ -523,6 +524,7 @@ fn an_observer_still_working_at_the_drain_deadline_is_named_rather_than_read_as_
         },
         64,
         CaptureRetention::Prefix,
+        false,
         CaptureWorker {
             stream: OutputStream::Stderr,
             observation: Some(
@@ -793,6 +795,7 @@ fn selected_reader_failure_uses_the_same_bounded_cleanup_path() {
         failing_reader(),
         32,
         CaptureRetention::Prefix,
+        false,
         CaptureWorker {
             stream: OutputStream::Stdout,
             observation: Some(observation),
@@ -853,6 +856,7 @@ fn opaque_reader_failure_uses_the_selected_observer_cleanup_path() {
         failing_reader(),
         32,
         CaptureRetention::Prefix,
+        false,
         CaptureWorker {
             stream: OutputStream::Stderr,
             observation: None,
@@ -958,6 +962,28 @@ fn output_capture_is_bounded_and_environment_is_explicit() {
     assert!(stdout.truncated());
     assert!(stdout.complete());
     assert!(!stdout.retains_suffix());
+}
+
+#[test]
+fn bounded_capture_terminates_the_process_group_on_overflow() {
+    let spec = test_spec(
+        "/bin/sh",
+        ["-c", "trap '' TERM; while :; do printf '123456789'; done"],
+        Environment::empty(),
+        Cancellation::Never,
+        Duration::from_secs(10),
+        StreamPolicy::CaptureBounded { limit: 4 },
+    );
+    let outcome = spawn(spec)
+        .expect("spawn strict bounded output child")
+        .wait()
+        .expect("overflowing output child is reaped");
+
+    assert!(matches!(outcome.completion(), Completion::Exited(status) if !status.success()));
+    let stdout = outcome.stdout().expect("stdout was captured");
+    assert_eq!(stdout.bytes(), b"1234");
+    assert!(stdout.truncated());
+    assert!(stdout.complete());
 }
 
 #[test]
