@@ -864,7 +864,7 @@ tbody tr:last-child td { border-bottom: 0; }
 
 .empty {
   padding: 34px 18px;
-  border: var(--canvas-edge);
+  border: var(--canvas-edge-soft);
   border-radius: var(--canvas-radius-compact);
   color: var(--muted);
   background: var(--panel);
