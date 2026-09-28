@@ -23,7 +23,7 @@ pub(super) fn render(
     context: &Context<'_>,
 ) -> Html {
     match destination {
-        CanvasDestination::Team => render_axis(
+        CanvasDestination::Dash => render_axis(
             Axis::Topology,
             axis_count(Axis::Topology, runtime),
             runtime,
@@ -52,7 +52,7 @@ fn render_axis(
         ),
         Axis::Topology => (
             "teams",
-            "Team covers resident teams, seats, capabilities, and current ownership.",
+            "Dash consolidates resident teams, seats, capabilities, and current ownership.",
         ),
     };
     html! {

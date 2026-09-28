@@ -627,7 +627,7 @@ fn render_agent_details(
                 <span>{standing.vendor.clone()}</span>
             </header>
             {match mode {
-                TeamMode::Team => html! {
+                TeamMode::Dash => html! {
                     <dl>
                         <div><dt>{"Agent channel"}</dt><dd>{standing.lane.to_string()}</dd></div>
                         <div><dt>{"Occupant"}</dt><dd>{occupant}</dd></div>

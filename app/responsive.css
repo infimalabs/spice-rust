@@ -38,7 +38,7 @@
     padding-inline: var(--canvas-shell-edge-start) var(--canvas-shell-edge-end);
   }
   .split { grid-template-columns: 1fr; }
-  .team-overview-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .dash-overview-summary { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
 @media (max-width: 720px) {
@@ -76,10 +76,10 @@
   .page-heading { align-items: start; }
   .page-heading h1 { font-size: 1.35rem; }
   th, td { padding: 10px; }
-  .team-overview-topology-section .section-heading,
-  .team-overview-group-heading { align-items: start; flex-direction: column; }
-  .team-overview-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .team-overview-group-count { white-space: normal; }
+  .dash-overview-topology-section .section-heading,
+  .dash-overview-group-heading { align-items: start; flex-direction: column; }
+  .dash-overview-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .dash-overview-group-count { white-space: normal; }
 }
 
 @media (max-width: 1180px) {
