@@ -4,6 +4,7 @@ use super::*;
 use crate::work::{WorkArrangement, WorkProjection, WorkScope};
 
 pub(super) mod chrome;
+mod quota;
 mod team_menu;
 mod work_board;
 mod work_detail;
@@ -523,8 +524,11 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
         .map(|member| member.vendor.as_str())
         .collect::<std::collections::BTreeSet<_>>()
         .len();
+    let quota = quota::render_info(Some(runtime));
     html! {
-        <section class="section info-topology-section">
+        <>
+            {quota}
+            <section class="section info-topology-section">
             <div class="section-heading">
                 <div>
                     <h2>{"Resident topology"}</h2>
@@ -554,7 +558,8 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
                     {for lanes.lanes.iter().map(render_topology_group)}
                 </div>
             }
-        </section>
+            </section>
+        </>
     }
 }
 

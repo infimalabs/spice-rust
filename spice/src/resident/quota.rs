@@ -286,6 +286,7 @@ pub(super) struct Runtime {
     settings: Arc<Settings>,
     state: Arc<State>,
     updates: watch::Sender<Arc<State>>,
+    feed: canvas::stream::QuotaFeed,
     completions: mpsc::UnboundedReceiver<SampleCompletion>,
     completion_sender: mpsc::UnboundedSender<SampleCompletion>,
     active: Option<Active>,
@@ -326,12 +327,14 @@ impl Runtime {
 
     fn start_with(settings: Settings) -> Self {
         let state = Arc::new(State::default());
+        let feed = canvas::stream::QuotaFeed::new(wire_generation(&state));
         let (updates, _) = watch::channel(Arc::clone(&state));
         let (completion_sender, completions) = mpsc::unbounded_channel();
         Self {
             settings: Arc::new(settings),
             state,
             updates,
+            feed,
             completions,
             completion_sender,
             active: None,
@@ -367,6 +370,10 @@ impl Runtime {
     )]
     pub(crate) fn subscribe(&self) -> watch::Receiver<Arc<State>> {
         self.updates.subscribe()
+    }
+
+    pub(super) fn feed(&self) -> canvas::stream::QuotaFeed {
+        self.feed.clone()
     }
 
     pub(super) async fn recv(&mut self) -> Option<SampleCompletion> {
@@ -462,6 +469,7 @@ impl Runtime {
 
     fn publish(&mut self, state: State) {
         let state = Arc::new(state);
+        self.feed.publish(wire_generation(&state));
         self.updates.send_replace(Arc::clone(&state));
         self.state = state;
     }
@@ -640,6 +648,193 @@ fn retain_mask(value: &mut Option<String>) {
     if value.as_ref().is_some_and(|value| !value.contains('*')) {
         *value = None;
     }
+}
+
+fn wire_generation(state: &State) -> wire::QuotaGeneration {
+    wire::QuotaGeneration {
+        generation: state.generation,
+        refreshing: state.refreshing,
+        last_good: state.last_good.as_deref().map(wire_snapshot).map(Arc::new),
+        latest_attempt: state.latest_attempt.as_ref().map(|attempt| match attempt {
+            Attempt::Succeeded { finished_at_ms } => wire::QuotaAttempt::Succeeded {
+                finished_at_ms: *finished_at_ms,
+            },
+            Attempt::Failed(failure) => wire::QuotaAttempt::Failed {
+                finished_at_ms: failure.finished_at_ms,
+                kind: wire_failure_kind(failure.kind),
+                exit_code: failure.exit_code,
+            },
+        }),
+    }
+}
+
+fn wire_failure_kind(kind: FailureKind) -> wire::QuotaFailureKind {
+    match kind {
+        FailureKind::ExecutableUnavailable => wire::QuotaFailureKind::ExecutableUnavailable,
+        FailureKind::Spawn => wire::QuotaFailureKind::Spawn,
+        FailureKind::Timeout => wire::QuotaFailureKind::Timeout,
+        FailureKind::StdoutOverflow => wire::QuotaFailureKind::StdoutOverflow,
+        FailureKind::StderrOverflow => wire::QuotaFailureKind::StderrOverflow,
+        FailureKind::NonzeroExit => wire::QuotaFailureKind::NonzeroExit,
+        FailureKind::MalformedOutput => wire::QuotaFailureKind::MalformedOutput,
+        FailureKind::OutputIncomplete => wire::QuotaFailureKind::OutputIncomplete,
+        FailureKind::Supervisor => wire::QuotaFailureKind::Supervisor,
+        FailureKind::WorkerStart => wire::QuotaFailureKind::WorkerStart,
+        FailureKind::WorkerLost => wire::QuotaFailureKind::WorkerLost,
+    }
+}
+
+fn wire_snapshot(snapshot: &Snapshot) -> wire::QuotaSnapshot {
+    wire::QuotaSnapshot {
+        generated_at_ms: snapshot.generated_at_ms,
+        reports: snapshot.reports.iter().map(wire_report).collect(),
+        accounts_without_usage: snapshot
+            .accounts_without_usage
+            .iter()
+            .map(|account| wire::QuotaAccountWithoutUsage {
+                provider: account.provider.clone(),
+                credential_type: account.credential_type.clone(),
+                account: wire_account_fields(
+                    &account.email,
+                    &account.account_id,
+                    &account.project_id,
+                    &account.org_id,
+                    &account.org_name,
+                ),
+                authorized_at_ms: account.authorized_at,
+            })
+            .collect(),
+        disabled_credentials: snapshot
+            .disabled_credentials
+            .iter()
+            .map(|credential| wire::QuotaDisabledCredential {
+                provider: credential.provider.clone(),
+                credential_type: credential.credential_type.clone(),
+                account: wire_account_fields(
+                    &credential.email,
+                    &credential.account_id,
+                    &None,
+                    &credential.org_id,
+                    &credential.org_name,
+                ),
+                disabled_at_ms: credential.disabled_at_ms,
+            })
+            .collect(),
+        capacity: snapshot
+            .capacity
+            .iter()
+            .map(|(provider, windows)| wire::QuotaProviderCapacity {
+                provider: provider.clone(),
+                windows: windows
+                    .iter()
+                    .map(|capacity| wire::QuotaCapacity {
+                        window: capacity.window.clone(),
+                        duration_ms: capacity.duration_ms,
+                        meter: capacity.meter.clone(),
+                        accounts: capacity.accounts,
+                        used_accounts: quantity(capacity.used_accounts),
+                        remaining_accounts: quantity(capacity.remaining_accounts),
+                    })
+                    .collect(),
+            })
+            .collect(),
+    }
+}
+
+fn wire_report(report: &Report) -> wire::QuotaReport {
+    wire::QuotaReport {
+        provider: report.provider.clone(),
+        fetched_at_ms: report.fetched_at_ms,
+        account: wire::QuotaAccount {
+            email: report.account.email.clone(),
+            account_id: report.account.account_id.clone(),
+            project_id: report.account.project_id.clone(),
+            org_id: report.account.org_id.clone(),
+            org_name: report.account.org_name.clone(),
+            plan_type: report.account.plan_type.clone(),
+            allowed: report.account.allowed,
+            limit_reached: report.account.limit_reached,
+        },
+        limits: report
+            .limits
+            .iter()
+            .map(|limit| wire::QuotaLimit {
+                id: limit.id.clone(),
+                label: limit.label.clone(),
+                scope: wire::QuotaScope {
+                    provider: limit.scope.provider.clone(),
+                    account_id: limit.scope.account_id.clone(),
+                    project_id: limit.scope.project_id.clone(),
+                    org_id: limit.scope.org_id.clone(),
+                    model_id: limit.scope.model_id.clone(),
+                    tier: limit.scope.tier.clone(),
+                    window_id: limit.scope.window_id.clone(),
+                    shared: limit.scope.shared,
+                    shared_group: limit.scope.shared_group.clone(),
+                },
+                window: limit.window.as_ref().map(|window| wire::QuotaWindow {
+                    id: window.id.clone(),
+                    label: window.label.clone(),
+                    duration_ms: window.duration_ms,
+                    resets_at: window.resets_at,
+                    reset_label: window.reset_label.clone(),
+                }),
+                amount: wire::QuotaAmount {
+                    used: limit.amount.used.map(quantity),
+                    limit: limit.amount.limit.map(quantity),
+                    remaining: limit.amount.remaining.map(quantity),
+                    used_fraction: limit.amount.used_fraction.map(quantity),
+                    remaining_fraction: limit.amount.remaining_fraction.map(quantity),
+                    unit: limit.amount.unit.clone(),
+                },
+                status: limit.status.clone(),
+            })
+            .collect(),
+        reset_credits: report
+            .reset_credits
+            .as_ref()
+            .map(|credits| wire::QuotaResetCredits {
+                available_count: credits.available_count,
+                redeemable_count: credits.redeemable_count,
+                eligible: credits.eligible,
+                cooldown_until: credits.cooldown_until.clone(),
+                credits: credits
+                    .credits
+                    .iter()
+                    .map(|credit| wire::QuotaResetCredit {
+                        title: credit.title.clone(),
+                        program: credit.program.clone(),
+                        remaining_count: credit.remaining_count,
+                        usable: credit.usable,
+                        requires_limit: credit.requires_limit,
+                        granted_at: credit.granted_at.clone(),
+                        expires_at: credit.expires_at.clone(),
+                        status: credit.status.clone(),
+                    })
+                    .collect(),
+            }),
+    }
+}
+
+fn wire_account_fields(
+    email: &Option<String>,
+    account_id: &Option<String>,
+    project_id: &Option<String>,
+    org_id: &Option<String>,
+    org_name: &Option<String>,
+) -> wire::QuotaAccount {
+    wire::QuotaAccount {
+        email: email.clone(),
+        account_id: account_id.clone(),
+        project_id: project_id.clone(),
+        org_id: org_id.clone(),
+        org_name: org_name.clone(),
+        ..wire::QuotaAccount::default()
+    }
+}
+
+fn quantity(value: f64) -> String {
+    value.to_string()
 }
 
 #[cfg(test)]
@@ -864,6 +1059,21 @@ mod tests {
             snapshot.capacity["openai-codex"][0].remaining_accounts,
             1.62
         );
+        let encoded = String::from_utf8(
+            wire::encode(&wire_generation(&state)).expect("wire quota generation encodes"),
+        )
+        .expect("wire quota generation is UTF-8 JSON");
+        for secret in [
+            "raw-project",
+            "raw-scope-project",
+            "https://secret.invalid",
+            "\"token\":\"secret\"",
+        ] {
+            assert!(!encoded.contains(secret), "{secret} crossed the quota wire");
+        }
+        for mask in ["us*", "sc*", "no*", "di*"] {
+            assert!(encoded.contains(mask), "{mask} redaction was lost");
+        }
     }
 
     #[tokio::test]
@@ -983,13 +1193,18 @@ mod tests {
         let mut runtime = Runtime::start_with(settings(script, &fixture.root));
         runtime.request();
         let deadline = Instant::now() + Duration::from_secs(2);
-        while !pid_path.exists() && Instant::now() < deadline {
+        let pid = loop {
+            if let Ok(text) = fs::read_to_string(&pid_path)
+                && let Ok(pid) = text.parse::<i32>()
+            {
+                break pid;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "hanging child records its numeric pid"
+            );
             thread::sleep(Duration::from_millis(5));
-        }
-        let pid: i32 = fs::read_to_string(&pid_path)
-            .expect("hanging child records its pid")
-            .parse()
-            .expect("recorded pid is numeric");
+        };
 
         drop(runtime);
 

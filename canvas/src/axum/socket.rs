@@ -120,6 +120,7 @@ struct ActiveSession {
     subscription: Option<crate::stream::Subscription>,
     broadcasts: Option<bus::BroadcastSubscriber>,
     messages: Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
+    quota: Option<tokio::sync::broadcast::Receiver<Arc<wire::QuotaGeneration>>>,
     commands: PendingCommands,
     histories: PendingHistories,
     lead: Lead,
@@ -137,6 +138,10 @@ impl ActiveSession {
             .stream
             .as_ref()
             .map(crate::stream::Source::subscribe_messages);
+        let quota = state
+            .stream
+            .as_ref()
+            .and_then(crate::stream::Source::subscribe_quota);
         Self {
             state,
             accepted,
@@ -145,6 +150,7 @@ impl ActiveSession {
             subscription: None,
             broadcasts,
             messages,
+            quota,
             commands: PendingCommands::new(),
             histories: PendingHistories::new(),
             lead: Lead::Journal,
@@ -166,6 +172,7 @@ impl ActiveSession {
             SessionSignals::new(closed, &self.retired),
             &mut self.broadcasts,
             &mut self.messages,
+            &mut self.quota,
             &mut self.commands,
             &mut self.histories,
             SessionReadiness { live, continuing },
@@ -219,6 +226,19 @@ impl ActiveSession {
             }
             Event::Message(notice) => {
                 route_message_broadcast(
+                    socket,
+                    &self.state,
+                    &self.accepted,
+                    self.capability,
+                    self.subscription
+                        .as_mut()
+                        .expect("live branch has a subscription"),
+                    notice,
+                )
+                .await
+            }
+            Event::Quota(notice) => {
+                route_quota_broadcast(
                     socket,
                     &self.state,
                     &self.accepted,
@@ -361,6 +381,7 @@ async fn route_inbound_command(
 pub(super) enum Lead {
     Journal,
     Message,
+    Quota,
     Inbound,
     Command,
     History,
@@ -377,7 +398,8 @@ impl Lead {
         let leading = *self;
         *self = match leading {
             Self::Journal => Self::Message,
-            Self::Message => Self::Inbound,
+            Self::Message => Self::Quota,
+            Self::Quota => Self::Inbound,
             Self::Inbound => Self::Command,
             Self::Command => Self::History,
             Self::History => Self::Continuation,
@@ -410,6 +432,7 @@ pub(super) enum Event {
     Retired,
     Journal(Result<bus::JournalCommit, tokio::sync::broadcast::error::RecvError>),
     Message(Result<Box<wire::TranscriptGeneration>, tokio::sync::broadcast::error::RecvError>),
+    Quota(Result<Arc<wire::QuotaGeneration>, tokio::sync::broadcast::error::RecvError>),
     Inbound(Option<Result<Message, ::axum::Error>>),
     Command(Option<CommandCompletion>),
     History(Option<HistoryCompletion>),
@@ -453,22 +476,21 @@ impl<'session> SessionSignals<'session> {
 /// `tokio::select!` under `biased` evaluates its arms in source order every
 /// iteration, so a source that is ready every time keeps every later arm from
 /// running at all. One fixed order therefore lets a committing fleet's journal
-/// broadcasts hold off this session's own operator commands and agent messages
-/// without a bound, which per-connection isolation does not help: the flood and
-/// the starved requests share the connection.
+/// broadcasts hold off this session's own operator commands and ephemeral
+/// updates without a bound, which per-connection isolation does not help: the
+/// flood and the starved requests share the connection.
 ///
-/// Rotating which of the six work sources is evaluated first bounds the wait
-/// at five iterations rather than at the journal falling quiet. No source is
-/// ever *disabled* to make room, because a disabled broadcast receiver stops
-/// draining its channel and converts a scheduling question into a lag question,
-/// changing the retained-cursor overflow behavior this rotation must leave
-/// alone.
+/// Rotating which of the seven work sources is evaluated first bounds the wait
+/// at six iterations rather than at one source falling quiet. No source is ever
+/// disabled to make room, because a disabled broadcast receiver stops draining
+/// its channel and converts a scheduling question into a lag question.
 pub(super) async fn next_event(
     lead: &mut Lead,
     socket: &mut impl Inbound,
     signals: SessionSignals<'_>,
     broadcasts: &mut Option<bus::BroadcastSubscriber>,
     messages: &mut Option<tokio::sync::broadcast::Receiver<wire::TranscriptGeneration>>,
+    quota: &mut Option<tokio::sync::broadcast::Receiver<Arc<wire::QuotaGeneration>>>,
     commands: &mut PendingCommands,
     histories: &mut PendingHistories,
     readiness: SessionReadiness,
@@ -476,6 +498,7 @@ pub(super) async fn next_event(
     let SessionReadiness { live, continuing } = readiness;
     let journal = broadcasts.is_some() && live;
     let transcript = messages.is_some() && live;
+    let quota_ready = quota.is_some() && live;
     let command = !commands.is_empty();
     let history = !histories.is_empty();
     let SessionSignals { closed, retired } = signals;
@@ -486,6 +509,7 @@ pub(super) async fn next_event(
             () = retired.cancelled() => Event::Retired,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
+            notice = recv_quota(quota), if quota_ready => Event::Quota(notice),
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
             completed = histories.next(), if history => Event::History(completed),
@@ -496,11 +520,24 @@ pub(super) async fn next_event(
             changed = closed.changed() => Event::Closed(changed),
             () = retired.cancelled() => Event::Retired,
             notice = recv_message(messages), if transcript => Event::Message(notice),
+            notice = recv_quota(quota), if quota_ready => Event::Quota(notice),
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
             completed = histories.next(), if history => Event::History(completed),
             _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
+        },
+        Lead::Quota => tokio::select! {
+            biased;
+            changed = closed.changed() => Event::Closed(changed),
+            () = retired.cancelled() => Event::Retired,
+            notice = recv_quota(quota), if quota_ready => Event::Quota(notice),
+            message = socket.next_message() => Event::Inbound(message),
+            completed = commands.next(), if command => Event::Command(completed),
+            completed = histories.next(), if history => Event::History(completed),
+            _ = std::future::ready(()), if continuing => Event::Continuation,
+            notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
+            notice = recv_message(messages), if transcript => Event::Message(notice),
         },
         Lead::Inbound => tokio::select! {
             biased;
@@ -512,6 +549,7 @@ pub(super) async fn next_event(
             _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
+            notice = recv_quota(quota), if quota_ready => Event::Quota(notice),
         },
         Lead::Command => tokio::select! {
             biased;
@@ -522,6 +560,7 @@ pub(super) async fn next_event(
             _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
+            notice = recv_quota(quota), if quota_ready => Event::Quota(notice),
             message = socket.next_message() => Event::Inbound(message),
         },
         Lead::History => tokio::select! {
@@ -532,6 +571,7 @@ pub(super) async fn next_event(
             _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
+            notice = recv_quota(quota), if quota_ready => Event::Quota(notice),
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
         },
@@ -542,6 +582,7 @@ pub(super) async fn next_event(
             _ = std::future::ready(()), if continuing => Event::Continuation,
             notice = recv_journal(broadcasts), if journal => Event::Journal(notice),
             notice = recv_message(messages), if transcript => Event::Message(notice),
+            notice = recv_quota(quota), if quota_ready => Event::Quota(notice),
             message = socket.next_message() => Event::Inbound(message),
             completed = commands.next(), if command => Event::Command(completed),
             completed = histories.next(), if history => Event::History(completed),
@@ -570,6 +611,17 @@ async fn recv_message(
         .recv()
         .await
         .map(Box::new)
+}
+
+/// Read one redacted quota generation from the enabled broadcast.
+async fn recv_quota(
+    quota: &mut Option<tokio::sync::broadcast::Receiver<Arc<wire::QuotaGeneration>>>,
+) -> Result<Arc<wire::QuotaGeneration>, tokio::sync::broadcast::error::RecvError> {
+    quota
+        .as_mut()
+        .expect("enabled branch has a quota broadcast")
+        .recv()
+        .await
 }
 
 async fn route_message_broadcast(
@@ -611,6 +663,56 @@ async fn route_message_broadcast(
                 wire::FaultClass::Environment,
                 "stream::message-broadcast-closed",
                 "resident transcript-activity broadcast closed",
+            );
+            send_encoded(socket, &frame).await;
+            SessionFlow::Close
+        }
+    }
+}
+
+async fn route_quota_broadcast(
+    socket: &mut WebSocket,
+    state: &SurfaceState,
+    accepted: &wire::Accepted,
+    capability: wire::CanonicalUuid,
+    subscription: &mut crate::stream::Subscription,
+    notice: Result<Arc<wire::QuotaGeneration>, tokio::sync::broadcast::error::RecvError>,
+) -> SessionFlow {
+    if !state.capabilities.matches(capability, &accepted.actor) {
+        send_replaced(socket, state.epoch, Some(subscription.id())).await;
+        return SessionFlow::Close;
+    }
+    match notice {
+        Ok(generation) => {
+            let generation_id = generation.generation;
+            let Some(frame) = subscription.quota(generation) else {
+                return SessionFlow::Continue;
+            };
+            if send_encoded(socket, &frame).await {
+                subscription.admit_quota(generation_id);
+                SessionFlow::Continue
+            } else {
+                SessionFlow::Close
+            }
+        }
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(dropped)) => {
+            let frame = stream_fault(
+                state.epoch,
+                Some(subscription.id()),
+                wire::FaultClass::Protocol,
+                "stream::quota-broadcast-lagged",
+                &format!("quota subscription dropped {dropped} generations"),
+            );
+            send_encoded(socket, &frame).await;
+            SessionFlow::Close
+        }
+        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+            let frame = stream_fault(
+                state.epoch,
+                Some(subscription.id()),
+                wire::FaultClass::Environment,
+                "stream::quota-broadcast-closed",
+                "resident quota broadcast closed",
             );
             send_encoded(socket, &frame).await;
             SessionFlow::Close

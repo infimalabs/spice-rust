@@ -62,6 +62,47 @@ impl fmt::Debug for QuotePresenter {
         formatter.write_str("QuotePresenter")
     }
 }
+/// Process-local source for current and live redacted quota generations.
+#[derive(Clone, Debug)]
+pub struct QuotaFeed {
+    current: tokio::sync::watch::Sender<Arc<wire::QuotaGeneration>>,
+    updates: tokio::sync::broadcast::Sender<Arc<wire::QuotaGeneration>>,
+}
+
+impl QuotaFeed {
+    /// Start at one explicit generation.
+    #[must_use]
+    pub fn new(initial: wire::QuotaGeneration) -> Self {
+        let (current, _) = tokio::sync::watch::channel(Arc::new(initial));
+        let (updates, _) = tokio::sync::broadcast::channel(16);
+        Self { current, updates }
+    }
+
+    /// Atomically replace current state and announce only a newer generation.
+    pub fn publish(&self, generation: wire::QuotaGeneration) {
+        let generation = Arc::new(generation);
+        let mut published = false;
+        self.current.send_if_modified(|current| {
+            if generation.generation <= current.generation {
+                return false;
+            }
+            *current = Arc::clone(&generation);
+            published = true;
+            true
+        });
+        if published {
+            let _no_subscribers = self.updates.send(generation);
+        }
+    }
+
+    fn current(&self) -> Arc<wire::QuotaGeneration> {
+        Arc::clone(&self.current.borrow())
+    }
+
+    fn subscribe(&self) -> tokio::sync::broadcast::Receiver<Arc<wire::QuotaGeneration>> {
+        self.updates.subscribe()
+    }
+}
 
 /// Generation-owned source for every streamed canvas answer.
 #[derive(Clone, Debug)]
@@ -70,6 +111,7 @@ pub struct Source {
     epoch: wire::CanonicalUuid,
     rows: usize,
     messages: MessageFeed,
+    quota: Option<QuotaFeed>,
     #[cfg(test)]
     reads: Arc<ReadCounts>,
 }
@@ -95,9 +137,25 @@ impl Source {
             epoch,
             rows,
             messages: MessageFeed::new(presenter),
+            quota: None,
             #[cfg(test)]
             reads: Arc::new(ReadCounts::default()),
         }
+    }
+
+    /// Attach the process-local redacted quota source.
+    #[must_use]
+    pub fn with_quota(mut self, quota: QuotaFeed) -> Self {
+        self.quota = Some(quota);
+        self
+    }
+
+    /// Reader for live redacted quota generations.
+    #[must_use]
+    pub fn subscribe_quota(
+        &self,
+    ) -> Option<tokio::sync::broadcast::Receiver<Arc<wire::QuotaGeneration>>> {
+        self.quota.as_ref().map(QuotaFeed::subscribe)
     }
 
     /// Reader for the one bounded post-durability Bus cursor broadcast.
@@ -149,6 +207,7 @@ impl Source {
             )));
         }
         let subjects = admit_subjects(&accepted.actor, subjects)?;
+        let mut quota_generation = self.current_quota(subjects.contains(&ViewSubject::Quota))?;
         let wants_messages = subjects.contains(&ViewSubject::Messages);
         let (heads, mut message_generation) = loop {
             let observed_generation = self.messages.current_generation();
@@ -197,6 +256,9 @@ impl Source {
             message_generation: message_generation
                 .as_ref()
                 .map(|generation| generation.generation),
+            quota_generation: quota_generation
+                .as_ref()
+                .map(|generation| generation.generation),
             catch_up: None,
             rows: self.rows,
         };
@@ -216,6 +278,17 @@ impl Source {
                         generation,
                     }
                 }
+                ViewSubject::Quota => {
+                    let generation = quota_generation
+                        .take()
+                        .expect("quota subjects prepare one current generation");
+                    StreamFrame::Quota {
+                        v: WireVersion::CURRENT,
+                        id: *id,
+                        epoch: self.epoch,
+                        generation: (*generation).clone(),
+                    }
+                }
                 ViewSubject::Facts | ViewSubject::Trust => {
                     subscription.page(self, subject, None, *id)?
                 }
@@ -224,6 +297,25 @@ impl Source {
         }
         subscription.settle_barrier(horizon);
         Ok((subscription, frames))
+    }
+
+    fn current_quota(
+        &self,
+        requested: bool,
+    ) -> Result<Option<Arc<wire::QuotaGeneration>>, Failure> {
+        if !requested {
+            return Ok(None);
+        }
+        self.quota
+            .as_ref()
+            .map(QuotaFeed::current)
+            .map(Some)
+            .ok_or_else(|| {
+                Failure::Fault(protocol_fault(
+                    "stream::quota-source-unavailable",
+                    "resident quota source is unavailable",
+                ))
+            })
     }
 
     /// Answer one causal thread request from one immutable Bus snapshot.

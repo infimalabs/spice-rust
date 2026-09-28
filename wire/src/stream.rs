@@ -87,8 +87,8 @@ pub const MESSAGE_FLOOR: usize = 25;
 
 use crate::{
     Actor, AnyFact, Body, CanonicalUuid, Envelope, FactKind, Fault, FaultClass, Instant, Name,
-    Origin, Packed, QuotePresentation, QuoteTarget, Refusal, RefusalDiagnostic, Seq, TaskStamp,
-    TrustHead, WireVersion,
+    Origin, Packed, QuotaGeneration, QuotePresentation, QuoteTarget, Refusal, RefusalDiagnostic,
+    Seq, TaskStamp, TrustHead, WireVersion,
 };
 
 /// Stable source position of one decoded event in a lane transcript tape.
@@ -782,6 +782,8 @@ pub enum ViewSubject {
     Trust,
     /// Agent-authored prose and tool moments projected from transcript capture.
     Messages,
+    /// Redacted provider quota sampled by the resident.
+    Quota,
 }
 
 /// One strict client-to-resident stream request.
@@ -1241,6 +1243,20 @@ pub enum StreamFrame {
         id: CanonicalUuid,
         epoch: CanonicalUuid,
         generation: TranscriptGeneration,
+    },
+    /// Current redacted provider quota state for a new subscription.
+    Quota {
+        v: WireVersion,
+        id: CanonicalUuid,
+        epoch: CanonicalUuid,
+        generation: QuotaGeneration,
+    },
+    /// One later redacted provider quota generation.
+    QuotaGeneration {
+        v: WireVersion,
+        id: CanonicalUuid,
+        epoch: CanonicalUuid,
+        generation: QuotaGeneration,
     },
     /// The resident read a [`StreamRequest::Ping`] and answered on that socket.
     ///

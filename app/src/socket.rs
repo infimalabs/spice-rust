@@ -310,6 +310,8 @@ impl Session {
             | StreamFrame::Messages { v, epoch, .. }
             | StreamFrame::MessageHistory { v, epoch, .. }
             | StreamFrame::MessageGeneration { v, epoch, .. }
+            | StreamFrame::Quota { v, epoch, .. }
+            | StreamFrame::QuotaGeneration { v, epoch, .. }
             | StreamFrame::Refusal { v, epoch, .. }
             | StreamFrame::Fault { v, epoch, .. }
             | StreamFrame::Pong { v, epoch, .. } => (*v, *epoch),

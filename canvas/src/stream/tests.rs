@@ -644,7 +644,11 @@ fn lane_principal_never_admits_operator_only_subjects() {
     let bus = fixture(1);
     let source = Source::new(bus.reader(), epoch(), 10, presenter());
     let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163c2");
-    for subject in [ViewSubject::Trust, ViewSubject::Messages] {
+    for subject in [
+        ViewSubject::Trust,
+        ViewSubject::Messages,
+        ViewSubject::Quota,
+    ] {
         let failure = source
             .begin(
                 &accepted(Actor::Lane(lane)),
@@ -660,6 +664,70 @@ fn lane_principal_never_admits_operator_only_subjects() {
     }
     drop(source);
     bus.shutdown().expect("bus shuts down");
+}
+
+#[tokio::test]
+async fn quota_subscription_hydrates_replaces_reconnects_and_exposes_lag() {
+    let bus = fixture(1);
+    let feed = QuotaFeed::new(quota_generation(3));
+    let source = Source::new(bus.reader(), epoch(), 10, presenter()).with_quota(feed.clone());
+    let mut updates = source.subscribe_quota().expect("quota source subscribes");
+    let (mut subscription, initial) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc4, vec![ViewSubject::Quota], None),
+        )
+        .expect("operator quota subscription begins");
+    assert!(matches!(
+        initial.as_slice(),
+        [StreamFrame::Quota { generation, .. }] if generation.generation == 3
+    ));
+
+    feed.publish(quota_generation(4));
+    let generation = updates.recv().await.expect("live quota generation arrives");
+    let frame = subscription
+        .quota(generation)
+        .expect("newer generation projects");
+    assert!(matches!(
+        frame,
+        StreamFrame::QuotaGeneration { ref generation, .. }
+            if generation.generation == 4
+    ));
+    subscription.admit_quota(4);
+    feed.publish(quota_generation(3));
+    assert!(
+        updates.try_recv().is_err(),
+        "older generation is not announced"
+    );
+
+    let (_, reconnected) = source
+        .begin(
+            &accepted(Actor::Operator),
+            &request(0xc5, vec![ViewSubject::Quota], None),
+        )
+        .expect("reconnected quota subscription begins");
+    assert!(matches!(
+        reconnected.as_slice(),
+        [StreamFrame::Quota { generation, .. }] if generation.generation == 4
+    ));
+
+    let mut lagged = source.subscribe_quota().expect("lag probe subscribes");
+    for generation in 5..=22 {
+        feed.publish(quota_generation(generation));
+    }
+    assert!(matches!(
+        lagged.recv().await,
+        Err(tokio::sync::broadcast::error::RecvError::Lagged(2))
+    ));
+    drop(source);
+    bus.shutdown().expect("bus shuts down");
+}
+
+fn quota_generation(generation: u64) -> wire::QuotaGeneration {
+    wire::QuotaGeneration {
+        generation,
+        ..wire::QuotaGeneration::default()
+    }
 }
 
 #[test]

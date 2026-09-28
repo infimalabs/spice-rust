@@ -57,6 +57,7 @@ pub mod manifest;
 pub mod media;
 mod optional;
 pub mod packed;
+pub mod quota;
 pub mod quote;
 pub mod reply;
 /// Steering-specific bodies that sit outside the core body module's shape boundary.
@@ -96,6 +97,11 @@ pub use hello::{
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
 pub use media::{AgentMediaReference, Media, MediaError};
 pub use packed::{Derived, FoldName, FoldNameError, Overflow, Packed};
+pub use quota::{
+    QuotaAccount, QuotaAccountWithoutUsage, QuotaAmount, QuotaAttempt, QuotaCapacity,
+    QuotaDisabledCredential, QuotaFailureKind, QuotaGeneration, QuotaLimit, QuotaProviderCapacity,
+    QuotaReport, QuotaResetCredit, QuotaResetCredits, QuotaScope, QuotaSnapshot, QuotaWindow,
+};
 pub use quote::{
     QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation, QuoteResolution, QuoteTarget,
     QuoteTargetError, QuoteUnavailable, ResolvedQuote,
