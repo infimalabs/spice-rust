@@ -167,7 +167,7 @@ fn acknowledged_broadcast_marker_earns_its_own_semantic_badge() {
 #[test]
 fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
     assert!(is_review_feedback(Some("review-feedback:1kKRRsDR:42")));
-    assert!(!is_review_feedback(Some("task-generation:1kKRRsDR:42:3")));
+    assert!(!is_review_feedback(Some("lane-renewal-context")));
     let source = "00000000-0000-4000-8000-000000000002"
         .parse()
         .expect("fixture source");
@@ -578,55 +578,6 @@ fn unknown_key_preserves_the_original_message_across_replay() {
 
     assert_eq!(first, text);
     assert_eq!(replayed, first);
-}
-
-#[test]
-fn system_acknowledgment_hides_framing_and_earns_no_authored_context() {
-    assert!(!presents_as_authored_steering(Some(
-        "task-generation:1kKRRsDP:33:4"
-    )));
-    let key = "dRyzkGX8b"
-        .parse::<steer::Key>()
-        .expect("current system key parses");
-    let directives = PresentationDirectives(BTreeMap::from([(
-        key,
-        PresentationDirective {
-            actor: wire::Actor::Operator,
-            published: published(1),
-            lane: lane(),
-            text: "Accepted lane renewal context.".to_owned(),
-            authored: false,
-            taste: false,
-            review: false,
-            disposition: wire::Disposition::Acked,
-            quote_target: quote_target("dRyzkGX8b", "Accepted lane renewal context."),
-            retirement: Some(wire::body::TranscriptLocus {
-                source: None,
-                member: 1,
-                offset: 0,
-                length: 1,
-                event: 0,
-                line: 1,
-                column: 5,
-            }),
-        },
-    )]));
-    let text = "ACK dRyzkGX8b: Accepted revision 44.";
-    assert_eq!(
-        presented_text(text, &directives, event()).expect("system acknowledgment presents"),
-        "Accepted revision 44.",
-    );
-    assert_eq!(
-        message_badges(text, Some(&directives), event()),
-        ClassificationCounts {
-            acknowledgements: 1,
-            tastes: 0,
-            broadcasts: 0,
-            reviews: 0,
-            pending: 0,
-            declines: 0,
-        },
-    );
 }
 
 #[test]

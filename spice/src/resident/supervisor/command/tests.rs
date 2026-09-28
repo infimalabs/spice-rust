@@ -829,7 +829,46 @@ fn a_confirm_is_stated_as_one_request_and_answered_once_consent_rules() {
 }
 
 #[test]
-fn a_kick_names_either_the_inbox_or_one_consent_answer() {
+fn task_generation_reminders_are_private_and_deduplicated_by_authority() {
+    let scratch = Scratch::new("task-generation");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, None);
+    let notice = TaskGenerationNotice {
+        occupant: super::super::super::new_uuid(),
+        task: "CLAIM-1kKRRsDP".to_owned(),
+        claim: 33,
+        generation: 4,
+        change: "task edited".to_owned(),
+        editor: "operator".to_owned(),
+        position: 44,
+    };
+
+    driver.deliver_task_generation(&notice);
+    driver.deliver_task_generation(&notice);
+    let frames = sink.answered(1);
+    assert_eq!(frames.len(), 1, "one authority identity interjects once");
+    let message = frames[0]["message"]
+        .as_str()
+        .expect("private reminder text");
+    assert!(message.starts_with("<system-notice>\n"));
+    assert!(message.contains("generation 4 is task edited by operator at position 44"));
+    assert!(message.contains("spice task reclaim CLAIM-1kKRRsDP"));
+    assert!(message.contains("no acknowledgment key or visible ACK/NAK is required"));
+
+    driver.deliver_task_generation(&TaskGenerationNotice {
+        generation: 5,
+        ..notice.clone()
+    });
+    driver.deliver_task_generation(&notice);
+    assert_eq!(
+        sink.answered(2).len(),
+        2,
+        "a later generation receives one new reminder and suppresses older replay",
+    );
+}
+
+#[test]
+fn a_kick_carries_inbox_consent_or_private_task_authority() {
     let request = super::super::super::new_uuid();
     let answer = Kick::Answer {
         request,
@@ -840,6 +879,21 @@ fn a_kick_names_either_the_inbox_or_one_consent_answer() {
     assert_eq!(
         serde_json::from_slice::<Kick>(&bytes).expect("a kick reads back"),
         answer
+    );
+    let task = Kick::TaskGeneration(TaskGenerationNotice {
+        occupant: super::super::super::new_uuid(),
+        task: "CLAIM-1kKRRsDP".to_owned(),
+        claim: 33,
+        generation: 4,
+        change: "task edited".to_owned(),
+        editor: "operator".to_owned(),
+        position: 44,
+    });
+    let bytes = serde_json::to_vec(&task).expect("a private task kick serializes");
+    assert!(bytes.len() <= KICK_BYTES, "{}", bytes.len());
+    assert_eq!(
+        serde_json::from_slice::<Kick>(&bytes).expect("a private task kick reads back"),
+        task,
     );
     assert_eq!(
         serde_json::to_string(&Kick::Inbox).expect("a kick serializes"),

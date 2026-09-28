@@ -38,6 +38,10 @@ and buried key mentions do not. A repeated delivery is not a new request.
 If a reminder arrives after your visible acknowledgment, check the current
 inbox when needed rather than repeating commands or creating duplicate work.
 An empty pending list is not an acknowledgment failure.
+Private `<system-notice>` deliveries that explicitly say no acknowledgment key
+are not steering keys: follow the authority action without visible ACK/NAK.
+In particular, a claimed-task generation reminder requires `spice task reclaim`,
+not acknowledgment prose.
 Handle operator direction before allocator work; capture durable new work
 before returning to the allocator only when its substance warrants a separate
 deliverable.
