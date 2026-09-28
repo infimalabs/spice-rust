@@ -121,26 +121,130 @@ pub(crate) fn capacity_summary(generation: &QuotaGeneration) -> String {
     let Some(snapshot) = generation.last_good.as_ref() else {
         return present(generation).condition.label().to_owned();
     };
-    let Some((remaining, accounts)) = snapshot
-        .capacity
+    let (remaining, capacity) = snapshot
+        .reports
         .iter()
-        .flat_map(|provider| &provider.windows)
-        .try_fold((0.0, 0_u64), |(remaining, accounts), window| {
-            let window_remaining = window.remaining_accounts.parse::<f64>().ok()?;
-            if !window_remaining.is_finite() {
-                return None;
-            }
-            Some((
-                remaining + window_remaining,
-                accounts.checked_add(window.accounts)?,
-            ))
+        .filter_map(|report| {
+            let remaining = binding_remaining_fraction(report)?;
+            let capacity = plan_capacity_units(report);
+            Some((remaining * capacity, capacity))
         })
-        .filter(|(_, accounts)| *accounts > 0)
-    else {
+        .fold((0.0, 0.0), |(remaining, capacity), account| {
+            (remaining + account.0, capacity + account.1)
+        });
+    if capacity == 0.0 {
         return "No provider capacity reported".to_owned();
-    };
-    let percentage = (remaining * 100.0 / accounts as f64).clamp(0.0, 100.0);
+    }
+    let percentage = (remaining * 100.0 / capacity).clamp(0.0, 100.0);
     format!("{percentage:.0}% remaining")
+}
+
+fn binding_remaining_fraction(report: &wire::QuotaReport) -> Option<f64> {
+    report
+        .limits
+        .iter()
+        .filter(|limit| limit.scope.shared == Some(true))
+        .filter_map(limit_remaining_fraction)
+        .reduce(f64::min)
+        .or_else(|| {
+            report
+                .limits
+                .iter()
+                .filter_map(limit_remaining_fraction)
+                .reduce(f64::min)
+        })
+}
+
+fn limit_remaining_fraction(limit: &wire::QuotaLimit) -> Option<f64> {
+    let amount = &limit.amount;
+    parse_quantity(amount.remaining_fraction.as_ref())
+        .or_else(|| parse_quantity(amount.used_fraction.as_ref()).map(|used| 1.0 - used))
+        .or_else(|| {
+            let remaining = parse_quantity(amount.remaining.as_ref())?;
+            let limit = parse_quantity(amount.limit.as_ref())?;
+            (limit > 0.0).then_some(remaining / limit)
+        })
+        .filter(|fraction| fraction.is_finite())
+        .map(|fraction| fraction.clamp(0.0, 1.0))
+}
+
+fn parse_quantity(value: Option<&String>) -> Option<f64> {
+    value?.parse::<f64>().ok().filter(|value| value.is_finite())
+}
+
+fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
+    const FREE: f64 = 0.2;
+    const BASELINE: f64 = 1.0;
+    const LOWER_PRO: f64 = 5.0;
+    const HIGH_PRO: f64 = 20.0;
+
+    let Some(plan) = report.account.plan_type.as_deref().map(str::trim) else {
+        return BASELINE;
+    };
+    if plan_matches(
+        plan,
+        &[
+            "20x",
+            "max20",
+            "max20x",
+            "max_20x",
+            "max-20x",
+            "max 20x",
+            "pro20",
+            "pro20x",
+            "pro_20x",
+            "pro-20x",
+            "pro 20x",
+            "chatgpt_pro_20x",
+        ],
+    ) {
+        return HIGH_PRO;
+    }
+    if plan_matches(plan, &["free", "chatgpt_free", "go", "chatgpt_go"]) {
+        return FREE;
+    }
+    if plan_matches(
+        plan,
+        &[
+            "5x",
+            "max",
+            "max5",
+            "max5x",
+            "max_5x",
+            "max-5x",
+            "max 5x",
+            "pro5",
+            "pro5x",
+            "pro_5x",
+            "pro-5x",
+            "pro 5x",
+            "chatgpt_pro_5x",
+        ],
+    ) {
+        return LOWER_PRO;
+    }
+    if report.provider.eq_ignore_ascii_case("openai-codex")
+        && plan_matches(
+            plan,
+            &[
+                "pro",
+                "chatgpt_pro",
+                "prolite",
+                "pro_lite",
+                "pro-lite",
+                "pro lite",
+            ],
+        )
+    {
+        return LOWER_PRO;
+    }
+    BASELINE
+}
+
+fn plan_matches(plan: &str, candidates: &[&str]) -> bool {
+    candidates
+        .iter()
+        .any(|candidate| plan.eq_ignore_ascii_case(candidate))
 }
 #[cfg(test)]
 mod tests {
@@ -178,7 +282,7 @@ mod tests {
     }
 
     #[test]
-    fn mixed_provider_capacity_is_weighted_by_account_equivalents() {
+    fn aggregate_uses_plan_capacity_and_each_accounts_binding_window() {
         let generation = QuotaGeneration {
             generation: 4,
             refreshing: false,
@@ -189,36 +293,66 @@ mod tests {
                 exit_code: None,
             }),
         };
-        assert_eq!(capacity_summary(&generation), "80% remaining");
+        assert_eq!(capacity_summary(&generation), "14% remaining");
         assert_eq!(present(&generation).condition, Condition::StaleLastGood);
     }
+
     fn snapshot() -> wire::QuotaSnapshot {
         wire::QuotaSnapshot {
             generated_at_ms: 10,
-            reports: Vec::new(),
+            reports: vec![
+                report("openai-codex", Some("free"), &["1"]),
+                report("anthropic", None, &["1"]),
+                report("openai-codex", Some("pro"), &["0.9", "0.5"]),
+                report("openai-codex", Some("pro_20x"), &["0"]),
+            ],
             accounts_without_usage: Vec::new(),
             disabled_credentials: Vec::new(),
-            capacity: vec![
-                wire::QuotaProviderCapacity {
-                    provider: "anthropic".to_owned(),
-                    windows: vec![capacity("five-hour", 1, "0.5", "0.5")],
-                },
-                wire::QuotaProviderCapacity {
-                    provider: "openai-codex".to_owned(),
-                    windows: vec![capacity("seven-day", 3, "0.3", "2.7")],
-                },
-            ],
+            capacity: Vec::new(),
         }
     }
 
-    fn capacity(window: &str, accounts: u64, used: &str, remaining: &str) -> wire::QuotaCapacity {
-        wire::QuotaCapacity {
-            window: window.to_owned(),
-            duration_ms: None,
-            meter: None,
-            accounts,
-            used_accounts: used.to_owned(),
-            remaining_accounts: remaining.to_owned(),
+    fn report(
+        provider: &str,
+        plan_type: Option<&str>,
+        remaining_fractions: &[&str],
+    ) -> wire::QuotaReport {
+        let mut account = wire::QuotaAccount::default();
+        account.plan_type = plan_type.map(ToOwned::to_owned);
+        wire::QuotaReport {
+            provider: provider.to_owned(),
+            fetched_at_ms: 10,
+            account,
+            limits: remaining_fractions
+                .iter()
+                .enumerate()
+                .map(|(index, remaining)| wire::QuotaLimit {
+                    id: format!("{provider}:{index}"),
+                    label: format!("Window {index}"),
+                    scope: wire::QuotaScope {
+                        provider: provider.to_owned(),
+                        account_id: None,
+                        project_id: None,
+                        org_id: None,
+                        model_id: None,
+                        tier: None,
+                        window_id: Some(format!("window-{index}")),
+                        shared: Some(true),
+                        shared_group: None,
+                    },
+                    window: None,
+                    amount: wire::QuotaAmount {
+                        used: None,
+                        limit: None,
+                        remaining: None,
+                        used_fraction: None,
+                        remaining_fraction: Some((*remaining).to_owned()),
+                        unit: "percent".to_owned(),
+                    },
+                    status: None,
+                })
+                .collect(),
+            reset_credits: None,
         }
     }
 }
