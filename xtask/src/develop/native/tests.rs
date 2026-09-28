@@ -314,6 +314,7 @@ fn serve_bootstraps(
                     canvas: wire::CanvasVersion::CURRENT,
                     app: Digest::compute(wire::Domain::DistInventory, b"fixture app"),
                 },
+                operator_gravatar: None,
             };
             let body = wire::encode(&bootstrap).expect("fixture bootstrap encodes");
             let (mut stream, _) = listener.accept().expect("bootstrap connection arrives");

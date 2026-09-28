@@ -32,8 +32,8 @@ pub struct CanvasVersion(pub u32);
 impl CanvasVersion {
     /// The one Canvas protocol this build speaks.
     ///
-    /// Version 8 retires the operator-direction stream subject.
-    pub const CURRENT: Self = Self(8);
+    /// Version 9 carries the operator's optional Gravatar hash in the bootstrap.
+    pub const CURRENT: Self = Self(9);
 
     /// True when this is the Canvas protocol this build speaks.
     #[must_use]
@@ -91,6 +91,74 @@ pub struct CanvasBootstrap {
     pub epoch: CanonicalUuid,
     /// Product and build identity served at this bootstrap boundary.
     pub version: crate::reply::Version,
+    /// Gravatar hash of the repository's configured Git `user.email`.
+    ///
+    /// Absent when no nonempty `user.email` is configured; the address itself
+    /// never crosses.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub operator_gravatar: Option<GravatarHash>,
+}
+
+/// Gravatar's SHA-256 identity for one trimmed, lower-cased email address.
+///
+/// This is Gravatar's external key, not a WIRE [`crate::Digest`]: it is plain
+/// SHA-256 with no domain tag, spelled as 64 lowercase hexadecimal digits.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GravatarHash(String);
+
+impl GravatarHash {
+    /// Character length of the one admitted spelling.
+    const SPELLING_LEN: usize = 64;
+
+    /// The hash as Gravatar's avatar path spells it.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// A Gravatar hash that is not 64 lowercase hexadecimal digits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GravatarHashError;
+
+impl std::fmt::Display for GravatarHashError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Gravatar hash must be 64 lowercase hexadecimal digits")
+    }
+}
+
+impl std::error::Error for GravatarHashError {}
+
+impl std::str::FromStr for GravatarHash {
+    type Err = GravatarHashError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let admitted = text.len() == Self::SPELLING_LEN
+            && text
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'));
+        admitted
+            .then(|| Self(text.to_owned()))
+            .ok_or(GravatarHashError)
+    }
+}
+
+impl Serialize for GravatarHash {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for GravatarHash {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        String::deserialize(deserializer)?
+            .parse()
+            .map_err(serde::de::Error::custom)
+    }
 }
 
 /// Browser-safe speech path resolved for one admitted agent worktree.

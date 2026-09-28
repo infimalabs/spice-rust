@@ -64,6 +64,7 @@ async fn start_surface<'a>(
     epoch: CanonicalUuid,
     residency: &ResidencyHead,
     config: &SurfaceConfig,
+    operator_gravatar: Option<wire::GravatarHash>,
     launch: SurfaceLaunch<'a>,
 ) -> CommandResult<StartedSurface<'a>> {
     let operator = new_uuid();
@@ -88,7 +89,8 @@ async fn start_surface<'a>(
         app,
         config.speech.clone(),
     )
-    .with_speech_resolver(move |worktree| speech_paths.speech_for_worktree(worktree));
+    .with_speech_resolver(move |worktree| speech_paths.speech_for_worktree(worktree))
+    .with_operator_gravatar(operator_gravatar);
     let quote_presenter =
         spice::quote::presenter(paths.tape.clone(), bus.reader(), quote_agent_prose);
     let (server, control) = canvas::axum::Server::bind_streaming(
@@ -176,6 +178,26 @@ fn runtimes<'a>(
     )
 }
 
+/// Gravatar hash of the repository's configured `user.email`, absent when unset or blank.
+fn operator_gravatar(repository: &Repository) -> CommandResult<Option<wire::GravatarHash>> {
+    use sha2::{Digest as _, Sha256};
+
+    let git = gix::open(repository.worktree_root()).map_err(|error| {
+        environment_fault("canvas::operator-identity-unavailable", &error.to_string())
+    })?;
+    let Some(email) = git.config_snapshot().string("user.email") else {
+        return Ok(None);
+    };
+    let email = email.trim_ascii().to_ascii_lowercase();
+    if email.is_empty() {
+        return Ok(None);
+    }
+    let hash = format!("{:x}", Sha256::digest(&email))
+        .parse()
+        .expect("a SHA-256 lowercase hex spelling is a Gravatar hash");
+    Ok(Some(hash))
+}
+
 pub(super) async fn run_surface(
     bus: &Bus,
     repository: &Repository,
@@ -197,6 +219,7 @@ pub(super) async fn run_surface(
     } else {
         None
     };
+    let emblem = operator_gravatar(repository)?;
     let StartedSurface {
         capabilities,
         discovery,
@@ -206,7 +229,7 @@ pub(super) async fn run_surface(
         mut server_task,
         message_publisher,
         progress,
-    } = start_surface(bus, paths, epoch, residency.body(), config, launch).await?;
+    } = start_surface(bus, paths, epoch, residency.body(), config, emblem, launch).await?;
     let channels = capture::channels();
     let mut supervisor_reports = capture::SupervisorReports::bind(paths)?;
     lane_surface::restore_seats(bus, paths, epoch, seats, progress)?;

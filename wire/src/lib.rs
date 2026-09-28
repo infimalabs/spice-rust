@@ -91,7 +91,8 @@ pub use head::{
     WorkflowHead,
 };
 pub use hello::{
-    Accepted, CanvasBootstrap, CanvasVersion, Hello, Rejected, SpeechPlayback, SpeechRequest,
+    Accepted, CanvasBootstrap, CanvasVersion, GravatarHash, GravatarHashError, Hello, Rejected,
+    SpeechPlayback, SpeechRequest,
 };
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
 pub use media::{AgentMediaReference, Media, MediaError};

@@ -291,6 +291,7 @@ struct SurfaceState {
     version: wire::Version,
     app: crate::AppSource,
     speech: SpeechResolver,
+    operator_gravatar: Option<wire::GravatarHash>,
     speech_slot: Semaphore,
     history: history::HistoryLimits,
     admission: Mutex<Admission>,
@@ -639,7 +640,7 @@ pub struct Server {
     state: Arc<SurfaceState>,
 }
 
-/// Identity, capabilities, app, and speech resolver for one server generation.
+/// Identity, capabilities, app, speech resolver, and operator emblem for one server generation.
 #[derive(Debug)]
 pub struct Generation {
     epoch: wire::CanonicalUuid,
@@ -647,6 +648,7 @@ pub struct Generation {
     version: wire::Version,
     app: crate::AppSource,
     speech: SpeechResolver,
+    operator_gravatar: Option<wire::GravatarHash>,
 }
 
 impl Generation {
@@ -666,6 +668,7 @@ impl Generation {
             version,
             app,
             speech: SpeechResolver::new(move |_| Ok(fallback.clone())),
+            operator_gravatar: None,
         }
     }
 
@@ -676,6 +679,13 @@ impl Generation {
         resolve: impl Fn(&str) -> Result<crate::SpeechConfig, String> + Send + Sync + 'static,
     ) -> Self {
         self.speech = SpeechResolver::new(resolve);
+        self
+    }
+
+    /// Publish the operator's Gravatar hash through every bootstrap of this generation.
+    #[must_use]
+    pub fn with_operator_gravatar(mut self, operator_gravatar: Option<wire::GravatarHash>) -> Self {
+        self.operator_gravatar = operator_gravatar;
         self
     }
 }
@@ -743,6 +753,7 @@ impl Server {
             version,
             app,
             speech,
+            operator_gravatar,
         } = generation;
         if !requested.ip().is_loopback() && !access.allows_non_loopback() {
             return Err(std::io::Error::new(
@@ -779,6 +790,7 @@ impl Server {
                     version,
                     app,
                     speech,
+                    operator_gravatar,
                     speech_slot: Semaphore::new(1),
                     history: history::HistoryLimits::new(),
                     admission: Mutex::new(Admission::Open),
@@ -1175,7 +1187,8 @@ fn browser_content_security_policy(script_hashes: &[&str]) -> String {
         .map(|hash| format!(" 'sha256-{hash}'"))
         .collect::<String>();
     format!(
-        "default-src 'self'; connect-src 'self' ws:; img-src 'self' data:; object-src 'none'; \
+        "default-src 'self'; connect-src 'self' ws:; img-src 'self' data: https://gravatar.com; \
+         object-src 'none'; \
          script-src 'self' 'wasm-unsafe-eval'{script_hashes}; style-src 'self'; \
          media-src 'self' blob:; base-uri 'none'; frame-ancestors 'none'"
     )
