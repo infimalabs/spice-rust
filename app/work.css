@@ -30,7 +30,7 @@
   gap: 8px 12px;
   margin: 0 -2px 12px;
   padding: 10px 2px;
-  border-bottom: var(--canvas-edge);
+  border-bottom: var(--canvas-edge-soft);
   background: var(--page);
 }
 .work-board-header h2 {
@@ -285,7 +285,7 @@
    a quiet heading, and a body that eases open and closed. */
 .work-history {
   margin-top: 22px;
-  border-top: var(--canvas-edge);
+  border-top: var(--canvas-edge-soft);
   interpolate-size: allow-keywords;
 }
 .work-history::details-content {
@@ -446,7 +446,7 @@
   height: 100%;
   overflow: auto;
   border: 0;
-  border-left: var(--canvas-edge);
+  border-left: var(--canvas-control-edge);
   background: color-mix(in srgb, var(--panel) 96%, var(--page));
   opacity: 0;
   transform: translateX(1.25rem);
@@ -475,7 +475,7 @@
   justify-content: space-between;
   gap: 20px;
   padding: 18px 22px;
-  border-bottom: var(--canvas-edge);
+  border-bottom: var(--canvas-control-edge);
   background: color-mix(in srgb, var(--panel) 94%, transparent);
   backdrop-filter: blur(12px);
 }
@@ -598,7 +598,7 @@
 }
 .work-note-card header { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .68rem; }
 .work-note-card p { margin: 7px 0 0; white-space: pre-wrap; }
-.work-note-composer { margin-top: 14px; padding-top: 14px; border-top: var(--canvas-edge); }
+.work-note-composer { margin-top: 14px; padding-top: 14px; border-top: var(--canvas-edge-soft); }
 .work-note-composer textarea { min-height: 88px; }
 .work-note-pending,
 .work-note-capability { margin: 8px 0 0; color: var(--muted); font-size: .74rem; }

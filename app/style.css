@@ -627,7 +627,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 
 .section {
   padding: 22px 0;
-  border-top: var(--canvas-edge);
+  border-top: var(--canvas-edge-soft);
 }
 
 .section:first-of-type { border-top: 0; }
@@ -671,10 +671,11 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   position: relative;
   min-width: 0;
   padding: 8px 34px 9px 10px;
-  border: var(--canvas-edge);
+  border: var(--canvas-control-edge);
   border-left: 3px solid var(--accent-slot, var(--accent));
   border-radius: var(--canvas-radius-element);
   background: var(--panel);
+  box-shadow: var(--shadow);
   color: var(--muted);
   font-size: .72rem;
   line-height: 1.4;
@@ -701,7 +702,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 6px 12px;
   margin: 0 0 12px;
   padding: 10px 12px;
-  border: var(--canvas-edge);
+  border: var(--canvas-control-edge);
   border-radius: var(--canvas-radius-element);
   background: var(--control-surface-soft);
   color: var(--muted);
@@ -718,9 +719,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .quota-empty { margin: 0; color: var(--muted); font-size: .76rem; }
 .quota-simple-list li {
   padding: 10px 12px;
-  border: var(--canvas-edge);
+  border: var(--canvas-control-edge);
   border-radius: var(--canvas-radius-element);
   background: var(--panel);
+  box-shadow: var(--shadow);
 }
 .quota-account-list {
   display: grid;
@@ -730,9 +732,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 .quota-account {
   padding: 9px 12px 10px;
-  border: var(--canvas-edge);
+  border: var(--canvas-control-edge);
   border-radius: var(--canvas-radius-surface);
   background: var(--panel);
+  box-shadow: var(--shadow);
 }
 .quota-account > header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 3px 10px; }
 .quota-account > header .dash-overview-quota-age { margin-left: auto; color: var(--muted); font-size: .7rem; }
@@ -777,9 +780,10 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   align-items: center;
   gap: 16px;
   padding: 12px 16px;
-  border: var(--canvas-edge);
+  border: var(--canvas-control-edge);
   border-radius: var(--canvas-radius-surface);
   background: var(--panel);
+  box-shadow: var(--shadow);
 }
 .operator-avatar {
   display: inline-grid;
