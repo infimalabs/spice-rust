@@ -11,10 +11,9 @@ pub(super) async fn send_after_frame(
     full: bool,
     stale: crate::Stale,
 ) -> Result<(), String> {
+    send_stale(principal, writer, actions, submissions, stale).await?;
     if full {
         send_refresh(principal, writer, actions, submissions).await?;
-    } else {
-        send_stale(principal, writer, actions, submissions, stale).await?;
     }
 
     // A lane read already in flight can coalesce a causal refresh, but it
@@ -43,8 +42,8 @@ pub(super) async fn send_refresh(
     send_vendors(principal, writer, actions).await
 }
 
-/// Refresh only the current reads invalidated by one streamed fact batch.
-///
+/// Remember each invalidated current read until every older request for it has
+/// settled, then issue exactly one replacement from the websocket callback.
 pub(super) async fn send_stale(
     principal: &Principal,
     writer: &mut SocketWriter,
@@ -52,13 +51,15 @@ pub(super) async fn send_stale(
     submissions: &SubmissionHandle,
     stale: crate::Stale,
 ) -> Result<(), String> {
-    if stale.board() {
+    actions.defer_stale_current_reads(&stale);
+
+    if actions.take_ready_current_read(CurrentRead::Board) {
         send_board(principal, writer, actions).await?;
     }
-    if stale.lanes() {
+    if actions.take_ready_current_read(CurrentRead::Lanes) {
         send_lanes(principal, writer, actions, submissions).await?;
     }
-    if stale.inbox() {
+    if actions.take_ready_current_read(CurrentRead::Inbox) {
         send_inbox(principal, writer, actions, submissions).await?;
     }
     for task in stale.task_details() {

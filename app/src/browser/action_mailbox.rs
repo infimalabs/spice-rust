@@ -107,6 +107,34 @@ impl ActionQueue {
             .values()
             .any(|entry| entry.kind.current_read() == Some(read))
     }
+
+    /// Remember every current read an authoritative stream event invalidated,
+    /// including while an older request for that read is in flight.
+    pub(super) fn defer_stale_current_reads(&self, stale: &crate::Stale) {
+        let mut mailbox = self.mailbox.borrow_mut();
+        for (invalidated, read) in [
+            (stale.board(), CurrentRead::Board),
+            (stale.lanes(), CurrentRead::Lanes),
+            (stale.inbox(), CurrentRead::Inbox),
+        ] {
+            if invalidated {
+                mailbox.stale_current_reads.insert(read);
+            }
+        }
+    }
+
+    /// Consume one deferred read only when no older request can still answer.
+    pub(super) fn take_ready_current_read(&self, read: CurrentRead) -> bool {
+        let mut mailbox = self.mailbox.borrow_mut();
+        if mailbox
+            .pending
+            .values()
+            .any(|entry| entry.kind.current_read() == Some(read))
+        {
+            return false;
+        }
+        mailbox.stale_current_reads.remove(&read)
+    }
     pub(super) fn has_task_detail(&self, task: &wire::TaskStamp) -> bool {
         self.mailbox.borrow().pending.values().any(|entry| {
             matches!(&entry.kind, PendingKind::TaskDetail { task: pending } if pending == task)
@@ -161,7 +189,7 @@ pub(super) enum ActionAdmissionError {
     History,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq)]
 pub(crate) enum CurrentRead {
     Board,
     Lanes,
@@ -227,6 +255,7 @@ struct ActionMailbox {
     awaiting_topology_authority: bool,
     rebase_ready: bool,
     rebase_on_authority: bool,
+    stale_current_reads: HashSet<CurrentRead>,
 }
 
 struct QueuedAction {
@@ -761,6 +790,7 @@ impl ActionMailbox {
     }
 
     fn reconnect(&mut self) {
+        self.stale_current_reads.clear();
         if let Some(in_flight) = self.in_flight.take() {
             let index = in_flight.index.min(self.records.len());
             self.records.insert(index, in_flight.queued);
@@ -1033,6 +1063,35 @@ mod tests {
             .unwrap();
         queue.cancel_pending(pending);
         assert!(!queue.pending_contains(pending));
+    }
+
+    #[test]
+    fn streamed_invalidation_survives_an_older_current_read() {
+        let (queue, _wakes) = ActionQueue::new();
+        let pending = id(41);
+        queue
+            .reserve_pending(pending, PendingKind::Lanes { wakes: Vec::new() }, 1)
+            .expect("older lane read reserves");
+
+        let mut stale = crate::Stale::default();
+        stale.widen(wire::FactKind::LaneExited);
+        queue.defer_stale_current_reads(&stale);
+        assert!(
+            !queue.take_ready_current_read(CurrentRead::Lanes),
+            "an older reply cannot satisfy the later stream event"
+        );
+
+        queue
+            .settle_pending(pending)
+            .expect("older lane read settles");
+        assert!(
+            queue.take_ready_current_read(CurrentRead::Lanes),
+            "settling the older reply releases one authoritative re-read"
+        );
+        assert!(
+            !queue.take_ready_current_read(CurrentRead::Lanes),
+            "the refresh debt is consumed exactly once"
+        );
     }
 
     #[test]
