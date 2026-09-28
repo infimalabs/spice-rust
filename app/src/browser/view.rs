@@ -407,7 +407,7 @@ pub(super) fn render_axis(
 ) -> Html {
     match axis {
         Axis::Flow => render_flow(render, work),
-        Axis::Topology => render_topology(render.surface),
+        Axis::Topology => render_topology(render),
     }
 }
 
@@ -490,8 +490,8 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
     })
 }
 
-pub(super) fn render_topology(surface: &SurfaceData) -> Html {
-    let surface = surface.read();
+pub(super) fn render_topology(render: &CanvasRender<'_>) -> Html {
+    let surface = render.surface.read();
     let Some(runtime) = surface.as_ref() else {
         return empty("No admitted topology is available.");
     };
@@ -504,67 +504,73 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
             </>
         };
     };
-    let group_count = lanes.lanes.len();
-    let agent_count = lanes
-        .lanes
+    // The same join the chat's lane tiles read, over answers already held.
+    let waiting = runtime
+        .inbox()
+        .map(|inbox| inbox.lanes.as_slice())
+        .unwrap_or(&[]);
+    let tasks = runtime
+        .board()
+        .map(|board| board.tasks.as_slice())
+        .unwrap_or(&[]);
+    let mut standings = crate::watchband::standings(&lanes.lanes, waiting, tasks);
+    for standing in &mut standings {
+        standing.pending = member_pending(waiting, &render.submissions.status, standing.lane);
+    }
+    let live = standings
         .iter()
-        .map(|team| team.members.len())
-        .sum::<usize>();
-    let occupant_count = lanes
-        .lanes
-        .iter()
-        .flat_map(|team| &team.members)
-        .filter(|member| member.occupant.is_some())
+        .filter(|standing| standing.thread.is_some())
         .count();
-    let worktree_count = lanes
-        .lanes
+    let holding = standings
         .iter()
-        .flat_map(|team| &team.members)
-        .map(|member| member.worktree.as_str())
-        .collect::<std::collections::BTreeSet<_>>()
-        .len();
-    let vendor_count = lanes
-        .lanes
+        .filter(|standing| standing.handle.is_some())
+        .count();
+    let pending = standings
         .iter()
-        .flat_map(|team| &team.members)
-        .map(|member| member.vendor.as_str())
-        .collect::<std::collections::BTreeSet<_>>()
-        .len();
+        .map(|standing| standing.pending)
+        .sum::<usize>();
+    let (teams, solos): (Vec<_>, Vec<_>) = lanes.lanes.iter().partition(|team| team.teamed());
+    let totals = [
+        topology_count(standings.len(), "agent", "agents"),
+        topology_count(teams.len(), "team", "teams"),
+        format!("{live} live"),
+        topology_count(holding, "holding a task", "holding tasks"),
+        format!("{pending} pending"),
+    ]
+    .join(" · ");
     let quota = quota::render_dash(Some(runtime));
     html! {
         <>
             {operator}
             {quota}
-            <section class="section dash-overview-topology-section">
-            <div class="section-heading">
-                <div>
-                    <h2>{"Resident topology"}</h2>
-                    <p class="dash-overview-section-copy">
-                        {"Resident groups contain independently steerable agent lanes."}
-                    </p>
+            <section class="section dash-overview-topology-section" aria-labelledby="resident-topology-heading">
+                <div class="section-heading">
+                    <h2 id="resident-topology-heading">{"Resident topology"}</h2>
+                    <span class="section-count">{totals}</span>
                 </div>
-                <span class="section-count">{
-                    format!(
-                        "{} across {}",
-                        topology_count(agent_count, "agent lane", "agent lanes"),
-                        topology_count(group_count, "group", "groups"),
-                    )
-                }</span>
-            </div>
-            <div class="dash-overview-summary" aria-label="Resident topology totals">
-                {topology_stat(group_count, "Group", "Groups")}
-                {topology_stat(agent_count, "Agent lane", "Agent lanes")}
-                {topology_stat(occupant_count, "Occupant", "Occupants")}
-                {topology_stat(worktree_count, "Worktree", "Worktrees")}
-                {topology_stat(vendor_count, "Vendor", "Vendors")}
-            </div>
-            if lanes.lanes.is_empty() {
-                {empty("No agent lanes are connected.")}
-            } else {
-                <div class="dash-overview-topology-groups">
-                    {for lanes.lanes.iter().map(render_topology_group)}
-                </div>
-            }
+                if lanes.lanes.is_empty() {
+                    {empty("No agent lanes are connected.")}
+                } else {
+                    <div class="dash-overview-topology-groups">
+                        {for teams.iter().map(|team| {
+                            let host = team.host().map_or("Empty", |member| {
+                                crate::watchband::agent_message_label(&member.worktree, member.name.as_deref())
+                            });
+                            render_topology_group(
+                                format!("{host} team"),
+                                Some(team.lane),
+                                team_agents(team, &standings).collect(),
+                            )
+                        })}
+                        if !solos.is_empty() {
+                            {render_topology_group(
+                                "Independent".to_owned(),
+                                None,
+                                solos.iter().flat_map(|team| team_agents(team, &standings)).collect(),
+                            )}
+                        }
+                    </div>
+                }
             </section>
         </>
     }
@@ -647,125 +653,83 @@ fn topology_count(count: usize, singular: &str, plural: &str) -> String {
     format!("{count} {}", if count == 1 { singular } else { plural })
 }
 
-fn topology_stat(count: usize, singular: &str, plural: &str) -> Html {
-    html! {
-        <div class="dash-overview-stat">
-            <strong>{count}</strong>
-            <span>{if count == 1 { singular } else { plural }}</span>
-        </div>
-    }
+/// A lane's members paired with their joined standings, in member order.
+fn team_agents<'a>(
+    team: &'a crate::runtime::LaneRow,
+    standings: &'a [crate::watchband::Standing],
+) -> impl Iterator<
+    Item = (
+        &'a crate::runtime::LaneMember,
+        &'a crate::watchband::Standing,
+    ),
+> {
+    team.members.iter().zip(
+        standings
+            .iter()
+            .filter(move |standing| standing.team == team.lane),
+    )
 }
 
-fn render_topology_group(team: &crate::runtime::LaneRow) -> Html {
-    let identity = team.lane.to_string();
-    let host = team.host();
-    let host_label = host
-        .map(|member| {
-            crate::watchband::agent_message_label(&member.worktree, member.name.as_deref())
-        })
-        .unwrap_or("Empty");
-    let teamed = team.teamed();
-    let heading = if teamed {
-        format!("{host_label} team")
-    } else {
-        host_label.to_owned()
-    };
-    html! {
-        <article
-            class="dash-overview-topology-group"
-            data-topology-group={identity.clone()}
-            data-group-kind={if teamed { "team" } else { "independent" }}
-        >
-            <header class="dash-overview-group-heading">
-                <div>
-                    <span class="dash-overview-group-kind">
-                        {if teamed { "Team" } else { "Independent lane" }}
-                    </span>
-                    <h3>{heading}</h3>
-                    <code
-                        class="dash-overview-identity"
-                        title={identity.clone()}
-                        aria-label={format!("Group identity {identity}")}
-                        tabindex="0"
-                    >{format!("Group {}", short(&identity))}</code>
-                </div>
-                <span class="dash-overview-group-count">
-                    {topology_count(team.members.len(), "agent lane", "agent lanes")}
-                </span>
-            </header>
-            <div class="dash-overview-agent-list">
-                {for team.members.iter().map(render_topology_agent)}
-            </div>
-        </article>
-    }
-}
-
-fn render_topology_agent(member: &crate::runtime::LaneMember) -> Html {
-    let label = crate::watchband::agent_message_label(&member.worktree, member.name.as_deref());
-    let lane = member.lane.to_string();
-    let status = member.status(0);
-    let (occupant, occupant_title) = member.occupant.map_or_else(
-        || {
-            (
-                "Vacant".to_owned(),
-                "No occupant is currently seated".to_owned(),
-            )
-        },
-        |occupant| {
-            let identity = occupant.to_string();
-            (short(&identity), identity)
-        },
-    );
-    let vendor = member.model.as_ref().map_or_else(
-        || member.vendor.to_string(),
-        |model| format!("{} · {model}", member.vendor),
-    );
+/// One team, or every independent lane together, as a titled run of tiles.
+fn render_topology_group(
+    heading: String,
+    team: Option<CanonicalUuid>,
+    agents: Vec<(&crate::runtime::LaneMember, &crate::watchband::Standing)>,
+) -> Html {
     html! {
         <section
+            class="dash-overview-topology-group"
+            data-topology-group={team.map(|team| team.to_string())}
+            data-group-kind={if team.is_some() { "team" } else { "independent" }}
+        >
+            <h3 title={team.map(|team| format!("Group {team}"))}>
+                {heading}
+                <span>{topology_count(agents.len(), "agent", "agents")}</span>
+            </h3>
+            <div class="dash-overview-agent-list">
+                {for agents.into_iter().map(|(member, standing)| render_topology_agent(member, standing))}
+            </div>
+        </section>
+    }
+}
+
+/// One lane in the chat's tile language: accent-dealt name, presence, the
+/// "pending, liveness" line, the held task, kept jobs, and the vendor emblem.
+/// Every row is always drawn so a tile's geometry never follows its data.
+fn render_topology_agent(
+    member: &crate::runtime::LaneMember,
+    standing: &crate::watchband::Standing,
+) -> Html {
+    debug_assert_eq!(member.lane, standing.lane, "standings keep member order");
+    let status = member.status(standing.pending);
+    let branch = crate::watchband::agent_message_label(&standing.worktree, None);
+    let lane = standing.lane.to_string();
+    html! {
+        <article
             class="dash-overview-agent"
+            data-accent={standing.accent.to_string()}
             data-agent-lane={lane.clone()}
             data-lane-status={status.key()}
+            title={format!("Lane {lane}\nGroup {}", standing.team)}
         >
-            <header class="dash-overview-agent-heading">
-                <div>
-                    <span class="dash-overview-agent-kind">{"Agent"}</span>
-                    <h4>{label}</h4>
-                </div>
-                <span class={classes!("dash-overview-agent-standing", status.key())}>
-                    {status.label()}
-                </span>
+            <header>
+                {render_member_presence(status)}
+                <strong>{standing.label.clone()}</strong>
+                if standing.label != branch {
+                    <span title={standing.worktree.clone()}>{branch.to_owned()}</span>
+                }
             </header>
-            <p class="dash-overview-agent-worktree" title={member.worktree.clone()}>
-                {member.worktree.clone()}
-            </p>
-            <dl class="dash-overview-agent-facts">
-                <div>
-                    <dt>{"Agent lane"}</dt>
-                    <dd><code
-                        class="dash-overview-identity"
-                        title={lane.clone()}
-                        aria-label={format!("Agent lane identity {lane}")}
-                        tabindex="0"
-                    >{short(&lane)}</code></dd>
-                </div>
-                <div>
-                    <dt>{"Occupant"}</dt>
-                    <dd><code
-                        class="dash-overview-identity"
-                        title={occupant_title.clone()}
-                        aria-label={format!("Occupant {occupant_title}")}
-                        tabindex="0"
-                    >{occupant}</code></dd>
-                </div>
-                <div>
-                    <dt>{"Standing"}</dt>
-                    <dd title={member.disposition.clone()}>{member.disposition.clone()}</dd>
-                </div>
-                <div>
-                    <dt>{"Vendor"}</dt>
-                    <dd title={vendor.clone()}>{vendor}</dd>
-                </div>
-            </dl>
-        </section>
+            <p>{format!("{} pending, {}", standing.pending, standing.liveness.as_str())}</p>
+            <p class="dash-overview-agent-task" title={standing.task_title.clone()}>{
+                match (&standing.handle, &standing.phase) {
+                    (Some(handle), Some(phase)) => format!("{handle}, {phase}"),
+                    (Some(handle), None) => handle.clone(),
+                    (None, _) => "\u{a0}".to_owned(),
+                }
+            }</p>
+            <p>{crate::watchband::jobs_kept(&standing.jobs).unwrap_or_else(|| "\u{a0}".to_owned())}</p>
+            <p class="dash-overview-agent-model">{standing.model.clone().unwrap_or_else(|| standing.vendor.clone())}</p>
+            {super::watchband::render_composer_vendor_icon(standing)}
+        </article>
     }
 }
