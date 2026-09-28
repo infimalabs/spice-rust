@@ -142,7 +142,6 @@ pub(crate) fn capacity_summary(generation: &QuotaGeneration) -> String {
     let percentage = (remaining * 100.0 / accounts as f64).clamp(0.0, 100.0);
     format!("{percentage:.0}% remaining")
 }
-
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
@@ -193,7 +192,6 @@ mod tests {
         assert_eq!(capacity_summary(&generation), "80% remaining");
         assert_eq!(present(&generation).condition, Condition::StaleLastGood);
     }
-
     fn snapshot() -> wire::QuotaSnapshot {
         wire::QuotaSnapshot {
             generated_at_ms: 10,

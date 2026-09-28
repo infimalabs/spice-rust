@@ -1,34 +1,6 @@
 use super::*;
 use crate::browser::clock::Age;
 
-pub(super) fn render_chrome(runtime: Option<&CanvasRuntime>) -> Html {
-    let Some(generation) = runtime.and_then(CanvasRuntime::quota) else {
-        return Html::default();
-    };
-    let presentation = crate::quota::present(generation);
-    let capacity = crate::quota::capacity_summary(generation);
-    let title = format!(
-        "Provider quota: {capacity}. {}. {}",
-        presentation.condition.label(),
-        presentation.detail
-    );
-    html! {
-        <div
-            class="quota-chrome"
-            role="status"
-            aria-label={title.clone()}
-            title={title}
-            data-quota-state={presentation.condition.key()}
-        >
-            <span class="quota-chrome-capacity">{capacity}</span>
-            <span class="quota-chrome-state">{presentation.condition.label()}</span>
-            if let Some(sampled_at) = presentation.sampled_at_ms {
-                <Age authored={sampled_at} class={classes!("quota-chrome-age")} title="Age of retained successful quota data" />
-            }
-        </div>
-    }
-}
-
 pub(super) fn render_info(runtime: Option<&CanvasRuntime>) -> Html {
     let Some(generation) = runtime.and_then(CanvasRuntime::quota) else {
         return section_unavailable();
