@@ -143,16 +143,23 @@ fn binding_remaining_fraction(report: &wire::QuotaReport) -> Option<f64> {
     report
         .limits
         .iter()
-        .filter(|limit| limit.scope.shared == Some(true))
+        .filter(|limit| limit.scope.shared == Some(true) && is_weekly_limit(limit))
         .filter_map(limit_remaining_fraction)
         .reduce(f64::min)
-        .or_else(|| {
-            report
-                .limits
-                .iter()
-                .filter_map(limit_remaining_fraction)
-                .reduce(f64::min)
-        })
+}
+
+fn is_weekly_limit(limit: &wire::QuotaLimit) -> bool {
+    const WEEK_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+
+    limit.window.as_ref().is_some_and(|window| {
+        window.duration_ms == Some(WEEK_MS) || is_weekly_id(window.id.as_str())
+    }) || limit.scope.window_id.as_deref().is_some_and(is_weekly_id)
+}
+
+fn is_weekly_id(id: &str) -> bool {
+    ["7d", "7-day", "7-days", "weekly"]
+        .iter()
+        .any(|candidate| id.eq_ignore_ascii_case(candidate))
 }
 
 fn limit_remaining_fraction(limit: &wire::QuotaLimit) -> Option<f64> {
@@ -282,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_uses_plan_capacity_and_each_accounts_binding_window() {
+    fn aggregate_uses_plan_capacity_and_only_each_accounts_weekly_window() {
         let generation = QuotaGeneration {
             generation: 4,
             refreshing: false,
@@ -298,13 +305,23 @@ mod tests {
     }
 
     fn snapshot() -> wire::QuotaSnapshot {
+        const FIVE_HOURS_MS: u64 = 5 * 60 * 60 * 1_000;
+        const WEEK_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+
         wire::QuotaSnapshot {
             generated_at_ms: 10,
             reports: vec![
-                report("openai-codex", Some("free"), &["1"]),
-                report("anthropic", None, &["1"]),
-                report("openai-codex", Some("pro"), &["0.9", "0.5"]),
-                report("openai-codex", Some("pro_20x"), &["0"]),
+                report("openai-codex", Some("free"), &[("weekly", None, "1")]),
+                report("anthropic", None, &[("provider-week", Some(WEEK_MS), "1")]),
+                report(
+                    "openai-codex",
+                    Some("pro"),
+                    &[
+                        ("5h", Some(FIVE_HOURS_MS), "0"),
+                        ("7d", Some(WEEK_MS), "0.5"),
+                    ],
+                ),
+                report("openai-codex", Some("pro_20x"), &[("7-days", None, "0")]),
             ],
             accounts_without_usage: Vec::new(),
             disabled_credentials: Vec::new(),
@@ -315,7 +332,7 @@ mod tests {
     fn report(
         provider: &str,
         plan_type: Option<&str>,
-        remaining_fractions: &[&str],
+        limits: &[(&str, Option<u64>, &str)],
     ) -> wire::QuotaReport {
         let mut account = wire::QuotaAccount::default();
         account.plan_type = plan_type.map(ToOwned::to_owned);
@@ -323,34 +340,42 @@ mod tests {
             provider: provider.to_owned(),
             fetched_at_ms: 10,
             account,
-            limits: remaining_fractions
+            limits: limits
                 .iter()
                 .enumerate()
-                .map(|(index, remaining)| wire::QuotaLimit {
-                    id: format!("{provider}:{index}"),
-                    label: format!("Window {index}"),
-                    scope: wire::QuotaScope {
-                        provider: provider.to_owned(),
-                        account_id: None,
-                        project_id: None,
-                        org_id: None,
-                        model_id: None,
-                        tier: None,
-                        window_id: Some(format!("window-{index}")),
-                        shared: Some(true),
-                        shared_group: None,
+                .map(
+                    |(index, (window_id, duration_ms, remaining))| wire::QuotaLimit {
+                        id: format!("{provider}:{index}"),
+                        label: format!("Window {index}"),
+                        scope: wire::QuotaScope {
+                            provider: provider.to_owned(),
+                            account_id: None,
+                            project_id: None,
+                            org_id: None,
+                            model_id: None,
+                            tier: None,
+                            window_id: Some((*window_id).to_owned()),
+                            shared: Some(true),
+                            shared_group: None,
+                        },
+                        window: Some(wire::QuotaWindow {
+                            id: (*window_id).to_owned(),
+                            label: format!("Window {index}"),
+                            duration_ms: *duration_ms,
+                            resets_at: None,
+                            reset_label: None,
+                        }),
+                        amount: wire::QuotaAmount {
+                            used: None,
+                            limit: None,
+                            remaining: None,
+                            used_fraction: None,
+                            remaining_fraction: Some((*remaining).to_owned()),
+                            unit: "percent".to_owned(),
+                        },
+                        status: None,
                     },
-                    window: None,
-                    amount: wire::QuotaAmount {
-                        used: None,
-                        limit: None,
-                        remaining: None,
-                        used_fraction: None,
-                        remaining_fraction: Some((*remaining).to_owned()),
-                        unit: "percent".to_owned(),
-                    },
-                    status: None,
-                })
+                )
                 .collect(),
             reset_credits: None,
         }
