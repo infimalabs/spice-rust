@@ -627,7 +627,7 @@ pub(super) fn render_operator_avatar(operator: &wire::OperatorIdentity) -> Html 
         Some(gravatar) => html! {
             <span class="operator-avatar" data-avatar-source="gravatar">
                 <img
-                    src={format!("https://gravatar.com/avatar/{}?s=128&d=retro", gravatar.as_str())}
+                    src={format!("https://gravatar.com/avatar/{}?s=160&d=retro", gravatar.as_str())}
                     alt={format!("{label} Gravatar")}
                 />
             </span>
