@@ -644,12 +644,29 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .section-count { color: var(--muted); font-size: .78rem; }
 
 .dash-overview-section-copy { margin: 4px 0 0; color: var(--muted); font-size: .78rem; }
-.dash-overview-topology-groups { display: flex; flex-wrap: wrap; gap: 14px 22px; }
-.dash-overview-topology-group { flex: 0 0 auto; min-width: 0; max-width: 100%; }
-.dash-overview-topology-group > h3 { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; font-size: .86rem; }
+/* One grid of up to four tile columns shared by every group. A group spans a
+   column per tile (data-span, capped by the renderer) and lays its tiles on
+   the shared columns, so small groups sit beside each other. Container
+   queries step the columns down with the section's own width. */
+.dash-overview-topology-section { container-type: inline-size; }
+.dash-overview-topology-groups {
+  --topology-columns: 4;
+  display: grid;
+  grid-template-columns: repeat(var(--topology-columns), minmax(0, 1fr));
+  gap: 14px 10px;
+}
+.dash-overview-topology-group,
+.dash-overview-agent-list { display: grid; grid-template-columns: subgrid; gap: 8px 10px; min-width: 0; }
+.dash-overview-topology-group { grid-column: span min(var(--group-span, 1), var(--topology-columns)); align-content: start; }
+.dash-overview-topology-group[data-span="2"] { --group-span: 2; }
+.dash-overview-topology-group[data-span="3"] { --group-span: 3; }
+.dash-overview-topology-group[data-span="4"] { --group-span: 4; }
+.dash-overview-agent-list { grid-column: 1 / -1; }
+@container (max-width: 820px) { .dash-overview-topology-groups { --topology-columns: 3; } }
+@container (max-width: 610px) { .dash-overview-topology-groups { --topology-columns: 2; } }
+@container (max-width: 400px) { .dash-overview-topology-groups { --topology-columns: 1; } }
+.dash-overview-topology-group > h3 { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: .86rem; }
 .dash-overview-topology-group > h3 span { color: var(--muted); font-size: .72rem; font-weight: 400; }
-.dash-overview-agent-list { display: flex; flex-wrap: wrap; gap: 8px; }
-.dash-overview-agent-list > .dash-overview-agent { flex: 0 0 15rem; max-width: 100%; }
 .dash-overview-agent {
   position: relative;
   min-width: 0;
