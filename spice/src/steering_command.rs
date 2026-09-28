@@ -13,7 +13,7 @@ use wire::{CanonicalUuid, Disposition, Fault, FaultClass, Outcome, Refusal};
 use crate::command_client::{SelectedCommand, execute_steering};
 
 mod codex_hook;
-mod media_projection;
+pub(crate) mod media_projection;
 #[cfg(test)]
 mod tests;
 

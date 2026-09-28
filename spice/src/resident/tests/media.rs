@@ -167,8 +167,11 @@ fn operator_media_replays_after_restart_into_the_browsable_pending_directive() {
     .expect("operator send admits");
     send_direction(&bus, epoch, &send_command, &send);
     let inbox = read_inbox(&bus, &paths, epoch, lane, test_uuid(31));
-    let rendered =
-        steer::inbox::render_pending(&steer::Key::for_identity(lane), &inbox.lanes[0].pending);
+    let rendered = steer::inbox::render_pending(
+        &steer::Key::for_identity(lane),
+        &inbox.lanes[0].pending,
+        |_, _| None,
+    );
     assert!(
         rendered.contains(&format!("directive={}", send_command.id())),
         "lane delivery lost directive causality: {rendered}",

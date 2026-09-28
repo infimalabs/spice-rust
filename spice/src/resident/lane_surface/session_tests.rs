@@ -65,6 +65,7 @@ fn paths(fixture: &Fixture) -> RuntimePaths {
         degraded: fixture.root.join("degraded"),
         tape: fixture.root.join("tape"),
         supervisors: fixture.root.join("supervisors"),
+        steering_media: fixture.root.join("steering-media"),
         stage: fixture.root.join("stage"),
     }
 }

@@ -11,7 +11,7 @@ const FILE_MODE: u32 = 0o600;
 const MAX_PROJECTION_PATH_BYTES: usize = 4096;
 
 #[derive(Clone, Debug)]
-pub(super) struct Projection {
+pub(crate) struct Projection {
     lane: CanonicalUuid,
     reference: AgentMediaReference,
     path: String,
@@ -19,7 +19,7 @@ pub(super) struct Projection {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Record {
+pub(crate) struct Record {
     directive: CanonicalUuid,
     ordinal: u8,
     digest: Digest,
@@ -41,11 +41,11 @@ struct RenderedProjection<'a> {
 }
 
 impl Projection {
-    pub(super) const fn reference(&self) -> &AgentMediaReference {
+    pub(crate) const fn reference(&self) -> &AgentMediaReference {
         &self.reference
     }
 
-    pub(super) fn encoded(&self) -> Result<Vec<u8>, String> {
+    pub(crate) fn encoded(&self) -> Result<Vec<u8>, String> {
         wire::encode(&RenderedProjection {
             lane: self.lane,
             directive: self.reference.directive(),
@@ -60,7 +60,7 @@ impl Projection {
     }
 }
 
-pub(super) fn reconcile(
+pub(crate) fn reconcile(
     lane: CanonicalUuid,
     pending: &[wire::intent::PendingDirective],
     retained: &mut Vec<Record>,
@@ -142,6 +142,28 @@ fn reconcile_retention(
         desired.extend(still_owned);
     }
     Ok(())
+}
+
+/// Retires every projection an earlier occupant left under `lane`.
+///
+/// A lane has one occupant at a time, so a new occupant owns no path its
+/// predecessor advertised; this is the occupant boundary the shell-hook route
+/// crosses through its persisted delivery row.
+pub(crate) fn retire_lane(root: &Path, lane: CanonicalUuid) -> Result<(), String> {
+    let path = root.join(lane.to_string());
+    match fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_dir() => {
+            fs::remove_dir_all(&path).map_err(|error| {
+                format!("earlier occupant steering media could not be retired: {error}")
+            })
+        }
+        Ok(_) => Err(format!(
+            "steering media lane {} is not a directory",
+            path.display(),
+        )),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!("steering media lane is unreadable: {error}")),
+    }
 }
 
 impl Record {
