@@ -110,3 +110,48 @@ fn a_positionless_lane_reply_is_not_authority() {
     assert!(!runtime.apply_lanes(&direct));
     assert!(runtime.lanes().is_none());
 }
+
+/// A lane fresh from `spice lane add` has neither occupant nor session, and
+/// the resident launches it fresh on an operator wake; only a seat that was
+/// started and lost its session is one the resident refuses to wake.
+#[test]
+fn a_never_started_vacant_lane_takes_a_wake_submission() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut response: Response<wire::intent::LaneAnswer> = wire::decode(&lane_response(&[
+        (LANE, LANE, None, false),
+        (SECOND_LANE, SECOND_LANE, None, true),
+        (THIRD_LANE, THIRD_LANE, None, false),
+    ]))
+    .expect("base lane response decodes");
+    let Outcome::Reply(reply) = &mut response.outcome else {
+        unreachable!("base lane response replies")
+    };
+    reply.body.lanes[2].lineage = vec![uuid(OPERATOR)];
+    let bytes = wire::encode(&response).expect("lane response encodes");
+    let admitted = session.admit_frame(&bytes).expect("lane response admits");
+    assert!(runtime.apply_lanes(&admitted));
+
+    let lanes = runtime.lanes().expect("lane table is retained");
+    let authority = app::watchband::SubmissionAuthority::derive(true, |_| true);
+    let target = |lane: &str| {
+        let member = lanes.member(uuid(lane)).expect("member is seated");
+        authority.target(member.occupant, member.wakeable, uuid(EPOCH))
+    };
+    assert_eq!(
+        target(LANE),
+        Some(app::watchband::SubmissionTarget::Wake),
+        "a never-started seat launches fresh"
+    );
+    assert_eq!(
+        target(SECOND_LANE),
+        Some(app::watchband::SubmissionTarget::Wake),
+        "a bound seat resumes its session"
+    );
+    assert_eq!(
+        target(THIRD_LANE),
+        None,
+        "a started seat without a session has nothing to resume"
+    );
+}

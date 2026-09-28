@@ -1296,6 +1296,7 @@ mod tests {
             disposition: "seated".to_owned(),
             liveness: wire::intent::LaneLiveness::Working,
             bound: true,
+            wakeable: true,
             jobs: Vec::new(),
         };
         let actor = Actor::Lane(lane);
