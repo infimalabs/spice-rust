@@ -32,6 +32,39 @@ struct MessageStartup {
     diagnostic: Vec<u8>,
 }
 
+struct SurfaceRuntimes {
+    timer_commits: bus::BroadcastSubscriber,
+    timers: timers::Runtime,
+    quota: quota::Runtime,
+    quota_triggers: quota::Triggers,
+    lifecycle: lifecycle::Runtime,
+    taste_adjudication: Option<taste_surface::AdjudicationRuntime>,
+}
+
+impl SurfaceRuntimes {
+    fn start(bus: &Bus, config: &SurfaceConfig) -> CommandResult<Self> {
+        let timer_commits = bus.reader().subscribe();
+        let timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
+        let mut quota = quota::Runtime::start(config.omp_binary.clone());
+        let quota_triggers = quota::Triggers::start(bus)?;
+        quota.request();
+        let lifecycle = lifecycle::Runtime::new(&config.lane);
+        let taste_adjudication = if config.judge_enabled {
+            Some(taste_surface::start_adjudication()?)
+        } else {
+            None
+        };
+        Ok(Self {
+            timer_commits,
+            timers,
+            quota,
+            quota_triggers,
+            lifecycle,
+            taste_adjudication,
+        })
+    }
+}
+
 impl SurfacePublication<'_> {
     fn publish(
         &mut self,
@@ -65,6 +98,7 @@ async fn start_surface<'a>(
     residency: &ResidencyHead,
     config: &SurfaceConfig,
     operator_gravatar: Option<wire::GravatarHash>,
+    quota: canvas::stream::QuotaFeed,
     launch: SurfaceLaunch<'a>,
 ) -> CommandResult<StartedSurface<'a>> {
     let operator = new_uuid();
@@ -99,6 +133,7 @@ async fn start_surface<'a>(
         bus.reader(),
         config.canvas.rows(),
         quote_presenter,
+        quota,
     )
     .await
     .map_err(|error| {
@@ -208,17 +243,7 @@ pub(super) async fn run_surface(
     launch: SurfaceLaunch<'_>,
 ) -> CommandResult<()> {
     let residency = current_residency(bus, epoch)?;
-    let timer_commits = bus.reader().subscribe();
-    let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
-    let mut quota = quota::Runtime::start(config.omp_binary.clone());
-    let quota_triggers = quota::Triggers::start(bus)?;
-    quota.request();
-    let mut lifecycle = lifecycle::Runtime::new(&config.lane);
-    let mut taste_adjudication = if config.judge_enabled {
-        Some(taste_surface::start_adjudication()?)
-    } else {
-        None
-    };
+    let mut backgrounds = SurfaceRuntimes::start(bus, config)?;
     let emblem = operator_gravatar(repository)?;
     let StartedSurface {
         capabilities,
@@ -229,7 +254,17 @@ pub(super) async fn run_surface(
         mut server_task,
         message_publisher,
         progress,
-    } = start_surface(bus, paths, epoch, residency.body(), config, emblem, launch).await?;
+    } = start_surface(
+        bus,
+        paths,
+        epoch,
+        residency.body(),
+        config,
+        emblem,
+        backgrounds.quota.feed(),
+        launch,
+    )
+    .await?;
     let channels = capture::channels();
     let mut supervisor_reports = capture::SupervisorReports::bind(paths)?;
     lane_surface::restore_seats(bus, paths, epoch, seats, progress)?;
@@ -246,7 +281,8 @@ pub(super) async fn run_surface(
         config,
         &reads,
     );
-    let (taste_submitter, taste_completions) = taste_adjudication
+    let (taste_submitter, taste_completions) = backgrounds
+        .taste_adjudication
         .as_mut()
         .map(taste_surface::AdjudicationRuntime::parts)
         .map_or((None, None), |(submitter, completions)| {
@@ -258,8 +294,8 @@ pub(super) async fn run_surface(
         &command_surface,
         seats,
         progress,
-        &mut timers,
-        &mut lifecycle,
+        &mut backgrounds.timers,
+        &mut backgrounds.lifecycle,
         &mut supervisor_reports,
         &mut publication,
     )
@@ -271,8 +307,8 @@ pub(super) async fn run_surface(
         bus,
         &command_surface,
         seats,
-        &mut lifecycle,
-        &mut timers,
+        &mut backgrounds.lifecycle,
+        &mut backgrounds.timers,
         &mut supervisor_reports,
         &mut control,
         &mut server_task,
@@ -307,11 +343,11 @@ pub(super) async fn run_surface(
         channels.exits,
         supervisor_reports,
         progress,
-        timers,
-        quota,
-        quota_triggers,
-        timer_commits,
-        lifecycle,
+        backgrounds.timers,
+        backgrounds.quota,
+        backgrounds.quota_triggers,
+        backgrounds.timer_commits,
+        backgrounds.lifecycle,
         inbox_deliveries,
         lifecycle_reconciliation,
     )

@@ -712,12 +712,13 @@ impl Server {
         bus: bus::BusReader,
         rows: usize,
         presenter: crate::stream::QuotePresenter,
+        quota: crate::stream::QuotaFeed,
     ) -> Result<(Self, Control), std::io::Error> {
         let epoch = generation.epoch;
         Self::bind_with_capacity(
             binding,
             generation,
-            Some(crate::stream::Source::new(bus, epoch, rows, presenter)),
+            Some(crate::stream::Source::new(bus, epoch, rows, presenter).with_quota(quota)),
             64,
         )
         .await
@@ -736,6 +737,7 @@ impl Server {
             bus,
             rows,
             crate::stream::QuotePresenter::new(|_| Vec::new()),
+            crate::stream::QuotaFeed::new(wire::QuotaGeneration::default()),
         )
         .await
     }

@@ -612,7 +612,11 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
     let operator = CanvasRuntime::new(&operator);
     assert_eq!(
         operator.subjects(),
-        vec![ViewSubject::Facts, ViewSubject::Messages]
+        vec![
+            ViewSubject::Facts,
+            ViewSubject::Messages,
+            ViewSubject::Quota,
+        ]
     );
     assert!(operator.offers(CommandKind::ConsentDecide));
 
@@ -622,6 +626,52 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
     assert_eq!(lane.subjects(), vec![ViewSubject::Facts]);
     assert!(lane.offers(CommandKind::TaskNote));
     assert!(!lane.offers(CommandKind::ConsentDecide));
+}
+
+#[test]
+fn quota_generations_replace_monotonically_and_reconnect_hydrates_current() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = CanvasRuntime::new(&accepted);
+
+    let initial = quota_frame("quota", 2);
+    assert!(
+        runtime
+            .apply_stream_frame(&admitted_stream(&session, &initial))
+            .changed()
+    );
+    assert_eq!(runtime.quota().map(|quota| quota.generation), Some(2));
+
+    let replay = quota_frame("quota-generation", 1);
+    assert!(
+        !runtime
+            .apply_stream_frame(&admitted_stream(&session, &replay))
+            .changed()
+    );
+    assert_eq!(runtime.quota().map(|quota| quota.generation), Some(2));
+
+    assert!(!runtime.reconnect(&acceptance(&session, "operator", EPOCH)));
+    let hydrated = quota_frame("quota", 3);
+    assert!(
+        runtime
+            .apply_stream_frame(&admitted_stream(&session, &hydrated))
+            .changed()
+    );
+    assert_eq!(runtime.quota().map(|quota| quota.generation), Some(3));
+}
+
+fn quota_frame(stream: &str, generation: u64) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "stream": stream,
+        "v": 1,
+        "id": REQUEST,
+        "epoch": EPOCH,
+        "generation": {
+            "generation": generation,
+            "refreshing": false,
+        },
+    }))
+    .expect("quota frame serializes")
 }
 
 /// One lane filled to its message floor beside a lane that said one thing.

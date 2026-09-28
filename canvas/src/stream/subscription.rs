@@ -1,6 +1,7 @@
 //! Admitted Canvas subscriptions and their bounded live deliveries.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use bus::{CanvasHeads, JournalCommit};
 use wire::{
@@ -43,6 +44,7 @@ pub struct Subscription {
     pub(super) catch_up: Option<CanvasHeads>,
     pub(super) rows: usize,
     pub(super) message_generation: Option<u64>,
+    pub(super) quota_generation: Option<u64>,
 }
 
 impl Subscription {
@@ -249,6 +251,30 @@ impl Subscription {
         );
     }
 
+    /// Project one newer live quota generation for operator subscriptions.
+    #[must_use]
+    pub fn quota(&self, generation: Arc<wire::QuotaGeneration>) -> Option<StreamFrame> {
+        (self.is_live()
+            && self.subjects.contains(&ViewSubject::Quota)
+            && self
+                .quota_generation
+                .is_none_or(|current| generation.generation > current))
+        .then(|| StreamFrame::QuotaGeneration {
+            v: WireVersion::CURRENT,
+            id: self.id,
+            epoch: self.epoch,
+            generation: (*generation).clone(),
+        })
+    }
+
+    /// Advance the quota watermark after its frame reached the socket.
+    pub fn admit_quota(&mut self, generation: u64) {
+        self.quota_generation = Some(
+            self.quota_generation
+                .map_or(generation, |current| current.max(generation)),
+        );
+    }
+
     /// Terminal bounded-backpressure frame, resumable after the admitted cursor.
     pub fn overflow(&self, dropped: u64) -> Result<StreamFrame, Failure> {
         let cursor = self.cursor.ok_or_else(|| {
@@ -325,10 +351,10 @@ impl Subscription {
                     packed,
                 }
             }
-            ViewSubject::Messages => {
+            ViewSubject::Messages | ViewSubject::Quota => {
                 return Err(Failure::Refusal(refusal(
-                    "stream::message-continuation-invalid",
-                    "message snapshots never carry a journal continuation",
+                    "stream::ephemeral-continuation-invalid",
+                    "ephemeral snapshots never carry a journal continuation",
                 )));
             }
         };

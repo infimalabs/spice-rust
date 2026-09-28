@@ -68,8 +68,10 @@ pub(super) fn admit_subjects(
 }
 
 pub(super) fn admit_subject(actor: &Actor, subject: ViewSubject) -> Result<(), Failure> {
-    if matches!(subject, ViewSubject::Trust | ViewSubject::Messages)
-        && !matches!(actor, Actor::Operator)
+    if matches!(
+        subject,
+        ViewSubject::Trust | ViewSubject::Messages | ViewSubject::Quota
+    ) && !matches!(actor, Actor::Operator)
     {
         return Err(Failure::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(

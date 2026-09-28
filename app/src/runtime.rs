@@ -711,6 +711,7 @@ pub struct CanvasRuntime {
     message_reconnect_pending: bool,
     /// Re-arms member-local paging after a same-scope subscription refresh.
     message_history_revision: u64,
+    quota: Option<Rc<wire::QuotaGeneration>>,
     resume: Option<StreamCursor>,
     terminal: Option<StreamTerminal>,
     activities: Vec<LaneActivity>,
@@ -744,6 +745,7 @@ impl CanvasRuntime {
             message_generation: None,
             message_reconnect_pending: false,
             message_history_revision: 0,
+            quota: None,
             resume: None,
             terminal: None,
             activities: Vec::new(),
@@ -826,6 +828,7 @@ impl CanvasRuntime {
         let mut subjects = vec![ViewSubject::Facts];
         if self.principal.actor() == &Actor::Operator {
             subjects.push(ViewSubject::Messages);
+            subjects.push(ViewSubject::Quota);
         }
         subjects
     }
@@ -985,6 +988,12 @@ impl CanvasRuntime {
     #[must_use]
     pub fn vendor_catalog(&self) -> Option<&VendorCatalogAnswer> {
         self.vendors.get(&self.principal)
+    }
+
+    /// Latest monotonic redacted provider quota generation.
+    #[must_use]
+    pub fn quota(&self) -> Option<&wire::QuotaGeneration> {
+        self.quota.as_deref()
     }
 
     /// Newest retained activity produced by any member of `team`.

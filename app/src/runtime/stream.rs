@@ -111,6 +111,10 @@ impl CanvasRuntime {
             StreamFrame::MessageGeneration { generation, .. } => {
                 self.apply_live_message_generation(generation)
             }
+            StreamFrame::Quota { generation, .. }
+            | StreamFrame::QuotaGeneration { generation, .. } => {
+                self.apply_quota_generation(generation)
+            }
             // Proof the socket answered, and nothing else. It reports no state,
             // so applying it changes none.
             StreamFrame::Pong { .. } => StreamApplication::new(Vec::new(), false),
@@ -139,6 +143,18 @@ impl CanvasRuntime {
                 StreamApplication::new(vec![StreamDirective::Reconnect], changed)
             }
         }
+    }
+
+    fn apply_quota_generation(&mut self, generation: &wire::QuotaGeneration) -> StreamApplication {
+        if self
+            .quota
+            .as_ref()
+            .is_some_and(|current| current.generation >= generation.generation)
+        {
+            return StreamApplication::new(Vec::new(), false);
+        }
+        self.quota = Some(Rc::new(generation.clone()));
+        StreamApplication::new(Vec::new(), true)
     }
 
     fn apply_fact_page(
