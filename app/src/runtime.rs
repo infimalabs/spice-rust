@@ -752,6 +752,25 @@ impl CanvasRuntime {
             review_feedback: Vec::new(),
         }
     }
+    /// Start a changed resident scope without blanking the operator's mounted
+    /// transcript while its replacement snapshots settle.
+    ///
+    /// Only two operator capabilities may share this presentation cache. A
+    /// downgrade to a lane principal starts empty, so data visible under the
+    /// old capability never crosses an authority boundary. The first message
+    /// snapshot merges by durable card identity, retaining deep history and
+    /// allocation identity while replacing content the new generation changed.
+    #[cfg(target_arch = "wasm32")]
+    pub(crate) fn rehydrate(accepted: &Admitted<Accepted>, previous: &Self) -> Self {
+        let mut next = Self::new(accepted);
+        if previous.principal.actor() == &Actor::Operator
+            && next.principal.actor() == &Actor::Operator
+        {
+            next.message_cards = previous.message_cards.clone();
+            next.message_reconnect_pending = true;
+        }
+        next
+    }
 
     /// Adopt a reconnect. Returns true when a changed capability or epoch
     /// cleared the entire runtime before the new principal can render.

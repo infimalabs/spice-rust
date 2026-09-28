@@ -938,6 +938,9 @@ html[data-command-modifier-held="true"]
   margin-bottom: var(--mosaic-gap);
   visibility: visible; pointer-events: auto;
 }
+.lane-mosaic-plane .mosaic-message-card[data-mosaic-measurement-clone="true"] {
+  visibility: hidden; pointer-events: none; transition: none;
+}
 .lane-mosaic-plane[data-lanes="2"] { --mosaic-module: 2.5rem; }
 .lane-mosaic-plane[data-lanes="1"] { --mosaic-module: 1.25rem; }
 .lane-mosaic-plane .mosaic-message-card {
