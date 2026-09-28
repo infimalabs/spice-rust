@@ -376,6 +376,8 @@ fn math_image(props: &MathImageProps) -> Html {
     let context = use_context::<Context>().expect("Canvas renderer provider");
     let host = use_node_ref();
     let state = use_state(Display::default);
+    // This callback is a render-effect dependency, even though math ignores geometry.
+    let on_geometry = use_callback((), |_, _| {});
     let counter = use_memo((), |()| Cell::new(0_u64));
     let kind = if props.display {
         RenderKind::DisplayMath
@@ -400,7 +402,7 @@ fn math_image(props: &MathImageProps) -> Html {
         source: props.source.clone(),
         kind,
         node_ids: Rc::new(Vec::new()),
-        on_geometry: Callback::from(|_| {}),
+        on_geometry,
         revision: revision.clone(),
         current_theme,
         previous: previous.clone(),
