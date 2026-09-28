@@ -1,7 +1,7 @@
 use super::*;
 use crate::browser::clock::Age;
 
-pub(super) fn render_team(runtime: Option<&CanvasRuntime>) -> Html {
+pub(super) fn render_dash(runtime: Option<&CanvasRuntime>) -> Html {
     let Some(generation) = runtime.and_then(CanvasRuntime::quota) else {
         return section_unavailable();
     };
@@ -9,14 +9,14 @@ pub(super) fn render_team(runtime: Option<&CanvasRuntime>) -> Html {
     let snapshot = generation.last_good.as_deref();
     html! {
         <section
-            class="section team-overview-quota-section"
+            class="section dash-overview-quota-section"
             aria-labelledby="provider-quota-heading"
             data-quota-state={presentation.condition.key()}
         >
             <div class="section-heading">
                 <div>
                     <h2 id="provider-quota-heading">{"Provider quota"}</h2>
-                    <p class="team-overview-section-copy">{"Redacted account usage sampled by the resident; quota never controls allocation or routing."}</p>
+                    <p class="dash-overview-section-copy">{"Redacted account usage sampled by the resident; quota never controls allocation or routing."}</p>
                 </div>
                 <span class="section-count">{format!("Generation {}", generation.generation)}</span>
             </div>
@@ -24,7 +24,7 @@ pub(super) fn render_team(runtime: Option<&CanvasRuntime>) -> Html {
                 <strong>{presentation.condition.label()}</strong>
                 <span>{presentation.detail}</span>
                 if let Some(sampled_at) = presentation.sampled_at_ms {
-                    <span>{"Sample age "}<Age authored={sampled_at} class={classes!("team-overview-quota-age")} title="Age of retained successful quota data" /></span>
+                    <span>{"Sample age "}<Age authored={sampled_at} class={classes!("dash-overview-quota-age")} title="Age of retained successful quota data" /></span>
                 }
             </div>
             {render_attempt(generation.latest_attempt.as_ref())}
@@ -40,7 +40,7 @@ pub(super) fn render_team(runtime: Option<&CanvasRuntime>) -> Html {
 
 fn section_unavailable() -> Html {
     html! {
-        <section class="section team-overview-quota-section" aria-labelledby="provider-quota-heading" data-quota-state="unavailable">
+        <section class="section dash-overview-quota-section" aria-labelledby="provider-quota-heading" data-quota-state="unavailable">
             <div class="section-heading"><h2 id="provider-quota-heading">{"Provider quota"}</h2></div>
             <p class="quota-status" role="status">{"No admitted quota generation is available."}</p>
         </section>
@@ -62,7 +62,7 @@ fn render_attempt(attempt: Option<&wire::QuotaAttempt>) -> Html {
     html! {
         <p class="quota-attempt" role="alert">
             {format!("Latest attempt: {}{exit}. ", crate::quota::failure_label(*kind))}
-            <Age authored={i64::try_from(*finished_at_ms).unwrap_or(i64::MAX)} class={classes!("team-overview-quota-age")} title="Age of latest failed quota attempt" />
+            <Age authored={i64::try_from(*finished_at_ms).unwrap_or(i64::MAX)} class={classes!("dash-overview-quota-age")} title="Age of latest failed quota attempt" />
             {" ago"}
         </p>
     }
@@ -115,7 +115,7 @@ fn render_report(index: usize, report: &wire::QuotaReport) -> Html {
                     <span class="quota-provider">{report.provider.clone()}</span>
                     <h4 id={heading}>{crate::quota::account_label(&report.account)}</h4>
                 </div>
-                <Age authored={report.fetched_at_ms} class={classes!("team-overview-quota-age")} title="Age of this provider report" />
+                <Age authored={report.fetched_at_ms} class={classes!("dash-overview-quota-age")} title="Age of this provider report" />
             </header>
             {render_account_metadata(&report.account)}
             <div class="quota-limit-list">
