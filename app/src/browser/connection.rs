@@ -602,7 +602,16 @@ async fn admit_runtime(
         .is_some_and(|runtime| !runtime.same_scope(&accepted));
     if hydrating {
         let replacement = SurfaceData::default();
-        *replacement.write() = Some(CanvasRuntime::new(&accepted));
+        let runtime = {
+            let current = data.read();
+            CanvasRuntime::rehydrate(
+                &accepted,
+                current
+                    .as_ref()
+                    .expect("changed-scope hydration has a prior runtime"),
+            )
+        };
+        *replacement.write() = Some(runtime);
         *data = replacement;
     }
     let principal = {

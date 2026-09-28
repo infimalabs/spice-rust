@@ -428,14 +428,14 @@ impl<'a> MeasurementIndex<'a> {
         })
     }
 
-    fn latest(&self, key: &str, activity: &ActivityCard) -> Option<&'a ActivityMeasurement> {
-        let fingerprint = activity.measurement_fingerprint();
-        self.by_key
-            .get(key)?
-            .iter()
-            .rev()
-            .copied()
-            .find(|measurement| measurement.fingerprint == fingerprint)
+    /// Most recent geometry for this durable card, even when its rendered
+    /// fingerprint has changed and a replacement measurement is pending.
+    ///
+    /// Keeping that admitted geometry on the live node prevents metadata-only
+    /// updates from hiding or moving the settled card while an offscreen clone
+    /// measures the revision.
+    fn latest(&self, key: &str) -> Option<&'a ActivityMeasurement> {
+        self.by_key.get(key)?.last().copied()
     }
 }
 
@@ -914,22 +914,48 @@ async fn measure_unknown(
         }
     });
     let host = host.cast::<web_sys::Element>()?;
+    let track = host.query_selector(".lane-mosaic-track").ok().flatten()?;
     let geometry = crate::mosaic::Geometry::new(16.0, f64::from(width));
     let mut pending = Vec::with_capacity(unknown.len());
     for (_index, activity, latched_span) in unknown {
         let selector = format!("[data-mosaic-card-key=\"{}\"]", activity.key());
-        let Some(element) = host.query_selector(&selector).ok().flatten() else {
+        let Some(source) = host.query_selector(&selector).ok().flatten() else {
             continue;
         };
-        let Some(element) = element.dyn_into::<web_sys::HtmlElement>().ok() else {
+        let Some(element) = source
+            .clone_node_with_deep(true)
+            .ok()
+            .and_then(|clone| clone.dyn_into::<web_sys::HtmlElement>().ok())
+        else {
             continue;
         };
-        if !prepare_images(&element) {
-            continue;
-        }
+        element.remove_attribute("id").ok();
+        element.remove_attribute("data-mosaic-card-key").ok();
+        element
+            .set_attribute("data-mosaic-measurement-clone", "true")
+            .expect("the fixed Mosaic measurement-clone attribute is valid");
         element
             .set_attribute("data-mosaic-measurement-active", "true")
             .expect("the fixed Mosaic measurement attribute is valid");
+        element
+            .set_attribute("aria-hidden", "true")
+            .expect("the fixed Mosaic clone accessibility attribute is valid");
+        element
+            .set_attribute("inert", "")
+            .expect("the fixed Mosaic clone interaction attribute is valid");
+        if let Ok(ids) = element.query_selector_all("[id]") {
+            for index in 0..ids.length() {
+                if let Some(descendant) = ids
+                    .item(index)
+                    .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
+                {
+                    descendant.remove_attribute("id").ok();
+                }
+            }
+        }
+        if !prepare_images(&element) || track.append_child(&element).is_err() {
+            continue;
+        }
         pending.push(PendingActivityMeasurement {
             activity,
             element,
@@ -953,9 +979,6 @@ async fn measure_unknown(
     });
     for item in &pending {
         set_measure_span(&item.element, item.activity.base_span(&geometry));
-        item.element
-            .remove_attribute("data-mosaic-measurement-active")
-            .expect("the fixed Mosaic measurement attribute is valid");
     }
     Some(
         pending
@@ -1003,6 +1026,9 @@ impl PendingActivityMeasurement {
                 span,
                 rows: crate::mosaic::rows_for(measured_height(span), geometry.gap, geometry.module),
             });
+        if let Some(parent) = self.element.parent_node() {
+            let _ = parent.remove_child(&self.element);
+        }
         ActivityMeasurement {
             width,
             key: self.activity.key(),
@@ -1139,7 +1165,7 @@ fn render_activity_cards(
             let placement = plane.zip(placements.get(key.as_str()).copied());
             let measurement = placement
                 .and_then(|(plane, _)| measurement_index.get(&key, plane.geometry(), activity))
-                .or_else(|| measurement_index.latest(&key, activity));
+                .or_else(|| measurement_index.latest(&key));
             let layout = match (placement, measurement) {
                 (Some((_plane, entry)), Some(measurement)) => {
                     CardLayout::placed(entry.card.creation_index, &entry.card, measurement)

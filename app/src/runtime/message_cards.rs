@@ -66,7 +66,7 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
     })
 }
 
-#[derive(PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub(super) struct MessageCards {
     entries: Vec<Rc<AgentMessage>>,
     limit: Option<usize>,
