@@ -237,7 +237,20 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
   }]
 }"#,
     ),
-    (AnswerShape::GlobalSettings, r#"{ "fast_mode": true }"#),
+    (
+        AnswerShape::GlobalSettings,
+        r#"{
+  "fast_mode": true,
+  "operator_name": "C Adams",
+  "operator_email": "c@example.invalid",
+  "operator": {
+    "name": "C Adams",
+    "email": "c@example.invalid",
+    "initials": "CA",
+    "gravatar": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  }
+}"#,
+    ),
     (
         AnswerShape::VendorCatalog,
         r#"{

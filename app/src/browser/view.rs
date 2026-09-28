@@ -495,8 +495,14 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
     let Some(runtime) = surface.as_ref() else {
         return empty("No admitted topology is available.");
     };
+    let operator = render_operator_info(runtime.settings());
     let Some(lanes) = runtime.lanes() else {
-        return empty("No agent snapshot is available.");
+        return html! {
+            <>
+                {operator}
+                {empty("No agent snapshot is available.")}
+            </>
+        };
     };
     let group_count = lanes.lanes.len();
     let agent_count = lanes
@@ -527,6 +533,7 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
     let quota = quota::render_info(Some(runtime));
     html! {
         <>
+            {operator}
             {quota}
             <section class="section info-topology-section">
             <div class="section-heading">
@@ -560,6 +567,79 @@ pub(super) fn render_topology(surface: &SurfaceData) -> Html {
             }
             </section>
         </>
+    }
+}
+
+fn render_operator_info(settings: Option<&wire::intent::GlobalSettingsAnswer>) -> Html {
+    let Some(settings) = settings else {
+        return empty("Operator identity is loading.");
+    };
+    let operator = &settings.operator;
+    let name_source = if settings.operator_name.is_some() {
+        "Explicit setting"
+    } else {
+        "Git user.name"
+    };
+    let email_source = if settings.operator_email.is_some() {
+        "Explicit setting"
+    } else {
+        "Git user.email"
+    };
+    html! {
+        <section class="section info-operator-section" data-operator-member="">
+            <div class="section-heading">
+                <div>
+                    <h2>{"You"}</h2>
+                    <p class="info-section-copy">
+                        {"The operator is the human member of this resident team."}
+                    </p>
+                </div>
+                <span class="section-count">{"Operator"}</span>
+            </div>
+            <article class="info-operator">
+                {render_operator_avatar(operator)}
+                <div class="info-operator-identity">
+                    <h3>{operator.name.as_deref().unwrap_or("Operator")}</h3>
+                    <p>{operator.email.as_deref().unwrap_or("No email configured")}</p>
+                    <dl class="info-agent-facts">
+                        <div>
+                            <dt>{"Badge"}</dt>
+                            <dd>{operator.initials.as_deref().unwrap_or("Not available")}</dd>
+                        </div>
+                        <div>
+                            <dt>{"Name source"}</dt>
+                            <dd>{name_source}</dd>
+                        </div>
+                        <div>
+                            <dt>{"Email source"}</dt>
+                            <dd>{email_source}</dd>
+                        </div>
+                    </dl>
+                </div>
+            </article>
+        </section>
+    }
+}
+
+pub(super) fn render_operator_avatar(operator: &wire::OperatorIdentity) -> Html {
+    let label = operator.name.as_deref().unwrap_or("Operator");
+    match operator.gravatar.as_ref() {
+        Some(gravatar) => html! {
+            <span class="operator-avatar" data-avatar-source="gravatar">
+                <img
+                    src={format!("https://gravatar.com/avatar/{}?s=128&d=retro", gravatar.as_str())}
+                    alt={format!("{label} Gravatar")}
+                />
+            </span>
+        },
+        None => html! {
+            <span
+                class="operator-avatar"
+                data-avatar-source="initials"
+                role="img"
+                aria-label={format!("{label} badge")}
+            >{operator.initials.as_deref().unwrap_or("?")}</span>
+        },
     }
 }
 

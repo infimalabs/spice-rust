@@ -32,8 +32,8 @@ pub struct CanvasVersion(pub u32);
 impl CanvasVersion {
     /// The one Canvas protocol this build speaks.
     ///
-    /// Version 9 carries the operator's optional Gravatar hash in the bootstrap.
-    pub const CURRENT: Self = Self(9);
+    /// Version 10 carries the operator's resolved identity in the bootstrap.
+    pub const CURRENT: Self = Self(10);
 
     /// True when this is the Canvas protocol this build speaks.
     #[must_use]
@@ -91,16 +91,42 @@ pub struct CanvasBootstrap {
     pub epoch: CanonicalUuid,
     /// Product and build identity served at this bootstrap boundary.
     pub version: crate::reply::Version,
-    /// Gravatar hash of the repository's configured Git `user.email`.
-    ///
-    /// Absent when no nonempty `user.email` is configured; the address itself
-    /// never crosses.
+    /// Operator identity resolved from durable overrides and repository Git configuration.
+    pub operator: OperatorIdentity,
+}
+
+/// Effective single-operator identity presented by Canvas.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OperatorIdentity {
+    /// Resolved display name, absent when neither settings nor Git configure one.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub operator_gravatar: Option<GravatarHash>,
+    pub name: Option<String>,
+    /// Resolved email, absent when neither settings nor Git configure one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub email: Option<String>,
+    /// Uppercase badge derived from the first one or two words of the resolved name.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub initials: Option<String>,
+    /// Gravatar hash derived only from the resolved email.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub gravatar: Option<GravatarHash>,
 }
 
 /// Gravatar's SHA-256 identity for one trimmed, lower-cased email address.

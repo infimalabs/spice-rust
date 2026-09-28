@@ -9,8 +9,14 @@ const CANVAS_BOOTSTRAP: &str = r#"{
     "binary": "1111111111111111111111111111111111111111111111111111111111111111",
     "wire": 1,
     "journal": 20,
-    "canvas": 6,
+    "canvas": 10,
     "app": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "operator": {
+    "name": "C Adams",
+    "email": "c@example.invalid",
+    "initials": "CA",
+    "gravatar": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   }
 }"#;
 
@@ -45,7 +51,7 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
     assert_eq!(bootstrap.version.product.as_str(), "1.2.3");
     assert_eq!(bootstrap.version.app.as_str(), "2".repeat(64));
 
-    for field in ["endpoint", "capability", "epoch", "version"] {
+    for field in ["endpoint", "capability", "epoch", "version", "operator"] {
         let mut value: serde_json::Value =
             serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
         value
@@ -73,22 +79,25 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
 }
 
 #[test]
-fn operator_gravatar_crosses_only_as_lowercase_sha256_hex() {
-    let hash = "0123456789abcdef".repeat(4);
-    let mut value: serde_json::Value =
-        serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
-    value["operator_gravatar"] = serde_json::Value::String(hash.clone());
-    let document = serde_json::to_string(&value).expect("bootstrap encodes");
-    let bootstrap = round_trip(&document);
+fn operator_identity_crosses_with_one_strict_gravatar_hash() {
+    let bootstrap = round_trip(CANVAS_BOOTSTRAP);
+    assert_eq!(bootstrap.operator.name.as_deref(), Some("C Adams"));
+    assert_eq!(
+        bootstrap.operator.email.as_deref(),
+        Some("c@example.invalid")
+    );
+    assert_eq!(bootstrap.operator.initials.as_deref(), Some("CA"));
     assert_eq!(
         bootstrap
-            .operator_gravatar
+            .operator
+            .gravatar
             .as_ref()
             .map(wire::GravatarHash::as_str),
-        Some(hash.as_str())
+        Some("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
     );
 
-    // The hash is spliced into a CSS url(); only bare hex may cross.
+    let mut value: serde_json::Value =
+        serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
     for malformed in [
         serde_json::Value::Null,
         serde_json::Value::String("0123456789ABCDEF".repeat(4)),
@@ -96,7 +105,7 @@ fn operator_gravatar_crosses_only_as_lowercase_sha256_hex() {
         serde_json::Value::String(format!("{}\")", "0".repeat(62))),
         serde_json::Value::String("anthony@example.invalid".to_owned()),
     ] {
-        value["operator_gravatar"] = malformed.clone();
+        value["operator"]["gravatar"] = malformed.clone();
         assert!(
             wire::decode::<CanvasBootstrap>(&serde_json::to_vec(&value).expect("shape encodes"))
                 .is_err(),

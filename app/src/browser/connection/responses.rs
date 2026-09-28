@@ -41,7 +41,7 @@ fn handle_stream_frame(
             .into(),
         ..diagnostics::Metadata::default()
     });
-    let (directives, changed) = {
+    let (directives, changed, operator) = {
         let mut data = data.write();
         let runtime = data
             .as_mut()
@@ -56,8 +56,15 @@ fn handle_stream_frame(
         stale.retain_task_details(|task| changed && runtime.invalidate_task_detail(task));
         stale.resolve_task_relations(runtime, changed);
         stale.resolve_work_history(runtime, changed);
-        (application.into_directives(), changed)
+        let operator = changed
+            .then(|| runtime.settings())
+            .flatten()
+            .map(|settings| settings.operator.clone());
+        (application.into_directives(), changed, operator)
     };
+    if let Some(operator) = operator {
+        super::publish_operator_identity(&operator);
+    }
     drop(apply);
     if changed && publish {
         let _publication = diagnostics::span("state.publish", || diagnostics::Metadata {
@@ -435,7 +442,15 @@ fn apply_scalar_response(
 ) -> Result<CommandApplication, String> {
     match kind {
         PendingKind::Board => runtime.apply_board(&admit_response(session, bytes)?),
-        PendingKind::Settings => runtime.apply_settings(&admit_response(session, bytes)?),
+        PendingKind::Settings => {
+            let admitted: crate::Admitted<Response<wire::intent::GlobalSettingsAnswer>> =
+                admit_response(session, bytes)?;
+            if runtime.apply_settings(&admitted)
+                && let Some(settings) = runtime.settings()
+            {
+                super::publish_operator_identity(&settings.operator);
+            }
+        }
         PendingKind::Vendors => runtime.apply_vendor_catalog(&admit_response(session, bytes)?),
         _ => unreachable!("scalar response partition is closed"),
     }

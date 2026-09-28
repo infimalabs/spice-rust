@@ -37,12 +37,33 @@ pub struct DocApplied {
     pub operations: u32,
 }
 
-/// The global fast-mode setting changed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The global Canvas settings changed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsChanged {
     /// Whether supported agent vendors launch in fast mode.
     pub fast_mode: bool,
+    /// Explicit operator display name; absent in predecessor facts and when Git supplies it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub operator_name: Option<String>,
+    /// Explicit operator email; absent in predecessor facts and when Git supplies it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub operator_email: Option<String>,
+    /// Effective identity at the time of this mutation; absent in predecessor facts.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub operator: Option<crate::OperatorIdentity>,
 }
 
 /// A directive was created.

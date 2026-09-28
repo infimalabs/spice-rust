@@ -1166,7 +1166,7 @@ impl CanvasRuntime {
     }
 
     /// Apply a global settings read or mutation without allowing older authority backwards.
-    pub fn apply_settings(&mut self, admitted: &Admitted<Response<GlobalSettingsAnswer>>) {
+    pub fn apply_settings(&mut self, admitted: &Admitted<Response<GlobalSettingsAnswer>>) -> bool {
         let position = match &admitted.get().outcome {
             Outcome::Reply(reply) => match reply.position {
                 wire::ReplyPosition::Committed(range) => Some(range.last),
@@ -1176,6 +1176,7 @@ impl CanvasRuntime {
 
             Outcome::Refusal(_) | Outcome::Fault(_) => None,
         };
+        let mut applied = false;
         self.apply_response(admitted, |runtime, answer| {
             if position.is_some_and(|next| {
                 runtime
@@ -1183,9 +1184,10 @@ impl CanvasRuntime {
                     .is_none_or(|current| next >= current)
             }) {
                 runtime.settings_position = position;
-                runtime.settings.replace(admitted.scope(), *answer);
+                applied = runtime.settings.replace(admitted.scope(), answer.clone());
             }
         });
+        applied
     }
 
     /// Apply the resident's vendor catalogue read.
