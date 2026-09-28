@@ -523,6 +523,20 @@
 .markdown-body .message-quote-name[data-accent] {
   --message-quote-name-accent: var(--accent-slot);
 }
+/* The operator's byline is an emblem, shown only when bootstrap named one. */
+.markdown-body .message-quote-name[data-quote-actor="operator"] {
+  display: none;
+}
+:root[data-operator-emblem] .markdown-body .message-quote-name[data-quote-actor="operator"] {
+  display: inline-block;
+  flex: 0 0 1.2em;
+  align-self: center;
+  width: 1.2em;
+  height: 1.2em;
+  border-radius: 50%;
+  background: var(--operator-emblem) center / cover no-repeat;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--muted) 40%, transparent);
+}
 .markdown-body .message-quote-age-slot {
   display: inline-flex;
   flex: 0 0 3ch;

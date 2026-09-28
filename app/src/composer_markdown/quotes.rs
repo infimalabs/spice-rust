@@ -277,7 +277,12 @@ fn quote_author_name_html(
         }
         QuoteAuthor::Directive {
             actor: wire::Actor::Operator,
-        } => String::new(),
+        } => quote_name_html(
+            "",
+            " data-quote-author=\"directive\" data-quote-actor=\"operator\" role=\"img\" \
+             aria-label=\"Operator\"",
+            None,
+        ),
         QuoteAuthor::Directive {
             actor: wire::Actor::Spice,
         } => quote_name_html(

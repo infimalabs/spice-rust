@@ -73,6 +73,39 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
 }
 
 #[test]
+fn operator_gravatar_crosses_only_as_lowercase_sha256_hex() {
+    let hash = "0123456789abcdef".repeat(4);
+    let mut value: serde_json::Value =
+        serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
+    value["operator_gravatar"] = serde_json::Value::String(hash.clone());
+    let document = serde_json::to_string(&value).expect("bootstrap encodes");
+    let bootstrap = round_trip(&document);
+    assert_eq!(
+        bootstrap
+            .operator_gravatar
+            .as_ref()
+            .map(wire::GravatarHash::as_str),
+        Some(hash.as_str())
+    );
+
+    // The hash is spliced into a CSS url(); only bare hex may cross.
+    for malformed in [
+        serde_json::Value::Null,
+        serde_json::Value::String("0123456789ABCDEF".repeat(4)),
+        serde_json::Value::String("0123456789abcdef".repeat(4)[1..].to_owned()),
+        serde_json::Value::String(format!("{}\")", "0".repeat(62))),
+        serde_json::Value::String("anthony@example.invalid".to_owned()),
+    ] {
+        value["operator_gravatar"] = malformed.clone();
+        assert!(
+            wire::decode::<CanvasBootstrap>(&serde_json::to_vec(&value).expect("shape encodes"))
+                .is_err(),
+            "malformed operator Gravatar was admitted: {malformed}"
+        );
+    }
+}
+
+#[test]
 fn canvas_version_has_one_http_header_spelling() {
     assert_eq!(wire::hello::CANVAS_VERSION_HEADER, "x-spice-canvas-version");
     assert_eq!(

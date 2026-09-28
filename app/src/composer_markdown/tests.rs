@@ -894,7 +894,11 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
          data-quote-agent-occupant=\"{source}\" data-quote-author-state=\"current\" \
          data-accent=\"3\">spice-rust-k</span>"
     )));
-    assert_eq!(rendered.html.matches("message-quote-name").count(), 1);
+    assert!(rendered.html.contains(
+        "<span class=\"message-quote-name\" data-quote-author=\"directive\" \
+         data-quote-actor=\"operator\" role=\"img\" aria-label=\"Operator\"></span>"
+    ));
+    assert_eq!(rendered.html.matches("message-quote-name").count(), 2);
     assert!(!rendered.html.contains("history unavailable"));
     assert_eq!(rendered.html.matches("data-quote-source=").count(), 1);
     assert!(!rendered.html.contains("Original"));
@@ -1347,7 +1351,7 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
             attributed(operator, "operator"),
             operator.matches("message-quote-signoff").count()
         ),
-        (2, 2),
+        (4, 2),
         "the nested quote and the context each sign once: {operator}"
     );
     assert_eq!(
@@ -1358,7 +1362,7 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         (2, 1),
         "{lane}"
     );
-    assert_eq!(html.matches("message-quote-name").count(), 1, "{html}");
+    assert_eq!(html.matches("message-quote-name").count(), 3, "{html}");
     assert!(lane.contains(&format!(
         "class=\"message-quote-name\" data-quote-author=\"directive\" \
          data-quote-actor=\"lane:{directing}\" data-quote-author-state=\"lane\">lane {}</span>",
