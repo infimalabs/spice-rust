@@ -36,8 +36,16 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
     rendered
 }
 /// Renders a journal-backed inbox answer for one lane.
+///
+/// `projection` names, per directive and attachment ordinal, the encoded
+/// local projection that makes the referenced bytes readable to the lane; it
+/// follows its `media-reference` line exactly as the shell-hook route does.
 #[must_use]
-pub fn render_pending(seal: &Key, pending: &[PendingDirective]) -> String {
+pub fn render_pending(
+    seal: &Key,
+    pending: &[PendingDirective],
+    projection: impl Fn(wire::CanonicalUuid, u8) -> Option<String>,
+) -> String {
     if pending.is_empty() {
         return String::new();
     }
@@ -55,6 +63,7 @@ pub fn render_pending(seal: &Key, pending: &[PendingDirective]) -> String {
             directive.directive,
             &directive.text,
             &directive.attachments,
+            &projection,
         ));
         rendered.push('\n');
     }
@@ -218,6 +227,7 @@ fn render_directive_body(directive: &Directive) -> String {
         directive.directive(),
         directive.text(),
         directive.attachments(),
+        &|_, _| None,
     )
 }
 
@@ -225,6 +235,7 @@ fn render_body(
     directive: wire::CanonicalUuid,
     text: &str,
     attachments: &[wire::body::DirectiveAttachment],
+    projection: &impl Fn(wire::CanonicalUuid, u8) -> Option<String>,
 ) -> String {
     let mut rendered = wire::media::without_media_payloads(text, attachments);
     for reference in wire::media::agent_media_references(directive, attachments)
@@ -238,6 +249,10 @@ fn render_body(
             &String::from_utf8(wire::encode(&reference).expect("media reference encodes"))
                 .expect("JSON media reference is UTF-8"),
         );
+        if let Some(projected) = projection(directive, reference.ordinal()) {
+            rendered.push_str("\nmedia-projection=");
+            rendered.push_str(&projected);
+        }
     }
     rendered
 }

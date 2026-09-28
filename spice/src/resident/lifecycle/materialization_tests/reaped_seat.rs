@@ -402,6 +402,7 @@ pub(super) fn runtime_paths(root: &Path) -> RuntimePaths {
         degraded: root.join("degraded"),
         tape: root.join("tape"),
         supervisors: root.join("supervisors"),
+        steering_media: root.join("steering-media"),
         stage: root.join("stage"),
     }
 }

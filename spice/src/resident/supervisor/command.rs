@@ -129,21 +129,36 @@ pub(in crate::resident) struct TaskGenerationNotice {
 }
 impl<W: Write + Send + 'static> Driver<W> {
     /// Own a child's stdin, authenticated resident discovery, lane identity,
-    /// and the terminal its commands run in.
+    /// steering media root, and the terminal its commands run in.
     pub(in crate::resident) fn new(
         stdin: W,
         discovery: impl Into<PathBuf>,
+        steering_media: PathBuf,
         lane: CanonicalUuid,
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
         let discovery = discovery.into();
+        let projector = media::Projector::new(steering_media, lane);
         Self::with_inbox_reader(
             stdin,
             move || {
                 let inbox = crate::command_client::read_lane_inbox(&discovery, lane).ok()?;
                 let lane_inbox = inbox.lanes.iter().find(|row| row.lane == lane)?;
+                // Direction outranks its pictures: a projection failure still
+                // delivers the text and references, and says why on stderr.
+                let projected = projector.project(lane_inbox).unwrap_or_else(|error| {
+                    eprintln!("spice supervisor: steering media projection failed: {error}");
+                    media::Projected::new()
+                });
                 let seal = steer::Key::for_identity(lane);
-                Some(steer::inbox::render_pending(&seal, &lane_inbox.pending).into_bytes())
+                Some(
+                    steer::inbox::render_pending(
+                        &seal,
+                        &lane_inbox.pending,
+                        |directive, ordinal| projected.get(&(directive, ordinal)).cloned(),
+                    )
+                    .into_bytes(),
+                )
             },
             terminal,
         )
@@ -816,5 +831,6 @@ impl Drop for KickDoor {
     }
 }
 
+mod media;
 #[cfg(test)]
 mod tests;
