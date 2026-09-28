@@ -256,9 +256,9 @@ fn top_level_version_flags_are_repository_free_and_byte_identical() {
         let output = std::str::from_utf8(&spoken.out).expect("version is UTF-8");
         let version = output.split_whitespace().nth(1).expect("product version");
         let version = wire::manifest::ProductVersion::parse(version).expect("canonical semver");
-        assert!(
-            version.as_str().contains('+'),
-            "version identifies the build"
+        assert_eq!(
+            version,
+            dist::current_product_version().expect("tracked product version")
         );
         assert!(spoken.err.is_empty());
     }
@@ -315,12 +315,10 @@ fn version_reports_the_running_artifacts_and_finalized_schema_in_both_forms() {
             &fs::read(env!("CARGO_BIN_EXE_spice")).expect("read launched spice binary"),
         )
     );
-    assert!(
-        text_body
-            .product
-            .as_str()
-            .contains(text_body.binary.as_str()),
-        "the public version identifies the same executable as the artifact report"
+    assert_eq!(
+        text_body.product,
+        dist::current_product_version().expect("tracked product version"),
+        "an unstamped build reports the tracked version; the executable digest stays in `binary`"
     );
     assert_eq!(text_body.wire, wire::WireVersion::CURRENT);
     assert_eq!(text_body.journal, journal::SCHEMA_VERSION);

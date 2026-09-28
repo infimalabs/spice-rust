@@ -486,11 +486,11 @@ publication preview requires the manifest source to name the already-versioned
 release commit, then binds that manifest, package, notes, targets, and operations
 with the identical source and release commit.
 Runtime version surfaces (`spice --version`, `spice version`, and the Canvas
-menu footer) qualify the tracked version with `+bin.<digest>`, appending
-`.bin.<digest>` when build metadata already exists. The digest is the complete
-domain-separated identity of the running executable, shared with the report's
-native-binary field. It needs no Git checkout, generated build input, timestamp,
-or random value: identical executable bytes retain the same version. Ordinary
+menu footer) report the tracked version, with an installed pre-release extended
+by its source commit stamp. The version never carries the executable digest:
+the report's native-binary field names the running executable by its complete
+domain-separated digest, which needs no Git checkout, generated build input, or
+random value, so identical executable bytes keep the same identity. Ordinary
 CLI commands do not hash the executable; explicit version reads and resident
 identity construction stream it without retaining the whole file. Release
 selection and sealing still use the tracked base version from `dist/VERSION`.
