@@ -7,7 +7,16 @@ use yew::prelude::*;
 
 use crate::watchband::{self, OmpEmblem, Standing};
 
-pub(in crate::browser) fn render_composer_vendor_icon(standing: &Standing) -> Html {
+/// The emblem for `standing` as drawn on `surface`.
+///
+/// Gradient and halo ids are named by surface as well as lane: the mosaic
+/// stays mounted while hidden, so a lane drawn on two surfaces would
+/// otherwise mint one id twice, and `url(#id)` would resolve to the hidden
+/// copy, which does not paint.
+pub(in crate::browser) fn render_composer_vendor_icon(
+    standing: &Standing,
+    surface: &'static str,
+) -> Html {
     let Some(class) = watchband::composer_vendor_icon_class(&standing.vendor) else {
         return Html::default();
     };
@@ -19,11 +28,11 @@ pub(in crate::browser) fn render_composer_vendor_icon(standing: &Standing) -> Ht
                     return Html::default();
                 };
                 (
-                    render_vendor_glyph(path, render_omp_badge(standing.lane)),
+                    render_vendor_glyph(path, render_omp_badge(surface, standing.lane)),
                     Some(family),
                 )
             }
-            OmpEmblem::Pi => (render_omp_mark(standing.lane), None),
+            OmpEmblem::Pi => (render_omp_mark(surface, standing.lane), None),
         },
         vendor => {
             let Some(path) = vendor_glyph_path(vendor) else {
@@ -59,10 +68,10 @@ fn render_vendor_glyph(path: &'static str, badge: Html) -> Html {
 }
 
 /// oh-my-pi's mark filling the emblem on its own.
-fn render_omp_mark(lane: CanonicalUuid) -> Html {
+fn render_omp_mark(surface: &str, lane: CanonicalUuid) -> Html {
     html! {
         <svg viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-            {render_omp_pi(lane)}
+            {render_omp_pi(surface, lane)}
         </svg>
     }
 }
@@ -77,8 +86,8 @@ fn render_omp_mark(lane: CanonicalUuid) -> Html {
 /// 16-unit canvas, anchored at the foot corner, and its diagonal gradient
 /// reads over the single-hue glyph instead of drowning in it. The inner
 /// canvas stays open so the blur is not clipped at the pi's bounds.
-fn render_omp_badge(lane: CanonicalUuid) -> Html {
-    let halo = format!("composer-vendor-halo-{lane}");
+fn render_omp_badge(surface: &str, lane: CanonicalUuid) -> Html {
+    let halo = format!("{surface}-vendor-halo-{lane}");
     let softened = format!("url(#{halo})");
     html! {
         <g class="composer-vendor-badge">
@@ -92,7 +101,7 @@ fn render_omp_badge(lane: CanonicalUuid) -> Html {
                     </filter>
                 </defs>
                 <path class="composer-vendor-halo" d={OMP_PI} filter={softened}></path>
-                {render_omp_pi(lane)}
+                {render_omp_pi(surface, lane)}
             </svg>
         </g>
     }
@@ -104,11 +113,11 @@ const OMP_PI: &str = "M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z";
 /// oh-my-pi's pi as omp.sh draws it, under one diagonal gradient on its
 /// 64-unit canvas.
 ///
-/// Every composer carries its own gradient, named by its lane, so the fill
-/// resolves inside the icon that paints it whether the pi is the emblem or
-/// the badge.
-fn render_omp_pi(lane: CanonicalUuid) -> Html {
-    let gradient = format!("composer-vendor-gradient-{lane}");
+/// Every emblem carries its own gradient, named by its surface and lane, so
+/// the fill resolves inside the icon that paints it whether the pi is the
+/// emblem or the badge.
+fn render_omp_pi(surface: &str, lane: CanonicalUuid) -> Html {
+    let gradient = format!("{surface}-vendor-gradient-{lane}");
     let fill = format!("url(#{gradient})");
     html! {
         <>
