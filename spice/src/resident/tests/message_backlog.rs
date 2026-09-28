@@ -103,6 +103,93 @@ fn assert_bootstrap(generation: &wire::TranscriptGeneration, lane: wire::Canonic
 }
 
 #[test]
+fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_backlog() {
+    let (root, paths) = resident_fixture("message-backlog-conflict");
+    let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))
+        .expect("backlog bus starts");
+    let epoch = test_uuid(4);
+    let lane = test_uuid(5);
+    let author = test_uuid(7);
+    seat_backlog_residency(&bus, epoch, lane, test_uuid(6), author, &root);
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+        .expect("the backlog tape opens");
+    tape.tee(CODEX_PROSE).expect("durable prose is captured");
+    let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let publisher = source.message_publisher();
+    let residency = current_residency(&bus, epoch).expect("residency reads");
+    let mut reader = message_surface::BacklogReader::indexed();
+    let mut diagnostic = Vec::new();
+    message_surface::restore_agent_messages_indexed(
+        &bus.reader(),
+        &paths,
+        residency.body(),
+        &publisher,
+        &mut reader,
+        &mut diagnostic,
+    )
+    .expect("first backlog restores");
+    let accepted = wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    };
+    let request = wire::StreamRequest::Subscribe {
+        v: wire::WireVersion::CURRENT,
+        id: test_uuid(8),
+        epoch,
+        subjects: vec![wire::ViewSubject::Messages],
+        after: None,
+    };
+    let (_, frames) = source
+        .begin(&accepted, &request)
+        .expect("messages subscribe");
+    let message = frames
+        .iter()
+        .find_map(|frame| match frame {
+            wire::StreamFrame::Messages { generation, .. } => generation.messages.first(),
+            _ => None,
+        })
+        .expect("first card is published");
+    publisher
+        .revise_presentation(
+            lane,
+            message.locus,
+            "accepted presentation".to_owned(),
+            Vec::new(),
+            Vec::new(),
+        )
+        .expect("accepted card has a later presentation");
+    tape.tee(CODEX_APPEND)
+        .expect("another durable card is captured");
+    diagnostic.clear();
+    message_surface::restore_agent_messages_indexed(
+        &bus.reader(),
+        &paths,
+        residency.body(),
+        &publisher,
+        &mut message_surface::BacklogReader::indexed(),
+        &mut diagnostic,
+    )
+    .expect("a conflicting history projection must not terminate the resident");
+    let (_, frames) = source
+        .begin(&accepted, &request)
+        .expect("messages still subscribe");
+    let messages = frames
+        .iter()
+        .find_map(|frame| match frame {
+            wire::StreamFrame::Messages { generation, .. } => Some(&generation.messages),
+            _ => None,
+        })
+        .expect("restored cards are available");
+    assert_eq!(messages.len(), 2);
+    assert_eq!(messages[0].text, "accepted presentation");
+    assert_eq!(messages[1].text, "appended after initial backlog");
+    assert!(String::from_utf8_lossy(&diagnostic).contains("canvas::message-publish-failed"));
+    bus.shutdown().expect("backlog bus stops");
+    fs::remove_dir_all(root).expect("backlog fixture cleanup");
+}
+
+#[test]
 fn each_resident_generation_restores_durable_prose_before_canvas_subscription() {
     let (root, paths) = resident_fixture("message-backlog");
     let bus = Bus::start(journal::Journal::in_memory().expect("backlog authority opens"))

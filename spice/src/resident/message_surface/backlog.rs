@@ -254,9 +254,13 @@ fn restore_agent_messages_with(
         match page {
             Ok(Some(page)) => {
                 for message in page.messages {
-                    generation.publish(message).map_err(|error| {
-                        store_fault("canvas::message-publish-failed", &error.to_string())
-                    })?;
+                    // Historical projections have the same failure boundary as live replay.
+                    canvas_diagnostic(
+                        generation.publish(message).map(|_| ()).map_err(|error| {
+                            store_fault("canvas::message-publish-failed", &error.to_string())
+                        }),
+                        diagnostic,
+                    )?;
                 }
             }
             Ok(None) => {}
