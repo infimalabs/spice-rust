@@ -39,6 +39,20 @@ pub enum WorkAvailability {
     Terminal,
 }
 
+impl WorkAvailability {
+    /// Stable presentation key shared by every Work lifecycle surface.
+    #[must_use]
+    pub const fn key(self) -> &'static str {
+        match self {
+            Self::InFlight => "in-flight",
+            Self::Ready => "ready",
+            Self::Blocked => "blocked",
+            Self::Deferred => "deferred",
+            Self::Terminal => "terminal",
+        }
+    }
+}
+
 /// Exact public or hidden stem identity.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct WorkStemIdentity {

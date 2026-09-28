@@ -1,4 +1,5 @@
-.work-layout {
+.work-layout,
+.work-detail-layer {
   min-width: 0;
   --work-in-flight: var(--accent);
   --work-ready: var(--focus);
@@ -187,14 +188,14 @@
 }
 .work-card--selected { outline: 2px solid var(--focus); outline-offset: 2px; }
 
-.work-card[data-work-availability="in-flight"] { --work-card-tone: var(--work-in-flight); }
-.work-card[data-work-availability="ready"] { --work-card-tone: var(--work-ready); }
-.work-card[data-work-availability="blocked"] { --work-card-tone: var(--work-blocked); }
-.work-card[data-work-availability="deferred"] { --work-card-tone: var(--work-deferred); }
-.work-card[data-work-availability="terminal"] { --work-card-tone: var(--work-terminal); }
+:is(.work-card, .work-map-node-button, .work-map-task)[data-work-availability="in-flight"] { --work-card-tone: var(--work-in-flight); }
+:is(.work-card, .work-map-node-button, .work-map-task)[data-work-availability="ready"] { --work-card-tone: var(--work-ready); }
+:is(.work-card, .work-map-node-button, .work-map-task)[data-work-availability="blocked"] { --work-card-tone: var(--work-blocked); }
+:is(.work-card, .work-map-node-button, .work-map-task)[data-work-availability="deferred"] { --work-card-tone: var(--work-deferred); }
+:is(.work-card, .work-map-node-button, .work-map-task)[data-work-availability="terminal"] { --work-card-tone: var(--work-terminal); }
 /* History keeps the terminal lane but shows how each task ended. */
-.work-card[data-work-disposition="completed"] { --work-card-tone: var(--work-completed); }
-.work-card[data-work-disposition="deleted"] { --work-card-tone: var(--work-deleted); }
+:is(.work-card, .work-map-node-button, .work-map-task)[data-work-disposition="completed"] { --work-card-tone: var(--work-completed); }
+:is(.work-card, .work-map-node-button, .work-map-task)[data-work-disposition="deleted"] { --work-card-tone: var(--work-deleted); }
 
 .work-card-heading {
   display: flex;
@@ -727,16 +728,30 @@
   pointer-events: none;
 }
 .work-map-node-button {
+  --work-card-tone: var(--work-terminal);
   position: absolute; pointer-events: auto; padding: 0;
-  border: 2px solid color-mix(in srgb, var(--accent) 65%, transparent);
+  border: 2px solid color-mix(in srgb, var(--work-card-tone) 65%, transparent);
   border-radius: var(--canvas-radius-control);
   background: transparent;
   cursor: pointer;
 }
+.work-map-node-button[data-work-state]::after {
+  content: attr(data-work-state);
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--work-card-tone) 45%, var(--line));
+  border-radius: var(--canvas-radius-pill);
+  background: var(--panel);
+  color: var(--work-card-tone);
+  font: 750 .6rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase;
+}
 .work-map-node-button:hover,
 .work-map-node-button:focus-visible {
   border-color: var(--focus);
-  background: color-mix(in srgb, var(--accent-soft) 45%, transparent);
+  background: color-mix(in srgb, var(--work-card-tone) 9%, transparent);
 }
 .work-map-node-button:focus-visible {
   outline: 3px solid var(--focus);
@@ -769,6 +784,10 @@
   padding: 9px 10px;
   text-align: left;
 }
+.work-map-task {
+  --work-card-tone: var(--work-terminal);
+  border-left: 3px solid var(--work-card-tone);
+}
 .work-map-fact { border-radius: var(--canvas-radius-element); background: var(--control-surface-soft); }
 .work-map-task span,
 .work-map-fact span { color: var(--accent); font-size: .62rem; text-transform: uppercase; }
@@ -778,6 +797,10 @@
 .work-map-fact small { max-width: 100%; overflow-wrap: anywhere; }
 .work-map-task small,
 .work-map-fact small { color: var(--muted); }
+.work-map-task .work-map-task-state {
+  color: var(--work-card-tone);
+  font-weight: 750;
+}
 .work-map-task[aria-current="true"] { box-shadow: inset 0 0 0 2px var(--focus); }
 .work-map-frontier-list { display: grid; gap: 7px; margin: 0 0 10px; padding-left: 20px; color: var(--muted); font-size: .72rem; }
 .work-map-problem {

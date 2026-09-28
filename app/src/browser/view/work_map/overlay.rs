@@ -13,6 +13,9 @@ pub(super) struct MapNodeTarget {
     pub(super) task: TaskStamp,
     pub(super) label: String,
     pub(super) current: bool,
+    pub(super) availability: Option<&'static str>,
+    pub(super) disposition: Option<&'static str>,
+    pub(super) state: Option<&'static str>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -91,7 +94,10 @@ fn geometry_overlay(props: &GeometryOverlayProps) -> Html {
                     let task = target.task.clone();
                     Callback::from(move |_| select.emit(task.clone()))
                 };
-                let label = format!("Open {} in Work detail", target.label);
+                let label = target.state.map_or_else(
+                    || format!("Open {} in Work detail", target.label),
+                    |state| format!("Open {} in Work detail — {state}", target.label),
+                );
                 let left = offset_x + (node.rect.x - view.x) * scale;
                 let top = offset_y + (node.rect.y - view.y) * scale;
                 let width = node.rect.width * scale;
@@ -107,6 +113,9 @@ fn geometry_overlay(props: &GeometryOverlayProps) -> Html {
                         data-map-height={height.to_string()}
                         data-map-node-id={node.id.clone()}
                         data-task-stamp={target.task.to_string()}
+                        data-work-availability={target.availability}
+                        data-work-disposition={target.disposition}
+                        data-work-state={target.state}
                         aria-label={label.clone()}
                         title={label}
                         aria-current={target.current.then_some("true")}

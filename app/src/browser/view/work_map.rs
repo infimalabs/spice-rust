@@ -10,7 +10,7 @@ use wire::intent::{
 use yew::prelude::*;
 
 use crate::browser::mermaid::MermaidImage;
-use crate::work::WorkRelationshipDirection;
+use crate::work::{WorkAvailability, WorkProjection, WorkRelationshipDirection};
 use crate::{TaskRelationsKey, TaskRelationsState};
 
 mod lens;
@@ -195,7 +195,7 @@ impl WorkMapState {
     }
 }
 
-pub(super) struct WorkMapRender<'a> {
+pub(super) struct WorkMapRender<'a, 'work> {
     pub selected: &'a TaskStamp,
     pub state: &'a UseStateHandle<WorkMapState>,
     pub select_task: Callback<TaskStamp>,
@@ -203,6 +203,7 @@ pub(super) struct WorkMapRender<'a> {
     pub can_read_relations: bool,
     /// Reads an unavailable lens again.
     pub retry: Callback<MouseEvent>,
+    pub work: &'a WorkProjection<'work>,
 }
 
 pub(super) fn toggle_root_callback(state: UseStateHandle<WorkMapState>) -> Callback<TaskStamp> {
@@ -238,7 +239,7 @@ pub(super) fn render_tabs(state: &UseStateHandle<WorkMapState>, selected: &TaskS
     }
 }
 
-pub(super) fn render(render: WorkMapRender<'_>) -> Html {
+pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
     let controls = render_controls(render.state, render.selected);
     if !render.can_read_relations {
         return html! {
@@ -295,20 +296,15 @@ pub(super) fn render(render: WorkMapRender<'_>) -> Html {
             </div>
         };
     };
-    let node_ids = Rc::new(
-        presentation
-            .targets
-            .iter()
-            .map(|target| target.id.clone())
-            .collect(),
-    );
+    let targets = map_targets(&presentation, render.work);
+    let node_ids = Rc::new(targets.iter().map(|target| target.id.clone()).collect());
     let viewport = overlay::ViewportTransform {
         zoom: render.state.zoom,
         pan_x: render.state.pan_x,
         pan_y: render.state.pan_y,
     };
     let render_geometry = Some(overlay::renderer(
-        presentation.targets.clone(),
+        targets,
         render.select_task.clone(),
         viewport,
     ));
@@ -353,7 +349,7 @@ pub(super) fn render(render: WorkMapRender<'_>) -> Html {
                     />
                 </div>
             </section>
-            {render_relationship_list(&presentation, render.selected, &render.select_task)}
+            {render_relationship_list(&presentation, render.work, render.selected, &render.select_task)}
             {render_truncation(answer.truncation.as_ref(), render.state)}
         </div>
     }
@@ -498,9 +494,66 @@ fn is_default_view(state: &WorkMapState) -> bool {
         && state.pan_x == 0
         && state.pan_y == 0
 }
+fn map_targets(
+    presentation: &lens::Presentation,
+    work: &WorkProjection<'_>,
+) -> Rc<Vec<overlay::MapNodeTarget>> {
+    Rc::new(
+        presentation
+            .nodes
+            .iter()
+            .filter_map(|node| {
+                let task = node.task.as_ref()?;
+                let tone = task_tone(work, task);
+                Some(overlay::MapNodeTarget {
+                    id: node.id.clone(),
+                    task: task.clone(),
+                    label: node.label.clone(),
+                    current: node.current,
+                    availability: tone.map(|tone| tone.availability),
+                    disposition: tone.and_then(|tone| tone.disposition),
+                    state: tone.map(|tone| tone.label),
+                })
+            })
+            .collect(),
+    )
+}
+
+#[derive(Clone, Copy)]
+struct TaskTone {
+    availability: &'static str,
+    disposition: Option<&'static str>,
+    label: &'static str,
+}
+
+fn task_tone(work: &WorkProjection<'_>, task: &TaskStamp) -> Option<TaskTone> {
+    let task = work
+        .tasks()
+        .iter()
+        .find(|candidate| candidate.row().statement.body.born == *task)?;
+    let availability = task.availability();
+    let (label, disposition) = match availability {
+        WorkAvailability::InFlight => ("In flight", None),
+        WorkAvailability::Ready => ("Ready", None),
+        WorkAvailability::Blocked => ("Blocked", None),
+        WorkAvailability::Deferred => ("Deferred", None),
+        WorkAvailability::Terminal if task.row().workflow.body.status == "deleted" => {
+            ("Deleted", Some("deleted"))
+        }
+        // Completed map nodes use the neutral terminal tone, matching the
+        // board's History region rather than its completion accent.
+        WorkAvailability::Terminal => ("Completed", None),
+    };
+    Some(TaskTone {
+        availability: availability.key(),
+        disposition,
+        label,
+    })
+}
 
 fn render_relationship_list(
     presentation: &lens::Presentation,
+    work: &WorkProjection<'_>,
     selected: &TaskStamp,
     select: &Callback<TaskStamp>,
 ) -> Html {
@@ -518,6 +571,7 @@ fn render_relationship_list(
                             let task = task.clone();
                             Callback::from(move |_| select.emit(task.clone()))
                         };
+                        let tone = task_tone(work, task);
                         html! {
                             <button
                                 key={node.id.clone()}
@@ -525,11 +579,17 @@ fn render_relationship_list(
                                 class="work-map-task"
                                 data-task-stamp={task.to_string()}
                                 aria-current={(task == selected).then_some("true")}
+                                data-work-availability={tone.map(|tone| tone.availability)}
+                                data-work-disposition={tone.and_then(|tone| tone.disposition)}
+                                data-work-state={tone.map(|tone| tone.label)}
                                 onclick={activate}
                             >
                                 <span>{node.kind}</span>
                                 <strong>{node.label.clone()}</strong>
                                 <small>{node.detail.clone()}</small>
+                                if let Some(tone) = tone {
+                                    <span class="work-map-task-state">{tone.label}</span>
+                                }
                             </button>
                         }
                     } else {

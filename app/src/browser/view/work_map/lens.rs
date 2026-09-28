@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt::Write as _;
-use std::rc::Rc;
 
 use wire::intent::{
     TaskLifecycleKind, TaskRelationEdge, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
@@ -10,13 +9,11 @@ use wire::intent::{
 };
 use wire::{Actor, ClaimDisposition, TaskStamp, body::Verdict};
 
-use super::overlay::MapNodeTarget;
 use crate::work::WorkRelationshipDirection;
 
 pub(super) struct Presentation {
     pub(super) nodes: Vec<Node>,
     pub(super) edges: Vec<Edge>,
-    pub(super) targets: Rc<Vec<MapNodeTarget>>,
     pub(super) source: String,
 }
 
@@ -78,24 +75,10 @@ pub(super) fn project(
             label: edge_label(relation),
         });
     }
-    let targets = Rc::new(
-        nodes
-            .iter()
-            .filter_map(|node| {
-                node.task.as_ref().map(|task| MapNodeTarget {
-                    id: node.id.clone(),
-                    task: task.clone(),
-                    label: node.label.clone(),
-                    current: node.current,
-                })
-            })
-            .collect(),
-    );
     let source = mermaid_source(&nodes, &edges);
     Some(Presentation {
         nodes,
         edges,
-        targets,
         source,
     })
 }
