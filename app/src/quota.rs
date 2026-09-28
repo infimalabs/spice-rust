@@ -42,6 +42,9 @@ pub(crate) struct Presentation {
     pub(crate) condition: Condition,
     pub(crate) detail: &'static str,
     pub(crate) sampled_at_ms: Option<i64>,
+    /// Retained data whose latest attempt did not fail, including while a
+    /// refresh runs over it; its age then carries nothing worth reading.
+    pub(crate) fresh: bool,
 }
 
 pub(crate) fn present(generation: &QuotaGeneration) -> Presentation {
@@ -86,6 +89,7 @@ pub(crate) fn present(generation: &QuotaGeneration) -> Presentation {
         condition,
         detail,
         sampled_at_ms,
+        fresh: sampled_at_ms.is_some() && !failed,
     }
 }
 
@@ -289,9 +293,21 @@ mod tests {
         generation.last_good = Some(Arc::new(snapshot()));
         assert_eq!(present(&generation).condition, Condition::StaleLastGood);
         assert_eq!(present(&generation).sampled_at_ms, Some(10));
+        generation.refreshing = true;
+        assert!(
+            !present(&generation).fresh,
+            "a refresh does not freshen a failed sample"
+        );
+        generation.refreshing = false;
 
         generation.latest_attempt = Some(QuotaAttempt::Succeeded { finished_at_ms: 30 });
         assert_eq!(present(&generation).condition, Condition::Current);
+        assert!(present(&generation).fresh);
+        generation.refreshing = true;
+        assert!(
+            present(&generation).fresh,
+            "a refresh over current data stays fresh"
+        );
     }
 
     #[test]
