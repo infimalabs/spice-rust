@@ -283,13 +283,13 @@ impl<'a> Surface<'a> {
     fn dispatch_policy(&self, command: &wire::AdmittedCommand) -> Option<Outcome<CommandAnswer>> {
         match (command.kind(), command.body()) {
             (CommandKind::GlobalSettingsRead, Intent::GlobalSettingsRead(_)) => {
-                Some(settings_surface::read(self.bus))
+                Some(settings_surface::read(self.bus, self.repository))
             }
             (CommandKind::VendorCatalog, Intent::VendorCatalog(_)) => {
                 Some(vendor_surface::catalog(self.bus, self.repository))
             }
             (CommandKind::GlobalSettingsSet, Intent::GlobalSettingsSet(settings)) => Some(
-                settings_surface::set(self.bus, self.epoch, command, settings),
+                settings_surface::set(self.bus, self.repository, self.epoch, command, settings),
             ),
             (CommandKind::ConsentRead, Intent::ConsentRead(_)) => {
                 Some(policy_surface::read(self.reads, &self.config.consent))

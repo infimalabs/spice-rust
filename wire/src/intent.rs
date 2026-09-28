@@ -122,20 +122,50 @@ pub struct ConsentPolicy {}
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsRead {}
 
-/// Replace the durable global fast-mode setting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// Replace the durable global Canvas settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsSet {
     /// Whether supported agent vendors launch in fast mode.
     pub fast_mode: bool,
+    /// Explicit operator display name; absence selects repository Git configuration.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub operator_name: Option<String>,
+    /// Explicit operator email; absence selects repository Git configuration.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub operator_email: Option<String>,
 }
 
 /// Authoritative global Canvas settings at one journal revision.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlobalSettingsAnswer {
     /// Whether supported agent vendors launch in fast mode.
     pub fast_mode: bool,
+    /// Explicit operator display name, absent when repository Git configuration supplies it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub operator_name: Option<String>,
+    /// Explicit operator email, absent when repository Git configuration supplies it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub operator_email: Option<String>,
+    /// Effective operator identity after applying explicit settings over Git configuration.
+    pub operator: crate::OperatorIdentity,
 }
 
 /// Read the vendor choices this resident generation can seat.

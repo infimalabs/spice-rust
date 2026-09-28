@@ -34,7 +34,7 @@ pub(super) async fn bootstrap(
         capability,
         epoch: state.epoch,
         version,
-        operator_gravatar: state.operator_gravatar.clone(),
+        operator: state.operator.clone(),
     };
     let Ok(bytes) = wire::encode(&discovery) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();

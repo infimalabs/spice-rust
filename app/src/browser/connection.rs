@@ -295,7 +295,9 @@ async fn dispatch_client_action(
     } else {
         if matches!(
             lease.action(),
-            ClientAction::FastMode(_) | ClientAction::Note { .. } | ClientAction::Steer { .. }
+            ClientAction::GlobalSettings(_)
+                | ClientAction::Note { .. }
+                | ClientAction::Steer { .. }
         ) {
             lease.prepare_pending_transfer();
         }
@@ -527,7 +529,7 @@ async fn open_socket(
         &generation,
         loaded_generation,
     )?));
-    publish_operator_emblem(discovery.operator_gravatar.as_ref());
+    publish_operator_identity(&discovery.operator);
     let session = Session::open(discovery.capability, discovery.epoch);
     let endpoint = discovery
         .endpoint
@@ -569,11 +571,8 @@ fn admit_bootstrap_identity(
     })
 }
 
-/// Paint the operator's quote byline emblem from the bootstrap's Gravatar hash.
-///
-/// The hash crosses once per bootstrap; every operator byline reads the one
-/// root property instead of carrying the address in rendered quote HTML.
-fn publish_operator_emblem(gravatar: Option<&wire::GravatarHash>) {
+/// Publish the operator initials used by quote bylines.
+fn publish_operator_identity(operator: &wire::OperatorIdentity) {
     let Some(root) = web_sys::window()
         .and_then(|window| window.document())
         .and_then(|document| document.document_element())
@@ -582,23 +581,18 @@ fn publish_operator_emblem(gravatar: Option<&wire::GravatarHash>) {
         return;
     };
     let style = root.style();
-    match gravatar {
-        Some(gravatar) => {
+    match operator.initials.as_deref() {
+        Some(initials) => {
+            let escaped = initials.replace('\\', "\\\\").replace('"', "\\\"");
             style
-                .set_property(
-                    "--operator-emblem",
-                    &format!(
-                        "url(\"https://gravatar.com/avatar/{}?s=64&d=retro\")",
-                        gravatar.as_str()
-                    ),
-                )
-                .expect("the operator emblem CSS property is valid");
-            root.set_attribute("data-operator-emblem", "")
-                .expect("the operator emblem root attribute is valid");
+                .set_property("--operator-initials", &format!("\"{escaped}\""))
+                .expect("operator initials form a valid CSS string");
+            root.set_attribute("data-operator-identity", "")
+                .expect("the operator identity root attribute is valid");
         }
         None => {
-            let _ = style.remove_property("--operator-emblem");
-            let _ = root.remove_attribute("data-operator-emblem");
+            let _ = style.remove_property("--operator-initials");
+            let _ = root.remove_attribute("data-operator-identity");
         }
     }
 }
@@ -716,9 +710,11 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
-        ClientAction::FastMode(fast_mode) => send_fast_mode(principal, writer, actions, *fast_mode)
-            .await
-            .map(Some),
+        ClientAction::GlobalSettings(settings) => {
+            send_global_settings(principal, writer, actions, settings)
+                .await
+                .map(Some)
+        }
         ClientAction::MessageHistory {
             generation,
             lane,
@@ -780,11 +776,11 @@ async fn dispatch_authored_action(
     }
 }
 
-async fn send_fast_mode(
+async fn send_global_settings(
     principal: &Principal,
     writer: &mut SocketWriter,
     actions: &ActionQueue,
-    fast_mode: bool,
+    settings: &GlobalSettingsSet,
 ) -> Result<CanonicalUuid, String> {
     send_typed(
         principal,
@@ -793,7 +789,7 @@ async fn send_fast_mode(
         PendingKind::Settings,
         CommandKind::GlobalSettingsSet,
         vec![],
-        GlobalSettingsSet { fast_mode },
+        settings.clone(),
     )
     .await
 }

@@ -97,7 +97,7 @@ async fn start_surface<'a>(
     epoch: CanonicalUuid,
     residency: &ResidencyHead,
     config: &SurfaceConfig,
-    operator_gravatar: Option<wire::GravatarHash>,
+    operator_identity: wire::OperatorIdentity,
     quota: canvas::stream::QuotaFeed,
     launch: SurfaceLaunch<'a>,
 ) -> CommandResult<StartedSurface<'a>> {
@@ -124,7 +124,7 @@ async fn start_surface<'a>(
         config.speech.clone(),
     )
     .with_speech_resolver(move |worktree| speech_paths.speech_for_worktree(worktree))
-    .with_operator_gravatar(operator_gravatar);
+    .with_operator_identity(operator_identity);
     let quote_presenter =
         spice::quote::presenter(paths.tape.clone(), bus.reader(), quote_agent_prose);
     let (server, control) = canvas::axum::Server::bind_streaming(
@@ -213,26 +213,6 @@ fn runtimes<'a>(
     )
 }
 
-/// Gravatar hash of the repository's configured `user.email`, absent when unset or blank.
-fn operator_gravatar(repository: &Repository) -> CommandResult<Option<wire::GravatarHash>> {
-    use sha2::{Digest as _, Sha256};
-
-    let git = gix::open(repository.worktree_root()).map_err(|error| {
-        environment_fault("canvas::operator-identity-unavailable", &error.to_string())
-    })?;
-    let Some(email) = git.config_snapshot().string("user.email") else {
-        return Ok(None);
-    };
-    let email = email.trim_ascii().to_ascii_lowercase();
-    if email.is_empty() {
-        return Ok(None);
-    }
-    let hash = format!("{:x}", Sha256::digest(&email))
-        .parse()
-        .expect("a SHA-256 lowercase hex spelling is a Gravatar hash");
-    Ok(Some(hash))
-}
-
 pub(super) async fn run_surface(
     bus: &Bus,
     repository: &Repository,
@@ -244,7 +224,7 @@ pub(super) async fn run_surface(
 ) -> CommandResult<()> {
     let residency = current_residency(bus, epoch)?;
     let mut backgrounds = SurfaceRuntimes::start(bus, config)?;
-    let emblem = operator_gravatar(repository)?;
+    let operator = settings_surface::current(bus, repository)?.operator;
     let StartedSurface {
         capabilities,
         discovery,
@@ -260,7 +240,7 @@ pub(super) async fn run_surface(
         epoch,
         residency.body(),
         config,
-        emblem,
+        operator,
         backgrounds.quota.feed(),
         launch,
     )

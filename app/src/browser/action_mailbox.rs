@@ -306,7 +306,7 @@ struct RenewalKey {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ActionClass {
     DrainSubmissions,
-    FastMode,
+    Settings,
     Other,
 }
 
@@ -422,8 +422,12 @@ impl ClientAction {
                     .saturating_add(attachment.content_type.len())
                     .saturating_add(attachment.data_url.len())
             }),
+            Self::GlobalSettings(settings) => settings
+                .operator_name
+                .as_ref()
+                .map_or(0, String::len)
+                .saturating_add(settings.operator_email.as_ref().map_or(0, String::len)),
             Self::DrainSubmissions
-            | Self::FastMode(_)
             | Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
             | Self::WorkHistory { .. }
@@ -520,11 +524,11 @@ impl ActionMailbox {
         {
             return Ok(());
         }
-        if class == ActionClass::FastMode
+        if class == ActionClass::Settings
             && let Some(queued) = self
                 .records
                 .iter_mut()
-                .find(|queued| queued.class == ActionClass::FastMode)
+                .find(|queued| queued.class == ActionClass::Settings)
         {
             queued.action = action;
             return Ok(());
@@ -767,11 +771,11 @@ impl ActionMailbox {
             ActionClass::of(&action) == leased.class,
             "a lease restores its exact action class"
         );
-        if leased.class == ActionClass::FastMode
+        if leased.class == ActionClass::Settings
             && self
                 .records
                 .iter()
-                .any(|queued| queued.class == ActionClass::FastMode)
+                .any(|queued| queued.class == ActionClass::Settings)
         {
             self.release_accounting(&leased);
             return;
@@ -915,7 +919,7 @@ impl ActionClass {
     fn of(action: &ClientAction) -> Self {
         match action {
             ClientAction::DrainSubmissions => Self::DrainSubmissions,
-            ClientAction::FastMode(_) => Self::FastMode,
+            ClientAction::GlobalSettings(_) => Self::Settings,
             _ => Self::Other,
         }
     }
@@ -947,6 +951,14 @@ mod tests {
                 lanes: vec![id(suffix), id(suffix + 1)],
             }],
         }
+    }
+
+    fn settings() -> ClientAction {
+        ClientAction::GlobalSettings(wire::intent::GlobalSettingsSet {
+            fast_mode: false,
+            operator_name: None,
+            operator_email: None,
+        })
     }
 
     #[test]
@@ -1043,7 +1055,7 @@ mod tests {
             Some(PendingKind::Settings)
         ));
 
-        queue.admit(ClientAction::FastMode(false), None).unwrap();
+        queue.admit(settings(), None).unwrap();
         let mut lease = queue.lease().expect("ordinary pending action leases");
         lease.prepare_pending_transfer();
         queue

@@ -58,6 +58,9 @@ fn render_axis(
     html! {
         <div class="canvas-menu-page" data-menu-page={super::axis_label(axis)}>
             {render_global_settings(runtime, context.sender)}
+            if axis == Axis::Topology {
+                {render_operator_settings(runtime, context.sender)}
+            }
             <section class="canvas-menu-section canvas-menu-context">
                 <h2>{super::axis_label(axis)}</h2>
                 <div class="canvas-menu-setting">
@@ -159,11 +162,22 @@ fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
 fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
     let settings = runtime.and_then(CanvasRuntime::settings);
     let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
+    let operator_name = settings.and_then(|settings| settings.operator_name.clone());
+    let operator_email = settings.and_then(|settings| settings.operator_email.clone());
     let enabled = settings.is_some()
         && runtime.is_some_and(|runtime| runtime.offers(CommandKind::GlobalSettingsSet));
     let sender = sender.clone();
     let onclick = Callback::from(move |event: MouseEvent| {
-        if enabled && admit_action(&sender, ClientAction::FastMode(!fast_mode)) {
+        if enabled
+            && admit_action(
+                &sender,
+                ClientAction::GlobalSettings(GlobalSettingsSet {
+                    fast_mode: !fast_mode,
+                    operator_name: operator_name.clone(),
+                    operator_email: operator_email.clone(),
+                }),
+            )
+        {
             event.stop_propagation();
         }
     });
@@ -200,6 +214,103 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
             </div>
         </section>
     }
+}
+
+fn render_operator_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
+    let Some(settings) = runtime.and_then(CanvasRuntime::settings) else {
+        return html! {
+            <section class="canvas-menu-section canvas-menu-operator">
+                <h2>{"You"}</h2>
+                <p class="canvas-menu-empty">{"Loading operator identity…"}</p>
+            </section>
+        };
+    };
+    let enabled = runtime.is_some_and(|runtime| runtime.offers(CommandKind::GlobalSettingsSet));
+    let name = settings.operator_name.clone().unwrap_or_default();
+    let email = settings.operator_email.clone().unwrap_or_default();
+    let name_placeholder = settings
+        .operator
+        .name
+        .clone()
+        .unwrap_or_else(|| "Git user.name is not set".to_owned());
+    let email_placeholder = settings
+        .operator
+        .email
+        .clone()
+        .unwrap_or_else(|| "Git user.email is not set".to_owned());
+    let fast_mode = settings.fast_mode;
+    let sender = sender.clone();
+    let onsubmit = Callback::from(move |event: SubmitEvent| {
+        event.prevent_default();
+        event.stop_propagation();
+        if !enabled {
+            return;
+        }
+        let setting = |id| {
+            input_value(id).and_then(|value| {
+                let value = value.trim();
+                (!value.is_empty()).then(|| value.to_owned())
+            })
+        };
+        let _ = admit_action(
+            &sender,
+            ClientAction::GlobalSettings(GlobalSettingsSet {
+                fast_mode,
+                operator_name: setting("operator-name"),
+                operator_email: setting("operator-email"),
+            }),
+        );
+    });
+    html! {
+        <section class="canvas-menu-section canvas-menu-operator" data-operator-member="">
+            <h2>{"You"}</h2>
+            <div class="canvas-operator-summary">
+                {super::render_operator_avatar(&settings.operator)}
+                <div>
+                    <strong>{settings.operator.name.as_deref().unwrap_or("Operator")}</strong>
+                    <span>{settings.operator.email.as_deref().unwrap_or("No email configured")}</span>
+                </div>
+            </div>
+            <form class="canvas-operator-form" {onsubmit}>
+                <label for="operator-name">
+                    <span>{"Name"}</span>
+                    <small>{if settings.operator_name.is_some() { "explicit" } else { "Git" }}</small>
+                </label>
+                <input
+                    id="operator-name"
+                    type="text"
+                    value={name}
+                    placeholder={name_placeholder}
+                    autocomplete="name"
+                    disabled={!enabled}
+                />
+                <label for="operator-email">
+                    <span>{"Email"}</span>
+                    <small>{if settings.operator_email.is_some() { "explicit" } else { "Git" }}</small>
+                </label>
+                <input
+                    id="operator-email"
+                    type="email"
+                    value={email}
+                    placeholder={email_placeholder}
+                    autocomplete="email"
+                    disabled={!enabled}
+                />
+                <button type="submit" class="canvas-compact-control" disabled={!enabled}>
+                    {"Save identity"}
+                </button>
+            </form>
+        </section>
+    }
+}
+
+fn input_value(id: &str) -> Option<String> {
+    web_sys::window()?
+        .document()?
+        .get_element_by_id(id)?
+        .dyn_into::<web_sys::HtmlInputElement>()
+        .ok()
+        .map(|input| input.value())
 }
 
 fn render_version_footer(

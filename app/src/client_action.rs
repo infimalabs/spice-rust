@@ -1,12 +1,12 @@
 use wire::body::DirectiveAttachment;
-use wire::intent::{TeamArrangement, TeamLife};
+use wire::intent::{GlobalSettingsSet, TeamArrangement, TeamLife};
 use wire::{CanonicalUuid, TaskHandle, TaskStamp};
 
 #[cfg_attr(all(test, not(target_arch = "wasm32")), allow(dead_code))]
 pub(crate) enum ClientAction {
     /// Wake the connection vendor after a composer synchronously queues work.
     DrainSubmissions,
-    FastMode(bool),
+    GlobalSettings(GlobalSettingsSet),
     TaskDetail {
         task: TaskStamp,
     },

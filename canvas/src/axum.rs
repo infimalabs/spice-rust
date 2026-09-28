@@ -291,7 +291,7 @@ struct SurfaceState {
     version: wire::Version,
     app: crate::AppSource,
     speech: SpeechResolver,
-    operator_gravatar: Option<wire::GravatarHash>,
+    operator: wire::OperatorIdentity,
     speech_slot: Semaphore,
     history: history::HistoryLimits,
     admission: Mutex<Admission>,
@@ -640,7 +640,7 @@ pub struct Server {
     state: Arc<SurfaceState>,
 }
 
-/// Identity, capabilities, app, speech resolver, and operator emblem for one server generation.
+/// Identity, capabilities, app, speech resolver, and operator presentation for one server generation.
 #[derive(Debug)]
 pub struct Generation {
     epoch: wire::CanonicalUuid,
@@ -648,7 +648,7 @@ pub struct Generation {
     version: wire::Version,
     app: crate::AppSource,
     speech: SpeechResolver,
-    operator_gravatar: Option<wire::GravatarHash>,
+    operator: wire::OperatorIdentity,
 }
 
 impl Generation {
@@ -668,7 +668,7 @@ impl Generation {
             version,
             app,
             speech: SpeechResolver::new(move |_| Ok(fallback.clone())),
-            operator_gravatar: None,
+            operator: wire::OperatorIdentity::default(),
         }
     }
 
@@ -682,10 +682,10 @@ impl Generation {
         self
     }
 
-    /// Publish the operator's Gravatar hash through every bootstrap of this generation.
+    /// Publish the effective operator identity through every bootstrap of this generation.
     #[must_use]
-    pub fn with_operator_gravatar(mut self, operator_gravatar: Option<wire::GravatarHash>) -> Self {
-        self.operator_gravatar = operator_gravatar;
+    pub fn with_operator_identity(mut self, operator: wire::OperatorIdentity) -> Self {
+        self.operator = operator;
         self
     }
 }
@@ -755,7 +755,7 @@ impl Server {
             version,
             app,
             speech,
-            operator_gravatar,
+            operator,
         } = generation;
         if !requested.ip().is_loopback() && !access.allows_non_loopback() {
             return Err(std::io::Error::new(
@@ -792,7 +792,7 @@ impl Server {
                     version,
                     app,
                     speech,
-                    operator_gravatar,
+                    operator,
                     speech_slot: Semaphore::new(1),
                     history: history::HistoryLimits::new(),
                     admission: Mutex::new(Admission::Open),

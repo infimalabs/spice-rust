@@ -199,11 +199,17 @@ impl CanvasRuntime {
             {
                 continue;
             }
+            let Some(operator) = body.operator.clone() else {
+                continue;
+            };
             self.settings_position = Some(row.seq());
             changed |= self.settings.replace(
                 self.accepted.scope(),
                 GlobalSettingsAnswer {
                     fast_mode: body.fast_mode,
+                    operator_name: body.operator_name.clone(),
+                    operator_email: body.operator_email.clone(),
+                    operator,
                 },
             );
         }
