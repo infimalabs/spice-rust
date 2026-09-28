@@ -47,8 +47,11 @@ pub(super) fn present_steering_acknowledgements_with_directives(
         if packet.recognized.is_empty() {
             continue;
         }
+        let start = presentation_framing_start(text, cursor, acknowledgement.start);
+        let end = presentation_framing_end(text, acknowledgement.end);
+        let framing_removed = start != acknowledgement.start || end != acknowledgement.end;
         let source = text
-            .get(cursor..acknowledgement.start)
+            .get(cursor..start)
             .ok_or_else(|| "acknowledgment header crossed a non-character boundary".to_owned())?;
         append_presented_source(&mut rendered, source, capitalize_body);
         capitalize_body = false;
@@ -79,7 +82,7 @@ pub(super) fn present_steering_acknowledgements_with_directives(
             }
             rendered.push_str("\n\n");
         }
-        cursor = acknowledgement.end;
+        cursor = end;
         if packet.missed.is_empty() {
             cursor = skip_horizontal_space(text, cursor);
             capitalize_body = true;
@@ -91,6 +94,13 @@ pub(super) fn present_steering_acknowledgements_with_directives(
             }
             if let Some(separator) = separator {
                 rendered.push(separator);
+            } else if framing_removed
+                && text
+                    .get(cursor..)
+                    .and_then(|tail| tail.chars().next())
+                    .is_some_and(|character| !character.is_whitespace())
+            {
+                rendered.push(' ');
             }
         }
         changed = true;
@@ -230,6 +240,56 @@ fn start_quote_block(rendered: &mut String) {
     if !rendered.is_empty() && !rendered.ends_with('\n') {
         rendered.push('\n');
     }
+}
+
+/// Decorative punctuation that models sometimes wrap around a protocol header
+/// is not authored response prose. Consume it only when the whole current-line
+/// prefix is framing, so brackets and dashes after real words remain content.
+fn presentation_framing_start(text: &str, floor: usize, start: usize) -> usize {
+    let Some(prefix) = text.get(..start) else {
+        return start;
+    };
+    let line_start = prefix
+        .rfind('\n')
+        .map_or(0, |newline| newline + 1)
+        .max(floor);
+    let Some(framing) = text.get(line_start..start) else {
+        return start;
+    };
+    let mut decorated = false;
+    for character in framing.chars() {
+        match character {
+            ' ' | '\t' => {}
+            '[' | '\u{2013}' | '\u{2014}' => decorated = true,
+            _ => return start,
+        }
+    }
+    if decorated { line_start } else { start }
+}
+
+/// A closing square bracket can hide the ordinary separator from the protocol
+/// scanner. Remove that close and any adjacent Unicode dash before the body is
+/// capitalized and before Markdown turns inserted directive context into a
+/// structural quote card.
+fn presentation_framing_end(text: &str, end: usize) -> usize {
+    let mut cursor = skip_horizontal_space(text, end);
+    let mut bracketed = false;
+    while text.get(cursor..).is_some_and(|tail| tail.starts_with(']')) {
+        cursor += ']'.len_utf8();
+        cursor = skip_horizontal_space(text, cursor);
+        bracketed = true;
+    }
+    if !bracketed {
+        return end;
+    }
+    while let Some(character) = text.get(cursor..).and_then(|tail| tail.chars().next()) {
+        if !matches!(character, '\u{2013}' | '\u{2014}') {
+            break;
+        }
+        cursor += character.len_utf8();
+        cursor = skip_horizontal_space(text, cursor);
+    }
+    cursor
 }
 
 fn skip_horizontal_space(text: &str, mut cursor: usize) -> usize {
