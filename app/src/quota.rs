@@ -340,8 +340,10 @@ mod tests {
         plan_type: Option<&str>,
         limits: &[(&str, Option<u64>, &str)],
     ) -> wire::QuotaReport {
-        let mut account = wire::QuotaAccount::default();
-        account.plan_type = plan_type.map(ToOwned::to_owned);
+        let account = wire::QuotaAccount {
+            plan_type: plan_type.map(ToOwned::to_owned),
+            ..wire::QuotaAccount::default()
+        };
         wire::QuotaReport {
             provider: provider.to_owned(),
             fetched_at_ms: 10,

@@ -168,7 +168,19 @@ pub(super) fn signoff_html(
     };
     let name = quote_author_name_html(author, agents, source);
     let age = quote_age_slot_html(author, agents, source);
-    format!("<span class=\"message-quote-signoff\"{tasks}>{name}{age}</span>")
+    if matches!(
+        author,
+        QuoteAuthor::Directive {
+            actor: wire::Actor::Operator
+        }
+    ) {
+        format!(
+            "<span class=\"message-quote-signoff\"{tasks}>\
+             <span class=\"message-quote-operator-byline\">{name}{age}</span></span>"
+        )
+    } else {
+        format!("<span class=\"message-quote-signoff\"{tasks}>{name}{age}</span>")
+    }
 }
 
 fn structural_quote_target<'event>(events: &'event [MarkdownEvent<'_>]) -> Option<&'event str> {

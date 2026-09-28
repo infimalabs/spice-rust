@@ -500,6 +500,14 @@
   line-height: 1.5;
   text-shadow: 0 1px 1px var(--panel);
 }
+.markdown-body .message-quote-operator-byline {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-self: flex-end;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
 /* A sourceless quote's signoff waits empty for Work links. */
 .markdown-body .message-quote-signoff:empty,
 .markdown-body .message-quote-signoff-line:has(> .message-quote-signoff:empty) {
@@ -593,10 +601,10 @@
 }
 :root[data-operator-emblem] .markdown-body .message-quote-name[data-quote-actor="operator"] {
   display: inline-block;
-  flex: 0 0 1.2em;
-  align-self: center;
-  width: 1.2em;
-  height: 1.2em;
+  flex: 0 0 2.4em;
+  align-self: flex-end;
+  width: 2.4em;
+  height: 2.4em;
   border-radius: 50%;
   background: var(--operator-emblem) center / cover no-repeat;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--muted) 40%, transparent);
