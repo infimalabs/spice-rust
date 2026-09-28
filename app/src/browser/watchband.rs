@@ -1074,7 +1074,7 @@ fn render_composer_body(
                 {onkeydown}
                 {onpaste}
             />
-            {render_composer_vendor_icon(standing)}
+            {render_composer_vendor_icon(standing, "composer")}
             if let Some(issue) = &draft.issue {
                 <p class="composer-issue" role="status">{issue.clone()}</p>
             }

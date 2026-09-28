@@ -736,7 +736,7 @@ fn render_topology_agent(
             }</p>
             <p>{crate::watchband::jobs_kept(&standing.jobs).unwrap_or_else(|| "\u{a0}".to_owned())}</p>
             <p class="dash-overview-agent-model">{standing.model.clone().unwrap_or_else(|| standing.vendor.clone())}</p>
-            {super::watchband::render_composer_vendor_icon(standing)}
+            {super::watchband::render_composer_vendor_icon(standing, "dash")}
         </article>
     }
 }
