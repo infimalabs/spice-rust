@@ -76,14 +76,14 @@ fn render_capacity(generation: &wire::QuotaGeneration) -> Html {
     html! {
         <section class="quota-detail-group" aria-labelledby="quota-capacity-heading">
             <h3 id="quota-capacity-heading">{"Remaining provider quota"}</h3>
-            if snapshot.capacity.is_empty() {
-                <p class="quota-empty">{"No aggregate provider capacity was reported."}</p>
+            if snapshot.reports.is_empty() {
+                <p class="quota-empty">{"No account usage reports were returned."}</p>
             } else {
                 <dl class="quota-capacity-grid">
                     <div>
                         <dt>{"Total across all account capacity"}</dt>
                         <dd><strong>{crate::quota::capacity_summary(generation)}</strong></dd>
-                        <dd>{"Weighted by account-equivalent capacity across provider windows"}</dd>
+                        <dd>{"Plan-weighted estimate · Free 0.2× · $20 plans 1× · Pro/Max 5× or explicit 20×"}</dd>
                     </div>
                 </dl>
             }
