@@ -276,19 +276,27 @@ use restrictive CSP and hashed owned import maps. Parent CSP and Host/origin
 checks remain. Publication retains prior receipt-owned members, not current ones.
 
 Mermaid uses full 12.0.0 ESM, not Tiny: 105 unchanged upstream modules, owned
-`renderer-000.html` import map and `renderer-000.mjs` bridge.
-[`renderer-000.txt`](../../app/renderer/renderer-000.txt) records tarball integrity,
-original members, renamed-file checksums, licenses and source revisions.
-Reproduce recorded filenames and original `dist/` path/basename import aliases.
-Builds use checked-in bytes; no runtime CDN/package requests. Math uses native
-MathML and system fonts.
+`renderer-000.html` import map and `renderer-000.mjs` bridge. The same bridge
+uses the checked-in, generation-pinned KaTeX 0.16.47 module already present in
+that bundle. [`renderer-000.txt`](../../app/renderer/renderer-000.txt) records
+tarball integrity, original members, renamed-file checksums, licenses and source
+revisions. Reproduce recorded filenames and original `dist/` path/basename
+import aliases. Builds use checked-in bytes; no runtime CDN/package requests.
 
-[`mermaid.rs`](../../app/src/browser/mermaid.rs) owns a lazy, measurable, offscreen
-`allow-scripts` sandbox pinned to the **loaded page's** generation and effective
-Canvas theme. Protocol v1 checks window, origin, generation, channel, request ID,
-revision and theme. Strict child security locks host configuration, never invokes
-click bindings, normalizes SVG namespaces and clears temporary nodes. The parent
-admits ≤8 MiB UTF-8 SVG as a base64 image, never SVG nodes/styles in its DOM.
+Pulldown-cmark owns `$...$` and `$$...$$` math. Canvas maps model-common
+`\(...\)` and `\[...\]` delimiters onto that parser only when its first pass
+exposes both delimiters as prose; escaped text and inline or fenced code remain
+literal. KaTeX produces native MathML with system fonts. The renderer wraps it
+in bounded SVG, and the parent admits only the decoded image, never renderer
+markup in its DOM. Invalid TeX retains its authored source.
+
+[`mermaid.rs`](../../app/src/browser/mermaid.rs) owns a lazy, measurable,
+offscreen `allow-scripts` sandbox pinned to the **loaded page's** generation and
+effective Canvas theme. Protocol v3 checks window, origin, generation, render
+kind, channel, request ID, revision and theme. Strict child security locks host
+configuration, never invokes click bindings, normalizes SVG namespaces and
+clears temporary nodes. The parent admits ≤8 MiB UTF-8 SVG as a base64 image,
+never SVG nodes/styles in its DOM.
 
 Limits: 50,000 UTF-16 source units, 500 error characters. Rendering is serial;
 identical requests share work, pending revisions coalesce over 80 ms. Queue:

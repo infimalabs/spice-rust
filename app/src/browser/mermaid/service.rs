@@ -30,6 +30,7 @@ pub(super) type Shared = Rc<RefCell<Service>>;
 
 #[derive(Clone, PartialEq)]
 pub(super) struct Key {
+    pub(super) kind: super::RenderKind,
     pub(super) source: AttrValue,
     pub(super) theme: Theme,
     pub(super) generation: AttrValue,
@@ -38,6 +39,16 @@ pub(super) struct Key {
 
 pub(super) struct Subscriber {
     pub(super) id: u32,
+    pub(super) host: web_sys::Element,
+    pub(super) revision: AttrValue,
+    pub(super) callback: Callback<Outcome>,
+}
+
+pub(super) struct RenderRequest {
+    pub(super) kind: super::RenderKind,
+    pub(super) source: AttrValue,
+    pub(super) theme: Theme,
+    pub(super) node_ids: Rc<Vec<String>>,
     pub(super) host: web_sys::Element,
     pub(super) revision: AttrValue,
     pub(super) callback: Callback<Outcome>,
@@ -119,19 +130,24 @@ impl Service {
         })))
     }
 
-    pub(super) fn request(
-        shared: &Shared,
-        source: AttrValue,
-        theme: Theme,
-        node_ids: Rc<Vec<String>>,
-        host: web_sys::Element,
-        revision: AttrValue,
-        callback: Callback<Outcome>,
-    ) -> Result<Lease, AttrValue> {
+    pub(super) fn request(shared: &Shared, request: RenderRequest) -> Result<Lease, AttrValue> {
+        let RenderRequest {
+            kind,
+            source,
+            theme,
+            node_ids,
+            host,
+            revision,
+            callback,
+        } = request;
         if source.encode_utf16().take(SOURCE_UNITS + 1).count() > SOURCE_UNITS {
-            return Err("Diagram exceeds the 50,000 UTF-16 unit source limit".into());
+            return Err("Render source exceeds the 50,000 UTF-16 unit limit".into());
         }
-        crate::mermaid_geometry::validate_ids(&node_ids).map_err(AttrValue::from)?;
+        if kind == super::RenderKind::Diagram {
+            crate::mermaid_geometry::validate_ids(&node_ids).map_err(AttrValue::from)?;
+        } else if !node_ids.is_empty() {
+            return Err("Math rendering does not accept diagram node IDs".into());
+        }
         let mut service = shared.borrow_mut();
         let id = service
             .serial
@@ -139,6 +155,7 @@ impl Service {
             .ok_or("Renderer request limit reached; reload Canvas")?;
         service.serial = id;
         let key = Key {
+            kind,
             source,
             theme,
             generation: service.generation.clone(),
@@ -171,9 +188,7 @@ impl Service {
             .map(|job| job.subscribers.len())
             .sum::<usize>();
         if subscribers >= SUBSCRIBERS {
-            return Err(
-                "Diagram renderer has 64 pending subscribers; retry when it is idle".into(),
-            );
+            return Err("Renderer has 64 pending subscribers; retry when it is idle".into());
         }
         if let Some(job) = service.active.as_mut().filter(|job| job.key == key) {
             job.subscribers.push(subscriber);
@@ -186,7 +201,7 @@ impl Service {
                 .map(|job| job.key.source.len())
                 .sum::<usize>();
             if service.queue.len() >= QUEUE_JOBS || bytes + key.source.len() > QUEUE_BYTES {
-                return Err("Diagram render queue is full; retry when it is idle".into());
+                return Err("Render queue is full; retry when it is idle".into());
             }
             service.queue.push_back(Job {
                 id,
@@ -243,7 +258,7 @@ impl Service {
                 }
                 Err(_) => {
                     drop(service);
-                    Self::close(shared, "Could not load the diagram renderer");
+                    Self::close(shared, "Could not load the isolated renderer");
                 }
             }
             return;
@@ -258,7 +273,7 @@ impl Service {
         );
         if result.is_err() {
             drop(service);
-            Self::close(shared, "Could not send the diagram to its renderer");
+            Self::close(shared, "Could not send content to its renderer");
             return;
         }
         service.arm_deadline(shared);
@@ -270,10 +285,7 @@ impl Service {
         // this event loop; recovery runs only once the browser can execute it.
         self.deadline = Some(Timeout::new(RESPONSE_MILLIS, move || {
             if let Some(shared) = weak.upgrade() {
-                Self::close(
-                    &shared,
-                    "Diagram renderer did not respond; retry or reload Canvas",
-                );
+                Self::close(&shared, "Renderer did not respond; retry or reload Canvas");
             }
         }));
     }
