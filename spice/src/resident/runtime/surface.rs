@@ -188,7 +188,9 @@ pub(super) async fn run_surface(
     let residency = current_residency(bus, epoch)?;
     let timer_commits = bus.reader().subscribe();
     let mut timers = timers::Runtime::start(config.projects.clone(), config.steering.clone())?;
-    let quota = quota::Runtime::start(config.omp_binary.clone());
+    let mut quota = quota::Runtime::start(config.omp_binary.clone());
+    let quota_triggers = quota::Triggers::start(bus)?;
+    quota.request();
     let mut lifecycle = lifecycle::Runtime::new(&config.lane);
     let mut taste_adjudication = if config.judge_enabled {
         Some(taste_surface::start_adjudication()?)
@@ -284,6 +286,7 @@ pub(super) async fn run_surface(
         progress,
         timers,
         quota,
+        quota_triggers,
         timer_commits,
         lifecycle,
         inbox_deliveries,
@@ -502,6 +505,7 @@ async fn drive_surface(
     diagnostic: &mut dyn io::Write,
     mut timers: timers::Runtime,
     mut quota: quota::Runtime,
+    mut quota_triggers: quota::Triggers,
     mut timer_commits: bus::BroadcastSubscriber,
     mut lifecycle: lifecycle::Runtime,
     mut inbox_deliveries: InboxDeliveries,
@@ -579,11 +583,12 @@ async fn drive_surface(
                 bus, seats, command_surface, &mut lifecycle, &mut supervisor_reports,
                 diagnostic, &mut timers, &mut lifecycle_reconciliation, timer,
             )?,
+            () = quota_triggers.wait_periodic() => request_quota(&mut quota, &mut quota_triggers),
             completed = quota.recv() => quota.accept(completed),
             committed = timer_commits.recv() => accept_commit_turn(
                 bus, seats, command_surface, &message_publisher, &mut lifecycle,
                 &mut supervisor_reports, message_state.as_ref(), diagnostic, &mut timers,
-                &mut lifecycle_reconciliation, committed,
+                &mut quota, &mut quota_triggers, &mut lifecycle_reconciliation, committed,
             )?,
             ending = &mut server_task => return Err(server_outcome(ending)),
         }
@@ -1101,6 +1106,11 @@ fn accept_exit(
     super::deferral::defer_store_fault(accounted, diagnostic, "exit accounting")
 }
 
+fn request_quota(quota: &mut quota::Runtime, triggers: &mut quota::Triggers) {
+    triggers.accept_periodic();
+    quota.request();
+}
+
 /// Let one journal commit settle the reconciliation and the sweep it may run.
 ///
 /// Every presented record commits a fact, so this arm fires throughout a
@@ -1119,6 +1129,8 @@ fn accept_commit_turn(
     message_state: &std::sync::Mutex<message_surface::MessageState>,
     diagnostic: &mut dyn io::Write,
     timers: &mut timers::Runtime,
+    quota: &mut quota::Runtime,
+    quota_triggers: &mut quota::Triggers,
     reconciliation: &mut lifecycle::Reconciliation,
     committed: Result<JournalCommit, tokio::sync::broadcast::error::RecvError>,
 ) -> CommandResult<()> {
@@ -1134,6 +1146,9 @@ fn accept_commit_turn(
     )? {
         Some(commit) => reconciliation.settle_commit(commit),
         None => reconciliation.settle(),
+    }
+    if quota_triggers.accept_commits(bus)? {
+        quota.request();
     }
     settle_spoken_acknowledgements(bus, message_publisher, message_state, diagnostic)
 }

@@ -1,3 +1,7 @@
+mod triggers;
+
+pub(super) use triggers::Triggers;
+
 use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::future;
@@ -335,13 +339,6 @@ impl Runtime {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "the dependent resident-boundary task owns sampler requests"
-        )
-    )]
     pub(crate) fn request(&mut self) {
         if self.active.is_some() {
             self.follow_up = true;
