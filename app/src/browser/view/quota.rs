@@ -83,7 +83,7 @@ fn render_capacity(generation: &wire::QuotaGeneration) -> Html {
                     <div>
                         <dt>{"Total across all account capacity"}</dt>
                         <dd><strong>{crate::quota::capacity_summary(generation)}</strong></dd>
-                        <dd>{"Plan-weighted estimate · Free 0.2× · $20 plans 1× · Pro/Max 5× or explicit 20×"}</dd>
+                        <dd>{"Weekly plan-weighted estimate · Free 0.2× · $20 plans 1× · Pro/Max 5× or explicit 20×"}</dd>
                     </div>
                 </dl>
             }
