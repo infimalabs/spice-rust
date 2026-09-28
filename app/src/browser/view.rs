@@ -542,7 +542,6 @@ pub(super) fn render_topology(render: &CanvasRender<'_>) -> Html {
     html! {
         <>
             {operator}
-            {quota}
             <section class="section dash-overview-topology-section" aria-labelledby="resident-topology-heading">
                 <div class="section-heading">
                     <h2 id="resident-topology-heading">{"Resident topology"}</h2>
@@ -572,6 +571,7 @@ pub(super) fn render_topology(render: &CanvasRender<'_>) -> Html {
                     </div>
                 }
             </section>
+            {quota}
         </>
     }
 }
