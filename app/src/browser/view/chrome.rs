@@ -200,15 +200,14 @@ fn render_canvas_menu(
                     update.is_some().then_some("canvas-menu-trigger--update"),
                 )}
                 data-connection={render.connection.indicator_state()}
-                data-quota={quota.as_ref().map(|quota| quota.state)}
+                data-quota-stale={quota.as_ref().is_some_and(|quota| quota.stale).then_some("true")}
                 aria-label={trigger_label.clone()}
                 aria-haspopup="menu"
                 aria-expanded={(**render.menu_open).to_string()}
                 title={trigger_label}
                 onclick={toggle}
             >
-                <span class="canvas-menu-flame" aria-hidden="true">
-                    {"🔥"}
+                <span class="canvas-menu-well" aria-hidden="true">
                     {quota.as_ref().map(QuotaLevel::render)}
                 </span>
                 <span class="canvas-menu-pepper" aria-hidden="true">{"🌶️"}</span>
@@ -236,7 +235,7 @@ fn render_canvas_menu(
 
 /// Consolidated weekly quota drawn as the Spice button's fluid level.
 struct QuotaLevel {
-    state: &'static str,
+    stale: bool,
     percentage: f64,
     label: String,
 }
@@ -256,20 +255,26 @@ impl QuotaLevel {
     }
 }
 
+/// Only a failed refresh marks the level stale; an in-flight refresh keeps
+/// the retained level steady instead of flashing on every sample.
 fn quota_level(runtime: Option<&CanvasRuntime>) -> Option<QuotaLevel> {
     let generation = runtime.and_then(CanvasRuntime::quota)?;
     let remaining = crate::quota::weekly_remaining(generation.last_good.as_deref()?)?;
-    let condition = crate::quota::present(generation).condition;
+    let stale = matches!(
+        generation.latest_attempt,
+        Some(wire::QuotaAttempt::Failed { .. })
+    );
     let percentage = remaining * 100.0;
-    let label = match condition {
-        crate::quota::Condition::Current => format!("weekly quota {percentage:.0}% remaining"),
-        stale => format!(
+    let label = if stale {
+        format!(
             "weekly quota {percentage:.0}% remaining ({})",
-            stale.label()
-        ),
+            crate::quota::Condition::StaleLastGood.label()
+        )
+    } else {
+        format!("weekly quota {percentage:.0}% remaining")
     };
     Some(QuotaLevel {
-        state: condition.key(),
+        stale,
         percentage,
         label,
     })
