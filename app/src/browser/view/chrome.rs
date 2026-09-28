@@ -201,14 +201,16 @@ fn render_canvas_menu(
                 )}
                 data-connection={render.connection.indicator_state()}
                 data-quota={quota.as_ref().map(|quota| quota.state)}
-                style={quota.as_ref().map(|quota| quota.style.clone())}
                 aria-label={trigger_label.clone()}
                 aria-haspopup="menu"
                 aria-expanded={(**render.menu_open).to_string()}
                 title={trigger_label}
                 onclick={toggle}
             >
-                <span class="canvas-menu-flame" aria-hidden="true">{"🔥"}</span>
+                <span class="canvas-menu-flame" aria-hidden="true">
+                    {"🔥"}
+                    {quota.as_ref().map(QuotaLevel::render)}
+                </span>
                 <span class="canvas-menu-pepper" aria-hidden="true">{"🌶️"}</span>
             </summary>
             <div class="canvas-menu-frame">
@@ -232,11 +234,26 @@ fn render_canvas_menu(
     }
 }
 
-/// Consolidated weekly quota drawn as the Spice button's fill level.
+/// Consolidated weekly quota drawn as the Spice button's fluid level.
 struct QuotaLevel {
     state: &'static str,
-    style: AttrValue,
+    percentage: f64,
     label: String,
+}
+
+impl QuotaLevel {
+    /// SVG geometry attributes, unlike inline style, survive Canvas's
+    /// `style-src 'self'` policy.
+    fn render(&self) -> Html {
+        let surface = format!("{:.1}", 100.0 - self.percentage);
+        let depth = format!("{:.1}", self.percentage);
+        html! {
+            <svg class="canvas-menu-quota" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
+                <rect class="canvas-menu-quota-fluid" x="0" y={surface.clone()} width="100" height={depth}></rect>
+                <line class="canvas-menu-quota-surface" x1="0" x2="100" y1={surface.clone()} y2={surface}></line>
+            </svg>
+        }
+    }
 }
 
 fn quota_level(runtime: Option<&CanvasRuntime>) -> Option<QuotaLevel> {
@@ -253,7 +270,7 @@ fn quota_level(runtime: Option<&CanvasRuntime>) -> Option<QuotaLevel> {
     };
     Some(QuotaLevel {
         state: condition.key(),
-        style: format!("--canvas-quota-level: {percentage:.1}%").into(),
+        percentage,
         label,
     })
 }
