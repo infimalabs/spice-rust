@@ -84,8 +84,13 @@ pub fn team_work<'p, 'a>(projection: &'p WorkProjection<'a>, team: &LaneRow) -> 
     for task in projection.tasks() {
         let row = task.row();
         let member_actor = |actor: Option<&Actor>| matches!(actor, Some(Actor::Lane(lane)) if members.contains(lane));
+        let claimed_by_member = task.availability() == WorkAvailability::InFlight
+            && row
+                .claim
+                .as_ref()
+                .is_some_and(|claim| members.contains(&claim.body.lane));
         let owned = row.creator_team == Some(team.lane)
-            || member_actor(task.working_claimant())
+            || claimed_by_member
             || member_actor(row.workflow.body.assignment.as_ref());
         let wait = match task.availability() {
             WorkAvailability::Terminal => continue,
@@ -179,7 +184,7 @@ mod tests {
 
     fn claimed_by(mut row: BoardTask, lane: &str) -> BoardTask {
         let mut head = claim(&row, ClaimDisposition::Active);
-        head.body.actor = Actor::Lane(uuid(lane));
+        head.body.lane = uuid(lane);
         row.claim = Some(head);
         row
     }
