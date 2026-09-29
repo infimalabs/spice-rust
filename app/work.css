@@ -825,3 +825,113 @@
   border-top-color: var(--accent);
   border-radius: 50%;
 }
+.team-direction-ledger {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.team-direction-ledger-row {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: var(--canvas-edge);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--panel) 76%, var(--page));
+}
+.team-task-member {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+}
+.team-task-member .agent-presence {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  background: var(--accent-slot, var(--accent));
+  box-shadow: none;
+}
+.team-task-member-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-direction-ledger-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  font-size: .67rem;
+}
+.team-direction-preview {
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-direction-age {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .61rem;
+}
+.team-direction-recipients {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.team-direction-recipients > li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 25%, var(--line-soft));
+  border-radius: var(--canvas-radius-pill);
+  font-size: .61rem;
+}
+.team-direction-state {
+  color: var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.team-direction-recipients > li[data-direction-state="queued"] .team-direction-state {
+  color: var(--warning);
+}
+.team-direction-recipients > li[data-direction-state="acknowledged"] .team-direction-state {
+  color: var(--accent);
+}
+.team-direction-recipients > li[data-direction-state="declined"] .team-direction-state,
+.team-direction-recipients > li[data-direction-state="dead-lettered"] .team-direction-state,
+.team-direction-recipients > li[data-direction-state="canceled"] .team-direction-state {
+  color: var(--danger);
+}
+.team-direction-tasks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.team-direction-tasks:empty { display: none; }
+.team-direction-task-chip {
+  position: relative;
+  z-index: 1;
+  padding: 2px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--canvas-radius-pill);
+  background: var(--canvas-menu-surface);
+  color: var(--accent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: .6rem;
+  cursor: pointer;
+}
+.team-direction-task-chip:hover,
+.team-direction-task-chip:focus-visible {
+  border-color: var(--accent);
+}

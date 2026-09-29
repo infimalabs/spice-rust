@@ -252,7 +252,7 @@ async fn send_inbox(
         CommandKind::SteerInbox,
         SteerInbox {
             lane: None,
-            retired: false,
+            retired: true,
         },
     )
     .await

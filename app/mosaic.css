@@ -1322,12 +1322,6 @@ a.relative-age {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .64rem;
 }
-.team-direction-list {
-  margin: 0;
-  padding: 0;
-  border-top: var(--canvas-edge);
-  list-style: none;
-}
 .team-task-card-list {
   display: grid;
   gap: 8px;
@@ -1378,51 +1372,6 @@ a.relative-age {
     border-top: 1px solid color-mix(in srgb, var(--work-card-tone) 16%, var(--line-soft));
     border-left: 0;
   }
-}
-.team-direction-row {
-  min-width: 0;
-  border-bottom: var(--canvas-edge);
-  border-left: 2px solid var(--accent-slot, var(--accent));
-  background: color-mix(in srgb, var(--panel) 76%, var(--page));
-}
-.team-task-member {
-  display: inline-flex;
-  align-items: center;
-  min-width: 0;
-  gap: 5px;
-}
-.team-task-member .agent-presence {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  background: var(--accent-slot, var(--accent));
-  box-shadow: none;
-}
-.team-task-member-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.team-direction-row {
-  display: grid;
-  grid-template-columns: minmax(84px, .35fr) minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-  min-height: 46px;
-  padding: 7px 10px;
-  font-size: .65rem;
-}
-.team-direction-preview {
-  overflow: hidden;
-  color: var(--muted);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.team-direction-count {
-  color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: nowrap;
 }
 .team-task-empty {
   min-height: 46px;

@@ -126,6 +126,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                             &[],
                             (**render.selected_task).as_ref(),
                             render.select_task,
+                            render.submissions,
                             None,
                         ),
                         TeamMode::Dash => {
@@ -229,6 +230,7 @@ pub(super) fn render_populated_fleet(
                                             &team_standings,
                                             (**render.selected_task).as_ref(),
                                             render.select_task,
+                                            render.submissions,
                                             Some(render.team_settled),
                                         ),
                                         TeamMode::Dash => render_details(

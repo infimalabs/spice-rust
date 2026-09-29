@@ -61,11 +61,6 @@
   .team-mode-badge { display: none; }
   .team-task-workspace { padding-inline: 8px; }
   .team-task-member { max-width: 100%; }
-  .team-direction-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 4px 8px;
-  }
-  .team-direction-preview { grid-column: 1 / -1; grid-row: 2; }
   .team-job-table th:nth-child(1) { width: 5.5rem; }
   .team-job-table th:nth-child(2) { width: 3.5rem; }
   .team-job-table th:nth-child(4) { width: 4.5rem; }

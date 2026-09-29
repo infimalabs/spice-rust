@@ -1,6 +1,7 @@
 //! Predecessor-style lane composer rendered inside the Lanes surface.
 
 use std::cmp::Reverse;
+use std::collections::{BTreeMap, BTreeSet};
 use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{DragEvent, HtmlInputElement, PointerEvent};
@@ -9,9 +10,7 @@ use super::clock::Age;
 use super::work_card::{self, Density};
 use super::*;
 use crate::composer_drafts::ComposerDraft;
-use crate::watchband::{
-    self, Standing, SubmissionAuthority, SubmissionTarget, TeamTaskSectionState,
-};
+use crate::watchband::{self, Standing, SubmissionAuthority, SubmissionTarget};
 
 mod command_preview;
 mod composer;
@@ -38,7 +37,7 @@ pub(super) use fleet::use_team_menu_escape;
 use fleet::{FleetRender, TeamMode, carries_team, render_empty_fleet, render_populated_fleet};
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
-use team_work::{render_team_jobs, render_team_work_lanes};
+use team_work::{render_directive_ledger, render_team_jobs, render_team_work_lanes};
 pub(super) use vendor_icon::{render_composer_vendor_icon, render_dash_vendor_icon};
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
@@ -511,6 +510,7 @@ fn render_tasks(
     standings: &[Standing],
     selected: Option<&wire::TaskStamp>,
     select: &Callback<wire::TaskStamp>,
+    submissions: &SubmissionHandle,
     settled: Option<&super::team_settled::Controls>,
 ) -> Html {
     let work = work.map(|projection| crate::work::team_work(projection, team));
@@ -523,11 +523,6 @@ fn render_tasks(
         work: settled_work.as_ref(),
         controls,
     });
-    let queued = standings
-        .iter()
-        .filter(|standing| standing.pending > 0)
-        .collect::<Vec<_>>();
-    let direction_state = TeamTaskSectionState::direction(runtime.inbox().is_some(), queued.len());
     let policy = TeamLife::from(team.subscription).label();
     let work_summary = work.as_ref().map_or_else(
         || "Task state unavailable".to_owned(),
@@ -563,43 +558,8 @@ fn render_tasks(
             </header>
             {render_team_work_lanes(work.as_ref(), team.lane, &cards, settled.as_ref())}
             {render_team_jobs(standings, team.lane)}
-            <section class="team-task-section" aria-labelledby={format!("direction-queue-{}", team.lane)}>
-                <header>
-                    <h3 id={format!("direction-queue-{}", team.lane)}>{"Direction queue"}</h3>
-                    if !queued.is_empty() {
-                        <span>{queued.iter().map(|standing| standing.pending).sum::<usize>()}</span>
-                    }
-                </header>
-                if let Some(message) = direction_state.message() {
-                    <p class="team-task-empty" role={direction_state.unavailable().then_some("status")}>{message}</p>
-                } else {
-                    <ol class="team-direction-list">
-                        {for queued.into_iter().map(render_direction_row)}
-                    </ol>
-                }
-            </section>
+            {render_directive_ledger(runtime, team, standings, submissions, select)}
         </main>
-    }
-}
-
-fn render_direction_row(standing: &Standing) -> Html {
-    let preview = standing
-        .headline
-        .clone()
-        .unwrap_or_else(|| "Preview unavailable".to_owned());
-    html! {
-        <li
-            class="team-direction-row"
-            data-agent-lane={standing.lane.to_string()}
-            data-accent={standing.accent.to_string()}
-        >
-            <span class="team-task-member">
-                <span class="agent-presence" aria-hidden="true"></span>
-                <strong class="team-task-member-name">{standing.label.clone()}</strong>
-            </span>
-            <span class="team-direction-preview">{preview}</span>
-            <span class="team-direction-count">{format!("{} pending", standing.pending)}</span>
-        </li>
     }
 }
 
@@ -1398,12 +1358,13 @@ fn submit_draft(
     let Ok(id) = random_uuid() else {
         return false;
     };
+    let authored_millis = js_sys::Date::now() as i64;
     let submission = match target {
         Some(SubmissionTarget::Resident { occupant, epoch }) => Submission::new(
             id,
             fanout,
             lane,
-            (occupant, epoch),
+            (occupant, epoch, authored_millis),
             prepared.message,
             prepared.attachments,
             prepared.snapshot,
@@ -1412,6 +1373,7 @@ fn submit_draft(
             id,
             fanout,
             lane,
+            authored_millis,
             prepared.message,
             prepared.attachments,
             prepared.snapshot,
@@ -1448,7 +1410,8 @@ fn submit_broadcast(
     let Ok(fanout) = random_uuid() else {
         return false;
     };
-    let payload = Submission::payload(fanout, message, prepared.attachments);
+    let authored_millis = js_sys::Date::now() as i64;
+    let payload = Submission::payload(fanout, authored_millis, message, prepared.attachments);
     let mut snapshot = Some(prepared.snapshot);
     let mut batch = Vec::with_capacity(targets.len());
     for target in targets {

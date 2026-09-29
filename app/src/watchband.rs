@@ -14,6 +14,9 @@
 //! a task. A field the reference design shows and the wire does not carry is
 //! therefore absent here rather than approximated.
 
+#[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
+pub(crate) mod directive_ledger;
+
 use wire::head::ClaimDisposition;
 use wire::intent::{BoardTask, LaneInbox};
 use wire::{CanonicalUuid, TaskHandle};
@@ -66,44 +69,6 @@ pub const FIELD_BUDGET: usize = 22;
 
 /// Stable bounded identity when neither configured name nor worktree leaf exists.
 pub const UNKNOWN_AGENT_LABEL: &str = "Unknown agent";
-
-/// Render state for one independently admitted section of the team Work view.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TeamTaskSectionState {
-    DirectionSnapshotUnavailable,
-    NoQueuedDirection,
-    QueuedDirection,
-}
-
-impl TeamTaskSectionState {
-    /// State of the inbox-backed direction section.
-    #[must_use]
-    pub const fn direction(inbox_available: bool, count: usize) -> Self {
-        if !inbox_available {
-            Self::DirectionSnapshotUnavailable
-        } else if count == 0 {
-            Self::NoQueuedDirection
-        } else {
-            Self::QueuedDirection
-        }
-    }
-
-    /// Exact empty or unavailable copy, absent when rows are ready.
-    #[must_use]
-    pub const fn message(self) -> Option<&'static str> {
-        match self {
-            Self::DirectionSnapshotUnavailable => Some("Direction snapshot unavailable."),
-            Self::NoQueuedDirection => Some("No queued direction."),
-            Self::QueuedDirection => None,
-        }
-    }
-
-    /// Whether assistive technology should announce a missing projection.
-    #[must_use]
-    pub const fn unavailable(self) -> bool {
-        matches!(self, Self::DirectionSnapshotUnavailable)
-    }
-}
 
 /// One lane's complete standing, joined from the three answers that carry it.
 #[derive(Debug, Clone, PartialEq, Eq)]
