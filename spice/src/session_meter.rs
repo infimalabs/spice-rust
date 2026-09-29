@@ -444,24 +444,12 @@ struct StoredState {
 }
 
 fn render(snapshot: &WorkingState) -> String {
-    format!(
-        "🌶️ Working state: {}.",
-        render_parts(snapshot, true, true).join("; ")
-    )
+    format!("🌶️ Working state: {}.", render_parts(snapshot).join("; "))
 }
 
-/// Render ordinary post-tool status without repeating authored steering.
-///
-/// When no authored directive section owns the pending rows, their count stays
-/// visible here as the hook's sole inbox representation.
-pub fn ordinary_status(snapshot: &WorkingState, authored_steering: bool) -> Option<String> {
-    let parts = render_parts(snapshot, false, !authored_steering);
-    (!parts.is_empty()).then(|| format!("Working state: {}.", parts.join("; ")))
-}
-
-fn render_parts(snapshot: &WorkingState, include_lease: bool, include_inbox: bool) -> Vec<String> {
+fn render_parts(snapshot: &WorkingState) -> Vec<String> {
     let mut parts = Vec::new();
-    if include_inbox && snapshot.pending_inbox_count > 0 {
+    if snapshot.pending_inbox_count > 0 {
         let noun = if snapshot.pending_inbox_count == 1 {
             "inbox"
         } else {
@@ -470,7 +458,7 @@ fn render_parts(snapshot: &WorkingState, include_lease: bool, include_inbox: boo
         parts.push(format!("{} pending {noun}", snapshot.pending_inbox_count));
     }
     if snapshot.drain_queue && snapshot.claim.is_none() {
-        let direction = if include_inbox && snapshot.pending_inbox_count > 0 {
+        let direction = if snapshot.pending_inbox_count > 0 {
             "handle operator direction first, then run spice task next"
         } else {
             "run spice task next"
@@ -486,11 +474,11 @@ fn render_parts(snapshot: &WorkingState, include_lease: bool, include_inbox: boo
                 text.push(' ');
                 text.push_str(&phase);
             }
-            if include_lease && let Some(elapsed) = claim.elapsed {
+            if let Some(elapsed) = claim.elapsed {
                 text.push_str(&format!(" held for {}s", elapsed.as_secs()));
             }
             parts.push(text);
-            if include_lease && let Some(lease) = render_claim_lease(claim, &handle) {
+            if let Some(lease) = render_claim_lease(claim, &handle) {
                 parts.push(lease);
             }
         }

@@ -90,7 +90,7 @@ pub(super) fn fixture(
             name: None,
             worktree: "/fixture".to_owned(),
             life: "drive".to_owned(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
             occupant: Some(seat.occupant),

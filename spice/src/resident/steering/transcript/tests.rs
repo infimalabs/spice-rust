@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::{TranscriptEvidence, transcript_recognition};
+use super::{TranscriptEvidence, TranscriptRecognition};
 use crate::resident::RuntimePaths;
 use steer::Outcome as ScanOutcome;
 use wire::{CanonicalUuid, Disposition};
@@ -11,11 +11,11 @@ static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 const KEY: &str = "1kKRRsDS";
 
-const ACK_CALL: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_fixture_ack","name":"Bash","input":{"command":"spice ack 1kKRRsDS"}}]}}
+const TRAILING_CALL: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-trailing","name":"bash","arguments":{"command":"git status"}}],"stopReason":"toolUse"}}
 "#;
-const LEADING_HEADER: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: revision accepted."}]}}
+const LEADING_HEADER: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: revision accepted."}],"stopReason":"toolUse"}}
 "#;
-const TOOL_RESULT: &[u8] = br#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_fixture_earlier","content":"ok"}]}}
+const TOOL_RESULT: &[u8] = br#"{"type":"message_end","message":{"role":"toolResult","toolCallId":"call-earlier","toolName":"bash","content":[{"type":"text","text":"ok"}],"isError":false}}
 "#;
 const OMP_ACK_UPDATE: &[u8] = br#"{"type":"message_update","assistantMessageEvent":{"type":"text_end","content":"ACK 1kKRRsDS: revision accepted."},"message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: revision accepted."}]}}
 "#;
@@ -31,18 +31,11 @@ impl steer::Standing for LiveKey {
 }
 
 #[test]
-fn a_leading_header_older_than_the_ack_call_is_still_recognized() {
-    let fixture = Fixture::new(&[TOOL_RESULT, LEADING_HEADER, ACK_CALL]);
+fn a_leading_header_older_than_a_trailing_tool_call_is_still_recognized() {
+    let fixture = Fixture::new(&[TOOL_RESULT, LEADING_HEADER, TRAILING_CALL]);
 
-    let recognition = transcript_recognition(
-        &fixture.paths,
-        lane(),
-        &vendor(),
-        KEY,
-        Some(Disposition::Acked),
-        &LiveKey,
-    )
-    .unwrap_or_else(|outcome| panic!("the leading header is evidence: {outcome:?}"));
+    let recognition = transcript_recognition(&fixture.paths, lane(), &vendor(), KEY, &LiveKey)
+        .unwrap_or_else(|outcome| panic!("the leading header is evidence: {outcome:?}"));
 
     assert!(matches!(
         recognition.outcome,
@@ -57,13 +50,10 @@ fn a_leading_header_older_than_the_ack_call_is_still_recognized() {
 
 #[test]
 fn omp_terminal_text_update_survives_a_header_stripped_settled_message() {
-    let fixture = Fixture::omp(&[OMP_ACK_UPDATE, OMP_PARAPHRASED_END]);
+    let fixture = Fixture::new(&[OMP_ACK_UPDATE, OMP_PARAPHRASED_END]);
 
-    let recognition =
-        transcript_recognition(&fixture.paths, lane(), &omp_vendor(), KEY, None, &LiveKey)
-            .unwrap_or_else(|outcome| {
-                panic!("the streamed visible header is evidence: {outcome:?}")
-            });
+    let recognition = transcript_recognition(&fixture.paths, lane(), &vendor(), KEY, &LiveKey)
+        .unwrap_or_else(|outcome| panic!("the streamed visible header is evidence: {outcome:?}"));
 
     assert!(matches!(
         recognition.outcome,
@@ -77,10 +67,10 @@ fn omp_terminal_text_update_survives_a_header_stripped_settled_message() {
 
 #[test]
 fn omp_paraphrase_and_tool_payload_do_not_invent_acknowledgement_evidence() {
-    let fixture = Fixture::omp(&[OMP_PARAPHRASED_END]);
+    let fixture = Fixture::new(&[OMP_PARAPHRASED_END]);
 
     assert!(matches!(
-        transcript_recognition(&fixture.paths, lane(), &omp_vendor(), KEY, None, &LiveKey),
+        transcript_recognition(&fixture.paths, lane(), &vendor(), KEY, &LiveKey),
         Err(wire::Outcome::Refusal(refusal))
             if refusal.reason() == "steer::transcript-evidence-absent"
     ));
@@ -91,11 +81,11 @@ fn the_newest_placed_answer_wins_within_the_recent_window() {
     let declined = String::from_utf8(LEADING_HEADER.to_vec())
         .unwrap()
         .replace("ACK ", "NAK ");
-    let fixture = Fixture::new(&[LEADING_HEADER, declined.as_bytes(), ACK_CALL]);
+    let fixture = Fixture::new(&[LEADING_HEADER, declined.as_bytes(), TRAILING_CALL]);
     let evidence = TranscriptEvidence::read(&fixture.paths, lane(), &vendor(), KEY)
         .unwrap_or_else(|error| panic!("{error:?}"));
     let recognition = evidence
-        .recognize(KEY, None, &LiveKey)
+        .recognize(KEY, &LiveKey)
         .unwrap_or_else(|error| panic!("{error:?}"));
     assert!(matches!(
         recognition.outcome,
@@ -116,11 +106,10 @@ fn an_answer_behind_multi_megabyte_records_is_still_recognized() {
         LEADING_HEADER,
         &oversized,
         &oversized,
-        ACK_CALL,
+        TRAILING_CALL,
     ]);
-    let recognition =
-        transcript_recognition(&fixture.paths, lane(), &vendor(), KEY, None, &LiveKey)
-            .unwrap_or_else(|error| panic!("{error:?}"));
+    let recognition = transcript_recognition(&fixture.paths, lane(), &vendor(), KEY, &LiveKey)
+        .unwrap_or_else(|error| panic!("{error:?}"));
     assert!(matches!(
         recognition.outcome,
         ScanOutcome::Retired {
@@ -135,7 +124,7 @@ fn an_answer_behind_multi_megabyte_records_is_still_recognized() {
 fn an_unfinished_record_cannot_supply_evidence() {
     let unfinished = Fixture::new(&[&LEADING_HEADER[..LEADING_HEADER.len() - 1]]);
     assert!(
-        matches!(transcript_recognition(&unfinished.paths, lane(), &vendor(), KEY, None, &LiveKey), Err(wire::Outcome::Refusal(refusal)) if refusal.reason() == "steer::transcript-evidence-absent")
+        matches!(transcript_recognition(&unfinished.paths, lane(), &vendor(), KEY, &LiveKey), Err(wire::Outcome::Refusal(refusal)) if refusal.reason() == "steer::transcript-evidence-absent")
     );
 }
 
@@ -146,14 +135,6 @@ struct Fixture {
 
 impl Fixture {
     fn new(records: &[&[u8]]) -> Self {
-        Self::for_vendor("claude", records)
-    }
-
-    fn omp(records: &[&[u8]]) -> Self {
-        Self::for_vendor("omp", records)
-    }
-
-    fn for_vendor(vendor: &str, records: &[&[u8]]) -> Self {
         let root = std::env::temp_dir().join(format!(
             "spice-transcript-recognition-{}-{}",
             std::process::id(),
@@ -161,7 +142,7 @@ impl Fixture {
         ));
         fs::create_dir_all(&root).expect("fixture root");
         let paths = runtime_paths(&root);
-        let tape = tape::Tape::open(paths.tape.join(lane().to_string()).join(vendor))
+        let tape = tape::Tape::open(paths.tape.join(lane().to_string()).join("omp"))
             .expect("the lane tape opens");
         for record in records {
             tape.tee(record).expect("the transcript record is captured");
@@ -176,6 +157,17 @@ impl Drop for Fixture {
     }
 }
 
+/// Recognize `token` as occupant exit does: read the lane's evidence, then judge it.
+fn transcript_recognition(
+    paths: &RuntimePaths,
+    lane: CanonicalUuid,
+    vendor: &wire::Name,
+    token: &str,
+    standing: &impl steer::Standing,
+) -> Result<TranscriptRecognition, wire::Outcome<wire::intent::CommandAnswer>> {
+    TranscriptEvidence::read(paths, lane, vendor, token)?.recognize(token, standing)
+}
+
 fn lane() -> CanonicalUuid {
     "018f82d4-6f59-7d06-92e3-bce913116301"
         .parse()
@@ -183,10 +175,6 @@ fn lane() -> CanonicalUuid {
 }
 
 fn vendor() -> wire::Name {
-    "claude".parse().expect("vendor name")
-}
-
-fn omp_vendor() -> wire::Name {
     "omp".parse().expect("vendor name")
 }
 

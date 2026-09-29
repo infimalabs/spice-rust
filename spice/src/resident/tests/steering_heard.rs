@@ -13,12 +13,11 @@ struct Heard {
     occupant: CanonicalUuid,
     directive: CanonicalUuid,
     key: String,
-    vendor: &'static str,
 }
 
 impl Heard {
-    /// One occupied lane of the named vendor with one live direction.
-    fn new(tag: &str, vendor: &'static str) -> Self {
+    /// One occupied lane with one live direction.
+    fn new(tag: &str) -> Self {
         let (root, paths) = resident_fixture(tag);
         let repository = Repository::discover(&root).expect("fixture repository resolves");
         let worktree = repository.worktree_root().to_string_lossy().into_owned();
@@ -31,7 +30,7 @@ impl Heard {
         let lane = test_uuid(2);
         let occupant = test_uuid(3);
         commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
-        seed_vendor_lane_in_worktree(&bus, epoch, lane, occupant, &worktree, vendor);
+        seed_vendor_lane_in_worktree(&bus, epoch, lane, occupant, &worktree, "omp");
         let send = wire::intent::SteerSend {
             fanout: test_uuid(31),
             lane,
@@ -81,20 +80,14 @@ impl Heard {
             occupant,
             directive: sent.directive,
             key: sent.key,
-            vendor,
         }
     }
 
     /// Capture one assistant record answering the direction and sweep it as
     /// the record notice would.
     fn speak(&self, record: &[u8]) -> String {
-        let tape = tape::Tape::open(
-            self.paths
-                .tape
-                .join(self.lane.to_string())
-                .join(self.vendor),
-        )
-        .expect("the lane tape opens");
+        let tape = tape::Tape::open(self.paths.tape.join(self.lane.to_string()).join("omp"))
+            .expect("the lane tape opens");
         let locus = tape.tee(record).expect("the answer is durable");
         let notice = supervisor::Notice::Record {
             lane: self.lane,
@@ -170,7 +163,7 @@ impl Heard {
 
 #[test]
 fn an_interjected_lane_s_answer_retires_its_key_as_the_prose_lands() {
-    let heard = Heard::new("steer-heard-omp", "omp");
+    let heard = Heard::new("steer-heard-omp");
     let key = heard.key.clone();
     assert!(heard.pending());
     let record = format!(
@@ -181,23 +174,5 @@ fn an_interjected_lane_s_answer_retires_its_key_as_the_prose_lands() {
 
     assert_eq!(heard.disposition(), Disposition::Acked);
     assert!(!heard.pending(), "the disposition retires the pending key");
-    heard.finish();
-}
-
-#[test]
-fn a_lane_that_retires_its_own_keys_is_left_to_its_ack_command() {
-    let heard = Heard::new("steer-heard-claude", "claude");
-    let key = heard.key.clone();
-    let record = format!(
-        r#"{{"type":"assistant","message":{{"type":"message","role":"assistant","content":[{{"type":"text","text":"ACK {key}: Answering now."}}]}}}}"#
-    );
-
-    let spoken = heard.speak(format!("{record}\n").as_bytes());
-    recover_transcripts(&heard.bus, &heard.paths, heard.epoch, &mut Vec::new())
-        .expect("startup leaves shell-hook retirement to its command");
-
-    assert_eq!(heard.disposition(), Disposition::Live);
-    assert_eq!(spoken, "");
-    assert!(heard.pending());
     heard.finish();
 }

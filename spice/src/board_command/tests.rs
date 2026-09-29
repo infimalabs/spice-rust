@@ -121,7 +121,7 @@ fn seed_creation_transcript(bus: &Bus, lane: CanonicalUuid) -> body::TaskCreatio
 }
 
 fn seed_creation_stream(bus: &Bus, lane: CanonicalUuid, stream: &str) -> body::TaskCreationContext {
-    let vendor: wire::Name = "claude".parse().expect("fixture vendor");
+    let vendor: wire::Name = "omp".parse().expect("fixture vendor");
     let source = uuid(NEXT_COMMAND.fetch_add(1, Ordering::Relaxed));
     let next = body::TranscriptPosition {
         member: 1,
@@ -169,7 +169,7 @@ fn seed_creation_stream(bus: &Bus, lane: CanonicalUuid, stream: &str) -> body::T
         session: String::new(),
         boundary: wire::TranscriptSourceHead {
             lane,
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             stream: stream.to_owned(),
             source,
             next,

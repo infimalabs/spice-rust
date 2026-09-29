@@ -10,9 +10,7 @@ use sill::{
     RestartDisposition, Spec, StdinPolicy, StreamPolicy, WaitPolicy,
 };
 
-pub use wire::body::{
-    RtkHealth as Health, RtkHealthState as HealthState, RtkHookState as HookState,
-};
+pub use wire::body::{RtkHealth as Health, RtkHealthState as HealthState};
 
 /// Exact configured RTK identity carried into supervised shell wrappers.
 pub const EXECUTABLE_VARIABLE: &str = wire::SpiceVariable::RtkExecutable.as_str();

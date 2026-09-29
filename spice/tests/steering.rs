@@ -1,13 +1,11 @@
 //! Process coverage for the resident's transcript-backed steering path.
 
 use std::fs;
-use std::io::Write as _;
 use std::net::TcpStream;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::PathBuf;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::{Arc, Barrier};
 
 use bus::{Bus, CommitOutcome};
 use journal::{FactCause, JournalWrite};
@@ -15,7 +13,7 @@ use serde::de::DeserializeOwned;
 use tungstenite::client::IntoClientRequest;
 use tungstenite::http::header::ORIGIN;
 use tungstenite::{Message, WebSocket};
-use wire::{Actor, FactKind, Instant, Outcome, Producer};
+use wire::{Actor, Instant, Outcome, Producer};
 
 #[path = "support/fixture_root.rs"]
 mod fixture_root;
@@ -26,11 +24,8 @@ mod staged_app;
 
 use readiness::Readiness;
 
-const FAULT_EXIT: i32 = 1;
-const REFUSAL_EXIT: i32 = 2;
 const SESSION_ID: &str = "018f7777-7777-7444-8888-999999999999";
-const SESSION_RECORD: &str =
-    r#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#;
+const SESSION_RECORD: &str = r#"{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{"sessionId":"018f7777-7777-7444-8888-999999999999"}}"#;
 
 struct Fixture {
     root: PathBuf,
@@ -61,15 +56,20 @@ impl Fixture {
         fs::write(&skill, ::std::include_bytes!("../agent/SKILL.md"))
             .expect("fixture installs the appliance skill");
         staged_app::seed(&root);
-        let vendor = root.join("fake-claude");
+        let vendor = root.join("fake-omp");
         fs::write(
             &vendor,
             concat!(
                 "#!/bin/sh\n",
                 "trap 'exit 0' TERM INT\n",
-                "printf '%s\\n' '",
-                "{\"type\":\"system\",\"subtype\":\"init\",",
-                "\"session_id\":\"018f7777-7777-7444-8888-999999999999\"}'\n",
+                "session=018f7777-7777-7444-8888-999999999999\n",
+                "while [ \"$#\" -gt 1 ]; do\n",
+                "  if [ \"$1\" = --resume ]; then session=$2; fi\n",
+                "  shift\n",
+                "done\n",
+                "printf '%s\\n' '{\"type\":\"ready\",\"protocolVersion\":1}'\n",
+                "printf '{\"id\":\"spice-state\",\"type\":\"response\",\"command\":\"get_state\",",
+                "\"success\":true,\"data\":{\"sessionId\":\"%s\"}}\\n' \"$session\"\n",
                 "while [ -d .git ]; do sleep 1; done\n",
             ),
         )
@@ -84,7 +84,7 @@ impl Fixture {
                     "[lane]\nlease = \"20s\"\n\n",
                     "[tasks]\nstems = [\"taste\"]\n\n",
                     "[policy]\ntaste_mining_threshold = 3\n\n",
-                    "[vendor.claude]\nbinary = {:?}\n",
+                    "[vendor.omp]\nbinary = {:?}\n",
                 ),
                 vendor.display().to_string()
             ),
@@ -111,10 +111,7 @@ impl Fixture {
     }
 
     fn tape(&self, lane: wire::CanonicalUuid) -> PathBuf {
-        self.runtime
-            .join("tape")
-            .join(lane.to_string())
-            .join("claude")
+        self.runtime.join("tape").join(lane.to_string()).join("omp")
     }
 }
 
@@ -255,15 +252,6 @@ struct Lanes {
     other: wire::CanonicalUuid,
 }
 
-#[derive(Clone)]
-struct ExpectedRecognition {
-    directive: wire::CanonicalUuid,
-    key: String,
-    epoch: wire::CanonicalUuid,
-    disposition: wire::Disposition,
-    locus: wire::body::TranscriptLocus,
-}
-
 fn invoke(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
     let mut process = Command::new(env!("CARGO_BIN_EXE_spice"));
     process.env_remove(steer::hook::LANE);
@@ -275,96 +263,6 @@ fn invoke(fixture: &Fixture, arguments: &[&str], json: bool) -> Output {
         .current_dir(&fixture.root)
         .output()
         .expect("spice launches")
-}
-
-fn invoke_as_lane(fixture: &Fixture, lane: &str, arguments: &[&str], json: bool) -> Output {
-    let mut process = Command::new(env!("CARGO_BIN_EXE_spice"));
-    if json {
-        process.arg("--json");
-    }
-    process
-        .args(arguments)
-        .env(steer::hook::LANE, lane)
-        .current_dir(&fixture.root)
-        .output()
-        .expect("lane spice launches")
-}
-
-#[test]
-fn codex_pre_tool_process_emits_a_consumable_rtk_decision() {
-    let fixture = Fixture::new();
-    let rtk = fixture.root.join("rtk");
-    fs::write(&rtk, "#!/bin/sh\nprintf '%s\\n' 'rtk git status'\n").expect("fixture RTK writes");
-    #[cfg(unix)]
-    fs::set_permissions(&rtk, fs::Permissions::from_mode(0o700))
-        .expect("fixture RTK becomes executable");
-    let path =
-        std::env::join_paths([fixture.root.as_path()]).expect("fixture RTK search path composes");
-
-    let changed = invoke_codex_pre_tool(&fixture, Some(path.as_os_str()));
-    assert!(
-        changed.status.success(),
-        "changed hook failed: {:?}",
-        changed.stderr
-    );
-    assert!(
-        changed.stderr.is_empty(),
-        "changed hook spoke on stderr: {:?}",
-        String::from_utf8_lossy(&changed.stderr)
-    );
-    assert_eq!(
-        vendor::codex::decode_rtk_pre_tool_output(&changed.stdout),
-        Ok(vendor::codex::RtkPreToolDecision::Rewritten(
-            "rtk git status".to_owned()
-        ))
-    );
-
-    let unchanged = invoke_codex_pre_tool(&fixture, None);
-    assert!(
-        unchanged.status.success(),
-        "unchanged hook failed: {:?}",
-        unchanged.stderr
-    );
-    assert!(
-        unchanged.stderr.is_empty(),
-        "unchanged hook spoke on stderr: {:?}",
-        String::from_utf8_lossy(&unchanged.stderr)
-    );
-    assert_eq!(
-        vendor::codex::decode_rtk_pre_tool_output(&unchanged.stdout),
-        Ok(vendor::codex::RtkPreToolDecision::Unchanged)
-    );
-}
-
-fn invoke_codex_pre_tool(fixture: &Fixture, path: Option<&std::ffi::OsStr>) -> Output {
-    let input = serde_json::to_vec(&serde_json::json!({
-        "hook_event_name": "PreToolUse",
-        "tool_name": "Bash",
-        "tool_input": { "command": "git status" }
-    }))
-    .expect("Codex pre-tool input encodes");
-    let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
-    command
-        .args(["hook", "codex"])
-        .current_dir(&fixture.root)
-        .env_remove(steer::hook::LANE)
-        .env_remove(spice::rtk::EXECUTABLE_VARIABLE)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    if let Some(path) = path {
-        command
-            .env("PATH", path)
-            .env(spice::rtk::EXECUTABLE_VARIABLE, "rtk");
-    }
-    let mut child = command.spawn().expect("Codex pre-tool hook launches");
-    child
-        .stdin
-        .take()
-        .expect("hook stdin is piped")
-        .write_all(&input)
-        .expect("Codex pre-tool input writes");
-    child.wait_with_output().expect("Codex pre-tool hook exits")
 }
 
 fn json_outcome<B: serde::de::DeserializeOwned>(output: &Output) -> Outcome<B> {
@@ -578,7 +476,7 @@ fn seed_occupied_lane(
         lane,
         occupant,
         worktree: worktree.clone(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high")),
         epoch,
         stream: "stdout".to_owned(),
@@ -596,7 +494,7 @@ fn seed_occupied_lane(
         name: None,
         worktree: worktree.clone(),
         life: "drive".to_owned(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
         occupant: Some(occupant),
@@ -624,7 +522,7 @@ fn seed_occupied_lane(
                 name: None,
                 worktree,
                 life: "drive".to_owned(),
-                vendor: "claude".parse().expect("fixture vendor"),
+                vendor: "omp".parse().expect("fixture vendor"),
                 model: None,
                 effort: None,
             },
@@ -670,53 +568,7 @@ fn seed_occupied_lane(
     bus.shutdown().expect("fixture bus stops");
 }
 
-fn record_reply(
-    fixture: &Fixture,
-    lane: wire::CanonicalUuid,
-    text: &str,
-    token: &str,
-) -> wire::body::TranscriptLocus {
-    let record = serde_json::json!({
-        "type": "assistant",
-        "message": {
-            "type": "message",
-            "role": "assistant",
-            "content": [{ "type": "text", "text": text }],
-            "usage": {
-                "input_tokens": 7,
-                "cache_read_input_tokens": 5,
-                "cache_creation_input_tokens": 3,
-                "output_tokens": 2
-            }
-        }
-    });
-    let mut bytes = wire::encode(&record).expect("assistant transcript record encodes");
-    bytes.push(b'\n');
-    let tape = tape::Tape::open(fixture.tape(lane)).expect("lane tape opens");
-    let locus = tape.tee(&bytes).expect("assistant record reaches tape");
-    let source = tape.source_id().expect("assistant tape source reads");
-    let column = text.find(token).expect("reply names its token") + 1;
-    wire::body::TranscriptLocus {
-        source: Some(source.as_str().parse().expect("tape source is canonical")),
-        member: locus.member,
-        offset: locus.offset,
-        length: locus.length,
-        event: 0,
-        line: 1,
-        column: u32::try_from(column).expect("fixture column fits"),
-    }
-}
-
-fn lane_epoch(fixture: &Fixture, lane: wire::CanonicalUuid) -> wire::CanonicalUuid {
-    let lane = lane.to_string();
-    text_inbox(&invoke(fixture, &["inbox", &lane], false)).epoch
-}
-
-fn acknowledgment_paths(
-    fixture: &Fixture,
-    resident: &mut RunningResident,
-    lanes: Lanes,
-) -> (ExpectedRecognition, String) {
+fn publication_path(fixture: &Fixture, resident: &mut RunningResident, lanes: Lanes) {
     let lane = lanes.target.to_string();
     let direction = "> > earlier context\n> quoted context\n\nbind the exact command family";
     let sent = invoke(fixture, &["steer", &lane, direction], true);
@@ -752,199 +604,12 @@ fn acknowledgment_paths(
         inbox.lanes[0].pending[0].preview.as_deref(),
         Some("bind the exact command family")
     );
-
-    let codex = invoke_as_lane(fixture, &lane, &["hook", "codex"], false);
-    assert!(
-        codex.status.success(),
-        "hook inbox failed: {:?}",
-        codex.stderr
-    );
-    assert!(codex.stderr.is_empty(), "hook inbox spoke on stderr");
-    let hook: serde_json::Value =
-        wire::decode(&codex.stdout).expect("hook inbox speaks one Codex hook document");
-    assert_eq!(hook["hookSpecificOutput"]["hookEventName"], "PostToolUse");
-    let additional_context = hook["hookSpecificOutput"]["additionalContext"]
-        .as_str()
-        .expect("hook context is text");
-    assert!(additional_context.starts_with("Rust Spice steering is pending."));
-    assert!(!additional_context.contains("Working state:"));
-    assert!(!additional_context.contains("pending inbox"));
-    assert!(additional_context.contains(&sent.key));
-    assert!(additional_context.contains("stage=published"));
-    assert!(additional_context.contains(direction));
-    assert!(additional_context.contains("ack <key>"));
-    hook_harness_paths(fixture, &lane, &codex.stdout);
-
-    let other = lanes.other.to_string();
-    record_reply(
+    let canceled = text_directive(&invoke(
         fixture,
-        lanes.other,
-        &format!("ACK {}: wrong lane", sent.key),
-        &sent.key,
-    );
-    let wrong = invoke_as_lane(fixture, &other, &["ack", &sent.key], true);
-    assert_refusal(&wrong, "steer::lane-scope");
-    let locus = record_reply(
-        fixture,
-        lanes.target,
-        &format!("ACK {}: applied", sent.key),
-        &sent.key,
-    );
-    let acknowledged = text_directive(&invoke_as_lane(fixture, &lane, &["ack", &sent.key], false));
-    assert_eq!(acknowledged.directive, sent.directive);
-    assert_eq!(acknowledged.disposition, wire::Disposition::Acked);
-    let empty_hook = invoke_as_lane(fixture, &lane, &["hook", "codex"], false);
-    assert!(
-        empty_hook.status.success(),
-        "empty hook inbox failed: {:?}",
-        empty_hook.stderr
-    );
-    assert!(empty_hook.stdout.is_empty());
-    assert!(empty_hook.stderr.is_empty());
-    let duplicate = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);
-    assert_refusal(&duplicate, "steer::ack-missed");
-    let duplicate_again = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);
-    assert_refusal(&duplicate_again, "steer::ack-missed");
-    (
-        ExpectedRecognition {
-            directive: sent.directive,
-            key: sent.key.clone(),
-            epoch: inbox.epoch,
-            disposition: wire::Disposition::Acked,
-            locus,
-        },
-        sent.key,
-    )
-}
-
-/// Both admitted harnesses, and one that is not, over the same pending inbox.
-///
-/// The two admitted spellings render byte-identical content today, so the first
-/// process publishes and the second process shares its durable suppression
-/// decision. The refusal keeps an unrecognised harness from being handed a
-/// document written for someone else even after content was recorded.
-fn hook_harness_paths(fixture: &Fixture, lane: &str, codex: &[u8]) {
-    let claude = invoke_as_lane(fixture, lane, &["hook", "claude"], false);
-    assert!(
-        claude.status.success(),
-        "claude hook inbox failed: {:?}",
-        claude.stderr
-    );
-    assert!(
-        claude.stderr.is_empty(),
-        "claude hook inbox spoke on stderr"
-    );
-    assert!(
-        claude.stdout.is_empty(),
-        "byte-identical hook content escaped durable suppression after {:?}",
-        String::from_utf8_lossy(codex)
-    );
-
-    let unsupported = invoke_as_lane(fixture, lane, &["hook", "nushell"], false);
-    assert_eq!(unsupported.status.code(), Some(FAULT_EXIT));
-    assert!(
-        unsupported.stdout.is_empty(),
-        "an unadmitted harness still took a document"
-    );
-    let text = std::str::from_utf8(&unsupported.stderr).expect("text fault is UTF-8");
-    assert!(text.contains("unsupported hook harness"), "{text:?}");
-    assert!(text.contains("nushell"), "{text:?}");
-}
-
-fn decline_path(fixture: &Fixture, lane: wire::CanonicalUuid) -> ExpectedRecognition {
-    let lane = lane.to_string();
-    let sent = text_directive(&invoke(
-        fixture,
-        &["steer", &lane, "decline this direction"],
+        &["steer", "cancel", &sent.directive.to_string()],
         false,
     ));
-    let epoch = lane_epoch(fixture, lane.parse().expect("lane UUID"));
-    let locus = record_reply(
-        fixture,
-        lane.parse().expect("lane UUID"),
-        &format!("NAK {}: cannot apply", sent.key),
-        &sent.key,
-    );
-    let mismatched = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);
-    assert_refusal(&mismatched, "steer::transcript-disposition-mismatch");
-    let declined = invoke_as_lane(fixture, &lane, &["ack", &sent.key, "--decline"], true);
-    let Outcome::Reply(reply): Outcome<wire::intent::DirectiveAnswer> = json_outcome(&declined)
-    else {
-        panic!("JSON decline must reply: {:?}", declined.stderr);
-    };
-    assert_eq!(reply.body.disposition, wire::Disposition::Declined);
-    ExpectedRecognition {
-        directive: sent.directive,
-        key: sent.key,
-        epoch,
-        disposition: wire::Disposition::Declined,
-        locus,
-    }
-}
-
-fn cancellation_race(
-    fixture: &Fixture,
-    lane: wire::CanonicalUuid,
-) -> (wire::Disposition, Option<ExpectedRecognition>) {
-    let lane = lane.to_string();
-    let sent = text_directive(&invoke(
-        fixture,
-        &["steer", &lane, "retire exactly once under contention"],
-        false,
-    ));
-    let epoch = lane_epoch(fixture, lane.parse().expect("lane UUID"));
-    let locus = record_reply(
-        fixture,
-        lane.parse().expect("lane UUID"),
-        &format!("ACK {}: raced", sent.key),
-        &sent.key,
-    );
-    let directive = sent.directive.to_string();
-    let barrier = Arc::new(Barrier::new(3));
-    let (cancel, ack) = std::thread::scope(|scope| {
-        let cancel_barrier = Arc::clone(&barrier);
-        let cancel_fixture = fixture;
-        let cancel_directive = &directive;
-        let cancel = scope.spawn(move || {
-            cancel_barrier.wait();
-            invoke(cancel_fixture, &["steer", "cancel", cancel_directive], true)
-        });
-        let ack_barrier = Arc::clone(&barrier);
-        let ack_fixture = fixture;
-        let ack_lane = &lane;
-        let ack_key = &sent.key;
-        let ack = scope.spawn(move || {
-            ack_barrier.wait();
-            invoke_as_lane(ack_fixture, ack_lane, &["ack", ack_key], true)
-        });
-        barrier.wait();
-        (cancel.join().unwrap(), ack.join().unwrap())
-    });
-    let cancel: Outcome<wire::intent::DirectiveAnswer> = json_outcome(&cancel);
-    let ack: Outcome<wire::intent::DirectiveAnswer> = json_outcome(&ack);
-    let (disposition, loser) = match (&cancel, &ack) {
-        (Outcome::Reply(reply), Outcome::Refusal(refusal)) => (reply.body.disposition, refusal),
-        (Outcome::Refusal(refusal), Outcome::Reply(reply)) => (reply.body.disposition, refusal),
-        outcomes => panic!("race must have one winner and one refusal: {outcomes:?}"),
-    };
-    assert!(
-        matches!(
-            loser.reason(),
-            "steer::directive-retired"
-                | "steer::directive-moved"
-                | "steer::witness-moved"
-                | "steer::ack-missed"
-        ),
-        "unexpected race refusal: {loser:?}"
-    );
-    let recognition = (disposition == wire::Disposition::Acked).then_some(ExpectedRecognition {
-        directive: sent.directive,
-        key: sent.key.clone(),
-        epoch,
-        disposition,
-        locus,
-    });
-    (disposition, recognition)
+    assert_eq!(canceled.disposition, wire::Disposition::Canceled);
 }
 
 fn cancellation_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
@@ -960,43 +625,17 @@ fn cancellation_path(fixture: &Fixture, lane: wire::CanonicalUuid) {
         false,
     ));
     assert_eq!(canceled.disposition, wire::Disposition::Canceled);
-    record_reply(
-        fixture,
-        lane.parse().expect("lane UUID"),
-        &format!("ACK {}: too late", sent.key),
-        &sent.key,
-    );
-    let refused = invoke_as_lane(fixture, &lane, &["ack", &sent.key], true);
-    assert_refusal(&refused, "steer::ack-missed");
-}
-
-fn direct_input_cannot_ack(fixture: &Fixture, lane: wire::CanonicalUuid) {
-    let lane = lane.to_string();
-    let sent = text_directive(&invoke(
-        fixture,
-        &["steer", &lane, "require durable transcript evidence"],
-        false,
-    ));
-    let refused = invoke_as_lane(fixture, &lane, &["ack", &sent.key], false);
-    assert_text_refusal(&refused, "steer::transcript-evidence-absent");
     let inbox = text_inbox(&invoke(fixture, &["inbox", &lane], false));
     assert!(
         inbox.lanes[0]
             .pending
             .iter()
-            .any(|pending| pending.directive == sent.directive),
-        "direct ack input retired a directive without transcript evidence"
+            .all(|pending| pending.directive != sent.directive),
+        "a canceled directive stayed pending"
     );
-    let canceled = text_directive(&invoke(
-        fixture,
-        &["steer", "cancel", &sent.directive.to_string()],
-        false,
-    ));
-    assert_eq!(canceled.disposition, wire::Disposition::Canceled);
 }
 
 #[path = "steering/flows.rs"]
 mod flows;
-mod steering_media;
 
-use flows::{assert_refusal, assert_text_refusal, directive_authored, instant, uuid};
+use flows::{directive_authored, instant, uuid};

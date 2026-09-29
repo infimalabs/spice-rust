@@ -60,7 +60,7 @@ pub(super) fn history_newest(
     tape: &Path,
     dialect: listen::Dialect,
 ) -> Result<listen::TailScan, listen::ScanError> {
-    listen::scan_tail(tape, dialect, history_budget(dialect))
+    listen::scan_tail(tape, dialect, history_budget())
 }
 
 pub(super) fn history_tail(
@@ -68,7 +68,7 @@ pub(super) fn history_tail(
     dialect: listen::Dialect,
     before: &listen::Checkpoint,
 ) -> Result<listen::TailScan, listen::ScanError> {
-    listen::scan_before(tape, dialect, before, history_budget(dialect))
+    listen::scan_before(tape, dialect, before, history_budget())
 }
 
 pub(super) fn history_tail_error(error: listen::ScanError) -> String {

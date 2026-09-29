@@ -39,7 +39,7 @@ pub fn render(seal: &Key, pending: &[&Directive]) -> String {
 ///
 /// `projection` names, per directive and attachment ordinal, the encoded
 /// local projection that makes the referenced bytes readable to the lane; it
-/// follows its `media-reference` line exactly as the shell-hook route does.
+/// follows its `media-reference` line.
 #[must_use]
 pub fn render_pending(
     seal: &Key,

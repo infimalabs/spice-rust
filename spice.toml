@@ -92,7 +92,7 @@ pre_commit = [
 # after its last use fails too. That is what makes the vocabulary countable
 # rather than a set of literals accumulating across crates.
 #
-# Session forensics reads the live Codex or Claude identity and the selected
+# Session forensics reads the live omp session identity and the selected
 # agent vendor. `steer` owns the four hook/session names. The configured commit
 # executor owns the staged-path JSON and source-digest handoff names. A supervised launch
 # separates the installed outer shell from the native shell restored by its
@@ -125,8 +125,6 @@ pre_commit = [
 # difference wire pins between this manifest and SpiceVariable.
 # Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
-    "CLAUDE_CODE_SESSION_ID",
-    "CODEX_THREAD_ID",
     "GIT_CONFIG_COUNT",
     "GIT_CONFIG_SYSTEM",
     "GIT_DIR",

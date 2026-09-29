@@ -56,7 +56,7 @@ blocked_trailers = ["Co-Authored-By"]
 words = ["delay", "slept"]
 message = "Wait on the real event."
 enabled = false
-scopes = { paths = ["src/**"], extensions = [".rs"], vendors = ["codex"], models = ["gpt-current"], phases = ["pre-commit-success"] }
+scopes = { paths = ["src/**"], extensions = [".rs"], vendors = ["omp"], models = ["gpt-current"], phases = ["pre-commit-success"] }
 
 [taste.alpha]
 words = ["finish"]
@@ -85,7 +85,7 @@ band = 3
 [lane]
 life = "Steer"
 lease = "90s"
-vendor = "codex"
+vendor = "omp"
 deaths = 4
 young = "45s"
 hold = "1h"
@@ -94,21 +94,6 @@ narration = 30
 [steer]
 expiry = "48h"
 resend = ["10m", "30m", "2h"]
-
-[vendor.claude]
-binary = "/opt/claude"
-model = "opus"
-effort = "xhigh"
-auto_compact_window_tokens = 123456
-
-[vendor.codex]
-binary = "/opt/codex"
-model = "gpt-current"
-effort = "max"
-model_context_window = 1234567
-auto_compact_window_tokens = 300000
-personality = "pragmatic"
-fast_mode = true
 
 [vendor.omp]
 binary = "/opt/omp"
@@ -519,11 +504,11 @@ fn registry_builtins_are_the_typed_root_defaults() {
     assert_eq!(
         descriptor(&[
             PathSegment::Key("vendor"),
-            PathSegment::Key("claude"),
+            PathSegment::Key("omp"),
             PathSegment::Key("model"),
         ])
         .and_then(|entry| entry.builtin()),
-        Some(Builtin::String("claude-opus-5"))
+        Some(Builtin::String(vendor::DEFAULT_OMP_MODEL))
     );
     for leaf in ["container", "runner"] {
         assert_eq!(
@@ -592,17 +577,6 @@ const EXPECTED_TEMPLATES: &[&str] = &[
     "lane.narration",
     "steer.expiry",
     "steer.resend",
-    "vendor.claude.binary",
-    "vendor.claude.model",
-    "vendor.claude.effort",
-    "vendor.claude.auto_compact_window_tokens",
-    "vendor.codex.binary",
-    "vendor.codex.model",
-    "vendor.codex.effort",
-    "vendor.codex.model_context_window",
-    "vendor.codex.auto_compact_window_tokens",
-    "vendor.codex.personality",
-    "vendor.codex.fast_mode",
     "vendor.omp.binary",
     "vendor.omp.model",
     "vendor.omp.effort",
@@ -733,15 +707,7 @@ fn layer_policy_kind_and_flag_metadata_are_complete() {
         .collect::<Vec<_>>();
     assert_eq!(
         worktree,
-        [
-            "vendor.claude.model",
-            "vendor.claude.effort",
-            "vendor.codex.model",
-            "vendor.codex.effort",
-            "vendor.omp.model",
-            "vendor.omp.effort",
-            "say.voice",
-        ]
+        ["vendor.omp.model", "vendor.omp.effort", "say.voice",]
     );
 
     let local = descriptors()

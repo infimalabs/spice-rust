@@ -22,12 +22,10 @@ treat their task, repository, and steering output as current truth. Do not
 infer a durable task from this skill invocation.
 
 When steering keys are pending, lead the next working message with a visible
-line `ACK <key> [<key> ...]: <one clause>` or `NAK <key>: <one clause>`. For
-interjected steering, including OMP, that prose is the acknowledgment: the
-resident retires the key as the text lands, so run no acknowledgment command
-and wait for no confirmation. Shell-hook vendors instead print acknowledgment
-commands for mid-turn retirement; follow them after speaking the header. A
-final reply can also acknowledge; never end unfinished work merely to do so.
+line `ACK <key> [<key> ...]: <one clause>` or `NAK <key>: <one clause>`. That
+prose is the acknowledgment: the resident retires the key as the text lands, so
+run no acknowledgment command and wait for no confirmation. A final reply can
+also acknowledge; never end unfinished work merely to do so.
 
 The evidence is visible assistant text on the transcript, not a UI label;
 reasoning, tool arguments, quoted headers, and buried key mentions do not

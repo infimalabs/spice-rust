@@ -2,7 +2,7 @@ use super::*;
 
 fn actor() -> ProcessActor {
     ProcessActor {
-        vendor: "codex".to_owned(),
+        vendor: "omp".to_owned(),
         identity: "current-thread".to_owned(),
     }
 }

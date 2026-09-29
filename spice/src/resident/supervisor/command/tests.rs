@@ -95,12 +95,9 @@ fn make_driver(sink: Sink, scratch: &Scratch, terminal: Option<Terminal>) -> Arc
     )
 }
 
-fn decoded_as(dialect: Dialect, bytes: &[u8]) -> Decoded {
-    listen::decode(dialect, bytes, Locus::new(1, 0, bytes.len() as u64)).expect("matching locus")
-}
-
 fn decoded(bytes: &[u8]) -> Decoded {
-    decoded_as(Dialect::Omp, bytes)
+    listen::decode(Dialect::Omp, bytes, Locus::new(1, 0, bytes.len() as u64))
+        .expect("matching locus")
 }
 
 /// Release a command holding on a line from the fifo. The hold is a `read`,
@@ -403,10 +400,6 @@ fn hidden_ack_attempts_receive_one_private_visible_prose_nudge() {
     driver.observe(&attempt);
     driver.observe(&decoded(
         br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"1kJK7Sqy bare; `ACK 1kJK7Sqy: quoted`; ACK 1kJKZZZZ: unknown."}]}}"#,
-    ));
-    driver.observe(&decoded_as(
-        Dialect::Claude,
-        br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"redacted_thinking","data":"opaque"}]}}"#,
     ));
     assert_eq!(
         sink.frames().len(),

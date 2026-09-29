@@ -590,7 +590,7 @@ mod tests {
             name: Some("Ava".to_owned()),
             worktree: "/worktrees/main-a".to_owned(),
             life: "drive".to_owned(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
             occupant: Some(uuid(2)),
@@ -600,7 +600,7 @@ mod tests {
                 lane: uuid(1),
                 occupant: uuid(2),
                 worktree: "/worktrees/main-a".to_owned(),
-                vendor: "claude".parse().expect("fixture vendor"),
+                vendor: "omp".parse().expect("fixture vendor"),
                 launch: Some(
                     wire::body::LaneLaunchIdentity::new("sonnet", "high")
                         .with_git("current")

@@ -5,7 +5,7 @@ use std::fs;
 
 use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite, PendingFact};
-use steer::{Miss, Outcome as ScanOutcome};
+use steer::Outcome as ScanOutcome;
 use wire::body::TranscriptLocus;
 use wire::intent::{CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective};
 use wire::{
@@ -15,7 +15,7 @@ use wire::{
 
 use super::{
     CommandEffects, CommandResult, RuntimePaths, commit, current_residency, environment_fault, seq,
-    store_fault, typed_outcome, typed_protocol_fault, typed_store_fault, write,
+    store_fault, typed_outcome, typed_protocol_fault, typed_store_fault,
 };
 
 mod exit;
@@ -27,9 +27,8 @@ mod transitions;
 
 pub(super) use exit::{dispose_at_exit, dispose_at_startup, dispose_heard};
 use preview::directive_preview;
-use transcript::transcript_recognition;
 use transitions::evidence_refusal;
-pub(super) use transitions::{cancel, dispose, recover, resend, send};
+pub(super) use transitions::{cancel, recover, resend, send};
 
 const LEGACY_TASK_GENERATION_CONTROL_PREFIX: &str = "task-generation:";
 
@@ -668,15 +667,6 @@ fn directive_head(
     .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))
 }
 
-fn key_head(
-    bus: &Bus,
-    key: &steer::Key,
-) -> Result<Option<journal::JournalHead<wire::SteeringHead>>, Outcome<CommandAnswer>> {
-    let key = key.to_string();
-    bus.read(move |read| read.steering_key(&key))
-        .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))
-}
-
 struct IndexedStanding {
     key: Option<steer::Key>,
     disposition: Option<Disposition>,
@@ -1034,16 +1024,6 @@ fn recovery_guard(
             Ok(())
         }
         _ => Err(GuardError::refused("steer::recovery-moved")),
-    })
-}
-
-fn miss_guard(expected: wire::body::SteerMissed) -> JournalGuard {
-    JournalGuard::new(move |read| {
-        if read.steering_miss_recorded(&expected)? {
-            Err(GuardError::refused("steer::recognition-recorded"))
-        } else {
-            Ok(())
-        }
     })
 }
 

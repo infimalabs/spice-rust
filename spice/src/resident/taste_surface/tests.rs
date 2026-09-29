@@ -12,13 +12,11 @@ use wire::{Disposition, ResidentState};
 
 #[path = "tests/recognition.rs"]
 mod recognition;
-#[path = "tests/recovered_compaction.rs"]
-mod recovered_compaction;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
 fn taste_context() -> gate::PolicyContext {
-    gate::PolicyContext::new().with_vendor("claude")
+    gate::PolicyContext::new().with_vendor("omp")
 }
 
 struct Fixture {
@@ -33,7 +31,7 @@ struct Fixture {
 
 impl Fixture {
     fn new(name: &str) -> Self {
-        Self::with_vendor(name, "claude")
+        Self::with_vendor(name, "omp")
     }
 
     fn with_vendor(name: &str, vendor: &str) -> Self {
@@ -368,33 +366,33 @@ fn vendor_scoped_tastes_follow_the_durable_lane_vendor() {
 [taste.polling]
 words = ["polling"]
 message = "Wait for the terminal event."
-scopes = { vendors = ["codex"] }
+scopes = { vendors = ["omp"] }
 "#,
     )
     .expect("vendor-scoped bag");
-    let codex = Fixture::with_vendor("scoped-codex", "codex");
-    let claude = Fixture::with_vendor("scoped-claude", "claude");
-    let codex_record = prose_record(codex.lane, codex.occupant, "Polling is not completion.");
-    let claude_record = prose_record(claude.lane, claude.occupant, "Polling is not completion.");
+    let scoped = Fixture::with_vendor("scoped-omp", "omp");
+    let other = Fixture::with_vendor("scoped-other", "other");
+    let scoped_record = prose_record(scoped.lane, scoped.occupant, "Polling is not completion.");
+    let other_record = prose_record(other.lane, other.occupant, "Polling is not completion.");
 
     assert!(
-        prepare_judgment(&codex.bus, codex.epoch, &bag, &codex_record)
-            .expect("codex judgment preparation resolves")
+        prepare_judgment(&scoped.bus, scoped.epoch, &bag, &scoped_record)
+            .expect("scoped judgment preparation resolves")
             .is_some()
     );
     assert!(
-        prepare_judgment(&claude.bus, claude.epoch, &bag, &claude_record)
-            .expect("claude judgment preparation resolves")
+        prepare_judgment(&other.bus, other.epoch, &bag, &other_record)
+            .expect("other judgment preparation resolves")
             .is_none()
     );
 
-    codex.recognize(&bag, &codex_record);
-    claude.recognize(&bag, &claude_record);
+    scoped.recognize(&bag, &scoped_record);
+    other.recognize(&bag, &other_record);
 
-    assert_eq!(codex.reminders().len(), 1);
-    assert!(claude.reminders().is_empty());
-    codex.finish();
-    claude.finish();
+    assert_eq!(scoped.reminders().len(), 1);
+    assert!(other.reminders().is_empty());
+    scoped.finish();
+    other.finish();
 }
 
 #[test]
@@ -985,7 +983,7 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
         fixture.lane,
         fixture.occupant,
         listen::Decoded::Residue(listen::Residue {
-            dialect: listen::Dialect::Claude,
+            dialect: listen::Dialect::Omp,
             locus,
             kind: listen::ResidueKind::Unknown {
                 discriminator: "polling".to_owned(),

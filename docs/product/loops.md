@@ -157,13 +157,9 @@ stateDiagram-v2
 
 ```mermaid
 flowchart LR
-  J["journal standing is live<br/>with retained presentation stage"] --> V["authenticated vendor-hook read"]
-  J --> S["authenticated supervisor read<br/>at startup or resident kick"]
-  V --> H["locked durable hook suppression"]
-  H --> VR["eligible post-tool readout"]
+  J["journal standing is live<br/>with retained presentation stage"] --> S["authenticated supervisor read<br/>at startup or resident kick"]
   S --> SR["occupant-local dedupe, nudge,<br/>interruption, and compaction reset"]
-  VR --> U["observation only;<br/>journal standing and stage unchanged"]
-  SR --> U
+  SR --> U["observation only;<br/>journal standing and stage unchanged"]
 ```
 
 **Invariants**
@@ -185,10 +181,8 @@ flowchart LR
    presentation stage; prior delivery is not a prerequisite. Held-claim,
    capacity, operator-start, nonterminal-error, and arbitrary delivery-failure
    paths do not deadletter.
-- Delivery is eligible at each admitted agent boundary: the vendor's post-tool
-  hook and the command-driven supervisor. Both query the current authenticated
-  journal inbox directly. The hook consults its locked durable delivery record;
-  the supervisor catches up at occupant start, reads again on resident kicks,
+- Delivery runs through the command-driven supervisor, which queries the
+  current authenticated journal inbox directly. It catches up at occupant start, reads again on resident kicks,
   deduplicates unchanged renderings, nudges repeated keys, interrupts active
   commands for unheard direction, and resets occupant-local telling state after
   compaction. Descendant shells remain unmodified.

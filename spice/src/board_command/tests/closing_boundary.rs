@@ -50,7 +50,7 @@ const SEEDED_OFFSET: u64 = 512;
 /// other lane still answers with none. The same hazard is guarded the same way
 /// in `board/tests/allocation.rs`.
 fn seed_transcript(bus: &Bus, lane: CanonicalUuid) {
-    let vendor: wire::Name = "claude".parse().expect("fixture vendor");
+    let vendor: wire::Name = "omp".parse().expect("fixture vendor");
     let source: CanonicalUuid = SEEDED_SOURCE.parse().expect("fixture source generation");
     let next = body::TranscriptPosition {
         member: SEEDED_MEMBER,
@@ -102,7 +102,7 @@ fn proven_with_seeded_head(lane: CanonicalUuid) -> serde_json::Value {
         "proven": {
             "heads": [{
                 "lane": lane.to_string(),
-                "vendor": "claude",
+                "vendor": "omp",
                 "stream": "session",
                 "source": SEEDED_SOURCE,
                 "next": { "member": SEEDED_MEMBER, "offset": SEEDED_OFFSET },

@@ -1,8 +1,8 @@
 //! Cards spoken as acknowledged before the journal retired their keys.
 //!
 //! An agent speaks `ACK KEY` in prose; the card follows the journaled
-//! steer::acked disposition, whether committed by the ack command, live
-//! interjection handling, startup recovery, or exit disposal. Once that fact
+//! steer::acked disposition, whether committed by live interjection
+//! handling, startup recovery, or exit disposal. Once that fact
 //! lands, the card is presented again from the journal disposition.
 
 use super::*;

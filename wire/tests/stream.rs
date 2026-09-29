@@ -137,7 +137,7 @@ fn lane_seated_stream_fact_is_strict_and_credential_free() {
             name: Some("Ava".to_owned()),
             worktree: "/tmp/lane".to_owned(),
             life: "drive".to_owned(),
-            vendor: "claude".parse().expect("vendor"),
+            vendor: "omp".parse().expect("vendor"),
             model: None,
             effort: None,
         }),

@@ -102,7 +102,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
           "proven": {
             "heads": [{
               "lane": "018f82d4-6f59-7d06-92e3-bce9131163c5",
-              "vendor": "claude",
+              "vendor": "omp",
               "stream": "session",
               "source": "018f82d4-6f59-7d06-92e3-bce9131163c7",
               "next": { "member": 3, "offset": 44 }
@@ -140,7 +140,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
         "name": "Ava",
         "worktree": "/worktrees/lane-a",
         "life": "drive",
-        "vendor": "claude",
+        "vendor": "omp",
         "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
         "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c5"],
         "capabilities": ["018f82d4-6f59-7d06-92e3-bce9131163c7"],
@@ -255,8 +255,8 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
         AnswerShape::VendorCatalog,
         r#"{
   "vendors": [{
-    "name": "codex",
-    "label": "codex",
+    "name": "omp",
+    "label": "omp",
     "default_model": "gpt-5.6-sol",
     "default_effort": "high"
   }],
@@ -294,7 +294,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
       "words_per_minute": 190
     },
     "life": "drive",
-    "vendor": "claude",
+    "vendor": "omp",
     "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
     "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c5"],
     "bound": true,
@@ -308,7 +308,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
       "backend": "disabled"
     },
     "life": "steer",
-    "vendor": "codex",
+    "vendor": "omp",
     "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c8"],
     "bound": false,
     "disposition": "vacant",
@@ -371,7 +371,7 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
         "words_per_minute": 190
       },
       "life": "drive",
-      "vendor": "claude",
+      "vendor": "omp",
       "occupant": "018f82d4-6f59-7d06-92e3-bce9131163c5",
       "lineage": ["018f82d4-6f59-7d06-92e3-bce9131163c5"],
       "bound": true,

@@ -60,39 +60,12 @@ changes before either value crosses.
 ```mermaid
 flowchart LR
   G["GIT GATE HOOKS<br/>pre-commit, commit-msg, reference-transaction"] --> R["refuse or allow a repo mutation"]
-  D["AGENT VENDOR HOOKS<br/>shell, post-tool"] --> S["shape and steer the agent's own commands"]
+  D["AGENT SHELL HOOKS<br/>wrapper, supervisor"] --> S["shape and steer the agent's own commands"]
 ```
 
 **Invariant —** These are different systems with different owners and different
 failure semantics, and the product says so out loud. Conflating them is a known
 confusion the design specifically resolves.
-
-### Steering delivery through the post-tool hook
-
-```mermaid
-flowchart LR
-  T["agent finishes a non-shell tool call"] --> H["vendor PostToolUse hook"]
-  J["journal standing is LIVE"] --> P{"authenticated current inbox<br/>eligible under suppression?"}
-  H --> P
-  P -- yes --> R["deliver readout, with suppression"]
-  P -- no --> N["nothing"]
-  R --> O["delivery observation only;<br/>journal lifecycle unchanged"]
-  O --> A["agent may ACK or NAK<br/>(decline) in prose"]
-```
-
-**Invariant —** Delivery becomes eligible after a non-shell tool call, at its
-vendor `PostToolUse` boundary, not only at shell boundaries. No individual tool
-invocation is interrupted; an agent doing a long edit sequence remains reachable
-between calls.
-
-**Invariant —** Vendor post-tool invocations serialize through one durable hook
-delivery record. Already-delivered key and content identities suppress a repeat
-within the same occupant and compaction epoch; a new key remains deliverable
-even when its text was already shown. Advancing this hook-local record changes
-neither the directive's disposition nor its presentation stage.
-
-**Invariant —** The hot path must not query the task database. Steering delivery
-cannot be allowed to cost what a board read costs.
 
 ### The command-driven supervisor and instrumented command boundary
 
@@ -169,14 +142,10 @@ relative paths, expansions, redirections, pipelines, directory-changing options,
 and unknown or overridden hook working directories remain silent. Symlinks are
 not resolved to equate different logical directory spellings.
 
-Claude and Codex inspect authored Bash input at `PreToolUse`, before any
-vendor-generated shell envelope; advice uses `additionalContext`. OMP attaches
-the same advice only to the initial host-shell response seen by the agent.
-It is not stored in job notices, replayed by completion or log reads, or sent as
-an operator notification. Advice never changes
-the command, permission decision, child output, or exit status. Independently
-configured Codex RTK rewriting retains its existing behavior; Claude's pre-tool
-advice does not invoke RTK.
+OMP attaches the advice only to the initial host-shell response seen by the
+agent. It is not stored in job notices, replayed by completion or log reads, or
+sent as an operator notification. Advice never changes the command, permission
+decision, child output, or exit status, and never invokes RTK.
 
 A final `head` or `tail` pipeline stage receives a gentle hint that it is
 probably unnecessary: rely on the tool's native output wrapping instead of
@@ -224,35 +193,26 @@ Each due reminder commits an occupant-guarded `narration::prodded` fact. OMP's
 existing supervisor command channel then interjects a progress notice and
 interrupts outstanding tool waits, **not their underlying commands**. The
 second prod asks for progress as overdue. No ACK key is minted or required.
-Shell/hook meters retain the durable reminder for their next delivery boundary;
-hook-only vendors cannot be interrupted in the middle of an arbitrary tool.
 
 The guarantee is deadline-driven recording and an immediate best-effort local
 notification attempt while the resident is serving, subject to event-loop and
-OS scheduling. An unavailable supervisor channel, a blocked hook-only vendor,
-or a hung model can delay receipt or prose. The three/five-minute targets do
+OS scheduling. An unavailable supervisor channel or a hung model can delay
+receipt or prose. The three/five-minute targets do
 not claim the ability to force a model to speak or justify cancelling healthy
 work.
 
 #### Cadence is reachability
 
-A live directive may be rendered through whichever admitted delivery path is
-active or occurs next. Vendor post-tool hooks keep non-shell tool sequences
-reachable between calls; the command-driven supervisor catches up at occupant
-startup and reacts to resident notifications while the turn is active. Only a
-stretch crossing neither path offers no delivery opportunity.
+A live directive is rendered by the command-driven supervisor, which catches
+up at occupant startup and reacts to resident notifications while the turn is
+active, interrupting outstanding tool waits for an unheard key.
 
 ```mermaid
 flowchart TD
-  D["live steering in journal authority"] --> B{"active or next admitted delivery path"}
-  B --> T["vendor post-tool hook"]
-  B --> C["command-driven supervisor"]
-  T --> HS["authenticated inbox read<br/>plus locked hook suppression"]
+  D["live steering in journal authority"] --> C["command-driven supervisor"]
   C --> SR["authenticated startup or kick read<br/>plus occupant-local dedupe"]
-  HR["eligible post-tool readout"] --> O["observation only;<br/>durable lifecycle stays live"]
-  HS --> HR
-  SR --> O
-  D --> N["neither delivery path occurs"]
+  SR --> O["observation only;<br/>durable lifecycle stays live"]
+  D --> N["no occupant is running"]
   N --> W["delivery waits;<br/>durable lifecycle stays live"]
   C --> BG["the agent backgrounds the work<br/>and ends its turn"]
   BG --> S(["the resident vacates the lane;<br/>the detached keeper continues"])
@@ -260,16 +220,12 @@ flowchart TD
   X --> RL["the keeper requests a lane wake;<br/>startup catch-up delivers the completion"]
 ```
 
-**Invariant —** Admitted-path cadence is delivery cadence, not shell-command
-cadence alone. Non-shell work remains reachable between calls at vendor
-post-tool boundaries. If neither a post-tool hook nor a running supervisor
-offers a delivery opportunity, the directive remains live without fabricating a
-lifecycle transition.
-
-**Invariant —** The two paths share the same authenticated journal inbox, not
-one suppression decision. Post-tool delivery consults its locked durable hook
-record; the supervisor independently deduplicates within the occupant and
-compaction epoch.
+**Invariant —** Supervisor cadence is delivery cadence, not shell-command
+cadence alone. Non-shell work remains reachable because an unheard key
+interrupts outstanding tool waits. If no supervisor is running, the directive
+remains live without fabricating a lifecycle transition; the next occupant's
+startup catch-up delivers it. The supervisor deduplicates within the occupant
+and compaction epoch.
 
 **Invariant —** Every turn exit vacates the lane, including exit code zero. A
 backgrounded command survives under its detached keeper. If a non-stopped
@@ -283,7 +239,7 @@ turn neither cancels the job nor loses its completion.
 #### Acknowledgment evidence
 
 The transcript tape is the one place an acknowledgment is read from. A header
-is credited when the tape holds it as assistant text; nothing the ack command
+is credited when the tape holds it as assistant text; nothing a tool call
 carries about itself can stand in for that text, because a command that
 witnessed its own key would retire direction nobody answered where the
 operator can read it.
@@ -292,7 +248,6 @@ operator can read it.
 flowchart TD
   H["ACK or NAK header"] --> W{"where does it reach the tape?"}
   W -- "interjected vendor assistant text" --> M["resident retires the key<br/>as prose lands; no command"]
-  W -- "shell-hook vendor assistant text" --> C["printed ack command finds the record;<br/>the key retires mid-turn"]
   W -- "tool input or reasoning only" --> A["not acknowledgment evidence;<br/>the key stays live"]
   W -- "assistant text ending the turn" --> X["retired on landing or at exit<br/>from the final transcript"]
   W -- "quoted or narrated in assistant text" --> Q["quoted mentions produce steer::ack-missed;<br/>the key stays live"]
@@ -301,13 +256,11 @@ flowchart TD
 ```
 
 **Invariant —** Assistant text on the lane tape is the sole acknowledgment
-evidence. The tool call that runs the ack command, its arguments, and reasoning
-blocks never retire a key, even when they spell the header exactly.
+evidence. Tool calls, their arguments, and reasoning blocks never retire a
+key, even when they spell the header exactly.
 
-**Invariant —** Delivery determines who retires the key. For interjected
-steering, including OMP, the resident recognizes the visible assistant header
-as prose lands; no acknowledgment command is required. Shell-hook vendors
-retain their printed command path for mid-turn retirement. At occupant exit,
+**Invariant —** The resident retires the key. It recognizes the visible
+assistant header as prose lands; no acknowledgment command exists. At occupant exit,
 the resident also retires keys answered in the final transcript under the same
 recognition rules, with no successor woken to cite them. Visible commentary
 counts when persisted as assistant text; reasoning does not, regardless of how

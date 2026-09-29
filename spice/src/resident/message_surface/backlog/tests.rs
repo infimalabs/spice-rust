@@ -42,19 +42,16 @@ fn visible_cards(scan: &listen::Scan) -> usize {
 fn startup_work_caps_lane_reads_and_total_source_bytes() {
     let mut aggregate = StartupWork::default();
     for _ in 0..STARTUP_LANE_READ_LIMIT {
-        assert!(aggregate.admits_lane(WIDEST_DIALECT));
+        assert!(aggregate.admits_lane());
         aggregate.begin_lane();
         aggregate.add(listen::TailWork {
-            source_bytes: startup_source_bytes(WIDEST_DIALECT),
+            source_bytes: STARTUP_SOURCE_BYTES,
             records: 1,
             passes: 1,
             duration: Duration::from_millis(1),
         });
     }
-    assert!(
-        !aggregate.admits_lane(listen::Dialect::Codex),
-        "the spent ceiling closes startup to a short-record dialect too",
-    );
+    assert!(!aggregate.admits_lane(), "the spent ceiling closes startup",);
     assert_eq!(aggregate.lanes, STARTUP_LANE_READ_LIMIT);
     assert_eq!(aggregate.source_bytes, STARTUP_SOURCE_BYTE_LIMIT);
     assert_eq!(aggregate.records, STARTUP_LANE_READ_LIMIT);
@@ -62,7 +59,7 @@ fn startup_work_caps_lane_reads_and_total_source_bytes() {
 }
 
 #[test]
-fn codex_completed_turn_materializes_history_as_one_final_card() {
+fn a_settled_turn_materializes_history_as_one_final_card() {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
         "spice-backlog-final-history-{}-{}",
@@ -72,15 +69,15 @@ fn codex_completed_turn_materializes_history_as_one_final_card() {
     let tape = tape::Tape::open(&root).expect("final history tape opens");
     tape.tee(
         concat!(
-            "{\"type\":\"item.completed\",\"item\":{\"id\":\"final\",",
-            "\"type\":\"agent_message\",\"text\":\"settled final\"}}\n",
-            "{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,",
-            "\"cached_input_tokens\":0,\"output_tokens\":1}}\n",
+            "{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",",
+            "\"content\":[{\"type\":\"text\",\"text\":\"settled final\"}],",
+            "\"usage\":{\"input\":1,\"output\":1},\"stopReason\":\"stop\"}}\n",
+            "{\"type\":\"agent_end\"}\n",
         )
         .as_bytes(),
     )
     .expect("final history is durable");
-    let scan = listen::scan(&root, listen::Dialect::Codex, None).expect("final history scans");
+    let scan = listen::scan(&root, listen::Dialect::Omp, None).expect("final history scans");
     let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT, None);
     let mut reader = BacklogReader::default();
     let mut diagnostic = Vec::new();
@@ -92,7 +89,6 @@ fn codex_completed_turn_materializes_history_as_one_final_card() {
         "018f82d4-6f59-7d06-92e3-bce9131163ef"
             .parse()
             .expect("fixture author"),
-        Path::new("/fixture-worktree"),
         &messages,
         &mut reader,
         &mut diagnostic,
@@ -109,46 +105,27 @@ fn codex_completed_turn_materializes_history_as_one_final_card() {
 
 #[test]
 fn replay_keeps_vendor_turn_boundaries_after_compaction() {
-    assert_replay_boundary(
-        "codex",
-        listen::Dialect::Codex,
-        concat!(
-            "{\"timestamp\":\"2026-08-09T01:00:00.000Z\",\"type\":\"compacted\",",
-            "\"payload\":{}}\n",
-            "{\"timestamp\":\"2026-08-09T01:00:01.000Z\",\"type\":\"event_msg\",",
-            "\"payload\":{\"type\":\"task_started\",\"turn_id\":\"turn-2\"}}\n",
-            "{\"timestamp\":\"2026-08-09T01:00:02.000Z\",\"type\":\"item.completed\",",
-            "\"item\":{\"id\":\"commentary\",\"type\":\"agent_message\",",
-            "\"text\":\"resumed work\"}}\n",
-        ),
-    );
-    assert_replay_boundary(
-        "claude",
-        listen::Dialect::Claude,
-        concat!(
-            "{\"timestamp\":\"2026-08-09T01:00:00.000Z\",\"type\":\"summary\",",
-            "\"summary\":\"compacted context\"}\n",
-            "{\"timestamp\":\"2026-08-09T01:00:01.000Z\",\"type\":\"user\",",
-            "\"promptId\":\"turn-2\",\"message\":{\"type\":\"message\",\"role\":\"user\",",
-            "\"content\":[{\"type\":\"text\",\"text\":\"continue\"}]}}\n",
-            "{\"timestamp\":\"2026-08-09T01:00:02.000Z\",\"type\":\"assistant\",",
-            "\"message\":{\"type\":\"message\",\"role\":\"assistant\",",
-            "\"content\":[{\"type\":\"text\",\"text\":\"resumed work\"}]}}\n",
-        ),
-    );
+    assert_replay_boundary(concat!(
+        "{\"type\":\"auto_compaction_end\",\"timestamp\":\"2026-08-09T01:00:00.000Z\",",
+        "\"result\":{\"summary\":\"compacted context\"}}\n",
+        "{\"type\":\"agent_start\",\"timestamp\":\"2026-08-09T01:00:01.000Z\"}\n",
+        "{\"type\":\"message_end\",\"timestamp\":\"2026-08-09T01:00:02.000Z\",",
+        "\"message\":{\"role\":\"assistant\",",
+        "\"content\":[{\"type\":\"text\",\"text\":\"resumed work\"}]}}\n",
+    ));
 }
 
-fn assert_replay_boundary(label: &str, dialect: listen::Dialect, contents: &str) {
+fn assert_replay_boundary(contents: &str) {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let root = std::env::temp_dir().join(format!(
-        "spice-backlog-turn-boundary-{label}-{}-{}",
+        "spice-backlog-turn-boundary-{}-{}",
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed),
     ));
     let tape = tape::Tape::open(&root).expect("turn boundary tape opens");
     tape.tee(contents.as_bytes())
         .expect("compacted turn sequence is durable");
-    let scan = listen::scan(&root, dialect, None).expect("turn sequence scans");
+    let scan = listen::scan(&root, listen::Dialect::Omp, None).expect("turn sequence scans");
     let messages = CollectedMessages::new(canvas::stream::MESSAGE_HISTORY_PAGE_LIMIT, None);
     let mut reader = BacklogReader::default();
     let mut diagnostic = Vec::new();
@@ -160,7 +137,6 @@ fn assert_replay_boundary(label: &str, dialect: listen::Dialect, contents: &str)
         "018f82d4-6f59-7d06-92e3-bce9131163ef"
             .parse()
             .expect("fixture author"),
-        Path::new("/fixture-worktree"),
         &messages,
         &mut reader,
         &mut diagnostic,
@@ -211,7 +187,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         NEXT.fetch_add(1, Ordering::Relaxed),
     ));
     let tape_root = root.join("tape");
-    let session_path = root.join("rollout.jsonl");
+    let session_path = root.join("session.jsonl");
     fs::create_dir_all(&root).expect("merged fixture root exists");
     let tape = tape::Tape::open(&tape_root).expect("merged tape opens");
     let filler = "x".repeat(1_800);
@@ -221,16 +197,16 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         let timestamp = timestamp(index);
         tape_contents.extend_from_slice(
             format!(
-                "{{\"timestamp\":\"{timestamp}\",\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"message {index} {filler}\"}}}}\n"
+                "{{\"type\":\"message_end\",\"timestamp\":\"{timestamp}\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"message {index} {filler}\"}}]}}}}\n"
             )
             .as_bytes(),
         );
         session_contents.push_str(&format!(
-            "{{\"timestamp\":\"{timestamp}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"message {index}\"}}]}}}}\n"
+            "{{\"type\":\"message\",\"timestamp\":\"{timestamp}\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"message {index}\"}}]}}}}\n"
         ));
         if matches!(index, 30 | 60 | 90) {
             session_contents.push_str(&format!(
-                "{{\"timestamp\":\"{timestamp}\",\"type\":\"compacted\",\"payload\":{{}}}}\n"
+                "{{\"type\":\"compaction\",\"timestamp\":\"{timestamp}\"}}\n"
             ));
         }
     }
@@ -243,7 +219,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
     let author: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163ef"
         .parse()
         .expect("fixture author");
-    let source_end = listen::scan(&tape_root, listen::Dialect::Codex, None)
+    let source_end = listen::scan(&tape_root, listen::Dialect::Omp, None)
         .expect("merged tape scans")
         .checkpoint;
     let session_source = session_compaction::history_checkpoint(&session_path)
@@ -253,14 +229,12 @@ fn merged_history_fixture() -> MergedHistoryFixture {
             lane,
             DurableLane {
                 tape: tape_root,
-                worktree: root.join("worktree"),
-                dialect: listen::Dialect::Codex,
+                dialect: listen::Dialect::Omp,
                 author,
                 source: Some(source_end.clone()),
                 session: Some(DurableSession {
                     path: session_path.clone(),
-                    worktree: root.join("worktree"),
-                    dialect: listen::Dialect::Codex,
+                    dialect: listen::Dialect::Omp,
                     thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
                     source: session_source,
                     cards: Mutex::default(),
@@ -271,7 +245,6 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
-        sessions: TranscriptSessions::default(),
     };
     let future = wire::AgentMessage {
         lane,
@@ -382,7 +355,7 @@ fn assert_replaced_session_is_refused(
     );
 }
 
-/// Write a Codex season of `messages` visible agent messages followed by
+/// Write an omp season of `messages` visible agent messages followed by
 /// `tools` tool calls without a visible card, each record near 1.9 KiB.
 fn season_tape(tag: &str, messages: usize, tools: usize) -> PathBuf {
     static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -397,7 +370,7 @@ fn season_tape(tag: &str, messages: usize, tools: usize) -> PathBuf {
     for index in 0..messages {
         season.extend_from_slice(
             format!(
-                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"{index} {filler}\"}}}}\n"
+                "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{index} {filler}\"}}]}}}}\n"
             )
             .as_bytes(),
         );
@@ -405,7 +378,7 @@ fn season_tape(tag: &str, messages: usize, tools: usize) -> PathBuf {
     for index in 0..tools {
         season.extend_from_slice(
             format!(
-                "{{\"type\":\"item.started\",\"item\":{{\"id\":\"call-{index}\",\"type\":\"command_execution\",\"command\":\"echo {filler}\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}}}\n"
+                "{{\"type\":\"tool_execution_start\",\"toolCallId\":\"call-{index}\",\"toolName\":\"bash\",\"args\":{{\"command\":\"echo {filler}\"}}}}\n"
             )
             .as_bytes(),
         );
@@ -421,7 +394,7 @@ fn season_history(root: &Path) -> (DurableHistory, CanonicalUuid, listen::Checkp
     let author: CanonicalUuid = "018f82d4-6f59-7d06-92e3-bce9131163ef"
         .parse()
         .expect("fixture author");
-    let source_end = listen::scan(root, listen::Dialect::Codex, None)
+    let source_end = listen::scan(root, listen::Dialect::Omp, None)
         .expect("season endpoint reads")
         .checkpoint;
     let history = DurableHistory {
@@ -429,8 +402,7 @@ fn season_history(root: &Path) -> (DurableHistory, CanonicalUuid, listen::Checkp
             lane,
             DurableLane {
                 tape: root.to_path_buf(),
-                worktree: root.join("worktree"),
-                dialect: listen::Dialect::Codex,
+                dialect: listen::Dialect::Omp,
                 author,
                 source: Some(source_end.clone()),
                 session: None,
@@ -440,7 +412,6 @@ fn season_history(root: &Path) -> (DurableHistory, CanonicalUuid, listen::Checkp
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
-        sessions: TranscriptSessions::default(),
     };
     (history, lane, source_end)
 }
@@ -453,16 +424,16 @@ fn startup_tail_reads_one_fixed_window_before_byte_zero() {
     const DENSE_LANE_MESSAGES: usize = 800;
     let root = season_tape("tail", DENSE_LANE_MESSAGES, 0);
 
-    let tail = tail_backlog(&root, listen::Dialect::Codex).expect("season tail scans");
+    let tail = tail_backlog(&root, listen::Dialect::Omp).expect("season tail scans");
     assert!(
         visible_cards(&tail.scan) > wire::MESSAGE_FLOOR,
         "one startup window carries more than the initial page of a dense lane",
     );
     assert!(visible_cards(&tail.scan) < DENSE_LANE_MESSAGES);
-    assert!(tail.work.source_bytes <= startup_source_bytes(listen::Dialect::Codex));
+    assert!(tail.work.source_bytes <= STARTUP_SOURCE_BYTES);
     assert!(tail.work.source_bytes > STARTUP_WINDOW_BYTES);
     assert_eq!(tail.work.records, tail.scan.records.len());
-    assert!(tail.work.passes <= codex_startup_passes());
+    assert!(tail.work.passes <= tail_passes(STARTUP_SOURCE_BYTES));
     let first_offset = tail
         .scan
         .records
@@ -477,51 +448,6 @@ fn startup_tail_reads_one_fixed_window_before_byte_zero() {
     assert!(first_offset > 0, "startup does not scan back to byte zero");
 
     fs::remove_dir_all(root).expect("season fixture cleanup");
-}
-
-#[test]
-fn startup_tail_affords_one_captured_record_at_its_limit() {
-    // Enough newest messages that the startup window begins deep inside a
-    // record at the capture limit: the boundary allowance retreats over the
-    // rest of that record, and the window is read from where it was asked.
-    const NEWEST_MESSAGES: usize = 500;
-    let root = season_tape("limit-record", 30, 0);
-    let tape = tape::Tape::open(&root).expect("season tape reopens");
-    let mut record = vec![b'x'; lane_surface::CAPTURE_LIMIT];
-    record.push(b'\n');
-    tape.tee(&record)
-        .expect("a record at the capture limit is durable");
-    let filler = "x".repeat(1_800);
-    let mut newest = Vec::new();
-    for index in 0..NEWEST_MESSAGES {
-        newest.extend_from_slice(
-            format!(
-                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"late-{index}\",\"type\":\"agent_message\",\"text\":\"{index} {filler}\"}}}}\n"
-            )
-            .as_bytes(),
-        );
-    }
-    tape.tee(&newest).expect("newest messages are durable");
-
-    let tail = tail_backlog(&root, listen::Dialect::Codex)
-        .expect("a record at the capture limit is affordable");
-    let straddled = tail.scan.records.first().expect("the window has records");
-    assert_eq!(
-        straddled.locus.length,
-        record.len() as u64,
-        "the window begins with the whole straddled record"
-    );
-    assert_eq!(tail.scan.records.len(), NEWEST_MESSAGES + 1);
-    assert!(tail.work.source_bytes > STARTUP_WINDOW_BYTES + STARTUP_WINDOW_BYTES / 2);
-    assert!(tail.work.source_bytes <= startup_source_bytes(listen::Dialect::Codex));
-    assert!(tail.work.passes <= codex_startup_passes());
-
-    fs::remove_dir_all(root).expect("limit-record fixture cleanup");
-}
-
-/// Bounded reads one Codex startup scan may perform under its own allowance.
-fn codex_startup_passes() -> usize {
-    tail_passes(startup_source_bytes(listen::Dialect::Codex))
 }
 
 #[test]
@@ -562,15 +488,15 @@ fn startup_tail_crosses_one_reassembled_record_at_the_admitted_logical_limit() {
         "the window begins with the whole straddled record",
     );
     assert_eq!(tail.scan.records.len(), NEWEST_MESSAGES + 1);
-    assert!(tail.work.source_bytes <= startup_source_bytes(listen::Dialect::Omp));
-    assert!(tail.work.passes <= tail_passes(startup_source_bytes(listen::Dialect::Omp)));
+    assert!(tail.work.source_bytes <= STARTUP_SOURCE_BYTES);
+    assert!(tail.work.passes <= tail_passes(STARTUP_SOURCE_BYTES));
 
     fs::remove_dir_all(root).expect("omp limit-record fixture cleanup");
 }
 
 #[test]
-fn a_record_beyond_the_dialects_admitted_length_refuses_within_its_allowance() {
-    // Nothing admitted can land a Codex record this long, so the retreat runs
+fn a_record_beyond_the_admitted_length_refuses_within_its_allowance() {
+    // Nothing admitted can land a record this long, so the retreat runs
     // out of source bytes rather than reading the tape without a bound. The
     // refusal names the dimension it spent and reports the work it did.
     let root = season_tape("oversize-record", 30, 0);
@@ -578,15 +504,12 @@ fn a_record_beyond_the_dialects_admitted_length_refuses_within_its_allowance() {
     // The retreat pays for every byte of the record below the window it was
     // asked for, so the record has to outrun the whole allowance, not the
     // admitted length alone.
-    let mut oversize = vec![
-        b'x';
-        startup_source_bytes(listen::Dialect::Codex) as usize
-            + 2 * STARTUP_WINDOW_BYTES as usize
-    ];
+    let mut oversize =
+        vec![b'x'; STARTUP_SOURCE_BYTES as usize + 2 * STARTUP_WINDOW_BYTES as usize];
     oversize.push(b'\n');
     tape.tee(&oversize).expect("the long record is durable");
 
-    let error = tail_backlog(&root, listen::Dialect::Codex)
+    let error = tail_backlog(&root, listen::Dialect::Omp)
         .expect_err("a record beyond the admitted length is refused");
     let listen::ScanError::WorkLimit {
         dimension,
@@ -598,9 +521,9 @@ fn a_record_beyond_the_dialects_admitted_length_refuses_within_its_allowance() {
         panic!("the refusal names the allowance it spent: {error}");
     };
     assert_eq!(*dimension, "source bytes");
-    assert_eq!(*limit, startup_source_bytes(listen::Dialect::Codex));
-    assert!(work.source_bytes <= startup_source_bytes(listen::Dialect::Codex));
-    assert!(work.passes <= codex_startup_passes());
+    assert_eq!(*limit, STARTUP_SOURCE_BYTES);
+    assert!(work.source_bytes <= STARTUP_SOURCE_BYTES);
+    assert!(work.passes <= tail_passes(STARTUP_SOURCE_BYTES));
 
     fs::remove_dir_all(root).expect("oversize fixture cleanup");
 }
@@ -633,7 +556,7 @@ fn omp_messages(count: usize) -> String {
 fn tool_only_tail_stops_at_one_fixed_read_with_a_backward_cursor() {
     let root = season_tape("sparse-tail", 30, SPARSE_TOOL_RECORDS);
 
-    let tail = tail_backlog(&root, listen::Dialect::Codex).expect("sparse tail scans");
+    let tail = tail_backlog(&root, listen::Dialect::Omp).expect("sparse tail scans");
     assert_eq!(
         visible_cards(&tail.scan),
         0,
@@ -644,9 +567,9 @@ fn tool_only_tail_stops_at_one_fixed_read_with_a_backward_cursor() {
         "the scanner does not cross the complete sparse tool tail",
     );
     assert!(tail.start.next > listen::Position::start());
-    assert!(tail.work.source_bytes <= startup_source_bytes(listen::Dialect::Codex));
+    assert!(tail.work.source_bytes <= STARTUP_SOURCE_BYTES);
     assert_eq!(tail.work.records, tail.scan.records.len());
-    assert!(tail.work.passes <= codex_startup_passes());
+    assert!(tail.work.passes <= tail_passes(STARTUP_SOURCE_BYTES));
 
     fs::remove_dir_all(root).expect("sparse fixture cleanup");
 }
@@ -684,9 +607,8 @@ fn historical_page_wades_through_a_sparse_tool_horizon_to_fill_the_page() {
         "the request read older windows"
     );
     assert_eq!(filled.end, newest_end);
-    let window = history_source_bytes(listen::Dialect::Codex);
-    assert!(filled.work.source_bytes > window);
-    assert!(filled.work.source_bytes <= window * HISTORY_READ_LIMIT as u64);
+    assert!(filled.work.source_bytes > HISTORY_WINDOW_BYTES);
+    assert!(filled.work.source_bytes <= HISTORY_SOURCE_BYTES * HISTORY_READ_LIMIT as u64);
     assert!(filled.work.records > SPARSE_HORIZON_RECORDS);
     assert!(filled.messages[0].text.starts_with("250 "));
     assert!(filled.messages[limit - 1].text.starts_with("299 "));
@@ -891,11 +813,11 @@ fn a_tape_continuation_resumes_from_physical_progress_not_the_anchor() {
     assert_eq!(tape_continuation(&unserved, &anchor), at(1, 10));
 }
 
-/// Season a preserved Codex session whose newest `groups` compactions each sit
+/// Season a preserved omp session whose newest `groups` compactions each sit
 /// behind five near 1.9 KiB assistant records, so a page of compaction cards
 /// spans more source bytes than one history window.
 fn season_session_horizon(root: &Path, groups: usize) -> (DurableHistory, CanonicalUuid) {
-    let session_path = root.join("rollout.jsonl");
+    let session_path = root.join("session.jsonl");
     fs::create_dir_all(root).expect("session horizon fixture root exists");
     let filler = "x".repeat(1_800);
     let mut group_contents = Vec::new();
@@ -904,12 +826,12 @@ fn season_session_horizon(root: &Path, groups: usize) -> (DurableHistory, Canoni
         for slot in 0..5 {
             let timestamp = timestamp(group * 6 + slot);
             contents.push_str(&format!(
-                "{{\"timestamp\":\"{timestamp}\",\"type\":\"response_item\",\"payload\":{{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{{\"type\":\"output_text\",\"text\":\"message {group} {slot} {filler}\"}}]}}}}\n"
+                "{{\"type\":\"message\",\"timestamp\":\"{timestamp}\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"message {group} {slot} {filler}\"}}]}}}}\n"
             ));
         }
         let timestamp = timestamp(group * 6 + 5);
         contents.push_str(&format!(
-            "{{\"timestamp\":\"{timestamp}\",\"type\":\"compacted\",\"payload\":{{}}}}\n"
+            "{{\"type\":\"compaction\",\"timestamp\":\"{timestamp}\"}}\n"
         ));
         group_contents.push(contents);
     }
@@ -938,14 +860,12 @@ fn season_session_horizon(root: &Path, groups: usize) -> (DurableHistory, Canoni
             lane,
             DurableLane {
                 tape: root.join("tape"),
-                worktree: root.join("worktree"),
-                dialect: listen::Dialect::Codex,
+                dialect: listen::Dialect::Omp,
                 author,
                 source: None,
                 session: Some(DurableSession {
                     path: session_path,
-                    worktree: root.join("worktree"),
-                    dialect: listen::Dialect::Codex,
+                    dialect: listen::Dialect::Omp,
                     thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
                     source: session_source,
                     cards: Mutex::default(),
@@ -956,7 +876,6 @@ fn season_session_horizon(root: &Path, groups: usize) -> (DurableHistory, Canoni
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
-        sessions: TranscriptSessions::default(),
     };
     (history, lane)
 }
@@ -1131,13 +1050,11 @@ fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::A
             lane,
             DurableLane {
                 tape: tape_root,
-                worktree: root.join("worktree"),
                 dialect: listen::Dialect::Omp,
                 author,
                 source: Some(source_end.clone()),
                 session: Some(DurableSession {
                     path: session_path,
-                    worktree: root.join("worktree"),
                     dialect: listen::Dialect::Omp,
                     thread: "01a0a807-666f-7524-be0d-2ee476b6c15c".to_owned(),
                     source: session_source,
@@ -1149,7 +1066,6 @@ fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::A
         hydration: Mutex::new(Hydration::default()),
         bus: None,
         steering: PresentationDirectives::default(),
-        sessions: TranscriptSessions::default(),
     };
     let future = wire::AgentMessage {
         lane,

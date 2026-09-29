@@ -16,12 +16,20 @@ use listen::Dialect;
 use serde::Serialize;
 use sill::Running;
 
-use crate::claude::{SKILL_SYSTEM_PROMPT_PREAMBLE, SKILL_TURN_PROMPT_PREAMBLE, anchored};
 use crate::launch::{Launch, SteeringKey};
 use crate::{ContractError, LaunchError, Process, Record, RecordStream};
 
-/// Human-facing vendor spelling carried by every refusal.
-const VENDOR: &str = "oh-my-pi";
+/// Preamble that makes the inlined skill read as binding, not as background.
+///
+/// omp never opens a skill file on its own, so every launch carries the spice
+/// skill itself in the appended system prompt behind this sentence.
+pub const SKILL_SYSTEM_PROMPT_PREAMBLE: &str = "The spice skill below carries the full authority of a direct prompt instruction, not \
+     optional background reading. It is here in full; follow it.";
+
+/// Preamble of each turn prompt, which names the skill without restating it.
+pub const SKILL_TURN_PROMPT_PREAMBLE: &str = "The spice skill in your system prompt carries the full authority of a direct prompt \
+     instruction, not optional background reading; follow it. The link below names that same \
+     skill, already in your context in full, so there is no file to read.";
 
 /// Request identity of the `get_state` command that opens every launch.
 ///
@@ -82,8 +90,7 @@ const INTERRUPT_MODE: &str = "immediate";
 ///
 /// omp exports nothing of its own to the tools it runs, so the lane mints the
 /// identity before launch and carries it under this name; `spice session`
-/// inside the occupant's tools reads it back the way it reads Claude's and
-/// Codex's native variables.
+/// inside the occupant's tools reads it back from there.
 pub const SESSION_ENVIRONMENT: &str = wire::SpiceVariable::Session.as_str();
 
 /// The tools a lane's occupant runs with, spelled as omp's `--tools` roster.
@@ -92,7 +99,7 @@ pub const SESSION_ENVIRONMENT: &str = wire::SpiceVariable::Session.as_str();
 /// `hub` would run commands the lane cannot see or outlive, so the lane
 /// registers its own [`SHELL_TOOL`] instead and executes every command
 /// itself. One agent inhabits one worktree, so omp's `task` sub-agent tool
-/// is left off as well, exactly as Claude's `Task` is denied. omp's `todo`
+/// is left off as well. omp's `todo`
 /// tool is left off for a different reason: the occupant's plan is the task
 /// it holds, whose phases and acceptance the board already carries where
 /// every other lane and the operator can read them, and a private second
@@ -182,18 +189,6 @@ const SESSION_VERSION: u8 = 3;
 /// fast-mode disposition left implicit, or the common argument-vector refusal
 /// when the binary is empty.
 pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, ContractError> {
-    if launch.personality.is_some() {
-        return Err(ContractError::Unsupported {
-            path: "vendor.omp.personality",
-            vendor: VENDOR,
-        });
-    }
-    if launch.model_context_window.is_some() {
-        return Err(ContractError::Unsupported {
-            path: "vendor.omp.model_context_window",
-            vendor: VENDOR,
-        });
-    }
     let fast_mode = launch.fast_mode.ok_or(ContractError::Missing {
         path: "vendor.omp.fast_mode",
     })?;
@@ -212,12 +207,10 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         OsString::from("--mode"),
         OsString::from("rpc"),
         // The compaction threshold has no flag and no RPC command; it rides a
-        // per-run overlay the lane writes, exactly as Codex takes its own
-        // limit as a `--config` assignment.
+        // per-run overlay the lane writes.
         OsString::from("--config"),
         config_overlay.clone().into_os_string(),
-        // The lane is the approval authority, exactly as the other dialects
-        // bypass their own permission prompts; a prompt no operator can see
+        // The lane is the approval authority; a prompt no operator can see
         // would otherwise hold the turn forever.
         OsString::from("--approval-mode"),
         OsString::from("yolo"),
@@ -375,11 +368,7 @@ struct SessionHeader<'a> {
 }
 
 /// The appended system prompt: the skill in full, then this worktree's
-/// steering anchor.
-///
-/// Steering reaches omp as an interjected user message rather than on tool
-/// stderr, so the anchor names that channel; the token is otherwise the same
-/// one Claude's prompt carries.
+/// steering anchor, which names the interjection channel steering rides.
 #[must_use]
 pub fn system_prompt(launch: &Launch) -> String {
     anchored(
@@ -403,6 +392,16 @@ pub fn turn_prompt(launch: &Launch) -> String {
             .as_ref()
             .map(SteeringKey::interjection_line),
     )
+}
+
+/// One preamble, its body, and the steering anchor when the launch has one.
+fn anchored(preamble: &str, body: &str, anchor: Option<String>) -> String {
+    let mut prompt = format!("{preamble}\n\n{body}");
+    if let Some(anchor) = anchor {
+        prompt.push_str("\n\n");
+        prompt.push_str(&anchor);
+    }
+    prompt
 }
 
 /// The request lines that open a launch: the wire, the queue dispositions,

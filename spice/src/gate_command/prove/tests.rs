@@ -346,26 +346,6 @@ fn cargo_environment_omits_worktree_outputs_and_matches_forced_wrappers() {
 }
 
 #[test]
-fn codex_launcher_paths_do_not_partition_environment_identity() {
-    let normalized =
-        |path| normalized_action_environment(&[(OsString::from("PATH"), search_path(path))]);
-    let first = normalized(&[
-        "/toolchain/bin",
-        "/runtime/.codex/tmp/arg0/codex-arg0-first",
-        "/usr/bin",
-    ]);
-    let second = normalized(&[
-        "/toolchain/bin",
-        "/runtime/.codex/tmp/arg0/codex-arg0-second",
-        "/usr/bin",
-    ]);
-
-    assert_eq!(first, second);
-    assert_eq!(first[0].1, search_path(&["/toolchain/bin", "/usr/bin"]));
-    assert_ne!(first, normalized(&["/different-toolchain/bin", "/usr/bin"]),);
-}
-
-#[test]
 fn a_repeated_search_path_entry_does_not_partition_environment_identity() {
     let normalized =
         |path| normalized_action_environment(&[(OsString::from("PATH"), search_path(path))]);

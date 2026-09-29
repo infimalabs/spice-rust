@@ -91,7 +91,6 @@ pub(in crate::resident::message_surface) struct HistoryScan {
 
 pub(in crate::resident::message_surface) struct HistoryRequest<'a> {
     pub(in crate::resident::message_surface) path: PathBuf,
-    pub(in crate::resident::message_surface) worktree: PathBuf,
     pub(in crate::resident::message_surface) dialect: listen::Dialect,
     pub(in crate::resident::message_surface) thread: String,
     pub(in crate::resident::message_surface) lane: CanonicalUuid,
@@ -126,7 +125,6 @@ pub(in crate::resident::message_surface) fn retained_messages(
             Cursor::new(
                 request.thread.clone(),
                 request.path.clone(),
-                request.worktree.clone(),
                 request.dialect,
                 request.author,
             )
@@ -152,14 +150,7 @@ pub(super) fn history_window(
     // Preserved-session loci name no tape batch, so observations never apply.
     let mut state = MessageState::default();
     for record in page.records {
-        publish(
-            record,
-            request.lane,
-            request.author,
-            &request.worktree,
-            &messages,
-            &mut state,
-        )?;
+        publish(record, request.lane, request.author, &messages, &mut state)?;
     }
     let messages = messages.0.into_inner().map_err(|_| {
         store_fault(

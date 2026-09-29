@@ -443,7 +443,7 @@ mod tests {
             team,
             "/tmp/spice-lane".to_owned(),
             "drive".to_owned(),
-            "codex".parse().expect("fixture vendor parses"),
+            "omp".parse().expect("fixture vendor parses"),
         );
 
         assert_eq!(body.topology_revision, 7);
@@ -452,7 +452,7 @@ mod tests {
         assert_eq!(body.name.as_deref(), Some("reviewer"));
         assert_eq!(body.worktree, "/tmp/spice-lane");
         assert_eq!(body.life, "drive");
-        assert_eq!(body.vendor.as_str(), "codex");
+        assert_eq!(body.vendor.as_str(), "omp");
         assert_eq!(body.model.as_deref(), Some("gpt-5.5"));
         assert_eq!(body.effort.as_deref(), Some("low"));
         assert_eq!(body.resume, None);

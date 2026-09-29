@@ -132,7 +132,7 @@ fn exercise_task_done(worktree_label: &str, branch: &str, reference_admission_ma
     let resident = Resident::start(root);
     let lane = command_body(&spice_run(
         root,
-        &["lane", "add", root.to_str().unwrap(), "--vendor", "claude"],
+        &["lane", "add", root.to_str().unwrap(), "--vendor", "omp"],
         None,
     ))["lane"]
         .as_str()
@@ -228,11 +228,17 @@ fn completion_repository(label: &str) -> Scratch {
     fs::write(&skill, ::std::include_bytes!("../../agent/SKILL.md"))
         .expect("fixture installs appliance skill");
     scratch.executable(
-        "fake-claude",
+        "fake-omp",
         concat!(
             "#!/bin/sh\n",
-            "printf '%s\\n' '{\"type\":\"system\",\"subtype\":\"init\",",
-            "\"session_id\":\"018f7777-7777-7444-8888-999999999999\"}'\n",
+            "session=018f7777-7777-7444-8888-999999999999\n",
+            "while [ \"$#\" -gt 1 ]; do\n",
+            "  if [ \"$1\" = --resume ]; then session=$2; fi\n",
+            "  shift\n",
+            "done\n",
+            "printf '%s\\n' '{\"type\":\"ready\",\"protocolVersion\":1}'\n",
+            "printf '{\"id\":\"spice-state\",\"type\":\"response\",\"command\":\"get_state\",",
+            "\"success\":true,\"data\":{\"sessionId\":\"%s\"}}\\n' \"$session\"\n",
             "while [ -d .git ]; do sleep 1; done\n",
         )
         .as_bytes(),
@@ -240,8 +246,8 @@ fn completion_repository(label: &str) -> Scratch {
     fs::write(
         scratch.join("spice-rust.toml"),
         format!(
-            "[tasks]\nstems = [\"task\"]\n\n[vendor.claude]\nbinary = {:?}\n",
-            scratch.join("fake-claude").display().to_string()
+            "[tasks]\nstems = [\"task\"]\n\n[vendor.omp]\nbinary = {:?}\n",
+            scratch.join("fake-omp").display().to_string()
         ),
     )
     .unwrap();

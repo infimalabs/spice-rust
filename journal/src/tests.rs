@@ -31,7 +31,6 @@ mod fact_bounds;
 mod generation;
 mod historical_receipts;
 mod identity_migration;
-mod lane_compaction;
 mod lineage_migration;
 mod page_budget;
 mod predecessor;
@@ -1163,7 +1162,7 @@ fn witness_head() -> WitnessHead {
 fn transcript_source_head() -> TranscriptSourceHead {
     TranscriptSourceHead {
         lane: uuid("018f82d4-6f59-7d06-92e3-bce913116305"),
-        vendor: "claude".parse().expect("canonical fixture vendor"),
+        vendor: "omp".parse().expect("canonical fixture vendor"),
         stream: "session".to_owned(),
         source: uuid("018f82d4-6f59-7d06-92e3-bce913116306"),
         next: TranscriptPosition {
@@ -1184,7 +1183,7 @@ fn residency_head() -> ResidencyHead {
             name: None,
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
             occupant: Some(uuid("018f82d4-6f59-7d06-92e3-bce913116303")),

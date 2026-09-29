@@ -23,9 +23,8 @@ const REFUSAL_EXIT: i32 = 2;
 /// The exit a landed command's typed environment fault carries.
 const FAULT_EXIT: i32 = 1;
 
-const CODEX_PROSE: &[u8] =
-    br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"working"}}"#;
-const CODEX_PROSE_TEXT: &str = "working";
+const PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}"#;
+const PROSE_TEXT: &str = "working";
 
 struct Scratch(PathBuf);
 
@@ -65,7 +64,7 @@ fn record(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn session(root: &Path) -> (PathBuf, Tape) {
-    let path = root.join("lane-a/codex");
+    let path = root.join("lane-a/omp");
     let tape = Tape::open(&path).expect("fixture tape opens");
     (path, tape)
 }
@@ -89,8 +88,6 @@ fn invoke_configured(argv: &[&str], current_dir: Option<&Path>) -> Spoken {
     let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
     command
         .args(argv)
-        .env_remove("CODEX_THREAD_ID") // env-policy: allow
-        .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
         .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
         .env_remove(steer::hook::LANE)
         // Assertions below exercise the CLI's words, not terminal styling.
@@ -122,8 +119,6 @@ fn invoke_isolated_rtk_run(
         .args(["run", "--", "/bin/sh", "-c", "printf native"])
         .current_dir(working)
         .env_remove(steer::hook::LANE)
-        .env_remove("CODEX_THREAD_ID") // env-policy: allow
-        .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
         .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
         .env_remove(spice::rtk::EXECUTABLE_VARIABLE)
         .env_remove(spice::rtk::HISTORY_VARIABLE)
@@ -142,15 +137,14 @@ fn utf8(bytes: Vec<u8>) -> String {
 fn finite_retro_renders_typed_text_json_and_success_exit() {
     let scratch = Scratch::new("transcript-leaves");
     let (path, tape) = session(scratch.path());
-    tape.tee(&record(CODEX_PROSE))
-        .expect("fixture record is durable");
+    tape.tee(&record(PROSE)).expect("fixture record is durable");
     let session = path.to_string_lossy().into_owned();
 
     let text = invoke(&["retro", &session]);
     assert_eq!(text.code, Some(0));
     assert!(text.err.is_empty());
     let text = utf8(text.out);
-    assert!(text.contains("event lane=lane-a dialect=codex"));
+    assert!(text.contains("event lane=lane-a dialect=omp"));
     assert!(text.contains("kind=prose"));
     assert!(
         text.contains("working"),
@@ -171,7 +165,7 @@ fn finite_retro_renders_typed_text_json_and_success_exit() {
         )
     }));
 
-    let missing = scratch.path().join("missing/codex");
+    let missing = scratch.path().join("missing/omp");
     let missing = missing.to_string_lossy().into_owned();
     let missing = invoke(&["--json", "retro", &missing]);
     assert_eq!(missing.code, Some(0));
@@ -211,7 +205,7 @@ fn watch_accounts_for_a_selected_symlink_without_following_it() {
 
     let scratch = Scratch::new("watch-symlink");
     let (session, tape) = session(scratch.path());
-    tape.tee(&record(CODEX_PROSE))
+    tape.tee(&record(PROSE))
         .expect("real fixture record is durable");
     let alias = scratch.path().join("alias");
     symlink(&session, &alias).expect("fixture symlink exists");
@@ -559,8 +553,7 @@ fn installed_shell_boundary_wraps_once_then_restores_native_process_semantics() 
         .env(steer::hook::HOOKS, hooks.root())
         .env(steer::hook::NATIVE_SHELL, &native)
         .env("BOUNDARY_ARGUMENTS", &arguments)
-        .env_remove(vendor::CODEX.thread_id_environment())
-        .env_remove(vendor::CLAUDE.thread_id_environment())
+        .env_remove(vendor::OMP.thread_id_environment())
         .output()
         .expect("outer structural shell runs");
 

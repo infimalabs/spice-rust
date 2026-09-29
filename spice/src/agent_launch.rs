@@ -10,14 +10,10 @@ use wire::{CanonicalUuid, Name};
 
 use crate::config::Root;
 
-/// Child variable understood by Claude Code's auto-compaction boundary.
-pub const CLAUDE_AUTO_COMPACT_WINDOW: &str = "CLAUDE_CODE_AUTO_COMPACT_WINDOW";
 /// OMP's external multiplexer opt-out, independent of its shared-broker setting.
 pub const OMP_DISABLE_LSPMUX: &str = "PI_DISABLE_LSPMUX";
 /// Child variable binding every supervised Rust shell to its durable lane.
 pub const SPICE_RS_LANE: &str = wire::SpiceVariable::Lane.as_str();
-/// Claude's native commit attribution trailer.
-pub const CLAUDE_ATTRIBUTION_TRAILER: &str = "Co-Authored-By";
 
 /// Outer-boundary values required to compose a launch without ambient reads.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -28,11 +24,9 @@ pub struct Inputs {
     pub vendor: Name,
     /// Neutral skill prompt with no operator prose.
     pub prompt: String,
-    /// The verified skill's instructions, carried whole where a vendor has a
-    /// system prompt that survives compaction.
+    /// The verified skill's instructions, carried whole in the system prompt
+    /// that survives compaction.
     pub skill: String,
-    /// Current Spice executable spelling used by the hook.
-    pub executable: String,
     /// Explicit child environment admitted by the resident rim.
     pub environment: Environment,
     /// Durable lane identity. Also the seed for this launch's steering key,
@@ -101,8 +95,8 @@ impl Plan {
 ///
 /// # Errors
 ///
-/// Refuses an unsupported lane vendor, empty rim values, or a child environment
-/// that attempts to supply the composition-owned lane identity.
+/// Refuses an unsupported lane vendor, an empty worktree, or a child
+/// environment that attempts to supply the composition-owned lane identity.
 pub fn compose(root: &Root, inputs: Inputs) -> Result<Plan, ComposeError> {
     let registry = crate::extension::registry()
         .expect("compiled extension declarations are validated by the test gate");
@@ -117,9 +111,6 @@ fn compose_with_registry(
     if inputs.worktree.as_os_str().is_empty() {
         return Err(ComposeError::Empty("launch.worktree"));
     }
-    if inputs.executable.is_empty() || inputs.executable.contains('\0') {
-        return Err(ComposeError::Empty("launch.executable"));
-    }
     if environment_contains(&inputs.environment, SPICE_RS_LANE) {
         return Err(ComposeError::ReservedEnvironment(SPICE_RS_LANE));
     }
@@ -129,16 +120,6 @@ fn compose_with_registry(
         OsString::from(SPICE_RS_LANE),
         OsString::from(inputs.lane.to_string()),
     ));
-    let attribution = if root
-        .policy()
-        .commit_message()
-        .trailer_rejection(CLAUDE_ATTRIBUTION_TRAILER)
-        .is_some()
-    {
-        vendor::Attribution::Withheld
-    } else {
-        vendor::Attribution::Harness
-    };
     let steering_key = Some(vendor::SteeringKey {
         token: steer::Key::for_identity(inputs.lane).as_str().to_owned(),
     });
@@ -159,24 +140,6 @@ fn compose_with_registry(
             environment.push((OsString::from(OMP_DISABLE_LSPMUX), OsString::from("1")));
         }
     }
-    // Claude alone takes its window from the environment; Codex renders its
-    // limit inline and omp reads the overlay the lane wrote.
-    if let Some(window) = configured.auto_compact_window_tokens
-        && declared.dialect() == listen::Dialect::Claude
-        && !environment_contains_entries(&environment, CLAUDE_AUTO_COMPACT_WINDOW)
-    {
-        environment.push((
-            OsString::from(CLAUDE_AUTO_COMPACT_WINDOW),
-            OsString::from(window.to_string()),
-        ));
-    }
-    let hook = vendor::SteeringHook {
-        command: format!(
-            "{} hook {}",
-            shell_word(&inputs.executable),
-            declared.name()
-        ),
-    };
     let environment = Environment::new(environment).map_err(ComposeError::Environment)?;
 
     Ok(Plan {
@@ -188,16 +151,11 @@ fn compose_with_registry(
             skill: inputs.skill,
             model: inputs.model.unwrap_or_else(|| configured.model.to_owned()),
             effort: inputs.effort.unwrap_or(configured.effort),
-            personality: configured.personality.map(str::to_owned),
             fast_mode: configured.fast_mode.map(|_| inputs.fast_mode),
-            model_context_window: configured.model_context_window,
             auto_compact_window_tokens: configured.auto_compact_window_tokens,
             config_overlay: inputs.config_overlay,
             lsp: configured.lsp,
-            attribution,
-            hook,
             steering_key,
-            mcp: None,
             resume: inputs.resume,
         },
         environment,
@@ -210,10 +168,6 @@ fn environment_contains(environment: &Environment, key: &str) -> bool {
 
 fn environment_contains_entries(entries: &[(OsString, OsString)], key: &str) -> bool {
     entries.iter().any(|(candidate, _)| candidate == key)
-}
-
-fn shell_word(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// A launch plan could not be composed from its admitted inputs.
@@ -262,7 +216,7 @@ mod tests {
     use super::*;
 
     const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c7";
-    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
+    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::OMP);
     const FIXTURE_VENDOR: crate::extension::Vendor =
         crate::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration, 2);
     const FIXTURE_DECLARATIONS: &[crate::extension::Declaration] =
@@ -274,16 +228,14 @@ mod tests {
         }];
 
     fn fixture_configuration(root: &Root) -> vendor::LaunchValues<'_> {
-        let configured = root.vendor().codex();
+        let configured = root.vendor().omp();
         vendor::LaunchValues {
             binary: configured.binary().as_str(),
             model: configured.model(),
             effort: configured.effort(),
-            personality: configured.personality(),
             fast_mode: Some(configured.fast_mode()),
-            model_context_window: Some(configured.model_context_window()),
             auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
-            lsp: None,
+            lsp: Some(configured.lsp()),
         }
     }
 
@@ -298,11 +250,10 @@ mod tests {
                 vendor: "fixture".parse().expect("fixture vendor name"),
                 prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
                 skill: "skill".to_owned(),
-                executable: "spice".to_owned(),
                 environment: Environment::empty(),
                 lane: LANE.parse().expect("fixture lane"),
                 resume: vendor::Resume::Fresh,
-                config_overlay: None,
+                config_overlay: Some(PathBuf::from("/lane/omp.yml")),
                 fast_mode: false,
                 model: None,
                 effort: None,
@@ -312,10 +263,9 @@ mod tests {
         .expect("third declaration composes");
 
         assert_eq!(plan.vendor().name(), "fixture");
-        assert_eq!(plan.launch().hook.command, "'spice' hook fixture");
         assert_eq!(
             plan.record().expect("third declaration renders").dialect(),
-            listen::Dialect::Codex
+            listen::Dialect::Omp
         );
     }
 
@@ -328,7 +278,6 @@ mod tests {
             vendor: "fixture".parse().expect("fixture vendor name"),
             prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
             skill: "skill".to_owned(),
-            executable: "spice".to_owned(),
             environment: Environment::empty(),
             lane: LANE.parse().expect("fixture lane"),
             resume: vendor::Resume::Fresh,
@@ -340,8 +289,8 @@ mod tests {
         let root = Root::default();
         let configured = compose_with_registry(&root, inputs(None, None), &registry)
             .expect("configured launch composes");
-        assert_eq!(configured.launch().model, vendor::DEFAULT_CODEX_MODEL);
-        assert_eq!(configured.launch().effort, root.vendor().codex().effort());
+        assert_eq!(configured.launch().model, vendor::DEFAULT_OMP_MODEL);
+        assert_eq!(configured.launch().effort, root.vendor().omp().effort());
 
         let selected = compose_with_registry(
             &root,

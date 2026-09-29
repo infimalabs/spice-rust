@@ -8,20 +8,20 @@ use wire::body::{NarrationCleared, NarrationProdded, NarrationRelief};
 /// Tool moments the fixture lane may run without visible prose before the prod.
 const BOUND: u32 = 3;
 
-const PROSE: &[u8] = br#"{"timestamp":"2030-04-12T18:44:20.271Z","type":"item.completed","item":{"id":"item-prose","type":"agent_message","text":"three listings in, nothing renamed yet"}}
+const PROSE: &[u8] = br#"{"timestamp":"2030-04-12T18:44:20.271Z","type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"three listings in, nothing renamed yet"}]}}
 "#;
 
-/// One completed codex command: a tool call and its result on one record.
+/// One assistant message that calls a shell command.
 fn command(second: u8) -> Vec<u8> {
     let mut bytes = format!(
-        r#"{{"timestamp":"2030-04-12T18:44:{second:02}.271Z","type":"item.completed","item":{{"id":"call-{second}","type":"command_execution","command":"ls","status":"completed","aggregated_output":"","exit_code":0}}}}"#
+        r#"{{"timestamp":"2030-04-12T18:44:{second:02}.271Z","type":"message_end","message":{{"role":"assistant","content":[{{"type":"toolCall","id":"call-{second}","name":"bash","arguments":{{"command":"ls"}}}}],"stopReason":"toolUse"}}}}"#
     )
     .into_bytes();
     bytes.push(b'\n');
     bytes
 }
 
-/// One seated codex lane whose supervisor notices reach the resident sweep.
+/// One seated lane whose supervisor notices reach the resident sweep.
 struct Occupied<'a> {
     bus: &'a Bus,
     epoch: CanonicalUuid,
@@ -74,22 +74,11 @@ fn clearances(bus: &Bus) -> Vec<NarrationCleared> {
         .collect()
 }
 
-/// The working state the PostToolUse hook reads for the lane, and its line.
-fn hook_status(
-    root: &Path,
-    lane: CanonicalUuid,
-) -> (Option<spice::session_meter::NarrationState>, Option<String>) {
-    let state = spice::session_meter::LiveMeter::working_state_for_lane(root, lane)
-        .expect("the lane's working state reads");
-    let status = spice::session_meter::ordinary_status(&state, false);
-    (state.narration, status)
-}
-
-/// The resident measures the lane from its tape, records the prod as a fact the
-/// hook's working state reads back for the lane, and clears it on the first
-/// visible prose; further tool calls under the bound stay silent.
+/// The resident measures the lane from its tape, records the prod as a fact,
+/// and clears it on the first visible prose; further tool calls under the
+/// bound stay silent.
 #[test]
-fn a_silent_lane_is_prodded_through_the_hook_and_falls_silent_once_it_speaks() {
+fn a_silent_lane_is_prodded_and_falls_silent_once_it_speaks() {
     let (root, paths) = resident_fixture("narration-prod");
     let bus = Bus::start(journal::Journal::open(&paths.journal).expect("narration journal opens"))
         .expect("narration bus starts");
@@ -112,7 +101,7 @@ fn a_silent_lane_is_prodded_through_the_hook_and_falls_silent_once_it_speaks() {
         epoch,
         lane,
         occupant,
-        tape: tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+        tape: tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
             .expect("the lane tape opens"),
         seats,
         state: std::sync::Mutex::new(MessageState::default()),
@@ -127,7 +116,6 @@ fn a_silent_lane_is_prodded_through_the_hook_and_falls_silent_once_it_speaks() {
     occupied.accept(&surfaces, &command(1));
     occupied.accept(&surfaces, &command(2));
     assert!(prods(&bus).is_empty(), "a lane under the bound was prodded");
-    assert_eq!(hook_status(&root, lane), (None, None));
 
     occupied.accept(&surfaces, &command(3));
     assert_eq!(
@@ -138,14 +126,6 @@ fn a_silent_lane_is_prodded_through_the_hook_and_falls_silent_once_it_speaks() {
             moments: BOUND,
             count: 1,
         }],
-    );
-    let (narration, _) = hook_status(&root, lane);
-    assert_eq!(
-        narration,
-        Some(spice::session_meter::NarrationState {
-            moments: BOUND,
-            count: 1,
-        }),
     );
 
     occupied.accept(&surfaces, PROSE);
@@ -159,7 +139,6 @@ fn a_silent_lane_is_prodded_through_the_hook_and_falls_silent_once_it_speaks() {
             relief: NarrationRelief::Prose,
         }],
     );
-    assert_eq!(hook_status(&root, lane), (None, None));
 
     occupied.accept(&surfaces, &command(4));
     occupied.accept(&surfaces, &command(5));
@@ -168,7 +147,6 @@ fn a_silent_lane_is_prodded_through_the_hook_and_falls_silent_once_it_speaks() {
         1,
         "a lane that spoke was prodded again under the bound"
     );
-    assert_eq!(hook_status(&root, lane), (None, None));
     assert!(
         occupied.diagnostics.is_empty(),
         "the sweep raised diagnostics: {}",

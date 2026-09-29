@@ -112,7 +112,7 @@ multiplier = 2.0
 id = "vendor-rule"
 source_order = 2
 priority = 1
-scopes = { vendors = ["CODEX"] }
+scopes = { vendors = ["OMP"] }
 [rules.source]
 location = "current.toml"
 field = "rules.vendor-rule"
@@ -324,7 +324,7 @@ fn current_named_rules_cover_every_scope_dimension_with_provenance() {
         ),
         (
             BoundName::RoutineCcn,
-            PolicyContext::new().with_vendor("Codex"),
+            PolicyContext::new().with_vendor("Omp"),
             "vendor-rule",
             "vendor=",
         ),

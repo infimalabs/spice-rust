@@ -7,7 +7,7 @@ fn wall_exhaustion_returns_current_typed_work_without_partial_decode() {
     fs::write(&transcript, b"{}\n").expect("fixture record is written");
     let stamp = FileStamp::read(&File::open(&transcript).expect("fixture record opens"))
         .expect("fixture stamp reads");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     let initial_next = cursor.next;
     let mut work = HistoryWork {
         source_bytes: 3,
@@ -43,24 +43,24 @@ fn unchanged_append_only_prefix_never_replays_an_earlier_boundary() {
     let transcript = scratch.transcript();
     fs::write(
         &transcript,
-        "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+        "{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T18:44:09.271Z\"}\n",
     )
     .expect("initial boundary is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     assert_eq!(scan(&mut cursor).expect("initial scan").len(), 1);
 
     append(
         &transcript,
-        b"{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"later\",\"name\":\"Read\",\"input\":{\"path\":\"later.rs\"}}]}}\n",
+        b"{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"later\",\"name\":\"read\",\"arguments\":{\"path\":\"later.rs\"}}]}}\n",
     );
     assert!(scan(&mut cursor).expect("call append scans").is_empty());
     append(
         &transcript,
-        b"{\"timestamp\":\"2030-04-12T18:44:10.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
+        b"{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T18:44:10.271Z\"}\n",
     );
     let records = scan(&mut cursor).expect("later boundary scans");
     assert_eq!(records.len(), 1, "the earlier boundary is not replayed");
-    assert_eq!(records[0].unavailable_tool_terminals, ["Read: later.rs"]);
+    assert_eq!(records[0].unavailable_tool_terminals, ["read: later.rs"]);
 }
 #[test]
 fn resident_reload_bootstraps_only_boundaries_in_the_initial_visible_tail() {
@@ -69,15 +69,14 @@ fn resident_reload_bootstraps_only_boundaries_in_the_initial_visible_tail() {
     let filler = "x".repeat(1_800);
     let mut contents = String::new();
     for index in 0..300 {
-        contents.push_str(&claude_assistant_record(index, &filler));
+        contents.push_str(&assistant_record(index, &filler));
         if matches!(index, 80 | 180 | 260 | 285) {
-            contents.push_str(
-                "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
-            );
+            contents
+                .push_str("{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T18:44:09.271Z\"}\n");
         }
     }
     fs::write(&transcript, &contents).expect("long preserved transcript is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     cursor.initialized = false;
 
     let records = bootstrap_until_ready(&mut cursor, "resident tail bootstrap scans");
@@ -140,8 +139,7 @@ fn retained_history_request<'a>(
 ) -> HistoryRequest<'a> {
     HistoryRequest {
         path: transcript.to_path_buf(),
-        worktree: PathBuf::from("/worktree"),
-        dialect: listen::Dialect::Claude,
+        dialect: listen::Dialect::Omp,
         thread: "018f7777-7777-7444-8888-999999999999".to_owned(),
         lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
         author: uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
@@ -162,11 +160,10 @@ fn write_retained_horizon(transcript: &PathBuf) -> HistoryCheckpoint {
     let filler = "x".repeat(1_800);
     let mut contents = String::new();
     for index in 0..300 {
-        contents.push_str(&claude_assistant_record(index, &filler));
+        contents.push_str(&assistant_record(index, &filler));
         if matches!(index, 80 | 180 | 260 | 285) {
-            contents.push_str(
-                "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
-            );
+            contents
+                .push_str("{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T18:44:09.271Z\"}\n");
         }
     }
     assert!(
@@ -271,7 +268,6 @@ fn each_history_window_stays_inside_its_fixed_allowances() {
     let mut cursor = Cursor::new(
         request.thread.clone(),
         request.path.clone(),
-        request.worktree.clone(),
         request.dialect,
         request.author,
     );
@@ -304,17 +300,17 @@ fn each_history_window_stays_inside_its_fixed_allowances() {
     assert!(older.work.source_bytes <= HISTORY_BYTE_BUDGET as u64);
 }
 
-/// Write two Claude boundaries around one assistant record of `record_bytes`
+/// Write two compaction boundaries around one assistant record of `record_bytes`
 /// text with a short filler run on either side, and serve one history page.
 fn page_around_oversized_record(scratch: &Scratch, record_bytes: usize) -> HistoryScan {
-    const EARLIER: &str = "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
-    const LATER: &str = "{\"timestamp\":\"2030-04-12T19:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    const EARLIER: &str = "{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T18:44:09.271Z\"}\n";
+    const LATER: &str = "{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T19:44:09.271Z\"}\n";
     let transcript = scratch.transcript();
     let filler = "x".repeat(1_800);
     let mut contents = String::from(EARLIER);
-    contents.extend((0..20).map(|index| claude_assistant_record(index, &filler)));
-    contents.push_str(&claude_assistant_record(20, &"y".repeat(record_bytes)));
-    contents.extend((21..41).map(|index| claude_assistant_record(index, &filler)));
+    contents.extend((0..20).map(|index| assistant_record(index, &filler)));
+    contents.push_str(&assistant_record(20, &"y".repeat(record_bytes)));
+    contents.extend((21..41).map(|index| assistant_record(index, &filler)));
     contents.push_str(LATER);
     fs::write(&transcript, contents).expect("transcript with an oversized record is written");
     let end = history_checkpoint(&transcript).expect("oversized transcript checkpoint reads");
@@ -383,10 +379,10 @@ fn resident_reload_does_not_manufacture_a_boundary_from_a_long_prose_tail() {
     let transcript = scratch.transcript();
     let filler = "x".repeat(1_800);
     let contents = (0..300)
-        .map(|index| claude_assistant_record(index, &filler))
+        .map(|index| assistant_record(index, &filler))
         .collect::<String>();
     fs::write(&transcript, &contents).expect("long prose transcript is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     cursor.initialized = false;
 
     assert!(
@@ -399,16 +395,16 @@ fn resident_reload_does_not_manufacture_a_boundary_from_a_long_prose_tail() {
 
 #[test]
 fn live_boundary_after_tail_bootstrap_authenticates_only_the_new_context_epoch() {
-    const CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"later\",\"name\":\"Read\",\"input\":{\"path\":\"later.rs\"}}]}}\n";
-    const BOUNDARY: &str = "{\"timestamp\":\"2030-04-12T19:44:10.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    const CALL: &str = "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"later\",\"name\":\"read\",\"arguments\":{\"path\":\"later.rs\"}}]}}\n";
+    const BOUNDARY: &str = "{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T19:44:10.271Z\"}\n";
     let scratch = Scratch::new("post-bootstrap-live-boundary");
     let transcript = scratch.transcript();
     let filler = "x".repeat(1_800);
     let contents = (0..300)
-        .map(|index| claude_assistant_record(index, &filler))
+        .map(|index| assistant_record(index, &filler))
         .collect::<String>();
     fs::write(&transcript, &contents).expect("long prose transcript is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     cursor.initialized = false;
     assert!(bootstrap_until_ready(&mut cursor, "tail bootstrap scans").is_empty());
     let epoch_start = cursor.next;
@@ -418,7 +414,7 @@ fn live_boundary_after_tail_bootstrap_authenticates_only_the_new_context_epoch()
     let records = scan(&mut cursor).expect("live boundary scans");
 
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].unavailable_tool_terminals, ["Read: later.rs"]);
+    assert_eq!(records[0].unavailable_tool_terminals, ["read: later.rs"]);
     assert_eq!(cursor.prefix_start, cursor.next);
     assert!(cursor.prefix_start > epoch_start);
     assert!(
@@ -432,11 +428,11 @@ fn live_boundary_after_tail_bootstrap_authenticates_only_the_new_context_epoch()
 fn large_prefix_validation_is_bounded_and_restarts_after_generation_movement() {
     let scratch = Scratch::new("progressive-validation");
     let transcript = scratch.transcript();
-    let original = large_claude_transcript('x');
-    let replacement = large_claude_transcript('y');
+    let original = large_transcript('x');
+    let replacement = large_transcript('y');
     assert_eq!(original.len(), replacement.len());
     fs::write(&transcript, original).expect("large original transcript is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
 
     assert!(scan(&mut cursor).expect("first bounded scan").is_empty());
     assert!(
@@ -473,13 +469,14 @@ fn large_prefix_validation_is_bounded_and_restarts_after_generation_movement() {
 
 #[test]
 fn append_only_growth_preserves_progress_and_stays_behind_the_held_boundary() {
-    const LATER_CALL: &str = "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"later\",\"name\":\"Read\",\"input\":{\"path\":\"later.rs\"}}]}}\n";
-    const LATER_BOUNDARY: &str = "{\"timestamp\":\"2030-04-12T18:44:10.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+    const LATER_CALL: &str = "{\"type\":\"message\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"later\",\"name\":\"read\",\"arguments\":{\"path\":\"later.rs\"}}]}}\n";
+    const LATER_BOUNDARY: &str =
+        "{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T18:44:10.271Z\"}\n";
     let scratch = Scratch::new("append-during-validation");
     let transcript = scratch.transcript();
-    fs::write(&transcript, large_claude_transcript_with_pending('x', 192))
+    fs::write(&transcript, large_transcript_with_pending('x', 192))
         .expect("large active transcript is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
 
     for _ in 0..8 {
         assert!(scan(&mut cursor).expect("prefix scans").is_empty());
@@ -494,7 +491,7 @@ fn append_only_growth_preserves_progress_and_stays_behind_the_held_boundary() {
     assert_eq!(validation.offset, VALIDATION_BYTE_BUDGET as u64);
     assert_eq!(
         validation.records[0].unavailable_tool_terminals,
-        ["Read: held.rs"]
+        ["read: held.rs"]
     );
     let frozen_next = cursor.next;
     let frozen_next_call = cursor.next_call;
@@ -568,14 +565,14 @@ fn append_only_growth_preserves_progress_and_stays_behind_the_held_boundary() {
     );
     assert_eq!(
         records[0].unavailable_tool_terminals,
-        ["Read: held.rs"],
+        ["read: held.rs"],
         "the appended call cannot enter the held boundary",
     );
 
     append(&transcript, LATER_BOUNDARY.as_bytes());
     let later = scan_until_boundary(&mut cursor, "appended records scan after validation");
     assert_eq!(later.len(), 1);
-    assert_eq!(later[0].unavailable_tool_terminals, ["Read: later.rs"]);
+    assert_eq!(later[0].unavailable_tool_terminals, ["read: later.rs"]);
     assert!(scan(&mut cursor).expect("settled poll scans").is_empty());
 }
 
@@ -584,9 +581,9 @@ fn same_length_mutation_after_admitted_growth_resets_validation() {
     const SUFFIX: &str = "{\"type\":\"progress\",\"serial\":1}\n";
     let scratch = Scratch::new("mutation-after-append");
     let transcript = scratch.transcript();
-    fs::write(&transcript, large_claude_transcript_with_pending('x', 192))
+    fs::write(&transcript, large_transcript_with_pending('x', 192))
         .expect("large original transcript is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     for _ in 0..8 {
         assert!(scan(&mut cursor).expect("prefix scans").is_empty());
         if cursor.validation.is_some() {
@@ -605,7 +602,7 @@ fn same_length_mutation_after_admitted_growth_resets_validation() {
         .expect("validation remains pending")
         .offset;
 
-    let replacement = format!("{}{SUFFIX}", large_claude_transcript_with_pending('y', 192));
+    let replacement = format!("{}{SUFFIX}", large_transcript_with_pending('y', 192));
     fs::write(&transcript, replacement).expect("same-length mutation is written in place");
     assert!(scan(&mut cursor).expect("mutation refuses").is_empty());
     assert_eq!(cursor.next, 0, "mixed-generation scan state is discarded");
@@ -618,11 +615,11 @@ fn prefix_mutation_hidden_by_growth_resets_validation() {
     const SUFFIX: &str = "{\"type\":\"progress\",\"serial\":1}\n";
     let scratch = Scratch::new("mutation-with-append");
     let transcript = scratch.transcript();
-    let original = large_claude_transcript_with_pending('x', 192);
+    let original = large_transcript_with_pending('x', 192);
     let mutation = u64::try_from(original.find("xxxx").expect("fixture text exists"))
         .expect("fixture offset fits u64");
     fs::write(&transcript, original).expect("large original transcript is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     for _ in 0..8 {
         assert!(scan(&mut cursor).expect("prefix scans").is_empty());
         if cursor.validation.is_some() {
@@ -657,7 +654,7 @@ fn prefix_mutation_hidden_by_growth_resets_validation() {
 
     let records = scan_until_boundary(&mut cursor, "rewritten generation replays");
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].unavailable_tool_terminals, ["Read: held.rs"]);
+    assert_eq!(records[0].unavailable_tool_terminals, ["read: held.rs"]);
 }
 
 #[test]
@@ -665,11 +662,11 @@ fn mutation_during_extension_authentication_discards_the_moving_slice() {
     const SUFFIX: &str = "{\"type\":\"progress\",\"serial\":1}\n";
     let scratch = Scratch::new("mutation-during-authentication");
     let transcript = scratch.transcript();
-    let original = large_claude_transcript_with_pending('x', 192);
+    let original = large_transcript_with_pending('x', 192);
     let mutation = u64::try_from(original.find("xxxx").expect("fixture text exists"))
         .expect("fixture offset fits u64");
     fs::write(&transcript, original).expect("large original transcript is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     for _ in 0..8 {
         assert!(scan(&mut cursor).expect("prefix scans").is_empty());
         if cursor.validation.is_some() {
@@ -739,11 +736,11 @@ fn rewrite_between_authentication_slices_cannot_publish_stale_records() {
     const SUFFIX: &str = "{\"type\":\"progress\",\"serial\":1}\n";
     let scratch = Scratch::new("mutation-between-authentication-slices");
     let transcript = scratch.transcript();
-    let original = large_claude_transcript_with_pending('x', 192);
+    let original = large_transcript_with_pending('x', 192);
     let mutation = u64::try_from(original.find("xxxx").expect("fixture text exists"))
         .expect("fixture offset fits u64");
     fs::write(&transcript, original).expect("large original transcript is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     for _ in 0..8 {
         assert!(scan(&mut cursor).expect("prefix scans").is_empty());
         if cursor
@@ -829,228 +826,5 @@ fn rewrite_between_authentication_slices_cannot_publish_stale_records() {
 
     let records = scan_until_boundary(&mut cursor, "rewritten generation replays");
     assert_eq!(records.len(), 1);
-    assert_eq!(records[0].unavailable_tool_terminals, ["Read: held.rs"]);
-}
-
-#[test]
-fn timestamped_claude_boundary_uses_the_same_typed_projection() {
-    let scratch = Scratch::new("claude");
-    let transcript = scratch.transcript();
-    fs::write(
-        &transcript,
-        b"{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
-    )
-    .expect("Claude boundary is written");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
-    let records = scan(&mut cursor).expect("Claude session scans");
-
-    assert_eq!(records.len(), 1);
-    assert_eq!(records[0].authored, "2030-04-12T18:44:09.271Z");
-    assert!(matches!(records[0].decoded, listen::Event::Compaction(_)));
-
-    let publisher = Messages::default();
-    publish(
-        records.into_iter().next().expect("one compaction"),
-        uuid("018f82d4-6f59-7d06-92e3-bce9131163e5"),
-        uuid("018f82d4-6f59-7d06-92e3-bce9131163ef"),
-        Path::new("/worktree"),
-        &publisher,
-        &mut MessageState::default(),
-    )
-    .expect("timestamped Claude boundary publishes");
-    let messages = publisher.0.lock().expect("message lock");
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].activity, wire::AgentActivityKind::Compaction);
-    assert!(!messages[0].authored_synthetic);
-    assert!(messages[0].unavailable_tool_terminals.is_empty());
-    assert_eq!(
-        messages[0].locus.member,
-        session_member("018f7777-7777-7444-8888-999999999999"),
-        "source chronology does not erase the preserved-session identity",
-    );
-    assert_eq!(
-        messages[0].authored,
-        "2030-04-12T18:44:09.271Z"
-            .parse::<wire::Instant>()
-            .expect("session authored instant parses"),
-    );
-    assert_eq!(messages[0].observed, None);
-}
-
-#[test]
-fn timestamped_claude_boundary_survives_live_poll_and_resident_reload_once() {
-    const THREAD: &str = "018f7777-7777-7444-8888-999999999999";
-
-    let scratch = Scratch::new("claude-synchronize");
-    let transcript = scratch
-        .0
-        .join("projects")
-        .join(format!("session-{THREAD}.jsonl"));
-    fs::create_dir_all(transcript.parent().expect("transcript parent"))
-        .expect("Claude project directory exists");
-    fs::write(&transcript, b"").expect("empty Claude session exists at initial sync");
-    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163e5");
-    let author = uuid("018f82d4-6f59-7d06-92e3-bce9131163ef");
-    let residency = session_residency(lane, author, THREAD);
-    let publisher = Messages::default();
-    let mut state = observed_state(lane);
-    let mut diagnostic = Vec::new();
-    let mut compactions = SessionCompactions::new(claude_environment(&scratch.0));
-
-    compactions
-        .synchronize_display_only(&residency, &publisher, &mut state, &mut diagnostic)
-        .expect("initial synchronization remains live before a boundary");
-    append(
-        &transcript,
-        concat!(
-            "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"tool_use\",\"id\":\"call-live\",\"name\":\"Bash\",\"input\":{\"command\":\"cargo test\"}}]}}\n",
-            "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
-        )
-        .as_bytes(),
-    );
-    compactions
-        .synchronize_display_only(&residency, &publisher, &mut state, &mut diagnostic)
-        .expect("live polling publishes the timestamped boundary");
-    compactions
-        .synchronize_display_only(&residency, &publisher, &mut state, &mut diagnostic)
-        .expect("an unchanged live poll remains quiet");
-
-    let mut reloaded = SessionCompactions::new(claude_environment(&scratch.0));
-    let mut reloaded_state = observed_state(lane);
-    reloaded_state.observations.0.push(MessageObservation {
-        lane,
-        source: uuid("018f82d4-6f59-7d06-92e3-bce9131163bc"),
-        from: wire::body::TranscriptPosition {
-            member: 2,
-            offset: 0,
-        },
-        to: wire::body::TranscriptPosition {
-            member: 2,
-            offset: 1,
-        },
-        at: "2031-04-12T18:44:09.000Z"
-            .parse()
-            .expect("later observation instant"),
-    });
-    reloaded
-        .synchronize_display_only(&residency, &publisher, &mut reloaded_state, &mut diagnostic)
-        .expect("resident reload replays the same durable identity without fault");
-
-    let messages = publisher.0.lock().expect("message lock");
-    assert_eq!(messages.len(), 1, "poll and reload retain one boundary");
-    assert_eq!(messages[0].activity, wire::AgentActivityKind::Compaction);
-    assert!(!messages[0].authored_synthetic);
-    assert_eq!(
-        messages[0].unavailable_tool_terminals,
-        ["Bash: cargo test"],
-        "reload replays the same boundary-bound unavailable terminal",
-    );
-    assert_eq!(
-        messages[0].observed, None,
-        "the transcript timestamp is the only compaction chronology source",
-    );
-    assert!(
-        diagnostic.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&diagnostic)
-    );
-}
-
-#[test]
-fn timestamp_less_claude_boundary_is_refused_without_a_chronology_fallback() {
-    const THREAD: &str = "018f7777-7777-7444-8888-999999999999";
-
-    let scratch = Scratch::new("claude-missing-time");
-    let transcript = scratch
-        .0
-        .join("projects")
-        .join(format!("session-{THREAD}.jsonl"));
-    fs::create_dir_all(transcript.parent().expect("transcript parent"))
-        .expect("Claude project directory exists");
-    fs::write(
-        &transcript,
-        concat!(
-            "{\"type\":\"assistant\",\"message\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[",
-            "{\"type\":\"tool_use\",\"id\":\"stale-call\",\"name\":\"Read\",\"input\":{\"path\":\"stale.rs\"}}]}}\n",
-            "{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
-        ),
-    )
-    .expect("timestamp-less Claude boundary is written");
-    let lane = uuid("018f82d4-6f59-7d06-92e3-bce9131163e5");
-    let author = uuid("018f82d4-6f59-7d06-92e3-bce9131163ef");
-    let publisher = Messages::default();
-    let mut state = observed_state(lane);
-    let mut diagnostic = Vec::new();
-    let mut compactions = SessionCompactions::new(claude_environment(&scratch.0));
-
-    for _ in 0..4 {
-        compactions
-            .synchronize_display_only(
-                &session_residency(lane, author, THREAD),
-                &publisher,
-                &mut state,
-                &mut diagnostic,
-            )
-            .expect("a malformed preserved boundary does not stop the resident");
-        if !diagnostic.is_empty() {
-            break;
-        }
-    }
-
-    assert!(publisher.0.lock().expect("message lock").is_empty());
-    assert!(
-        String::from_utf8(diagnostic.clone())
-            .expect("diagnostic is UTF-8")
-            .contains("preserved session compaction record carries no timestamp"),
-        "the missing contract field is diagnosed without another chronology source",
-    );
-    let reported = diagnostic.len();
-    let failure = compactions
-        .cursors
-        .get(&lane)
-        .and_then(|cursor| cursor.failure)
-        .expect("the unchanged source generation latches its failure");
-    compactions
-        .synchronize_display_only(
-            &session_residency(lane, author, THREAD),
-            &publisher,
-            &mut state,
-            &mut diagnostic,
-        )
-        .expect("an unchanged failed source performs no retry work");
-    assert_eq!(diagnostic.len(), reported);
-    assert_eq!(
-        compactions
-            .cursors
-            .get(&lane)
-            .and_then(|cursor| cursor.failure),
-        Some(failure),
-        "the stable failed generation remains latched",
-    );
-
-    append(
-        &transcript,
-        b"{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n",
-    );
-    compactions
-        .synchronize_display_only(
-            &session_residency(lane, author, THREAD),
-            &publisher,
-            &mut state,
-            &mut diagnostic,
-        )
-        .expect("a later valid boundary remains publishable");
-    let messages = publisher.0.lock().expect("message lock");
-    assert_eq!(messages.len(), 1);
-    assert!(
-        compactions
-            .cursors
-            .get(&lane)
-            .is_some_and(|cursor| cursor.failure.is_none()),
-        "real source movement releases the failed generation latch",
-    );
-    assert!(
-        messages[0].unavailable_tool_terminals.is_empty(),
-        "the refused boundary clears its unavailable-tool epoch",
-    );
+    assert_eq!(records[0].unavailable_tool_terminals, ["read: held.rs"]);
 }

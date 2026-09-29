@@ -19,30 +19,28 @@ use crate::resident::{CommandResult, RuntimePaths, lifecycle};
 const REFUSAL: &str =
     "Refusal (reasoning_extraction): This request was blocked by our content filtering policy.";
 
-const DECLARATION: &[u8] =
-    br#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}
+const DECLARATION: &[u8] = br#"{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{"sessionId":"018f7777-7777-7444-8888-999999999999"}}
 "#;
-const PROMPT: &[u8] = br#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"Resume the claim."}]}}
+const PROMPT: &[u8] = br#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Resume the claim."}]}}
 "#;
-const REFUSED_RESULT: &[u8] = br#"{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["Refusal (reasoning_extraction): This request was blocked by our content filtering policy."]}
+const REFUSED_RESULT: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"Refusal (reasoning_extraction): This request was blocked by our content filtering policy."}}
 "#;
-const RATE_LIMIT_ALLOWED: &[u8] = br#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}
+const TRAILING_WIDGET: &[u8] =
+    br#"{"type":"extension_ui_request","id":"1583f94d24ebac0b","method":"setWidget"}
 "#;
-const FINISHED_PROSE: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"Finished the claim."}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}
+const FINISHED_PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Finished the claim."}],"stopReason":"stop","usage":{"input":7,"cacheRead":5,"cacheWrite":3,"output":2}}}
 "#;
-const FINISHED_RESULT: &[u8] =
-    br#"{"type":"result","subtype":"success","is_error":false,"result":"Finished the claim."}
+const FINISHED_RESULT: &[u8] = br#"{"type":"agent_end","messages":[]}
 "#;
 /// The occupant's answer headed with the key `operator_direction_write` addresses to the lane.
-const ACKED_PROSE: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: Finished the claim."}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}
+const ACKED_PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: Finished the claim."}],"stopReason":"stop","usage":{"input":7,"cacheRead":5,"cacheWrite":3,"output":2}}}
 "#;
-const ACKED_RESULT: &[u8] =
-    br#"{"type":"result","subtype":"success","is_error":false,"result":"ACK 1kKRRsDS: Finished the claim."}
+const ACKED_RESULT: &[u8] = br#"{"type":"agent_end","messages":[]}
 "#;
 
 #[test]
 fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat() {
-    let fixture = VendorExitFixture::new("refused", &[PROMPT, REFUSED_RESULT, RATE_LIMIT_ALLOWED]);
+    let fixture = VendorExitFixture::new("refused", &[PROMPT, REFUSED_RESULT, TRAILING_WIDGET]);
     let config = lane::Config::default();
     let mut lifecycle = lifecycle::Runtime::new(&config);
     let before = fact_kinds(&fixture.bus);
@@ -109,7 +107,7 @@ fn an_exit_whose_only_turn_the_vendor_refused_holds_the_lane_before_any_reseat()
 fn an_exit_that_ended_on_prose_is_a_mature_death_however_young_the_occupant() {
     let fixture = VendorExitFixture::new(
         "finished",
-        &[PROMPT, FINISHED_PROSE, FINISHED_RESULT, RATE_LIMIT_ALLOWED],
+        &[PROMPT, FINISHED_PROSE, FINISHED_RESULT, TRAILING_WIDGET],
     );
     let config = one_death_holds();
     let mut lifecycle = lifecycle::Runtime::new(&config);
@@ -136,7 +134,7 @@ fn an_exit_that_ended_on_prose_is_a_mature_death_however_young_the_occupant() {
 
 #[test]
 fn an_exit_that_never_answered_the_prompt_is_a_young_death() {
-    let fixture = VendorExitFixture::new("silent", &[PROMPT, RATE_LIMIT_ALLOWED]);
+    let fixture = VendorExitFixture::new("silent", &[PROMPT, TRAILING_WIDGET]);
     let config = one_death_holds();
     let mut lifecycle = lifecycle::Runtime::new(&config);
     let before = fact_kinds(&fixture.bus);
@@ -170,7 +168,7 @@ fn an_exit_that_never_answered_the_prompt_is_a_young_death() {
 fn an_exit_that_answered_but_left_its_direction_live_is_a_young_death() {
     let fixture = VendorExitFixture::new(
         "unsettled",
-        &[PROMPT, FINISHED_PROSE, FINISHED_RESULT, RATE_LIMIT_ALLOWED],
+        &[PROMPT, FINISHED_PROSE, FINISHED_RESULT, TRAILING_WIDGET],
     );
     fixture.steer();
     let config = one_death_holds();
@@ -194,11 +192,12 @@ fn an_exit_that_answered_but_left_its_direction_live_is_a_young_death() {
         format!(
             "lane {lane} steering 1kKRRsDS left pending at exit: \
              steer::transcript-evidence-absent: the newest assistant text \
-             (member 1 offset 184) does not carry the header: \"Finished the claim.\"\n\
+             (member 1 offset {offset}) does not carry the header: \"Finished the claim.\"\n\
              lifecycle held lane={lane} until={} evidence={}\n",
             held.until,
             held.evidence,
             lane = lane(),
+            offset = DECLARATION.len() + PROMPT.len(),
         ),
         "the direction left pending and the hold it earns are written down together"
     );
@@ -209,7 +208,7 @@ fn an_exit_that_answered_but_left_its_direction_live_is_a_young_death() {
 fn an_exit_that_retired_its_direction_in_its_final_prose_is_a_mature_death() {
     let fixture = VendorExitFixture::new(
         "settled",
-        &[PROMPT, ACKED_PROSE, ACKED_RESULT, RATE_LIMIT_ALLOWED],
+        &[PROMPT, ACKED_PROSE, ACKED_RESULT, TRAILING_WIDGET],
     );
     fixture.steer();
     let config = one_death_holds();
@@ -390,7 +389,7 @@ impl VendorExitFixture {
         let root = fs::canonicalize(root).expect("fixture root canonicalizes");
         let paths = runtime_paths(&root);
         let occupant = uuid(3);
-        let tape = tape::Tape::open(paths.tape.join(lane().to_string()).join("claude"))
+        let tape = tape::Tape::open(paths.tape.join(lane().to_string()).join("omp"))
             .expect("the lane tape opens");
         let declared = tape
             .tee(DECLARATION)

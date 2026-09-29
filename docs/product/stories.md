@@ -66,11 +66,10 @@ is.* — Journal allocation never reads queued bodies, so submit cost does not g
 with backlog depth.
 
 *As the agent, I want to remain reachable during tool work without instrumenting
-descendants twice.* — Pending intent is eligible at the vendor's post-tool hook
-and through the command-driven supervisor. Both read the authenticated journal
-inbox directly. Post-tool delivery uses the locked durable suppression record;
-the supervisor catches up at occupant start, reacts to resident kicks, and
-deduplicates within the occupant. Descendant shells remain unmodified.
+descendants twice.* — Pending intent reaches the agent through the
+command-driven supervisor, which reads the authenticated journal inbox directly,
+catches up at occupant start, reacts to resident kicks by interrupting tool
+waits, and deduplicates within the occupant. Descendant shells remain unmodified.
 
 ### Work
 

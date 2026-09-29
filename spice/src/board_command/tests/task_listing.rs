@@ -237,7 +237,7 @@ fn task_show_prints_creation_context_as_one_shell_executable_current_command() {
         session: "session with ' quote".to_owned(),
         boundary: wire::TranscriptSourceHead {
             lane,
-            vendor: "codex".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             stream: "session".to_owned(),
             source,
             next: body::TranscriptPosition {
@@ -262,7 +262,7 @@ fn task_show_prints_creation_context_as_one_shell_executable_current_command() {
             "--lane".to_owned(),
             lane.to_string(),
             "--vendor".to_owned(),
-            "codex".to_owned(),
+            "omp".to_owned(),
             "--stream".to_owned(),
             "session".to_owned(),
             "--source".to_owned(),
@@ -282,7 +282,7 @@ fn claim_context_recovery_requires_one_exact_session_authority() {
     let other_lane = uuid(9_411);
     let occupant = uuid(9_412);
     let epoch = uuid(9_413);
-    let vendor: Name = "codex".parse().expect("fixture vendor");
+    let vendor: Name = "omp".parse().expect("fixture vendor");
     let stream = body::TASK_CREATION_CONTEXT_STREAM.to_owned();
     let mut won = body::ClaimWon {
         task: stamp("claim-context-authority"),

@@ -165,7 +165,7 @@ fn commit_ingestion(bus: &Bus) -> JournalCommit {
         .fact(
             body::JournalIngested {
                 lane,
-                vendor: "codex".parse().expect("vendor name"),
+                vendor: "omp".parse().expect("vendor name"),
                 stream: "transcript".to_owned(),
                 source: uuid("018f82d4-6f59-7d06-92e3-bce9131163e6"),
                 supersedes: None,

@@ -750,8 +750,6 @@ fn accept_supervisor_reports(
                 .any(|row| row.lane == lane && row.occupant == Some(occupant))
             {
                 session_compactions.synchronize(
-                    bus,
-                    epoch,
                     (residency.body(), lane),
                     &batch,
                     message_state,
@@ -796,8 +794,6 @@ fn accept_record_turn(
     if let Some(lane) = record.as_ref().map(|record| record.lane) {
         let residency = current_residency(bus, epoch)?;
         session_compactions.synchronize(
-            bus,
-            epoch,
             (residency.body(), lane),
             &batch,
             message_state,

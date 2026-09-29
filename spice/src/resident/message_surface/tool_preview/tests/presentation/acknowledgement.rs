@@ -690,7 +690,6 @@ fn system_acknowledgment_badge_reaches_canvas_without_speech_eligibility() {
             lane: lane(),
             author: lane(),
             source: Some(TEST_TAPE_SOURCE.parse().expect("fixture source")),
-            worktree: None,
             ordinal: 0,
             decoded: &prose,
             authored: None,
@@ -742,9 +741,8 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
     assert_eq!(registered.keys(), &BTreeSet::from([key]));
     let publisher = Messages::default();
     let mut state = MessageState::default();
-    let record = capture_record_for(
-        listen::Dialect::Claude,
-        br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK 1kQnrzNZ: Applied:"}]}}"#,
+    let record = capture_record(
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kQnrzNZ: Applied:"}]}}"#,
         0,
     );
     publish_agent_messages(&publisher, &record, &mut state, Some(&directives))

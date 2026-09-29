@@ -14,7 +14,6 @@ pub(in crate::resident) fn publish_agent_messages(
         record,
         state,
         steering,
-        None,
         Some(
             TEST_TAPE_SOURCE
                 .parse()
@@ -29,7 +28,6 @@ pub(super) fn publish_agent_messages_in(
     record: &lane::capture::CaptureRecord,
     state: &mut MessageState,
     steering: Option<&PresentationDirectives>,
-    worktree: Option<&Path>,
     source: Option<CanonicalUuid>,
     observed: Option<wire::Instant>,
 ) -> CommandResult<()> {
@@ -56,7 +54,6 @@ pub(super) fn publish_agent_messages_in(
             lane: record.lane,
             author: record.occupant,
             source,
-            worktree,
             locus: record.locus,
             context,
             events: &events,
@@ -87,7 +84,6 @@ pub(super) fn publish_agent_record(
                 lane: record.lane,
                 author: record.author,
                 source: record.source,
-                worktree: record.worktree,
                 ordinal,
                 decoded,
                 authored: record.context.timestamp.as_deref(),
@@ -411,7 +407,7 @@ fn project_event_body(
             }
         }
         listen::Event::Tool(tool) => {
-            let activity = tool_preview::activity_in(event.lane, tool, previews, event.worktree);
+            let activity = tool_preview::activity(event.lane, tool, previews);
             let media = tool_message_media(tool);
             let text = tool_preview::message_text(tool, activity, &media);
             ProjectedEvent {
@@ -582,7 +578,7 @@ fn synthetic_agent_message_authored(
     locus: listen::Locus,
     event: u32,
 ) -> CommandResult<wire::Instant> {
-    // Some current Codex records omit vendor time. The wire identity still
+    // Some transcript records omit vendor time. The wire identity still
     // needs a stable ordering key, so derive one from durable tape coordinates;
     // presentation must use `observed` and never expose this surrogate as time.
     const BASE_MILLIS: i64 = 946_684_800_000;

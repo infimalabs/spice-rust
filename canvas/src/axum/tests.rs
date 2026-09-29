@@ -143,7 +143,7 @@ fn commit_lane_stream(
                 name: None,
                 worktree: "/tmp/canvas-stream-lane".to_owned(),
                 life: "drive".to_owned(),
-                vendor: "claude".parse().expect("vendor"),
+                vendor: "omp".parse().expect("vendor"),
                 model: None,
                 effort: None,
             },

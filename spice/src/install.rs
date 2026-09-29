@@ -1297,7 +1297,7 @@ pub fn installed_skill(repository: &Repository) -> PathBuf {
     repository.common_dir().join(SKILL_PATH)
 }
 
-/// Hard ceiling on the skill Claude and omp carry whole in every system prompt.
+/// Hard ceiling on the skill omp carries whole in every system prompt.
 ///
 /// The skill is paid for on every request of every lane, so a skill that
 /// outgrows this fails the build rather than silently taxing each turn. The

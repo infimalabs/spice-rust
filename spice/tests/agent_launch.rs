@@ -2,12 +2,9 @@ use std::ffi::OsString;
 use std::path::PathBuf;
 
 use sill::Environment;
-use spice::agent_launch::{
-    CLAUDE_ATTRIBUTION_TRAILER, CLAUDE_AUTO_COMPACT_WINDOW, ComposeError, Inputs, SPICE_RS_LANE,
-    compose,
-};
+use spice::agent_launch::{ComposeError, Inputs, SPICE_RS_LANE, compose};
 use spice::config::Root;
-use vendor::{Attribution, Effort, Resume, SessionId};
+use vendor::{Effort, Resume, SessionId};
 use wire::{CanonicalUuid, Name};
 
 const LANE: &str = "018f82d4-6f59-7d06-92e3-bce9131163c7";
@@ -26,11 +23,11 @@ fn inputs(vendor: &str, environment: Environment, resume: Resume) -> Inputs {
         worktree: PathBuf::from("/work/tree"),
         vendor: vendor.parse::<Name>().expect("fixture vendor name"),
         prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
-        executable: "/opt/spice's bin".to_owned(),
+        skill: "skill".to_owned(),
         environment,
         lane: lane(),
         resume,
-        config_overlay: (vendor == "omp").then(|| PathBuf::from("/supervisors/omp.yml")),
+        config_overlay: Some(PathBuf::from("/supervisors/omp.yml")),
         fast_mode: true,
         model: None,
         effort: None,
@@ -54,46 +51,29 @@ fn arguments(record: &vendor::Record) -> Vec<String> {
 }
 
 #[test]
-fn claude_plan_materializes_shared_fields_policy_and_one_compact_window() {
+fn omp_plan_materializes_configured_values_and_the_lane_derived_key() {
     let root = root(
         r#"
-[policy.commit_message]
-allowed_trailers = ["Spice-Origin"]
-
-[vendor.claude]
-binary = "/opt/claude"
+[vendor.omp]
+binary = "/opt/omp"
 model = "opus"
 effort = "max"
-auto_compact_window_tokens = 123456
 "#,
     );
     let plan = compose(
         &root,
         inputs(
-            "claude",
+            "omp",
             Environment::new([("HOME", "/home/operator")]).expect("fixture environment"),
             Resume::Fresh,
         ),
     )
-    .expect("Claude plan composes");
+    .expect("omp plan composes");
     let launch = plan.launch();
 
-    assert_eq!(plan.binary(), "/opt/claude");
+    assert_eq!(plan.binary(), "/opt/omp");
     assert_eq!(launch.model, "opus");
     assert_eq!(launch.effort, Effort::Max);
-    assert_eq!(launch.attribution, Attribution::Withheld);
-    assert_eq!(
-        launch.fast_mode, None,
-        "unsupported Claude launches receive no invalid fast-mode option"
-    );
-    assert_eq!(
-        root.policy()
-            .commit_message()
-            .trailer_rejection(CLAUDE_ATTRIBUTION_TRAILER),
-        Some(gate::TrailerRejection::Disallowed)
-    );
-    assert_eq!(launch.hook.command, "'/opt/spice'\\''s bin' hook claude");
-    assert_eq!(launch.mcp, None);
     let announced = &launch
         .steering_key
         .as_ref()
@@ -109,36 +89,9 @@ auto_compact_window_tokens = 123456
         "the raw lane uuid is not the announced key"
     );
     assert_eq!(
-        environment_value(plan.environment(), CLAUDE_AUTO_COMPACT_WINDOW),
-        Some("123456")
-    );
-    assert_eq!(
-        plan.environment()
-            .entries()
-            .iter()
-            .filter(|(key, _)| key == CLAUDE_AUTO_COMPACT_WINDOW)
-            .count(),
-        1
-    );
-    assert_eq!(
         environment_value(plan.environment(), SPICE_RS_LANE),
         Some(LANE)
     );
-
-    let rendered = arguments(&plan.record().expect("Claude plan renders"));
-    assert!(!rendered.iter().any(|argument| argument == "--mcp-config"));
-    assert_eq!(
-        rendered
-            .windows(2)
-            .filter(|pair| pair == &["--effort", "max"])
-            .count(),
-        1
-    );
-    let settings = rendered
-        .windows(2)
-        .find_map(|pair| (pair[0] == "--settings").then_some(pair[1].as_str()))
-        .expect("Claude settings argument exists");
-    assert!(settings.contains(r#""attribution":{"commit":"","sessionUrl":false}"#));
 }
 
 #[test]
@@ -159,14 +112,6 @@ fn omp_plan_carries_the_global_fast_mode_as_its_service_tier() {
         rendered
             .windows(2)
             .any(|pair| pair == ["--config", "/supervisors/omp.yml"])
-    );
-    assert!(
-        !plan
-            .environment()
-            .entries()
-            .iter()
-            .any(|(key, _)| key == CLAUDE_AUTO_COMPACT_WINDOW),
-        "omp takes its window through the overlay, never Claude's variable"
     );
 }
 
@@ -193,17 +138,6 @@ fn the_omp_roster_names_the_language_server_tool_only_where_policy_admits_it() {
             .windows(2)
             .any(|pair| pair == ["--tools", vendor::omp::LSP_TOOLS])
     );
-
-    let claude = compose(
-        &Root::default(),
-        inputs("claude", Environment::empty(), Resume::Fresh),
-    )
-    .expect("Claude plan composes");
-    assert_eq!(
-        claude.launch().lsp,
-        None,
-        "a dialect with no language-server seam is never handed a disposition"
-    );
 }
 
 #[test]
@@ -223,120 +157,30 @@ fn omp_containment_overrides_an_inherited_external_mux_opt_in() {
 }
 
 #[test]
-fn inherited_claude_compact_window_is_preserved_exactly_once() {
-    let inherited = Environment::new([
-        ("HOME", "/home/operator"),
-        (CLAUDE_AUTO_COMPACT_WINDOW, "777"),
-    ])
-    .expect("fixture environment");
-    let plan = compose(&Root::default(), inputs("claude", inherited, Resume::Fresh))
-        .expect("Claude plan composes");
-
-    assert_eq!(plan.launch().model, "claude-opus-5");
-    assert_eq!(
-        arguments(&plan.record().expect("Claude default plan renders"))
-            .windows(2)
-            .filter(|pair| pair == &["--model", "claude-opus-5"])
-            .count(),
-        1
-    );
-    assert_eq!(
-        environment_value(plan.environment(), CLAUDE_AUTO_COMPACT_WINDOW),
-        Some("777")
-    );
-    assert_eq!(
-        plan.environment()
-            .entries()
-            .iter()
-            .filter(|(key, _)| key == CLAUDE_AUTO_COMPACT_WINDOW)
-            .count(),
-        1
-    );
-}
-
-#[test]
-fn codex_plan_renders_admitted_model_personality_and_explicit_fast_mode() {
-    let root = root(
-        r#"
-[vendor.codex]
-binary = "/opt/codex"
-model = "gpt-6-astra"
-effort = "max"
-model_context_window = 1234567
-auto_compact_window_tokens = 300000
-personality = "pragmatic"
-fast_mode = true
-"#,
-    );
-    let plan = compose(&root, inputs("codex", Environment::empty(), Resume::Fresh))
-        .expect("Codex plan composes");
-    let rendered = arguments(&plan.record().expect("Codex plan renders"));
-
-    assert_eq!(
-        plan.launch().hook.command,
-        "'/opt/spice'\\''s bin' hook codex"
-    );
-    assert_eq!(plan.launch().model, "gpt-6-astra");
-    assert_eq!(plan.launch().personality.as_deref(), Some("pragmatic"));
-    assert_eq!(plan.launch().fast_mode, Some(true));
-    assert_eq!(plan.launch().model_context_window, Some(1_234_567));
-    assert_eq!(
-        rendered
-            .windows(2)
-            .filter(|pair| pair == &["--model", "gpt-6-astra"])
-            .count(),
-        1
-    );
-    assert!(
-        rendered
-            .windows(2)
-            .any(|pair| pair == ["--enable", "fast_mode"])
-    );
-    assert!(
-        rendered
-            .windows(2)
-            .any(|pair| { pair[0] == "--config" && pair[1] == r#"personality="pragmatic""# })
-    );
-    assert!(
-        rendered
-            .iter()
-            .all(|argument| !argument.starts_with("mcp_servers."))
-    );
-    assert_eq!(
-        environment_value(plan.environment(), CLAUDE_AUTO_COMPACT_WINDOW),
-        None
-    );
-    assert_eq!(config_integer(&rendered, "model_context_window"), 1_234_567);
-    assert_eq!(plan.launch().auto_compact_window_tokens, Some(300_000));
-    assert_eq!(
-        config_integer(&rendered, "model_auto_compact_token_limit"),
-        285_000
-    );
-}
-
-#[test]
 fn fresh_resume_and_recomposition_keep_the_same_admitted_policy() {
     let root = root(
         r#"
-[vendor.codex]
+[vendor.omp]
 model = "gpt-stable"
 effort = "high"
 fast_mode = false
 "#,
     );
     let environment = Environment::new([("PATH", "/usr/bin")]).expect("fixture environment admits");
-    let fresh = compose(&root, inputs("codex", environment.clone(), Resume::Fresh))
+    let fresh = compose(&root, inputs("omp", environment.clone(), Resume::Fresh))
         .expect("fresh plan composes");
-    let restarted = compose(&root, inputs("codex", environment.clone(), Resume::Fresh))
+    let restarted = compose(&root, inputs("omp", environment.clone(), Resume::Fresh))
         .expect("restart plan composes");
     assert_eq!(restarted, fresh);
 
     let resumed = compose(
         &root,
         inputs(
-            "codex",
+            "omp",
             environment,
-            Resume::Session(SessionId::new("thread-stable").expect("session id")),
+            Resume::Session(
+                SessionId::new("01a0a807-666f-7524-be0d-2ee476b6c15c").expect("session id"),
+            ),
         ),
     )
     .expect("resume plan composes");
@@ -344,57 +188,31 @@ fast_mode = false
     assert_eq!(resumed.environment(), fresh.environment());
     assert_eq!(resumed.launch().model, fresh.launch().model);
     assert_eq!(resumed.launch().effort, fresh.launch().effort);
-    assert_eq!(resumed.launch().personality, fresh.launch().personality);
     assert_eq!(resumed.launch().fast_mode, fresh.launch().fast_mode);
-    assert_eq!(
-        resumed.launch().model_context_window,
-        fresh.launch().model_context_window
-    );
     assert_eq!(
         resumed.launch().fast_mode,
         Some(true),
-        "fresh and resumed Codex launches use the authoritative global value"
+        "fresh and resumed launches use the authoritative global value"
     );
-    assert_eq!(resumed.launch().hook, fresh.launch().hook);
-    assert_eq!(resumed.launch().mcp, fresh.launch().mcp);
     assert_eq!(resumed.launch().steering_key, fresh.launch().steering_key);
-}
-
-fn config_integer(arguments: &[String], key: &str) -> i64 {
-    let prefix = format!("{key}=");
-    let values = arguments
-        .windows(2)
-        .filter_map(|pair| {
-            (pair[0] == "--config")
-                .then(|| pair[1].strip_prefix(&prefix))
-                .flatten()
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(values.len(), 1, "{key} must be configured exactly once");
-    let document = format!("value = {}", values[0]);
-    let parsed = document
-        .parse::<toml::Table>()
-        .expect("Codex override value is valid TOML");
-    parsed["value"]
-        .as_integer()
-        .expect("Codex window override is a TOML integer")
 }
 
 #[test]
 fn composition_refuses_unsupported_vendor_and_reserved_lane_environment() {
-    let unsupported = compose(
-        &Root::default(),
-        inputs("gemini", Environment::empty(), Resume::Fresh),
-    )
-    .expect_err("unsupported vendor refuses");
-    assert_eq!(
-        unsupported,
-        ComposeError::UnsupportedVendor("gemini".to_owned())
-    );
+    for retired in ["claude", "codex", "gemini"] {
+        assert_eq!(
+            compose(
+                &Root::default(),
+                inputs(retired, Environment::empty(), Resume::Fresh),
+            )
+            .expect_err("a vendor without a declared value refuses"),
+            ComposeError::UnsupportedVendor(retired.to_owned())
+        );
+    }
 
     let reserved = Environment::new([(OsString::from(SPICE_RS_LANE), OsString::from(LANE))])
         .expect("reserved fixture environment itself admits");
-    let error = compose(&Root::default(), inputs("codex", reserved, Resume::Fresh))
+    let error = compose(&Root::default(), inputs("omp", reserved, Resume::Fresh))
         .expect_err("caller-supplied lane identity refuses");
     assert_eq!(error, ComposeError::ReservedEnvironment(SPICE_RS_LANE));
 }

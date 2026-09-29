@@ -9,16 +9,15 @@ use crate::resident::ingest_vendor;
 
 /// Retire every live directive the ended occupant answered in its transcript.
 ///
-/// An agent that ends its turn on an ACK or NAK header exits before anything
-/// can run the ack command, so its answer sits in the transcript alone until
-/// a successor wakes to cite it. The exit reads that transcript under the
-/// rules the ack command applies, journals the disposition the successor
-/// would have journaled with the transcript locus as evidence, and notifies the
-/// lane supervisor so its next authenticated inbox read follows the journal the
+/// An agent that ends its turn on an ACK or NAK header may exit before the
+/// live sweep hears it, so its answer sits in the transcript alone. The exit
+/// reads that transcript under the same recognition rules, journals the
+/// disposition with the transcript locus as evidence, and notifies the lane
+/// supervisor so its next authenticated inbox read follows the journal the
 /// Canvas card already reads. A key the transcript does not answer stays live
 /// and still wakes a successor, and nothing here disturbs the exit that was
 /// already accounted: every failure is written down and leaves the key
-/// pending for the command path.
+/// pending.
 pub(in crate::resident) fn dispose_at_exit(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -58,9 +57,7 @@ pub(in crate::resident) fn dispose_at_startup(
             );
             break;
         }
-        let interjected = ingest_vendor(&row.vendor)
-            .is_some_and(|vendor| vendor.steering() == vendor::SteeringChannel::Interjection);
-        if interjected {
+        if ingest_vendor(&row.vendor).is_some() {
             dispose_pending(
                 bus,
                 paths,
@@ -78,8 +75,7 @@ pub(in crate::resident) fn dispose_at_startup(
 /// Retire the live directives the occupant's newest prose answered, as that
 /// prose lands.
 ///
-/// A lane that hears steering by interjection runs no ack command: what it
-/// says is its answer, and the sweep that presents the prose hears it here,
+/// What a lane says is its answer, and the sweep that presents the prose hears it here,
 /// so a resend ladder never climbs past an answer already given. Only the
 /// keys the prose headed are read, so a record that answers nothing costs no
 /// scan of the tape.
@@ -208,7 +204,7 @@ fn dispose_head(
         .parse::<steer::Key>()
         .map_err(|error| typed_protocol_fault("steer::key-invalid", &error.to_string()))?;
     let standing = IndexedStanding::new(Some(parsed), Some(head));
-    let recognition = evidence.recognize(token, None, &standing)?;
+    let recognition = evidence.recognize(token, &standing)?;
     let (key, disposition) = match recognition.outcome {
         ScanOutcome::Retired { key, disposition } => (key, disposition),
         ScanOutcome::Missed { token, miss } => {

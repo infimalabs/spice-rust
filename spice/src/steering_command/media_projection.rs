@@ -147,8 +147,7 @@ fn reconcile_retention(
 /// Retires every projection an earlier occupant left under `lane`.
 ///
 /// A lane has one occupant at a time, so a new occupant owns no path its
-/// predecessor advertised; this is the occupant boundary the shell-hook route
-/// crosses through its persisted delivery row.
+/// predecessor advertised.
 pub(crate) fn retire_lane(root: &Path, lane: CanonicalUuid) -> Result<(), String> {
     let path = root.join(lane.to_string());
     match fs::symlink_metadata(&path) {

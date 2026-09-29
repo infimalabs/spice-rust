@@ -236,8 +236,7 @@ impl Record {
     /// Admit the session declaration carried by one decoded selected record.
     ///
     /// Diagnostic streams and records of every other event kind return no
-    /// declaration. The current Claude and Codex decoders each emit at most one
-    /// declaration from their exact initialization record.
+    /// declaration; a decoder emits at most one declaration per record.
     ///
     /// # Errors
     ///

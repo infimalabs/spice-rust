@@ -1,12 +1,9 @@
-use std::path::Path;
-
 use super::*;
 
 pub(super) fn publish(
     record: CompactionRecord,
     lane: CanonicalUuid,
     author: CanonicalUuid,
-    worktree: &Path,
     publisher: &impl AgentMessagePublisher,
     state: &mut MessageState,
 ) -> CommandResult<()> {
@@ -16,7 +13,6 @@ pub(super) fn publish(
             lane,
             author,
             source: None,
-            worktree: Some(worktree),
             ordinal: record.ordinal,
             decoded: &record.decoded,
             authored: Some(&record.authored),

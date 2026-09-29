@@ -7,8 +7,7 @@
 //! instead of the `tool_use` id that joins them. The rules here follow the
 //! predecessor at `spice-z spice/serve/messagepresentation.py`.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Component, Path};
+use std::collections::BTreeMap;
 
 use serde_json::{Map, Value};
 use wire::CanonicalUuid;
@@ -20,9 +19,6 @@ mod tests;
 pub(in crate::resident) const MAX_CHARS: usize = 120;
 const MIN_INFORMATIVE_TOKENS: usize = 2;
 const MAX_EVENT_IDENTITY_CHARS: usize = 18;
-const MAX_FILE_CHANGE_KIND_CHARS: usize = 12;
-const MAX_FILE_CHANGE_KINDS: usize = 2;
-const TOOL_OUTCOME_RESERVE: usize = " succeeded".len();
 
 /// Argument fields worth showing, most recognizable first.
 ///
@@ -33,9 +29,6 @@ const TOOL_OUTCOME_RESERVE: usize = " succeeded".len();
 const ARGUMENT_KEYS: [&str; 8] = [
     "command", "cmd", "path", "query", "url", "input", "prompt", "text",
 ];
-
-const GENERIC_COMMAND_EXECUTION_TOOLS: [&str; 3] = ["exec", "exec_command", "command_execution"];
-const STRUCTURED_COMMAND_EXECUTION_TOOLS: [&str; 2] = ["exec", "exec_command"];
 
 /// Call previews held only while their calls are still outstanding.
 ///
@@ -60,30 +53,20 @@ impl CallPreviews {
 }
 
 /// Render one tool moment as the line an operator reads.
-#[cfg(test)]
 pub(super) fn activity(
     lane: CanonicalUuid,
     tool: &listen::Tool,
     previews: &mut CallPreviews,
 ) -> String {
-    activity_in(lane, tool, previews, None)
-}
-
-pub(super) fn activity_in(
-    lane: CanonicalUuid,
-    tool: &listen::Tool,
-    previews: &mut CallPreviews,
-    worktree: Option<&Path>,
-) -> String {
     let key = (lane, tool.call_id.clone());
     match &tool.moment {
         listen::ToolMoment::Call { name, arguments } => {
-            let preview = identified_preview(name, arguments, &tool.call_id, worktree);
+            let preview = identified_preview(name, arguments, &tool.call_id);
             previews.by_call.insert(key, preview.clone());
             preview
         }
         listen::ToolMoment::Update { name, arguments } => {
-            let preview = identified_preview(name, arguments, &tool.call_id, worktree);
+            let preview = identified_preview(name, arguments, &tool.call_id);
             previews.by_call.insert(key, preview.clone());
             flatten(&format!("{preview} update"))
         }
@@ -101,12 +84,7 @@ pub(super) fn activity_in(
     }
 }
 
-fn identified_preview(
-    name: &str,
-    arguments: &str,
-    call_id: &str,
-    worktree: Option<&Path>,
-) -> String {
+fn identified_preview(name: &str, arguments: &str, call_id: &str) -> String {
     let normalized = normalized_name(name);
     if normalized.is_empty() || normalized.eq_ignore_ascii_case("tool") {
         return named_preview(
@@ -115,7 +93,7 @@ fn identified_preview(
             "activity",
         );
     }
-    activity_preview_in(name, arguments, worktree)
+    ordinary_call_preview(name, arguments)
 }
 
 fn event_identity(call_id: &str) -> String {
@@ -150,138 +128,8 @@ pub(super) fn message_text(tool: &listen::Tool, activity: String, media: &[wire:
     }
 }
 
-#[cfg(test)]
-fn activity_preview(name: &str, arguments: &str) -> String {
-    activity_preview_in(name, arguments, None)
-}
-
-fn activity_preview_in(name: &str, arguments: &str, worktree: Option<&Path>) -> String {
-    let name = name.trim();
-    if name == "file_change"
-        && let Some(arguments) = file_change_preview(arguments, worktree)
-    {
-        return named_preview(&normalized_name(name), &arguments, "tool");
-    }
-    if GENERIC_COMMAND_EXECUTION_TOOLS.contains(&name) {
-        if STRUCTURED_COMMAND_EXECUTION_TOOLS.contains(&name)
-            && !arguments.is_empty()
-            && serde_json::from_str::<Value>(arguments).is_err()
-        {
-            return complete_preview(&normalized_name(name), "command");
-        }
-        let arguments = flatten(&argument_preview(arguments));
-        return if informative_tokens(&arguments) >= MIN_INFORMATIVE_TOKENS {
-            arguments
-        } else {
-            named_preview(&normalized_name(name), &arguments, "command")
-        };
-    }
-    ordinary_call_preview(name, arguments)
-}
-
 pub(super) fn call_preview(name: &str, arguments: &str) -> String {
     ordinary_call_preview(name, arguments)
-}
-
-fn file_change_preview(raw: &str, worktree: Option<&Path>) -> Option<String> {
-    let Value::Object(arguments) = serde_json::from_str::<Value>(raw).ok()? else {
-        return None;
-    };
-    let changes = arguments.get("changes")?.as_array()?;
-    if changes.is_empty() {
-        return None;
-    }
-    let mut paths = Vec::with_capacity(changes.len());
-    let mut kinds = BTreeSet::<String>::new();
-    for change in changes {
-        let change = change.as_object()?;
-        let path = relative_change_path(change.get("path")?.as_str()?, worktree)?;
-        paths.push(path);
-        if let Some(kind) = change
-            .get("kind")
-            .and_then(Value::as_str)
-            .and_then(change_kind)
-        {
-            kinds.insert(kind);
-        }
-    }
-    paths.sort();
-    let suffix = if paths.len() == 1 {
-        kinds
-            .iter()
-            .next()
-            .map_or_else(String::new, |kind| format!(" [{kind}]"))
-    } else {
-        format!(
-            " +{} paths{}",
-            paths.len() - 1,
-            file_change_kind_summary(&kinds)
-        )
-    };
-    let prefix_chars = "file_change: ".chars().count();
-    let suffix_chars = suffix.chars().count();
-    let path_budget = MAX_CHARS
-        .saturating_sub(TOOL_OUTCOME_RESERVE)
-        .saturating_sub(prefix_chars)
-        .saturating_sub(suffix_chars);
-    Some(format!("{}{}", elide(&paths[0], path_budget), suffix))
-}
-
-fn relative_change_path(raw: &str, worktree: Option<&Path>) -> Option<String> {
-    let path = Path::new(raw);
-    let relative = if path.is_absolute() {
-        path.strip_prefix(worktree?).ok()?
-    } else {
-        path
-    };
-    let mut components = Vec::new();
-    for component in relative.components() {
-        match component {
-            Component::Normal(component) => components.push(component.to_str()?.to_owned()),
-            Component::CurDir => {}
-            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
-        }
-    }
-    (!components.is_empty()).then(|| components.join("/"))
-}
-
-fn change_kind(kind: &str) -> Option<String> {
-    let kind = kind.trim();
-    (!kind.is_empty()
-        && kind.len() <= MAX_FILE_CHANGE_KIND_CHARS
-        && kind
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-')))
-    .then(|| kind.to_owned())
-}
-
-fn file_change_kind_summary(kinds: &BTreeSet<String>) -> String {
-    if kinds.is_empty() {
-        return String::new();
-    }
-    let shown = kinds
-        .iter()
-        .take(MAX_FILE_CHANGE_KINDS)
-        .map(String::as_str)
-        .collect::<Vec<_>>();
-    let remaining = kinds.len().saturating_sub(shown.len());
-    let remaining = if remaining > 0 {
-        format!(" +{remaining} kinds")
-    } else {
-        String::new()
-    };
-    format!(" [{}{}]", shown.join(","), remaining)
-}
-
-fn elide(text: &str, budget: usize) -> String {
-    if text.chars().count() <= budget {
-        return text.to_owned();
-    }
-    if budget == 0 {
-        return String::new();
-    }
-    let kept = text.chars().take(budget - 1).collect::<String>();
-    format!("{}…", kept.trim_end())
 }
 
 fn ordinary_call_preview(name: &str, arguments: &str) -> String {

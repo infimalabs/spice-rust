@@ -393,29 +393,28 @@ empty frame.
 
 ### One turn through the plane
 
-The live path persists intent before attempting delivery, then uses the agent's
-own post-tool boundary to pick it up.
+The live path persists intent before attempting delivery, then the
+command-driven supervisor interjects it into the agent's command stream.
 
 ```mermaid
 sequenceDiagram
   autonumber
   actor OP as Operator
   participant ST as Steering plane
-  participant HK as Post-tool hook
+  participant SV as Supervisor
   participant AG as Agent
   participant TR as Transcript
 
   OP->>ST: post an ask
   ST->>ST: persist BEFORE any delivery attempt
-  AG->>HK: finish a non-shell tool call
-  HK->>ST: anything pending?
-  Note over HK,ST: this path never reads the task database
-  ST-->>HK: one readout
+  ST->>SV: resident kick
+  SV->>ST: authenticated inbox read
+  ST-->>SV: one readout
   alt readout is new
-    HK->>AG: deliver
+    SV->>AG: interrupt tool waits and interject
     AG->>TR: ACK or NAK in prose
   else readout would repeat
-    HK-->>AG: suppress delivery
+    SV-->>AG: suppress delivery
   end
 ```
 

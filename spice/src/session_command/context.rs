@@ -495,7 +495,7 @@ mod tests {
     fn live_environment(identity: &str) -> Environment {
         Environment::new(
             vec![VendorEnvironment::new(
-                &spice::extension::CLAUDE,
+                &spice::extension::OMP,
                 Some(std::ffi::OsString::from(identity)),
                 None,
             )],
@@ -516,7 +516,7 @@ mod tests {
                 "--lane",
                 "47f8b187-f5ec-4644-a2bd-11e077408d0e",
                 "--vendor",
-                "claude",
+                "omp",
                 "--stream",
                 wire::body::TASK_CREATION_CONTEXT_STREAM,
                 "--source",
@@ -540,7 +540,7 @@ mod tests {
             refused
                 .diagnostic()
                 .and_then(wire::RefusalDiagnostic::observed),
-            Some("CLAUDE_CODE_SESSION_ID names the requested session")
+            Some("SPICE_RS_SESSION names the requested session")
         );
 
         let dashless = LIVE_SESSION.replace('-', "").to_ascii_uppercase();
@@ -566,11 +566,7 @@ mod tests {
             .expect("another session is not the caller's own");
 
         let unnamed = Environment::new(
-            vec![VendorEnvironment::new(
-                &spice::extension::CLAUDE,
-                None,
-                None,
-            )],
+            vec![VendorEnvironment::new(&spice::extension::OMP, None, None)],
             None,
             None,
             None,

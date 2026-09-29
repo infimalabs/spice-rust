@@ -147,8 +147,6 @@ fn every_contract_has_an_executable_landing_disposition() {
     assert_eq!(landing(&["steer"]), Landing::Landed);
     assert_eq!(landing(&["steer", "cancel"]), Landing::Landed);
     assert_eq!(landing(&["inbox"]), Landing::Landed);
-    assert_eq!(landing(&["hook"]), Landing::Landed);
-    assert_eq!(landing(&["ack"]), Landing::Landed);
     assert_eq!(landing(&["consent"]), Landing::Landed);
     assert_eq!(landing(&["consent", "allow"]), Landing::Landed);
     assert_eq!(landing(&["consent", "deny"]), Landing::Landed);
@@ -868,7 +866,6 @@ fn contract_syntax_drives_argument_registration() {
         &["spice", "task", "require", "TASK", "--clear"],
         &["spice", "task", "depends", "TASK", "FIRST", "SECOND"],
         &["spice", "lane", "add", "--life", "Drive"],
-        &["spice", "hook", "codex"],
         &[
             "spice",
             "lane",

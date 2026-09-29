@@ -56,26 +56,6 @@ fn short_working_state_line_contains_only_live_signal() {
 }
 
 #[test]
-fn ordinary_hook_status_keeps_state_but_omits_elapsed_and_lease_countdown() {
-    let status = ordinary_status(&state(Some(59)), false).expect("ordinary state renders");
-    assert!(status.contains("1 pending inbox"));
-    assert!(status.contains("claim METER-00000001 todo"));
-    assert!(status.contains("last taste fallbacks"));
-    assert!(!status.contains("held for"));
-    assert!(!status.contains("Claim lease"));
-
-    let drain = WorkingState {
-        pending_inbox_count: 1,
-        drain_queue: true,
-        ..WorkingState::default()
-    };
-    let status = ordinary_status(&drain, false).expect("drain state renders");
-    assert!(status.contains("handle operator direction first"));
-    assert!(status.contains("run spice task next"));
-    assert_eq!(ordinary_status(&WorkingState::default(), false), None);
-}
-
-#[test]
 fn idle_drain_guidance_orders_operator_direction_and_stops_while_claimed() {
     let root = fixture("drain-guidance");
     let path = root.join("working-state.json");
@@ -128,7 +108,7 @@ fn idle_drain_guidance_orders_operator_direction_and_stops_while_claimed() {
 fn only_the_running_process_environment_names_the_current_actor() {
     let claims = [
         ClaimObservation {
-            vendor: &crate::extension::CODEX,
+            vendor: &crate::extension::OMP,
             actor: "stale-tree-thread".to_owned(),
             state: ClaimState {
                 handle: "STALE-00000001".to_owned(),
@@ -136,8 +116,8 @@ fn only_the_running_process_environment_names_the_current_actor() {
             },
         },
         ClaimObservation {
-            vendor: &crate::extension::CODEX,
-            actor: "live-codex-thread".to_owned(),
+            vendor: &crate::extension::OMP,
+            actor: "live-omp-session".to_owned(),
             state: ClaimState {
                 handle: "LIVE-00000001".to_owned(),
                 ..ClaimState::default()
@@ -145,7 +125,7 @@ fn only_the_running_process_environment_names_the_current_actor() {
         },
     ];
     let absent = collect_working_state(ProcessEnvironment::default(), 0, &claims, String::new());
-    let current_identities = [(&crate::extension::CODEX, Some("live-codex-thread"))];
+    let current_identities = [(&crate::extension::OMP, Some("live-omp-session"))];
     let current = collect_working_state(
         ProcessEnvironment {
             identities: &current_identities,
@@ -166,8 +146,8 @@ fn only_the_running_process_environment_names_the_current_actor() {
     assert_eq!(
         ProcessEnvironment {
             identities: &[
-                (&crate::extension::CODEX, Some("codex")),
-                (&crate::extension::CLAUDE, Some("claude")),
+                (&crate::extension::OMP, Some("first")),
+                (&crate::extension::OMP, Some("second")),
             ],
         }
         .current_actor(),

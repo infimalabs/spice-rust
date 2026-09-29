@@ -718,7 +718,7 @@ mod tests {
             name: Some("Ava".to_owned()),
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
         }
@@ -747,7 +747,7 @@ mod tests {
             lane: uuid(1),
             occupant,
             worktree: "/worktrees/lane-a".to_owned(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             launch: Some(LaneLaunchIdentity::new("sonnet", "high")),
             epoch: uuid(0),
             stream: "stdout".to_owned(),
@@ -766,7 +766,7 @@ mod tests {
             "lane":"018f82d4-6f59-7d06-92e3-bce913116301",
             "occupant":"018f82d4-6f59-7d06-92e3-bce913116303",
             "worktree":"/worktrees/lane-a",
-            "vendor":"claude",
+            "vendor":"omp",
             "epoch":"018f82d4-6f59-7d06-92e3-bce913116300",
             "stream":"stdout",
             "identity":"session-a",
@@ -837,7 +837,7 @@ mod tests {
             ancestor: uuid(3),
             from_worktree: "/worktrees/lane-a".to_owned(),
             worktree: "/worktrees/lane-b".to_owned(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             identity: "session-a".to_owned(),
             epoch: uuid(0),
         };
@@ -1001,7 +1001,7 @@ mod tests {
         ));
 
         let mut vendor = declared(uuid(4));
-        vendor.vendor = "codex".parse().expect("fixture vendor");
+        vendor.vendor = "other".parse().expect("fixture vendor");
         assert!(matches!(
             table.absorb(Seating::Session(&vendor)),
             Err(Refusal::CrossVendor { .. })

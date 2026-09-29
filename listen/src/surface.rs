@@ -212,8 +212,6 @@ pub enum SurfaceReasoning {
         /// Lines reported by the vendor.
         lines: Vec<String>,
     },
-    /// Reasoning exists but its text is unavailable.
-    Opaque {},
 }
 
 impl From<&ReasoningContent> for SurfaceReasoning {
@@ -222,7 +220,6 @@ impl From<&ReasoningContent> for SurfaceReasoning {
             ReasoningContent::Plain(lines) => Self::Plain {
                 lines: lines.clone(),
             },
-            ReasoningContent::Opaque => Self::Opaque {},
         }
     }
 }
@@ -231,7 +228,6 @@ impl fmt::Display for SurfaceReasoning {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Plain { lines } => write!(formatter, "plain lines={lines:?}"),
-            Self::Opaque {} => formatter.write_str("opaque"),
         }
     }
 }

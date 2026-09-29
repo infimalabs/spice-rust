@@ -12,7 +12,6 @@ mod claim_index;
 mod commit;
 mod generation;
 mod indexed_read;
-mod lane;
 mod read_metrics;
 mod receipt;
 mod steering_index;

@@ -6,8 +6,8 @@
 //! envelope beside its own `session` record.
 
 use listen::{
-    Decoded, Dialect, Dialog, Event, EventKind, Locus, ProseRole, ToolMoment, ToolResult,
-    TurnMoment, decode, decode_record, restated,
+    Decoded, Dialect, Dialog, Event, EventKind, Locus, ProseRole, RecordDecodeError, ToolMoment,
+    ToolResult, TurnMoment, decode, decode_record, restated,
 };
 
 const SESSION: &[u8] = br#"{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{"model":{"id":"claude-opus-5","contextWindow":1000000},"sessionId":"01a0a807-666f-7524-be0d-2ee476b6c15c","sessionFile":"/tmp/sessions/x.jsonl","isStreaming":false}}"#;
@@ -396,10 +396,6 @@ fn boundary(bytes: &[u8]) -> wire::MessageBoundary {
 fn partials_are_restated_by_the_frames_that_end_them_and_decode_to_nothing() {
     for partial in [PARTIAL, TOOL_PARTIAL] {
         assert!(restated(Dialect::Omp, partial));
-        assert!(
-            !restated(Dialect::Claude, partial),
-            "restatement is omp's own"
-        );
         let decoded = decode(Dialect::Omp, partial, locus(partial)).expect("locus matches");
         assert!(decoded.events().is_empty(), "{decoded:?}");
         assert!(!matches!(decoded, Decoded::Residue(_)), "{decoded:?}");
@@ -418,4 +414,30 @@ fn an_unreassembled_transport_envelope_is_residue_not_silent_content() {
     let record = br#"{"type":"rpc_chunk","chunkId":"one","index":0,"count":5,"byteLength":1048577,"data":"eA=="}"#;
     assert!(matches!(decoded(record), Decoded::Residue(_)));
     assert!(!restated(Dialect::Omp, record));
+}
+
+#[test]
+fn a_retired_harness_record_is_refused_by_name_rather_than_decoded_as_omp() {
+    let claude = br#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}"#;
+    let codex = br#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t"}}"#;
+    for (record, harness, discriminator) in [
+        (&claude[..], "claude", "assistant"),
+        (&codex[..], "codex", "event_msg"),
+    ] {
+        for expected in [None, Some(Dialect::Omp)] {
+            assert_eq!(
+                decode_record(expected, record, locus(record)),
+                Err(RecordDecodeError::Retired {
+                    harness,
+                    discriminator: discriminator.to_owned(),
+                }),
+                "{harness} under {expected:?}"
+            );
+        }
+    }
+    let unowned = br#"{"type":"future_record"}"#;
+    assert_eq!(
+        decode_record(None, unowned, locus(unowned)),
+        Err(RecordDecodeError::Unowned)
+    );
 }

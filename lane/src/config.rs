@@ -79,7 +79,7 @@ impl Default for Config {
             life: Life::Steer,
             lease: "15m".parse().expect("the compiled lane lease is valid"),
             runtime: "24h".parse().expect("the compiled lane runtime is valid"),
-            vendor: "codex"
+            vendor: "omp"
                 .parse()
                 .expect("the compiled lane vendor is a valid name"),
             deaths: 3,

@@ -290,20 +290,9 @@ mod tests {
         command
             .env(steer::hook::BASH_ENV, "/fixture/bash-env")
             .env(steer::hook::ZDOTDIR, "/fixture/zdotdir")
-            .env(vendor::CODEX.thread_id_environment(), "fixture-codex")
-            .env(vendor::CLAUDE.thread_id_environment(), "fixture-claude");
+            .env(vendor::OMP.thread_id_environment(), "fixture-omp");
         isolate_developer_environment(&mut command);
 
-        assert_eq!(
-            spice::cargo_isolation::DEVELOPER_CHILD_EXCLUDED_VARIABLES,
-            [
-                steer::hook::BASH_ENV,
-                steer::hook::ZDOTDIR,
-                vendor::CODEX.thread_id_environment(),
-                vendor::CLAUDE.thread_id_environment(),
-                vendor::OMP.thread_id_environment(),
-            ]
-        );
         for variable in spice::cargo_isolation::DEVELOPER_CHILD_EXCLUDED_VARIABLES {
             assert!(
                 command
@@ -313,10 +302,10 @@ mod tests {
             );
         }
 
-        command.env(vendor::CODEX.thread_id_environment(), "owned-codex");
+        command.env(vendor::OMP.thread_id_environment(), "owned-omp");
         assert!(command.get_envs().any(|(name, value)| {
-            name == vendor::CODEX.thread_id_environment()
-                && value == Some(std::ffi::OsStr::new("owned-codex"))
+            name == vendor::OMP.thread_id_environment()
+                && value == Some(std::ffi::OsStr::new("owned-omp"))
         }));
     }
 

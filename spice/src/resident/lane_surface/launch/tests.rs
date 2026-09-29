@@ -10,13 +10,13 @@ static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 #[test]
 fn occupant_deadline_uses_runtime_instead_of_the_claim_lease() {
     let fixture = AdvisoryRtkFixture::new();
-    let vendor = fixture.root.join("fake-claude");
+    let vendor = fixture.root.join("fake-omp");
     fs::write(
         fixture.root.join("spice-rust.toml"),
         format!(
             concat!(
                 "[lane]\nlease = \"1s\"\nruntime = \"5s\"\n\n",
-                "[vendor.claude]\nbinary = {:?}\n\n",
+                "[vendor.omp]\nbinary = {:?}\n\n",
                 "[rtk]\nexecutable = {:?}\n",
             ),
             vendor.display().to_string(),
@@ -42,7 +42,7 @@ fn absent_cargo_lock_launches_without_rust_environment_or_tool_probe() {
 
     let (environment, _) = launch_environment(
         &repository,
-        &fixture.root.join("fake-claude"),
+        &fixture.root.join("fake-omp"),
         None,
         fixture
             .root
@@ -89,15 +89,18 @@ fn absent_cargo_lock_launches_without_rust_environment_or_tool_probe() {
 }
 
 #[test]
-fn zero_config_repository_without_a_lock_composes_default_codex() {
+fn zero_config_repository_without_a_lock_composes_default_omp_and_refuses_retired_vendors() {
     let fixture = AdvisoryRtkFixture::new();
     for path in ["Cargo.lock", "Cargo.toml", "spice-rust.toml"] {
         fs::remove_file(fixture.root.join(path)).expect("remove Rust fixture input");
     }
-    let vendor = "codex".parse().expect("default vendor name");
-    let request = OccupantLaunchRequest {
-        worktree: fixture.root.to_str().expect("fixture worktree is UTF-8"),
-        vendor: &vendor,
+    let worktree = fixture.root.to_str().expect("fixture worktree is UTF-8");
+    let omp: wire::Name = "omp".parse().expect("default vendor name");
+    let retired: [wire::Name; 2] =
+        ["claude", "codex"].map(|name| name.parse().expect("retired vendor name"));
+    let request = |vendor| OccupantLaunchRequest {
+        worktree,
+        vendor,
         epoch: fixture.epoch,
         lane: fixture.lane,
         occupant: fixture.occupant,
@@ -107,8 +110,26 @@ fn zero_config_repository_without_a_lock_composes_default_codex() {
         effort: None,
     };
 
-    occupant_launch(&fixture.paths, request, fixture.reporter())
-        .expect("zero-config non-Rust repository composes default Codex");
+    occupant_launch(&fixture.paths, request(&omp), fixture.reporter())
+        .expect("zero-config non-Rust repository composes default omp");
+
+    for recorded in &retired {
+        let Err(Outcome::Refusal(refusal)) =
+            occupant_launch(&fixture.paths, request(recorded), fixture.reporter())
+        else {
+            panic!("a lane recorded under {recorded} must refuse to wake");
+        };
+        let diagnostic = refusal.diagnostic().expect("the refusal is diagnosed");
+        assert_eq!(diagnostic.reason(), "lane::vendor-unsupported");
+        assert_eq!(diagnostic.expected(), Some("omp"));
+        assert_eq!(diagnostic.observed(), Some(recorded.as_str()));
+        assert!(
+            diagnostic
+                .detail()
+                .is_some_and(|detail| detail.contains("spice lane remove")),
+            "the refusal names the recovery: {diagnostic:?}"
+        );
+    }
 }
 
 #[test]

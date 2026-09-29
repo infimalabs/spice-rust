@@ -194,34 +194,6 @@ pub fn presenter(
     })
 }
 
-/// Session boundaries durably bound to transcript source generations.
-#[derive(Clone, Debug, Default)]
-pub struct TranscriptSessions(bus::TranscriptSessions);
-
-impl TranscriptSessions {
-    /// Reconstruct source-qualified session boundaries from durable journal facts.
-    ///
-    /// # Errors
-    ///
-    /// Refuses retained session authority that did not cross the source migration.
-    pub fn from_snapshot(snapshot: &journal::FactSnapshot) -> Result<Self, String> {
-        bus::TranscriptSessions::from_snapshot(snapshot).map(Self)
-    }
-
-    /// Worktree bound to the session containing one source-qualified tape locus.
-    #[must_use]
-    pub fn worktree_at(
-        &self,
-        lane: CanonicalUuid,
-        source: CanonicalUuid,
-        locus: tape::Locus,
-    ) -> Option<&Path> {
-        self.0
-            .at(lane, source, locus.member, locus.offset)
-            .map(|session| session.worktree.as_path())
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct SourceQuote {
     identity: Option<String>,
@@ -518,25 +490,22 @@ mod tests {
                 NEXT.fetch_add(1, Ordering::Relaxed),
             ));
             let lane = uuid(1);
-            let vendor: wire::Name = "codex".parse().expect("fixture vendor");
+            let vendor: wire::Name = "omp".parse().expect("fixture vendor");
             let tape_root = root.join("tape");
             let tape_path = tape_root.join(lane.to_string()).join(vendor.as_str());
             fs::create_dir_all(&tape_path).expect("fixture tape directory exists");
             let tape = tape::Tape::open(&tape_path).expect("fixture tape opens");
-            for (id, text) in [
-                ("predecessor", PREDECESSOR_TEXT),
-                ("successor", SUCCESSOR_TEXT),
-            ] {
+            for text in [PREDECESSOR_TEXT, SUCCESSOR_TEXT] {
                 tape.tee(
                     format!(
-                        "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"{id}\",\"type\":\"agent_message\",\"text\":\"{text}\"}}}}\n"
+                        "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}}],\"stopReason\":\"stop\"}}}}\n"
                     )
                     .as_bytes(),
                 )
                 .expect("fixture prose is durable");
             }
             let scan =
-                listen::scan(&tape_path, listen::Dialect::Codex, None).expect("fixture tape scans");
+                listen::scan(&tape_path, listen::Dialect::Omp, None).expect("fixture tape scans");
             let predecessor_locus = scan.records[0].locus;
             let successor_locus = scan.records[1].locus;
             let source = scan
@@ -686,14 +655,6 @@ mod tests {
                 })
             );
         }
-        let sessions = TranscriptSessions::from_snapshot(
-            &fixture.bus.fact_snapshot().expect("fixture facts read"),
-        )
-        .expect("fixture sessions are source-qualified");
-        assert_eq!(
-            sessions.worktree_at(fixture.lane, fixture.source, fixture.predecessor_locus),
-            Some(Path::new("/worktrees/predecessor")),
-        );
         for unavailable in [
             fixture.target(uuid(9), fixture.predecessor_locus, PREDECESSOR_TEXT),
             fixture.target(

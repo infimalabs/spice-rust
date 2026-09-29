@@ -1233,7 +1233,7 @@ fn lane_residency(authority: &Authority) -> LaneResidency {
         name: None,
         worktree: authority.worktree.clone(),
         life: "drive".to_owned(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
         occupant: Some(authority.occupant),

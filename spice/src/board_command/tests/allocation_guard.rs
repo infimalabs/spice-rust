@@ -61,7 +61,7 @@ fn reseat(bus: &Bus, epoch: CanonicalUuid, seats: &[Seat]) {
             name: None,
             worktree: "/fixture".to_owned(),
             life: "drive".to_owned(),
-            vendor: "claude".parse().expect("reseat fixture vendor"),
+            vendor: "omp".parse().expect("reseat fixture vendor"),
             model: None,
             effort: None,
             occupant: Some(seat.occupant),

@@ -1,6 +1,6 @@
 use super::*;
 
-const BOUNDARY: &str = "{\"timestamp\":\"2030-04-12T18:44:09.271Z\",\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n";
+const BOUNDARY: &str = "{\"type\":\"compaction\",\"timestamp\":\"2030-04-12T18:44:09.271Z\"}\n";
 
 /// Write a transcript several history windows long, one boundary behind every
 /// run of assistant records, and return each boundary's offset.
@@ -9,8 +9,7 @@ fn windowed_transcript(transcript: &Path) -> Vec<u64> {
     let mut contents = String::new();
     let mut boundaries = Vec::new();
     for boundary in 0..30 {
-        contents
-            .extend((0..24).map(|index| claude_assistant_record(boundary * 24 + index, &filler)));
+        contents.extend((0..24).map(|index| assistant_record(boundary * 24 + index, &filler)));
         boundaries.push(contents.len() as u64);
         contents.push_str(BOUNDARY);
     }
@@ -38,7 +37,7 @@ fn history_pages_a_transcript_appended_before_every_window() {
     let transcript = scratch.transcript();
     let boundaries = windowed_transcript(&transcript);
     let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     let mut end = checkpoint.clone();
     let mut served = Vec::new();
 
@@ -69,7 +68,7 @@ fn rewrite_plus_append_of_read_prefix_bytes_is_refused() {
     let transcript = scratch.transcript();
     let boundaries = windowed_transcript(&transcript);
     let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
     bootstrap_before(&mut cursor, 0, &checkpoint, HistoryRead::Page).expect("newest window reads");
 
     rewrite_byte(&transcript, checkpoint.next() - 200);
@@ -93,7 +92,7 @@ fn a_write_during_a_first_read_serves_appends_and_refuses_rewrites() {
     let transcript = scratch.transcript();
     let boundaries = windowed_transcript(&transcript);
     let checkpoint = history_checkpoint(&transcript).expect("history checkpoint starts");
-    let mut cursor = cursor(&transcript, listen::Dialect::Claude);
+    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
 
     let appending = transcript.clone();
     after_authentication_read(move || append(&appending, b"{}\n"));

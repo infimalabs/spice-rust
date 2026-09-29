@@ -79,7 +79,7 @@ fn row(fixture: &Fixture) -> wire::LaneResidency {
         name: None,
         worktree: WORKTREE.into(),
         life: "drive".into(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
         occupant: Some(fixture.occupant),
@@ -89,7 +89,7 @@ fn row(fixture: &Fixture) -> wire::LaneResidency {
             lane: fixture.lane,
             occupant: fixture.occupant,
             worktree: WORKTREE.into(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high")),
             epoch: uuid(3),
             stream: "stdout".into(),
@@ -128,7 +128,7 @@ fn declaration_reporter_forwards_the_kernel_exit_to_its_resident_sink() {
         lane,
         occupant,
         worktree: WORKTREE.to_owned(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         model: "sonnet".to_owned(),
         effort: "high".to_owned(),
         git: "skipped:test".to_owned(),
@@ -153,9 +153,12 @@ fn declaration_reporter_forwards_the_kernel_exit_to_its_resident_sink() {
     assert_eq!(*inner.0.lock().expect("exit sink lock"), vec![exit]);
 }
 
-/// One Claude initialization record, in the words the dialect actually reads.
+/// One omp state reply, in the words the dialect actually reads.
 fn declaration(identity: &str) -> Vec<u8> {
-    format!(r#"{{"type":"system","subtype":"init","session_id":"{identity}"}}"#).into_bytes()
+    format!(
+        r#"{{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{{"sessionId":"{identity}"}}}}"#
+    )
+    .into_bytes()
 }
 
 /// Commit one record to this lane's durable tape and bind the head to it.
@@ -260,7 +263,7 @@ fn resume_refuses_a_session_head_declared_in_another_worktree() {
 fn resume_refuses_a_session_head_declared_by_another_vendor() {
     let fixture = fixture();
     let mut row = row(&fixture);
-    head(&mut row).vendor = "codex".parse().expect("fixture vendor");
+    head(&mut row).vendor = "gemini".parse().expect("fixture vendor");
     assert_eq!(reason(&fixture, &row), "lane::session-cross-vendor");
     finish(fixture);
 }
@@ -328,11 +331,7 @@ fn resume_refuses_a_locus_reaching_past_the_tape_that_holds_it() {
 fn resume_refuses_a_locus_naming_a_record_that_declares_no_session() {
     let fixture = fixture();
     let mut row = row(&fixture);
-    declare(
-        &fixture,
-        &mut row,
-        br#"{"type":"system","subtype":"compact_boundary"}"#,
-    );
+    declare(&fixture, &mut row, br#"{"type":"agent_start"}"#);
     let refusal = refusal(&fixture, &row);
     assert_eq!(refusal.reason(), "lane::session-tape-moved");
     assert_eq!(

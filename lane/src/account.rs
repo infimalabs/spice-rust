@@ -411,7 +411,7 @@ mod tests {
     fn batch(source: &str, from: u64, length: u64) -> body::JournalIngested {
         body::JournalIngested {
             lane: uuid(LANE),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             stream: "session".to_owned(),
             source: uuid(source),
             supersedes: None,
@@ -457,7 +457,7 @@ mod tests {
     /// the writer never wrote and report an accounted stream as never
     /// accounted.
     fn checkpoint(journal: &Journal) -> Option<body::TranscriptPosition> {
-        let vendor = "claude".parse().expect("fixture vendor");
+        let vendor = "omp".parse().expect("fixture vendor");
         let key = TranscriptStreamKey::new(&uuid(LANE), &vendor, "session");
         journal
             .read(|read| read.transcript_source_head(&key))

@@ -189,7 +189,7 @@ const BODIES: &[(CommandKind, &str)] = &[
   "team": "018f82d4-6f59-7d06-92e3-bce9131163c2",
   "worktree": "worktrees/h",
   "life": "drive",
-  "vendor": "claude"
+  "vendor": "omp"
 }"#,
     ),
     (
@@ -668,7 +668,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
             source: wire::body::SourceBoundary::Proven {
                 heads: vec![wire::TranscriptSourceHead {
                     lane: uuid("018f82d4-6f59-7d06-92e3-bce9131163c5"),
-                    vendor: "claude".parse().expect("a vendor"),
+                    vendor: "omp".parse().expect("a vendor"),
                     stream: "session".to_owned(),
                     source: uuid("018f82d4-6f59-7d06-92e3-bce9131163c7"),
                     next: wire::body::TranscriptPosition {
@@ -990,7 +990,7 @@ fn residency_row(lane: CanonicalUuid, team: CanonicalUuid) -> LaneResidency {
         name: None,
         worktree: "/fixture".to_owned(),
         life: "drive".to_owned(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
         occupant: None,

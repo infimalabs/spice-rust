@@ -233,25 +233,23 @@ fn a_vendor_and_model_scoped_bag_only_fires_in_its_shared_applicability_context(
 [taste.alpha]
 words = ["aardvark"]
 message = "Prefer the first letter."
-scopes = { vendors = ["codex"], models = ["gpt-5"] }
+scopes = { vendors = ["omp"], models = ["gpt-5"] }
 "#,
     )
     .expect("scoped row decodes");
-    let codex = PolicyContext::new()
-        .with_vendor("codex")
-        .with_model("gpt-5");
-    let claude = PolicyContext::new()
-        .with_vendor("claude")
+    let scoped = PolicyContext::new().with_vendor("omp").with_model("gpt-5");
+    let other = PolicyContext::new()
+        .with_vendor("other")
         .with_model("gpt-5");
 
     assert_eq!(
-        bag.hits(&prose("one aardvark here"), &codex)
-            .expect("codex model context resolves")
+        bag.hits(&prose("one aardvark here"), &scoped)
+            .expect("scoped model context resolves")
             .len(),
         1,
     );
     assert!(
-        bag.hits(&prose("one aardvark here"), &claude)
+        bag.hits(&prose("one aardvark here"), &other)
             .expect("other vendor resolves")
             .is_empty(),
         "spice-shape case 438: a vendor-scoped bag cannot fire elsewhere",
@@ -259,7 +257,7 @@ scopes = { vendors = ["codex"], models = ["gpt-5"] }
     assert!(
         bag.hits(
             &prose("one aardvark here"),
-            &PolicyContext::new().with_vendor("codex").with_model("o3"),
+            &PolicyContext::new().with_vendor("omp").with_model("o3"),
         )
         .expect("other model resolves")
         .is_empty(),
@@ -274,7 +272,7 @@ fn a_disabled_named_row_remains_tracked_enumerable_clone_stable_and_inert() {
 words = ["aardvark"]
 message = "Prefer the first letter."
 enabled = false
-scopes = { vendors = ["codex"] }
+scopes = { vendors = ["omp"] }
 "#;
     let bag = configured(document).expect("disabled row decodes");
     let enabled = configured(
@@ -282,7 +280,7 @@ scopes = { vendors = ["codex"] }
 [taste.alpha]
 words = ["aardvark"]
 message = "Prefer the first letter."
-scopes = { vendors = ["codex"] }
+scopes = { vendors = ["omp"] }
 "#,
     )
     .expect("enabled row decodes");
@@ -291,7 +289,7 @@ scopes = { vendors = ["codex"] }
 
     assert_eq!(taste.name().as_str(), "alpha");
     assert!(!taste.enabled());
-    assert_eq!(taste.scopes().vendors(), ["codex"]);
+    assert_eq!(taste.scopes().vendors(), ["omp"]);
     assert_eq!(other_clone, bag);
     assert_eq!(bag_identity(&other_clone), bag_identity(&bag));
     assert_ne!(
@@ -328,7 +326,7 @@ scopes = { vendors = [""] }
 [taste.alpha]
 words = ["aardvark"]
 message = "Prefer the first letter."
-scopes = { vendors = ["codex"] }
+scopes = { vendors = ["omp"] }
 "#,
     )
     .expect("valid constrained row decodes");

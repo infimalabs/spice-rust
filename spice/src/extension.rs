@@ -147,12 +147,6 @@ impl PartialEq for Vendor {
 
 impl Eq for Vendor {}
 
-/// Current Codex declaration.
-pub const CODEX: Vendor = Vendor::new(&vendor::CODEX, codex_configuration, 0);
-
-/// Current Claude declaration.
-pub const CLAUDE: Vendor = Vendor::new(&vendor::CLAUDE, claude_configuration, 1);
-
 /// Current oh-my-pi declaration.
 pub const OMP: Vendor = Vendor::new(&vendor::OMP, omp_configuration, 2);
 
@@ -193,18 +187,6 @@ pub struct Declaration {
 /// Current compiled declarations. These are values, not mode arms: consumers
 /// resolve a row and call the selected value's contract.
 pub const DECLARATIONS: &[Declaration] = &[
-    Declaration {
-        namespace: Namespace::Vendor,
-        name: "codex",
-        provider: "vendor",
-        value: Value::Vendor(&CODEX),
-    },
-    Declaration {
-        namespace: Namespace::Vendor,
-        name: "claude",
-        provider: "vendor",
-        value: Value::Vendor(&CLAUDE),
-    },
     Declaration {
         namespace: Namespace::Vendor,
         name: "omp",
@@ -477,43 +459,13 @@ impl fmt::Display for RegistryError {
 
 impl Error for RegistryError {}
 
-fn codex_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
-    let configured = root.vendor().codex();
-    vendor::LaunchValues {
-        binary: configured.binary().as_str(),
-        model: configured.model(),
-        effort: configured.effort(),
-        personality: configured.personality(),
-        fast_mode: Some(configured.fast_mode()),
-        model_context_window: Some(configured.model_context_window()),
-        auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
-        lsp: None,
-    }
-}
-
-fn claude_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
-    let configured = root.vendor().claude();
-    vendor::LaunchValues {
-        binary: configured.binary().as_str(),
-        model: configured.model(),
-        effort: configured.effort(),
-        personality: None,
-        fast_mode: None,
-        model_context_window: None,
-        auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
-        lsp: None,
-    }
-}
-
 fn omp_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
     let configured = root.vendor().omp();
     vendor::LaunchValues {
         binary: configured.binary().as_str(),
         model: configured.model(),
         effort: configured.effort(),
-        personality: None,
         fast_mode: Some(configured.fast_mode()),
-        model_context_window: None,
         auto_compact_window_tokens: Some(configured.auto_compact_window_tokens()),
         lsp: Some(configured.lsp()),
     }
@@ -523,8 +475,8 @@ fn omp_configuration(root: &crate::config::Root) -> vendor::LaunchValues<'_> {
 mod tests {
     use super::*;
 
-    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
-    const FIXTURE_VENDOR: Vendor = Vendor::new(&FIXTURE_DIALECT, codex_configuration, 3);
+    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::OMP);
+    const FIXTURE_VENDOR: Vendor = Vendor::new(&FIXTURE_DIALECT, omp_configuration, 3);
 
     #[test]
     fn compiled_namespaces_are_complete_sorted_and_coherent() {
@@ -536,8 +488,6 @@ mod tests {
                 .map(|row| (row.namespace.as_str(), row.name))
                 .collect::<Vec<_>>(),
             [
-                ("spice.vendors", "claude"),
-                ("spice.vendors", "codex"),
                 ("spice.vendors", "omp"),
                 ("spice.wrappers", "shell"),
                 ("spice.gates", "core"),
@@ -551,7 +501,7 @@ mod tests {
                 .into_iter()
                 .map(|vendor| vendor.session_gate().identity())
                 .collect::<Vec<_>>(),
-            ["codex", "claude", "omp"],
+            ["omp"],
         );
     }
 
@@ -563,7 +513,7 @@ mod tests {
         };
         let expected = RegistryError::Collision {
             namespace: Namespace::Vendor,
-            name: "codex".to_owned(),
+            name: "omp".to_owned(),
             providers: vec!["external", "vendor"],
         };
         for rows in [[DECLARATIONS[0], external], [external, DECLARATIONS[0]]] {
@@ -580,13 +530,13 @@ mod tests {
             namespace: Namespace::Vendor,
             name: "other",
             provider: "fixture",
-            value: Value::Vendor(&CODEX),
+            value: Value::Vendor(&OMP),
         }];
         assert!(matches!(
             Registry::discover(&rows),
             Err(RegistryError::NameMismatch {
                 name,
-                value_name: "codex",
+                value_name: "omp",
                 ..
             }) if name == "other"
         ));
@@ -604,7 +554,7 @@ mod tests {
         let fixture = registry
             .vendor("fixture")
             .expect("third declaration resolves");
-        let bytes = br#"{"type":"thread.started","thread_id":"fixture-thread"}"#;
+        let bytes = br#"{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{"sessionId":"fixture-session"}}"#;
         let locus = listen::Locus::new(1, 0, bytes.len() as u64);
         let decoded = fixture
             .decode(bytes, locus)
@@ -615,17 +565,12 @@ mod tests {
             .expect("fixture record declares a session");
 
         assert_eq!(fixture.name(), "fixture");
-        assert_eq!(fixture.dialect(), listen::Dialect::Codex);
+        assert_eq!(fixture.dialect(), listen::Dialect::Omp);
         assert_eq!(fixture.session_gate().identity(), "fixture");
-        assert_eq!(fixture.session_gate().dialect(), listen::Dialect::Codex);
+        assert_eq!(fixture.session_gate().dialect(), listen::Dialect::Omp);
         assert_eq!(fixture.session_gate().ambient_precedence(), 3);
-        assert_eq!(fixture.stdout(), vendor::CODEX.stdout());
-        assert_eq!(fixture.tool_envelope(), vendor::ToolEnvelope::Direct);
-        assert_eq!(
-            fixture.transcript_layout(),
-            vendor::CODEX.transcript_layout()
-        );
-        assert_eq!(session.session.as_str(), "fixture-thread");
+        assert_eq!(fixture.transcript_layout(), vendor::OMP.transcript_layout());
+        assert_eq!(session.session.as_str(), "fixture-session");
         assert_eq!(session.locus, locus);
         assert_eq!(
             fixture.neutral_launch_prompt(std::path::Path::new("skill.md")),
@@ -635,7 +580,7 @@ mod tests {
             fixture
                 .launch_values(&crate::config::Root::default())
                 .binary,
-            "codex"
+            "omp"
         );
     }
 
@@ -645,7 +590,7 @@ mod tests {
             namespace: Namespace::Gate,
             name: "wrong-kind",
             provider: "fixture",
-            value: Value::Vendor(&CODEX),
+            value: Value::Vendor(&OMP),
         }];
         assert!(matches!(
             Registry::discover(&rows),

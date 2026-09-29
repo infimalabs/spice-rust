@@ -102,11 +102,6 @@ pub(crate) enum SelectedCommand<'a> {
     SteerRecover { directive: CanonicalUuid },
     /// The authenticated principal reads visible pending direction.
     SteerInbox { lane: Option<CanonicalUuid> },
-    /// The authenticated lane retires one live key.
-    SteerAck {
-        key: &'a steer::Key,
-        disposition: Disposition,
-    },
     /// The operator quarantines the exact current executable digest.
     TrustPend {
         digest: &'a wire::Digest,

@@ -2,7 +2,6 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
-use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -363,16 +362,7 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
         state.accounting = held;
         state.observations.extend(observations);
     }
-    sweep::present_swept(
-        bus,
-        epoch,
-        surfaces,
-        &mut recognition,
-        record.lane,
-        record.occupant,
-        &swept,
-        &mut views,
-    )?;
+    sweep::present_swept(bus, epoch, surfaces, &mut recognition, &swept, &mut views)?;
     hear_swept(
         bus,
         surfaces.paths,
@@ -383,12 +373,10 @@ fn accept_capture_record_with<P: AgentMessagePublisher>(
     )
 }
 
-/// Retire the directives the swept prose answered, for a lane that hears its
-/// steering by interjection.
+/// Retire the directives the swept prose answered.
 ///
-/// Such a lane runs no ack command: what it says is its answer, and the
-/// accounting sweep hears it even if live projection displayed it first.
-/// A lane that retires its own keys on the command line keeps that authority.
+/// What a lane says is its answer, and the accounting sweep hears it even if
+/// live projection displayed it first.
 fn hear_swept(
     bus: &Bus,
     paths: &RuntimePaths,
@@ -412,9 +400,7 @@ fn hear_swept(
     let Some(row) = residency.body().lanes.iter().find(|row| row.lane == lane) else {
         return Ok(());
     };
-    let interjected = ingest_vendor(&row.vendor)
-        .is_some_and(|vendor| vendor.steering() == vendor::SteeringChannel::Interjection);
-    if interjected {
+    if ingest_vendor(&row.vendor).is_some() {
         steering::dispose_heard(bus, paths, epoch, lane, &row.vendor, &keys, diagnostic);
     }
     Ok(())
@@ -454,23 +440,13 @@ pub(super) fn present_closed_transcript<P: AgentMessagePublisher>(
         state.accounting = held;
         state.observations.extend(observations);
     }
-    sweep::present_swept(
-        bus,
-        epoch,
-        surfaces,
-        &mut recognition,
-        lane,
-        occupant,
-        &swept,
-        &mut views,
-    )
+    sweep::present_swept(bus, epoch, surfaces, &mut recognition, &swept, &mut views)
 }
 
 struct AgentRecord<'a> {
     lane: CanonicalUuid,
     author: CanonicalUuid,
     source: Option<CanonicalUuid>,
-    worktree: Option<&'a Path>,
     locus: listen::Locus,
     context: &'a listen::RecordContext,
     events: &'a [(u32, &'a listen::Event)],
@@ -482,7 +458,6 @@ struct AgentEvent<'a> {
     lane: CanonicalUuid,
     author: CanonicalUuid,
     source: Option<CanonicalUuid>,
-    worktree: Option<&'a Path>,
     ordinal: u32,
     decoded: &'a listen::Event,
     authored: Option<&'a str>,

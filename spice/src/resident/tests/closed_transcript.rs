@@ -2,9 +2,9 @@
 
 use super::*;
 
-const CODEX_EARLIER: &[u8] = br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"earlier answer whose notice was refused"}}
+const EARLIER: &[u8] = br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"earlier answer whose notice was refused"}]}}
 "#;
-const CODEX_LAST: &[u8] = br#"{"timestamp":"2030-04-12T18:44:10.271Z","type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"final answer written moments before exit"}}
+const LAST: &[u8] = br#"{"timestamp":"2030-04-12T18:44:10.271Z","type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"final answer written moments before exit"}]}}
 "#;
 
 /// The exit is accounted before the last records' notices are read, so the
@@ -19,12 +19,10 @@ fn a_closing_seat_presents_every_record_its_occupant_left_behind() {
     let occupant = test_uuid(6);
     let epoch = test_uuid(4);
     canvas_announcement::seat_ingestion_residency(&bus, lane, epoch);
-    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the lane tape opens");
-    let earlier = tape
-        .tee(CODEX_EARLIER)
-        .expect("the earlier record is durable");
-    let last = tape.tee(CODEX_LAST).expect("the last record is durable");
+    let earlier = tape.tee(EARLIER).expect("the earlier record is durable");
+    let last = tape.tee(LAST).expect("the last record is durable");
     let mut seats = Seats::new();
     seats
         .seat_detached(
