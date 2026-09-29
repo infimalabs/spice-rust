@@ -192,6 +192,15 @@ fn push_body(condensed: &mut String, body: &str, held: Option<(Told, &str)>) {
     }
 }
 
+/// How a lane keeps working while it acknowledges, said after compaction.
+macro_rules! keep_working {
+    () => {
+        "Acknowledge inline: after the header, keep working in that same message. \
+         Tool calls may follow; nothing needs to stop, run a command, or wait for \
+         confirmation."
+    };
+}
+
 /// Add one authenticated recovery instruction to a replay after compaction.
 ///
 /// The instruction sits inside the existing seal and names every key from the
@@ -218,9 +227,24 @@ pub fn post_compaction(rendered: &str) -> String {
          tool, with `ACK <key> [<key> ...]: <one clause>` or \
          `NAK <key>: <one clause>` for every key.\n",
     );
+    replayed.push_str(concat!(keep_working!(), "\n"));
     replayed.push_str(body);
     replayed
 }
+
+/// The private reminder a lane hears after compaction when nothing is pending.
+///
+/// Compaction can drop the acknowledgment contract with the rest of the
+/// context, so every compaction restates it. It names no key and carries no
+/// authority, so it needs neither a seal nor an acknowledgment.
+pub const POST_COMPACTION_NOTICE: &str = concat!(
+    "<system-notice>\n[POST-COMPACTION] No steering is pending, so there is nothing \
+     to acknowledge now. When sealed steering names keys, lead one visible assistant \
+     message with `ACK <key> [<key> ...]: <one clause>` or `NAK <key>: <one clause>` \
+     for every key. ",
+    keep_working!(),
+    " This notice carries no acknowledgment key.\n</system-notice>",
+);
 
 fn render_directive_body(directive: &Directive) -> String {
     render_body(

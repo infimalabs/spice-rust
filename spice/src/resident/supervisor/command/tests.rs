@@ -163,48 +163,47 @@ fn the_inbox_is_interjected_once_per_change_and_again_after_a_compaction() {
     scratch.publish(b"");
     driver.deliver_inbox();
     assert_eq!(driver.interjections(), 0);
+    // The agent lost its context, so it hears how to acknowledge inline even
+    // with nothing pending.
     driver.observe(&decoded(
         br#"{"type":"auto_compaction_end","result":{"summary":"empty"},"aborted":false}"#,
     ));
-    assert_eq!(
-        driver.interjections(),
-        0,
-        "compaction invents no guidance for an empty inbox"
-    );
+    assert_eq!(driver.interjections(), 1);
 
     scratch.publish(b"<key>\ndirective=d1 key=1kJK6N3R stage=new expires=never\nstop\n</key>\n");
     driver.deliver_inbox();
     driver.deliver_inbox();
-    assert_eq!(driver.interjections(), 1);
+    assert_eq!(driver.interjections(), 2);
 
     scratch.publish(b"<key>\ndirective=d2 key=1kJK6M0V stage=new expires=never\ngo\n</key>\n");
     driver.deliver_inbox();
-    assert_eq!(driver.interjections(), 2);
+    assert_eq!(driver.interjections(), 3);
 
     // The agent lost its context, so the standing inbox is said again.
     driver.observe(&decoded(
         br#"{"type":"auto_compaction_end","result":{"summary":"so far"},"aborted":false}"#,
     ));
-    assert_eq!(driver.interjections(), 3);
+    assert_eq!(driver.interjections(), 4);
 
     // A turn boundary that is not the end changes nothing.
     driver.observe(&decoded(br#"{"type":"agent_start"}"#));
-    assert_eq!(driver.interjections(), 3);
+    assert_eq!(driver.interjections(), 4);
 
     assert_eq!(
         sink.frames(),
         [
             serde_json::json!({"id": "spice-state", "type": "get_state"}),
+            steer(1, steer::inbox::POST_COMPACTION_NOTICE),
             steer(
-                1,
+                2,
                 "<key>\ndirective=d1 key=1kJK6N3R stage=new expires=never\nstop\n</key>\n"
             ),
             steer(
-                2,
+                3,
                 "<key>\ndirective=d2 key=1kJK6M0V stage=new expires=never\ngo\n</key>\n"
             ),
             steer(
-                3,
+                4,
                 &steer::inbox::post_compaction(
                     "<key>\ndirective=d2 key=1kJK6M0V stage=new expires=never\ngo\n</key>\n"
                 ),
