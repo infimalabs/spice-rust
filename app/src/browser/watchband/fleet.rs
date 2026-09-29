@@ -139,9 +139,8 @@ pub(super) fn render_populated_fleet(
             // Every team keeps its own subtree, so a reorder, fusion, or split moves
             // composers with their drafts, focus, and open menus instead of
             // repainting a neighbour's nodes. Yew diffs a list positionally unless
-            // every child is keyed, so closed teams leave the list rather than
-            // holding an unkeyed slot.
-            {for teams.iter().filter(|team| !render.team_controls.is_closed(team.lane)).map(|team| {
+            // every child is keyed.
+            {for teams.iter().map(|team| {
                 let team_standings = standings
                     .iter()
                     .filter(|standing| standing.team == team.lane)

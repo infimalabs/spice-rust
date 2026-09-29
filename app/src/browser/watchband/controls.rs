@@ -130,7 +130,6 @@ impl Default for TeamControl {
 pub(crate) struct TeamControls {
     teams: BTreeMap<CanonicalUuid, TeamControl>,
     empty_mode: TeamMode,
-    closed: BTreeSet<CanonicalUuid>,
 }
 
 pub(crate) enum TeamControlAction {
@@ -148,13 +147,7 @@ pub(crate) enum TeamControlAction {
         team: CanonicalUuid,
     },
     CloseMenus,
-    CloseTeam {
-        team: CanonicalUuid,
-    },
-    OpenTeam {
-        team: CanonicalUuid,
-    },
-    /// Open a team and switch it to Chat, where its members' composers live.
+    /// Switch a team to Chat, where its members' composers live.
     ShowChat {
         team: CanonicalUuid,
     },
@@ -211,12 +204,7 @@ impl Reducible for TeamControls {
                 next.toggle_arrangement(team);
             }
             TeamControlAction::CloseMenus => next.close_menus(),
-            TeamControlAction::CloseTeam { team } => next.close_team(team),
-            TeamControlAction::OpenTeam { team } => next.open_team(team),
-            TeamControlAction::ShowChat { team } => {
-                next.open_team(team);
-                next.set_mode(Some(team), TeamMode::Chat);
-            }
+            TeamControlAction::ShowChat { team } => next.set_mode(Some(team), TeamMode::Chat),
             TeamControlAction::SaveSplit { team, topology } => {
                 next.save_split(team, topology);
             }
@@ -297,10 +285,6 @@ impl TeamControls {
         self.empty_mode
     }
 
-    pub(in crate::browser) fn is_closed(&self, team: CanonicalUuid) -> bool {
-        self.closed.contains(&team)
-    }
-
     pub(in crate::browser) fn any_menu_open(&self) -> bool {
         self.teams
             .values()
@@ -354,18 +338,6 @@ impl TeamControls {
         for state in self.teams.values_mut() {
             state.arrangement_open = false;
         }
-    }
-
-    fn close_team(&mut self, team: CanonicalUuid) {
-        let state = self.teams.entry(team).or_default();
-        state.menu_open = false;
-        state.import_open = false;
-        state.arrangement_open = false;
-        self.closed.insert(team);
-    }
-
-    fn open_team(&mut self, team: CanonicalUuid) {
-        self.closed.remove(&team);
     }
 
     fn save_split(&mut self, team: CanonicalUuid, topology: Vec<TeamArrangement>) {
@@ -469,7 +441,6 @@ impl TeamControls {
             .map(|subscription| subscription.team)
             .collect::<BTreeSet<_>>();
         self.teams.retain(|team, _| live_teams.contains(team));
-        self.closed.retain(|team| live_teams.contains(team));
 
         // A seat submitted from the empty Dash view must keep that view when
         // its first real surface arrives. The resident's authoritative

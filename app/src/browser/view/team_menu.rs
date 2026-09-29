@@ -13,7 +13,6 @@ pub(super) struct Context<'a> {
     pub(super) identity: Option<&'a CanvasIdentity>,
     pub(super) update: Option<&'a CanvasUpdate>,
     pub(super) sender: &'a SenderHandle,
-    pub(super) team_controls: &'a UseReducerHandle<TeamControls>,
     pub(super) submissions: &'a SubmissionStatus,
 }
 
@@ -120,7 +119,6 @@ fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
         sender: context.sender,
         can_configure,
         topology_revision: lanes.topology_revision,
-        team_controls: context.team_controls,
     };
     html! {
         <div class="canvas-menu-page" data-menu-page="Chat">
@@ -138,7 +136,6 @@ fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
                             context.sender,
                             can_configure,
                             lanes.topology_revision,
-                            context.team_controls,
                         )
                     })}
                 }
@@ -511,7 +508,6 @@ fn render_team(
     sender: &SenderHandle,
     can_configure: bool,
     topology_revision: u64,
-    team_controls: &UseReducerHandle<TeamControls>,
 ) -> Html {
     let target = team.lane;
     let current = team
@@ -527,8 +523,6 @@ fn render_team(
         can_configure,
         topology_revision,
     );
-    let closed = team_controls.is_closed(team.lane);
-    let reopen = team_controls.clone();
     html! {
         <article
             class="canvas-team"
@@ -545,17 +539,6 @@ fn render_team(
                         team.members.len()
                     )}</span>
                 </div>
-                if closed {
-                    <button
-                        type="button"
-                        class="canvas-team-open canvas-compact-control"
-                        onclick={Callback::from(move |_| {
-                            reopen.dispatch(TeamControlAction::OpenTeam {
-                                team: target,
-                            });
-                        })}
-                    >{"Open team"}</button>
-                }
             </header>
             <div class="canvas-team-members">
                 {for team.members.iter().enumerate().map(|(position, member)| {
@@ -568,8 +551,6 @@ fn render_team(
                         },
                         team.lane,
                         can_configure,
-                        team_controls,
-                        false,
                     )
                 })}
             </div>
@@ -588,8 +569,6 @@ fn render_member(
     presence: PresenceProjection<'_>,
     source: CanonicalUuid,
     can_configure: bool,
-    team_controls: &UseReducerHandle<TeamControls>,
-    show_reopen: bool,
 ) -> Html {
     let pending = super::member_pending(presence.waiting, presence.submissions, member.lane);
     let status = member.status(pending);
@@ -599,8 +578,6 @@ fn render_member(
         .unwrap_or_else(|| watchband::leaf(&member.worktree).to_owned());
     let worktree = watchband::leaf(&member.worktree).to_owned();
     let ondragstart = begin_drag(member.lane, can_configure);
-    let closed = team_controls.is_closed(source);
-    let reopen = team_controls.clone();
     html! {
         <article
             class="canvas-team-member"
@@ -622,15 +599,6 @@ fn render_member(
                 )}</small>
             </span>
             <span class="canvas-member-drag" aria-hidden="true">{"↕"}</span>
-            if closed && show_reopen {
-                <button
-                    type="button"
-                    class="canvas-team-open canvas-compact-control"
-                    onclick={Callback::from(move |_| {
-                        reopen.dispatch(TeamControlAction::OpenTeam { team: source });
-                    })}
-                >{"Open team"}</button>
-            }
         </article>
     }
 }
@@ -662,7 +630,6 @@ struct SoloDropRender<'a> {
     sender: &'a SenderHandle,
     can_configure: bool,
     topology_revision: u64,
-    team_controls: &'a UseReducerHandle<TeamControls>,
 }
 
 fn render_solo_members_drop(
@@ -702,8 +669,6 @@ fn render_solo_members_drop(
                             },
                             member.lane,
                             render.can_configure,
-                            render.team_controls,
-                            true,
                         )
                     })}
                 }

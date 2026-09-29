@@ -145,8 +145,7 @@
 | Situation | Expected | Ref |
 | --- | --- | --- |
 | A team holds several worktrees | each worktree remains its own lane and send address; the team groups them in one console | [A team groups one or more lanes](../invariants/lifecycle.md#topology-a-team-groups-one-or-more-lanes) |
-| One browser chooses `Close team` | that mounted browser hides the console; topology and other browsers are unchanged | [Close team is browser-local presentation](../invariants/lifecycle.md#topology-close-team-is-browser-local-presentation) |
-| That browser chooses **Agents → Open team** for a closed grouped team | the console returns during the same mount; no authority command or topology change occurs | [Close team is browser-local presentation](../invariants/lifecycle.md#topology-close-team-is-browser-local-presentation) |
+| The operator chooses `Close team` | every lane leaves the team and keeps its seat and send address as an independent agent | [Close team removes every member](../invariants/lifecycle.md#topology-close-team-removes-every-member) |
 | New content arrives | it places by insert; nothing already placed is re-decided | [New content places by insert](../invariants/lifecycle.md#surface-new-content-places-by-insert) |
 | A neighbour's content grows | untouched cards keep their column and span | [A card's column and span latch between geometry replays](../invariants/lifecycle.md#surface-a-card-s-column-and-span-latch-between-geometry-replays) |
 | Any motion is observed | it corresponds to a change, not to a re-render | [Movement means change](../invariants/lifecycle.md#surface-movement-means-change) |

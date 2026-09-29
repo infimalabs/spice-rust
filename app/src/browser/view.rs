@@ -139,7 +139,6 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
                 cursor: &cursor,
                 sender: render.sender,
                 submissions: &render.submissions.status,
-                team_controls: render.team_controls,
             })}
             if let Some(notice) = &**render.work_scope_notice {
                 <p class="visually-hidden" role="status" aria-live="polite">{notice}</p>
@@ -599,9 +598,8 @@ fn render_topology_group(
     team: Option<(CanonicalUuid, &UseReducerHandle<TeamControls>)>,
     agents: Vec<(&crate::runtime::LaneMember, &crate::watchband::Standing)>,
 ) -> Html {
-    // The composer lives in the team's Chat pane, which a closed team or one
-    // showing Dash or Work leaves unrendered or inert, so following the link
-    // first shows that pane.
+    // The composer lives in the team's Chat pane, which a team showing Dash or
+    // Work leaves inert, so following the link first shows that pane.
     let show_chat = team.map(|(team, controls)| {
         let controls = controls.clone();
         Callback::from(move |_: MouseEvent| {

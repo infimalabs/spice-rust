@@ -456,6 +456,32 @@ pub fn split_team(
     Some(split)
 }
 
+/// Remove every member from one multi-agent team.
+///
+/// Each member becomes an independent agent under its own lane identity,
+/// standing where the team stood; unlike [`split_team`], nothing keeps the
+/// team's identity, so the team leaves the lane table. Every other team keeps
+/// its identity, members, and order.
+#[must_use]
+pub fn dissolve_team(
+    teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    target: CanonicalUuid,
+) -> Option<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>> {
+    let members = teams.iter().find(|(team, _)| *team == target)?.1.as_slice();
+    if members.len() < 2 {
+        return None;
+    }
+    let mut dissolved = Vec::with_capacity(teams.len() + members.len() - 1);
+    for (team, lanes) in teams {
+        if *team == target {
+            dissolved.extend(lanes.iter().map(|member| (*member, vec![*member])));
+        } else {
+            dissolved.push((*team, lanes.clone()));
+        }
+    }
+    Some(dissolved)
+}
+
 /// Move one member of a multi-agent team into one fresh team.
 ///
 /// The source team keeps its identity and the relative order of every sibling.
