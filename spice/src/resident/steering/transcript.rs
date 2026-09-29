@@ -61,7 +61,8 @@ impl NewestMessage {
             listen::Event::Session(_)
             | listen::Event::Usage(_)
             | listen::Event::Compaction(_)
-            | listen::Event::Failure(_) => {}
+            | listen::Event::Failure(_)
+            | listen::Event::SignOut(_) => {}
         }
     }
 

@@ -452,6 +452,20 @@ fn project_event_body(
             automatic_speech: None,
             media: Vec::new(),
         },
+        listen::Event::SignOut(sign_out) => ProjectedEvent {
+            activity: AgentActivityKind::SignOut,
+            final_answer: false,
+            locus: sign_out.locus,
+            text: format!(
+                "{}\n\nSign in from a terminal with `{}`.",
+                sign_out.message.trim_end(),
+                sign_out.login
+            ),
+            classifications: Vec::new(),
+            directive_contexts: Vec::new(),
+            automatic_speech: None,
+            media: Vec::new(),
+        },
         _ => return Ok(None),
     };
     Ok(Some(projected))

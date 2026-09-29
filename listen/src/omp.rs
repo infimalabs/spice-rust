@@ -12,8 +12,8 @@ use tape::Locus;
 
 use crate::{
     Compaction, Dialog, Event, Events, Failure, Object, PromptOutcome, PromptStatus, Prose,
-    ProseRole, ProviderError, Reasoning, ReasoningContent, ResidueKind, SessionDeclaration, Tool,
-    ToolMoment, ToolOutcome, ToolResult, TurnMoment, Usage, array,
+    ProseRole, ProviderError, Reasoning, ReasoningContent, ResidueKind, SessionDeclaration,
+    SignOut, Tool, ToolMoment, ToolOutcome, ToolResult, TurnMoment, Usage, array,
     media::{self, OwnedContent},
     object, optional_boolean, optional_string, optional_unsigned, required, string,
 };
@@ -548,7 +548,20 @@ fn kept_identity(body: &Object) -> Option<String> {
     Some(format!("kept:{kept}:{tokens}"))
 }
 
+/// Notice source omp gives the warning it raises when it signs an account out.
+const SIGN_OUT_SOURCE: &str = "auth";
+
+/// Terminal counterpart of the `/login` command omp's sign-out notice names.
+const LOGIN_COMMAND: &str = "omp login";
+
 fn notice(record: &Object, locus: Locus) -> Events {
+    if optional_string(record, "source")? == Some(SIGN_OUT_SOURCE) {
+        return Ok(vec![Event::SignOut(SignOut {
+            message: string(record, "message")?.to_owned(),
+            login: LOGIN_COMMAND.to_owned(),
+            locus,
+        })]);
+    }
     if optional_string(record, "level")? != Some("error") {
         return Ok(Vec::new());
     }

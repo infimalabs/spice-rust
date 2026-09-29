@@ -117,7 +117,14 @@ pub(super) fn closing_word(
             let decoded = vendor
                 .decode(&bytes[from..to], locus)
                 .map_err(|error| error.to_string())?;
-            let Some(newest) = decoded.events().last() else {
+            // A sign-out is the vendor's account notice, not a word on the
+            // turn, so the exit is decided by what the occupant wrote before it.
+            let Some(newest) = decoded
+                .events()
+                .iter()
+                .rev()
+                .find(|event| !matches!(event, listen::Event::SignOut(_)))
+            else {
                 continue;
             };
             return Ok(match newest {
@@ -125,7 +132,7 @@ pub(super) fn closing_word(
                 listen::Event::Prose(prose) if prose.role == listen::ProseRole::Operator => {
                     LastWord::Silent
                 }
-                listen::Event::Session(_) => LastWord::Silent,
+                listen::Event::Session(_) | listen::Event::SignOut(_) => LastWord::Silent,
                 listen::Event::Prose(_)
                 | listen::Event::ProseEvidence(_)
                 | listen::Event::Reasoning(_)

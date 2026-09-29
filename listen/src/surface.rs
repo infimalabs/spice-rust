@@ -102,6 +102,13 @@ pub enum SurfaceEvent {
         /// Vendor failure message.
         message: String,
     },
+    /// Vendor account sign-out.
+    SignOut {
+        /// Vendor notice naming the affected account.
+        message: String,
+        /// Terminal command that signs the vendor back in.
+        login: String,
+    },
 }
 
 fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
@@ -124,6 +131,7 @@ impl SurfaceEvent {
             Self::Usage { .. } => EventKind::Usage,
             Self::Compaction {} => EventKind::Compaction,
             Self::Failure { .. } => EventKind::Failure,
+            Self::SignOut { .. } => EventKind::SignOut,
         }
     }
 }
@@ -157,6 +165,10 @@ impl From<&Event> for SurfaceEvent {
             Event::Compaction(_) => Self::Compaction {},
             Event::Failure(event) => Self::Failure {
                 message: event.message.clone(),
+            },
+            Event::SignOut(event) => Self::SignOut {
+                message: event.message.clone(),
+                login: event.login.clone(),
             },
         }
     }
@@ -199,6 +211,9 @@ impl fmt::Display for SurfaceEvent {
             ),
             Self::Compaction {} => formatter.write_str("compaction"),
             Self::Failure { message } => write!(formatter, "failure message={message:?}"),
+            Self::SignOut { message, login } => {
+                write!(formatter, "sign_out message={message:?} login={login:?}")
+            }
         }
     }
 }

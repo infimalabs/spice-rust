@@ -702,6 +702,7 @@ pub(crate) const fn agent_activity_name(activity: wire::AgentActivityKind) -> &'
         wire::AgentActivityKind::Reasoning => "reasoning",
         wire::AgentActivityKind::Turn => "turn",
         wire::AgentActivityKind::Compaction => "compaction",
+        wire::AgentActivityKind::SignOut => "sign-out",
     }
 }
 
