@@ -66,6 +66,11 @@
     gap: 4px 8px;
   }
   .team-direction-preview { grid-column: 1 / -1; grid-row: 2; }
+  .team-job-table th:nth-child(1) { width: 5.5rem; }
+  .team-job-table th:nth-child(2) { width: 3.5rem; }
+  .team-job-table th:nth-child(4) { width: 4.5rem; }
+  .team-job-table th,
+  .team-job-table td { padding-inline: 6px; }
   .page-heading { align-items: start; }
   .page-heading h1 { font-size: 1.35rem; }
   th, td { padding: 10px; }

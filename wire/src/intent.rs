@@ -869,6 +869,15 @@ pub struct LaneJob {
     pub standing: LaneJobStanding,
 }
 
+impl LaneJob {
+    /// Unix microsecond the job started, decoded from its key; absent when
+    /// the key is not a moment-coded spelling.
+    #[must_use]
+    pub fn started_micros(&self) -> Option<i64> {
+        crate::witness::moment_micros(&self.id)
+    }
+}
+
 /// Dynamic liveness of one lane at the read barrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

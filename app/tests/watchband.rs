@@ -4,8 +4,8 @@ use app::watchband::{
     arrangement, badge, can_leave_all_teams, dissolve_team, elapsed_label,
     elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, latest_lane_prose, leaf,
     one_line, remaining_label, remaining_label_deadline_millis, reported_tasks, short,
-    split_member, split_team, standing_title, standings, task_mentions, teams, ticker_chunks,
-    ticker_line, topology, truncate,
+    split_member, split_team, standing_title, standings, task_mentions, team_jobs, teams,
+    ticker_chunks, ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -505,6 +505,51 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
         Some("waiting on 1 job (1 running)")
     );
     assert_eq!(jobs_kept(&[]), None);
+}
+
+#[test]
+fn team_jobs_interleave_members_by_start_and_keep_row_identity_across_standing() {
+    let mut members = standings(
+        &[
+            lane(LANE_A, "/fleet/one/spice-rust-a"),
+            lane(LANE_B, "/fleet/one/spice-rust-b"),
+        ],
+        &[],
+        &[],
+    );
+    let micros = 1_790_000_000_123_456_i64;
+    let key = |offset: i64| {
+        wire::TaskStamp::for_micros(micros + offset)
+            .expect("fixture moment")
+            .to_string()
+    };
+    let job = |offset: i64, command: &str, standing| wire::intent::LaneJob {
+        id: key(offset),
+        command: command.to_owned(),
+        standing,
+    };
+    use wire::intent::LaneJobStanding::{Running, Unheard};
+    members[0].jobs = vec![job(0, "a first", Running), job(20, "a third", Unheard)];
+    members[1].jobs = vec![job(10, "b second", Running)];
+
+    let rows = team_jobs(&members);
+    assert_eq!(
+        rows.iter()
+            .map(|row| row.job.command.as_str())
+            .collect::<Vec<_>>(),
+        ["a first", "b second", "a third"]
+    );
+    assert_eq!(rows[0].started_millis(), Some(micros / 1_000));
+    let before = rows.iter().map(|row| row.key()).collect::<Vec<_>>();
+
+    members[0].jobs[0].standing = Unheard;
+    let after = team_jobs(&members)
+        .iter()
+        .map(|row| row.key())
+        .collect::<Vec<_>>();
+    assert_eq!(before, after);
+    assert_ne!(before[0], before[1]);
+    assert!(team_jobs(&[]).is_empty());
 }
 
 #[test]

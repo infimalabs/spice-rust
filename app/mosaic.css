@@ -1428,4 +1428,36 @@ a.relative-age {
   color: var(--muted);
   font-size: .67rem;
 }
+.team-job-table {
+  table-layout: fixed;
+  border-top: var(--canvas-edge);
+  border-bottom: var(--canvas-edge);
+  font-size: .65rem;
+}
+.team-job-table th {
+  padding: 6px 10px;
+  font-size: .58rem;
+  font-weight: 650;
+}
+.team-job-table th:nth-child(1) { width: 9rem; }
+.team-job-table th:nth-child(2),
+.team-job-table th:nth-child(4) { width: 5.5rem; }
+.team-job-table td {
+  padding: 7px 10px;
+  vertical-align: middle;
+  background: color-mix(in srgb, var(--panel) 76%, var(--page));
+}
+.team-job-row td:first-child { border-left: 2px solid var(--accent-slot, var(--accent)); }
+.team-job-row .team-task-member { max-width: 100%; }
+.team-job-age,
+.team-job-standing {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+.team-job-command {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.team-job-row[data-job-standing="unheard"] .team-job-standing { color: var(--muted); }
 

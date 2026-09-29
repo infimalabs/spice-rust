@@ -77,6 +77,30 @@ impl TaskStamp {
     }
 }
 
+/// Decode the Unix microsecond a moment-coded key names: nine base-52 digits
+/// for microseconds, or a retained eight-digit spelling for milliseconds.
+///
+/// Task stamps, steering keys, and kept-job keys share this codec. Text that
+/// is not one such key names no moment.
+pub(crate) fn moment_micros(text: &str) -> Option<i64> {
+    if !matches!(text.len(), TaskStamp::LEGACY_WIDTH | TaskStamp::WIDTH) {
+        return None;
+    }
+    let mut value = 0_u64;
+    for byte in text.bytes() {
+        let digit = TASK_STAMP_ALPHABET
+            .iter()
+            .position(|candidate| *candidate == byte)?;
+        value = value.checked_mul(52)?.checked_add(digit as u64)?;
+    }
+    let decoded = i64::try_from(value).ok()?;
+    if text.len() == TaskStamp::LEGACY_WIDTH {
+        decoded.checked_mul(1_000)
+    } else {
+        Some(decoded)
+    }
+}
+
 impl FromStr for TaskStamp {
     type Err = TaskStampError;
 
@@ -114,7 +138,7 @@ impl<'de> Deserialize<'de> for TaskStamp {
 mod task_stamp_tests {
     use std::collections::BTreeSet;
 
-    use super::{TaskHandle, TaskStamp};
+    use super::{TaskHandle, TaskStamp, moment_micros};
 
     #[test]
     fn current_and_retained_stamps_share_one_strict_parser() {
@@ -127,6 +151,22 @@ mod task_stamp_tests {
         assert_eq!(current.as_str().parse::<TaskStamp>(), Ok(current));
         for refused in ["", "0000000", "0000000000", "0000000A", "00000000A"] {
             assert!(refused.parse::<TaskStamp>().is_err(), "{refused:?}");
+        }
+    }
+
+    #[test]
+    fn moment_decoding_inverts_minting_and_scales_retained_millis() {
+        for micros in [
+            0,
+            1_700_000_000_123_456,
+            52_i64.pow(TaskStamp::WIDTH as u32) - 1,
+        ] {
+            let stamp = TaskStamp::for_micros(micros).expect("mintable moment");
+            assert_eq!(moment_micros(stamp.as_str()), Some(micros));
+        }
+        assert_eq!(moment_micros("00000001"), Some(1_000));
+        for refused in ["", "0000000", "0000000000", "0000000A", "00000000A"] {
+            assert_eq!(moment_micros(refused), None, "{refused:?}");
         }
     }
 

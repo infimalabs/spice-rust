@@ -391,6 +391,13 @@ work. Empty lanes remain visible. The same keyed cards move between lanes
 without disturbing unchanged cards, and opening one uses the shared task detail
 layer with focus returned to its launching card.
 
+Below the lanes, a Kept jobs table lists every command a member keeps beyond
+the call that started it, across the whole team and oldest first. Each row
+names the member in its accent, ticks the job's age from the moment its key
+encodes, shows the command on one line with the full text on hover, and says
+whether it is still running or ended unheard. A standing change updates its
+row in place; with nothing kept, the table holds one fixed-height empty line.
+
 
 ### The team console
 

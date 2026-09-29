@@ -38,7 +38,7 @@ pub(super) use fleet::use_team_menu_escape;
 use fleet::{FleetRender, TeamMode, carries_team, render_empty_fleet, render_populated_fleet};
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
-use team_work::render_team_work_lanes;
+use team_work::{render_team_jobs, render_team_work_lanes};
 pub(super) use vendor_icon::{render_composer_vendor_icon, render_dash_vendor_icon};
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
@@ -522,6 +522,7 @@ fn render_tasks(
                 </div>
             </header>
             {render_team_work_lanes(work.as_ref(), team.lane, &cards)}
+            {render_team_jobs(standings, team.lane)}
             <section class="team-task-section" aria-labelledby={format!("direction-queue-{}", team.lane)}>
                 <header>
                     <h3 id={format!("direction-queue-{}", team.lane)}>{"Direction queue"}</h3>
