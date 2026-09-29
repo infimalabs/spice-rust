@@ -397,7 +397,10 @@ layer with focus returned to its launching card.
 Chat tiles one console per live team. Its ordered surface exposes team identity
 and liveness, the Dash/Work/Chat rail, pane-specific member standing, and the
 lane-attributed message stream. Each member lane remains the concrete address
-of one worktree; the team is never a broadcast identity.
+of one worktree; the team is never a broadcast identity. Dash gives every
+member exactly one presence row — working, working on its claim, idle in its
+seat, starting before first output, or genuinely vacant — plus the age of that
+state.
 
 Seat and import share one panel, including for an empty fleet. Moving one member
 to a new team preserves its siblings and allocation policy. Leaving all teams

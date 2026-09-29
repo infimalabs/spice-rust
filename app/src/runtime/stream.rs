@@ -6,6 +6,7 @@ use super::*;
 use super::message_cards::trim_agent_message_lane;
 
 const LIFECYCLE_BOUNDARY_LIMIT: usize = 256;
+const PRESENCE_TRANSITION_LIMIT: usize = 256;
 
 /// A terminal stream boundary that remains distinct from command outcomes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -101,6 +102,7 @@ impl CanvasRuntime {
                     return StreamApplication::new(Vec::new(), settings_changed);
                 }
                 self.observe_lifecycle_boundary(fact);
+                self.observe_presence_transition(fact);
                 self.resume = Some(StreamCursor {
                     epoch,
                     seq: fact.seq(),
@@ -177,6 +179,7 @@ impl CanvasRuntime {
         }
         for row in &packed.rows {
             self.observe_lifecycle_boundary(row);
+            self.observe_presence_transition(row);
         }
         self.resume = Some(StreamCursor {
             epoch,
@@ -212,6 +215,64 @@ impl CanvasRuntime {
             );
         }
         changed
+    }
+
+    fn observe_presence_transition(&mut self, row: &wire::StreamFact) {
+        let transition = match row.kind() {
+            FactKind::LaneSeated => row
+                .read::<wire::body::LaneSeated>()
+                .map(|body| (body.lane, None)),
+            FactKind::LaneStarted => row
+                .read::<wire::body::LaneStarted>()
+                .map(|body| (body.lane, Some(body.occupant))),
+            FactKind::LaneRenewed => row
+                .read::<wire::body::LaneRenewed>()
+                .map(|body| (body.lane, Some(body.occupant))),
+            FactKind::LaneExited => row
+                .read::<wire::body::LaneExited>()
+                .map(|body| (body.lane, None)),
+            FactKind::LaneTimedOut => row
+                .read::<wire::body::LaneTimedOut>()
+                .map(|body| (body.lane, None)),
+            FactKind::LaneCancelled => row
+                .read::<wire::body::LaneCancelled>()
+                .map(|body| (body.lane, None)),
+            FactKind::LaneSignalled => row
+                .read::<wire::body::LaneSignalled>()
+                .map(|body| (body.lane, None)),
+            FactKind::LaneDrained => row
+                .read::<wire::body::LaneDrained>()
+                .map(|body| (body.lane, None)),
+            FactKind::LaneKilled => row
+                .read::<wire::body::LaneKilled>()
+                .map(|body| (body.lane, None)),
+            FactKind::LaneDegraded => row
+                .read::<wire::body::LaneDegraded>()
+                .map(|body| (body.lane, None)),
+            _ => None,
+        };
+        let Some((lane, occupant)) = transition else {
+            return;
+        };
+        if self
+            .presence_transitions
+            .iter()
+            .any(|transition| transition.seq == row.seq())
+        {
+            return;
+        }
+        self.presence_transitions.push(LanePresenceTransition {
+            seq: row.seq(),
+            lane,
+            occupant,
+            observed: *row.at(),
+        });
+        self.presence_transitions
+            .sort_by_key(|transition| transition.seq);
+        if self.presence_transitions.len() > PRESENCE_TRANSITION_LIMIT {
+            let discard = self.presence_transitions.len() - PRESENCE_TRANSITION_LIMIT;
+            self.presence_transitions.drain(..discard);
+        }
     }
 
     fn observe_lifecycle_boundary(&mut self, row: &wire::StreamFact) {

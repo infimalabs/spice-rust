@@ -452,7 +452,11 @@ struct HistoryPaging<'a> {
     revision: u64,
 }
 
-fn render_details(team: &crate::runtime::LaneRow, standings: &[Standing]) -> Html {
+fn render_details(
+    runtime: &CanvasRuntime,
+    team: &crate::runtime::LaneRow,
+    standings: &[Standing],
+) -> Html {
     debug_assert_eq!(
         team.members.len(),
         standings.len(),
@@ -463,7 +467,7 @@ fn render_details(team: &crate::runtime::LaneRow, standings: &[Standing]) -> Htm
         <main class="team-dash-frame" aria-label="Team Dash">
             <section class="team-dash-roster" aria-label="Team roster">
                 {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
-                    render_agent_details(member, standing)
+                    render_agent_details(runtime, member, standing)
                 })}
             </section>
             <section class="team-dash-flow" aria-labelledby={flow_heading.clone()}>
@@ -575,7 +579,11 @@ fn lease_age(instant: Option<i64>, class: &'static str, vacant: &'static str) ->
     }
 }
 
-fn render_agent_details(member: &crate::runtime::LaneMember, standing: &Standing) -> Html {
+fn render_agent_details(
+    runtime: &CanvasRuntime,
+    member: &crate::runtime::LaneMember,
+    standing: &Standing,
+) -> Html {
     debug_assert_eq!(
         member.lane, standing.lane,
         "standings retain canonical member order"
@@ -589,6 +597,20 @@ fn render_agent_details(member: &crate::runtime::LaneMember, standing: &Standing
         .clone()
         .unwrap_or_else(|| "unbound".to_owned());
     let status = member.status(standing.pending);
+    let presence = watchband::member_presence(runtime, member, standing);
+    let presence_label = if presence.state == watchband::MemberPresenceState::Working {
+        standing.handle.as_ref().map_or_else(
+            || presence.state.label().to_owned(),
+            |handle| format!("working on {handle}"),
+        )
+    } else {
+        presence.state.label().to_owned()
+    };
+    let presence_age = lease_age(
+        presence.since_millis,
+        "team-presence-age",
+        "age unavailable",
+    );
     html! {
         <article
             key={standing.lane.to_string()}
@@ -596,6 +618,8 @@ fn render_agent_details(member: &crate::runtime::LaneMember, standing: &Standing
             data-agent-lane={standing.lane.to_string()}
             data-lane-status={status.key()}
             data-accent={standing.accent.to_string()}
+            data-agent-presence={presence.state.key()}
+            title={watchband::standing_title(standing)}
         >
             <header class="team-dash-member-header">
                 {view::render_member_presence(status)}
@@ -603,7 +627,11 @@ fn render_agent_details(member: &crate::runtime::LaneMember, standing: &Standing
                 {render_dash_vendor_icon(standing)}
             </header>
             <details class="team-dash-member-disclosure">
-                <summary>{"Seat details"}</summary>
+                <summary title="Seat details">
+                    <span class="team-presence-state">{presence_label}</span>
+                    {" · "}
+                    {presence_age}
+                </summary>
                 <dl>
                     <div>
                         <dt>{"Agent channel"}</dt>
@@ -618,13 +646,31 @@ fn render_agent_details(member: &crate::runtime::LaneMember, standing: &Standing
                         <dd><code>{standing.worktree.clone()}</code></dd>
                     </div>
                     <div>
-                        <dt>{"Residency policy"}</dt>
-                        <dd>{standing.life.clone()}</dd>
+                        <dt>{"Pending"}</dt>
+                        <dd>{format!("{} pending", standing.pending)}</dd>
+                    </div>
+                    <div>
+                        <dt>{"Model / residency policy"}</dt>
+                        <dd>{format!(
+                            "{} / {}",
+                            watchband::model_display(standing.model.as_deref()),
+                            standing.life
+                        )}</dd>
                     </div>
                     <div>
                         <dt>{"Session"}</dt>
                         <dd><code>{session}</code></dd>
                     </div>
+                    {for standing.jobs.iter().map(|job| html! {
+                        <div>
+                            <dt>
+                                {"Job "}
+                                <code>{job.id.clone()}</code>
+                                {format!(" ({})", job.standing.as_str())}
+                            </dt>
+                            <dd>{job.command.clone()}</dd>
+                        </div>
+                    })}
                 </dl>
             </details>
         </article>

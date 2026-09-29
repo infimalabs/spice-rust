@@ -366,6 +366,7 @@ impl<T> ScopedValue<T> {
 /// One agent-authored activity retained for a team status strip.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LaneActivity {
+    author: CanonicalUuid,
     lane: CanonicalUuid,
     display_millis: i64,
     class: &'static str,
@@ -382,6 +383,36 @@ pub struct LaneLifecycleBoundary {
     occupant: Option<CanonicalUuid>,
     observed: wire::Instant,
     cause: String,
+}
+
+/// One occupancy transition used to date the current member presence.
+///
+/// This is separate from [`LaneLifecycleBoundary`]: every start and ending
+/// matters to presence, while the conversation stream intentionally renders
+/// only noteworthy lifecycle cards.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LanePresenceTransition {
+    seq: Seq,
+    lane: CanonicalUuid,
+    occupant: Option<CanonicalUuid>,
+    observed: wire::Instant,
+}
+
+impl LanePresenceTransition {
+    #[must_use]
+    pub const fn lane(&self) -> CanonicalUuid {
+        self.lane
+    }
+
+    #[must_use]
+    pub const fn occupant(&self) -> Option<CanonicalUuid> {
+        self.occupant
+    }
+
+    #[must_use]
+    pub fn display_millis(&self) -> i64 {
+        self.observed.get().as_millisecond()
+    }
 }
 
 impl LaneLifecycleBoundary {
@@ -436,6 +467,7 @@ impl LaneActivity {
             _ => message.text.clone(),
         };
         Self {
+            author: message.author,
             lane: message.lane,
             display_millis: agent_message_display_millis(message),
             class,
@@ -446,6 +478,12 @@ impl LaneActivity {
                 locus: message.locus,
             },
         }
+    }
+
+    /// Occupant that produced this activity.
+    #[must_use]
+    pub const fn author(&self) -> CanonicalUuid {
+        self.author
     }
 
     /// Independently steerable member that produced this activity.
@@ -698,6 +736,7 @@ pub struct CanvasRuntime {
     terminal: Option<StreamTerminal>,
     activities: Vec<LaneActivity>,
     lifecycle_boundaries: Vec<LaneLifecycleBoundary>,
+    presence_transitions: Vec<LanePresenceTransition>,
 }
 
 impl CanvasRuntime {
@@ -730,6 +769,7 @@ impl CanvasRuntime {
             terminal: None,
             activities: Vec::new(),
             lifecycle_boundaries: Vec::new(),
+            presence_transitions: Vec::new(),
         }
     }
     /// Start a changed resident scope without blanking the operator's mounted
@@ -1004,6 +1044,18 @@ impl CanvasRuntime {
     #[must_use]
     pub fn lifecycle_boundaries(&self) -> &[LaneLifecycleBoundary] {
         &self.lifecycle_boundaries
+    }
+
+    /// Newest retained occupancy transition for one independently steerable lane.
+    #[must_use]
+    pub fn newest_lane_presence_transition(
+        &self,
+        lane: CanonicalUuid,
+    ) -> Option<&LanePresenceTransition> {
+        self.presence_transitions
+            .iter()
+            .rev()
+            .find(|transition| transition.lane == lane)
     }
 
     /// Newest retained agent-authored transcript messages in creation order.
