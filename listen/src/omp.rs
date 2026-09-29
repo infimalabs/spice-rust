@@ -277,8 +277,19 @@ fn assistant(message: &Object, locus: Locus) -> Events {
     let phase = stop_reason
         .is_some_and(|reason| matches!(reason, "stop" | "length"))
         .then(|| "final_answer".to_owned());
+    let content = array(message, "content")?;
+    // A provider can settle the prose before a tool call as a paraphrased
+    // reasoning block. The call's intent then holds the message's only
+    // verbatim assistant words; beside visible text it is a caption.
+    let spoken = content.iter().any(|value| {
+        value
+            .as_object()
+            .and_then(|block| block.get("type"))
+            .and_then(Value::as_str)
+            == Some("text")
+    });
     let mut events = Vec::new();
-    for value in array(message, "content")? {
+    for value in content {
         let block = value.as_object().ok_or(ResidueKind::Malformed {
             field: "message.content[]",
             expected: "object",
@@ -303,6 +314,11 @@ fn assistant(message: &Object, locus: Locus) -> Events {
                 moment: ToolMoment::Call {
                     name: string(block, "name")?.to_owned(),
                     arguments: arguments(block),
+                    intent: if spoken {
+                        None
+                    } else {
+                        optional_string(block, "intent")?.map(str::to_owned)
+                    },
                 },
                 locus,
             })),

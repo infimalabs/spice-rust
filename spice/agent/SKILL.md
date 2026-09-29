@@ -22,14 +22,18 @@ treat their task, repository, and steering output as current truth. Do not
 infer a durable task from this skill invocation.
 
 When steering keys are pending, lead the next working message with a visible
-line `ACK <key> [<key> ...]: <one clause>` or `NAK <key>: <one clause>`. That
-prose is the acknowledgment: the resident retires the key as the text lands, so
-run no acknowledgment command and wait for no confirmation. A final reply can
-also acknowledge; never end unfinished work merely to do so.
+line `ACK <key> [<key> ...]: <one clause>` or `NAK <key>: <one clause>`. When
+that message also calls a tool, lead the first call's intent with the same
+header: the provider can settle prose that precedes a tool call as a
+paraphrase that drops the key, while the call's intent is kept verbatim. That
+header is the acknowledgment: the resident retires the key as it lands, so run
+no acknowledgment command and wait for no confirmation. A final reply can also
+acknowledge; never end unfinished work merely to do so.
 
-The evidence is visible assistant text on the transcript, not a UI label;
-reasoning, tool arguments, quoted headers, and buried key mentions do not
-count. A repeated delivery is not a new request. After your visible
+The evidence is assistant words the transcript keeps verbatim, visible text or
+a tool call's intent, not a UI label; reasoning, tool arguments, quoted
+headers, and buried key mentions do not count. A repeated delivery is not a
+new request. After your visible
 acknowledgment, a reminder calls for checking the current inbox when needed,
 not repeated commands or duplicate work; an empty pending list is not a failure.
 A private `<system-notice>` that explicitly carries no acknowledgment key is

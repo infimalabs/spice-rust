@@ -277,7 +277,9 @@ pub enum SurfaceToolMoment {
 impl From<&ToolMoment> for SurfaceToolMoment {
     fn from(moment: &ToolMoment) -> Self {
         match moment {
-            ToolMoment::Call { name, arguments } => Self::Call {
+            ToolMoment::Call {
+                name, arguments, ..
+            } => Self::Call {
                 name: name.clone(),
                 arguments: arguments.clone(),
             },

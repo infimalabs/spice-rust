@@ -26,6 +26,7 @@ fn call(name: &str, arguments: &str) -> listen::ToolMoment {
     listen::ToolMoment::Call {
         name: name.to_owned(),
         arguments: arguments.to_owned(),
+        intent: None,
     }
 }
 

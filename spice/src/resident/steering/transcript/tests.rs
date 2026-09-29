@@ -21,6 +21,11 @@ const OMP_ACK_UPDATE: &[u8] = br#"{"type":"message_update","assistantMessageEven
 "#;
 const OMP_PARAPHRASED_END: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Acknowledging the operator direction."},{"type":"toolCall","id":"call-1","name":"shell","arguments":{"command":"echo ACK 1kKRRsDS"}}],"stopReason":"toolUse"}}
 "#;
+/// The shape the Anthropic API settles when it returns the prose before a tool
+/// call as a paraphrased narration block: no text record exists, and the only
+/// verbatim assistant words are the call's declared intent.
+const OMP_NARRATED_INTENT: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Confirming the revision and checking the listener next.","thinkingSignature":"CAQS/AcKEQgSGAI4AUIJbmFycmF0aW9u"},{"type":"toolCall","id":"call-1","name":"shell","arguments":{"command":"git status","i":"ACK 1kKRRsDS: revision accepted"},"intent":"ACK 1kKRRsDS: revision accepted"}],"stopReason":"toolUse"}}
+"#;
 
 struct LiveKey;
 
@@ -74,6 +79,23 @@ fn omp_paraphrase_and_tool_payload_do_not_invent_acknowledgement_evidence() {
         Err(wire::Outcome::Refusal(refusal))
             if refusal.reason() == "steer::transcript-evidence-absent"
     ));
+}
+
+#[test]
+fn a_leading_header_in_a_narrated_messages_tool_intent_retires_the_key() {
+    let fixture = Fixture::new(&[OMP_NARRATED_INTENT]);
+
+    let recognition = transcript_recognition(&fixture.paths, lane(), &vendor(), KEY, &LiveKey)
+        .unwrap_or_else(|outcome| panic!("the declared intent is evidence: {outcome:?}"));
+
+    assert!(matches!(
+        recognition.outcome,
+        ScanOutcome::Retired {
+            disposition: Disposition::Acked,
+            ..
+        }
+    ));
+    assert_eq!(recognition.locus.event, 1);
 }
 
 #[test]

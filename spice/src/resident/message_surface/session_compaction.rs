@@ -805,8 +805,9 @@ fn decode_record(
 
 fn visible_event(event: &listen::Event) -> bool {
     match event {
-        listen::Event::Prose(prose) => prose.role == listen::ProseRole::Assistant,
+        listen::Event::Prose(_) => super::projection::acknowledging_prose(event).is_some(),
         listen::Event::Compaction(_) => true,
+        listen::Event::Tool(_) if super::projection::acknowledging_prose(event).is_some() => true,
         listen::Event::Tool(tool) => match &tool.moment {
             listen::ToolMoment::Result(outcome) => !outcome.media.is_empty(),
             listen::ToolMoment::Call { .. } | listen::ToolMoment::Update { .. } => false,
@@ -817,7 +818,9 @@ fn visible_event(event: &listen::Event) -> bool {
 
 fn fold_tool(cursor: &mut Cursor, tool: &listen::Tool) {
     match &tool.moment {
-        listen::ToolMoment::Call { name, arguments }
+        listen::ToolMoment::Call {
+            name, arguments, ..
+        }
         | listen::ToolMoment::Update { name, arguments } => {
             let preview = super::tool_preview::call_preview(name, arguments);
             if let Some(pending) = cursor.pending.get_mut(&tool.call_id) {

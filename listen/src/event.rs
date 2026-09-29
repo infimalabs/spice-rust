@@ -108,6 +108,33 @@ impl Event {
             _ => None,
         }
     }
+
+    /// Assistant-authored words the transcript keeps verbatim: visible
+    /// assistant prose, or the intent a tool call declares.
+    ///
+    /// A provider may settle the prose that precedes a tool call as a
+    /// paraphrased reasoning block, while the call and its declared intent are
+    /// recorded exactly as written. Reasoning never qualifies, and neither do
+    /// call arguments, which are tool input rather than authored words.
+    #[must_use]
+    pub fn assistant_text(&self) -> Option<&str> {
+        match self {
+            Self::Prose(prose) | Self::ProseEvidence(prose)
+                if prose.role == ProseRole::Assistant =>
+            {
+                Some(&prose.text)
+            }
+            Self::Tool(Tool {
+                moment:
+                    ToolMoment::Call {
+                        intent: Some(intent),
+                        ..
+                    },
+                ..
+            }) => Some(intent),
+            _ => None,
+        }
+    }
 }
 
 /// The exact vendor identity declared by a current session record.
@@ -174,6 +201,11 @@ pub enum ToolMoment {
         name: String,
         /// Vendor call payload, serialized as JSON.
         arguments: String,
+        /// The assistant's declared purpose for the call, kept when the
+        /// settled message carries no visible text: a provider can settle the
+        /// prose before a tool call as paraphrased reasoning, leaving the
+        /// intent as the message's only verbatim assistant words.
+        intent: Option<String>,
     },
     /// A running call published updated state.
     Update {

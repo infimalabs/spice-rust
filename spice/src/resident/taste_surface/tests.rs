@@ -950,6 +950,7 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
                     moment: listen::ToolMoment::Call {
                         name: "file_change".to_owned(),
                         arguments: r#"{"patch":"polling"}"#.to_owned(),
+                        intent: None,
                     },
                     locus,
                 }),
