@@ -239,9 +239,9 @@ pub fn post_compaction(rendered: &str) -> String {
 /// authority, so it needs neither a seal nor an acknowledgment.
 pub const POST_COMPACTION_NOTICE: &str = concat!(
     "<system-notice>\n[POST-COMPACTION] No steering is pending, so there is nothing \
-     to acknowledge now. When sealed steering names keys, lead one visible assistant \
-     message with `ACK <key> [<key> ...]: <one clause>` or `NAK <key>: <one clause>` \
-     for every key. ",
+     to acknowledge now. When sealed steering names keys, lead visible assistant prose, \
+     and the first tool intent when the message calls a tool, with \
+     `ACK <key> [<key> ...]: <one clause>` or `NAK <key>: <one clause>` for every key. ",
     keep_working!(),
     " This notice carries no acknowledgment key.\n</system-notice>",
 );
