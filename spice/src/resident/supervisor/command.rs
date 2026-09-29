@@ -276,14 +276,15 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// Direction the lane has not heard interrupts the calls in flight, so the
     /// agent sees it as early as it can; a rendering that only restates what
     /// the lane heard waits for the turn's next boundary. After a compaction,
-    /// the replay carries one authenticated recovery instruction.
+    /// the replay carries one authenticated recovery instruction, and an empty
+    /// inbox still hears how to acknowledge inline.
     fn interject(&self, delivery: InboxDelivery) {
-        let Some(rendered) = (self.read_inbox)() else {
+        let Some(rendered) = (self.read_inbox)().filter(|rendered| !rendered.is_empty()) else {
+            if delivery == InboxDelivery::PostCompaction {
+                let _sent = self.steer(steer::inbox::POST_COMPACTION_NOTICE);
+            }
             return;
         };
-        if rendered.is_empty() {
-            return;
-        }
         let mut delivered = self
             .delivered
             .lock()
