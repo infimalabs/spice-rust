@@ -22,15 +22,15 @@ use crate::runtime::LaneRow;
 
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_drag;
+mod provider;
 mod renewal;
 mod submission;
-mod vendor;
 
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use composer_drag::ComposerDragSession;
+pub use provider::{Emblem, Provider, emblem, model_display, model_label, model_provider};
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
 pub use submission::{SubmissionAuthority, SubmissionTarget};
-pub use vendor::{OmpEmblem, composer_vendor_icon_class, omp_emblem, omp_provider};
 
 /// Accent slots the band cycles through.
 ///
@@ -177,25 +177,15 @@ pub struct Standing {
     pub accent: usize,
 }
 
-/// Complete vendor and session detail shown by a standing's hover title.
+/// Complete provider, model, and session detail shown by a standing's hover
+/// title.
 ///
 /// A launch recorded before model and effort became durable names that state
-/// explicitly. It does not borrow the vendor, session, or another lane as a
+/// explicitly. It does not borrow the harness, session, or another lane as a
 /// plausible-looking substitute.
 #[must_use]
 pub fn standing_title(standing: &Standing) -> String {
-    let vendor = match standing.vendor.as_str() {
-        "claude" => "Claude vendor",
-        "codex" => "Codex vendor",
-        "omp" => "oh-my-pi vendor",
-        "openai" => "OpenAI vendor",
-        _ => "Agent vendor",
-    };
-    let mut parts = vec![vendor.to_owned()];
-    parts.push(format!(
-        "model: {}",
-        standing.model.as_deref().unwrap_or("unrecorded")
-    ));
+    let mut parts = vec![model_display(standing.model.as_deref())];
     parts.push(format!(
         "effort: {}",
         standing.effort.as_deref().unwrap_or("unrecorded")

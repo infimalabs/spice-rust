@@ -403,7 +403,7 @@ fn lane_response_with_renewals(
                 worktree: format!("/tmp/worktree-{}", &lane[..8]),
                 speech: wire::SpeechPlayback::Disabled {},
                 life: "steer".to_owned(),
-                vendor: "claude".parse().expect("fixture vendor"),
+                vendor: "omp".parse().expect("fixture vendor"),
                 model: bound.then(|| "sonnet".to_owned()),
                 seat_model: None,
                 effort: bound.then(|| "high".to_owned()),

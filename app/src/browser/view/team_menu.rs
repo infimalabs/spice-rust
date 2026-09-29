@@ -616,7 +616,7 @@ fn render_member(
                 <strong>{format!("{label} on {worktree}")}</strong>
                 <small>{format!(
                     "{} · {}{}",
-                    member.vendor,
+                    crate::watchband::model_display(member.model.as_deref()),
                     status.label(),
                     if pending == 0 { String::new() } else { format!(" · {pending} pending") }
                 )}</small>

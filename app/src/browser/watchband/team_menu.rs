@@ -312,7 +312,11 @@ pub(super) fn render_import(team: &crate::runtime::LaneRow, context: &Context<'_
                             {view::render_member_presence(status)}
                             <span class="canvas-member-copy">
                                 <strong>{format!("{label} on {worktree}")}</strong>
-                                <small>{format!("{} · {}", member.vendor, status.label())}</small>
+                                <small>{format!(
+                                    "{} · {}",
+                                    crate::watchband::model_display(member.model.as_deref()),
+                                    status.label()
+                                )}</small>
                             </span>
                             <span class="team-import-action" aria-hidden="true">{"Import"}</span>
                         </button>

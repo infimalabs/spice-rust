@@ -130,12 +130,11 @@
   stroke-linejoin: round;
   opacity: .8;
 }
-.composer-vendor-icon--claude,
-.composer-vendor-icon--omp-claude {
+.composer-vendor-icon--anthropic {
   color: color-mix(in srgb, #d97706 88%, var(--ink));
   opacity: .72;
 }
-.composer-vendor-icon--omp:not([data-composer-vendor-provider]) { opacity: .9; }
+.composer-vendor-icon:not([data-composer-vendor-provider]) { opacity: .9; }
 .composer-shard--primary:has(.agent-action-menu[open]) .composer-vendor-icon { display: none; }
 
 .team-surface .mosaic-composer {
