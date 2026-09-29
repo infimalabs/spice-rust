@@ -614,7 +614,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .dash-overview-topology-group[data-span="2"] { --group-span: 2; }
 .dash-overview-topology-group[data-span="3"] { --group-span: 3; }
 .dash-overview-topology-group[data-span="4"] { --group-span: 4; }
-.dash-overview-agent-list { grid-column: 1 / -1; direction: rtl; }
+.dash-overview-agent-list { grid-column: 1 / -1; }
 @container (max-width: 820px) { .dash-overview-topology-groups { --topology-columns: 3; } }
 @container (max-width: 610px) { .dash-overview-topology-groups { --topology-columns: 2; } }
 @container (max-width: 400px) { .dash-overview-topology-groups { --topology-columns: 1; } }
