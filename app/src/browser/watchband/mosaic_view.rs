@@ -485,19 +485,20 @@ impl MosaicPlaneView<'_> {
         );
         let measurement_phase = measurement_phase(self.plane.is_some(), self.measurement_width);
         let plane_rows = self.plane.map_or(1, |plane| plane.rows());
-        let pending = self
-            .properties
-            .cards
-            .iter()
-            .filter(|activity| {
-                self.plane.is_none_or(|plane| {
-                    plane
-                        .cards()
-                        .iter()
-                        .all(|entry| entry.key != activity.key())
-                })
-            })
-            .count();
+        // Key each activity once against the placed set so a render stays
+        // linear in retained cards.
+        let pending = self.plane.map_or(self.properties.cards.len(), |plane| {
+            let placed = plane
+                .cards()
+                .iter()
+                .map(|entry| entry.key.as_str())
+                .collect::<std::collections::HashSet<_>>();
+            self.properties
+                .cards
+                .iter()
+                .filter(|activity| !placed.contains(activity.key().as_str()))
+                .count()
+        });
         let commits = self.plane.map_or(0, |plane| plane.commits());
         let transition = self
             .plane
