@@ -175,6 +175,32 @@ pub(super) async fn send_task_relations(
     .map(Some)
 }
 
+pub(super) async fn send_task_timeline(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    request: &crate::runtime::TaskTimelineRequest,
+) -> Result<Option<CanonicalUuid>, String> {
+    if !SteerPane::over(principal).offers(CommandKind::TaskTimeline)
+        || actions.has_task_timeline(request)
+    {
+        return Ok(None);
+    }
+    send_typed(
+        principal,
+        writer,
+        actions,
+        PendingKind::TaskTimeline {
+            request: request.clone(),
+        },
+        CommandKind::TaskTimeline,
+        vec![],
+        request.intent(),
+    )
+    .await
+    .map(Some)
+}
+
 pub(super) async fn send_lanes(
     principal: &Principal,
     writer: &mut SocketWriter,

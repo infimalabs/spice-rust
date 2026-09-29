@@ -27,10 +27,14 @@ mod message_cards;
 #[cfg(any(target_arch = "wasm32", test))]
 mod publication;
 mod stream;
+mod task_timeline;
 mod work_history;
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use publication::CanvasSurface;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
+#[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
+pub(crate) use task_timeline::TaskTimelineRequest;
+pub use task_timeline::{TaskTimelineKey, TaskTimelineState};
 pub use work_history::{WorkHistoryRequest, WorkHistoryState, work_history_completion_cutoff};
 pub(crate) type QuoteTasks = BTreeMap<String, Vec<wire::TaskHandle>>;
 
@@ -672,6 +676,8 @@ pub struct CanvasRuntime {
     lanes: ScopedValue<LaneView>,
     task_details: BTreeMap<wire::TaskStamp, TaskDetailState>,
     task_relations: BTreeMap<TaskRelationsKey, TaskRelationsState>,
+    task_timelines: BTreeMap<TaskTimelineKey, TaskTimelineState>,
+    task_timeline_revision: u64,
     task_relations_revision: u64,
     work_history: WorkHistoryState,
     lane_position: Option<Seq>,
@@ -712,6 +718,8 @@ impl CanvasRuntime {
             task_details: BTreeMap::new(),
             task_relations: BTreeMap::new(),
             task_relations_revision: 0,
+            task_timelines: BTreeMap::new(),
+            task_timeline_revision: 0,
             work_history: WorkHistoryState::default(),
             lane_position: None,
             inbox: ScopedValue::new(accepted),
@@ -772,6 +780,8 @@ impl CanvasRuntime {
             self.task_relations
                 .retain(|_, state| refresh_task_relations(state, false));
             self.task_relations_revision = self.task_relations_revision.saturating_add(1);
+            task_timeline::invalidate_all(&mut self.task_timelines);
+            self.task_timeline_revision = self.task_timeline_revision.saturating_add(1);
             false
         } else {
             *self = Self::new(accepted);
@@ -1258,6 +1268,7 @@ pub struct Stale {
     inbox: bool,
     task_details: BTreeSet<wire::TaskStamp>,
     task_relation_kinds: BTreeSet<TaskRelationKind>,
+    task_timelines: bool,
 }
 
 impl Stale {
@@ -1286,6 +1297,7 @@ impl Stale {
                 self.inbox = true;
             }
             Some(("task", _)) => {
+                self.task_timelines = true;
                 self.board = true;
                 self.task_relation_kinds.extend([
                     TaskRelationKind::Origin,
@@ -1297,6 +1309,7 @@ impl Stale {
             }
             // A claim binds a task to a lane, so both sides of that join move.
             Some(("claim", _)) => {
+                self.task_timelines = true;
                 self.board = true;
                 self.lanes = true;
                 self.task_relation_kinds.insert(TaskRelationKind::Claim);
@@ -1327,6 +1340,15 @@ impl Stale {
             runtime.invalidate_task_relations(&self.task_relation_kinds);
         }
         self.task_relation_kinds.clear();
+    }
+
+    /// Refresh only the mutable newest page; retained older cursors are immutable.
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
+    pub(crate) fn resolve_task_timelines(&self, runtime: &mut CanvasRuntime, changed: bool) {
+        if changed && self.task_timelines {
+            task_timeline::invalidate_all(&mut runtime.task_timelines);
+            runtime.task_timeline_revision = runtime.task_timeline_revision.saturating_add(1);
+        }
     }
 
     /// Hold terminal paging until a changed task snapshot has been refreshed.
@@ -1381,6 +1403,7 @@ impl Stale {
             || self.inbox
             || !self.task_details.is_empty()
             || !self.task_relation_kinds.is_empty()
+            || self.task_timelines
     }
 }
 

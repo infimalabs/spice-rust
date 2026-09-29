@@ -19,6 +19,7 @@ mod controls;
 mod fleet;
 mod mosaic_view;
 mod state;
+mod team_flow;
 mod team_menu;
 mod team_work;
 mod vendor_icon;
@@ -38,6 +39,7 @@ pub(super) use fleet::use_team_menu_escape;
 use fleet::{FleetRender, TeamMode, carries_team, render_empty_fleet, render_populated_fleet};
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
+use team_flow::{PageRequest as TeamFlowPageRequest, TeamFlow};
 use team_work::render_team_work_lanes;
 pub(super) use vendor_icon::{render_composer_vendor_icon, render_dash_vendor_icon};
 
@@ -76,6 +78,7 @@ pub(super) fn render_team(
         select_task,
         ..
     } = render;
+    let timeline_surface = (*surface).clone();
     let surface = surface.read();
     let Some(runtime) = surface.as_ref() else {
         return Html::default();
@@ -127,6 +130,7 @@ pub(super) fn render_team(
             })
             .collect::<crate::composer_markdown::QuoteAgents>(),
     );
+    let timeline_request = task_timeline_request(timeline_surface.clone(), (*sender).clone());
     let teams = lanes
         .lanes
         .iter()
@@ -144,6 +148,8 @@ pub(super) fn render_team(
         can_configure,
         topology,
         quote_agents,
+        surface: timeline_surface,
+        timeline_request,
         sender,
         drafts,
         submissions,
@@ -155,6 +161,46 @@ pub(super) fn render_team(
         return render_empty_fleet(team_fleet, &render);
     }
     render_populated_fleet(&teams, &standings, team_fleet, &render)
+}
+fn task_timeline_request(
+    surface: UseStateHandle<SurfaceData>,
+    sender: SenderHandle,
+) -> Callback<TeamFlowPageRequest> {
+    Callback::from(move |page| {
+        let request = {
+            let mut data = surface.write();
+            let Some(runtime) = data.as_mut() else {
+                return;
+            };
+            if !runtime.offers(CommandKind::TaskTimeline) {
+                return;
+            }
+            match page {
+                TeamFlowPageRequest::Head(key) => runtime.reserve_task_timeline_head(key),
+                TeamFlowPageRequest::Older(key) => runtime.reserve_task_timeline_older(key),
+            }
+        };
+        let Some(request) = request else {
+            return;
+        };
+        surface.set(surface.publication());
+        if !admit_action(
+            &sender,
+            ClientAction::TaskTimeline {
+                request: request.clone(),
+            },
+        ) {
+            let mut data = surface.write();
+            if let Some(runtime) = data.as_mut() {
+                runtime.refuse_task_timeline_request(
+                    &request,
+                    "Timeline request could not be queued.".to_owned(),
+                );
+            }
+            drop(data);
+            surface.set(surface.publication());
+        }
+    })
 }
 
 #[hook]
@@ -452,13 +498,26 @@ struct HistoryPaging<'a> {
     revision: u64,
 }
 
-fn render_details(team: &crate::runtime::LaneRow, standings: &[Standing]) -> Html {
+fn render_details(
+    surface: &UseStateHandle<SurfaceData>,
+    runtime: &CanvasRuntime,
+    team: &crate::runtime::LaneRow,
+    standings: &[Standing],
+    select: &Callback<wire::TaskStamp>,
+    request: &Callback<TeamFlowPageRequest>,
+    controls: &UseReducerHandle<TeamControls>,
+) -> Html {
     debug_assert_eq!(
         team.members.len(),
         standings.len(),
         "one standing belongs to every team member"
     );
     let flow_heading = format!("team-dash-flow-{}", team.lane);
+    let show_chat = {
+        let controls = controls.clone();
+        let team = team.lane;
+        Callback::from(move |_| controls.dispatch(TeamControlAction::ShowChat { team }))
+    };
     html! {
         <main class="team-dash-frame" aria-label="Team Dash">
             <section class="team-dash-roster" aria-label="Team roster">
@@ -468,7 +527,15 @@ fn render_details(team: &crate::runtime::LaneRow, standings: &[Standing]) -> Htm
             </section>
             <section class="team-dash-flow" aria-labelledby={flow_heading.clone()}>
                 <header><h3 id={flow_heading}>{"Flow"}</h3></header>
-                <div class="team-dash-flow-body"></div>
+                <TeamFlow
+                    team={team.clone()}
+                    standings={standings.to_vec()}
+                    surface={(*surface).clone()}
+                    revision={runtime.task_timeline_revision()}
+                    select={select.clone()}
+                    show_chat={show_chat}
+                    request={request.clone()}
+                />
             </section>
         </main>
     }

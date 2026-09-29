@@ -145,6 +145,15 @@ impl ActionQueue {
             matches!(&entry.kind, PendingKind::TaskRelations { key: pending } if pending == key)
         })
     }
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
+    pub(super) fn has_task_timeline(&self, request: &crate::runtime::TaskTimelineRequest) -> bool {
+        self.mailbox.borrow().pending.values().any(|entry| {
+            matches!(
+                &entry.kind,
+                PendingKind::TaskTimeline { request: pending } if pending == request
+            )
+        })
+    }
 
     pub(super) fn admit_topology(&self, id: CanonicalUuid, range: SeqRange) -> Result<(), String> {
         self.mailbox.borrow_mut().admit_topology(id, range)
@@ -208,6 +217,7 @@ impl PendingKind {
             Self::Vendors => Some(CurrentRead::Vendors),
             Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
+            | Self::TaskTimeline { .. }
             | Self::WorkHistory { .. }
             | Self::LaneSeat
             | Self::LaneRenewal { .. }
@@ -430,6 +440,7 @@ impl ClientAction {
             Self::DrainSubmissions
             | Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
+            | Self::TaskTimeline { .. }
             | Self::WorkHistory { .. }
             | Self::MessageHistory { .. }
             | Self::RenewLane { .. }
@@ -442,6 +453,7 @@ impl ClientAction {
             self,
             Self::TaskDetail { .. }
                 | Self::TaskRelations { .. }
+                | Self::TaskTimeline { .. }
                 | Self::WorkHistory { .. }
                 | Self::MessageHistory { .. }
         )

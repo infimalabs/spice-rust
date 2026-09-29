@@ -55,6 +55,7 @@ fn handle_stream_frame(
         }
         stale.retain_task_details(|task| changed && runtime.invalidate_task_detail(task));
         stale.resolve_task_relations(runtime, changed);
+        stale.resolve_task_timelines(runtime, changed);
         stale.resolve_work_history(runtime, changed);
         let operator = changed
             .then(|| runtime.settings())
@@ -265,12 +266,30 @@ fn apply_command_response(
             runtime.apply_task_relations(&key, &admitted);
             CommandApplication::ordinary(false)
         }
+        PendingKind::TaskTimeline { request } => {
+            let admitted: crate::Admitted<Response<wire::intent::TaskTimelineAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_task_timeline(&request, &admitted);
+            CommandApplication::ordinary(false)
+        }
         PendingKind::WorkHistory { request } => {
             let admitted: crate::Admitted<Response<wire::intent::BoardAnswer>> =
                 admit_response(session, bytes)?;
             runtime.apply_work_history(&request, &admitted);
             CommandApplication::ordinary(false)
         }
+        kind => apply_mutating_response(session, handles, runtime, id, kind, bytes)?,
+    })
+}
+fn apply_mutating_response(
+    session: &Session,
+    handles: &SurfaceHandles,
+    runtime: &mut CanvasRuntime,
+    id: CanonicalUuid,
+    kind: PendingKind,
+    bytes: &[u8],
+) -> Result<CommandApplication, String> {
+    Ok(match kind {
         // A read of the lane table and an arrangement of it answer with the
         // same authoritative table, so successful replies apply identically.
         // Orgs move only when that answer lands. A refused mutation differs:
@@ -336,8 +355,10 @@ fn apply_command_response(
         PendingKind::Note { task, text, after } => {
             apply_note_response(session, handles, runtime, task, text, after, bytes)?
         }
+        _ => unreachable!("read and mutation response partitions are closed"),
     })
 }
+
 fn apply_note_response(
     session: &Session,
     handles: &SurfaceHandles,
