@@ -360,6 +360,14 @@ link to where the reader left it. A card link opened in a fresh page brings its
 card into view and focus once Chat hydrates, holding it there as older history
 loads around it until the reader scrolls.
 
+### The global Dash page
+
+Resident topology presents each team in canonical order from left to right:
+member zero, the team's main agent, starts at the far-left control-flow origin,
+and later members proceed rightward before wrapping in the same order. Chat
+intentionally presents that order from its right-side controls instead; neither
+projection changes member identity, accent, keyboard order, or attribution.
+
 ### The global Work page
 
 One board shows all open work in in-flight, ready, blocked, and deferred lanes.
