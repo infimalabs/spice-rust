@@ -22,12 +22,14 @@ use crate::runtime::LaneRow;
 
 #[cfg(any(target_arch = "wasm32", test))]
 mod composer_drag;
+mod presence;
 mod provider;
 mod renewal;
 mod submission;
 
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use composer_drag::ComposerDragSession;
+pub use presence::{MemberPresence, MemberPresenceState, member_presence};
 pub use provider::{Emblem, Provider, emblem, model_display, model_label, model_provider};
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
 pub use submission::{SubmissionAuthority, SubmissionTarget};

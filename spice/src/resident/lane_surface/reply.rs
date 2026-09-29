@@ -25,7 +25,7 @@ pub(super) fn command_result<B: serde::Serialize>(
         .map_err(|error| store_fault("lane::receipt-invalid", &error.to_string()))
 }
 
-const QUIET_HORIZON: Duration = Duration::from_secs(60);
+const QUIET_HORIZON: Duration = Duration::from_millis(wire::intent::LANE_QUIET_HORIZON_MILLIS);
 
 pub(super) fn answer(
     head: &wire::ResidencyHead,
