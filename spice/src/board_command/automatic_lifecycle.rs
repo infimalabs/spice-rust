@@ -316,6 +316,7 @@ fn automatic_answer(
         origin_context: None,
         next: None,
         phase: None,
+        transplant: None,
     }
 }
 
@@ -358,6 +359,7 @@ pub(crate) fn release_automatic(
         origin_context: None,
         next: None,
         phase: None,
+        transplant: None,
     };
     match committed(bus, write, CommandAnswer::Claim(Box::new(answer))) {
         Outcome::Reply(_) => Ok(()),

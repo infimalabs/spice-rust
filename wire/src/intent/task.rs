@@ -521,6 +521,13 @@ pub struct ClaimAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub phase: Option<ClaimPhase>,
+    /// What claiming did with commits a previous holder left parked on the task.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub transplant: Option<ClaimTransplant>,
 }
 
 fn claim_warnings_empty(warnings: &[ClaimWarning]) -> bool {
@@ -540,6 +547,58 @@ pub struct ClaimPhase {
         deserialize_with = "crate::optional::present"
     )]
     pub deliverable: Option<Box<str>>,
+}
+
+/// Parked commits replayed onto the lane HEAD a claim fast-forwarded to.
+///
+/// Every parked commit lands in exactly one list, except the one the replay
+/// stopped on, which `conflict` names.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClaimTransplant {
+    /// Lane HEAD the parked commits were replayed onto.
+    pub onto: String,
+    /// Commits replayed cleanly, oldest first, with their new identities.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub applied: Vec<TransplantedCommit>,
+    /// Commits whose changes the lane already held, so nothing was replayed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub present: Vec<String>,
+    /// Commits Git no longer holds, which could not be replayed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing: Vec<String>,
+    /// The replay Git stopped on, left in the worktree for the claimant.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub conflict: Option<TransplantConflict>,
+}
+
+/// One parked commit and the commit its replay created.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransplantedCommit {
+    /// Parked commit identity.
+    pub parked: String,
+    /// Commit created on the claimant's lane.
+    pub commit: String,
+}
+
+/// A replay paused in the worktree as a Git cherry-pick with conflicts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TransplantConflict {
+    /// Parked commit whose cherry-pick stopped.
+    pub commit: String,
+    /// Paths Git left conflicted.
+    pub paths: Vec<String>,
+    /// Later parked commits queued behind it in Git's cherry-pick sequence.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub remaining: Vec<String>,
+    /// How to finish the replay.
+    pub remedy: Box<str>,
 }
 
 /// One active claim whose acceptance names the same implementation surface.

@@ -658,3 +658,125 @@ fn plan_boundary_predicate_retains_its_direct_failure_classification() {
         .expect_err("an unmeasured plan opening must fail closed");
     assert_eq!(absent.reason(), "git::plan-implementation");
 }
+
+fn lane_head(root: &Path) -> String {
+    required_read(root, &["rev-parse", "HEAD"], "read fixture HEAD").expect("fixture HEAD reads")
+}
+
+fn commit_file(root: &Path, path: &str, contents: &str, message: &str) -> String {
+    fs::write(root.join(path), contents).expect("write fixture change");
+    git(root, &["add", path]);
+    git(root, &["commit", "--no-verify", "-m", message]);
+    lane_head(root)
+}
+
+/// A remote-backed lane with a committer identity, since replay recreates commits.
+fn published_fixture(label: &str) -> RepositoryFixture {
+    let fixture = RepositoryFixture::new(label);
+    git(&fixture.root, &["config", "user.name", "Spice Test"]);
+    git(
+        &fixture.root,
+        &["config", "user.email", "spice@example.invalid"],
+    );
+    configure_peer_integrations(&fixture.root);
+    fixture
+}
+
+#[test]
+fn release_parks_only_unpublished_work_and_claim_replays_it_onto_a_moved_upstream() {
+    let fixture = published_fixture("release-replay");
+    let root = &fixture.root;
+    let claimed = prepare_claim(&fixture.repository).expect("claim the opening");
+    publish_peer_integrations(root);
+    advance_at_launch(&fixture.repository);
+    let relaunched = lane_head(root);
+    assert_ne!(
+        relaunched, claimed.head,
+        "the relaunch fast-forwards the lane"
+    );
+
+    let untouched = prepare_free(&fixture.repository, Some(&claimed))
+        .expect("published history alone releases");
+    assert!(untouched.is_none(), "upstream commits are not task work");
+    assert_eq!(lane_head(root), relaunched);
+
+    let task = commit_file(root, "task.txt", "task change\n", "task change");
+    let released = prepare_free(&fixture.repository, Some(&claimed))
+        .expect("release after a relaunch")
+        .expect("the task commit parks");
+    assert_eq!(released.parked().commits, [task.clone()]);
+    assert_eq!(released.parked().baseline, relaunched);
+    assert_eq!(lane_head(root), relaunched);
+
+    let peer = root.join(".git/fixture-peer");
+    let upstream = commit_file(&peer, "third.txt", "third\n", "third peer integration");
+    git(&peer, &["push", "origin", "main"]);
+    let claim = prepare_task_claim(&fixture.repository, Some(released.parked()))
+        .expect("claim replays the parked commit");
+    let report = claim.transplant().expect("the claim reports its replay");
+    assert_eq!(report.onto, upstream);
+    assert!(report.conflict.is_none() && report.present.is_empty() && report.missing.is_empty());
+    let [applied] = report.applied.as_slice() else {
+        panic!("one parked commit replays: {report:?}");
+    };
+    assert_eq!(applied.parked, task);
+    assert_eq!(lane_head(root), applied.commit);
+    assert_eq!(claim.boundary.head, applied.commit);
+    assert_eq!(
+        required_read(root, &["rev-parse", "HEAD^"], "read replay parent").expect("parent"),
+        upstream,
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("task.txt")).expect("replayed file"),
+        "task change\n"
+    );
+}
+
+#[test]
+fn a_conflicting_replay_stays_paused_for_the_claimant_until_the_claim_rolls_back() {
+    let fixture = published_fixture("replay-conflict");
+    let root = &fixture.root;
+    let claimed = prepare_claim(&fixture.repository).expect("claim the opening");
+    let conflicting = commit_file(root, "tracked.txt", "task edit\n", "edit tracked");
+    let later = commit_file(root, "later.txt", "later\n", "later task change");
+    let released = prepare_free(&fixture.repository, Some(&claimed))
+        .expect("release the task")
+        .expect("both task commits park");
+    assert_eq!(
+        released.parked().commits,
+        [conflicting.clone(), later.clone()]
+    );
+    assert_eq!(lane_head(root), claimed.head);
+
+    publish_peer_integrations(root);
+    let claim = prepare_task_claim(&fixture.repository, Some(released.parked()))
+        .expect("a conflict does not refuse the claim");
+    let report = claim.transplant().expect("the claim reports its replay");
+    let conflict = report.conflict.as_ref().expect("the replay stopped");
+    assert_eq!(conflict.commit, conflicting);
+    assert_eq!(conflict.paths, ["tracked.txt"]);
+    assert_eq!(conflict.remaining, [later]);
+    assert!(report.applied.is_empty());
+    assert_eq!(lane_head(root), report.onto);
+    assert!(
+        try_read(
+            root,
+            &["rev-parse", "--verify", "--quiet", "CHERRY_PICK_HEAD"]
+        )
+        .expect("read pick state")
+        .is_some(),
+        "Git's cherry-pick is left paused in the worktree",
+    );
+
+    claim.rollback().expect("a refused claim returns the lane");
+    assert_eq!(lane_head(root), claimed.head);
+    assert!(
+        try_read(
+            root,
+            &["rev-parse", "--verify", "--quiet", "CHERRY_PICK_HEAD"]
+        )
+        .expect("read pick state")
+        .is_none()
+    );
+    require_clean(root, "fixture check").expect("rollback leaves a clean tree");
+}

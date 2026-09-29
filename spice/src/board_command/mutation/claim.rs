@@ -214,6 +214,9 @@ impl PreparedClaim {
             &snapshot.entries,
             Some(claim_activation_next_action(selected)),
             origin_context,
+            self.prepared_git
+                .as_ref()
+                .and_then(spice::task_git::ClaimPreparation::transplant),
         )
     }
 
@@ -258,6 +261,7 @@ fn claim_answer(
     entries: &[Entry],
     next: Option<Box<str>>,
     origin_context: Option<Box<str>>,
+    transplant: Option<&wire::intent::ClaimTransplant>,
 ) -> wire::intent::ClaimAnswer {
     wire::intent::ClaimAnswer {
         task: selected.handle().clone(),
@@ -276,6 +280,7 @@ fn claim_answer(
         origin_context,
         next,
         phase: Some(claim_phase(selected.workflow())),
+        transplant: transplant.cloned(),
     }
 }
 
@@ -354,7 +359,16 @@ pub(in crate::board_command) fn commit_claim(
             return outcome;
         }
     };
-    let answer = claim_answer(command, &selected, &snapshot.entries, next, origin_context);
+    let answer = claim_answer(
+        command,
+        &selected,
+        &snapshot.entries,
+        next,
+        origin_context,
+        prepared_git
+            .as_ref()
+            .and_then(spice::task_git::ClaimPreparation::transplant),
+    );
     if let Err(error) = write.command_result(
         request(command, win.clone()),
         command.epoch(),
