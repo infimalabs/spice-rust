@@ -347,16 +347,13 @@ fn scan_record(
     };
     let mut latest_miss = None;
     for (event_index, sourced) in events.iter().enumerate().rev() {
-        let Some(prose) = sourced.event.prose() else {
-            continue;
-        };
         // Only the occupant answers for the lane. Operator input reaches
         // the same tape as user records, and a continuation summary or a
         // restated inbox spells the header without anyone having said it.
-        if prose.role != listen::ProseRole::Assistant {
+        let Some(text) = sourced.event.assistant_text() else {
             continue;
-        }
-        let Some(recognition) = steer::decisive(&prose.text, token, standing) else {
+        };
+        let Some(recognition) = steer::decisive(text, token, standing) else {
             continue;
         };
         let recognition = RecordRecognition {

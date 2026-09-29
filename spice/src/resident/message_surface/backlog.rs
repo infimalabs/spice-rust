@@ -922,12 +922,7 @@ fn scan_steering_keys(scan: &listen::Scan) -> BTreeSet<steer::Key> {
         match &record.payload {
             listen::RecordPayload::Events(events) => events
                 .iter()
-                .filter_map(|event| {
-                    let listen::Event::Prose(prose) = &event.event else {
-                        return None;
-                    };
-                    (prose.role == listen::ProseRole::Assistant).then_some(prose.text.as_str())
-                })
+                .filter_map(|event| event.event.assistant_text())
                 .collect::<Vec<_>>(),
             _ => Vec::new(),
         }

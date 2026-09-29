@@ -119,6 +119,7 @@ fn assistant_messages_type_prose_reasoning_tool_calls_and_usage() {
                 && call.moment == ToolMoment::Call {
                     name: "bash".to_owned(),
                     arguments: r#"{"command":"cargo test"}"#.to_owned(),
+                    intent: None,
                 }
     ));
     let result = decoded(TOOL_RESULT);

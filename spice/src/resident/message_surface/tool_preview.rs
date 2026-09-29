@@ -60,7 +60,9 @@ pub(super) fn activity(
 ) -> String {
     let key = (lane, tool.call_id.clone());
     match &tool.moment {
-        listen::ToolMoment::Call { name, arguments } => {
+        listen::ToolMoment::Call {
+            name, arguments, ..
+        } => {
             let preview = identified_preview(name, arguments, &tool.call_id);
             previews.by_call.insert(key, preview.clone());
             preview

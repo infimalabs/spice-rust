@@ -1082,7 +1082,10 @@ fn register_tool_call(
     work: &mut SessionWork,
     at: &str,
 ) -> Result<(), Refusal> {
-    let ToolMoment::Call { name, arguments } = &tool.moment else {
+    let ToolMoment::Call {
+        name, arguments, ..
+    } = &tool.moment
+    else {
         unreachable!("tool-call reduction passes only invocation events")
     };
     let name = name.as_str();

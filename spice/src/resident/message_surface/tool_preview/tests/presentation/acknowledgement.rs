@@ -798,6 +798,44 @@ fn a_spoken_acknowledgement_reads_pending_until_the_journal_retires_its_key() {
 }
 
 #[test]
+fn a_narrated_messages_acknowledging_intent_presents_as_an_acknowledgement_card() {
+    let directives = directives(&[("1kQnrzNZ", "Keep the current path.")]);
+    let publisher = Messages::default();
+    let mut state = MessageState::default();
+    let narrated = capture_record(
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Keeping the path and checking the log."},{"type":"toolCall","id":"call-1","name":"shell","arguments":{"command":"git status"},"intent":"ACK 1kQnrzNZ: Applied, checking the log"},{"type":"toolCall","id":"call-2","name":"read","arguments":{"path":"a"},"intent":"Reading the next file"}],"stopReason":"toolUse"}}"#,
+        0,
+    );
+    publish_agent_messages(&publisher, &narrated, &mut state, Some(&directives))
+        .expect("narrated message publishes");
+
+    let messages = publisher.0.lock().expect("message lock");
+    let cards = messages
+        .iter()
+        .filter(|message| message.activity == wire::AgentActivityKind::Prose)
+        .collect::<Vec<_>>();
+    let [card] = cards.as_slice() else {
+        panic!("only the acknowledging intent presents as a card: {cards:?}")
+    };
+    assert_eq!(
+        card.text,
+        "> [ACK PENDING] Keep the current path.\n\nApplied, checking the log"
+    );
+    assert_eq!(card.locus.event, 1);
+    assert_eq!(
+        state.pending.len(),
+        1,
+        "the intent card settles when the journal retires its key"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| !message.text.contains("Reading the next file")),
+        "an intent without a header stays tool activity"
+    );
+}
+
+#[test]
 fn live_key_for_another_lane_preserves_the_original_message() {
     let text = "ACK 1kQwPZtK: This lane does not own the directive.";
     let mut directives = directives(&[("1kQwPZtK", "Do not quote this direction here.")]);

@@ -40,6 +40,7 @@ fn call(name: &str) -> listen::Event {
         moment: listen::ToolMoment::Call {
             name: name.to_owned(),
             arguments: "{}".to_owned(),
+            intent: None,
         },
         locus: listen::Locus::new(7, 120, 64),
     })

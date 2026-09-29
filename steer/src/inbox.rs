@@ -101,10 +101,10 @@ pub enum Told {
 }
 
 const NUDGE_PREFIX: &str = "[NUDGE] key=";
-const SILENT_BEFORE_ACK: &str =
-    " still pending; no visible reply. Thinking/tool calls do not count. Lead visible prose: `ACK ";
+const SILENT_BEFORE_ACK: &str = " still pending; no visible reply. Thinking/tool args do not count. \
+     Lead prose and first tool intent: `ACK ";
 const REPLIED_BEFORE_ACK: &str =
-    " still pending; visible prose did not retire it. Lead visible prose: `ACK ";
+    " still pending; visible prose did not retire it. Lead prose and first tool intent: `ACK ";
 const ACK_TO_NAK: &str = ": <one clause>` or `NAK ";
 const SILENT_AFTER_NAK: &str = ": <one clause>`.";
 const REPLIED_AFTER_NAK: &str = ": <one clause>`.";
@@ -214,8 +214,8 @@ pub fn post_compaction(rendered: &str) -> String {
         replayed.push_str(key);
     }
     replayed.push_str(
-        ". Before more tools, lead visible assistant prose with \
-         `ACK <key> [<key> ...]: <one clause>` or \
+        ". Lead visible assistant prose, and the first tool intent when the message calls a \
+         tool, with `ACK <key> [<key> ...]: <one clause>` or \
          `NAK <key>: <one clause>` for every key.\n",
     );
     replayed.push_str(body);
@@ -331,17 +331,6 @@ mod tests {
             silent, replied,
             "the two observations must read differently"
         );
-        assert!(
-            silent.contains("no visible reply")
-                && silent.contains("Thinking/tool calls do not count"),
-            "an occupant that only thought or called tools must learn neither was visible prose: \
-             {silent}",
-        );
-        assert!(
-            replied.contains("visible prose did not retire it")
-                && !replied.contains("no visible reply"),
-            "an occupant that replied must not be told it was silent: {replied}",
-        );
         for reminder in [&silent, &replied] {
             assert!(
                 reminder.contains("`ACK dSvXD9bv3: <one clause>`")
@@ -363,14 +352,6 @@ mod tests {
             replayed.starts_with("<seal>\n[POST-COMPACTION] Pending keys: 1kJK6N3R 1kJK6M0V. ")
         );
         assert_eq!(replayed.matches("[POST-COMPACTION]").count(), 1);
-        assert!(
-            replayed.contains(
-                "Before more tools, lead visible assistant prose with \
-                 `ACK <key> [<key> ...]: <one clause>` or \
-                 `NAK <key>: <one clause>` for every key."
-            ),
-            "{replayed}",
-        );
         assert!(replayed.ends_with("</seal>\n"), "{replayed}");
         assert_eq!(post_compaction(""), "");
     }

@@ -383,29 +383,33 @@ fn project_event_body(
     previews: &mut CallPreviews,
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<Option<ProjectedEvent>> {
-    let projected = match event.decoded {
-        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
-            let presentation_event = PresentationEvent {
-                lane: event.lane,
-                source: event
-                    .source
-                    .or_else(|| event.observations.source(event.lane, prose.locus)),
-                locus: prose.locus,
-                ordinal: event.ordinal,
-            };
-            let (presented, automatic_speech) =
-                project_prose_presentation(prose, steering, presentation_event)?;
-            ProjectedEvent {
-                activity: AgentActivityKind::Prose,
-                final_answer: prose.phase.as_deref() == Some("final_answer"),
-                locus: prose.locus,
-                text: presented.text,
-                classifications: presented.classifications,
-                directive_contexts: presented.directive_contexts,
-                automatic_speech,
-                media: prose.media.clone(),
-            }
+    if let Some(prose) = acknowledging_prose(event.decoded) {
+        if let listen::Event::Tool(tool) = event.decoded {
+            // The call still joins its later result through the preview map.
+            tool_preview::activity(event.lane, tool, previews);
         }
+        let presentation_event = PresentationEvent {
+            lane: event.lane,
+            source: event
+                .source
+                .or_else(|| event.observations.source(event.lane, prose.locus)),
+            locus: prose.locus,
+            ordinal: event.ordinal,
+        };
+        let (presented, automatic_speech) =
+            project_prose_presentation(&prose, steering, presentation_event)?;
+        return Ok(Some(ProjectedEvent {
+            activity: AgentActivityKind::Prose,
+            final_answer: prose.phase.as_deref() == Some("final_answer"),
+            locus: prose.locus,
+            text: presented.text,
+            classifications: presented.classifications,
+            directive_contexts: presented.directive_contexts,
+            automatic_speech,
+            media: prose.media.clone(),
+        }));
+    }
+    let projected = match event.decoded {
         listen::Event::Tool(tool) => {
             let activity = tool_preview::activity(event.lane, tool, previews);
             let media = tool_message_media(tool);
@@ -478,6 +482,40 @@ fn agent_quote_target(
         digest: wire::QuoteTarget::text_digest(&prose.text),
     }))
 }
+
+/// The assistant prose one event presents as a message card.
+///
+/// Visible assistant text presents itself. A tool call presents its intent
+/// only when that intent carries an acknowledgement header: the dialect keeps
+/// an intent only for a message whose prose settled as paraphrased reasoning,
+/// and an acknowledgement retired from those words must still appear in the
+/// flow of message cards. Any other intent stays tool activity.
+pub(super) fn acknowledging_prose(
+    decoded: &listen::Event,
+) -> Option<std::borrow::Cow<'_, listen::Prose>> {
+    match decoded {
+        listen::Event::Prose(prose) if prose.role == listen::ProseRole::Assistant => {
+            Some(std::borrow::Cow::Borrowed(prose))
+        }
+        listen::Event::Tool(listen::Tool {
+            moment:
+                listen::ToolMoment::Call {
+                    intent: Some(intent),
+                    ..
+                },
+            locus,
+            ..
+        }) if steer::has_acknowledgement(intent) => Some(std::borrow::Cow::Owned(listen::Prose {
+            role: listen::ProseRole::Assistant,
+            text: intent.clone(),
+            phase: None,
+            media: Vec::new(),
+            locus: *locus,
+        })),
+        _ => None,
+    }
+}
+
 fn project_prose_presentation(
     prose: &listen::Prose,
     steering: Option<&PresentationDirectives>,
@@ -510,12 +548,7 @@ fn pending_presentation(
     presentation_event: impl Fn(listen::Locus) -> PresentationEvent,
     locus: wire::MessageLocus,
 ) -> Option<pending::PendingPresentation> {
-    let listen::Event::Prose(prose) = decoded else {
-        return None;
-    };
-    if prose.role != listen::ProseRole::Assistant {
-        return None;
-    }
+    let prose = acknowledging_prose(decoded)?;
     pending::PendingPresentation::of(
         &prose.text,
         steering,
@@ -538,15 +571,19 @@ fn terminal_prose_card(
     if published.activity != AgentActivityKind::Prose || published.final_answer {
         return None;
     }
+    // A tool call never ends a turn, so an intent card has no terminal twin.
     let listen::Event::Prose(prose) = decoded else {
-        unreachable!("only assistant prose projects a prose card")
+        return None;
     };
     let mut terminal_prose = prose.clone();
     terminal_prose.phase = Some("final_answer".to_owned());
     let mut terminal = published.clone();
     terminal.final_answer = true;
-    terminal.automatic_speech =
-        automatic_speech::classify(&terminal_prose, steering, presentation_event(prose.locus));
+    terminal.automatic_speech = automatic_speech::classify(
+        &terminal_prose,
+        steering,
+        presentation_event(terminal_prose.locus),
+    );
     Some(terminal)
 }
 
