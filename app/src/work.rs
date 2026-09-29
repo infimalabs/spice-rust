@@ -12,6 +12,8 @@ pub use relationship::{
     WorkRelationshipKind, WorkRelationshipNode, WorkRelationshipOptions,
     WorkRelationshipOriginNode, WorkRelationshipTaskNode,
 };
+mod team;
+pub use team::{TeamWait, TeamWork, team_work};
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -272,6 +274,8 @@ pub struct WorkTask<'a> {
     project: usize,
     /// An unsatisfied environment is one explicit blocker.
     environment_blocked: bool,
+    /// Position in the resident's offer order, when the allocator offers it.
+    offer_rank: Option<usize>,
     dependencies: Vec<WorkDependency<'a>>,
     dependents: Vec<WorkDependent>,
 }
@@ -295,6 +299,13 @@ impl<'a> WorkTask<'a> {
     #[must_use]
     pub const fn environment_blocked(&self) -> bool {
         self.environment_blocked
+    }
+
+    /// This task's position in the resident's offer order: `Some(0)` is the
+    /// task offered next, and `None` is work the allocator does not offer.
+    #[must_use]
+    pub const fn offer_rank(&self) -> Option<usize> {
+        self.offer_rank
     }
 
     #[must_use]
@@ -545,6 +556,7 @@ impl<'a> WorkProjection<'a> {
             .collect::<Vec<_>>();
 
         let dependent_indexes = dependent_indexes(board, &by_born, &availability);
+        let offer_ranks = offer_ranks(board, &by_born);
 
         let mut counts = WorkCounts::default();
         let mut stem_builders = BTreeMap::<StemKey<'a>, StemBuilder<'a>>::new();
@@ -624,13 +636,14 @@ impl<'a> WorkProjection<'a> {
                     availability: availability[index],
                     project: project_by_task[index],
                     environment_blocked: environment_blocked[index],
+                    offer_rank: offer_ranks[index],
                     dependencies,
                     dependents,
                 }
             })
             .collect();
 
-        let (offered, newest) = board_orders(board, &by_born, &availability);
+        let (offered, newest) = board_orders(board, &offer_ranks, &availability);
 
         Self {
             counts,
@@ -643,22 +656,28 @@ impl<'a> WorkProjection<'a> {
     }
 }
 
+/// Each task's position in the resident's offer order, by task index. A stamp
+/// the resident repeats keeps its first, leading position.
+fn offer_ranks(board: &BoardView, by_born: &BTreeMap<&TaskStamp, usize>) -> Vec<Option<usize>> {
+    let mut ranks = vec![None; board.tasks.len()];
+    for (rank, born) in board.offer.iter().enumerate() {
+        if let Some(&index) = by_born.get(born) {
+            ranks[index].get_or_insert(rank);
+        }
+    }
+    ranks
+}
+
 /// Every task index in the resident's offer order, and newest first.
 ///
 /// The resident ranks only work it would offer; that rank leads, and the rest
 /// keeps lifecycle and queue order beneath it.
 fn board_orders(
     board: &BoardView,
-    by_born: &BTreeMap<&TaskStamp, usize>,
+    offer_ranks: &[Option<usize>],
     availability: &[WorkAvailability],
 ) -> (Vec<usize>, Vec<usize>) {
-    let offer_rank = board
-        .offer
-        .iter()
-        .enumerate()
-        .filter_map(|(rank, born)| by_born.get(born).map(|&index| (index, rank)))
-        .collect::<BTreeMap<_, _>>();
-    let rank = |index: &usize| offer_rank.get(index).copied().unwrap_or(usize::MAX);
+    let rank = |index: &usize| offer_ranks[*index].unwrap_or(usize::MAX);
     let mut offered = (0..board.tasks.len()).collect::<Vec<_>>();
     offered.sort_by(|left, right| {
         rank(left)
@@ -820,11 +839,11 @@ mod tests {
         wire::Seq::new(value).expect("fixture sequence is positive")
     }
 
-    fn stamp(value: i64) -> TaskStamp {
+    pub(super) fn stamp(value: i64) -> TaskStamp {
         TaskStamp::for_micros(value).expect("fixture stamp is representable")
     }
 
-    fn task(value: i64, project: &str) -> BoardTask {
+    pub(super) fn task(value: i64, project: &str) -> BoardTask {
         let born = stamp(value);
         BoardTask {
             visibility: if project.starts_with('.') {
@@ -883,7 +902,7 @@ mod tests {
         }
     }
 
-    fn claim(task: &BoardTask, disposition: ClaimDisposition) -> Positioned<ClaimHead> {
+    pub(super) fn claim(task: &BoardTask, disposition: ClaimDisposition) -> Positioned<ClaimHead> {
         Positioned {
             position: seq(3),
             body: ClaimHead {
@@ -910,7 +929,7 @@ mod tests {
         }
     }
 
-    fn board(tasks: Vec<BoardTask>) -> BoardView {
+    pub(super) fn board(tasks: Vec<BoardTask>) -> BoardView {
         BoardView {
             schema: 1,
             cursor: seq(100),
