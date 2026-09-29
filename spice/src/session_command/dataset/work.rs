@@ -13,6 +13,8 @@ const REPORT_DURATION: Duration = Duration::from_secs(30);
 const MAX_RESIDUES: usize = 256;
 const MAX_RESIDUE_BYTES: u64 = 256 * 1_024;
 const RESIDUE_SUMMARY_RESERVE: u64 = 512;
+// Three decimal u64 values plus the fixed summary prose occupy at most 116 bytes.
+const RESIDUE_GROUP_SUMMARY_RESERVE: u64 = 128;
 
 pub(super) fn decoded_row_events(row: &DecodedRow) -> usize {
     match row {
@@ -200,9 +202,53 @@ impl SessionWork {
     }
 }
 
+struct ResidueGroup {
+    row: Residue,
+    count: u64,
+    first_line: u64,
+    last_line: u64,
+}
+
+impl ResidueGroup {
+    fn new(row: Residue) -> Self {
+        let line = row.line;
+        Self {
+            row,
+            count: 1,
+            first_line: line,
+            last_line: line,
+        }
+    }
+
+    fn matches(&self, candidate: &Residue) -> bool {
+        self.row.source == candidate.source
+            && self.row.kind == candidate.kind
+            && self.row.detail == candidate.detail
+            && self.row.recovery == candidate.recovery
+    }
+
+    fn observe(&mut self, line: u64) {
+        self.count = self.count.saturating_add(1);
+        self.first_line = self.first_line.min(line);
+        self.last_line = self.last_line.max(line);
+    }
+
+    fn finish(mut self) -> Residue {
+        if self.count > 1 {
+            self.row.line = self.first_line;
+            self.row.detail = format!(
+                "{} records matched this residue from line {} through line {}: {}",
+                self.count, self.first_line, self.last_line, self.row.detail
+            );
+        }
+        self.row
+    }
+}
+
 pub(crate) struct ResidueLedger {
-    rows: Vec<Residue>,
+    rows: Vec<ResidueGroup>,
     bytes: u64,
+    summary_reserve: u64,
     omitted: u64,
     omitted_bytes: u64,
 }
@@ -212,6 +258,7 @@ impl ResidueLedger {
         Self {
             rows: Vec::new(),
             bytes: 0,
+            summary_reserve: 0,
             omitted: 0,
             omitted_bytes: 0,
         }
@@ -223,29 +270,56 @@ impl ResidueLedger {
         work: &mut SessionWork,
         at: &str,
     ) -> Result<(), Refusal> {
-        let bytes = residue_bytes(&residue);
+        let retained_bytes = residue_bytes(&residue);
+        if let Some(index) = self.rows.iter().position(|row| row.matches(&residue)) {
+            let reserve = u64::from(self.rows[index].count == 1)
+                .saturating_mul(RESIDUE_GROUP_SUMMARY_RESERVE);
+            let fits = self
+                .bytes
+                .checked_add(self.summary_reserve)
+                .and_then(|bytes| bytes.checked_add(reserve))
+                .and_then(|bytes| bytes.checked_add(RESIDUE_SUMMARY_RESERVE))
+                .is_some_and(|bytes| bytes <= MAX_RESIDUE_BYTES);
+            if fits {
+                self.summary_reserve = self.summary_reserve.saturating_add(reserve);
+                self.rows[index].observe(residue.line);
+            } else {
+                self.omitted = self.omitted.saturating_add(1);
+                self.omitted_bytes = self.omitted_bytes.saturating_add(retained_bytes);
+            }
+            return Ok(());
+        }
+
         let fits = self.rows.len() < MAX_RESIDUES.saturating_sub(1)
             && self
                 .bytes
-                .checked_add(bytes)
+                .checked_add(self.summary_reserve)
+                .and_then(|bytes| bytes.checked_add(retained_bytes))
                 .and_then(|bytes| bytes.checked_add(RESIDUE_SUMMARY_RESERVE))
                 .is_some_and(|bytes| bytes <= MAX_RESIDUE_BYTES);
         if fits {
-            work.admit_retained_text(bytes, at)?;
-            self.bytes = self.bytes.saturating_add(bytes);
-            self.rows.push(residue);
+            work.admit_retained_text(retained_bytes, at)?;
+            self.bytes = self.bytes.saturating_add(retained_bytes);
+            self.rows.push(ResidueGroup::new(residue));
         } else {
             self.omitted = self.omitted.saturating_add(1);
-            self.omitted_bytes = self.omitted_bytes.saturating_add(bytes);
+            self.omitted_bytes = self.omitted_bytes.saturating_add(retained_bytes);
         }
         Ok(())
     }
 
-    pub(crate) fn finish(
-        mut self,
-        work: &mut SessionWork,
-        at: &str,
-    ) -> Result<Vec<Residue>, Refusal> {
+    pub(crate) fn finish(self, work: &mut SessionWork, at: &str) -> Result<Vec<Residue>, Refusal> {
+        let mut rows = Vec::with_capacity(self.rows.len() + usize::from(self.omitted > 0));
+        for group in self.rows {
+            let original_bytes = residue_bytes(&group.row);
+            let row = group.finish();
+            let summary_bytes = residue_bytes(&row).saturating_sub(original_bytes);
+            debug_assert!(summary_bytes <= RESIDUE_GROUP_SUMMARY_RESERVE);
+            if summary_bytes > 0 {
+                work.admit_retained_text(summary_bytes, at)?;
+            }
+            rows.push(row);
+        }
         if self.omitted > 0 {
             let summary = Residue {
                 source: String::new(),
@@ -259,9 +333,9 @@ impl ResidueLedger {
                     .to_owned(),
             };
             work.admit_retained_text(residue_bytes(&summary), at)?;
-            self.rows.push(summary);
+            rows.push(summary);
         }
-        Ok(self.rows)
+        Ok(rows)
     }
 }
 

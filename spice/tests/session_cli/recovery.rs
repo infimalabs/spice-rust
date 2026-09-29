@@ -655,3 +655,87 @@ fn briefing_completes_an_omp_command_with_surplus_screenshot_media() {
 
     scratch.remove();
 }
+
+#[test]
+fn briefing_collapses_repeated_residues_without_losing_the_window() {
+    let scratch = Scratch::new("briefing-residue-groups");
+    let transcript = scratch
+        .path()
+        .join("2026-09-26T21-00-00-000Z_019f0000-0000-7000-8000-000000000002.jsonl");
+    let mut records = vec![json!({
+        "type": "session",
+        "version": 3,
+        "id": "019f0000-0000-7000-8000-000000000002",
+        "timestamp": "2026-09-26T21:00:00Z",
+        "cwd": "/work/tree",
+    })];
+    for index in 0..12 {
+        records.push(omp_entry(
+            "2026-09-26T21:00:01Z",
+            &format!("malformed-{index}"),
+            json!({
+                "role": "user",
+                "content": [{
+                    "type": "image",
+                    "data": "not-base64",
+                    "mimeType": "image/png",
+                }],
+            }),
+        ));
+    }
+    records.extend([
+        omp_entry(
+            "2026-09-26T21:00:02Z",
+            "u1",
+            json!({"role": "user", "content": "retain the current ask"}),
+        ),
+        omp_entry(
+            "2026-09-26T21:00:03Z",
+            "a1",
+            json!({
+                "role": "assistant",
+                "content": [{"type": "text", "text": "window remains intact"}],
+                "stopReason": "stop",
+            }),
+        ),
+    ]);
+    write_jsonl(&transcript, &records);
+    let file = transcript.to_string_lossy().into_owned();
+
+    let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
+    let residues = recall["residues"]
+        .as_array()
+        .expect("briefing residues are an array");
+    assert_eq!(residues.len(), 1, "{residues:?}");
+    let residue = &residues[0];
+    assert_eq!(
+        residue["source"],
+        transcript
+            .canonicalize()
+            .expect("transcript canonicalizes")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(residue["line"], 2);
+    assert_eq!(residue["kind"], "record-field-malformed");
+    let detail = residue["detail"]
+        .as_str()
+        .expect("grouped residue detail is text");
+    for evidence in ["12 records", "line 2", "line 13", "field \"media\""] {
+        assert!(detail.contains(evidence), "{detail:?}");
+    }
+    assert!(
+        residue["recovery"].as_str().is_some_and(
+            |recovery| recovery.contains("surrounding typed history remains available")
+        )
+    );
+    assert_eq!(
+        recall["window"]["turns"][0]["dialogue"],
+        json!([
+            {"side": "user", "text": "retain the current ask"},
+            {"side": "assistant", "text": "window remains intact"},
+        ])
+    );
+
+    scratch.remove();
+}
