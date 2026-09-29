@@ -636,6 +636,7 @@ impl CanvasAppState {
                     "Linked card is unavailable in retained message history.".to_owned()
                 }
             });
+        let task_inspector = self.task_inspector.context();
         let canvas = render_canvas(
             CanvasRender {
                 connection: &self.connection,
@@ -658,6 +659,7 @@ impl CanvasAppState {
                 sender: &self.sender,
                 agents: &self.agents,
                 selected_task: &self.work_detail.selected,
+                task_inspector: &task_inspector,
                 detail_presented: *self.work_detail.presented,
                 detail_closing: *self.work_detail.closing,
                 work_map: &self.work_map,
@@ -808,6 +810,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
         state.team_controls.clone(),
         chat_visible,
     );
+    use_team_mode_return(state.card_target.clone(), state.team_controls.clone());
     use_mosaic_root_scroll(chat_visible);
     canvas_menu::use_dismissal(state.canvas_menu_open.clone());
     message_task_inspector::use_surface_lifetime(&state.task_inspector, chat_visible);
@@ -824,6 +827,20 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
         state.work_scope.clone(),
         state.work_scope_notice.clone(),
     );
+}
+
+#[hook]
+fn use_team_mode_return(card_target: Option<String>, controls: UseReducerHandle<TeamControls>) {
+    use_effect_with(card_target, move |target| {
+        if target.is_none()
+            && let Some(team) = card_target::team_return()
+        {
+            controls.dispatch(TeamControlAction::SetMode {
+                team: Some(team),
+                mode: watchband::TeamMode::Dash,
+            });
+        }
+    });
 }
 
 #[function_component(CanvasApp)]

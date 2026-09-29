@@ -3,6 +3,7 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::{JsCast as _, JsValue};
+use wire::CanonicalUuid;
 use yew::prelude::*;
 
 use crate::CanvasRuntime;
@@ -18,6 +19,62 @@ pub(super) struct Status {
 
 /// History-state key naming where a reader left through a card link.
 const RETURN_STATE: &str = "canvasReturn";
+/// History-state key naming the team Dash an actionable row left.
+const TEAM_RETURN_STATE: &str = "canvasTeamReturn";
+
+/// Preserve the Dash team whose row is about to navigate to a Chat target.
+///
+/// The team mode itself is browser-local, so the history entry carries the
+/// missing return coordinate. Modified clicks keep ordinary browser semantics
+/// and must not mutate the entry they leave.
+pub(super) fn remember_team_return(event: &web_sys::MouseEvent, team: CanonicalUuid) {
+    if event.default_prevented()
+        || event.button() != 0
+        || event.meta_key()
+        || event.ctrl_key()
+        || event.shift_key()
+        || event.alt_key()
+    {
+        return;
+    }
+    let Some(link) = event
+        .current_target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+    else {
+        return;
+    };
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    if link.get_attribute("href") == window.location().hash().ok() {
+        return;
+    }
+    let Ok(history) = window.history() else {
+        return;
+    };
+    let state = js_sys::Object::new();
+    if let Ok(current) = history.state()
+        && let Some(current) = current.dyn_ref::<js_sys::Object>()
+    {
+        js_sys::Object::assign(&state, current);
+    }
+    let _ = js_sys::Reflect::set(
+        &state,
+        &TEAM_RETURN_STATE.into(),
+        &JsValue::from(team.to_string()),
+    );
+    let _ = history.replace_state(&state, "");
+}
+
+/// Team Dash encoded by the current history entry, when this is a return.
+pub(super) fn team_return() -> Option<CanonicalUuid> {
+    let history = web_sys::window()?.history().ok()?;
+    js_sys::Reflect::get(&history.state().ok()?, &TEAM_RETURN_STATE.into())
+        .ok()?
+        .as_string()?
+        .parse()
+        .ok()
+}
 
 /// The element holding a followed card link and its offset inside its scrolling
 /// surface at that moment. Team modes and Chat lanes scroll independently, so
