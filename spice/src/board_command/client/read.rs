@@ -106,11 +106,17 @@ pub(super) fn client_show(
                 Ok(artifacts) => artifacts,
                 Err(outcome) => return outcome,
             };
-            let origin_context =
-                match task_show_origin_context(repository, &task.statement.body.provenance) {
-                    Ok(context) => context,
-                    Err(outcome) => return outcome,
-                };
+            let acknowledgments = board
+                .acknowledgments
+                .get(&task.statement.body.born)
+                .map_or(&[][..], Vec::as_slice);
+            let origin_context = match task_show_origin_context(
+                repository,
+                &task_acknowledgment_keys(&task.statement.body.provenance, acknowledgments),
+            ) {
+                Ok(context) => context,
+                Err(outcome) => return outcome,
+            };
             Outcome::Reply(Reply {
                 position,
                 body: CommandAnswer::Text(TextAnswer {
@@ -118,10 +124,13 @@ pub(super) fn client_show(
                         &board,
                         task,
                         &artifacts,
-                        board
-                            .notes
-                            .get(&task.statement.body.born)
-                            .map_or(&[], Vec::as_slice),
+                        TaskShowHistory {
+                            notes: board
+                                .notes
+                                .get(&task.statement.body.born)
+                                .map_or(&[], Vec::as_slice),
+                            acknowledgments,
+                        },
                         origin_context.as_deref(),
                     ),
                 }),
@@ -384,34 +393,53 @@ fn task_show_artifacts(
         .map_err(artifact_operation_failure)
 }
 
+/// Resolve every steering key on one task record inside one journal snapshot.
 fn task_show_origin_context(
     repository: &Repository,
-    origin: &wire::Origin,
+    keys: &[&str],
 ) -> Result<Option<Box<str>>, Outcome<CommandAnswer>> {
-    let Some(key) = task_steering_origin_token(origin) else {
+    if keys.is_empty() {
         return Ok(None);
-    };
+    }
     let state = repository
         .admit_state()
         .map_err(|error| repository_state_failure(&error))?;
     let reader = journal::JournalReader::open(state.journal()).map_err(|error| {
         store_fault(
             "task::steering-journal-unreadable",
-            &format!("cannot inspect steering origin {key}: {error}"),
+            &format!(
+                "cannot inspect steering origins {}: {error}",
+                keys.join(" ")
+            ),
         )
     })?;
-    let head = reader
-        .read(|read| read.steering_key(key))
+    let blocks = reader
+        .read(|read| {
+            keys.iter()
+                .map(|key| {
+                    read_steering_provenance(read, key)
+                        .map(|provenance| render_task_steering_origin(key, provenance.as_ref()))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
         .map_err(|error| {
             store_fault(
                 "task::steering-index-unreadable",
-                &format!("cannot inspect steering origin {key}: {error}"),
+                &format!(
+                    "cannot inspect steering origins {}: {error}",
+                    keys.join(" ")
+                ),
             )
         })?;
-    Ok(Some(render_task_steering_origin(
-        key,
-        head.as_ref().map(journal::JournalHead::body),
-    )))
+    Ok(Some(blocks.join("\n").into_boxed_str()))
+}
+
+/// Durable history shown with one task: its notes and every fact whose
+/// origin names an acknowledged steering key.
+#[derive(Clone, Copy, Default)]
+pub(in crate::board_command) struct TaskShowHistory<'a> {
+    pub(in crate::board_command) notes: &'a [wire::intent::TaskDetailNote],
+    pub(in crate::board_command) acknowledgments: &'a [wire::intent::TaskAcknowledgment],
 }
 
 #[cfg(test)]
@@ -420,14 +448,14 @@ pub(in crate::board_command) fn task_show(
     task: &BoardTask,
     artifacts: &[artifact::Artifact],
 ) -> String {
-    task_show_with_origin(board, task, artifacts, &[], None)
+    task_show_with_origin(board, task, artifacts, TaskShowHistory::default(), None)
 }
 
 pub(in crate::board_command) fn task_show_with_origin(
     board: &BoardAnswer,
     task: &BoardTask,
     artifacts: &[artifact::Artifact],
-    notes: &[wire::intent::TaskDetailNote],
+    history: TaskShowHistory<'_>,
     origin_context: Option<&str>,
 ) -> String {
     let statement = &task.statement.body;
@@ -449,6 +477,10 @@ pub(in crate::board_command) fn task_show_with_origin(
         format!("claim {}", claim_line(task)),
         format!("claim_thread {}", claim_thread(task)),
     ];
+    lines.extend(acknowledgment_lines(
+        &statement.provenance,
+        history.acknowledgments,
+    ));
     if let Some(origin_context) = origin_context {
         lines.extend(origin_context.lines().map(str::to_owned));
     }
@@ -514,24 +546,55 @@ pub(in crate::board_command) fn task_show_with_origin(
             ));
         }
     }
-    lines.push("notes:".to_owned());
-    if notes.is_empty() {
-        lines.push("  -".to_owned());
-    } else {
-        for note in notes {
-            lines.push(format!("  {} {} {}", note.position, note.at, note.author));
-            lines.extend(note.text.lines().map(|line| {
-                if line.is_empty() {
-                    String::new()
-                } else {
-                    format!("    {line}")
-                }
-            }));
-        }
-    }
+    lines.extend(note_lines(history));
     lines.extend(phase_guidance_lines(task));
     lines.push(next_command_line(board, task));
     lines.join("\n")
+}
+
+/// One line per distinct steering key naming every task fact it caused.
+fn acknowledgment_lines(
+    origin: &wire::Origin,
+    acknowledgments: &[wire::intent::TaskAcknowledgment],
+) -> Vec<String> {
+    task_acknowledgment_keys(origin, acknowledgments)
+        .into_iter()
+        .map(|key| {
+            let carriers = acknowledgments
+                .iter()
+                .filter(|row| row.key == key)
+                .map(|row| format!(" {}@{}", row.kind, row.position))
+                .collect::<String>();
+            format!("acknowledgment ack:{key}{carriers}")
+        })
+        .collect()
+}
+
+fn note_lines(history: TaskShowHistory<'_>) -> Vec<String> {
+    let mut lines = vec!["notes:".to_owned()];
+    if history.notes.is_empty() {
+        lines.push("  -".to_owned());
+        return lines;
+    }
+    for note in history.notes {
+        let origin = history
+            .acknowledgments
+            .iter()
+            .find(|row| row.position == note.position)
+            .map_or_else(String::new, |row| format!(" ack:{}", row.key));
+        lines.push(format!(
+            "  {} {} {}{origin}",
+            note.position, note.at, note.author
+        ));
+        lines.extend(note.text.lines().map(|line| {
+            if line.is_empty() {
+                String::new()
+            } else {
+                format!("    {line}")
+            }
+        }));
+    }
+    lines
 }
 
 fn requirement_lines(

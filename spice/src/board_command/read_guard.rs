@@ -130,6 +130,7 @@ fn validated_snapshot_from_with_occupant(
             offer: Vec::new(),
             origins: Default::default(),
             notes: Default::default(),
+            acknowledgments: Default::default(),
             history: None,
             trust: positioned_trust(observed),
             appliance,
@@ -805,7 +806,9 @@ pub(super) fn read_board(
             .filter(|born| tasks.contains(born))
             .cloned()
             .collect();
-        snapshot.answer.notes = task_detail::task_notes(&observed, &named);
+        let record = task_detail::task_record(&observed, &named);
+        snapshot.answer.notes = record.notes;
+        snapshot.answer.acknowledgments = record.acknowledgments;
     }
     snapshot.answer.history = history;
     snapshot_reply(

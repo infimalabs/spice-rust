@@ -197,6 +197,7 @@ fn insert_board_receipt(connection: &Connection) {
         offer: Vec::new(),
         origins: Default::default(),
         notes: Default::default(),
+        acknowledgments: Default::default(),
         trust: Vec::new(),
         appliance: wire::manifest::ProductVersion::parse("0.2.0").expect("fixture appliance"),
         tasks: vec![wire::intent::BoardTask::from_authoritative(

@@ -37,9 +37,9 @@ pub use board::{
     BoardStatement, BoardTask, DocLedger, Positioned, ProjectVisibility,
     TASK_HISTORY_PAGE_LIMIT_MAX, TASK_HISTORY_QUERY_BYTES_MAX, TASK_RELATION_DEPTH_LIMIT,
     TASK_RELATION_EDGE_LIMIT, TASK_RELATION_FRONTIER_LIMIT, TASK_RELATION_NODE_LIMIT,
-    TASK_RELATION_ROOT_LIMIT, TaskClaimContext, TaskDetail, TaskDetailAnswer, TaskDetailNote,
-    TaskGitContext, TaskGitContextKind, TaskHistoryCursor, TaskHistoryPage, TaskLifecycleKind,
-    TaskRelationEdge, TaskRelationFrontier, TaskRelationKind, TaskRelationNode,
+    TASK_RELATION_ROOT_LIMIT, TaskAcknowledgment, TaskClaimContext, TaskDetail, TaskDetailAnswer,
+    TaskDetailNote, TaskGitContext, TaskGitContextKind, TaskHistoryCursor, TaskHistoryPage,
+    TaskLifecycleKind, TaskRelationEdge, TaskRelationFrontier, TaskRelationKind, TaskRelationNode,
     TaskRelationNodeRef, TaskRelationTruncation, TaskRelations, TaskRelationsAnswer,
     TaskTranscriptRecovery, TextAnswer,
 };

@@ -288,6 +288,7 @@ fn board_response(
         offer: Vec::new(),
         origins: Default::default(),
         notes: Default::default(),
+        acknowledgments: Default::default(),
         schema: 1,
         cursor: seq(4),
         principal: wire::Actor::Operator,
