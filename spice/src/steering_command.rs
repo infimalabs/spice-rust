@@ -52,6 +52,16 @@ fn select<'a>(
             let message = matches
                 .get_one::<String>("TEXT")
                 .expect("clap requires steering text");
+            // Direction is the operator's voice. A seated lane's shell can read
+            // the operator discovery, so sending from it would journal and
+            // deliver the lane's text as operator-authored.
+            if let Some(sender) = lane_context(lane_environment)? {
+                return Err(refusal(
+                    "steer::operator-required",
+                    Some(wire::Actor::Lane(sender).to_string()),
+                    "steering is operator direction; a seated lane cannot author it",
+                ));
+            }
             Ok((SelectedCommand::SteerSend { lane, message }, None))
         }
         ["steer", "cancel"] => {
