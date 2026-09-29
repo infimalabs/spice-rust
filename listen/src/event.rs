@@ -287,11 +287,26 @@ pub struct Compaction {
     pub locus: Locus,
 }
 
+/// Structured provider cause reported after vendor retries are exhausted.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct ProviderError {
+    /// Provider identity, when the failure reached one.
+    pub provider: Option<String>,
+    /// Model identity, when the failure reached one.
+    pub model: Option<String>,
+    /// Provider HTTP status, when one was reported.
+    pub http_status: Option<u16>,
+    /// Whether resubmitting later may succeed.
+    pub retryable: bool,
+}
+
 /// A vendor-reported failure.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Failure {
     /// Vendor failure message or reason.
     pub message: String,
+    /// Structured provider cause, when the vendor supplied one.
+    pub provider: Option<ProviderError>,
     /// Source bytes.
     pub locus: Locus,
 }

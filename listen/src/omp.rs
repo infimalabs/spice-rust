@@ -1,18 +1,19 @@
 //! oh-my-pi's RPC frame grammar and the session file it persists beside it.
 //!
 //! A lane drives omp over `--mode rpc`, so the selected stream is one JSON
-//! frame per line. The frames that carry content are `message_end` and the
-//! `get_state` response; the rest are lifecycle and transport that the record
-//! context and the supervisor read. omp's own session file persists the same
-//! message shape under a `message` envelope, so one decoder reads both.
+//! frame per line. `message_end` carries authored content, `get_state` declares
+//! the session, `prompt_result` reports correlated completion and structured
+//! provider failure, and `session_settled` marks whole-session quiescence. omp's
+//! own session file persists the same message shape under a `message` envelope,
+//! so one decoder reads both current surfaces.
 
 use serde_json::Value;
 use tape::Locus;
 
 use crate::{
-    Compaction, Dialog, Event, Events, Failure, Object, Prose, ProseRole, Reasoning,
-    ReasoningContent, ResidueKind, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult,
-    TurnMoment, Usage, array,
+    Compaction, Dialog, Event, Events, Failure, Object, PromptOutcome, PromptStatus, Prose,
+    ProseRole, ProviderError, Reasoning, ReasoningContent, ResidueKind, SessionDeclaration, Tool,
+    ToolMoment, ToolOutcome, ToolResult, TurnMoment, Usage, array,
     media::{self, OwnedContent},
     object, optional_boolean, optional_string, optional_unsigned, required, string,
 };
@@ -31,7 +32,8 @@ pub const PROTOCOL_VERSION: u8 = 2;
 /// left to the unknown arm, so a frame omp adds later is drift the residue
 /// accounts for instead of silence.
 const SILENT: &[&str] = &[
-    // Transport and lifecycle frames.
+    // Transport and run delimiters. RecordContext consumes the run boundary
+    // where one exists; the remaining frames only delimit content-bearing ones.
     "ready",
     "agent_start",
     "agent_end",
@@ -43,13 +45,32 @@ const SILENT: &[&str] = &[
     "tool_execution_end",
     "auto_compaction_start",
     "compaction_summary",
+    "session_settled",
+    // Stream snapshots are restated by the terminal tool result. Retained tapes
+    // from before capture learned that rule still decode without residue.
+    "tool_stream_update",
+    // Retry, model, and UI state is either superseded by the settled message or
+    // has no transcript moment. A terminal provider error is typed from
+    // prompt_result instead of these intermediate status frames.
+    "auto_retry_start",
+    "auto_retry_end",
+    "retry_fallback_applied",
+    "retry_fallback_succeeded",
+    "model_changed",
+    "thinking_level_changed",
+    "config_warnings_changed",
+    "advisor_cost_changed",
+    "advisor_yielded",
+    "ttsr_triggered",
+    "todo_reminder",
+    "todo_auto_clear",
+    "goal_updated",
+    "irc_message",
     "extension_ui_request",
     "extension_error",
     "available_commands_update",
-    "advisor_cost_changed",
     "session_info_update",
     "session_shutdown",
-    "prompt_result",
     "subagent_event",
     "subagent_lifecycle",
     "subagent_progress",
@@ -58,8 +79,11 @@ const SILENT: &[&str] = &[
     "host_uri_request",
     "host_uri_cancel",
     "config_update",
-    // Session file entries.
+    // Session-file metadata changes how omp rebuilds provider context or
+    // presents its own UI; none is authored conversation. Compaction itself is
+    // decoded above, while branch/reset entries only describe rewinds around it.
     "title",
+    "title_change",
     "model_change",
     "thinking_level_change",
     "custom",
@@ -82,7 +106,7 @@ const SILENT: &[&str] = &[
 /// growth. Tool execution updates are always restated by their terminal frame.
 pub(crate) fn restated(record: &Object) -> bool {
     match record.get("type").and_then(Value::as_str) {
-        Some("tool_execution_update") => true,
+        Some("tool_execution_update" | "tool_stream_update") => true,
         Some("message_update") => {
             record
                 .get("assistantMessageEvent")
@@ -165,8 +189,10 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
             locus,
         })]),
         "auto_compaction_end" | "compaction" => compaction(record, locus),
+        "prompt_result" => prompt_result(record, locus),
         "rpc_frame_error" => Ok(vec![Event::Failure(Failure {
             message: string(record, "error")?.to_owned(),
+            provider: None,
             locus,
         })]),
         "notice" => notice(record, locus),
@@ -175,6 +201,64 @@ pub(crate) fn decode(record: &Object, locus: Locus) -> Events {
             discriminator: other.to_owned(),
         }),
     }
+}
+
+/// Terminal lifecycle and structured provider cause from one accepted prompt.
+pub(crate) fn prompt_outcome(record: &Object) -> Result<PromptOutcome, ResidueKind> {
+    let status = match string(record, "status")? {
+        "completed" => PromptStatus::Completed,
+        "aborted" => PromptStatus::Aborted,
+        "error" => PromptStatus::Error,
+        other => return Err(drift(&format!("prompt_result:{other}"))),
+    };
+    if status == PromptStatus::Error {
+        object(record, "error")?;
+    }
+    Ok(PromptOutcome {
+        agent_invoked: required(record, "agentInvoked")?.as_bool().ok_or(
+            ResidueKind::Malformed {
+                field: "prompt_result.agentInvoked",
+                expected: "boolean",
+            },
+        )?,
+        status,
+        session_settled: required(record, "sessionSettled")?.as_bool().ok_or(
+            ResidueKind::Malformed {
+                field: "prompt_result.sessionSettled",
+                expected: "boolean",
+            },
+        )?,
+    })
+}
+
+fn prompt_result(record: &Object, locus: Locus) -> Events {
+    let outcome = prompt_outcome(record)?;
+    if outcome.status != PromptStatus::Error {
+        return Ok(Vec::new());
+    }
+    let error = object(record, "error")?;
+    let http_status = optional_unsigned(error, "httpStatus")?
+        .map(u16::try_from)
+        .transpose()
+        .map_err(|_| ResidueKind::Malformed {
+            field: "prompt_result.error.httpStatus",
+            expected: "HTTP status integer",
+        })?;
+    Ok(vec![Event::Failure(Failure {
+        message: string(error, "message")?.to_owned(),
+        provider: Some(ProviderError {
+            provider: optional_string(error, "provider")?.map(str::to_owned),
+            model: optional_string(error, "model")?.map(str::to_owned),
+            http_status,
+            retryable: required(error, "retryable")?
+                .as_bool()
+                .ok_or(ResidueKind::Malformed {
+                    field: "prompt_result.error.retryable",
+                    expected: "boolean",
+                })?,
+        }),
+        locus,
+    })])
 }
 
 fn message(message: &Object, locus: Locus) -> Events {
@@ -333,6 +417,7 @@ fn assistant(message: &Object, locus: Locus) -> Events {
             message: optional_string(message, "errorMessage")?
                 .unwrap_or("vendor reported an error")
                 .to_owned(),
+            provider: None,
             locus,
         }));
     }
@@ -389,7 +474,11 @@ fn response(record: &Object, locus: Locus) -> Events {
                 "; this lane requires RPC protocol version {PROTOCOL_VERSION}"
             ));
         }
-        return Ok(vec![Event::Failure(Failure { message, locus })]);
+        return Ok(vec![Event::Failure(Failure {
+            message,
+            provider: None,
+            locus,
+        })]);
     }
     if command != "get_state" {
         return Ok(Vec::new());
@@ -462,6 +551,7 @@ fn notice(record: &Object, locus: Locus) -> Events {
     }
     Ok(vec![Event::Failure(Failure {
         message: string(record, "message")?.to_owned(),
+        provider: None,
         locus,
     })])
 }

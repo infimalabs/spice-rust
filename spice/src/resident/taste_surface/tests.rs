@@ -970,6 +970,7 @@ fn quoted_echo_and_every_non_prose_surface_are_inert() {
                 }),
                 listen::Event::Failure(listen::Failure {
                     message: "polling failed".to_owned(),
+                    provider: None,
                     locus,
                 }),
             ],

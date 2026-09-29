@@ -19,12 +19,13 @@ mod surface;
 pub use canary::{Alarm, Canary};
 pub use config::{Config, ConfigError};
 pub use event::{
-    Compaction, Event, EventKind, Failure, Prose, ProseRole, Reasoning, ReasoningContent,
-    SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage,
+    Compaction, Event, EventKind, Failure, Prose, ProseRole, ProviderError, Reasoning,
+    ReasoningContent, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage,
 };
 pub use omp::PROTOCOL_VERSION as OMP_PROTOCOL_VERSION;
 pub use residue::{
-    Decoded, Dialog, LocusLengthError, RecordContext, Residue, ResidueKind, TurnMoment,
+    Decoded, Dialog, LocusLengthError, PromptOutcome, PromptStatus, RecordContext, Residue,
+    ResidueKind, TurnMoment,
 };
 pub use stream::{
     BOUNDARY_CHUNK_BYTES, Checkpoint, Position, Record, RecordPayload, Scan, ScanError,
@@ -245,9 +246,28 @@ fn owner(discriminator: &str) -> Owner {
         | "message_update"
         | "message_end"
         | "tool_execution_start"
+        | "tool_execution_update"
+        | "tool_stream_update"
         | "tool_execution_end"
         | "auto_compaction_start"
         | "auto_compaction_end"
+        | "auto_retry_start"
+        | "auto_retry_end"
+        | "retry_fallback_applied"
+        | "retry_fallback_succeeded"
+        | "model_changed"
+        | "config_warnings_changed"
+        | "advisor_cost_changed"
+        | "advisor_yielded"
+        | "ttsr_triggered"
+        | "todo_reminder"
+        | "todo_auto_clear"
+        | "irc_message"
+        | "notice"
+        | "thinking_level_changed"
+        | "goal_updated"
+        | "prompt_result"
+        | "session_settled"
         | "extension_ui_request"
         | "available_commands_update"
         | "rpc_frame_error"
@@ -255,8 +275,8 @@ fn owner(discriminator: &str) -> Owner {
         | "session"
         | "model_change"
         | "thinking_level_change"
-        | "notice"
         | "title"
+        | "title_change"
         | "compaction"
         | "credential_pin"
         | "custom"
@@ -281,7 +301,8 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
     let Dialect::Omp = dialect;
     let timestamp = optional_string(record, "timestamp")?.map(str::to_owned);
     let message = record.get("message").and_then(Value::as_object);
-    let turn = match record.get("type").and_then(Value::as_str).unwrap_or("") {
+    let kind = record.get("type").and_then(Value::as_str).unwrap_or("");
+    let turn = match kind {
         "agent_start" => Some(TurnMoment::Started),
         "agent_end" => Some(TurnMoment::Completed),
         "message" => omp::session_turn(message),
@@ -300,13 +321,21 @@ fn record_context(dialect: Dialect, record: &Object) -> Result<RecordContext, Re
             })
         })
         .transpose()?;
+    let prompt_outcome = (kind == "prompt_result")
+        .then(|| omp::prompt_outcome(record))
+        .transpose()?;
     Ok(RecordContext {
         timestamp,
-        turn_id: None,
+        turn_id: (kind == "prompt_result")
+            .then(|| optional_string(record, "id").map(|id| id.map(str::to_owned)))
+            .transpose()?
+            .flatten(),
         turn,
         model_context_window,
         dialog: omp::dialog(record),
         withdrawn: omp::withdrawn(record),
+        prompt_outcome,
+        session_settled: kind == "session_settled",
     })
 }
 
