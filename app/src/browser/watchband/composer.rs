@@ -254,7 +254,7 @@ pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
     }
 }
 
-pub(super) fn primary_textarea_id(lane_key: &str) -> String {
+pub(in crate::browser) fn primary_textarea_id(lane_key: &str) -> String {
     format!("composer-primary-{lane_key}")
 }
 

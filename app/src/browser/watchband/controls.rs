@@ -154,6 +154,10 @@ pub(crate) enum TeamControlAction {
     OpenTeam {
         team: CanonicalUuid,
     },
+    /// Open a team and switch it to Chat, where its members' composers live.
+    ShowChat {
+        team: CanonicalUuid,
+    },
     SaveSplit {
         team: CanonicalUuid,
         topology: Vec<TeamArrangement>,
@@ -209,6 +213,10 @@ impl Reducible for TeamControls {
             TeamControlAction::CloseMenus => next.close_menus(),
             TeamControlAction::CloseTeam { team } => next.close_team(team),
             TeamControlAction::OpenTeam { team } => next.open_team(team),
+            TeamControlAction::ShowChat { team } => {
+                next.open_team(team);
+                next.set_mode(Some(team), TeamMode::Chat);
+            }
             TeamControlAction::SaveSplit { team, topology } => {
                 next.save_split(team, topology);
             }
