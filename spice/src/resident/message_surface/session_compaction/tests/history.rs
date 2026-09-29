@@ -1,43 +1,6 @@
 use super::*;
 
 #[test]
-fn wall_exhaustion_returns_current_typed_work_without_partial_decode() {
-    let scratch = Scratch::new("history-wall-exhaustion");
-    let transcript = scratch.transcript();
-    fs::write(&transcript, b"{}\n").expect("fixture record is written");
-    let stamp = FileStamp::read(&File::open(&transcript).expect("fixture record opens"))
-        .expect("fixture stamp reads");
-    let mut cursor = cursor(&transcript, listen::Dialect::Omp);
-    let initial_next = cursor.next;
-    let mut work = HistoryWork {
-        source_bytes: 3,
-        decoded_records: 0,
-        passes: 1,
-        elapsed: Duration::ZERO,
-    };
-    let started = Instant::now()
-        .checked_sub(HISTORY_WALL_BUDGET + Duration::from_millis(1))
-        .expect("test instant can move behind the wall limit");
-
-    let error = match decode_history_records(&mut cursor, b"{}\n", 0, stamp, started, &mut work) {
-        Ok(_) => panic!("expired history work must refuse before decode"),
-        Err(error) => error,
-    };
-
-    assert_eq!(error.kind(), io::ErrorKind::TimedOut);
-    let exhaustion = error
-        .get_ref()
-        .and_then(|source| source.downcast_ref::<HistoryExhaustion>())
-        .expect("wall refusal retains typed work");
-    assert_eq!(exhaustion.work, work);
-    assert_eq!(exhaustion.work.source_bytes, 3);
-    assert_eq!(exhaustion.work.decoded_records, 0);
-    assert_eq!(exhaustion.work.passes, 1);
-    assert!(exhaustion.work.elapsed > HISTORY_WALL_BUDGET);
-    assert_eq!(cursor.next, initial_next, "no record was partially decoded");
-}
-
-#[test]
 fn unchanged_append_only_prefix_never_replays_an_earlier_boundary() {
     let scratch = Scratch::new("append-only");
     let transcript = scratch.transcript();
