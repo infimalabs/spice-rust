@@ -275,6 +275,7 @@ fn insert_receipts(
         recent_cell: None,
         offer: Vec::new(),
         origins: Default::default(),
+        notes: Default::default(),
         tasks: Vec::new(),
         history: None,
         trust: Vec::new(),

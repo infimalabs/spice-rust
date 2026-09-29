@@ -61,6 +61,7 @@ pub(super) fn client_capture(
             tasks: Vec::new(),
             dependencies: false,
             claims: true,
+            notes: false,
         },
     ) {
         Ok(board) => board,
@@ -105,6 +106,7 @@ pub(super) fn client_capture(
         ],
         dependencies: false,
         claims: true,
+        notes: false,
     };
     mutate_from_board(repository, contract, read, |board| {
         require_no_plan_implementation(&board, "task capture")?;
@@ -621,6 +623,7 @@ pub(in crate::board_command) fn mutation_read(
             claims: tasks.is_empty(),
             tasks,
             dependencies,
+            notes: false,
         },
     ))
 }

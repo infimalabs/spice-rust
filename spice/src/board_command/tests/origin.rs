@@ -121,6 +121,7 @@ fn add_and_claim_causal_parent(
         &claimed,
         at(&claimed, &parent),
         &[],
+        &[],
         claim.origin_context.as_deref(),
     );
     assert!(

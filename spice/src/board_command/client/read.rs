@@ -91,6 +91,7 @@ pub(super) fn client_show(
             ],
             dependencies: true,
             claims: false,
+            notes: true,
         },
     ) {
         Outcome::Reply(Reply {
@@ -117,6 +118,10 @@ pub(super) fn client_show(
                         &board,
                         task,
                         &artifacts,
+                        board
+                            .notes
+                            .get(&task.statement.body.born)
+                            .map_or(&[], Vec::as_slice),
                         origin_context.as_deref(),
                     ),
                 }),
@@ -415,13 +420,14 @@ pub(in crate::board_command) fn task_show(
     task: &BoardTask,
     artifacts: &[artifact::Artifact],
 ) -> String {
-    task_show_with_origin(board, task, artifacts, None)
+    task_show_with_origin(board, task, artifacts, &[], None)
 }
 
 pub(in crate::board_command) fn task_show_with_origin(
     board: &BoardAnswer,
     task: &BoardTask,
     artifacts: &[artifact::Artifact],
+    notes: &[wire::intent::TaskDetailNote],
     origin_context: Option<&str>,
 ) -> String {
     let statement = &task.statement.body;
@@ -505,6 +511,21 @@ pub(in crate::board_command) fn task_show_with_origin(
                 "     spice task artifact show {} {}",
                 statement.handle, artifact.id
             ));
+        }
+    }
+    lines.push("notes:".to_owned());
+    if notes.is_empty() {
+        lines.push("  -".to_owned());
+    } else {
+        for note in notes {
+            lines.push(format!("  {} {} {}", note.position, note.at, note.author));
+            lines.extend(note.text.lines().map(|line| {
+                if line.is_empty() {
+                    String::new()
+                } else {
+                    format!("    {line}")
+                }
+            }));
         }
     }
     lines.extend(phase_guidance_lines(task));
