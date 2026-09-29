@@ -79,6 +79,7 @@ pub(in crate::resident) fn occupant_launch(
             &repository,
             resolved.root().vendor().omp(),
             model,
+            fast_mode,
             resume,
             lane,
             occupant,
@@ -659,13 +660,15 @@ struct Pinned {
 }
 
 /// Pin what an oh-my-pi occupant reads from disk before it launches: the
-/// session it resumes and the overlay carrying its compaction threshold and
-/// language-server disposition. The caller selects omp before entering.
+/// session it resumes and the overlay carrying its compaction threshold,
+/// Anthropic service tier, and language-server disposition. The caller selects
+/// omp before entering.
 fn pin_omp(
     paths: &RuntimePaths,
     repository: &Repository,
     omp: &vendor::config::OmpConfig,
     model: Option<&str>,
+    fast_mode: bool,
     resume: vendor::Resume,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
@@ -675,7 +678,8 @@ fn pin_omp(
         None => pin_session(repository)?,
     };
     let threshold = omp.auto_compact_threshold_tokens_for(model.unwrap_or_else(|| omp.model()));
-    let config_overlay = pin_config_overlay(paths, threshold, omp.lsp(), lane, occupant)?;
+    let config_overlay =
+        pin_config_overlay(paths, threshold, omp.lsp(), fast_mode, lane, occupant)?;
     Ok(Pinned {
         resume,
         config_overlay: Some(config_overlay),
@@ -688,18 +692,25 @@ fn pin_omp(
 /// limit, and it takes that limit only from a settings file, so every launch
 /// writes one stating the threshold the tracked policy derives for the model
 /// this seat runs. The same file states whether this seat runs omp's
-/// language-server integration, which omp otherwise decides for itself.
+/// language-server integration and whether Anthropic requests use the priority
+/// tier, both of which omp otherwise decides from persistent settings.
 fn pin_config_overlay(
     paths: &RuntimePaths,
     threshold: u64,
     lsp: bool,
+    fast_mode: bool,
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
 ) -> CommandResult<PathBuf> {
     let path =
         crate::resident::supervisor::supervisor_directory(paths, lane, occupant).join("omp.yml");
     fs::create_dir_all(path.parent().expect("an overlay has a directory"))
-        .and_then(|()| fs::write(&path, vendor::omp::config_overlay(threshold, lsp)))
+        .and_then(|()| {
+            fs::write(
+                &path,
+                vendor::omp::config_overlay(threshold, lsp, fast_mode),
+            )
+        })
         .map_err(|error| {
             store_fault(
                 "lane::config-overlay-unavailable",
