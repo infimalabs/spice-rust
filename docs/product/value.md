@@ -356,7 +356,9 @@ global destination is the `page` URL query, so browser history, reload, and
 copied URLs restore it; an absent legacy query opens Chat. Existing team,
 speech, and narration state keeps its current format. Following a quote link
 to its quoted message is a history step: Back returns the card that held the
-link to where the reader left it.
+link to where the reader left it. A card link opened in a fresh page brings its
+card into view and focus once Chat hydrates, holding it there as older history
+loads around it until the reader scrolls.
 
 ### The global Work page
 

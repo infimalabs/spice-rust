@@ -1,6 +1,7 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::{JsCast as _, JsValue};
 use yew::prelude::*;
 
@@ -131,12 +132,160 @@ fn returned_to(
     returned
 }
 
+/// Keeps a routed card where its route brought it while staged history grows
+/// its lane plane around it. The plane disables browser scroll anchoring, so
+/// without this a cold permalink load drifts off its card as older cards land
+/// above it. The first scroll the pin did not make belongs to the reader and
+/// releases it.
+struct Pin {
+    observer: web_sys::ResizeObserver,
+    _aligned: Closure<dyn FnMut(js_sys::Array, web_sys::ResizeObserver)>,
+}
+
+impl Pin {
+    fn hold(card: &web_sys::Element) -> Option<Self> {
+        let (plane, offset) = plane_offset(card)?;
+        let track = card.closest(".lane-mosaic-track").ok()??;
+        let expected = Cell::new(plane.scroll_top());
+        let card = card.clone();
+        let aligned = Closure::<dyn FnMut(js_sys::Array, web_sys::ResizeObserver)>::new(
+            move |_, observer: web_sys::ResizeObserver| {
+                if plane.scroll_top() != expected.get() || !card.is_connected() {
+                    observer.disconnect();
+                    return;
+                }
+                if let Some((_, now)) = plane_offset(&card) {
+                    plane.scroll_by_with_x_and_y(0.0, now - offset);
+                }
+                expected.set(plane.scroll_top());
+            },
+        );
+        let observer = web_sys::ResizeObserver::new(aligned.as_ref().unchecked_ref()).ok()?;
+        observer.observe(&track);
+        Some(Self {
+            observer,
+            _aligned: aligned,
+        })
+    }
+}
+
+impl Drop for Pin {
+    fn drop(&mut self) {
+        self.observer.disconnect();
+    }
+}
+
+/// Bring a route's element into view and focus, report it reached, and pin it.
+fn reach(
+    element: &web_sys::Element,
+    target: &str,
+    status: &UseStateHandle<Option<Status>>,
+) -> Option<Pin> {
+    element.scroll_into_view();
+    if let Some(element) = element.dyn_ref::<web_sys::HtmlElement>() {
+        let _ = element.focus();
+    }
+    status.set(Some(Status {
+        target: target.to_owned(),
+        available: true,
+    }));
+    Pin::hold(element)
+}
+
+/// Layout phase attribute; a `measuring` card is hidden until its lattice commits.
+const LAYOUT_PHASE: &str = "data-layout-phase";
+
+/// The rendered element a route names. A card counts only once its layout
+/// commits: while measuring it is hidden, so it can neither be scrolled to
+/// meaningfully nor take focus, and a measuring copy may briefly share its id.
+/// Route targets are ASCII alphanumerics and `-`, so they quote verbatim.
+fn routed_element(document: &web_sys::Document, target: &str) -> Option<web_sys::Element> {
+    let nodes = document
+        .query_selector_all(&format!("[id=\"{target}\"]"))
+        .ok()?;
+    (0..nodes.length())
+        .filter_map(|index| nodes.item(index)?.dyn_into::<web_sys::Element>().ok())
+        .find(|element| element.get_attribute(LAYOUT_PHASE).as_deref() != Some("measuring"))
+}
+
+/// Watches the document for a routed element that has not rendered yet.
+/// Staged hydration renders cards without advancing the stream cursor, so a
+/// cold permalink otherwise waits on an unrelated live event to find its card.
+struct Seek {
+    observer: web_sys::MutationObserver,
+    _found: Closure<dyn FnMut(js_sys::Array, web_sys::MutationObserver)>,
+    /// The card this seek marked selected, outside the route effect's care.
+    marked: Rc<RefCell<Option<web_sys::Element>>>,
+}
+
+impl Seek {
+    fn start(
+        document: &web_sys::Document,
+        target: &str,
+        status: &UseStateHandle<Option<Status>>,
+        pin: &Rc<RefCell<Option<Pin>>>,
+    ) -> Option<Self> {
+        let body = document.body()?;
+        let marked = Rc::new(RefCell::new(None));
+        let (document, target, status, pin, mark) = (
+            document.clone(),
+            target.to_owned(),
+            status.clone(),
+            Rc::clone(pin),
+            Rc::clone(&marked),
+        );
+        let found = Closure::<dyn FnMut(js_sys::Array, web_sys::MutationObserver)>::new(
+            move |_, observer: web_sys::MutationObserver| {
+                let Some(element) = routed_element(&document, &target) else {
+                    return;
+                };
+                observer.disconnect();
+                if element.matches(".mosaic-message-card").unwrap_or(false) {
+                    let _ = element.set_attribute("data-card-route-selected", "true");
+                    *mark.borrow_mut() = Some(element.clone());
+                }
+                *pin.borrow_mut() = reach(&element, &target, &status);
+            },
+        );
+        let observer = web_sys::MutationObserver::new(found.as_ref().unchecked_ref()).ok()?;
+        let options = web_sys::MutationObserverInit::new();
+        options.set_child_list(true);
+        options.set_subtree(true);
+        // A rendered card becomes reachable when its layout commits.
+        options.set_attribute_filter(&js_sys::Array::of1(&LAYOUT_PHASE.into()));
+        observer.observe_with_options(&body, &options).ok()?;
+        Some(Self {
+            observer,
+            _found: found,
+            marked,
+        })
+    }
+}
+
+impl Drop for Seek {
+    fn drop(&mut self) {
+        self.observer.disconnect();
+        if let Some(element) = self.marked.borrow_mut().take() {
+            let _ = element.remove_attribute("data-card-route-selected");
+        }
+    }
+}
+
+/// One route target being brought into view: sought until it renders, then
+/// pinned until the reader scrolls. Dropped when the route moves on.
+struct Hold {
+    target: String,
+    _seek: Option<Seek>,
+    _pin: Rc<RefCell<Option<Pin>>>,
+}
+
 /// Focus a card named by the current route once retained Chat state is ready,
 /// unless history returned to an entry a quote link left: then the card that
 /// held the link returns to where the reader saw it.
 ///
-/// Missing cards are retried when the stream cursor advances because the
-/// target may arrive during staged hydration.
+/// A target not yet rendered is sought as staged hydration renders it, and a
+/// reached card stays pinned while that hydration grows its plane, until the
+/// reader scrolls it.
 #[hook]
 pub(super) fn use_target(
     target: Option<String>,
@@ -145,6 +294,7 @@ pub(super) fn use_target(
     visible: bool,
 ) {
     let restored = use_mut_ref(|| None::<f64>);
+    let held = use_mut_ref(|| None::<Hold>);
     let (ready, revision) = {
         let surface = surface.read();
         let runtime = surface.as_ref();
@@ -174,6 +324,13 @@ pub(super) fn use_target(
                     false
                 }
             };
+            if returned
+                || held.borrow().as_ref().is_some_and(|hold| {
+                    Some(hold.target.as_str()) != target.as_deref() || !*visible
+                })
+            {
+                held.borrow_mut().take();
+            }
             if let Some(target) = target.as_deref().filter(|_| *visible) {
                 if *ready {
                     let settled = returned
@@ -182,7 +339,7 @@ pub(super) fn use_target(
                             .is_some_and(|settled| settled.target == target && settled.available);
                     let element = document
                         .as_ref()
-                        .and_then(|document| document.get_element_by_id(target));
+                        .and_then(|document| routed_element(document, target));
                     if let Some(element) = element
                         .as_ref()
                         .filter(|element| element.matches(".mosaic-message-card").unwrap_or(false))
@@ -191,17 +348,30 @@ pub(super) fn use_target(
                         selected = Some(element.clone());
                     }
                     if !settled {
-                        let available = element.is_some();
                         if let Some(element) = element {
-                            element.scroll_into_view();
-                            if let Ok(element) = element.dyn_into::<web_sys::HtmlElement>() {
-                                let _ = element.focus();
+                            let pin = Rc::new(RefCell::new(reach(&element, target, &status)));
+                            *held.borrow_mut() = Some(Hold {
+                                target: target.to_owned(),
+                                _seek: None,
+                                _pin: pin,
+                            });
+                        } else {
+                            status.set(Some(Status {
+                                target: target.to_owned(),
+                                available: false,
+                            }));
+                            if held.borrow().is_none()
+                                && let Some(document) = &document
+                            {
+                                let pin = Rc::new(RefCell::new(None));
+                                let seek = Seek::start(document, target, &status, &pin);
+                                *held.borrow_mut() = Some(Hold {
+                                    target: target.to_owned(),
+                                    _seek: seek,
+                                    _pin: pin,
+                                });
                             }
                         }
-                        status.set(Some(Status {
-                            target: target.to_owned(),
-                            available,
-                        }));
                     } else if returned && status.as_ref().is_none_or(|known| known.target != target)
                     {
                         // The route's own card counts as reached, so a later
