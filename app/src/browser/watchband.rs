@@ -5,7 +5,7 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{DragEvent, HtmlInputElement, PointerEvent};
 
-use super::clock::Age;
+use super::clock::{Age, Countdown};
 use super::work_card::{self, Density};
 use super::*;
 use crate::composer_drafts::ComposerDraft;
@@ -16,6 +16,7 @@ use crate::watchband::{
 mod command_preview;
 mod composer;
 mod controls;
+mod dash;
 mod fleet;
 mod mosaic_view;
 mod state;
@@ -34,8 +35,8 @@ pub(super) use composer::{
 };
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
 use controls::{TeamLife, render_team_controls};
-pub(super) use fleet::use_team_menu_escape;
-use fleet::{FleetRender, TeamMode, carries_team, render_empty_fleet, render_populated_fleet};
+use fleet::{FleetRender, carries_team, render_empty_fleet, render_populated_fleet};
+pub(in crate::browser) use fleet::{TeamMode, use_team_menu_escape};
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
 use team_work::{render_team_jobs, render_team_work_lanes};
@@ -73,6 +74,7 @@ pub(super) fn render_team(
         composer_drag,
         agents: controls,
         selected_task,
+        task_inspector,
         select_task,
         ..
     } = render;
@@ -136,6 +138,7 @@ pub(super) fn render_team(
         work,
         selected_task,
         select_task,
+        task_inspector,
         runtime,
         epoch: lanes.epoch,
         topology_revision: lanes.topology_revision,
@@ -456,6 +459,8 @@ fn render_details(
     runtime: &CanvasRuntime,
     team: &crate::runtime::LaneRow,
     standings: &[Standing],
+    task_inspector: &crate::browser::message_task_inspector::Context,
+    controls: &UseReducerHandle<TeamControls>,
 ) -> Html {
     debug_assert_eq!(
         team.members.len(),
@@ -467,7 +472,14 @@ fn render_details(
         <main class="team-dash-frame" aria-label="Team Dash">
             <section class="team-dash-roster" aria-label="Team roster">
                 {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
-                    render_agent_details(runtime, member, standing)
+                    dash::render_agent_details(
+                        runtime,
+                        member,
+                        standing,
+                        team.lane,
+                        task_inspector,
+                        controls,
+                    )
                 })}
             </section>
             <section class="team-dash-flow" aria-labelledby={flow_heading.clone()}>
@@ -577,104 +589,6 @@ fn lease_age(instant: Option<i64>, class: &'static str, vacant: &'static str) ->
                 data-age-slot={watchband::AGE_SLOT_WIDTH.to_string()}
             >{vacant}</span>
         },
-    }
-}
-
-fn render_agent_details(
-    runtime: &CanvasRuntime,
-    member: &crate::runtime::LaneMember,
-    standing: &Standing,
-) -> Html {
-    debug_assert_eq!(
-        member.lane, standing.lane,
-        "standings retain canonical member order"
-    );
-    let occupant = member
-        .occupant
-        .map(|value| value.to_string())
-        .unwrap_or_else(|| "vacant".to_owned());
-    let session = standing
-        .session
-        .clone()
-        .unwrap_or_else(|| "unbound".to_owned());
-    let status = member.status(standing.pending);
-    let presence = watchband::member_presence(runtime, member, standing);
-    let presence_label = if presence.state == watchband::MemberPresenceState::Working {
-        standing.handle.as_ref().map_or_else(
-            || presence.state.label().to_owned(),
-            |handle| format!("working on {handle}"),
-        )
-    } else {
-        presence.state.label().to_owned()
-    };
-    let presence_age = lease_age(
-        presence.since_millis,
-        "team-presence-age",
-        "age unavailable",
-    );
-    html! {
-        <article
-            key={standing.lane.to_string()}
-            class="team-dash-member"
-            data-agent-lane={standing.lane.to_string()}
-            data-lane-status={status.key()}
-            data-accent={standing.accent.to_string()}
-            data-agent-presence={presence.state.key()}
-            title={watchband::standing_title(standing)}
-        >
-            <header class="team-dash-member-header">
-                {view::render_member_presence(status)}
-                <strong>{standing.label.clone()}</strong>
-                {render_dash_vendor_icon(standing)}
-            </header>
-            <details class="team-dash-member-disclosure">
-                <summary title="Seat details">
-                    <span class="team-presence-state">{presence_label}</span>
-                    {" · "}
-                    {presence_age}
-                </summary>
-                <dl>
-                    <div>
-                        <dt>{"Agent channel"}</dt>
-                        <dd><code>{standing.lane.to_string()}</code></dd>
-                    </div>
-                    <div>
-                        <dt>{"Occupant"}</dt>
-                        <dd><code>{occupant}</code></dd>
-                    </div>
-                    <div>
-                        <dt>{"Worktree"}</dt>
-                        <dd><code>{standing.worktree.clone()}</code></dd>
-                    </div>
-                    <div>
-                        <dt>{"Pending"}</dt>
-                        <dd>{format!("{} pending", standing.pending)}</dd>
-                    </div>
-                    <div>
-                        <dt>{"Model / residency policy"}</dt>
-                        <dd>{format!(
-                            "{} / {}",
-                            watchband::model_display(standing.model.as_deref()),
-                            standing.life
-                        )}</dd>
-                    </div>
-                    <div>
-                        <dt>{"Session"}</dt>
-                        <dd><code>{session}</code></dd>
-                    </div>
-                    {for standing.jobs.iter().map(|job| html! {
-                        <div>
-                            <dt>
-                                {"Job "}
-                                <code>{job.id.clone()}</code>
-                                {format!(" ({})", job.standing.as_str())}
-                            </dt>
-                            <dd>{job.command.clone()}</dd>
-                        </div>
-                    })}
-                </dl>
-            </details>
-        </article>
     }
 }
 
