@@ -1121,19 +1121,29 @@ impl EventDirectives<'_> {
                     })))
     }
 
-    /// Display may repeat an acknowledged context without repeating retirement.
+    /// The answer the journal retired `key` with for this lane, which display
+    /// may repeat without repeating retirement.
     ///
-    /// The lane owns that conversation continuity across transcript replacement.
-    /// The original retirement locus remains the authority for retirement and
-    /// automatic speech; later sources only reuse its already-authenticated
-    /// context for presentation.
-    fn acknowledged_for_lane(&self, key: &steer::Key) -> bool {
-        self.directives.0.get(key).is_some_and(|directive| {
-            directive.lane == self.event.lane
-                && directive.disposition == wire::Disposition::Acked
-                && !directive.review
-                && directive.retirement.is_some()
-        })
+    /// The lane owns that conversation continuity across transcript replacement
+    /// and across the records of one message: a key retires at the streamed
+    /// text while the card projects from the settled message. The original
+    /// retirement locus remains the authority for retirement and automatic
+    /// speech; later records only reuse its already-authenticated context for
+    /// presentation.
+    fn answered_for_lane(&self, key: &steer::Key) -> Option<wire::Disposition> {
+        self.directives
+            .0
+            .get(key)
+            .filter(|directive| {
+                directive.lane == self.event.lane
+                    && matches!(
+                        directive.disposition,
+                        wire::Disposition::Acked | wire::Disposition::Declined
+                    )
+                    && !directive.review
+                    && directive.retirement.is_some()
+            })
+            .map(|directive| directive.disposition)
     }
 
     /// The stable seal authenticating steering delivery to this lane.
@@ -1151,8 +1161,8 @@ impl EventDirectives<'_> {
         locus: steer::ack::scan::Locus,
     ) -> bool {
         self.recognizes(key, disposition, locus)
-            || (disposition == wire::Disposition::Acked
-                && (self.acknowledged_for_lane(key) || self.is_lane_seal(key)))
+            || self.answered_for_lane(key) == Some(disposition)
+            || (disposition == wire::Disposition::Acked && self.is_lane_seal(key))
     }
 
     fn recognizes_authored(
