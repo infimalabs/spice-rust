@@ -709,8 +709,8 @@ fn read_endpoint(repository: &Repository) -> Option<String> {
 ///
 /// `up` accepts `--host` and `--port` independently, so an operator who names
 /// one gets it whether or not a resident had published the other. Dropping an
-/// explicit port for want of a host would instead leave `up` on its own default
-/// endpoint, which this repository documents as the predecessor's.
+/// explicit or published port for want of a host would instead leave `up` on a
+/// kernel-picked port, a new URL after every restart.
 fn requested_endpoint(
     request: &RefreshRequest,
     published: Option<&str>,
