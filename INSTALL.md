@@ -265,7 +265,11 @@ omits that lifecycle:
 "$SPICE_BIN" dev xtask -- install -- --host 0.0.0.0 --allow-insecure-bind
 ```
 
-Arguments after `--` are forwarded verbatim to `spice up`. Manual apply accepts
+Arguments after `--` are forwarded verbatim to `spice up`. The shortcut is the
+operator's: run from a lane the repository seats, it refuses with
+`resident::operator-install-only` before building anything, because every
+seated lane runs the appliance it would replace. A lane may still refresh a
+scratch repository that has never seated it. Manual apply accepts
 only its preview digest. Every linked worktree observes one Git-common upgrade,
 and the installed pre-commit worker verifies the receipt, assets, and exact
 binary before selected-source verification.

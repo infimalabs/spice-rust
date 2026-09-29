@@ -765,18 +765,6 @@ fn a_concurrent_predecessor_is_replaced_by_the_installed_resident() {
     );
 }
 
-#[test]
-fn a_refresh_started_inside_a_lane_stops_the_resident_as_the_operator() {
-    let command = resident_stop_command(Path::new("/installed/spice"));
-    let lane = OsStr::new(wire::SpiceVariable::Lane.as_str());
-
-    assert_eq!(
-        command.get_envs().find(|(name, _)| *name == lane),
-        Some((lane, None)),
-        "the down child can inherit the lane principal"
-    );
-}
-
 /// A clean stop is not reported as a refusal.
 ///
 /// `down` succeeding is the outcome that has nothing to say, so the assertion

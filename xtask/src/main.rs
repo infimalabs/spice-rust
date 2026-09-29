@@ -220,10 +220,11 @@ fn usage_error() -> UsageError {
 }
 
 fn run_install(arguments: Vec<OsString>) -> ExitCode {
-    let Some(request) = install_request(&arguments) else {
+    let Some(mut request) = install_request(&arguments) else {
         eprintln!("{}", help());
         return ExitCode::from(USAGE_EXIT);
     };
+    request.lane = bootstrap_environment(wire::SpiceVariable::Lane.as_str());
     let mut output = io::stdout().lock();
     match xtask::refresh(&request, &release_environment(), &mut output) {
         Ok(_) => ExitCode::SUCCESS,
