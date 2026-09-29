@@ -602,16 +602,6 @@ fn lease_instant(
         .map(|lease| pick(&lease.body).get().as_millisecond())
 }
 
-/// The zero-based canonical position projected onto a left-to-right visual stack.
-///
-/// Some compact summaries build left-to-right even though full team member
-/// surfaces project canonical order from the right control edge.
-#[must_use]
-pub const fn right_edge_ordinal(members: usize, position: usize) -> usize {
-    assert!(position < members, "member position belongs to its team");
-    members - position - 1
-}
-
 /// The accent slot dealt to one canonical team-member position.
 ///
 /// Canonical member zero is the main, control-adjacent member and receives
