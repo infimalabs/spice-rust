@@ -705,6 +705,11 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
+        ClientAction::TaskTimeline { request } => {
+            refresh::send_task_timeline(principal, writer, actions, request)
+                .await
+                .map(|_| None)
+        }
         ClientAction::WorkHistory { request } => {
             refresh::send_work_history(principal, writer, actions, request)
                 .await

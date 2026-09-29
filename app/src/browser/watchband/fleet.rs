@@ -71,6 +71,8 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) can_configure: bool,
     pub(super) topology: Vec<(CanonicalUuid, Vec<CanonicalUuid>)>,
     pub(super) quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
+    pub(super) surface: UseStateHandle<SurfaceData>,
+    pub(super) timeline_request: Callback<TeamFlowPageRequest>,
     pub(super) sender: &'a SenderHandle,
     pub(super) drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub(super) submissions: &'a SubmissionHandle,
@@ -129,9 +131,15 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                             render.submissions,
                             None,
                         ),
-                        TeamMode::Dash => {
-                            render_details(render.runtime, &empty_team, &[])
-                        }
+                        TeamMode::Dash => render_details(
+                            &render.surface,
+                            render.runtime,
+                            &empty_team,
+                            &[],
+                            render.select_task,
+                            &render.timeline_request,
+                            render.team_controls,
+                        ),
                     }}
                 </div>
             </section>
@@ -234,10 +242,15 @@ pub(super) fn render_populated_fleet(
                                             Some(render.team_settled),
                                         ),
                                         TeamMode::Dash => render_details(
+                                            &render.surface,
                                             render.runtime,
                                             team,
                                             &team_standings,
+                                            render.select_task,
+                                            &render.timeline_request,
+                                            render.team_controls,
                                         ),
+
                                         TeamMode::Chat => Html::default(),
                                     }}
                                 </div>

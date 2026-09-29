@@ -436,9 +436,13 @@ live state changes do not resize or reorder the roster. Agent channel, occupant,
 worktree, residency policy, and session identifiers remain available through a
 per-member seat-details disclosure that scrolls inside its own box.
 
-A separate Flow frame below the roster owns the space where team work will be
-projected. Keeping roster identity and flow in distinct regions lets later flow
-updates change without moving the people who perform them.
+A separate Flow frame below the roster merges task transitions, lane lifecycle
+boundaries, and delivered directions into one newest-first chronology. Task
+entries open the shared task detail; lifecycle and direction entries link to
+their source cards in Chat. Older task events page in at the bottom without
+moving the row under the reader, while newly arriving events appear at the top
+and preserve an existing scroll position. The resident-backed feed rehydrates
+after reload, so Dash remains useful as both live status and workflow history.
 
 ### Lane, team, occupant
 
