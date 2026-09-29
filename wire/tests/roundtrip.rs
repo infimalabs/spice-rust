@@ -192,7 +192,7 @@ fn version_is_the_exact_stable_six_identity_document() {
 #[test]
 fn board_history_filters_have_exact_optional_wire_shapes() {
     let filtered: wire::intent::BoardRead = round_trip(
-        r#"{"scope":"history","query":"failed deploy","completed_before":"2030-04-12T18:44:09.271Z","limit":25}"#,
+        r#"{"scope":"history","query":"failed deploy","completed_before":"2030-04-12T18:44:09.271Z","team":"019fe52f-10ad-7c83-9df4-511323d1b7fb","limit":25}"#,
     );
     assert!(matches!(
         filtered,
@@ -200,6 +200,7 @@ fn board_history_filters_have_exact_optional_wire_shapes() {
             before: None,
             query: Some(query),
             completed_before: Some(_),
+            team: Some(_),
             limit: 25,
         } if query == "failed deploy"
     ));
@@ -211,6 +212,7 @@ fn board_history_filters_have_exact_optional_wire_shapes() {
             before: None,
             query: None,
             completed_before: None,
+            team: None,
             limit: 25,
         }
     ));

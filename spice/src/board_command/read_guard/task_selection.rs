@@ -51,8 +51,16 @@ pub(super) fn selected_tasks(
             before,
             query,
             completed_before,
+            team,
             limit,
-        } => history_selection(observed, before, query, completed_before.as_ref(), *limit),
+        } => history_selection(
+            observed,
+            before,
+            query,
+            completed_before.as_ref(),
+            team.as_ref(),
+            *limit,
+        ),
         BoardRead::Trust => Ok(TaskSelection {
             tasks: Some(Default::default()),
             evidence: Default::default(),
@@ -142,11 +150,53 @@ fn context_tasks(
     selected
 }
 
+/// The terminal tasks one Canvas team may call its own history: those it
+/// created, and those whose most recent winning claim was bound to a lane now
+/// in the team, whichever principal won it. A team the residency does not
+/// know keeps only what it created.
+struct TeamHistoryScope {
+    lanes: std::collections::BTreeSet<wire::CanonicalUuid>,
+    created: std::collections::BTreeSet<wire::TaskStamp>,
+}
+
+impl TeamHistoryScope {
+    fn admits(&self, heads: &journal::TaskHeads) -> bool {
+        self.created.contains(&heads.statement().body().born)
+            || heads
+                .claim()
+                .is_some_and(|claim| self.lanes.contains(&claim.body().lane))
+    }
+}
+
+fn team_history_scope(
+    observed: &bus::TaskSnapshot,
+    team: &wire::CanonicalUuid,
+) -> Result<TeamHistoryScope, Outcome<CommandAnswer>> {
+    let lanes = observed
+        .residency()
+        .map(|residency| {
+            residency
+                .body()
+                .lanes
+                .iter()
+                .filter(|lane| lane.team == *team)
+                .map(|lane| lane.lane)
+                .collect()
+        })
+        .unwrap_or_default();
+    let created = task_creator_teams(observed.facts().iter(), None)?
+        .into_iter()
+        .filter_map(|(task, creator)| (creator == Some(*team)).then_some(task))
+        .collect();
+    Ok(TeamHistoryScope { lanes, created })
+}
+
 fn history_selection(
     observed: &bus::TaskSnapshot,
     before: &Option<TaskHistoryCursor>,
     query: &Option<String>,
     completed_before: Option<&wire::Instant>,
+    team: Option<&wire::CanonicalUuid>,
     limit: u16,
 ) -> Result<TaskSelection, Outcome<CommandAnswer>> {
     if limit == 0 || limit > TASK_HISTORY_PAGE_LIMIT_MAX {
@@ -159,6 +209,9 @@ fn history_selection(
         ));
     }
     let query = normalized_history_query(query)?;
+    let team = team
+        .map(|team| team_history_scope(observed, team))
+        .transpose()?;
     let mut history = observed
         .tasks()
         .iter()
@@ -173,6 +226,7 @@ fn history_selection(
                     .is_some_and(|completed| completed <= cutoff)
             })
         })
+        .filter(|heads| team.as_ref().is_none_or(|team| team.admits(heads)))
         .filter(|heads| {
             query
                 .as_deref()

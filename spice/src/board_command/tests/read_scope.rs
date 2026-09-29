@@ -53,15 +53,15 @@ fn append_terminal_tasks(bus: &Bus, count: usize) -> std::collections::BTreeSet<
     tasks
 }
 
-struct TerminalTaskFixture {
-    micros: i64,
-    title: String,
-    description: Option<String>,
-    project: String,
-    completion: Instant,
+pub(super) struct TerminalTaskFixture {
+    pub(super) micros: i64,
+    pub(super) title: String,
+    pub(super) description: Option<String>,
+    pub(super) project: String,
+    pub(super) completion: Instant,
 }
 
-fn push_terminal_task(
+pub(super) fn push_terminal_task(
     write: &mut JournalWrite,
     origin: &wire::Origin,
     creation: &body::TaskCreationContext,
@@ -351,6 +351,7 @@ fn open_read_excludes_large_history_and_cursor_pages_cover_it_once() {
                 before: before.clone(),
                 query: None,
                 completed_before: None,
+                team: None,
                 limit: PAGE_LIMIT,
             },
         );
@@ -487,6 +488,7 @@ fn history_page(
             before,
             query: query.map(str::to_owned),
             completed_before,
+            team: None,
             limit,
         },
     )
@@ -589,6 +591,7 @@ fn history_bounds_empty_page_and_stale_cursor_are_explicit() {
             before: None,
             query: None,
             completed_before: None,
+            team: None,
             limit: 10,
         },
     );
@@ -612,6 +615,7 @@ fn history_bounds_empty_page_and_stale_cursor_are_explicit() {
                     before: None,
                     query: None,
                     completed_before: None,
+                    team: None,
                     limit,
                 },
             ),
@@ -634,6 +638,7 @@ fn history_bounds_empty_page_and_stale_cursor_are_explicit() {
                     before: None,
                     query: Some(query),
                     completed_before: None,
+                    team: None,
                     limit: 10,
                 },
             ),
@@ -648,6 +653,7 @@ fn history_bounds_empty_page_and_stale_cursor_are_explicit() {
                 before: Some(stale),
                 query: None,
                 completed_before: None,
+                team: None,
                 limit: 10,
             },
         ),
