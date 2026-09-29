@@ -473,7 +473,7 @@ fn render_topology(render: &CanvasRender<'_>) -> (Option<String>, Html) {
                             });
                             render_topology_group(
                                 format!("{host} team"),
-                                Some(team.lane),
+                                Some((team.lane, render.team_controls)),
                                 team_agents(team, &standings).collect(),
                             )
                         })}
@@ -596,9 +596,19 @@ const TOPOLOGY_COLUMNS: usize = 4;
 /// groups share a row instead of leaving it empty.
 fn render_topology_group(
     heading: String,
-    team: Option<CanonicalUuid>,
+    team: Option<(CanonicalUuid, &UseReducerHandle<TeamControls>)>,
     agents: Vec<(&crate::runtime::LaneMember, &crate::watchband::Standing)>,
 ) -> Html {
+    // The composer lives in the team's Chat pane, which a closed team or one
+    // showing Dash or Work leaves unrendered or inert, so following the link
+    // first shows that pane.
+    let show_chat = team.map(|(team, controls)| {
+        let controls = controls.clone();
+        Callback::from(move |_: MouseEvent| {
+            controls.dispatch(TeamControlAction::ShowChat { team });
+        })
+    });
+    let team = team.map(|(team, _)| team);
     html! {
         <section
             class="dash-overview-topology-group"
@@ -611,7 +621,9 @@ fn render_topology_group(
                 <span>{topology_count(agents.len(), "agent", "agents")}</span>
             </h3>
             <div class="dash-overview-agent-list">
-                {for agents.into_iter().map(|(member, standing)| render_topology_agent(member, standing))}
+                {for agents.into_iter().map(|(member, standing)| {
+                    render_topology_agent(member, standing, show_chat.clone())
+                })}
             </div>
         </section>
     }
@@ -620,17 +632,35 @@ fn render_topology_group(
 /// One lane in the chat's tile language: accent-dealt name, presence, the
 /// "pending, liveness" line, the held task, kept jobs, and the provider emblem.
 /// Every row is always drawn so a tile's geometry never follows its data.
+///
+/// A teamed lane's tile is a link to its primary composer in Chat. Independent
+/// lanes have no Chat surface, so their tiles stay inert.
 fn render_topology_agent(
     member: &crate::runtime::LaneMember,
     standing: &crate::watchband::Standing,
+    show_chat: Option<Callback<MouseEvent>>,
 ) -> Html {
     debug_assert_eq!(member.lane, standing.lane, "standings keep member order");
     let status = member.status(standing.pending);
     let branch = crate::watchband::agent_message_label(&standing.worktree, None);
     let lane = standing.lane.to_string();
+    let (tag, href, label) = if show_chat.is_some() {
+        (
+            "a",
+            Some(crate::view::card_href(
+                &super::watchband::primary_textarea_id(&lane),
+            )),
+            Some(format!("Open {}'s composer in Chat", standing.label)),
+        )
+    } else {
+        ("article", None, None)
+    };
     html! {
-        <article
+        <@{tag}
             class="dash-overview-agent"
+            href={href}
+            onclick={show_chat}
+            aria-label={label}
             data-accent={standing.accent.to_string()}
             data-agent-lane={lane.clone()}
             data-lane-status={status.key()}
@@ -654,6 +684,6 @@ fn render_topology_agent(
             <p>{crate::watchband::jobs_kept(&standing.jobs).unwrap_or_else(|| "\u{a0}".to_owned())}</p>
             <p class="dash-overview-agent-model">{crate::watchband::model_display(standing.model.as_deref())}</p>
             {super::watchband::render_composer_vendor_icon(standing, "dash")}
-        </article>
+        </@>
     }
 }

@@ -24,10 +24,12 @@ mod vendor_icon;
 pub(super) use command_preview::use_command_modifier_preview;
 use composer::{
     AgentMessageCard, ComposerTextarea, agent_message_source_id, drop_on_lane, keyboard_submit,
-    paste_images, primary_composer_dragging, primary_textarea_id, render_image_indicators,
-    render_quote_shards, team_quote_sources,
+    paste_images, primary_composer_dragging, render_image_indicators, render_quote_shards,
+    team_quote_sources,
 };
-pub(super) use composer::{PrimaryComposerDragState, use_primary_composer_drag_state};
+pub(super) use composer::{
+    PrimaryComposerDragState, primary_textarea_id, use_primary_composer_drag_state,
+};
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
 use controls::{TeamLife, render_team_controls};
 pub(super) use fleet::use_team_menu_escape;
