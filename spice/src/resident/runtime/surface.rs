@@ -137,6 +137,19 @@ async fn start_surface<'a>(
     )
     .await
     .map_err(|error| {
+        if error.kind() == std::io::ErrorKind::AddrInUse {
+            return Outcome::Refusal(Refusal::bare(
+                wire::RefusalDiagnostic::new(
+                    "resident::listen-port-served".to_owned(),
+                    Some("requested-listen-address".to_owned()),
+                    Some("a port no other listener serves".to_owned()),
+                    Some(listen.to_string()),
+                )
+                .with_detail(format!(
+                    "{error}; choose another --port or stop the listener serving it"
+                )),
+            ));
+        }
         environment_fault(
             "canvas::bind-failed",
             &format!("listening on {listen} failed: {error}"),
