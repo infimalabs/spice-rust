@@ -326,26 +326,6 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
                 && issue.path().is_some_and(|found| found.to_string() == path)
         }));
     }
-
-    for retired in ["claude", "codex"] {
-        let document = format!("[vendor.{retired}]\nmodel = 'retired'\n");
-        let error = resolve(documents(Some(&document), None))
-            .expect_err("a retired vendor table must refuse, not sit inert");
-        let issue = error
-            .issues()
-            .iter()
-            .find(|issue| issue.kind() == IssueKind::Unknown)
-            .expect("the retired table is named");
-        assert_eq!(
-            issue.path().map(ToString::to_string),
-            Some(format!("vendor.{retired}"))
-        );
-        assert!(
-            issue.message().contains("omp is the only vendor"),
-            "the refusal names the recovery: {}",
-            issue.message()
-        );
-    }
 }
 
 #[test]

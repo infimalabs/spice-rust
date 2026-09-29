@@ -543,23 +543,12 @@ fn sanitize(
         .iter()
         .any(|entry| entry.template().accepts_prefix(&borrowed))
     {
-        let message = match borrowed.as_slice() {
-            [
-                PathSegment::Key("vendor"),
-                PathSegment::Key(retired @ ("claude" | "codex")),
-                ..,
-            ] => format!(
-                "vendor.{retired} configures a retired harness; omp is the only vendor, so \
-                 remove the [vendor.{retired}] table"
-            ),
-            _ => "path is not present in the release configuration registry".to_owned(),
-        };
         issues.push(Issue::at(
             IssueKind::Unknown,
             source,
             document,
             path.clone(),
-            message,
+            "path is not present in the release configuration registry",
         ));
         return false;
     }

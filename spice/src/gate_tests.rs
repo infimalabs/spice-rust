@@ -92,10 +92,6 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
             OsString::from("producer wrapper functions"),
         ),
         (
-            prefixed_name(AGENT_RUNTIME_PREFIXES[1], "SESSION_ID"),
-            OsString::from("producer-session"),
-        ),
-        (
             OsString::from("ARBITRARY_BUILD_INPUT"),
             OsString::from("retained"),
         ),
@@ -117,14 +113,6 @@ fn compiler_environment_ignores_shell_scratch_and_retains_arbitrary_build_inputs
         (
             prefixed_name(SHELL_HOOK_PREFIX, "WRAPPERS"),
             OsString::from("consumer wrapper functions"),
-        ),
-        (
-            prefixed_name(AGENT_RUNTIME_PREFIXES[1], "SESSION_ID"),
-            OsString::from("consumer-session"),
-        ),
-        (
-            prefixed_name(AGENT_RUNTIME_PREFIXES[0], "SESSION_ID"),
-            OsString::from("consumer-session"),
         ),
         (
             OsString::from("ARBITRARY_BUILD_INPUT"),

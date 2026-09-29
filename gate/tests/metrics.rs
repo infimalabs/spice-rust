@@ -8,10 +8,10 @@ use gate::metrics::{
     MetricMeasurement, MetricParity, MetricReport, MetricStateBinding, MetricUnit, ParseError,
     ParserEvidence, ParserId, PredecessorMetricObservation, PredecessorMetricResult,
     RUST_DOC_MARKDOWN_CITATION_ALLOWANCES, ResolvedMetricRule, RuleBinding,
-    RustDocMarkdownCitationAllowanceKind, RustDocMarkdownCitationScan, STRUCTURAL_ARMS,
-    STRUCTURAL_METRICS, StructuralArmEvidence, compare_predecessor_metric, measure_complexity,
-    measure_file_shape, measure_repository_document, resolve_magic_metric, resolve_metric_rule,
-    scan_magic_regressions, scan_markdown_link_case, scan_rust_doc_markdown_citations,
+    RustDocMarkdownCitationScan, STRUCTURAL_ARMS, STRUCTURAL_METRICS, StructuralArmEvidence,
+    compare_predecessor_metric, measure_complexity, measure_file_shape,
+    measure_repository_document, resolve_magic_metric, resolve_metric_rule, scan_magic_regressions,
+    scan_markdown_link_case, scan_rust_doc_markdown_citations,
 };
 use gate::state::{ActorInputs, CurrentState, LatchKind, RenameMap};
 use gate::{
@@ -666,58 +666,20 @@ fn a_prose_citation_is_judged_and_a_longer_suffix_is_not_one() {
 }
 
 #[test]
-fn rust_doc_markdown_allowances_are_exact_and_each_states_its_reason() {
-    let expected = [
-        (
-            None,
-            "CLAUDE.md",
-            RustDocMarkdownCitationAllowanceKind::External,
-            "operator-owned",
-        ),
-        (
-            Some("gate/src/battery/tests/file_shape.rs"),
-            "app/notes.md",
-            RustDocMarkdownCitationAllowanceKind::Fixture,
-            "synthetic repository fixture",
-        ),
-        (
-            Some("gate/tests/core_docs.rs"),
-            "GUIDE.md",
-            RustDocMarkdownCitationAllowanceKind::Fixture,
-            "fixture repository",
-        ),
-        (
-            Some("gate/tests/input.rs"),
-            "AGENTS.md",
-            RustDocMarkdownCitationAllowanceKind::Fixture,
-            "fixture document identity",
-        ),
-    ];
-    assert_eq!(RUST_DOC_MARKDOWN_CITATION_ALLOWANCES.len(), expected.len());
-    for (allowance, (source, target, kind, reason)) in RUST_DOC_MARKDOWN_CITATION_ALLOWANCES
-        .into_iter()
-        .zip(expected)
-    {
-        assert_eq!(allowance.source_path(), source);
-        assert_eq!(allowance.target_path(), target);
-        assert_eq!(allowance.kind(), kind);
-        assert!(allowance.reason().contains(reason));
-
-        let source = source.unwrap_or("vendor/src/omp.rs");
-        let text = format!("/// The fixture or external surface names `{target}`.");
-        let admitted =
-            scan_rust_doc_markdown_citations(source, &text, &[]).expect("declared citation scans");
+fn rust_doc_markdown_allowances_admit_their_fixture_citation_only_at_its_source() {
+    for allowance in RUST_DOC_MARKDOWN_CITATION_ALLOWANCES {
+        let target = allowance.target_path();
+        let text = format!("/// The fixture names `{target}`.");
+        let admitted = scan_rust_doc_markdown_citations(allowance.source_path(), &text, &[])
+            .expect("declared citation scans");
         assert_eq!(admitted.citations(), 1);
         assert!(admitted.findings().is_empty());
     }
 
-    for (source, target) in [
-        ("src/lib.rs", "app/notes.md"),
-        ("src/lib.rs", "GUIDE.md"),
-        ("src/lib.rs", "AGENTS.md"),
-    ] {
+    for allowance in RUST_DOC_MARKDOWN_CITATION_ALLOWANCES {
+        let target = allowance.target_path();
         let text = format!("/// An undeclared source names `{target}`.");
-        let refused = scan_rust_doc_markdown_citations(source, &text, &[])
+        let refused = scan_rust_doc_markdown_citations("src/lib.rs", &text, &[])
             .expect("source-bound fixture citation scans elsewhere");
         assert_eq!(refused.findings().len(), 1);
     }

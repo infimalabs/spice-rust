@@ -155,7 +155,7 @@ fn flag_values_cannot_cross_descriptor_types_or_duplicate_mappings() {
     assert_eq!(
         FlagOverride::new(
             life_mapping,
-            FlagValue::Name("codex".parse().expect("valid name"))
+            FlagValue::Name("other".parse().expect("valid name"))
         ),
         Err(FlagError::WrongValue {
             expected: spice::config::ValueKind::Life,

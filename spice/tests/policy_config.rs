@@ -239,7 +239,7 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
         ),
         ("[lane]\nlease = \"15minutes\"\n", "lane.lease"),
         ("[lane]\nruntime = \"eventually\"\n", "lane.runtime"),
-        ("[lane]\nvendor = \"Claude\"\n", "lane.vendor"),
+        ("[lane]\nvendor = \"Other\"\n", "lane.vendor"),
         ("[steer]\nresend = [\"15s\", \"60s\"]\n", "steer"),
         ("[steer]\nresend = [\"15s\", \"15s\", \"300s\"]\n", "steer"),
         (
@@ -250,9 +250,8 @@ fn malformed_policy_values_are_refused_under_their_domain_paths() {
         ("[proof]\nimage = \"proof:latest\"\n", "proof.image"),
         ("[proof]\ncontainer = \"docker\"\n", "proof.container"),
         ("[proof]\nrunner = \"\"\n", "proof.runner"),
-        ("[vendor.Claude]\nbinary = \"claude\"\n", "vendor.Claude"),
-        ("[vendor.claude]\nmodel = \"opus\"\n", "vendor.claude"),
-        ("[vendor.codex]\nmodel = \"gpt\"\n", "vendor.codex"),
+        ("[vendor.Other]\nbinary = \"other\"\n", "vendor.Other"),
+        ("[vendor.other]\nmodel = \"x\"\n", "vendor.other"),
         (
             "[vendor.omp]\nauto_compact_window_tokens = 16384\n",
             "vendor.omp.auto_compact_window_tokens",

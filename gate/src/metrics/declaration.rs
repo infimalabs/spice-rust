@@ -136,27 +136,17 @@ impl ParserId {
     }
 }
 
-/// Why one exact Rust doc-comment citation does not name a tracked path.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum RustDocMarkdownCitationAllowanceKind {
-    /// The named document belongs to an external operator surface.
-    External,
-    /// The spelling describes a document created inside a test fixture.
-    Fixture,
-}
-
 /// One exact compiled allowance for a Rust doc-comment Markdown citation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RustDocMarkdownCitationAllowance {
-    source_path: Option<&'static str>,
+    source_path: &'static str,
     target_path: &'static str,
-    kind: RustDocMarkdownCitationAllowanceKind,
     reason: &'static str,
 }
 
 impl RustDocMarkdownCitationAllowance {
     #[must_use]
-    pub const fn source_path(self) -> Option<&'static str> {
+    pub const fn source_path(self) -> &'static str {
         self.source_path
     }
 
@@ -166,55 +156,37 @@ impl RustDocMarkdownCitationAllowance {
     }
 
     #[must_use]
-    pub const fn kind(self) -> RustDocMarkdownCitationAllowanceKind {
-        self.kind
-    }
-
-    #[must_use]
     pub const fn reason(self) -> &'static str {
         self.reason
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn matches(self, source_path: &str, target_path: &str) -> bool {
-        self.target_path == target_path
-            && self
-                .source_path
-                .is_none_or(|declared| declared == source_path)
+        self.target_path == target_path && self.source_path == source_path
     }
 }
 
 /// Exact non-tracked Markdown spellings admitted in Rust doc comments.
 ///
-/// The external declaration is target-wide because Claude owns that operator
-/// document wherever the launch contract explains it. Fixture declarations are
-/// source-bound so the same missing name anywhere else remains a finding.
-pub const RUST_DOC_MARKDOWN_CITATION_ALLOWANCES: [RustDocMarkdownCitationAllowance; 4] = [
+/// Each names a document created inside one test fixture and is bound to that
+/// source, so the same missing name anywhere else remains a finding.
+pub const RUST_DOC_MARKDOWN_CITATION_ALLOWANCES: [RustDocMarkdownCitationAllowance; 3] = [
     RustDocMarkdownCitationAllowance {
-        source_path: None,
-        target_path: "CLAUDE.md",
-        kind: RustDocMarkdownCitationAllowanceKind::External,
-        reason: "Claude Code reads this operator-owned document outside repository tracking",
-    },
-    RustDocMarkdownCitationAllowance {
-        source_path: Some("gate/src/battery/tests/file_shape.rs"),
+        source_path: "gate/src/battery/tests/file_shape.rs",
         target_path: "app/notes.md",
-        kind: RustDocMarkdownCitationAllowanceKind::Fixture,
         reason: "the battery test names this path inside its synthetic repository fixture",
     },
     RustDocMarkdownCitationAllowance {
-        source_path: Some("gate/tests/core_docs.rs"),
+        source_path: "gate/tests/core_docs.rs",
         target_path: "GUIDE.md",
-        kind: RustDocMarkdownCitationAllowanceKind::Fixture,
         reason: concat!(
             "the core-docs test creates and measures this document inside its ",
             "fixture repository"
         ),
     },
     RustDocMarkdownCitationAllowance {
-        source_path: Some("gate/tests/input.rs"),
+        source_path: "gate/tests/input.rs",
         target_path: "AGENTS.md",
-        kind: RustDocMarkdownCitationAllowanceKind::Fixture,
         reason: "the input test names this packaged default as fixture document identity",
     },
 ];

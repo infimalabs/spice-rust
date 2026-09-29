@@ -199,14 +199,14 @@ fast_mode = false
 
 #[test]
 fn composition_refuses_unsupported_vendor_and_reserved_lane_environment() {
-    for retired in ["claude", "codex", "gemini"] {
+    for unsupported in ["gemini", "other"] {
         assert_eq!(
             compose(
                 &Root::default(),
-                inputs(retired, Environment::empty(), Resume::Fresh),
+                inputs(unsupported, Environment::empty(), Resume::Fresh),
             )
             .expect_err("a vendor without a declared value refuses"),
-            ComposeError::UnsupportedVendor(retired.to_owned())
+            ComposeError::UnsupportedVendor(unsupported.to_owned())
         );
     }
 
