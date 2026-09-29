@@ -27,6 +27,7 @@ base64 = "0.22.1"
 constant_time_eq = "0.4.2"
 futures-util = { version = "0.3.33", default-features = false, features = ["sink", "std"] }
 sha2 = "0.10.9"
+sill = { path = "../sill" }
 tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "process", "rt", "sync", "time"] }
 tokio-util = { version = "0.7.14", default-features = false, features = ["rt"] }
 
