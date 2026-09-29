@@ -9,6 +9,97 @@ pub(super) struct Settled<'s, 'p, 'a> {
     pub work: Option<&'p crate::work::WorkProjection<'a>>,
     pub controls: &'s super::super::team_settled::Controls,
 }
+pub(super) fn render_tasks(
+    render: &FleetRender<'_, '_>,
+    team: &crate::runtime::LaneRow,
+    standings: &[Standing],
+    settled: Option<&super::team_settled::Controls>,
+) -> Html {
+    let runtime = render.runtime;
+    let selected = (**render.selected_task).as_ref();
+    let select = render.select_task;
+    let submissions = render.submissions;
+    let team_controls = render.team_controls;
+    let work = render
+        .work
+        .map(|projection| crate::work::team_work(projection, team));
+    let settled_state = runtime.team_settled(team.lane);
+    let settled_work = settled_state
+        .and_then(crate::runtime::TeamSettledState::pages)
+        .map(crate::work::WorkProjection::from_board);
+    let settled = settled.map(|controls| team_work::Settled {
+        state: settled_state,
+        work: settled_work.as_ref(),
+        controls,
+    });
+    let policy = TeamLife::from(team.subscription).label();
+    let work_summary = work.as_ref().map_or_else(
+        || "Task state unavailable".to_owned(),
+        |work| {
+            format!(
+                "{} open",
+                work.up_next().len() + work.in_flight().len() + work.waiting().len()
+            )
+        },
+    );
+    let member_lanes = team
+        .members
+        .iter()
+        .map(|member| member.lane)
+        .collect::<BTreeSet<_>>();
+    let message_links =
+        watchband::work_message_links(&member_lanes, runtime.messages().iter().map(AsRef::as_ref));
+    let follow_message = {
+        let team = team.lane;
+        let team_controls = team_controls.clone();
+        Callback::from(move |event: MouseEvent| {
+            if super::card_target::remember_work_return(&event, team) {
+                team_controls.dispatch(TeamControlAction::ShowChat { team });
+            }
+        })
+    };
+    let cards = work_card::Controls {
+        selected,
+        select,
+        lanes: runtime.lanes(),
+        density: Density::Compact,
+        map: None,
+        messages: Some(work_card::MessageControls {
+            links: &message_links,
+            team: team.lane,
+            follow: &follow_message,
+        }),
+    };
+    html! {
+        <main class="team-task-workspace" aria-label="Team tasks">
+            <header class="team-task-summary">
+                <div>
+                    <span class="team-task-eyebrow">{"Team work"}</span>
+                    <strong>{work_summary}</strong>
+                </div>
+                <div
+                    class="team-task-policy"
+                    data-task-policy-extension=""
+                    aria-label={format!("Task policy: {policy}")}
+                >
+                    <span>{"Task policy"}</span>
+                    <strong>{policy}</strong>
+                </div>
+            </header>
+            {render_team_work_lanes(work.as_ref(), team.lane, &cards, settled.as_ref())}
+            {render_team_jobs(standings, team.lane)}
+            {render_directive_ledger(
+                runtime,
+                team,
+                standings,
+                submissions,
+                select,
+                &message_links,
+                &follow_message,
+            )}
+        </main>
+    }
+}
 
 pub(super) fn render_team_work_lanes(
     work: Option<&crate::work::TeamWork<'_, '_>>,
@@ -100,6 +191,8 @@ pub(super) fn render_directive_ledger(
     standings: &[Standing],
     submissions: &SubmissionHandle,
     select: &Callback<wire::TaskStamp>,
+    message_links: &watchband::WorkMessageLinks<'_>,
+    follow_message: &Callback<MouseEvent>,
 ) -> Html {
     let members = team
         .members
@@ -154,7 +247,14 @@ pub(super) fn render_directive_ledger(
             } else {
                 <ol class="team-direction-ledger">
                     {for rows.iter().map(|row| {
-                        render_directive_row(row, standings, board, select)
+                        render_directive_row(
+                            row,
+                            standings,
+                            board,
+                            select,
+                            message_links,
+                            follow_message,
+                        )
                     })}
                 </ol>
             }
@@ -231,6 +331,8 @@ fn render_directive_row(
     standings: &[Standing],
     board: Option<&crate::runtime::BoardView>,
     select: &Callback<wire::TaskStamp>,
+    message_links: &watchband::WorkMessageLinks<'_>,
+    follow_message: &Callback<MouseEvent>,
 ) -> Html {
     let task_handles = board.map_or_else(BTreeSet::new, |board| {
         row.keys
@@ -246,15 +348,34 @@ fn render_directive_row(
                 .then_some((&task.statement.body.handle, &task.statement.body.born))
         })
     });
+    let message_target = message_links
+        .directive(&row.keys)
+        .map(agent_message_source_id);
+    let return_id = message_target
+        .as_ref()
+        .map(|_| format!("team-work-directive-{}", row.identity));
     html! {
         <li
             key={row.identity.to_string()}
+            id={return_id}
             class="team-direction-ledger-row"
+            tabindex={message_target.as_ref().map(|_| "-1")}
+            data-card-return-origin={message_target.as_ref().map(|_| "work")}
             data-directive={row.identity.to_string()}
         >
             <div class="team-direction-ledger-heading">
                 <span class="team-direction-preview">{row.preview.clone()}</span>
-                <Age authored={row.authored_millis} class="team-direction-age" />
+                <span class="team-direction-heading-actions">
+                    if let Some(target) = &message_target {
+                        <a
+                            class="work-message-link"
+                            href={crate::view::card_href(target)}
+                            aria-label="Open acknowledging or declining message in Chat"
+                            onclick={follow_message.clone()}
+                        >{"Chat"}</a>
+                    }
+                    <Age authored={row.authored_millis} class="team-direction-age" />
+                </span>
             </div>
             <ul class="team-direction-recipients" aria-label="Recipients">
                 {for standings.iter().filter_map(|standing| {

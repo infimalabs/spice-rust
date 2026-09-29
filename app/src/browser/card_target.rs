@@ -8,6 +8,7 @@ use yew::prelude::*;
 use crate::CanvasRuntime;
 
 use super::SurfaceData;
+use super::watchband::{TeamControlAction, TeamControls, TeamMode};
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct Status {
@@ -15,15 +16,16 @@ pub(super) struct Status {
     pub(super) available: bool,
 }
 
-/// History-state key naming where a reader left through a quote link.
+/// History-state key naming where a reader left through a card link.
 const RETURN_STATE: &str = "canvasReturn";
 
-/// The card holding a followed quote link and its offset inside its lane
-/// plane at that moment. Chat scrolls inside each lane plane rather than the
-/// document, so the browser cannot restore this position itself.
+/// The element holding a followed card link and its offset inside its scrolling
+/// surface at that moment. Team modes and Chat lanes scroll independently, so
+/// the browser cannot restore this position itself.
 struct ReturnAnchor {
     card: String,
     offset: f64,
+    team: Option<wire::CanonicalUuid>,
     /// Distinguishes one recorded departure from a later one on the same entry.
     nonce: f64,
 }
@@ -35,6 +37,9 @@ impl ReturnAnchor {
         Some(Self {
             card: field("card")?.as_string()?,
             offset: field("offset")?.as_f64()?,
+            team: field("team")
+                .and_then(|team| team.as_string())
+                .and_then(|team| team.parse().ok()),
             nonce: field("nonce")?.as_f64()?,
         })
     }
@@ -44,7 +49,7 @@ impl ReturnAnchor {
         let Some(card) = document.get_element_by_id(&self.card) else {
             return false;
         };
-        let Some((plane, offset)) = plane_offset(&card) else {
+        let Some((plane, offset)) = return_offset(&card) else {
             return false;
         };
         plane.scroll_by_with_x_and_y(0.0, offset - self.offset);
@@ -64,10 +69,43 @@ fn plane_offset(card: &web_sys::Element) -> Option<(web_sys::Element, f64)> {
     Some((plane, offset))
 }
 
-/// Record, in the history entry a plain quote-link click is about to leave,
-/// the card holding that link and where it sits in its lane plane, so Back
-/// returns the reader there instead of leaving them at the quoted message.
+/// A return origin's scrolling surface and top edge relative to it.
+fn return_offset(origin: &web_sys::Element) -> Option<(web_sys::Element, f64)> {
+    let surface = origin
+        .closest(".lane-mosaic-plane, .team-mode-pane")
+        .ok()??;
+    let offset = origin.get_bounding_client_rect().top() - surface.get_bounding_client_rect().top();
+    Some((surface, offset))
+}
+
+/// Record where a plain quote link leaves its containing Chat card.
 pub(super) fn remember_quote_return(event: &web_sys::MouseEvent) {
+    let _ = remember_return(
+        event,
+        "a.message-quote-age[href]",
+        ".mosaic-message-card",
+        None,
+    );
+}
+
+/// Record where a plain Work link leaves, returning whether this tab should
+/// switch the team to Chat. Modified clicks retain native new-tab behavior and
+/// must not change this tab's team mode.
+pub(super) fn remember_work_return(event: &web_sys::MouseEvent, team: wire::CanonicalUuid) -> bool {
+    remember_return(
+        event,
+        "a.work-message-link[href]",
+        "[data-card-return-origin]",
+        Some(team),
+    )
+}
+
+fn remember_return(
+    event: &web_sys::MouseEvent,
+    link_selector: &str,
+    origin_selector: &str,
+    team: Option<wire::CanonicalUuid>,
+) -> bool {
     if event.default_prevented()
         || event.button() != 0
         || event.meta_key()
@@ -75,27 +113,27 @@ pub(super) fn remember_quote_return(event: &web_sys::MouseEvent) {
         || event.shift_key()
         || event.alt_key()
     {
-        return;
+        return false;
     }
     let Some(link) = event
         .target()
         .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .and_then(|target| target.closest("a.message-quote-age[href]").ok().flatten())
+        .and_then(|target| target.closest(link_selector).ok().flatten())
     else {
-        return;
+        return false;
     };
-    let Some(card) = link.closest(".mosaic-message-card").ok().flatten() else {
-        return;
+    let Some(origin) = link.closest(origin_selector).ok().flatten() else {
+        return false;
     };
     let Some(window) = web_sys::window() else {
-        return;
+        return false;
     };
     // A link to the current entry navigates nowhere, so nothing is left behind.
-    if card.id().is_empty() || link.get_attribute("href") == window.location().hash().ok() {
-        return;
+    if origin.id().is_empty() || link.get_attribute("href") == window.location().hash().ok() {
+        return false;
     }
-    let (Ok(history), Some((_, offset))) = (window.history(), plane_offset(&card)) else {
-        return;
+    let (Ok(history), Some((_, offset))) = (window.history(), return_offset(&origin)) else {
+        return false;
     };
     let state = js_sys::Object::new();
     // Keep the history library's own entry identity beside the anchor.
@@ -106,14 +144,20 @@ pub(super) fn remember_quote_return(event: &web_sys::MouseEvent) {
     }
     let anchor = js_sys::Object::new();
     for (name, value) in [
-        ("card", JsValue::from(card.id())),
+        ("card", JsValue::from(origin.id())),
         ("offset", JsValue::from(offset)),
         ("nonce", JsValue::from(js_sys::Date::now())),
     ] {
         let _ = js_sys::Reflect::set(&anchor, &name.into(), &value);
     }
+    if let Some(team) = team {
+        let _ = js_sys::Reflect::set(&anchor, &"team".into(), &JsValue::from(team.to_string()));
+    }
     let _ = js_sys::Reflect::set(&state, &RETURN_STATE.into(), &anchor);
-    let _ = history.replace_state(&state, "");
+    if history.replace_state(&state, "").is_err() {
+        return false;
+    }
+    true
 }
 
 /// Restore a returned-to entry's anchor once per arrival at that entry.
@@ -208,6 +252,15 @@ fn routed_element(document: &web_sys::Document, target: &str) -> Option<web_sys:
         .find(|element| element.get_attribute(LAYOUT_PHASE).as_deref() != Some("measuring"))
 }
 
+fn routed_team(element: &web_sys::Element) -> Option<wire::CanonicalUuid> {
+    element
+        .closest(".team-surface")
+        .ok()??
+        .get_attribute("data-team")?
+        .parse()
+        .ok()
+}
+
 /// Watches the document for a routed element that has not rendered yet.
 /// Staged hydration renders cards without advancing the stream cursor, so a
 /// cold permalink otherwise waits on an unrelated live event to find its card.
@@ -271,6 +324,34 @@ impl Drop for Seek {
     }
 }
 
+fn restore_work_entry(
+    anchor: Option<&ReturnAnchor>,
+    team_controls: &UseReducerHandle<TeamControls>,
+    restored: &Rc<RefCell<Option<f64>>>,
+    document: Option<&web_sys::Document>,
+) -> bool {
+    let restore_team = anchor.and_then(|anchor| {
+        anchor
+            .team
+            .filter(|team| team_controls.mode(*team) != TeamMode::Work)
+    });
+    if let Some(team) = restore_team {
+        team_controls.dispatch(TeamControlAction::SetMode {
+            team: Some(team),
+            mode: TeamMode::Work,
+        });
+        return false;
+    }
+    match (anchor, document) {
+        (Some(anchor), Some(document)) => returned_to(restored, anchor, document),
+        _ => {
+            // Leaving the entry lets a later Back restore it again.
+            restored.borrow_mut().take();
+            false
+        }
+    }
+}
+
 /// One route target being brought into view: sought until it renders, then
 /// pinned until the reader scrolls. Dropped when the route moves on.
 struct Hold {
@@ -291,6 +372,7 @@ pub(super) fn use_target(
     target: Option<String>,
     surface: &SurfaceData,
     status: UseStateHandle<Option<Status>>,
+    team_controls: UseReducerHandle<TeamControls>,
     visible: bool,
 ) {
     let restored = use_mut_ref(|| None::<f64>);
@@ -306,8 +388,8 @@ pub(super) fn use_target(
         )
     };
     use_effect_with(
-        (target, visible, ready, revision),
-        move |(target, visible, ready, _)| {
+        (target, visible, ready, revision, team_controls),
+        move |(target, visible, ready, _, team_controls)| {
             let mut selected = None;
             let window = web_sys::window();
             let document = window.as_ref().and_then(web_sys::Window::document);
@@ -315,15 +397,9 @@ pub(super) fn use_target(
                 .as_ref()
                 .and_then(|window| window.history().ok())
                 .and_then(|history| ReturnAnchor::read(&history))
-                .filter(|_| *visible && *ready);
-            let returned = match (&anchor, &document) {
-                (Some(anchor), Some(document)) => returned_to(&restored, anchor, document),
-                _ => {
-                    // Leaving the entry lets a later Back restore it again.
-                    restored.borrow_mut().take();
-                    false
-                }
-            };
+                .filter(|_| target.is_none() && *visible && *ready);
+            let returned =
+                restore_work_entry(anchor.as_ref(), team_controls, &restored, document.as_ref());
             if returned
                 || held.borrow().as_ref().is_some_and(|hold| {
                     Some(hold.target.as_str()) != target.as_deref() || !*visible
@@ -340,46 +416,54 @@ pub(super) fn use_target(
                     let element = document
                         .as_ref()
                         .and_then(|document| routed_element(document, target));
-                    if let Some(element) = element
+                    let open_team = element
                         .as_ref()
-                        .filter(|element| element.matches(".mosaic-message-card").unwrap_or(false))
-                    {
-                        let _ = element.set_attribute("data-card-route-selected", "true");
-                        selected = Some(element.clone());
-                    }
-                    if !settled {
-                        if let Some(element) = element {
-                            let pin = Rc::new(RefCell::new(reach(&element, target, &status)));
-                            *held.borrow_mut() = Some(Hold {
-                                target: target.to_owned(),
-                                _seek: None,
-                                _pin: pin,
-                            });
-                        } else {
-                            status.set(Some(Status {
-                                target: target.to_owned(),
-                                available: false,
-                            }));
-                            if held.borrow().is_none()
-                                && let Some(document) = &document
-                            {
-                                let pin = Rc::new(RefCell::new(None));
-                                let seek = Seek::start(document, target, &status, &pin);
+                        .and_then(routed_team)
+                        .filter(|team| team_controls.mode(*team) != TeamMode::Chat);
+                    if let Some(team) = open_team {
+                        team_controls.dispatch(TeamControlAction::ShowChat { team });
+                    } else {
+                        if let Some(element) = element.as_ref().filter(|element| {
+                            element.matches(".mosaic-message-card").unwrap_or(false)
+                        }) {
+                            let _ = element.set_attribute("data-card-route-selected", "true");
+                            selected = Some(element.clone());
+                        }
+                        if !settled {
+                            if let Some(element) = element {
+                                let pin = Rc::new(RefCell::new(reach(&element, target, &status)));
                                 *held.borrow_mut() = Some(Hold {
                                     target: target.to_owned(),
-                                    _seek: seek,
+                                    _seek: None,
                                     _pin: pin,
                                 });
+                            } else {
+                                status.set(Some(Status {
+                                    target: target.to_owned(),
+                                    available: false,
+                                }));
+                                if held.borrow().is_none()
+                                    && let Some(document) = &document
+                                {
+                                    let pin = Rc::new(RefCell::new(None));
+                                    let seek = Seek::start(document, target, &status, &pin);
+                                    *held.borrow_mut() = Some(Hold {
+                                        target: target.to_owned(),
+                                        _seek: seek,
+                                        _pin: pin,
+                                    });
+                                }
                             }
+                        } else if returned
+                            && status.as_ref().is_none_or(|known| known.target != target)
+                        {
+                            // The route's own card counts as reached, so a later
+                            // stream advance does not yank the reader to it.
+                            status.set(Some(Status {
+                                target: target.to_owned(),
+                                available: element.is_some(),
+                            }));
                         }
-                    } else if returned && status.as_ref().is_none_or(|known| known.target != target)
-                    {
-                        // The route's own card counts as reached, so a later
-                        // stream advance does not yank the reader to it.
-                        status.set(Some(Status {
-                            target: target.to_owned(),
-                            available: element.is_some(),
-                        }));
                     }
                 }
             } else if status.is_some() {

@@ -399,6 +399,14 @@ delivery failure; recent retirements therefore replace state in place instead
 of making the row jump.
 Any work whose origin names one of the row's steering keys appears on that row
 and opens the same shared task detail layer.
+Retained history connects Work back to Chat without inventing destinations. A
+task card links to the newest retained team message that mentions its handle,
+and a directive row links to a retained acknowledgement or decline carrying
+that steering target. If no matching card is retained, no link is shown.
+Following a link shows that team's Chat pane and focuses the message; Back
+restores the originating Work row and scroll position, Forward returns to the
+message, and modified clicks open the card route without changing this tab's
+team mode.
 
 A fourth lane, Settled, shows the work the team finished most recently: tasks
 it created or whose last winning claim a current member held, newest first,

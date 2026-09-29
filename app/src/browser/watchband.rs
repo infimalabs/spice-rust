@@ -24,20 +24,20 @@ mod vendor_icon;
 
 pub(super) use command_preview::use_command_modifier_preview;
 use composer::{
-    AgentMessageCard, ComposerTextarea, agent_message_source_id, drop_on_lane, keyboard_submit,
-    paste_images, primary_composer_dragging, render_image_indicators, render_quote_shards,
-    team_quote_sources,
+    AgentMessageCard, ComposerTextarea, drop_on_lane, keyboard_submit, paste_images,
+    primary_composer_dragging, render_image_indicators, render_quote_shards, team_quote_sources,
 };
 pub(super) use composer::{
-    PrimaryComposerDragState, primary_textarea_id, use_primary_composer_drag_state,
+    PrimaryComposerDragState, agent_message_source_id, primary_textarea_id,
+    use_primary_composer_drag_state,
 };
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
 use controls::{TeamLife, render_team_controls};
-pub(super) use fleet::use_team_menu_escape;
-use fleet::{FleetRender, TeamMode, carries_team, render_empty_fleet, render_populated_fleet};
+use fleet::{FleetRender, carries_team, render_empty_fleet, render_populated_fleet};
+pub(super) use fleet::{TeamMode, use_team_menu_escape};
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
-use team_work::{render_directive_ledger, render_team_jobs, render_team_work_lanes};
+use team_work::render_tasks;
 pub(super) use vendor_icon::{render_composer_vendor_icon, render_dash_vendor_icon};
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
@@ -499,66 +499,6 @@ fn render_details(
                 <header><h3 id={flow_heading}>{"Flow"}</h3></header>
                 <div class="team-dash-flow-body"></div>
             </section>
-        </main>
-    }
-}
-
-fn render_tasks(
-    runtime: &CanvasRuntime,
-    work: Option<&crate::work::WorkProjection<'_>>,
-    team: &crate::runtime::LaneRow,
-    standings: &[Standing],
-    selected: Option<&wire::TaskStamp>,
-    select: &Callback<wire::TaskStamp>,
-    submissions: &SubmissionHandle,
-    settled: Option<&super::team_settled::Controls>,
-) -> Html {
-    let work = work.map(|projection| crate::work::team_work(projection, team));
-    let settled_state = runtime.team_settled(team.lane);
-    let settled_work = settled_state
-        .and_then(crate::runtime::TeamSettledState::pages)
-        .map(crate::work::WorkProjection::from_board);
-    let settled = settled.map(|controls| team_work::Settled {
-        state: settled_state,
-        work: settled_work.as_ref(),
-        controls,
-    });
-    let policy = TeamLife::from(team.subscription).label();
-    let work_summary = work.as_ref().map_or_else(
-        || "Task state unavailable".to_owned(),
-        |work| {
-            format!(
-                "{} open",
-                work.up_next().len() + work.in_flight().len() + work.waiting().len()
-            )
-        },
-    );
-    let cards = work_card::Controls {
-        selected,
-        select,
-        lanes: runtime.lanes(),
-        density: Density::Compact,
-        map: None,
-    };
-    html! {
-        <main class="team-task-workspace" aria-label="Team tasks">
-            <header class="team-task-summary">
-                <div>
-                    <span class="team-task-eyebrow">{"Team work"}</span>
-                    <strong>{work_summary}</strong>
-                </div>
-                <div
-                    class="team-task-policy"
-                    data-task-policy-extension=""
-                    aria-label={format!("Task policy: {policy}")}
-                >
-                    <span>{"Task policy"}</span>
-                    <strong>{policy}</strong>
-                </div>
-            </header>
-            {render_team_work_lanes(work.as_ref(), team.lane, &cards, settled.as_ref())}
-            {render_team_jobs(standings, team.lane)}
-            {render_directive_ledger(runtime, team, standings, submissions, select)}
         </main>
     }
 }
