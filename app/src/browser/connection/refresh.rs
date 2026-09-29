@@ -223,7 +223,10 @@ async fn send_inbox(
         actions,
         PendingKind::Inbox { covered },
         CommandKind::SteerInbox,
-        SteerInbox { lane: None },
+        SteerInbox {
+            lane: None,
+            retired: false,
+        },
     )
     .await
 }

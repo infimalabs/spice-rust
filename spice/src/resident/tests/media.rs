@@ -251,7 +251,10 @@ fn read_inbox(
     lane: CanonicalUuid,
     command_id: CanonicalUuid,
 ) -> wire::intent::InboxAnswer {
-    let request = wire::intent::SteerInbox { lane: Some(lane) };
+    let request = wire::intent::SteerInbox {
+        lane: Some(lane),
+        retired: false,
+    };
     let command = Command {
         v: wire::WireVersion::CURRENT,
         id: command_id,

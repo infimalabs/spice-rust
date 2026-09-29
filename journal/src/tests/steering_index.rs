@@ -3,10 +3,11 @@
 use super::*;
 use crate::{
     CommitError, FactCause, JournalGuard, JournalHead, JournalWrite, MAX_STEERING_PAGE_ROWS,
+    RetiredSteering,
 };
 use wire::body::{
-    LaneHeld, SteerCanceled, SteerEscalated, SteerSent, SteeringStage, SteeringTransition,
-    TaskNoted,
+    LaneHeld, SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed, SteerSent,
+    SteeringStage, SteeringTransition, TaskNoted, TranscriptLocus,
 };
 use wire::{Disposition, Producer, SteeringHead};
 
@@ -334,6 +335,123 @@ fn steering_recovery_snapshot_excludes_unrelated_world_history() {
 }
 
 #[test]
+fn retired_window_keeps_each_lanes_newest_retirements_in_retirement_order() {
+    const WINDOW: usize = 4;
+    let other = indexed_uuid(0xff);
+    let fanout = indexed_uuid(0xfe);
+    let mut journal = Journal::in_memory().expect("steering journal");
+    let publish = |journal: &mut Journal, write: JournalWrite, key: &str| {
+        journal.apply(write).expect("publication applies");
+        journal
+            .read(|read| read.steering_key(key))
+            .expect("published head reads")
+            .expect("published head exists")
+    };
+    let heads = (0..6)
+        .map(|index| {
+            let key = format!("retired-{index}");
+            publish(&mut journal, send_write(indexed_uuid(index), &key), &key)
+        })
+        .collect::<Vec<_>>();
+    publish(&mut journal, send_write(indexed_uuid(6), "live"), "live");
+    let mut fanned_write =
+        JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
+    let mut body = sent(indexed_uuid(7), "fanned");
+    body.lane = other;
+    body.fanout = Some(fanout);
+    let pending = fanned_write
+        .fact(body.clone(), FactCause::Root)
+        .expect("fanned fact builds");
+    fanned_write.steering_head(pending, move |seq| {
+        live_head(&body, "fanned".to_owned(), seq)
+    });
+    let fanned = publish(&mut journal, fanned_write, "fanned");
+
+    // Retire out of creation order so retirement order is observable.
+    let order = [
+        (3, Disposition::Acked),
+        (0, Disposition::Declined),
+        (5, Disposition::Lapsed),
+        (1, Disposition::DeadLettered),
+        (4, Disposition::Canceled),
+        (2, Disposition::Acked),
+    ];
+    let mut retirements = Vec::new();
+    for (index, disposition) in order {
+        let applied = journal
+            .apply(retire_write(&heads[index], disposition))
+            .expect("retirement applies");
+        retirements.push((
+            lane(),
+            heads[index].body().key.clone(),
+            disposition,
+            applied.last(),
+        ));
+    }
+    let applied = journal
+        .apply(retire_write(&fanned, Disposition::Canceled))
+        .expect("fanned retirement applies");
+    let fanned_row = (
+        other,
+        "fanned".to_owned(),
+        Disposition::Canceled,
+        applied.last(),
+    );
+
+    let summary = |rows: &[RetiredSteering]| {
+        rows.iter()
+            .map(|row| (row.lane, row.key.clone(), row.disposition, row.retired))
+            .collect::<Vec<_>>()
+    };
+    let every = journal
+        .read(|read| read.retired_steering(None, WINDOW))
+        .expect("retired window reads");
+    let mut expected = retirements
+        .iter()
+        .rev()
+        .take(WINDOW)
+        .cloned()
+        .collect::<Vec<_>>();
+    if other.to_string() < lane().to_string() {
+        expected.insert(0, fanned_row.clone());
+    } else {
+        expected.push(fanned_row.clone());
+    }
+    assert_eq!(
+        summary(&every),
+        expected,
+        "each lane keeps only its newest retirements, newest first, lanes in canonical order"
+    );
+    let projected = every
+        .iter()
+        .find(|row| row.key == "fanned")
+        .expect("fanned row present");
+    assert_eq!(projected.directive, fanned.body().directive);
+    assert_eq!(projected.fanout, Some(fanout));
+    assert_eq!(projected.text, fanned.body().text);
+    assert_eq!(projected.published, fanned.body().published);
+
+    let scoped = journal
+        .read(|read| read.retired_steering(Some(other), WINDOW))
+        .expect("lane-scoped retired window reads");
+    assert_eq!(summary(&scoped), vec![fanned_row]);
+    let whole_lane = journal
+        .read(|read| read.retired_steering(Some(lane()), usize::from(u16::MAX)))
+        .expect("whole-lane retired window reads");
+    assert_eq!(
+        summary(&whole_lane),
+        retirements.iter().rev().cloned().collect::<Vec<_>>(),
+        "every retired disposition decodes and the live directive never appears"
+    );
+    assert!(
+        journal
+            .read(|read| read.retired_steering(None, 0))
+            .expect("empty window reads")
+            .is_empty()
+    );
+}
+
+#[test]
 fn live_steering_pages_bound_rows_decode_work_and_preserve_continuation_order() {
     let mut journal = Journal::in_memory().expect("steering journal");
     let total = MAX_STEERING_PAGE_ROWS + 3;
@@ -529,8 +647,20 @@ fn indexed_uuid(index: usize) -> CanonicalUuid {
 }
 
 fn cancel_write(observed: &JournalHead<SteeringHead>) -> JournalWrite {
+    retire_write(observed, Disposition::Canceled)
+}
+
+fn retire_write(observed: &JournalHead<SteeringHead>, disposition: Disposition) -> JournalWrite {
     let expected = observed.clone();
-    let mut write = JournalWrite::new(Actor::Operator, origin(), instant(), Producer::CommandDoor);
+    let (actor, producer) = match disposition {
+        Disposition::Acked | Disposition::Declined => {
+            (Actor::Lane(observed.body().lane), Producer::AckScanner)
+        }
+        Disposition::Lapsed => (Actor::Spice, Producer::BusTimer),
+        Disposition::DeadLettered => (Actor::Spice, Producer::ResidentRecognition),
+        Disposition::Canceled | Disposition::Live => (Actor::Operator, Producer::CommandDoor),
+    };
+    let mut write = JournalWrite::new(actor, origin(), instant(), producer);
     write.guard(JournalGuard::new(move |read| {
         let current = read
             .steering_head(expected.body().directive)?
@@ -542,17 +672,65 @@ fn cancel_write(observed: &JournalHead<SteeringHead>) -> JournalWrite {
         }
         Ok(())
     }));
-    let pending = write
-        .fact(
-            SteerCanceled {
-                key: observed.body().key.clone(),
-                lane: observed.body().lane,
+    let head = observed.body();
+    let (directive, key, lane) = (head.directive, head.key.clone(), head.lane);
+    let cause = FactCause::Existing(observed.position());
+    let locus = TranscriptLocus {
+        source: None,
+        member: 1,
+        offset: 0,
+        length: 1,
+        event: 0,
+        line: 1,
+        column: 1,
+    };
+    let epoch = uuid("018f82d4-6f59-7d06-92e3-bce913116305");
+    let pending = match disposition {
+        Disposition::Acked => write.fact(
+            SteerAcked {
+                directive,
+                key,
+                lane,
+                epoch,
+                locus,
             },
-            FactCause::Existing(observed.position()),
-        )
-        .expect("cancel fact builds");
-    let mut next = observed.body().clone();
-    next.disposition = Disposition::Canceled;
+            cause,
+        ),
+        Disposition::Declined => write.fact(
+            SteerDeclined {
+                directive,
+                key,
+                lane,
+                epoch,
+                locus,
+                reason: "cannot".to_owned(),
+            },
+            cause,
+        ),
+        Disposition::Lapsed => write.fact(
+            SteerLapsed {
+                key,
+                lane,
+                expires: head.expires,
+            },
+            cause,
+        ),
+        Disposition::DeadLettered => write.fact(
+            wire::steering::SteerDeadLettered {
+                directive,
+                key,
+                lane,
+                reason: "vacant".to_owned(),
+                requeue: "spice steer recover".to_owned(),
+            },
+            cause,
+        ),
+        Disposition::Canceled => write.fact(SteerCanceled { key, lane }, cause),
+        Disposition::Live => panic!("retirement needs a terminal disposition"),
+    }
+    .expect("retirement fact builds");
+    let mut next = head.clone();
+    next.disposition = disposition;
     write.steering_head(pending, move |_| next);
     write
 }

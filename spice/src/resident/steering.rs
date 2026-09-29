@@ -7,7 +7,10 @@ use bus::Bus;
 use journal::{FactCause, GuardError, JournalGuard, JournalWrite, PendingFact};
 use steer::Outcome as ScanOutcome;
 use wire::body::TranscriptLocus;
-use wire::intent::{CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective};
+use wire::intent::{
+    CommandAnswer, DirectiveAnswer, InboxAnswer, LaneInbox, PendingDirective,
+    RETIRED_DIRECTIVE_WINDOW, RetiredDirective,
+};
 use wire::{
     Actor, CanonicalUuid, Command, Disposition, Fault, FaultClass, Instant, Outcome, Producer,
     Refusal, Reply, ReplyPosition, ResidencyHead, Seq, SeqRange, Witness,
@@ -520,7 +523,12 @@ pub(super) fn inbox(
             );
         }
     };
-    let snapshot = match pending_snapshot(bus, selected, epoch) {
+    let retired = if request.retired {
+        RETIRED_DIRECTIVE_WINDOW
+    } else {
+        0
+    };
+    let snapshot = match pending_snapshot(bus, selected, epoch, retired) {
         Ok(snapshot) => snapshot,
         Err(outcome) => return outcome,
     };
@@ -555,11 +563,18 @@ pub(super) fn inbox(
             directive.text = resolver.expand(&directive.text);
             directive.preview = directive_preview(&directive.text);
         }
+        let recent = snapshot
+            .retired
+            .iter()
+            .filter(|head| head.lane == lane.lane)
+            .map(|head| retired_directive(&resolver, head))
+            .collect();
         lanes.push(LaneInbox {
             lane: lane.lane,
             occupant: lane.occupant,
             compaction,
             pending,
+            retired: recent,
         });
     }
     if let Some(selected) = selected
@@ -580,6 +595,7 @@ pub(super) fn inbox(
 
 struct SteeringSnapshot {
     ledger: steer::Ledger,
+    retired: Vec<journal::RetiredSteering>,
     position: Seq,
     authority: bus::TaskSnapshot,
     residency: journal::JournalHead<ResidencyHead>,
@@ -589,11 +605,12 @@ fn pending_snapshot(
     bus: &Bus,
     lane: Option<CanonicalUuid>,
     epoch: CanonicalUuid,
+    retired: usize,
 ) -> Result<SteeringSnapshot, Outcome<CommandAnswer>> {
     const PAGE_RETRIES: usize = 3;
     for _ in 0..PAGE_RETRIES {
         let first = bus
-            .steering_snapshot(lane, journal::FactPageStart::After(None))
+            .steering_snapshot(lane, journal::FactPageStart::After(None), retired)
             .map_err(|error| typed_store_fault("steer::index-unreadable", &error.to_string()))?;
         let authority = first.authority().clone();
         let position = authority.cursor().ok_or_else(|| {
@@ -613,7 +630,7 @@ fn pending_snapshot(
                 break;
             };
             let page = bus
-                .steering_snapshot(lane, journal::FactPageStart::At(next))
+                .steering_snapshot(lane, journal::FactPageStart::At(next), 0)
                 .map_err(|error| {
                     typed_store_fault("steer::index-unreadable", &error.to_string())
                 })?;
@@ -644,6 +661,7 @@ fn pending_snapshot(
             .map_err(|error| typed_store_fault("steer::index-invalid", &error.to_string()))?;
         return Ok(SteeringSnapshot {
             ledger,
+            retired: first.into_retired(),
             position,
             authority,
             residency,
@@ -715,6 +733,7 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
     PendingDirective {
         directive: directive.directive(),
         key: directive.key().to_string(),
+        fanout: directive.fanout(),
         text: directive.text().to_owned(),
         from: directive.from(),
         preview: directive_preview(directive.text()),
@@ -726,6 +745,23 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
         stage: directive.stage(),
         escalations: directive.escalations().to_vec(),
         expires: directive.expires(),
+    }
+}
+
+fn retired_directive(
+    resolver: &spice::quote::Resolver<'_>,
+    head: &journal::RetiredSteering,
+) -> RetiredDirective {
+    RetiredDirective {
+        directive: head.directive,
+        key: head.key.clone(),
+        fanout: head.fanout,
+        from: head.from,
+        preview: directive_preview(&resolver.expand(&head.text)),
+        authored: head.published,
+        disposition: head.disposition,
+        position: head.retired,
+        retired: head.retired_at,
     }
 }
 

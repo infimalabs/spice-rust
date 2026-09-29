@@ -353,7 +353,10 @@ fn read_inbox(
         &["inbox"],
         CommandKind::SteerInbox,
         Vec::new(),
-        &wire::intent::SteerInbox { lane },
+        &wire::intent::SteerInbox {
+            lane,
+            retired: false,
+        },
     )?;
     let outcome = execute_mapped(operator_discovery, contract, connection, Ok(mapped));
     match outcome {

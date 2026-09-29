@@ -100,6 +100,59 @@ impl JournalRead<'_> {
         }
     }
 
+    /// The `per_lane` most recently retired directives of one lane or every lane.
+    ///
+    /// Rows are grouped by lane in canonical lane order and, within a lane,
+    /// ordered by the retiring fact, newest first. Retirement is the head's
+    /// final transition, so the head position is the retiring fact.
+    pub fn retired_steering(
+        &self,
+        lane: Option<wire::CanonicalUuid>,
+        per_lane: usize,
+    ) -> Result<Vec<RetiredSteering>, GuardError> {
+        if per_lane == 0 {
+            return Ok(Vec::new());
+        }
+        self.require_current_steering_index()?;
+        let limit = i64::try_from(per_lane).map_err(|_| {
+            GuardError::Invalid("retired steering window exceeds SQLite".to_owned())
+        })?;
+        // Ranking reads only indexed columns; each surviving row then joins
+        // back by rowid so bodies outside the window are never loaded.
+        let sql = format!(
+            "WITH ranked AS (\
+                SELECT rowid AS head, ROW_NUMBER() OVER (\
+                    PARTITION BY lane ORDER BY head_seq DESC\
+                ) AS recency FROM steering_heads \
+                WHERE disposition != 'live'{}\
+             ) SELECT steering.directive, steering.steer_key, steering.lane, \
+                steering.disposition, steering.head_seq, retiring.instant, \
+                json_extract(CAST(steering.body AS TEXT), '$.text'), \
+                json_extract(CAST(steering.body AS TEXT), '$.from'), \
+                json_extract(CAST(steering.body AS TEXT), '$.fanout'), \
+                json_extract(CAST(steering.body AS TEXT), '$.published') \
+             FROM ranked \
+             JOIN steering_heads AS steering ON steering.rowid = ranked.head \
+             JOIN fact_envelopes AS retiring ON retiring.seq = steering.head_seq \
+             WHERE ranked.recency <= ?1 ORDER BY steering.lane, steering.head_seq DESC",
+            if lane.is_some() { " AND lane = ?2" } else { "" }
+        );
+        let mut statement = self.connection.prepare(&sql).map_err(GuardError::Store)?;
+        read_metrics::observe_query();
+        let rows = match lane {
+            Some(lane) => statement.query_map(params![limit, lane.to_string()], read_retired_row),
+            None => statement.query_map(params![limit], read_retired_row),
+        }
+        .map_err(GuardError::Store)?;
+        let mut retired = Vec::new();
+        for row in rows {
+            let row = row.map_err(GuardError::Store)?;
+            read_metrics::observe_row();
+            retired.push(self.decode_retired_row(row)?);
+        }
+        Ok(retired)
+    }
+
     /// Greatest moment already consumed by the current key mint.
     pub fn steering_minted_micros(&self) -> Result<Option<i64>, GuardError> {
         self.require_current_steering_index()?;
@@ -265,6 +318,53 @@ impl JournalRead<'_> {
             horizon: self.cursor,
         })
     }
+
+    fn decode_retired_row(&self, row: RetiredColumns) -> Result<RetiredSteering, GuardError> {
+        let invalid = |field: &str, detail: String| {
+            GuardError::Invalid(format!(
+                "retired steering head {} {field} is invalid: {detail}",
+                row.directive
+            ))
+        };
+        let uuid = |field: &str, text: &str| {
+            text.parse::<wire::CanonicalUuid>()
+                .map_err(|error| invalid(field, error.to_string()))
+        };
+        let instant = |field: &str, text: &str| {
+            text.parse::<wire::Instant>()
+                .map_err(|error| invalid(field, error.to_string()))
+        };
+        let disposition = disposition_named(&row.disposition)
+            .filter(|disposition| *disposition != wire::Disposition::Live)
+            .ok_or_else(|| invalid("disposition", row.disposition.clone()))?;
+        let retired = decode_seq(row.head_seq).map_err(GuardError::Invalid)?;
+        if self.cursor.is_none_or(|cursor| retired > cursor) {
+            return Err(invalid(
+                "position",
+                format!("{retired} is beyond cursor {:?}", self.cursor),
+            ));
+        }
+        Ok(RetiredSteering {
+            directive: uuid("identity", &row.directive)?,
+            fanout: row
+                .fanout
+                .as_deref()
+                .map(|fanout| uuid("fanout", fanout))
+                .transpose()?,
+            lane: uuid("lane", &row.lane)?,
+            from: row
+                .from
+                .as_deref()
+                .map(|from| uuid("sender", from))
+                .transpose()?,
+            published: instant("publication", &row.published)?,
+            retired_at: instant("retirement instant", &row.retired_at)?,
+            disposition,
+            retired,
+            key: row.key,
+            text: row.text,
+        })
+    }
 }
 
 fn steering_page_start(start: FactPageStart) -> Result<i64, GuardError> {
@@ -318,6 +418,34 @@ fn read_steering_page_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SteeringP
     })
 }
 
+struct RetiredColumns {
+    directive: String,
+    key: String,
+    lane: String,
+    disposition: String,
+    head_seq: i64,
+    retired_at: String,
+    text: String,
+    from: Option<String>,
+    fanout: Option<String>,
+    published: String,
+}
+
+fn read_retired_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RetiredColumns> {
+    Ok(RetiredColumns {
+        directive: row.get(0)?,
+        key: row.get(1)?,
+        lane: row.get(2)?,
+        disposition: row.get(3)?,
+        head_seq: row.get(4)?,
+        retired_at: row.get(5)?,
+        text: row.get(6)?,
+        from: row.get(7)?,
+        fanout: row.get(8)?,
+        published: row.get(9)?,
+    })
+}
+
 pub(crate) fn disposition_name(disposition: wire::Disposition) -> &'static str {
     match disposition {
         wire::Disposition::Live => "live",
@@ -327,6 +455,19 @@ pub(crate) fn disposition_name(disposition: wire::Disposition) -> &'static str {
         wire::Disposition::DeadLettered => "deadlettered",
         wire::Disposition::Canceled => "canceled",
     }
+}
+
+fn disposition_named(name: &str) -> Option<wire::Disposition> {
+    [
+        wire::Disposition::Live,
+        wire::Disposition::Acked,
+        wire::Disposition::Declined,
+        wire::Disposition::Lapsed,
+        wire::Disposition::DeadLettered,
+        wire::Disposition::Canceled,
+    ]
+    .into_iter()
+    .find(|disposition| disposition_name(*disposition) == name)
 }
 
 pub(crate) fn canonical_identity(miss: &wire::body::SteerMissed) -> Result<String, GuardError> {
