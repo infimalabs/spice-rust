@@ -576,11 +576,9 @@ pub struct ClaimRebound {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskParkedCommits {
-    /// Task-owned ref retaining the original commit graph.
-    pub reference: String,
     /// Exact task baseline the commits were authored from.
     pub baseline: String,
-    /// Original parked tip.
+    /// Original saved tip, recoverable by object ID while Git retains it.
     pub head: String,
     /// Original commit identities in oldest-first ancestry order.
     pub commits: Vec<String>,

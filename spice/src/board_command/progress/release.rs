@@ -52,7 +52,6 @@ fn release_transition(
 fn prepare_release(
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
-    entry: &Entry,
     claimed: Seq,
     repository: Option<&Repository>,
 ) -> Result<Option<spice::task_git::ParkedRelease>, Outcome<CommandAnswer>> {
@@ -65,7 +64,7 @@ fn prepare_release(
         .at(claimed)
         .and_then(|envelope| envelope.fact.read::<body::ClaimWon>())
         .and_then(|won| won.git);
-    spice::task_git::prepare_free(&lane, entry.born(), opening.as_ref()).map_err(task_git_outcome)
+    spice::task_git::prepare_free(&lane, opening.as_ref()).map_err(task_git_outcome)
 }
 
 fn append_release(
@@ -171,7 +170,7 @@ pub(in crate::board_command) fn claim_free(
         Err(outcome) => return outcome,
     };
     let next = next_action(&snapshot, &transition.post);
-    let parked = match prepare_release(&snapshot, command, entry, transition.claimed, repository) {
+    let parked = match prepare_release(&snapshot, command, transition.claimed, repository) {
         Ok(parked) => parked,
         Err(outcome) => return outcome,
     };

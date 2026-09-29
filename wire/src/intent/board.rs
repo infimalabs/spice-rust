@@ -611,7 +611,7 @@ pub struct BoardTask {
         deserialize_with = "crate::optional::present"
     )]
     pub git_context: Option<TaskGitContext>,
-    /// Commits retained on the task-owned ref after an explicit release.
+    /// Commits saved by object ID after an explicit release.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",

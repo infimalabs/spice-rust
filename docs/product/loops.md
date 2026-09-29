@@ -43,11 +43,16 @@ Voluntary release is one guarded Git-and-journal transition:
 flowchart LR
   A["active self-held claim"] --> C{"lane clean and<br/>baseline is ancestor?"}
   C -- no --> X["refusal;<br/>claim and lane unchanged"]
-  C -- yes --> P["retain commits on<br/>task-owned ref"]
+  C -- yes --> P["journal exact commit SHA<br/>while Git retains object"]
   P --> R["reset lane to<br/>claim baseline"]
   R --> F["claim&#58;&#58;freed records<br/>recovery coordinates"]
-  F --> N["next claim restores commits<br/>and consumes task-owned ref"]
+  F --> N["next claim restores commits<br/>directly from saved SHA"]
 ```
+
+The saved commit is intentionally unreachable: Spice creates no stash or
+preservation ref. Recovery is opportunistic while Git retains the object under
+its normal pruning grace period. If the object is gone, the claim refuses
+without moving the lane or board.
 
 Deferral by the holder uses that same release transaction before recording the
 deferral. Deferral by another actor changes scheduling only; it does not take
