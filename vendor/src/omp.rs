@@ -253,6 +253,10 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 ///
 /// omp reads `compaction.thresholdTokens` ahead of every percentage or
 /// reserve it would otherwise derive, clamped beneath the model's window.
+/// `compaction.methodOrder` is deliberately left to omp: its default tries
+/// provider-native compaction first, which a Claude seat supports, and falls
+/// back through omp's local methods when that pass fails. Stating an order
+/// would pin a chain omp owns and revises.
 ///
 /// The `lsp` block is stated either way rather than left to omp's defaults.
 /// A declined lane turns the integration off outright, because omp otherwise
