@@ -32,12 +32,12 @@ impl MappedCommand {
             SelectedCommand::SteerCancel { directive } => Self::steer_cancel(contract, directive),
             SelectedCommand::SteerResend { directive } => Self::steer_resend(contract, directive),
             SelectedCommand::SteerRecover { directive } => Self::steer_recover(contract, directive),
-            SelectedCommand::SteerSend { .. } | SelectedCommand::SteerInbox { .. } => {
-                Err(protocol_fault(
-                    "command::mapping-unsupported",
-                    "steering preflight must select its authenticated mapping path",
-                ))
-            }
+            SelectedCommand::SteerSend { .. }
+            | SelectedCommand::SteerTell { .. }
+            | SelectedCommand::SteerInbox { .. } => Err(protocol_fault(
+                "command::mapping-unsupported",
+                "steering preflight must select its authenticated mapping path",
+            )),
             SelectedCommand::TrustPend { digest, worktree } => Self::trust_rule(
                 contract,
                 digest,

@@ -483,6 +483,7 @@ fn seed_steering_attachment(fixture: &Fixture, key: &str) -> wire::Media {
         .parse()
         .expect("fixture expiry instant");
     let body = wire::body::SteerSent {
+        from: None,
         directive: uuid(1),
         fanout: None,
         key: key.to_owned(),

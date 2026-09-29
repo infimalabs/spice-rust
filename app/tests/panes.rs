@@ -306,13 +306,17 @@ fn no_rendered_row_promotes_a_lane_principal() {
 }
 
 #[test]
-fn an_operator_steer_pane_offers_every_command_in_the_registry() {
+fn an_operator_steer_pane_offers_every_command_but_a_lane_speaking_as_itself() {
     let operator = operator();
     let steer = SteerPane::over(&operator);
 
-    for kind in CommandKind::ALL {
-        assert!(steer.offers(*kind), "{kind} was withheld from the operator");
-    }
+    let withheld = CommandKind::ALL
+        .iter()
+        .copied()
+        .filter(|kind| !steer.offers(*kind))
+        .collect::<Vec<_>>();
+    assert_eq!(withheld, [CommandKind::SteerTell]);
+    assert!(SteerPane::over(&lane()).offers(CommandKind::SteerTell));
 }
 
 #[test]

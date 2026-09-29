@@ -187,6 +187,7 @@ const CASES: &[Case] = &[
     case("steer cancel", &["steer", "cancel", UUID]),
     case("steer resend", &["steer", "resend", UUID]),
     case("steer recover", &["steer", "recover", UUID]),
+    case("tell", &["tell", UUID, "the parser moved"]),
     case("inbox", &["inbox"]),
     case("recall", &["recall"]),
     case("consent", &["consent"]),

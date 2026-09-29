@@ -559,6 +559,7 @@ fn cancel_write(observed: &JournalHead<SteeringHead>) -> JournalWrite {
 
 fn sent(directive: CanonicalUuid, key: &str) -> SteerSent {
     SteerSent {
+        from: None,
         directive,
         fanout: None,
         key: key.to_owned(),
@@ -572,6 +573,7 @@ fn sent(directive: CanonicalUuid, key: &str) -> SteerSent {
 
 fn live_head(body: &SteerSent, key: String, created: Seq) -> SteeringHead {
     SteeringHead {
+        from: None,
         directive: body.directive,
         fanout: body.fanout,
         key,

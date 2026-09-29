@@ -88,6 +88,17 @@ pub struct SteerSent {
     pub lane: CanonicalUuid,
     /// Directive text.
     pub text: String,
+    /// Seated lane that told this directive as a peer message.
+    ///
+    /// Absent on operator and resident direction, which is every fact written
+    /// before peer messages existed. Present only when the creating fact's
+    /// actor is exactly this lane.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub from: Option<CanonicalUuid>,
     /// Control channel the directive drives; absent on plain prose.
     #[serde(
         default,

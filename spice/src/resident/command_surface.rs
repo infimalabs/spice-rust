@@ -243,6 +243,14 @@ impl<'a> Surface<'a> {
                 send,
                 &mut effects,
             )),
+            (CommandKind::SteerTell, Intent::SteerTell(tell)) => Some(steering::tell(
+                self.bus,
+                self.epoch,
+                &self.config.steering,
+                command,
+                tell,
+                &mut effects,
+            )),
             (CommandKind::SteerCancel, Intent::DirectiveRef(cancel)) => Some(steering::cancel(
                 self.bus,
                 self.epoch,

@@ -145,6 +145,7 @@ fn steering_fixture() -> Journal {
 
 fn send_write() -> JournalWrite {
     let body = SteerSent {
+        from: None,
         directive: uuid(DIRECTIVE),
         fanout: None,
         key: KEY.to_owned(),
@@ -164,6 +165,7 @@ fn send_write() -> JournalWrite {
         .fact(body.clone(), FactCause::Root)
         .expect("sent fact builds");
     write.steering_head(pending, move |seq| SteeringHead {
+        from: None,
         directive: body.directive,
         fanout: body.fanout,
         key: body.key,

@@ -2,6 +2,7 @@ use super::*;
 
 fn sent(text: &str) -> SteerSent {
     SteerSent {
+        from: None,
         directive: "00000000-0000-4000-8000-000000000001".parse().unwrap(),
         fanout: Some("00000000-0000-4000-8000-000000000004".parse().unwrap()),
         key: "taste-1".to_owned(),
@@ -130,6 +131,7 @@ fn one_operator_fanout_across_distinct_lane_tapes_counts_once() {
             position,
             Actor::Operator,
             SteerSent {
+                from: None,
                 directive: directive(position),
                 fanout: Some(if position <= 2 {
                     directive(700)

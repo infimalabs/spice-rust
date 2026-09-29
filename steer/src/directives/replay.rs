@@ -59,6 +59,7 @@ impl Directive {
             key: self.key.to_string(),
             lane: self.lane,
             text: self.text.clone(),
+            from: self.from,
             control: self.control.clone(),
             attachments: self.attachments.clone(),
             published: self

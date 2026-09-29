@@ -53,3 +53,47 @@ pub(crate) fn execute_steering(
         selected => execute(discovery_path, contract, selected),
     }
 }
+
+/// Tell another seated lane something, witnessing the seat it lands on.
+///
+/// The board's trust scope is the residency a lane may read, so the witness
+/// comes from the same authority the resident will compare it against.
+pub(crate) fn execute_tell(
+    repository: &spice::repository::Repository,
+    contract: &Contract,
+    lane: CanonicalUuid,
+    message: &str,
+) -> Outcome<CommandAnswer> {
+    let board =
+        match crate::board_command::current_board(repository, wire::intent::BoardRead::Trust) {
+            Ok(board) => board,
+            Err(outcome) => return outcome,
+        };
+    let residency = &board.residency.body;
+    let Some(occupant) = residency
+        .lanes
+        .iter()
+        .find(|row| row.lane == lane)
+        .and_then(|row| row.occupant)
+    else {
+        return steering_refusal(
+            "steer::lane-unseated",
+            Some(lane.to_string()),
+            "tell a lane that is seated now",
+        );
+    };
+    execute_typed(
+        repository,
+        contract,
+        CommandKind::SteerTell,
+        vec![Witness::Residency {
+            lane,
+            occupant: Some(occupant),
+            epoch: residency.epoch,
+        }],
+        &wire::intent::SteerTell {
+            lane,
+            message: message.to_owned(),
+        },
+    )
+}

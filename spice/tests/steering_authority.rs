@@ -67,6 +67,7 @@ fn stale_disposition_cannot_erase_a_winning_escalation_from_the_index() {
 
 fn send_write() -> JournalWrite {
     let body = SteerSent {
+        from: None,
         directive: directive(),
         fanout: None,
         key: "1kJK6N3R".to_owned(),
@@ -81,6 +82,7 @@ fn send_write() -> JournalWrite {
         .fact(body.clone(), FactCause::Root)
         .expect("sent fact builds");
     write.steering_head(pending, move |seq| SteeringHead {
+        from: None,
         directive: body.directive,
         fanout: body.fanout,
         key: body.key,

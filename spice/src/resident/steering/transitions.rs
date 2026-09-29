@@ -30,9 +30,130 @@ pub(in crate::resident) fn send(
             "seat the lane before sending it direction",
         );
     };
+    let occupant = lane.occupant;
+    publish(
+        bus,
+        epoch,
+        config,
+        command,
+        &residency,
+        Publication {
+            lane: send.lane,
+            occupant,
+            fanout: Some(send.fanout),
+            from: None,
+            text: &send.message,
+            attachments: &send.attachments,
+        },
+        typed_command(command, send.clone()),
+        effects,
+    )
+}
+
+/// Tell another seated lane something, as the authenticated sending lane.
+///
+/// A peer message is published exactly as direction is, so it is delivered,
+/// resent, retired, and lapses the same way, but its creating fact names the
+/// sending lane as actor and its body names that lane as `from`. It never
+/// fans out, and it lands only on another lane that is seated now.
+pub(in crate::resident) fn tell(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    config: &steer::Config,
+    command: &wire::AdmittedCommand,
+    tell: &wire::intent::SteerTell,
+    effects: &mut CommandEffects,
+) -> Outcome<CommandAnswer> {
+    let Actor::Lane(sender) = command.actor() else {
+        return refusal(
+            "steer::lane-required",
+            Some("lane".to_owned()),
+            Some(command.actor().to_string()),
+            "tell from a seated lane's shell; the operator's voice is `spice steer`",
+        );
+    };
+    let sender = *sender;
+    if tell.lane == sender {
+        return refusal(
+            "steer::tell-self",
+            Some("another lane".to_owned()),
+            Some(tell.lane.to_string()),
+            "name the lane that should hear this; a lane cannot tell itself",
+        );
+    }
+    if tell.message.trim().is_empty() {
+        return refusal(
+            "steer::message-empty",
+            Some("non-empty message".to_owned()),
+            Some(tell.message.clone()),
+            "supply text the other lane can act on",
+        );
+    }
+    let residency = match current_residency(bus, epoch) {
+        Ok(residency) => residency,
+        Err(outcome) => return typed_outcome(outcome),
+    };
+    let Some(occupant) = residency
+        .body()
+        .lanes
+        .iter()
+        .find(|lane| lane.lane == tell.lane)
+        .and_then(|lane| lane.occupant)
+    else {
+        return refusal(
+            "steer::lane-unseated",
+            Some("a seated lane".to_owned()),
+            Some(tell.lane.to_string()),
+            "tell a lane that is seated now",
+        );
+    };
+    publish(
+        bus,
+        epoch,
+        config,
+        command,
+        &residency,
+        Publication {
+            lane: tell.lane,
+            occupant: Some(occupant),
+            fanout: None,
+            from: Some(sender),
+            text: &tell.message,
+            attachments: &[],
+        },
+        typed_command(command, tell.clone()),
+        effects,
+    )
+}
+
+/// What one new directive says and whom it addresses.
+struct Publication<'a> {
+    lane: CanonicalUuid,
+    occupant: Option<CanonicalUuid>,
+    fanout: Option<CanonicalUuid>,
+    from: Option<CanonicalUuid>,
+    text: &'a str,
+    attachments: &'a [wire::body::DirectiveAttachment],
+}
+
+/// Journal one new directive against the residency it witnessed.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one publication door shared by operator direction and peer messages"
+)]
+fn publish<B: serde::Serialize>(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    config: &steer::Config,
+    command: &wire::AdmittedCommand,
+    residency: &journal::JournalHead<wire::ResidencyHead>,
+    publication: Publication<'_>,
+    receipt: wire::Command<B>,
+    effects: &mut CommandEffects,
+) -> Outcome<CommandAnswer> {
     let witness = Witness::Residency {
-        lane: send.lane,
-        occupant: lane.occupant,
+        lane: publication.lane,
+        occupant: publication.occupant,
         epoch,
     };
     if command.expected() != [witness.clone()] {
@@ -64,12 +185,13 @@ pub(in crate::resident) fn send(
     };
     let sent = wire::body::SteerSent {
         directive: command.id(),
-        fanout: Some(send.fanout),
+        fanout: publication.fanout,
         key: key.to_string(),
-        lane: send.lane,
-        text: send.message.clone(),
+        lane: publication.lane,
+        text: publication.text.to_owned(),
+        from: publication.from,
         control: None,
-        attachments: send.attachments.clone(),
+        attachments: publication.attachments.to_vec(),
         expires,
     };
     let origin = match resident_origin(epoch) {
@@ -105,12 +227,10 @@ pub(in crate::resident) fn send(
         authored: at,
         disposition: Disposition::Live,
     };
-    if let Err(error) =
-        proposal.command_result(typed_command(command, send.clone()), epoch, answer.clone())
-    {
+    if let Err(error) = proposal.command_result(receipt, epoch, answer.clone()) {
         return typed_store_fault("steer::receipt-invalid", &error.to_string());
     }
-    finish(bus, send.lane, proposal, answer, effects)
+    finish(bus, publication.lane, proposal, answer, effects)
 }
 
 fn admit_send_content(send: &wire::intent::SteerSend) -> Result<(), Outcome<CommandAnswer>> {

@@ -28,7 +28,7 @@ mod transitions;
 pub(super) use exit::{dispose_at_exit, dispose_at_startup, dispose_heard};
 use preview::directive_preview;
 use transitions::evidence_refusal;
-pub(super) use transitions::{cancel, recover, resend, send};
+pub(super) use transitions::{cancel, recover, resend, send, tell};
 
 const LEGACY_TASK_GENERATION_CONTROL_PREFIX: &str = "task-generation:";
 
@@ -79,6 +79,7 @@ pub(super) fn append_internal_directive(
     let key = mint_key(minted_micros).map_err(unit_outcome)?;
     let expires = expiry(at, internal.lifetime).map_err(unit_outcome)?;
     let sent = wire::body::SteerSent {
+        from: None,
         directive,
         fanout: None,
         key: key.to_string(),
@@ -715,6 +716,7 @@ fn pending_directive(directive: &steer::Directive) -> PendingDirective {
         directive: directive.directive(),
         key: directive.key().to_string(),
         text: directive.text().to_owned(),
+        from: directive.from(),
         preview: directive_preview(directive.text()),
         control: directive.control().map(str::to_owned),
         attachments: directive.attachments().to_vec(),

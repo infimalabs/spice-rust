@@ -34,6 +34,9 @@ pub(crate) fn run(
         Ok(selection) => selection,
         Err(outcome) => return outcome,
     };
+    if let SelectedCommand::SteerTell { lane, message } = selected {
+        return crate::command_client::execute_tell(&repository, contract, lane, message);
+    }
     execute_steering(&canvas, contract, selected, lane_context)
 }
 
@@ -63,6 +66,22 @@ fn select<'a>(
                 ));
             }
             Ok((SelectedCommand::SteerSend { lane, message }, None))
+        }
+        ["tell"] => {
+            let lane = uuid_operand(matches, "LANE", "steer::lane-invalid")?;
+            let message = matches
+                .get_one::<String>("TEXT")
+                .expect("clap requires the peer message text");
+            // A peer message speaks as the lane whose shell sends it. The
+            // operator's voice is `spice steer`, never this.
+            let Some(sender) = lane_context(lane_environment)? else {
+                return Err(refusal(
+                    "steer::lane-required",
+                    Some(wire::Actor::Operator.to_string()),
+                    "tell from a seated lane's shell; the operator steers with `spice steer`",
+                ));
+            };
+            Ok((SelectedCommand::SteerTell { lane, message }, Some(sender)))
         }
         ["steer", "cancel"] => {
             let directive = uuid_operand(matches, "ID", "steer::directive-invalid")?;

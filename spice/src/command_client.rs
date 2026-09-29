@@ -43,7 +43,7 @@ use discovery::{
 use session::{AuthenticatedSession, dialable_endpoint, open_session};
 #[cfg(test)]
 use session::{decode_opening, open_session_with};
-pub(crate) use steering::execute_steering;
+pub(crate) use steering::{execute_steering, execute_tell};
 pub(crate) use typed::execute_typed;
 #[cfg(test)]
 use typed::kind_for;
@@ -102,6 +102,11 @@ pub(crate) enum SelectedCommand<'a> {
     SteerRecover { directive: CanonicalUuid },
     /// The authenticated principal reads visible pending direction.
     SteerInbox { lane: Option<CanonicalUuid> },
+    /// A seated lane tells another seated lane something, as itself.
+    SteerTell {
+        lane: CanonicalUuid,
+        message: &'a str,
+    },
     /// The operator quarantines the exact current executable digest.
     TrustPend {
         digest: &'a wire::Digest,

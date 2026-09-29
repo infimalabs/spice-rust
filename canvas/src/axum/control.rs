@@ -52,6 +52,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::ClaimLapse
         | CommandKind::DocApply
         | CommandKind::SteerSend
+        | CommandKind::SteerTell
         | CommandKind::SteerInbox
         | CommandKind::SteerResend
         | CommandKind::SteerRecover

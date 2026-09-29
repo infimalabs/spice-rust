@@ -176,6 +176,7 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         "todo",
     );
     let steering = body::SteerSent {
+        from: None,
         directive: uuid(0xaf),
         fanout: None,
         key: "1kAsk001".to_owned(),
@@ -193,6 +194,7 @@ fn seed_recall_authority(path: &Path, thread: &str) {
         .expect("steering fact builds");
     let steering_origin = origin.clone();
     write.steering_head(steering_fact, move |created| SteeringHead {
+        from: None,
         directive: steering.directive,
         fanout: steering.fanout,
         key: steering.key,
@@ -253,6 +255,7 @@ fn seed_retired_peer_steering(path: &Path) {
         Producer::CommandDoor,
     );
     let body = body::SteerSent {
+        from: None,
         directive,
         fanout: None,
         key: "1kRetire".to_owned(),
@@ -267,6 +270,7 @@ fn seed_retired_peer_steering(path: &Path) {
         .expect("peer steering fact builds");
     let head_origin = origin.clone();
     sent.steering_head(fact, move |created| SteeringHead {
+        from: None,
         directive: body.directive,
         fanout: body.fanout,
         key: body.key,

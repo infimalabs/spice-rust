@@ -354,6 +354,7 @@ fn operator_direction_write() -> JournalWrite {
         .parse::<Origin>()
         .expect("fixture resident origin");
     let direction = body::SteerSent {
+        from: None,
         directive: uuid(11),
         fanout: Some(uuid(12)),
         key: "1kKRRsDS".to_owned(),
@@ -740,6 +741,7 @@ fn invalid_late_suffix() -> JournalWrite {
         Producer::CommandDoor,
     );
     let steering = body::SteerSent {
+        from: None,
         directive: uuid(4),
         fanout: None,
         key: "1kJK6N3R".to_owned(),

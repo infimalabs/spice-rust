@@ -63,6 +63,7 @@ fn typed_media_reaches_the_lane_once_with_its_directive_identity() {
 
     for text in cases {
         let body = SteerSent {
+            from: None,
             directive: directive("1kJK6M0V"),
             fanout: None,
             key: "1kJK6M0V".to_owned(),
@@ -309,6 +310,7 @@ fn ledger() -> Ledger {
     ] {
         ledger
             .absorb(Steering::Sent(&SteerSent {
+                from: None,
                 directive: directive(key),
                 fanout: None,
                 key: key.to_owned(),

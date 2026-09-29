@@ -44,6 +44,7 @@ pub struct Directive {
     key: Key,
     lane: CanonicalUuid,
     text: String,
+    from: Option<CanonicalUuid>,
     control: Option<String>,
     attachments: Vec<DirectiveAttachment>,
     expires: Instant,
@@ -82,6 +83,13 @@ impl Directive {
     #[must_use]
     pub fn text(&self) -> &str {
         &self.text
+    }
+
+    /// The seated lane that told this as a peer message; absent on operator
+    /// and resident direction.
+    #[must_use]
+    pub const fn from(&self) -> Option<CanonicalUuid> {
+        self.from
     }
 
     /// The control word the operator attached, if any.
@@ -146,6 +154,7 @@ impl Directive {
             key,
             lane: head.lane,
             text: head.text.clone(),
+            from: head.from,
             control: head.control.clone(),
             attachments: head.attachments.clone(),
             expires: head.expires,
@@ -423,6 +432,7 @@ impl Ledger {
             key,
             lane: body.lane,
             text: body.text.clone(),
+            from: body.from,
             control: body.control.clone(),
             attachments: body.attachments.clone(),
             expires: body.expires,
@@ -452,6 +462,7 @@ impl Ledger {
             key,
             lane: body.lane,
             text: body.text.clone(),
+            from: None,
             control: None,
             attachments: Vec::new(),
             expires: body.expires,
@@ -474,6 +485,7 @@ impl Ledger {
             key,
             lane: body.lane,
             text: body.text.clone(),
+            from: None,
             control: None,
             attachments: Vec::new(),
             expires: body.expiry,
@@ -501,6 +513,7 @@ impl Ledger {
             key: read("key", key)?,
             lane: body.lane,
             text: text.clone(),
+            from: None,
             control: None,
             attachments: Vec::new(),
             expires: *expires,
