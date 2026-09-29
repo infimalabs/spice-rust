@@ -789,14 +789,21 @@ fn resident_stop_executable(
 /// captured and dropped. Its diagnostics are captured too and republished here:
 /// an inherited stream puts the refusal wherever the parent's happens to go,
 /// which is not this command's own report and is not what the error carries.
+fn resident_stop_command(installed: &Path) -> Command {
+    let mut command = Command::new(installed);
+    command
+        .arg("down")
+        .env_remove(wire::SpiceVariable::Lane.as_str());
+    command
+}
+
 fn stop(
     repository: &Repository,
     installed: &Path,
     output: &mut impl Write,
 ) -> Result<(), RefreshError> {
     writeln!(output, "stopping resident")?;
-    let answer = Command::new(installed)
-        .arg("down")
+    let answer = resident_stop_command(installed)
         .current_dir(repository.worktree_root())
         .output()?;
     if !answer.status.success() {
