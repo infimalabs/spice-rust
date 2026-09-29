@@ -34,6 +34,9 @@ publish = false
 [workspace.lints.rust]
 warnings = "deny"
 unfulfilled_lint_expectations = "deny"
+# rust-analyzer sets `rust_analyzer` while analysing the host target; Canvas
+# browser gates admit it so the Wasm-only modules stay navigable.
+unexpected_cfgs = { level = "deny", check-cfg = ["cfg(rust_analyzer)"] }
 
 [workspace.lints.clippy]
 all = "deny"

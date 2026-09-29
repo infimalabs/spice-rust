@@ -116,7 +116,15 @@ const REPLY: &str = r#"{
   }
 }"#;
 
-const VERSION: &str = r#"{"product":"1.2.3","binary":"1111111111111111111111111111111111111111111111111111111111111111","wire":1,"journal":1,"canvas":9,"app":"2222222222222222222222222222222222222222222222222222222222222222"}"#;
+fn version_document() -> String {
+    format!(
+        r#"{{"product":"1.2.3","binary":"{binary}","wire":{wire},"journal":1,"canvas":{canvas},"app":"{app}"}}"#,
+        binary = "1".repeat(64),
+        wire = WireVersion::CURRENT.0,
+        canvas = wire::CanvasVersion::CURRENT.0,
+        app = "2".repeat(64),
+    )
+}
 
 const PROOF_EVIDENCE: &str = concat!(
     r#"{"target":"x86_64-unknown-linux-musl","#,
@@ -165,7 +173,8 @@ fn envelope_matches_the_specified_document() {
 
 #[test]
 fn version_is_the_exact_stable_six_identity_document() {
-    let version: Version = wire::decode(VERSION.as_bytes()).expect("version document decodes");
+    let document = version_document();
+    let version: Version = wire::decode(document.as_bytes()).expect("version document decodes");
 
     assert_eq!(version.product.as_str(), "1.2.3");
     assert_eq!(version.binary.as_str(), "1".repeat(64));
@@ -175,7 +184,7 @@ fn version_is_the_exact_stable_six_identity_document() {
     assert_eq!(version.app.as_str(), "2".repeat(64));
     assert_eq!(
         wire::encode(&version).expect("version document re-encodes"),
-        VERSION.as_bytes(),
+        document.as_bytes(),
         "the stable machine form changed"
     );
 }
@@ -259,7 +268,8 @@ fn rtk_gain_report_requires_exact_agent_database_and_output_provenance() {
 
 #[test]
 fn version_refuses_missing_null_extra_and_wrong_shaped_identities() {
-    let document: serde_json::Value = serde_json::from_str(VERSION).expect("fixture is JSON");
+    let document: serde_json::Value =
+        serde_json::from_str(&version_document()).expect("fixture is JSON");
 
     for field in ["product", "binary", "wire", "journal", "canvas", "app"] {
         let mut missing = document.clone();

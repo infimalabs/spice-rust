@@ -65,14 +65,14 @@ pub mod socket;
 pub mod speech_owner;
 pub mod speech_queue;
 pub mod state;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 mod task_pill;
 pub mod view;
 pub mod watchband;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod work;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 mod browser;
 
 #[derive(Clone)]
@@ -122,7 +122,7 @@ pub(crate) enum PendingKind {
         after: Option<wire::Seq>,
     },
 }
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 mod speech;
 
 pub use pane::{Declined, GrantPane, Principal, ReadPane, SteerPane, settled};

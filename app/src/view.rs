@@ -172,7 +172,7 @@ pub(crate) enum CanvasNotice {
     LoadingAgents,
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 impl CanvasNotice {
     #[must_use]
     pub(crate) const fn label(self) -> &'static str {
@@ -268,7 +268,7 @@ impl CanvasRoute {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) fn card_href(target: &str) -> String {
     let route = CanvasRoute::card(target.to_owned())
         .expect("a rendered Canvas card has a canonical route target");

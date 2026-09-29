@@ -3,7 +3,7 @@
 use std::cell::{Ref, RefCell, RefMut};
 use std::rc::Rc;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 use super::CanvasRuntime;
 
 /// One shared allocation whose handle is the value published to Yew.
@@ -48,10 +48,10 @@ impl<T> Shared<T> {
 /// must not move to `use_state_eq`, because two publications intentionally
 /// point at the same allocation.
 #[derive(Clone, Default, PartialEq)]
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) struct CanvasSurface(Shared<Option<CanvasRuntime>>);
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 impl CanvasSurface {
     pub(crate) fn read(&self) -> Ref<'_, Option<CanvasRuntime>> {
         self.0.read()

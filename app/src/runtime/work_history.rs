@@ -233,7 +233,7 @@ impl CanvasRuntime {
     }
 
     /// Invalidate terminal rows until the corresponding open-board refresh lands.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn invalidate_work_history(&mut self) {
         if self.work_history.active() {
             self.evict_work_history(true);
