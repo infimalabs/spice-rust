@@ -10,13 +10,32 @@ pub(super) struct Inspection {
     pub return_focus: bool,
 }
 
-#[derive(Clone, PartialEq)]
+/// Every message card and each team's mosaic consume this context, so it
+/// compares only what they render. The commands are rebuilt each render
+/// around fresh state; routing them through one shared cell keeps a
+/// navigation or unrelated app render from re-rendering every retained card.
+#[derive(Clone)]
 pub(super) struct Context {
     pub inspection: UseStateHandle<Option<Inspection>>,
+    commands: Rc<RefCell<Commands>>,
+    quote_tasks: Rc<crate::runtime::QuoteTasks>,
+}
+
+impl PartialEq for Context {
+    fn eq(&self, other: &Self) -> bool {
+        self.inspection == other.inspection
+            && Rc::ptr_eq(&self.commands, &other.commands)
+            && self.quote_tasks == other.quote_tasks
+    }
+}
+
+/// The latest render's commands; callers clone one out before emitting so a
+/// render the command triggers can refresh the cell.
+#[derive(Clone)]
+struct Commands {
     request_detail: Callback<TaskStamp>,
     return_focus_to: Callback<web_sys::Element>,
     navigate: Callback<navigation::Intent>,
-    quote_tasks: Rc<crate::runtime::QuoteTasks>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -39,6 +58,13 @@ pub(super) fn use_controls(
     navigate: &Callback<navigation::Intent>,
 ) -> Controls {
     let inspection = use_state(|| None::<Inspection>);
+    let fresh = Commands {
+        request_detail: task.request.clone(),
+        return_focus_to: task.return_focus_to.clone(),
+        navigate: navigate.clone(),
+    };
+    let commands = use_mut_ref(|| fresh.clone());
+    *commands.borrow_mut() = fresh;
     let runtime = surface.read();
     let detail = (*inspection)
         .as_ref()
@@ -60,9 +86,7 @@ pub(super) fn use_controls(
     Controls {
         context: Context {
             inspection,
-            request_detail: task.request.clone(),
-            return_focus_to: task.return_focus_to.clone(),
-            navigate: navigate.clone(),
+            commands,
             quote_tasks,
         },
         detail: DetailContext {
@@ -121,7 +145,12 @@ impl Context {
             open: true,
             return_focus: false,
         }));
-        self.request_detail.emit(task);
+        self.request_detail(task);
+    }
+
+    fn request_detail(&self, task: TaskStamp) {
+        let request = self.commands.borrow().request_detail.clone();
+        request.emit(task);
     }
 
     /// Every task caused by the directions `message` quotes, and nothing else.
@@ -161,9 +190,13 @@ impl Context {
     /// this one state transition.
     pub fn open_detail(&self, task: TaskStamp, return_target: Option<web_sys::Element>) {
         self.inspection.set(None);
-        self.navigate.emit(navigation::Intent::Task(task));
+        let (navigate, return_focus_to) = {
+            let commands = self.commands.borrow();
+            (commands.navigate.clone(), commands.return_focus_to.clone())
+        };
+        navigate.emit(navigation::Intent::Task(task));
         if let Some(return_target) = return_target {
-            self.return_focus_to.emit(return_target);
+            return_focus_to.emit(return_target);
         }
     }
 }
@@ -200,9 +233,9 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
             |answer| answer.task.presentation_title.clone(),
         );
     let retry = {
-        let request = properties.context.request_detail.clone();
+        let context = properties.context.clone();
         let task = properties.inspection.task.clone();
-        Callback::from(move |_| request.emit(task.clone()))
+        Callback::from(move |_| context.request_detail(task.clone()))
     };
     let open_detail = {
         let context = properties.context.clone();
