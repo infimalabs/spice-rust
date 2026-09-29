@@ -449,9 +449,10 @@ fn render_team_toolbar(
     };
     let toggle_arrangement = team_arrangement_click(id, can_arrange, render.team_controls);
     let keyboard_arrangement = team_arrangement_key(id, can_arrange, render.team_controls);
+    // PipStack places index 0 at the lower right, so pip index is canonical
+    // member position: the main agent sits beside the team controls.
     let render_pip = |index: usize| {
-        let member_index = watchband::right_edge_ordinal(standings.len(), index);
-        let standing = &standings[member_index];
+        let standing = &standings[index];
         let member = team.member(standing.lane)?;
         let status = member.status(standing.pending);
         let position = pip_stack

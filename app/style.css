@@ -879,7 +879,6 @@ tbody tr:last-child td { border-bottom: 0; }
 .team-lights {
   align-items: flex-end;
   display: flex;
-  direction: rtl;
   gap: 5px;
   justify-content: center;
   min-width: 18px;
