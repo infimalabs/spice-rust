@@ -471,6 +471,7 @@ impl NativeInvocation<'_> {
             | ["steer", "cancel"]
             | ["steer", "resend"]
             | ["steer", "recover"]
+            | ["tell"]
             | ["inbox"] => deliver(
                 &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
                 form,

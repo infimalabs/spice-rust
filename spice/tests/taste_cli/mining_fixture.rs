@@ -273,6 +273,7 @@ fn publish_mining_corrections(bus: &Bus, rows: &[SeededCorrection]) {
     );
     for row in rows {
         let body = SteerSent {
+            from: None,
             directive: directive(row.key),
             fanout: Some(uuid(row.fanout)),
             key: row.key.to_owned(),
@@ -423,6 +424,7 @@ pub(super) fn seed_later_mining_correction(fixture: &Fixture) {
         Producer::CommandDoor,
     );
     let body = SteerSent {
+        from: None,
         directive: directive(key),
         fanout: Some(uuid(0x53)),
         key: key.to_owned(),

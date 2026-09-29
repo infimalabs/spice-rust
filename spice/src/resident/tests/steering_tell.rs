@@ -1,0 +1,286 @@
+//! A seated lane tells another seated lane something, as itself.
+
+use std::collections::BTreeMap;
+
+use super::*;
+
+const SENDER: u8 = 2;
+const RECIPIENT: u8 = 4;
+const VACANT: u8 = 6;
+
+struct Peers {
+    root: PathBuf,
+    paths: RuntimePaths,
+    bus: Bus,
+    epoch: CanonicalUuid,
+}
+
+impl Peers {
+    /// Two occupied lanes and one lane nobody sits in.
+    fn new(tag: &str) -> Self {
+        let (root, paths) = resident_fixture(tag);
+        let repository = Repository::discover(&root).expect("fixture repository resolves");
+        let worktree = repository.worktree_root().to_string_lossy().into_owned();
+        let surface =
+            crate::trust_command::Surface::load(&repository).expect("fixture trust surface loads");
+        let bus =
+            Bus::start(journal::Journal::open(&paths.journal).expect("fixture journal opens"))
+                .expect("fixture bus starts");
+        let epoch = test_uuid(1);
+        commit_startup(&bus, &repository, &surface, epoch, None).expect("resident seats");
+        seed_vendor_lane_in_worktree(
+            &bus,
+            epoch,
+            test_uuid(SENDER),
+            test_uuid(SENDER + 1),
+            &worktree,
+            "omp",
+        );
+        seed_vendor_lane_in_worktree(
+            &bus,
+            epoch,
+            test_uuid(RECIPIENT),
+            test_uuid(RECIPIENT + 1),
+            &worktree,
+            "omp",
+        );
+        seed_vacant_lane_in_worktree(&bus, epoch, test_uuid(VACANT), &worktree);
+        Self {
+            root,
+            paths,
+            bus,
+            epoch,
+        }
+    }
+
+    fn seat(&self, lane: u8) -> Witness {
+        let lane = test_uuid(lane);
+        let occupant = current_residency(&self.bus, self.epoch)
+            .expect("residency reads")
+            .body()
+            .lanes
+            .iter()
+            .find(|row| row.lane == lane)
+            .and_then(|row| row.occupant);
+        Witness::Residency {
+            lane,
+            occupant,
+            epoch: self.epoch,
+        }
+    }
+
+    fn admit<B: serde::Serialize>(
+        &self,
+        kind: CommandKind,
+        id: u8,
+        actor: Actor,
+        witness: Witness,
+        body: &B,
+    ) -> Result<wire::AdmittedCommand, wire::CommandRejection> {
+        Command {
+            v: wire::WireVersion::CURRENT,
+            id: test_uuid(id),
+            epoch: self.epoch,
+            kind,
+            expected: vec![witness],
+            body: serde_json::to_value(body).expect("request encodes"),
+        }
+        .admit(&wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor,
+            epoch: self.epoch,
+        })
+    }
+
+    fn tell(&self, id: u8, to: u8, message: &str) -> (Outcome<CommandAnswer>, CommandEffects) {
+        let tell = wire::intent::SteerTell {
+            lane: test_uuid(to),
+            message: message.to_owned(),
+        };
+        let command = self
+            .admit(
+                CommandKind::SteerTell,
+                id,
+                Actor::Lane(test_uuid(SENDER)),
+                self.seat(to),
+                &tell,
+            )
+            .expect("a lane's tell admits");
+        let mut effects = CommandEffects::default();
+        let outcome = steering::tell(
+            &self.bus,
+            self.epoch,
+            &steer::Config::default(),
+            &command,
+            &tell,
+            &mut effects,
+        );
+        (outcome, effects)
+    }
+
+    fn finish(self) {
+        self.bus.verify().expect("the authority verifies");
+        self.bus.shutdown().expect("fixture bus stops");
+        fs::remove_dir_all(self.root).expect("fixture cleanup");
+    }
+}
+
+#[test]
+fn a_lane_tells_a_seated_peer_as_itself_and_the_delivery_names_the_sender() {
+    let peers = Peers::new("steer-tell");
+    let sender = test_uuid(SENDER);
+    let recipient = test_uuid(RECIPIENT);
+
+    let (outcome, effects) = peers.tell(40, RECIPIENT, "the parser moved to listen/src/omp.rs");
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Directive(told),
+        ..
+    }) = outcome
+    else {
+        panic!("a peer message is durable: {outcome:?}");
+    };
+    assert_eq!(effects.inbox_delivery, Some(recipient));
+
+    let send = wire::intent::SteerSend {
+        fanout: test_uuid(41),
+        lane: recipient,
+        message: "keep the parser where it is".to_owned(),
+        attachments: Vec::new(),
+    };
+    let command = peers
+        .admit(
+            CommandKind::SteerSend,
+            42,
+            Actor::Operator,
+            peers.seat(RECIPIENT),
+            &send,
+        )
+        .expect("operator send admits");
+    let mut effects = CommandEffects::default();
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Directive(sent),
+        ..
+    }) = steering::send(
+        &peers.bus,
+        peers.epoch,
+        &steer::Config::default(),
+        &command,
+        &send,
+        &mut effects,
+    )
+    else {
+        panic!("operator direction is durable");
+    };
+
+    let snapshot = peers.bus.fact_snapshot().expect("authority reads");
+    let creators = snapshot
+        .facts()
+        .iter()
+        .filter_map(|envelope| {
+            let body = envelope.fact.read::<wire::body::SteerSent>()?;
+            Some((body.directive, (envelope.actor.clone(), body.from)))
+        })
+        .collect::<BTreeMap<_, _>>();
+    assert_eq!(
+        creators[&told.directive],
+        (Actor::Lane(sender), Some(sender)),
+        "the peer message is journaled as the sending lane"
+    );
+    assert_eq!(creators[&sent.directive], (Actor::Operator, None));
+
+    let request = wire::intent::SteerInbox {
+        lane: Some(recipient),
+    };
+    let command = Command {
+        v: wire::WireVersion::CURRENT,
+        id: test_uuid(43),
+        epoch: peers.epoch,
+        kind: CommandKind::SteerInbox,
+        expected: Vec::new(),
+        body: serde_json::to_value(&request).expect("inbox request encodes"),
+    }
+    .admit(&wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch: peers.epoch,
+    })
+    .expect("operator inbox admits");
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Inbox(inbox),
+        ..
+    }) = steering::inbox(&peers.bus, &peers.paths, peers.epoch, &command, &request)
+    else {
+        panic!("inbox reads durable authority");
+    };
+    let [row] = inbox.lanes.as_slice() else {
+        panic!("one recipient row: {inbox:?}")
+    };
+    let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
+    let render = |key: &str| {
+        let pending = row
+            .pending
+            .iter()
+            .filter(|directive| directive.key == key)
+            .cloned()
+            .collect::<Vec<_>>();
+        steer::inbox::render_pending(&seal, &pending, |_, _| None)
+    };
+    let peer = render(&told.key);
+    assert!(
+        peer.contains(&format!("from=lane:{sender}\n[PEER lane {sender}]")),
+        "the recipient hears who told it: {peer}"
+    );
+    assert!(peer.contains("not operator direction"), "{peer}");
+    let operator = render(&sent.key);
+    assert!(
+        !operator.contains("from=") && !operator.contains("[PEER"),
+        "operator direction names no sender: {operator}"
+    );
+
+    peers.finish();
+}
+
+#[test]
+fn a_tell_is_refused_from_the_operator_to_the_sender_and_to_an_unseated_lane() {
+    let peers = Peers::new("steer-tell-refused");
+    let tell = wire::intent::SteerTell {
+        lane: test_uuid(RECIPIENT),
+        message: "a peer message".to_owned(),
+    };
+    let Err(wire::CommandRejection::Refusal(refusal)) = peers.admit(
+        CommandKind::SteerTell,
+        50,
+        Actor::Operator,
+        peers.seat(RECIPIENT),
+        &tell,
+    ) else {
+        panic!("the operator's voice is steer, never tell");
+    };
+    assert_eq!(refusal.reason(), "command::authority");
+
+    for (id, to, reason) in [
+        (51, SENDER, "steer::tell-self"),
+        (52, VACANT, "steer::lane-unseated"),
+        (53, 99, "steer::lane-unseated"),
+    ] {
+        let (outcome, effects) = peers.tell(id, to, "a peer message");
+        assert!(
+            matches!(&outcome, Outcome::Refusal(refusal) if refusal.reason() == reason),
+            "{reason}: {outcome:?}"
+        );
+        assert!(
+            effects.inbox_delivery.is_none(),
+            "{reason} delivers nothing"
+        );
+    }
+    let snapshot = peers.bus.fact_snapshot().expect("authority reads");
+    assert!(
+        snapshot
+            .facts()
+            .iter()
+            .all(|envelope| envelope.fact.read::<wire::body::SteerSent>().is_none()),
+        "a refused tell journals nothing"
+    );
+
+    peers.finish();
+}

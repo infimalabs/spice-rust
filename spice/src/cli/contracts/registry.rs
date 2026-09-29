@@ -804,6 +804,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "steer::recover"
     ),
     row!(
+        ["tell"],
+        "tell LANE TEXT",
+        Lane,
+        Command,
+        [SteerSent],
+        [Resident, LaneCapability],
+        Reply,
+        "steer::tell"
+    ),
+    row!(
         ["inbox"],
         "inbox [LANE]",
         OperatorOrLane,

@@ -40,6 +40,8 @@ mod startup;
 mod startup_window;
 #[path = "tests/steering_heard.rs"]
 mod steering_heard;
+#[path = "tests/steering_tell.rs"]
+mod steering_tell;
 #[path = "tests/steering_vacant.rs"]
 mod steering_vacant;
 #[path = "tests/sweep_publish.rs"]
@@ -478,6 +480,7 @@ fn failed_pending_inbox_start_parks_key_and_reports_exact_requeue() {
         .expect("steering origin");
     let mut sent = JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     let body = wire::body::SteerSent {
+        from: None,
         directive,
         fanout: None,
         key: "1kJK6N3R".to_owned(),

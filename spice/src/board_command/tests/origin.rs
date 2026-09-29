@@ -7,6 +7,7 @@ fn seed_steering_origin(bus: &Bus, key: &str) {
         .parse()
         .expect("fixture expiry instant");
     let sent = body::SteerSent {
+        from: None,
         directive: uuid(16_201),
         fanout: None,
         key: key.to_owned(),
@@ -33,6 +34,7 @@ fn seed_steering_origin(bus: &Bus, key: &str) {
         .fact(sent.clone(), FactCause::Root)
         .expect("steering fact builds");
     write.steering_head(pending, move |created| wire::SteeringHead {
+        from: None,
         directive: sent.directive,
         fanout: sent.fanout,
         key: sent.key,

@@ -71,6 +71,7 @@ pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
         ["task", "delete"] => CommandKind::TaskDelete,
         ["doc"] => CommandKind::DocApply,
         ["doc", "ledger"] => CommandKind::DocLedger,
+        ["tell"] => CommandKind::SteerTell,
         _ => return None,
     })
 }

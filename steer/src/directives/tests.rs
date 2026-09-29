@@ -1159,6 +1159,7 @@ fn expires() -> Instant {
 
 fn sent(key: &str) -> SteerSent {
     SteerSent {
+        from: None,
         directive: directive(key),
         fanout: None,
         key: key.to_owned(),

@@ -1294,6 +1294,7 @@ fn append_send(
     let mut proposal =
         JournalWrite::new(Actor::Operator, origin.clone(), at, Producer::CommandDoor);
     let body = wire::body::SteerSent {
+        from: None,
         directive,
         fanout: None,
         key: key.to_owned(),

@@ -87,6 +87,8 @@ pub enum CommandKind {
 
     /// Append one durable directive to a lane.
     SteerSend,
+    /// Tell another seated lane something, as the sending lane.
+    SteerTell,
     /// Read pending direction visible to the authenticated principal.
     SteerInbox,
     /// Re-deliver one live directive and catch up any due presentation stages.
@@ -182,6 +184,8 @@ pub enum Authority {
     Connected,
     /// Only an operator connection may submit.
     Operator,
+    /// Only a lane connection may submit, and it speaks as that lane.
+    Lane,
 }
 
 /// The law one command carries.
@@ -406,6 +410,15 @@ impl Law {
         optional: &[],
         authority: Authority::Operator,
     };
+    /// A peer message names the seated lane it lands on as it found it.
+    ///
+    /// Only a lane tells: the operator's own direction is [`Self::SEND`], and a
+    /// peer message must never be mistaken for it.
+    pub const TELL: Self = Self {
+        required: &[WitnessKind::Residency],
+        optional: &[],
+        authority: Authority::Lane,
+    };
     /// Exact live directive disposition for a time-derived re-presentation.
     pub const RESEND: Self = Self {
         required: &[WitnessKind::Directive],
@@ -581,6 +594,7 @@ impl CommandKind {
         Self::ClaimLapse,
         Self::DocApply,
         Self::SteerSend,
+        Self::SteerTell,
         Self::SteerInbox,
         Self::SteerResend,
         Self::SteerRecover,
@@ -644,6 +658,7 @@ impl CommandKind {
             | Self::ClaimLapse
             | Self::DocApply
             | Self::SteerSend
+            | Self::SteerTell
             | Self::SteerInbox
             | Self::SteerResend
             | Self::SteerRecover
@@ -711,6 +726,7 @@ impl CommandKind {
             Self::ClaimLapse => "claim::lapse",
             Self::DocApply => "doc::apply",
             Self::SteerSend => "steer::send",
+            Self::SteerTell => "steer::tell",
             Self::SteerInbox => "steer::inbox",
             Self::SteerResend => "steer::resend",
             Self::SteerRecover => "steer::recover",
@@ -894,6 +910,7 @@ impl CommandKind {
         match self {
             Self::DocApply => Law::APPLY,
             Self::SteerSend => Law::SEND,
+            Self::SteerTell => Law::TELL,
             Self::SteerInbox => Law::READ,
             Self::SteerResend => Law::RESEND,
             Self::SteerRecover => Law::RECOVER,
@@ -1214,11 +1231,13 @@ impl Command<serde_json::Value> {
         let authorized = match law.authority {
             Authority::Connected => matches!(accepted.actor, Actor::Operator | Actor::Lane(_)),
             Authority::Operator => matches!(accepted.actor, Actor::Operator),
+            Authority::Lane => matches!(accepted.actor, Actor::Lane(_)),
         };
         if !authorized {
             let expected = match law.authority {
                 Authority::Connected => "operator or lane",
                 Authority::Operator => "operator",
+                Authority::Lane => "lane",
             };
             return Err(CommandRejection::Refusal(Refusal::bare(
                 RefusalDiagnostic::new(

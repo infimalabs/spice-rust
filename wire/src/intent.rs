@@ -64,6 +64,19 @@ pub struct SteerSend {
     pub attachments: Vec<DirectiveAttachment>,
 }
 
+/// Tell another seated lane something, as the authenticated sending lane.
+///
+/// The sender is never a body field: the resident takes it from the lane
+/// capability that submitted the command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SteerTell {
+    /// Seated lane the peer message lands on.
+    pub lane: CanonicalUuid,
+    /// What the sending lane has to say.
+    pub message: String,
+}
+
 /// Read pending direction visible to the authenticated principal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -563,6 +576,17 @@ pub struct PendingDirective {
     pub key: String,
     /// Direction text.
     pub text: String,
+    /// Seated lane that told this directive as a peer message.
+    ///
+    /// Absent on operator and resident direction, which is every fact written
+    /// before peer messages existed. Present only when the creating fact's
+    /// actor is exactly this lane.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub from: Option<CanonicalUuid>,
     /// First line authored outside quoted context, when the producer found one.
     #[serde(
         default,
