@@ -134,7 +134,7 @@ struct DisplayStanding<'a>(&'a EventDirectives<'a>);
 
 impl steer::Standing for DisplayStanding<'_> {
     fn disposition(&self, key: &steer::Key) -> Option<wire::Disposition> {
-        if self.0.acknowledged_for_lane(key) || self.0.is_lane_seal(key) {
+        if self.0.answered_for_lane(key).is_some() || self.0.is_lane_seal(key) {
             Some(wire::Disposition::Live)
         } else {
             steer::Standing::disposition(self.0, key)
