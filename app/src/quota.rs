@@ -196,7 +196,15 @@ fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
     const HIGH_PRO: f64 = 20.0;
 
     let Some(plan) = report.account.plan_type.as_deref().map(str::trim) else {
-        return BASELINE;
+        // omp reports no Anthropic plan: its usage provider never reads the
+        // tier Anthropic's OAuth profile carries. The operator's Anthropic
+        // account is the $200 Max 20x plan, so an unreported one counts as
+        // that instead of a $20 plan.
+        return if report.provider.eq_ignore_ascii_case("anthropic") {
+            HIGH_PRO
+        } else {
+            BASELINE
+        };
     };
     if plan_matches(
         plan,
@@ -213,6 +221,7 @@ fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
             "pro-20x",
             "pro 20x",
             "chatgpt_pro_20x",
+            "default_claude_max_20x",
         ],
     ) {
         return HIGH_PRO;
@@ -236,6 +245,7 @@ fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
             "pro-5x",
             "pro 5x",
             "chatgpt_pro_5x",
+            "default_claude_max_5x",
         ],
     ) {
         return LOWER_PRO;
@@ -322,7 +332,7 @@ mod tests {
                 exit_code: None,
             }),
         };
-        assert_eq!(capacity_summary(&generation), "14% remaining");
+        assert_eq!(capacity_summary(&generation), "50% remaining");
         assert_eq!(present(&generation).condition, Condition::StaleLastGood);
     }
 
