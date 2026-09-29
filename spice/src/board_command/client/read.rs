@@ -719,7 +719,6 @@ fn parked_commit_lines(task: &BoardTask) -> Vec<String> {
         return Vec::new();
     };
     let mut lines = vec![
-        format!("parked_ref {}", parked.reference),
         format!("parked_baseline {}", parked.baseline),
         format!("parked_head {}", parked.head),
         "parked_commits:".to_owned(),

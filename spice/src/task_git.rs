@@ -219,8 +219,8 @@ pub fn capture(repository: &Repository) -> Result<Capture, Error> {
 
 /// A release-side Git transition prepared before its board fact commits.
 ///
-/// The task-owned ref intentionally survives success. If the guarded board
-/// write refuses, `rollback` restores the lane and removes that ref.
+/// The journal retains the exact commit identity. If the guarded board write
+/// refuses, `rollback` restores that commit to the lane.
 #[derive(Debug)]
 pub struct ParkedRelease {
     parked: wire::body::TaskParkedCommits,
@@ -246,22 +246,15 @@ impl ParkedRelease {
                 "restore lane after refused task release",
             )?;
         }
-        delete_ref(
-            &self.root,
-            &self.parked.reference,
-            &self.parked.head,
-            "remove refused task parking ref",
-        )
+        Ok(())
     }
 }
 
-/// Park a holder's committed work and return its lane to the claim baseline.
+/// Save a holder's committed work by object ID and return its lane to the claim baseline.
 ///
-/// A clean task with no commits needs no ref and returns `None`. Every failure
-/// after ref creation compensates before returning.
+/// A clean task with no commits needs no saved identity and returns `None`.
 pub fn prepare_free(
     repository: &Repository,
-    task: &wire::TaskStamp,
     opening: Option<&GitBoundary>,
 ) -> Result<Option<ParkedRelease>, Error> {
     let root = repository.worktree_root();
@@ -282,24 +275,9 @@ pub fn prepare_free(
     if commits.is_empty() {
         return Ok(None);
     }
-    let reference = format!("refs/spice/tasks/{task}/parked");
-    if try_read(root, &["rev-parse", "--verify", &reference])?.is_some() {
-        return Err(Error::refusal(
-            "git::parked-ref-exists",
-            format!("task parking ref {reference} already exists"),
-            "claim and restore the task's parked commits before releasing it again",
-        ));
-    }
-    update_ref(root, &reference, &before, "", "create task parking ref")?;
-    if let Err(error) =
-        materialize_and_update(root, &baseline, &before, "return lane to task baseline")
-    {
-        let _ = delete_ref(root, &reference, &before, "remove failed task parking ref");
-        return Err(error);
-    }
+    materialize_and_update(root, &baseline, &before, "return lane to task baseline")?;
     Ok(Some(ParkedRelease {
         parked: wire::body::TaskParkedCommits {
-            reference,
             baseline,
             head: before.clone(),
             commits,
@@ -332,6 +310,19 @@ fn rev_list(root: &Path, baseline: &str, head: &str) -> Result<Vec<String>, Erro
     Ok(listed.lines().map(str::to_owned).collect())
 }
 
+fn saved_rev_list(root: &Path, baseline: &str, head: &str) -> Result<Vec<String>, Error> {
+    let range = format!("{baseline}..{head}");
+    let listed = run(root, &["rev-list", "--reverse", &range])?;
+    if !listed.success() {
+        return Err(Error::refusal(
+            "git::parked-object-missing",
+            listed.detail("read saved task commit graph"),
+            "restore the saved Git objects before claiming this task",
+        ));
+    }
+    Ok(listed.stdout.lines().map(str::to_owned).collect())
+}
+
 /// Safely advance a clean lane before allocator possession is minted.
 pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
     prepare_claim_observed(repository, || Ok(()), |_| Ok(()))
@@ -348,24 +339,9 @@ struct ParkedRestore {
     root: PathBuf,
     before: String,
     restored: String,
-    reference: String,
-    parked_head: String,
 }
 
 impl ClaimPreparation {
-    /// Consume the task-owned ref after the board has durably claimed its work.
-    pub fn commit(self) -> Result<(), Error> {
-        let Some(restore) = self.restore else {
-            return Ok(());
-        };
-        delete_ref(
-            &restore.root,
-            &restore.reference,
-            &restore.parked_head,
-            "consume restored task parking ref",
-        )
-    }
-
     /// Return the lane to its pre-claim HEAD after a guarded board refusal.
     pub fn rollback(self) -> Result<(), Error> {
         let Some(restore) = self.restore else {
@@ -437,8 +413,6 @@ pub fn prepare_task_claim(
             root: root.to_path_buf(),
             before,
             restored,
-            reference: parked.reference.clone(),
-            parked_head: parked.head.clone(),
         }),
     })
 }
@@ -448,30 +422,15 @@ fn restore_parked(
     parked: &wire::body::TaskParkedCommits,
     boundary: &GitBoundary,
 ) -> Result<String, Error> {
-    let retained = required_read(
-        root,
-        &["rev-parse", "--verify", &parked.reference],
-        "read task parking ref",
-    )?;
-    if retained != parked.head {
-        return Err(Error::refusal(
-            "git::parked-ref-moved",
-            format!(
-                "task parking ref {} names {retained}, expected {}",
-                parked.reference, parked.head
-            ),
-            "restore the task-owned ref to its journaled parked head and retry",
-        ));
-    }
-    let commits = rev_list(root, &parked.baseline, &parked.head)?;
+    let commits = saved_rev_list(root, &parked.baseline, &parked.head)?;
     if commits != parked.commits {
         return Err(Error::refusal(
             "git::parked-history-mismatch",
             format!(
-                "task parking ref {} no longer has its journaled history",
-                parked.reference
+                "saved task commit {} no longer has its journaled history",
+                parked.head
             ),
-            "restore the journaled parked commit graph and retry the claim",
+            "restore the journaled saved commit graph and retry the claim",
         ));
     }
     let current = &boundary.head;
@@ -941,35 +900,6 @@ fn ahead_count(root: &Path, baseline: &str) -> Result<u32, Error> {
     value
         .parse()
         .map_err(|_| Error::fault("git::ahead-invalid", format!("Git returned {value:?}")))
-}
-fn update_ref(
-    root: &Path,
-    reference: &str,
-    target: &str,
-    expected: &str,
-    action: &str,
-) -> Result<(), Error> {
-    let updated = run(root, &["update-ref", reference, target, expected])?;
-    if updated.success() {
-        Ok(())
-    } else {
-        Err(Error::fault(
-            "git::parked-ref-update-failed",
-            updated.detail(action),
-        ))
-    }
-}
-
-fn delete_ref(root: &Path, reference: &str, expected: &str, action: &str) -> Result<(), Error> {
-    let deleted = run(root, &["update-ref", "-d", reference, expected])?;
-    if deleted.success() {
-        Ok(())
-    } else {
-        Err(Error::fault(
-            "git::parked-ref-delete-failed",
-            deleted.detail(action),
-        ))
-    }
 }
 
 fn integrate(

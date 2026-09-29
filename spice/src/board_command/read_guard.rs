@@ -1104,13 +1104,6 @@ pub(super) enum PreparedTaskGit {
 }
 
 impl PreparedTaskGit {
-    fn commit(self) -> Result<(), spice::task_git::Error> {
-        match self {
-            Self::Release(_) => Ok(()),
-            Self::Claim(prepared) => prepared.commit(),
-        }
-    }
-
     fn rollback(self) -> Result<(), spice::task_git::Error> {
         match self {
             Self::Release(prepared) => prepared.rollback(),
@@ -1126,18 +1119,13 @@ pub(super) fn committed_with_task_git(
     prepared: PreparedTaskGit,
 ) -> Outcome<CommandAnswer> {
     match bus.commit(write) {
-        Ok(CommitOutcome::Committed(commit)) => {
-            if let Err(error) = prepared.commit() {
-                return task_git_outcome(error);
-            }
-            Outcome::Reply(Reply {
-                position: ReplyPosition::Committed(SeqRange {
-                    first: seq(commit.first()),
-                    last: seq(commit.last()),
-                }),
-                body,
-            })
-        }
+        Ok(CommitOutcome::Committed(commit)) => Outcome::Reply(Reply {
+            position: ReplyPosition::Committed(SeqRange {
+                first: seq(commit.first()),
+                last: seq(commit.last()),
+            }),
+            body,
+        }),
         Ok(CommitOutcome::Refused(refusal)) => {
             if let Err(error) = prepared.rollback() {
                 return task_git_outcome(error);

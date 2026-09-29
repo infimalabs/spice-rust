@@ -340,7 +340,7 @@ fn prepare_deferral_release(
         .at(claim.claimed)
         .and_then(|envelope| envelope.fact.read::<body::ClaimWon>())
         .and_then(|won| won.git);
-    spice::task_git::prepare_free(&lane, entry.born(), opening.as_ref()).map_err(task_git_outcome)
+    spice::task_git::prepare_free(&lane, opening.as_ref()).map_err(task_git_outcome)
 }
 
 fn append_deferral_release(
