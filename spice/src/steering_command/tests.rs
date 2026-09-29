@@ -60,6 +60,24 @@ fn steer_selects_send_with_no_lane_context() {
 }
 
 #[test]
+fn steer_from_a_seated_lane_is_refused_as_non_operator_direction() {
+    let (contract, leaf) = parse(&["spice", "steer", LANE, "closing smoke"]);
+    let sender = "2c4a7d8e-3f50-4162-8c13-d4e5f6071829";
+
+    let Err(Outcome::Refusal(refused)) = select(&leaf, contract, Some(OsString::from(sender)))
+    else {
+        panic!("a seated lane cannot author direction");
+    };
+    assert_eq!(refused.reason(), "steer::operator-required");
+    assert_eq!(
+        refused
+            .diagnostic()
+            .and_then(|diagnostic| diagnostic.observed()),
+        Some(format!("lane:{sender}").as_str())
+    );
+}
+
+#[test]
 fn steer_cancel_selects_cancel_rather_than_recover() {
     let (contract, leaf) = parse(&["spice", "steer", "cancel", DIRECTIVE]);
     let (selected, context) = selection(&leaf, contract, None);
