@@ -211,9 +211,6 @@ pub(crate) fn prompt_outcome(record: &Object) -> Result<PromptOutcome, ResidueKi
         "error" => PromptStatus::Error,
         other => return Err(drift(&format!("prompt_result:{other}"))),
     };
-    if status == PromptStatus::Error {
-        object(record, "error")?;
-    }
     Ok(PromptOutcome {
         agent_invoked: required(record, "agentInvoked")?.as_bool().ok_or(
             ResidueKind::Malformed {
@@ -236,7 +233,13 @@ fn prompt_result(record: &Object, locus: Locus) -> Events {
     if outcome.status != PromptStatus::Error {
         return Ok(Vec::new());
     }
-    let error = object(record, "error")?;
+    let Some(error) = record.get("error") else {
+        return Ok(Vec::new());
+    };
+    let error = error.as_object().ok_or(ResidueKind::Malformed {
+        field: "prompt_result.error",
+        expected: "object",
+    })?;
     let http_status = optional_unsigned(error, "httpStatus")?
         .map(u16::try_from)
         .transpose()
