@@ -392,11 +392,11 @@ flowchart LR
    hold presentation preferences.
 - A fused team renders one merged stream on one host; every member
    remains its own concrete send address.
-- Member order controls composer order only. Message chronology, accent, and
-   attribution do not derive from position. Accent derives from stable lane
-   identity, may repeat, and never substitutes for explicit lane attribution. A
-   member that momentarily fails to resolve keeps its seat rather than
-   re-entering at the tail.
+- Canonical member order runs from the right control edge: member zero is the
+   main agent and each later member sits one place farther left. Position controls
+   composer order and accent slot, while message chronology and explicit lane
+   attribution do not derive from position. A member that momentarily fails to
+   resolve keeps its seat rather than re-entering at the tail.
 - `Close team` only inserts the team into that browser reducer's hidden set.
    It sends no authority command, changes no membership, and neither inspects
    nor erases a draft. A closed grouped team remains restorable during that
@@ -457,8 +457,8 @@ stateDiagram-v2
    submission installs the browser's `beforeunload` confirmation guard.
    Browser-local `Close team` only suppresses rendering and does not erase it.
 - A late completion never steals focus the operator has since moved.
-- Shard order follows member order. Accent follows stable lane identity and may
-   repeat, so every card explicitly names the lane that would answer it.
+- Shard order runs right-to-left from canonical member zero, and accent advances
+   with that position. Every card explicitly names the lane that would answer it.
 - The band reports state the operator did not ask for: age, run state,
    pending, claimed task. It is a status surface first and a composer second.
 

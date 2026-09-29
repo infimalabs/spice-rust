@@ -431,16 +431,17 @@ entire point of the separation.
 ### Closed loop: The fused composer
 
 A team presents as one control surface: an ordered **strip of composer
-columns**, one per member. The operator reads it across, with east/west overflow
-when needed; it is not a set of tabs they switch between.
+columns**, one per member. Canonical member zero is the main agent at the right
+control edge; later members extend left with east/west overflow when needed.
+The strip is not a set of tabs the operator switches between.
 
 ```mermaid
 flowchart LR
-  subgraph STRIP["the composer strip — one column per member, in member order"]
-    direction LR
-    AshShard["Ash shard, amber accent"]
-    ElmShard["Elm shard, teal accent"]
-    YewShard["Yew shard, violet accent"]
+  subgraph STRIP["the composer strip — canonical order from the right control edge"]
+    direction RL
+    AshShard["main Ash shard, green accent"]
+    ElmShard["Elm shard, blue accent"]
+    YewShard["Yew shard, gold accent"]
   end
   AshShard --> AshWorktree["Ash worktree"]
   ElmShard --> ElmWorktree["Elm worktree"]
@@ -448,17 +449,17 @@ flowchart LR
   AshWorktree --> M["one merged stream in the host lane<br/>newest first"]
   ElmWorktree --> M
   YewWorktree --> M
-  M --> A(["each card names its lane;<br/>its lane-derived accent is continuity"])
+  M --> A(["each card names its lane;<br/>its slot accent aids scanning"])
   A --> STRIP
 ```
 
-The loop is the point. Member order lays out the shards; it does not order
-messages or assign identity. Each lane's stable identifier derives its accent,
-so reordering never recolours history. The finite palette may repeat, therefore
-cards carry explicit lane and worktree attribution and colour is only
-presentation continuity. Drag a shard to reorder within the team; drag it out to
-move that lane to another. A member that momentarily fails to resolve keeps its
-seat rather than being dropped from the stack.
+The loop is the point. Member order lays out the shards from the right control
+edge and assigns their palette slots; it does not order messages or assign
+identity. The finite palette may repeat, therefore cards carry explicit lane and
+worktree attribution and colour is only presentation. Drag a shard to reorder
+within the team; drag it out to move that lane to another. A member that
+momentarily fails to resolve keeps its seat rather than being dropped from the
+stack.
 
 **Value:** addressing three agents is one surface instead of three, and nothing
 is broadcast — every message still goes to exactly one worktree, through that

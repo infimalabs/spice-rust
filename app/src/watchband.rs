@@ -576,11 +576,10 @@ fn lease_instant(
         .map(|lease| pick(&lease.body).get().as_millisecond())
 }
 
-/// The zero-based visual ordinal of one member counted from the right edge.
+/// The zero-based canonical position projected onto a left-to-right visual stack.
 ///
-/// Canonical member order is also DOM order, from left to right. The predecessor
-/// renders the same order with `row-reverse`, so translating through this
-/// ordinal preserves Rust's geometry while keeping its right-handed deal.
+/// Some compact summaries build left-to-right even though full team member
+/// surfaces project canonical order from the right control edge.
 #[must_use]
 pub const fn right_edge_ordinal(members: usize, position: usize) -> usize {
     assert!(position < members, "member position belongs to its team");
@@ -589,12 +588,14 @@ pub const fn right_edge_ordinal(members: usize, position: usize) -> usize {
 
 /// The accent slot dealt to one canonical team-member position.
 ///
-/// The rightmost member is green. Moving left advances through the six slots,
-/// and a seventh member intentionally returns to green. Color decorates visible
-/// attribution; lane identity and accessible labels remain authoritative.
+/// Canonical member zero is the main, control-adjacent member and receives
+/// green. Moving left advances through the six slots, and a seventh member
+/// intentionally returns to green. Color decorates visible attribution; lane
+/// identity and accessible labels remain authoritative.
 #[must_use]
 pub const fn accent(members: usize, position: usize) -> usize {
-    right_edge_ordinal(members, position) % ACCENTS
+    assert!(position < members, "member position belongs to its team");
+    position % ACCENTS
 }
 
 /// Resolve the accent slot currently dealt to one independently steerable lane.
@@ -1165,9 +1166,9 @@ mod tests {
             members: vec![member(1), member(2), member(3)],
         }];
 
-        assert_eq!(lane_accent(&lanes, id(1)), Some(2));
+        assert_eq!(lane_accent(&lanes, id(1)), Some(0));
         assert_eq!(lane_accent(&lanes, id(2)), Some(1));
-        assert_eq!(lane_accent(&lanes, id(3)), Some(0));
+        assert_eq!(lane_accent(&lanes, id(3)), Some(2));
         assert_eq!(lane_accent(&lanes, id(4)), None);
     }
 

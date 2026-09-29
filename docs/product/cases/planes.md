@@ -152,8 +152,8 @@
 | Any motion is observed | it corresponds to a change, not to a re-render | [Movement means change](../invariants/lifecycle.md#surface-movement-means-change) |
 | Compensation adjusts the viewport | it is not read as a user gesture | [Programmatic scroll is excluded from anything that reads user intent](../invariants/lifecycle.md#surface-programmatic-scroll-is-excluded-from-anything-that-reads-user-intent) |
 | Several changed stream frames arrive in one tick | each frame immediately publishes the resulting surface state | [Each changed stream frame publishes immediately](../invariants/lifecycle.md#surface-each-changed-stream-frame-publishes-immediately) |
-| More lane identities exist than palette slots | colours repeat; explicit lane attribution remains unambiguous | [Accent derives from stable lane identity](../invariants/lifecycle.md#surface-accent-derives-from-stable-lane-identity) |
-| Two clients render the same fused team | stable lane-derived accents and explicit attribution agree independently of member order | [Member order controls composition, not identity](../invariants/lifecycle.md#topology-member-order-controls-composition-not-identity) |
+| More lane identities exist than palette slots | position colours repeat; explicit lane attribution remains unambiguous | [Accent derives from canonical member position](../invariants/lifecycle.md#surface-accent-derives-from-stable-lane-identity) |
+| Two clients render the same fused team | canonical order, position accents, and explicit attribution agree from the same authoritative topology | [Member order controls composition, not identity](../invariants/lifecycle.md#topology-member-order-controls-composition-not-identity) |
 
 ### Checks, session, extension, continued
 

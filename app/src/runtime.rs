@@ -250,7 +250,7 @@ impl LaneMember {
 }
 
 impl LaneRow {
-    /// The team host, which is the first member in canonical seat order.
+    /// The team host and main agent: canonical member zero at the right control edge.
     #[must_use]
     pub fn host(&self) -> Option<&LaneMember> {
         self.members.first()
