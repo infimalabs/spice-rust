@@ -424,6 +424,7 @@ mod tests {
             text: text.to_owned(),
             phase: phase.map(str::to_owned),
             media: Vec::new(),
+            external_media: Vec::new(),
             locus: event().locus,
         }
     }

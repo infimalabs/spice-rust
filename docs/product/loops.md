@@ -462,6 +462,14 @@ Existing directives and transcript media retain their canonical decoding
 contract: up to 8 images, each at most 8 MiB decoded. Reading or presenting
 those bytes is not a new steering send.
 
+OMP session records may replace inline image data with
+`blob:sha256:<lowercase-hex>`. Session readers resolve that reference only
+against the OMP state root's `blobs/` directory, require a regular
+non-symbolic file, verify its SHA-256 and declared image signature, and then
+present the same canonical media value as an inline record. A missing,
+unreadable, oversized, mismatched, or invalid blob is an explicit transcript
+residue; surrounding typed history remains available.
+
 **Incidental** — visual styling, concrete column and track sizing, truncation,
 and iconography. Horizontal ordered columns, strip-owned east/west overflow,
 and the age, run-state, pending-count, and claimed-task field set are fixed.

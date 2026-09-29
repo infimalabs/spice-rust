@@ -761,8 +761,10 @@ fn decode_record(
         length,
         hash: record_guard_hash(bytes),
     });
-    let decoded = listen::decode(cursor.dialect, bytes, locus)
+    let mut decoded = listen::decode(cursor.dialect, bytes, locus)
         .expect("the locus is built from the exact session record bytes");
+    crate::session_media::resolve(&mut decoded, &cursor.path)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
     let authored = decoded
         .context()
         .and_then(|context| context.timestamp.clone());

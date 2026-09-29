@@ -1219,6 +1219,7 @@ fn prose_events_record(
                         text: (*text).to_owned(),
                         phase: Some("final".to_owned()),
                         media: Vec::new(),
+                        external_media: Vec::new(),
                         locus: listen::Locus::new(
                             7,
                             120 + u64::try_from(index).expect("fixture event index fits u64") * 64,

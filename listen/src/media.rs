@@ -3,7 +3,7 @@
 use serde_json::Value;
 use wire::Media;
 
-use crate::ResidueKind;
+use crate::{ExternalMedia, ResidueKind};
 
 /// The authority that permits one value to expose media.
 pub(crate) enum OwnedContent<'a> {
@@ -19,6 +19,12 @@ pub(crate) enum OwnedContent<'a> {
 pub(crate) struct Decomposition {
     pub(crate) text: String,
     pub(crate) media: Vec<Media>,
+    pub(crate) external_media: Vec<ExternalMedia>,
+}
+
+enum Candidate {
+    Inline(Media),
+    External(ExternalMedia),
 }
 
 /// Decompose one owned current content value through the sole media contract.
@@ -36,6 +42,7 @@ pub(crate) fn decompose(content: OwnedContent<'_>) -> Result<Decomposition, Resi
             Ok(Decomposition {
                 text: text.to_owned(),
                 media: unique(media)?,
+                external_media: Vec::new(),
             })
         }
         OwnedContent::ProviderValue {
@@ -43,11 +50,13 @@ pub(crate) fn decompose(content: OwnedContent<'_>) -> Result<Decomposition, Resi
             default_name,
         } => {
             let mut text = Vec::new();
-            let mut media = Vec::new();
-            collect(value, default_name, &mut text, &mut media)?;
+            let mut candidates = Vec::new();
+            collect(value, default_name, &mut text, &mut candidates)?;
+            let (media, external_media) = unique_candidates(candidates)?;
             Ok(Decomposition {
                 text: text.join("\n"),
-                media: unique(media)?,
+                media,
+                external_media,
             })
         }
     }
@@ -57,7 +66,7 @@ fn collect(
     value: &Value,
     default_name: &str,
     text: &mut Vec<String>,
-    media: &mut Vec<Media>,
+    media: &mut Vec<Candidate>,
 ) -> Result<(), ResidueKind> {
     match value {
         Value::Array(values) => {
@@ -97,7 +106,7 @@ fn collect(
 fn image(
     object: &serde_json::Map<String, Value>,
     default_name: &str,
-) -> Result<Option<Media>, ResidueKind> {
+) -> Result<Option<Candidate>, ResidueKind> {
     let owned = object
         .get("type")
         .and_then(Value::as_str)
@@ -121,7 +130,7 @@ fn image(
     match (url, source, data, content_type) {
         (Some(url), None, None, None) => {
             let url = url.as_str().ok_or_else(malformed)?;
-            admit(name, url).map(Some)
+            admit(name, url).map(|media| Some(Candidate::Inline(media)))
         }
         (None, Some(source), None, None) => {
             let source = source.as_object().ok_or_else(malformed)?;
@@ -137,14 +146,19 @@ fn image(
                 .and_then(Value::as_str)
                 .ok_or_else(malformed)?;
             Media::from_base64(name, content_type, data)
-                .map(Some)
+                .map(|media| Some(Candidate::Inline(media)))
                 .map_err(|_| malformed())
         }
         (None, None, Some(data), Some(content_type)) => {
             let data = data.as_str().ok_or_else(malformed)?;
             let content_type = content_type.as_str().ok_or_else(malformed)?;
+            if data.starts_with("blob:") {
+                return ExternalMedia::admit(name, content_type, data)
+                    .map(|media| Some(Candidate::External(media)))
+                    .ok_or_else(malformed);
+            }
             Media::from_base64(name, content_type, data)
-                .map(Some)
+                .map(|media| Some(Candidate::Inline(media)))
                 .map_err(|_| malformed())
         }
         _ => Err(malformed()),
@@ -184,6 +198,35 @@ fn admit(name: &str, data_url: &str) -> Result<Media, ResidueKind> {
         .and_then(|rest| rest.split_once(";base64,").map(|(kind, _)| kind))
         .ok_or_else(malformed)?;
     Media::admit(name, content_type, data_url).map_err(|_| malformed())
+}
+
+fn unique_candidates(
+    mut candidates: Vec<Candidate>,
+) -> Result<(Vec<Media>, Vec<ExternalMedia>), ResidueKind> {
+    candidates.truncate(wire::media::MAX_MEDIA_ITEMS);
+    let mut media = Vec::new();
+    let mut external_media = Vec::new();
+    for candidate in candidates {
+        match candidate {
+            Candidate::Inline(candidate) => {
+                let identity = candidate.identity().map_err(|_| malformed())?;
+                if !media.iter().any(|existing: &Media| {
+                    existing
+                        .identity()
+                        .is_ok_and(|existing| existing == identity)
+                }) {
+                    media.push(candidate);
+                }
+            }
+            Candidate::External(candidate) => {
+                if !external_media.contains(&candidate) {
+                    external_media.push(candidate);
+                }
+            }
+        }
+    }
+    wire::media::validate_media(&media).map_err(|_| malformed())?;
+    Ok((media, external_media))
 }
 
 /// Keep the first wire-representable source-order media prefix.
@@ -245,6 +288,50 @@ mod tests {
             retained.media[0].identity().unwrap(),
             inline.media[0].identity().unwrap(),
         );
+    }
+
+    #[test]
+    fn externalized_provider_media_is_retained_as_a_typed_reference() {
+        let block = serde_json::json!({
+            "type": "image",
+            "data": format!("blob:sha256:{}", "a".repeat(64)),
+            "mimeType": "image/png",
+            "name": "capture.png",
+        });
+        let content = decompose(OwnedContent::ProviderValue {
+            value: &block,
+            default_name: "tool-image",
+        })
+        .expect("canonical blob reference decodes");
+        assert!(content.media.is_empty());
+        assert_eq!(content.external_media.len(), 1);
+        let reference = &content.external_media[0];
+        assert_eq!(reference.name(), "capture.png");
+        assert_eq!(reference.content_type(), "image/png");
+        assert_eq!(reference.sha256(), "a".repeat(64));
+    }
+
+    #[test]
+    fn externalized_provider_media_requires_exact_lowercase_sha256_uri() {
+        for data in [
+            "blob:sha256:abc".to_owned(),
+            format!("blob:sha256:{}", "A".repeat(64)),
+            format!("blob:sha256:{}x", "a".repeat(64)),
+            format!("file:sha256:{}", "a".repeat(64)),
+        ] {
+            let block = serde_json::json!({
+                "type": "image",
+                "data": data,
+                "mimeType": "image/png",
+            });
+            assert!(matches!(
+                decompose(OwnedContent::ProviderValue {
+                    value: &block,
+                    default_name: "tool-image.png",
+                }),
+                Err(ResidueKind::Malformed { field: "media", .. })
+            ));
+        }
     }
 
     #[test]

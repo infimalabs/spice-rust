@@ -19,9 +19,9 @@ mod surface;
 pub use canary::{Alarm, Canary};
 pub use config::{Config, ConfigError};
 pub use event::{
-    Compaction, Event, EventKind, Failure, Prose, ProseRole, ProviderError, Reasoning,
-    ReasoningContent, SessionDeclaration, SignOut, Tool, ToolMoment, ToolOutcome, ToolResult,
-    Usage,
+    Compaction, Event, EventKind, ExternalMedia, Failure, Prose, ProseRole, ProviderError,
+    Reasoning, ReasoningContent, SessionDeclaration, SignOut, Tool, ToolMoment, ToolOutcome,
+    ToolResult, Usage,
 };
 pub use omp::PROTOCOL_VERSION as OMP_PROTOCOL_VERSION;
 pub use residue::{

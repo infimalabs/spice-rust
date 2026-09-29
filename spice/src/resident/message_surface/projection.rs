@@ -506,6 +506,7 @@ pub(super) fn acknowledging_prose(
             text: intent.clone(),
             phase: None,
             media: Vec::new(),
+            external_media: Vec::new(),
             locus: *locus,
         })),
         _ => None,

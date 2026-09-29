@@ -861,6 +861,7 @@ fn candidates_with_provenance(
             phase: prose.phase.clone(),
             // Taste derivation rewrites text, not the durable media record.
             media: prose.media.clone(),
+            external_media: prose.external_media.clone(),
             locus: prose.locus,
         });
         let event = checked_locus(event)?;

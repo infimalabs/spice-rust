@@ -23,6 +23,8 @@ pub struct TranscriptLayout {
     pub default_home: &'static str,
     /// Directory beneath the state root containing transcript files.
     pub sessions_directory: &'static str,
+    /// Directory beneath the state root containing external transcript media.
+    pub media_directory: Option<&'static str>,
 }
 
 /// Borrowed launch values selected from the typed vendor configuration.
@@ -196,6 +198,7 @@ pub const OMP: Vendor = Vendor {
         home_environment: "PI_CODING_AGENT_DIR",
         default_home: ".omp/agent",
         sessions_directory: "sessions",
+        media_directory: Some("blobs"),
     },
     render: omp_record,
 };
@@ -213,5 +216,6 @@ mod tests {
         assert_eq!(OMP.dialect(), Dialect::Omp);
         assert_eq!(OMP.thread_id_environment(), omp::SESSION_ENVIRONMENT);
         assert_eq!(OMP.transcript_layout().default_home, ".omp/agent");
+        assert_eq!(OMP.transcript_layout().media_directory, Some("blobs"));
     }
 }

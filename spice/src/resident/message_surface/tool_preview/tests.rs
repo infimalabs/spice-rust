@@ -47,6 +47,7 @@ fn result(outcome: listen::ToolResult) -> listen::ToolMoment {
         output: None,
         exit_code: None,
         media: Vec::new(),
+        external_media: Vec::new(),
     })
 }
 
@@ -62,6 +63,7 @@ fn media_text_distinguishes_mixed_and_image_only_results() {
                 output: output.map(str::to_owned),
                 exit_code: None,
                 media: vec![media.clone()],
+                external_media: Vec::new(),
             }),
         )
     };

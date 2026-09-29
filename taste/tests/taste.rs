@@ -19,6 +19,7 @@ fn prose(text: &str) -> Event {
         text: text.to_owned(),
         phase: Some("final".to_owned()),
         media: Vec::new(),
+        external_media: Vec::new(),
         locus: locus(text),
     })
 }
