@@ -1064,6 +1064,93 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     fs::remove_dir_all(root).expect("backlog fixture cleanup");
 }
 
+#[test]
+fn an_intent_only_acknowledgement_publishes_live_with_its_quoted_directive() {
+    let (root, _paths) = resident_fixture("message-intent-acknowledgement");
+    let bus = Bus::start(journal::Journal::in_memory().expect("intent authority opens"))
+        .expect("intent bus starts");
+    let epoch = test_uuid(40);
+    let lane = test_uuid(41);
+    let author = test_uuid(43);
+    seat_backlog_residency(&bus, epoch, lane, test_uuid(42), author, &root);
+    seed_steering(
+        &bus,
+        epoch,
+        lane,
+        test_uuid(44),
+        "1kQwPZtK",
+        "First direction.",
+    );
+    // The provider settled the prose as reasoning, so the call's intent holds
+    // the only verbatim words, and with them the acknowledgement header.
+    let locus = listen::Locus::new(1, 0, 64);
+    let record = lane::capture::CaptureRecord {
+        lane,
+        occupant: author,
+        stream: vendor::RecordStream::Stdout,
+        boundary: sill::RecordBoundary::Complete,
+        locus,
+        declaration: None,
+        decoded: listen::Decoded::Events {
+            context: listen::RecordContext::default(),
+            events: vec![listen::Event::Tool(listen::Tool {
+                call_id: "call-1".to_owned(),
+                moment: listen::ToolMoment::Call {
+                    name: "shell".to_owned(),
+                    arguments: r#"{"command":"git status"}"#.to_owned(),
+                    intent: Some("ACK 1kQwPZtK: Applied, checking the log".to_owned()),
+                },
+                locus,
+            })],
+        },
+    };
+
+    let live = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
+    let publisher = live.message_publisher();
+    let steering =
+        message_surface::steering_ledger(&bus, &record).expect("live steering context reads");
+    message_surface::publish_agent_messages(
+        &publisher,
+        &record,
+        &mut MessageState::default(),
+        steering.as_ref(),
+    )
+    .expect("the intent card publishes live");
+
+    let accepted = wire::Accepted {
+        wire: wire::WireVersion::CURRENT,
+        actor: Actor::Operator,
+        epoch,
+    };
+    let request = wire::StreamRequest::Subscribe {
+        v: wire::WireVersion::CURRENT,
+        id: test_uuid(45),
+        epoch,
+        subjects: vec![wire::ViewSubject::Messages],
+        after: None,
+    };
+    let (_, frames) = live
+        .begin(&accepted, &request)
+        .expect("Canvas subscription begins");
+    let wire::StreamFrame::Messages { generation, .. } = &frames[0] else {
+        panic!("expected message snapshot")
+    };
+    let cards = generation
+        .messages
+        .iter()
+        .filter(|message| message.activity.is_prose())
+        .map(|message| message.text.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        cards,
+        ["> [ACK PENDING] First direction.\n\nApplied, checking the log"]
+    );
+
+    drop(live);
+    bus.shutdown().expect("intent bus stops");
+    fs::remove_dir_all(root).expect("intent fixture cleanup");
+}
+
 fn mixed_acknowledgement_record(
     lane: CanonicalUuid,
     author: CanonicalUuid,
