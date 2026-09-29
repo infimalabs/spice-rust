@@ -51,6 +51,13 @@ pub(super) struct Controls {
     detail: DetailContext,
 }
 
+impl Controls {
+    /// Shared task-detail command surface for non-message Canvas affordances.
+    pub(super) fn context(&self) -> Context {
+        self.context.clone()
+    }
+}
+
 #[hook]
 pub(super) fn use_controls(
     surface: &UseStateHandle<SurfaceData>,
@@ -194,10 +201,10 @@ impl Context {
             let commands = self.commands.borrow();
             (commands.navigate.clone(), commands.return_focus_to.clone())
         };
-        navigate.emit(navigation::Intent::Task(task));
         if let Some(return_target) = return_target {
             return_focus_to.emit(return_target);
         }
+        navigate.emit(navigation::Intent::Task(task));
     }
 }
 

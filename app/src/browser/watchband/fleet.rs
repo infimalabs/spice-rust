@@ -63,6 +63,7 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) team_settled: &'a super::super::team_settled::Controls,
     pub(super) selected_task: &'a UseStateHandle<Option<wire::TaskStamp>>,
     pub(super) select_task: &'a Callback<wire::TaskStamp>,
+    pub(super) task_inspector: &'a crate::browser::message_task_inspector::Context,
     pub(super) runtime: &'a CanvasRuntime,
     pub(super) epoch: CanonicalUuid,
     pub(super) topology_revision: u64,
@@ -126,20 +127,26 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                             render.work,
                             &empty_team,
                             &[],
-                            (**render.selected_task).as_ref(),
-                            render.select_task,
-                            render.submissions,
-                            None,
+                            WorkRender {
+                                selected: (**render.selected_task).as_ref(),
+                                select: render.select_task,
+                                submissions: render.submissions,
+                                settled: None,
+                            },
                         ),
                         TeamMode::Dash => render_details(
                             &render.surface,
                             render.runtime,
                             &empty_team,
                             &[],
-                            render.select_task,
-                            &render.timeline_request,
-                            render.team_controls,
+                            DashRender {
+                                task_inspector: render.task_inspector,
+                                select: render.select_task,
+                                request: &render.timeline_request,
+                                controls: render.team_controls,
+                            },
                         ),
+
                     }}
                 </div>
             </section>
@@ -236,19 +243,24 @@ pub(super) fn render_populated_fleet(
                                             render.work,
                                             team,
                                             &team_standings,
-                                            (**render.selected_task).as_ref(),
-                                            render.select_task,
-                                            render.submissions,
-                                            Some(render.team_settled),
+                                            WorkRender {
+                                                selected: (**render.selected_task).as_ref(),
+                                                select: render.select_task,
+                                                submissions: render.submissions,
+                                                settled: Some(render.team_settled),
+                                            },
                                         ),
                                         TeamMode::Dash => render_details(
                                             &render.surface,
                                             render.runtime,
                                             team,
                                             &team_standings,
-                                            render.select_task,
-                                            &render.timeline_request,
-                                            render.team_controls,
+                                            DashRender {
+                                                task_inspector: render.task_inspector,
+                                                select: render.select_task,
+                                                request: &render.timeline_request,
+                                                controls: render.team_controls,
+                                            },
                                         ),
 
                                         TeamMode::Chat => Html::default(),

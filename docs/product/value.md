@@ -436,6 +436,12 @@ live state changes do not resize or reorder the roster. Agent channel, occupant,
 worktree, residency policy, and session identifiers remain available through a
 per-member seat-details disclosure that scrolls inside its own box.
 
+Below presence, every member keeps fixed Task, Latest activity, and Waiting
+direction rows. Live values replace text inside those slots rather than changing
+card geometry. A task opens the shared detail layer and returns focus to its Dash
+row; activity and direction links enter the exact Chat message or composer, and
+browser Back returns to that team's Dash.
+
 A separate Flow frame below the roster merges task transitions, lane lifecycle
 boundaries, and delivered directions into one newest-first chronology. Task
 entries open the shared task detail; lifecycle and direction entries link to

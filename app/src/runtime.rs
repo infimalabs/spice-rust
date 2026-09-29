@@ -1058,6 +1058,15 @@ impl CanvasRuntime {
         &self.activities
     }
 
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
+    /// Retained card that produced one projected activity, when hydrated.
+    #[must_use]
+    pub(crate) fn activity_message(&self, activity: &LaneActivity) -> Option<&AgentMessage> {
+        self.messages().iter().map(Rc::as_ref).find(|message| {
+            message.lane == activity.source.lane && message.locus == activity.source.locus
+        })
+    }
+
     /// Durable lane endings in journal chronology.
     #[must_use]
     pub fn lifecycle_boundaries(&self) -> &[LaneLifecycleBoundary] {
@@ -1333,7 +1342,6 @@ pub struct Stale {
 
 impl Stale {
     /// Widen this set by whatever one admitted fact invalidated.
-    ///
     /// The mapping is read off the kind's own wire spelling rather than
     /// declared as a second table over [`FactKind`]. The vocabulary already
     /// namespaces every kind — `steer::sent`, `lane::seated`, `task::added`,
@@ -1469,28 +1477,14 @@ impl Stale {
             || self.task_timelines
     }
 }
-/// The reads one admitted stream frame invalidated.
-///
-/// Two frames carry facts and both count. [`StreamFrame::Fact`] is the live
-/// push an established subscription receives one event at a time, and it is the
-/// case the watchband exists for: it is always the tail, so it always widens.
-/// [`StreamFrame::Facts`] is the paged backlog, and only its last page counts —
-/// a subscription walks its history as a run of pages each carrying facts that
-/// would widen this set, so honouring every page would issue a round of reads
-/// per page of history to learn a state the final page already implies.
-///
-/// [`StreamFrame::Thread`] carries facts too and is deliberately absent: a
-/// thread page is a causal walk backwards through history, not an advance, so
-/// nothing it contains says a current read is out of date.
+/// Projects current-read invalidation from live facts or complete backlog tails, never history pages.
 #[must_use]
 pub fn stale_reads(admitted: &Admitted<StreamFrame>) -> Stale {
     let mut stale = Stale::default();
     match admitted.get() {
         StreamFrame::Fact { fact, .. } => stale.widen_fact(fact),
         StreamFrame::Facts { packed, .. } if packed.overflow.is_none() => {
-            for row in &packed.rows {
-                stale.widen_fact(row);
-            }
+            packed.rows.iter().for_each(|row| stale.widen_fact(row));
         }
         _ => {}
     }
@@ -1498,26 +1492,4 @@ pub fn stale_reads(admitted: &Admitted<StreamFrame>) -> Stale {
 }
 
 #[cfg(test)]
-mod topology_tests {
-    use super::*;
-
-    #[test]
-    fn a_stale_topology_refusal_requires_an_authoritative_refresh() {
-        let stale = Outcome::<()>::Refusal(wire::Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                "lane::topology-moved",
-                Some("topology_revision".to_owned()),
-                Some("7".to_owned()),
-                Some("8".to_owned()),
-            )
-            .with_detail("read the lane table"),
-        ));
-        assert!(topology_mutation_requires_refresh(&stale));
-
-        let current = Outcome::Reply(wire::Reply {
-            position: wire::ReplyPosition::Direct {},
-            body: (),
-        });
-        assert!(!topology_mutation_requires_refresh(&current));
-    }
-}
+mod topology_tests;
