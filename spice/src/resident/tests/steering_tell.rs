@@ -1,6 +1,9 @@
-//! A seated lane tells another seated lane something, as itself.
+//! A seated lane tells another seated lane something, as itself, and each
+//! lane's inbox keeps its recent retirements beside its live direction.
 
 use std::collections::BTreeMap;
+
+use wire::Disposition;
 
 use super::*;
 
@@ -118,6 +121,59 @@ impl Peers {
         (outcome, effects)
     }
 
+    fn cancel(&self, id: u8, directive: CanonicalUuid) -> Outcome<CommandAnswer> {
+        let cancel = wire::intent::DirectiveRef { directive };
+        let witness = Witness::Directive {
+            steer: directive,
+            disposition: Disposition::Live,
+        };
+        let command = self
+            .admit(
+                CommandKind::SteerCancel,
+                id,
+                Actor::Operator,
+                witness,
+                &cancel,
+            )
+            .expect("operator cancel admits");
+        steering::cancel(
+            &self.bus,
+            self.epoch,
+            &command,
+            &cancel,
+            &mut CommandEffects::default(),
+        )
+    }
+
+    fn inbox(&self, id: u8, actor: Actor, retired: bool) -> wire::intent::InboxAnswer {
+        let request = wire::intent::SteerInbox {
+            lane: None,
+            retired,
+        };
+        let command = Command {
+            v: wire::WireVersion::CURRENT,
+            id: test_uuid(id),
+            epoch: self.epoch,
+            kind: CommandKind::SteerInbox,
+            expected: Vec::new(),
+            body: serde_json::to_value(&request).expect("inbox request encodes"),
+        }
+        .admit(&wire::Accepted {
+            wire: wire::WireVersion::CURRENT,
+            actor,
+            epoch: self.epoch,
+        })
+        .expect("inbox admits");
+        let Outcome::Reply(Reply {
+            body: CommandAnswer::Inbox(inbox),
+            ..
+        }) = steering::inbox(&self.bus, &self.paths, self.epoch, &command, &request)
+        else {
+            panic!("inbox reads durable authority");
+        };
+        inbox
+    }
+
     fn finish(self) {
         self.bus.verify().expect("the authority verifies");
         self.bus.shutdown().expect("fixture bus stops");
@@ -190,6 +246,7 @@ fn a_lane_tells_a_seated_peer_as_itself_and_the_delivery_names_the_sender() {
 
     let request = wire::intent::SteerInbox {
         lane: Some(recipient),
+        retired: false,
     };
     let command = Command {
         v: wire::WireVersion::CURRENT,
@@ -236,6 +293,91 @@ fn a_lane_tells_a_seated_peer_as_itself_and_the_delivery_names_the_sender() {
         !operator.contains("from=") && !operator.contains("[PEER"),
         "operator direction names no sender: {operator}"
     );
+
+    peers.finish();
+}
+
+#[test]
+fn a_lane_inbox_keeps_its_retired_direction_with_fanout_beside_live_direction() {
+    let peers = Peers::new("steer-inbox-retired");
+    let recipient = test_uuid(RECIPIENT);
+    let (outcome, _) = peers.tell(60, RECIPIENT, "the parser moved");
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Directive(told),
+        ..
+    }) = outcome
+    else {
+        panic!("a peer message is durable: {outcome:?}");
+    };
+    let send = wire::intent::SteerSend {
+        fanout: test_uuid(61),
+        lane: recipient,
+        message: "> quoted context\nkeep the parser where it is".to_owned(),
+        attachments: Vec::new(),
+    };
+    let command = peers
+        .admit(
+            CommandKind::SteerSend,
+            62,
+            Actor::Operator,
+            peers.seat(RECIPIENT),
+            &send,
+        )
+        .expect("operator send admits");
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Directive(sent),
+        ..
+    }) = steering::send(
+        &peers.bus,
+        peers.epoch,
+        &steer::Config::default(),
+        &command,
+        &send,
+        &mut CommandEffects::default(),
+    )
+    else {
+        panic!("operator direction is durable");
+    };
+    let canceled = peers.cancel(63, sent.directive);
+    assert!(matches!(canceled, Outcome::Reply(_)), "{canceled:?}");
+
+    let inbox = peers.inbox(64, Actor::Lane(recipient), true);
+    let [row] = inbox.lanes.as_slice() else {
+        panic!("a lane principal reads only its own lane: {inbox:?}")
+    };
+    assert_eq!(row.lane, recipient);
+    let [live] = row.pending.as_slice() else {
+        panic!("the peer message is still live: {row:?}")
+    };
+    assert_eq!((live.key.as_str(), live.fanout), (told.key.as_str(), None));
+    let [retired] = row.retired.as_slice() else {
+        panic!("the canceled direction stays readable: {row:?}")
+    };
+    assert_eq!(retired.directive, sent.directive);
+    assert_eq!(retired.key, sent.key);
+    assert_eq!(retired.fanout, Some(test_uuid(61)));
+    assert_eq!(retired.from, None);
+    assert_eq!(retired.disposition, Disposition::Canceled);
+    assert_eq!(retired.authored, sent.authored);
+    assert_eq!(
+        retired.preview.as_deref(),
+        Some("keep the parser where it is")
+    );
+    assert!(retired.retired >= retired.authored);
+
+    let operator = peers.inbox(65, Actor::Operator, false);
+    assert!(
+        operator.lanes.iter().all(|lane| lane.retired.is_empty()),
+        "retirements are read only on request"
+    );
+    let operator = peers.inbox(66, Actor::Operator, true);
+    let others = operator
+        .lanes
+        .iter()
+        .filter(|lane| lane.lane != recipient)
+        .flat_map(|lane| &lane.retired)
+        .count();
+    assert_eq!(others, 0, "a retirement belongs only to its own lane");
 
     peers.finish();
 }

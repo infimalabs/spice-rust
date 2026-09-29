@@ -121,6 +121,35 @@ impl SteeringPage {
     }
 }
 
+/// One retired directive's standing, projected without its attachments.
+///
+/// Retired heads keep their complete bodies, whose attachments can run to
+/// megabytes; this projection reads only the fields a history presentation
+/// needs, so a bounded window never materializes attachment bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RetiredSteering {
+    /// Stable directive identity.
+    pub directive: wire::CanonicalUuid,
+    /// Operator submit action shared by target-specific fanout directives.
+    pub fanout: Option<wire::CanonicalUuid>,
+    /// Human-sized key retained for the directive's lifetime.
+    pub key: String,
+    /// Lane the directive addressed.
+    pub lane: wire::CanonicalUuid,
+    /// Seated lane that told this directive as a peer message.
+    pub from: Option<wire::CanonicalUuid>,
+    /// Original direction text.
+    pub text: String,
+    /// Instant the creating fact was recorded.
+    pub published: wire::Instant,
+    /// Terminal disposition; never [`wire::Disposition::Live`].
+    pub disposition: wire::Disposition,
+    /// Fact that retired the directive.
+    pub retired: wire::Seq,
+    /// Instant that fact was recorded.
+    pub retired_at: wire::Instant,
+}
+
 /// Indexed starting boundary for one bounded fact page.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FactPageStart {

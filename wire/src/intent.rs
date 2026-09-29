@@ -88,6 +88,10 @@ pub struct SteerInbox {
         deserialize_with = "crate::optional::present"
     )]
     pub lane: Option<CanonicalUuid>,
+    /// Also return each visible lane's [`RETIRED_DIRECTIVE_WINDOW`] most
+    /// recently retired directives.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub retired: bool,
 }
 
 /// Name one directive and nothing else.
@@ -574,6 +578,13 @@ pub struct PendingDirective {
     pub directive: CanonicalUuid,
     /// Human-sized acknowledgment key.
     pub key: String,
+    /// Operator submit action shared by target-specific fanout directives.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fanout: Option<CanonicalUuid>,
     /// Direction text.
     pub text: String,
     /// Seated lane that told this directive as a peer message.
@@ -615,6 +626,51 @@ pub struct PendingDirective {
     pub expires: Instant,
 }
 
+/// Most retired directives one inbox read returns per lane.
+pub const RETIRED_DIRECTIVE_WINDOW: usize = 8;
+
+/// One recently retired directive returned by an inbox read.
+///
+/// Carries the identity and presentation a reader needs to keep a directive
+/// in place after it leaves the pending set, but not its text or attachments.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetiredDirective {
+    /// Durable directive identity.
+    pub directive: CanonicalUuid,
+    /// Human-sized acknowledgment key.
+    pub key: String,
+    /// Operator submit action shared by target-specific fanout directives.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub fanout: Option<CanonicalUuid>,
+    /// Seated lane that told this directive as a peer message.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub from: Option<CanonicalUuid>,
+    /// First line authored outside quoted context, when the producer found one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub preview: Option<String>,
+    /// Commit instant of the original publication.
+    pub authored: Instant,
+    /// Terminal disposition; never [`Disposition::Live`].
+    pub disposition: Disposition,
+    /// Journal position of the retiring fact.
+    pub position: Seq,
+    /// Commit instant of the retiring fact.
+    pub retired: Instant,
+}
+
 /// Pending direction for one lane at a resident snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -637,6 +693,12 @@ pub struct LaneInbox {
     pub compaction: Option<u64>,
     /// Pending directives in journal order.
     pub pending: Vec<PendingDirective>,
+    /// Requested recent retirements, newest retirement first.
+    ///
+    /// At most [`RETIRED_DIRECTIVE_WINDOW`], and empty unless the read asked
+    /// for them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retired: Vec<RetiredDirective>,
 }
 
 /// Snapshot-positioned steering inbox answer.

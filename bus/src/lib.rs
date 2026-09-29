@@ -123,12 +123,14 @@ mod runtime {
         materialization_steps: u64,
     }
 
-    /// Incremental resident authority and one bounded pending-steering page
-    /// observed at one writer-queue barrier.
+    /// Incremental resident authority, one bounded pending-steering page, and
+    /// an optional recent retired-steering window observed at one
+    /// writer-queue barrier.
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct SteeringSnapshot {
         authority: TaskSnapshot,
         pending: journal::SteeringPage,
+        retired: Vec<journal::RetiredSteering>,
     }
 
     /// Cursor, trust, and residency heads observed inside one immutable authority snapshot.
@@ -278,6 +280,12 @@ mod runtime {
         #[must_use]
         pub const fn pending(&self) -> &journal::SteeringPage {
             &self.pending
+        }
+
+        /// Consume the snapshot and return its retired-steering window.
+        #[must_use]
+        pub fn into_retired(self) -> Vec<journal::RetiredSteering> {
+            self.retired
         }
     }
 
@@ -657,17 +665,21 @@ mod runtime {
         ///
         /// The retained authority shares already-decoded fact chunks across
         /// requests. Interactive inbox polling therefore never rebuilds the
-        /// complete journal merely to recover a lane's context anchor.
+        /// complete journal merely to recover a lane's context anchor. A
+        /// nonzero `retired` also reads that many most recently retired
+        /// directives per lane at the same barrier.
         pub fn steering_snapshot(
             &self,
             lane: Option<journal::crossing::CanonicalUuid>,
             start: journal::FactPageStart,
+            retired: usize,
         ) -> Result<SteeringSnapshot, BusReadError> {
             let (answer, receiver) = mpsc::sync_channel(1);
             self.requests
                 .send(Request::Steering {
                     lane,
                     start,
+                    retired,
                     answer,
                 })
                 .map_err(|_| BusReadError::Bus(BusError::Closed))?;
@@ -844,6 +856,7 @@ mod runtime {
         Steering {
             lane: Option<journal::crossing::CanonicalUuid>,
             start: journal::FactPageStart,
+            retired: usize,
             answer: SyncSender<Result<SteeringSnapshot, BusReadError>>,
         },
         CanvasHeads {
@@ -964,9 +977,16 @@ mod runtime {
                 Request::Steering {
                     lane,
                     start,
+                    retired,
                     answer,
                 } => {
-                    let _ = answer.send(steering_snapshot(&journal, &task_snapshot, lane, start));
+                    let _ = answer.send(steering_snapshot(
+                        &journal,
+                        &task_snapshot,
+                        lane,
+                        start,
+                        retired,
+                    ));
                 }
                 Request::CanvasHeads { answer } => {
                     let _ = answer.send(canvas_heads(&task_snapshot));
@@ -1187,12 +1207,22 @@ mod runtime {
         state: &TaskSnapshotState,
         lane: Option<journal::crossing::CanonicalUuid>,
         start: journal::FactPageStart,
+        retired: usize,
     ) -> Result<SteeringSnapshot, BusReadError> {
         current_task_snapshot(state).and_then(|authority| {
             journal
-                .read(|read| read.pending_steering(lane, start))
+                .read(|read| {
+                    Ok((
+                        read.pending_steering(lane, start)?,
+                        read.retired_steering(lane, retired)?,
+                    ))
+                })
                 .map_err(BusReadError::Head)
-                .map(|pending| SteeringSnapshot { authority, pending })
+                .map(|(pending, retired)| SteeringSnapshot {
+                    authority,
+                    pending,
+                    retired,
+                })
         })
     }
 

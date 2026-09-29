@@ -982,6 +982,7 @@ mod tests {
     fn pending(id: &str, key: &str) -> PendingDirective {
         PendingDirective {
             from: None,
+            fanout: None,
             directive: uuid(id),
             key: key.to_owned(),
             text: "durable".to_owned(),
