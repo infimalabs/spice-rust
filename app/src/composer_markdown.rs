@@ -18,6 +18,7 @@ use crate::watchband;
 mod diagrams;
 mod math;
 mod quotes;
+mod tables;
 mod taste_quotes;
 
 pub(crate) struct RenderedMarkdown {
@@ -296,7 +297,7 @@ pub(crate) fn render_received_with_quotes(
             _ => inline_task_chips(event),
         });
     let mut html = String::new();
-    pulldown_cmark::html::push_html(&mut html, events);
+    pulldown_cmark::html::push_html(&mut html, tables::align_by_attribute(events));
     RenderedMarkdown {
         html,
         image_only,

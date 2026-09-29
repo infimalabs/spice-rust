@@ -1467,3 +1467,28 @@ fn directive_context_ending_in_images_keeps_its_image_stacks_pairable() {
         "{html}"
     );
 }
+
+#[test]
+fn aligned_table_cells_carry_alignment_without_an_inline_style() {
+    let rendered = render_received(
+        "| Name | Size | Mid |\n| :--- | ---: | :-: |\n| a | four | x |\n| b | twelve | y |",
+    );
+
+    assert!(
+        !rendered.html.contains("style="),
+        "Canvas style-src refuses inline styles: {}",
+        rendered.html
+    );
+    assert_eq!(
+        rendered.html,
+        concat!(
+            "<table><thead><tr><th data-align=\"left\">Name</th><th data-align=\"right\">Size</th>",
+            "<th data-align=\"center\">Mid</th></tr></thead><tbody>\n",
+            "<tr><td data-align=\"left\">a</td><td data-align=\"right\">four</td>",
+            "<td data-align=\"center\">x</td></tr>\n",
+            "<tr><td data-align=\"left\">b</td><td data-align=\"right\">twelve</td>",
+            "<td data-align=\"center\">y</td></tr>\n",
+            "</tbody></table>\n",
+        )
+    );
+}

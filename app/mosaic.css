@@ -117,6 +117,8 @@
 .markdown-body table { width: 100%; border-collapse: collapse; }
 .markdown-body th,
 .markdown-body td { padding: .35em .45em; border: var(--canvas-edge); text-align: left; }
+.markdown-body :is(th, td)[data-align="center"] { text-align: center; }
+.markdown-body :is(th, td)[data-align="right"] { text-align: right; }
 .markdown-body a { color: var(--accent); }
 .composer-send {
   margin-left: auto;
