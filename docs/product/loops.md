@@ -369,9 +369,8 @@ flowchart LR
   QM -->|"next start of this lane"| OR["occupied<br/>(successor replaces occupant)"]
   O -->|"team merged"| F["fused"]
   F -->|"team split"| OS["occupied"]
-  O -.->|"Close team"| H["hidden<br/>(this browser only)"]
-  F -.->|"Close team"| H
-  H -.->|"Agents → Open team"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
+  O -.->|"Close team"| I["independent<br/>(team removed for every browser)"]
+  F -.->|"Close team"| I
 ```
 
 **Invariants**
@@ -397,11 +396,10 @@ flowchart LR
    composer order and accent slot, while message chronology and explicit lane
    attribution do not derive from position. A member that momentarily fails to
    resolve keeps its seat rather than re-entering at the tail.
-- `Close team` only inserts the team into that browser reducer's hidden set.
-   It sends no authority command, changes no membership, and neither inspects
-   nor erases a draft. A closed grouped team remains restorable during that
-   mount through **Agents → Open team**; a fresh mount independently renders the
-   authoritative subscription set again.
+- `Close team` removes every member from the team through the resident, so
+   each member becomes an independent agent and the team leaves the lane table
+   in every browser. A refusal leaves the team as it was. No browser hides a
+   team locally.
 - Message order is a pure function of the messages, never of member
    order. Reordering composers must not reorder the stream.
 
@@ -455,7 +453,6 @@ stateDiagram-v2
    timeout.
 - Unsubmitted intent is protected on page exit: an unsafe draft or queued
    submission installs the browser's `beforeunload` confirmation guard.
-   Browser-local `Close team` only suppresses rendering and does not erase it.
 - A late completion never steals focus the operator has since moved.
 - Shard order runs right-to-left from canonical member zero, and accent advances
    with that position. Every card explicitly names the lane that would answer it.

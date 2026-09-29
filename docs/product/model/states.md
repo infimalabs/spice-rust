@@ -351,9 +351,8 @@ flowchart LR
   QM -->|"next start of this lane"| OR["occupied<br/>(successor occupant)"]
   F -->|"split team"| OS["occupied"]
   F -->|"move or reorder member"| FR["fused<br/>(new member order)"]
-  O -.->|"Close team"| H["hidden<br/>(this browser only)"]
-  F -.->|"Close team"| H
-  H -.->|"Agents → Open team"| V["visible again;<br/>authoritative occupied / fused<br/>topology unchanged"]
+  O -.->|"Close team"| I["independent<br/>(team removed)"]
+  F -.->|"Close team"| I
 ```
 
 **Invariant —** Renewal marks a lane; it never starts an occupant. A live
@@ -364,13 +363,9 @@ operator withdraws it.
 **Invariant —** Fusing is a *team merge*, splitting a *team split*. There is no
 client-only grouping.
 
-**Invariant —** `Close team` is a browser-local presentation action. It hides
-the team in that mounted browser reducer; it sends no command, changes no
-topology, and does not hide the team in another browser. A closed grouped
-team remains restorable during that mount through **Agents → Open team**.
-
-**Invariant —** Browser-local close neither inspects nor erases drafts. Unsafe
-draft or submission state instead installs the page-leave confirmation guard.
+**Invariant —** `Close team` removes every member from the team through the
+resident: each becomes an independent agent and the team leaves the topology
+in every browser. There is no browser-local hiding of a team.
 
 ### Closed loop: Submission (a draft becoming evidence)
 

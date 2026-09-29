@@ -1022,7 +1022,6 @@ tbody tr:last-child td { border-bottom: 0; }
 .team-import-menu > header button { min-height: 30px; }
 .team-import-heading { grid-column: 1 / -1; margin: 8px 0 0; font-size: .8rem; }
 .team-import-empty { grid-column: 1 / -1; color: var(--muted); text-align: center; }
-.canvas-team-open { min-height: 30px; white-space: nowrap; }
 
 .work-history-actions {
   display: flex;

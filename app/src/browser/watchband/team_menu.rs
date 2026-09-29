@@ -52,7 +52,8 @@ pub(super) fn render(
     }
     let identity = team.lane;
     let member_count = team.members.len();
-    let close = context.controls.clone();
+    let close = close_team(team, context);
+    let closable = close.is_some();
     let import = context.controls.clone();
     let topology_actions = render_topology_actions(identity, control, context);
     html! {
@@ -65,12 +66,12 @@ pub(super) fn render(
                 type="button"
                 class="team-action"
                 role="menuitem"
-                onclick={Callback::from(move |_| {
-                    close.dispatch(TeamControlAction::CloseTeam { team: identity });
-                })}
+                disabled={!closable}
+                title="Remove every member from this team; each becomes an independent agent"
+                onclick={close}
             >
                 <span class="team-action-label">{"Close team"}</span>
-                <span class="team-action-detail">{members(member_count)}</span>
+                <span class="team-action-detail">{format!("remove {}", members(member_count))}</span>
             </button>
             <button
                 type="button"
@@ -87,6 +88,53 @@ pub(super) fn render(
             {topology_actions}
         </div>
     }
+}
+
+/// Closing a team removes every member from it in the resident.
+///
+/// A multi-agent team dissolves in one arrangement. A team of one leaves it
+/// the way its member's "Leave all teams" does, because an arrangement cannot
+/// name a fresh team whose source holds no other lane. `None` when this
+/// Canvas holds no authority for the needed command.
+fn close_team(
+    team: &crate::runtime::LaneRow,
+    context: &Context<'_>,
+) -> Option<Callback<MouseEvent>> {
+    let controls = context.controls.clone();
+    let sender = context.sender.clone();
+    let topology_revision = context.topology_revision;
+    if let [member] = team.members.as_slice() {
+        let member = member.lane;
+        return context.can_configure.then(|| {
+            Callback::from(move |_: MouseEvent| {
+                if admit_action(
+                    &sender,
+                    ClientAction::ConfigureTeam {
+                        topology_revision,
+                        team: member,
+                        member: Some(member),
+                        life: None,
+                    },
+                ) {
+                    controls.dispatch(TeamControlAction::CloseMenus);
+                }
+            })
+        });
+    }
+    let teams = watchband::dissolve_team(context.topology, team.lane)
+        .filter(|_| context.can_arrange)
+        .map(|rows| topology(&rows))?;
+    Some(Callback::from(move |_: MouseEvent| {
+        if admit_action(
+            &sender,
+            ClientAction::ArrangeTeams {
+                topology_revision,
+                teams: teams.clone(),
+            },
+        ) {
+            controls.dispatch(TeamControlAction::CloseMenus);
+        }
+    }))
 }
 
 fn render_topology_actions(

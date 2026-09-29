@@ -117,9 +117,8 @@ occupant author and stable lane attribution while every member remains its own
 send address.
 
 *As the operator, I want two browsers to agree.* — Membership, ordering, and
-topology revision are server truth. A browser may independently hide a team
-with `Close team`; that presentation choice does not mutate topology, and the
-same mount can restore a closed grouped team through **Agents → Open team**.
+topology revision are server truth. `Close team` removes every member from
+that team, so every browser sees them as independent agents.
 
 ### Reading
 

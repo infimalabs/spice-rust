@@ -413,10 +413,8 @@ classDiagram
 ```
 
 Read the two relationships as lifetimes. A lane belongs to exactly one team at
-a time and may move between teams, while the team is the unit that the current
-browser's `Close team` presentation action hides. That action does not alter
-the relationship, and **Agents → Open team** can restore a closed grouped
-team during the same mount. The team owns the task policy shared by its members: renewal
+a time and may move between teams; `Close team` ends a team by making every
+member independent. The team owns the task policy shared by its members: renewal
 leaves that policy in place because the team is unchanged, while a lane moved
 to another team takes the destination policy rather than carrying one with
 it. An occupant is held loosely and may be absent entirely —

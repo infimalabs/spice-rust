@@ -40,7 +40,6 @@ pub(super) struct CommandBarRender<'a> {
     pub(super) cursor: &'a str,
     pub(super) sender: &'a SenderHandle,
     pub(super) submissions: &'a SubmissionStatus,
-    pub(super) team_controls: &'a UseReducerHandle<TeamControls>,
 }
 
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
@@ -223,7 +222,6 @@ fn render_canvas_menu(
                             identity: (**render.identity).as_ref(),
                             update,
                             sender: render.sender,
-                            team_controls: render.team_controls,
                             submissions: render.submissions,
                         },
                     )}
