@@ -10,6 +10,8 @@ mod task_detail;
 pub(super) use task_detail::read_task_detail;
 mod task_relations;
 pub(super) use task_relations::read_task_relations;
+mod task_timeline;
+pub(super) use task_timeline::read_task_timeline;
 mod task_selection;
 use context::{route_actor_identity, task_contexts, task_creator_teams, task_origin_threads};
 #[cfg(test)]

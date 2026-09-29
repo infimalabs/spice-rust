@@ -1022,6 +1022,9 @@ pub(crate) fn dispatch_with_repository(
             projects,
             allocation,
         ),
+        wire::intent::Intent::TaskTimeline(timeline) => {
+            read_task_timeline(bus, timeline, command.actor().clone(), projects, allocation)
+        }
         wire::intent::Intent::BoardGraph(graph) => {
             read_graph(bus, graph, command.actor().clone(), projects, allocation)
         }

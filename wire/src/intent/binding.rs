@@ -13,9 +13,9 @@ use super::{
     LaneRetune, LaneSeat, LaneState, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish,
     StateAnswer, SteerDispose, SteerInbox, SteerSend, SteerTell, TaskAdd, TaskAnswer, TaskAssign,
     TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote,
-    TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskWake,
-    TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer,
-    TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
+    TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
+    TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
+    TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -27,6 +27,8 @@ pub enum BodyShape {
     TaskDetail,
     /// [`TaskRelations`]
     TaskRelations,
+    /// [`TaskTimeline`]
+    TaskTimeline,
     /// [`BoardGraph`]
     BoardGraph,
     /// [`BoardHandout`]
@@ -130,6 +132,8 @@ pub enum AnswerShape {
     TaskDetail,
     /// [`TaskRelationsAnswer`]
     TaskRelations,
+    /// [`TaskTimelineAnswer`]
+    TaskTimeline,
     /// [`TextAnswer`]
     Text,
     /// [`TaskAnswer`]
@@ -180,6 +184,8 @@ pub enum CommandAnswer {
     TaskDetail(Box<TaskDetailAnswer>),
     /// [`AnswerShape::TaskRelations`]
     TaskRelations(Box<TaskRelationsAnswer>),
+    /// [`AnswerShape::TaskTimeline`]
+    TaskTimeline(Box<TaskTimelineAnswer>),
     /// [`AnswerShape::Text`]
     Text(TextAnswer),
     /// [`AnswerShape::Task`]
@@ -228,6 +234,7 @@ impl CommandAnswer {
             Self::Board(_) => AnswerShape::Board,
             Self::TaskDetail(_) => AnswerShape::TaskDetail,
             Self::TaskRelations(_) => AnswerShape::TaskRelations,
+            Self::TaskTimeline(_) => AnswerShape::TaskTimeline,
             Self::Text(_) => AnswerShape::Text,
             Self::Task(_) => AnswerShape::Task,
             Self::Claim(_) => AnswerShape::Claim,
@@ -264,6 +271,7 @@ impl AnswerShape {
             Self::Board
             | Self::TaskDetail
             | Self::TaskRelations
+            | Self::TaskTimeline
             | Self::Text
             | Self::Task
             | Self::Claim
@@ -291,6 +299,7 @@ impl AnswerShape {
             Self::Board => CommandAnswer::Board(Box::new(crate::decode(bytes)?)),
             Self::TaskDetail => CommandAnswer::TaskDetail(Box::new(crate::decode(bytes)?)),
             Self::TaskRelations => CommandAnswer::TaskRelations(Box::new(crate::decode(bytes)?)),
+            Self::TaskTimeline => CommandAnswer::TaskTimeline(Box::new(crate::decode(bytes)?)),
             Self::Text => CommandAnswer::Text(crate::decode(bytes)?),
             Self::Task => CommandAnswer::Task(crate::decode(bytes)?),
             Self::Claim => CommandAnswer::Claim(Box::new(crate::decode(bytes)?)),
@@ -351,6 +360,7 @@ impl CommandKind {
             Self::BoardRead
             | Self::TaskDetail
             | Self::TaskRelations
+            | Self::TaskTimeline
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
@@ -416,6 +426,7 @@ impl CommandKind {
             Self::BoardRead => Binding::of(B::BoardRead, A::Board),
             Self::TaskDetail => Binding::of(B::TaskDetail, A::TaskDetail),
             Self::TaskRelations => Binding::of(B::TaskRelations, A::TaskRelations),
+            Self::TaskTimeline => Binding::of(B::TaskTimeline, A::TaskTimeline),
             Self::BoardGraph => Binding::of(B::BoardGraph, A::Text),
             Self::BoardHandout => Binding::of(B::BoardHandout, A::Text),
             Self::DocLedger => Binding::of(B::DocLedger, A::Text),
@@ -502,6 +513,8 @@ pub enum Intent {
     TaskDetail(TaskDetail),
     /// [`BodyShape::TaskRelations`]
     TaskRelations(TaskRelations),
+    /// [`BodyShape::TaskTimeline`]
+    TaskTimeline(TaskTimeline),
     /// [`BodyShape::BoardGraph`]
     BoardGraph(BoardGraph),
     /// [`BodyShape::BoardHandout`]
@@ -604,6 +617,7 @@ impl Intent {
             Self::BoardRead(_)
             | Self::TaskDetail(_)
             | Self::TaskRelations(_)
+            | Self::TaskTimeline(_)
             | Self::BoardGraph(_)
             | Self::BoardHandout(_)
             | Self::DocLedger(_)
@@ -658,6 +672,7 @@ impl Intent {
             Self::BoardRead(_) => BodyShape::BoardRead,
             Self::TaskDetail(_) => BodyShape::TaskDetail,
             Self::TaskRelations(_) => BodyShape::TaskRelations,
+            Self::TaskTimeline(_) => BodyShape::TaskTimeline,
             Self::BoardGraph(_) => BodyShape::BoardGraph,
             Self::BoardHandout(_) => BodyShape::BoardHandout,
             Self::DocLedger(_) => BodyShape::DocLedger,
@@ -737,6 +752,7 @@ impl BodyShape {
             Self::BoardRead
                 | Self::TaskDetail
                 | Self::TaskRelations
+                | Self::TaskTimeline
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
@@ -767,6 +783,7 @@ impl BodyShape {
             Self::BoardRead
                 | Self::TaskDetail
                 | Self::TaskRelations
+                | Self::TaskTimeline
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger
@@ -789,6 +806,7 @@ impl BodyShape {
             Self::BoardRead => Intent::BoardRead(crate::decode(bytes)?),
             Self::TaskDetail => Intent::TaskDetail(crate::decode(bytes)?),
             Self::TaskRelations => Intent::TaskRelations(crate::decode(bytes)?),
+            Self::TaskTimeline => Intent::TaskTimeline(crate::decode(bytes)?),
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),

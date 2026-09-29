@@ -26,6 +26,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         CommandKind::BoardRead
         | CommandKind::TaskDetail
         | CommandKind::TaskRelations
+        | CommandKind::TaskTimeline
         | CommandKind::GlobalSettingsRead
         | CommandKind::GlobalSettingsSet
         | CommandKind::VendorCatalog

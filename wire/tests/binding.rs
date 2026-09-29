@@ -15,7 +15,8 @@ use wire::intent::{
     AnswerShape, BoardStatement, BoardTask, BodyShape, CommandAnswer, Intent, Positioned,
     ProjectVisibility, TaskDetailAnswer, TaskDetailNote, TaskGuidance, TaskRelationEdge,
     TaskRelationFrontier, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
-    TaskRelationTruncation, TaskRelationsAnswer,
+    TaskRelationTruncation, TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry,
+    TaskTimelineEvent,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LaneResidency,
@@ -35,6 +36,14 @@ const BODIES: &[(CommandKind, &str)] = &[
   "relations": ["dependency", "review"],
   "depth": 2,
   "node_limit": 32
+}"#,
+    ),
+    (
+        CommandKind::TaskTimeline,
+        r#"{
+  "lanes": ["6f5ae476-efa6-471b-9bed-0f6994c3dcfa"],
+  "before": 42,
+  "limit": 50
 }"#,
     ),
     (CommandKind::BoardGraph, r#"{ "view": "dependencies" }"#),
@@ -517,6 +526,44 @@ fn task_relations_answer_round_trips_discriminated_nodes_and_frontier() {
     assert_eq!(*actual, expected);
 }
 
+#[test]
+fn task_timeline_answer_round_trips_payload_and_bare_events() {
+    let lane: CanonicalUuid = "6f5ae476-efa6-471b-9bed-0f6994c3dcfa"
+        .parse()
+        .expect("fixture lane");
+    let entry = |position, event| TaskTimelineEntry {
+        position: seq(position),
+        at: instant("2026-08-01T06:47:19.000Z"),
+        lane,
+        task: "1kKRRsDP".parse().expect("fixture task stamp"),
+        handle: "SPICE-1kKRRsDP".parse().expect("fixture task handle"),
+        title: "Page team transitions".to_owned(),
+        event,
+    };
+    let expected = TaskTimelineAnswer {
+        snapshot: seq(9),
+        lanes: vec![lane],
+        entries: vec![
+            entry(
+                9,
+                TaskTimelineEvent::Phased {
+                    phase: "review".parse().expect("fixture phase"),
+                },
+            ),
+            entry(8, TaskTimelineEvent::Claimed {}),
+        ],
+        next: Some(seq(8)),
+    };
+    let bytes = wire::encode(&expected).expect("task timeline answer encodes");
+    let CommandAnswer::TaskTimeline(actual) = AnswerShape::TaskTimeline
+        .decode(&bytes)
+        .expect("task timeline answer decodes through its registered shape")
+    else {
+        panic!("task timeline shape decoded another answer")
+    };
+    assert_eq!(*actual, expected);
+}
+
 /// Every path at which two encoded rows disagree, named so a failure is legible.
 ///
 /// `assert_eq!` on two `serde_json::Value`s prints both rows whole and leaves
@@ -836,6 +883,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::BoardRead,
     BodyShape::TaskDetail,
     BodyShape::TaskRelations,
+    BodyShape::TaskTimeline,
     BodyShape::BoardGraph,
     BodyShape::BoardHandout,
     BodyShape::DocLedger,
@@ -889,6 +937,7 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Board,
     AnswerShape::TaskDetail,
     AnswerShape::TaskRelations,
+    AnswerShape::TaskTimeline,
     AnswerShape::Text,
     AnswerShape::Task,
     AnswerShape::Claim,

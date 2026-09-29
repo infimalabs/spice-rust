@@ -32,6 +32,8 @@ pub enum CommandKind {
     TaskDetail,
     /// Read a bounded typed relationship graph centered on selected tasks.
     TaskRelations,
+    /// Page the task-workflow transitions a set of lanes caused.
+    TaskTimeline,
     /// Render one deterministic board graph.
     BoardGraph,
     /// Compose one deterministic board handout.
@@ -573,6 +575,7 @@ impl CommandKind {
         Self::BoardRead,
         Self::TaskDetail,
         Self::TaskRelations,
+        Self::TaskTimeline,
         Self::BoardGraph,
         Self::BoardHandout,
         Self::DocLedger,
@@ -640,6 +643,7 @@ impl CommandKind {
             Self::BoardRead
             | Self::TaskDetail
             | Self::TaskRelations
+            | Self::TaskTimeline
             | Self::BoardGraph
             | Self::BoardHandout
             | Self::DocLedger
@@ -702,6 +706,7 @@ impl CommandKind {
             Self::BoardRead => "board::read",
             Self::TaskDetail => "task::detail",
             Self::TaskRelations => "task::relations",
+            Self::TaskTimeline => "task::timeline",
             Self::BoardGraph => "board::graph",
             Self::BoardHandout => "board::handout",
             Self::DocLedger => "doc::ledger",
@@ -785,6 +790,7 @@ impl CommandKind {
             Self::BoardRead
             | Self::TaskDetail
             | Self::TaskRelations
+            | Self::TaskTimeline
             | Self::BoardGraph
             | Self::DocLedger => Law::READ,
             Self::GlobalSettingsRead | Self::VendorCatalog => Law::OPERATOR_READ,
@@ -953,6 +959,7 @@ impl CommandKind {
             Self::BoardRead
                 | Self::TaskDetail
                 | Self::TaskRelations
+                | Self::TaskTimeline
                 | Self::BoardGraph
                 | Self::BoardHandout
                 | Self::DocLedger

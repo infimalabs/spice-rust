@@ -186,7 +186,13 @@ fn active_witnesses(answer: &BoardAnswer, task: &TaskHandle, seat: &Seat) -> Vec
     ]
 }
 
-fn free_active(bus: &Bus, epoch: CanonicalUuid, lane: &Actor, seat: &Seat, task: &TaskHandle) {
+pub(super) fn free_active(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: &Actor,
+    seat: &Seat,
+    task: &TaskHandle,
+) {
     let active = board(bus, epoch, lane.clone());
     assert_committed(issue(
         bus,
