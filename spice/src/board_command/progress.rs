@@ -58,6 +58,7 @@ pub(super) fn claim_reclaim_with_clock(
         origin_context: None,
         next: None,
         phase: None,
+        transplant: None,
     };
     if let Err(error) = write.command_result(
         request(command, renew.clone()),

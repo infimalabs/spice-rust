@@ -376,6 +376,7 @@ fn build_write(request: Request, observed: Observation) -> Result<JournalWrite, 
                 origin_context: None,
                 next: None,
                 phase: None,
+                transplant: None,
             },
         )
         .map_err(LapseError::Build)?;
@@ -598,6 +599,7 @@ mod tests {
                     origin_context: None,
                     next: None,
                     phase: None,
+                    transplant: None,
                 },
             )
             .expect("the claim receipt builds");

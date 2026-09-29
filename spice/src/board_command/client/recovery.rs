@@ -333,6 +333,7 @@ fn reconcile_client_recovery(
                             origin_context: None,
                             next: None,
                             phase: None,
+                            transplant: None,
                         })),
                     })
                 })

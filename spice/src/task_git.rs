@@ -250,9 +250,13 @@ impl ParkedRelease {
     }
 }
 
-/// Save a holder's committed work by object ID and return its lane to the claim baseline.
+/// Park a holder's unpublished commits by object ID and return its lane to published history.
 ///
-/// A clean task with no commits needs no saved identity and returns `None`.
+/// The parked commits are exactly the lane commits the published upstream does
+/// not contain, however far that upstream moved since the claim, and the lane
+/// returns to the newest commit it shares with upstream. Without an upstream
+/// the claim-time head is the only published reference. A lane with no such
+/// commits stays where it is and returns `None`.
 pub fn prepare_free(
     repository: &Repository,
     opening: Option<&GitBoundary>,
@@ -261,21 +265,19 @@ pub fn prepare_free(
     recover_pending(root)?;
     require_clean(root, "task release")?;
     let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
-    let Some(baseline) = release_baseline(root, opening)? else {
+    let Some(published) = published_reference(root, opening)? else {
         return Ok(None);
     };
-    if !is_ancestor(root, &baseline, &before)? {
-        return Err(Error::refusal(
-            "git::release-baseline-diverged",
-            format!("task baseline {baseline} is not an ancestor of lane HEAD {before}"),
-            "restore the claimed task history before releasing it",
-        ));
-    }
-    let commits = rev_list(root, &baseline, &before)?;
+    let commits = rev_list(root, &published, &before)?;
     if commits.is_empty() {
         return Ok(None);
     }
-    materialize_and_update(root, &baseline, &before, "return lane to task baseline")?;
+    let baseline = required_read(
+        root,
+        &["merge-base", &published, &before],
+        "find the newest published lane commit",
+    )?;
+    materialize_and_update(root, &baseline, &before, "return lane to published history")?;
     Ok(Some(ParkedRelease {
         parked: wire::body::TaskParkedCommits {
             baseline,
@@ -287,17 +289,17 @@ pub fn prepare_free(
     }))
 }
 
-fn release_baseline(root: &Path, opening: Option<&GitBoundary>) -> Result<Option<String>, Error> {
-    if let Some(opening) = opening {
-        return Ok(Some(opening.head.clone()));
-    }
+fn published_reference(
+    root: &Path,
+    opening: Option<&GitBoundary>,
+) -> Result<Option<String>, Error> {
     let Some(target) = resolve_target(root)? else {
-        return Ok(None);
+        return Ok(opening.map(|opening| opening.head.clone()));
     };
     Ok(Some(required_read(
         root,
         &["rev-parse", &target.baseline],
-        "read release baseline",
+        "read published upstream",
     )?))
 }
 
@@ -308,19 +310,6 @@ fn rev_list(root: &Path, baseline: &str, head: &str) -> Result<Vec<String>, Erro
         "list task commits",
     )?;
     Ok(listed.lines().map(str::to_owned).collect())
-}
-
-fn saved_rev_list(root: &Path, baseline: &str, head: &str) -> Result<Vec<String>, Error> {
-    let range = format!("{baseline}..{head}");
-    let listed = run(root, &["rev-list", "--reverse", &range])?;
-    if !listed.success() {
-        return Err(Error::refusal(
-            "git::parked-object-missing",
-            listed.detail("read saved task commit graph"),
-            "restore the saved Git objects before claiming this task",
-        ));
-    }
-    Ok(listed.stdout.lines().map(str::to_owned).collect())
 }
 
 /// Safely advance a clean lane before allocator possession is minted.
@@ -339,9 +328,16 @@ struct ParkedRestore {
     root: PathBuf,
     before: String,
     restored: String,
+    report: wire::intent::ClaimTransplant,
 }
 
 impl ClaimPreparation {
+    /// What the claim did with the task's parked commits, when it had any.
+    #[must_use]
+    pub fn transplant(&self) -> Option<&wire::intent::ClaimTransplant> {
+        self.restore.as_ref().map(|restore| &restore.report)
+    }
+
     /// Return the lane to its pre-claim HEAD after a guarded board refusal.
     pub fn rollback(self) -> Result<(), Error> {
         let Some(restore) = self.restore else {
@@ -361,16 +357,19 @@ impl ClaimPreparation {
                 ),
             ));
         }
-        materialize_and_update(
+        transplant::abandon(
             &restore.root,
             &restore.before,
-            &current,
             "restore lane after refused parked claim",
         )
     }
 }
 
-/// Advance a clean lane and restore one task's parked commits at its claim boundary.
+/// Advance a clean lane and replay one task's parked commits onto it.
+///
+/// The commits are cherry-picked, oldest first, onto whatever HEAD the claim
+/// fast-forwarded to. A conflict does not refuse the claim: Git's cherry-pick
+/// stays paused in the worktree for the claimant, and the report says so.
 pub fn prepare_task_claim(
     repository: &Repository,
     parked: Option<&wire::body::TaskParkedCommits>,
@@ -384,92 +383,25 @@ pub fn prepare_task_claim(
             restore: None,
         });
     };
-    let result = restore_parked(root, parked, &boundary);
-    let restored = match result {
-        Ok(restored) => restored,
+    let replayed = match transplant::replay(root, &parked.commits, &boundary.head) {
+        Ok(replayed) => replayed,
         Err(error) => {
-            let current = required_read(
-                root,
-                &["rev-parse", "HEAD"],
-                "read failed restore lane HEAD",
-            )?;
-            if current != before {
-                materialize_and_update(
-                    root,
-                    &before,
-                    &current,
-                    "restore lane after failed parked claim",
-                )?;
-            }
+            transplant::abandon(root, &before, "restore lane after failed parked claim")?;
             return Err(error);
         }
     };
-    boundary.head = restored.clone();
-    boundary.integrated = restored.clone();
-    boundary.local_commits = u32::try_from(parked.commits.len()).unwrap_or(u32::MAX);
+    boundary.head = replayed.head.clone();
+    boundary.integrated = replayed.head.clone();
+    boundary.local_commits = u32::try_from(replayed.report.applied.len()).unwrap_or(u32::MAX);
     Ok(ClaimPreparation {
         boundary,
         restore: Some(ParkedRestore {
             root: root.to_path_buf(),
             before,
-            restored,
+            restored: replayed.head,
+            report: replayed.report,
         }),
     })
-}
-
-fn restore_parked(
-    root: &Path,
-    parked: &wire::body::TaskParkedCommits,
-    boundary: &GitBoundary,
-) -> Result<String, Error> {
-    let commits = saved_rev_list(root, &parked.baseline, &parked.head)?;
-    if commits != parked.commits {
-        return Err(Error::refusal(
-            "git::parked-history-mismatch",
-            format!(
-                "saved task commit {} no longer has its journaled history",
-                parked.head
-            ),
-            "restore the journaled saved commit graph and retry the claim",
-        ));
-    }
-    let current = &boundary.head;
-    let restored = if is_ancestor(root, current, &parked.head)? {
-        parked.head.clone()
-    } else if is_ancestor(root, &parked.head, current)? {
-        current.clone()
-    } else {
-        let merged = merge_tree(root, current, &parked.head)?;
-        if !merged.conflicts.is_empty() {
-            return Err(Error::refusal(
-                "git::parked-restore-conflict",
-                format!(
-                    "parked task commits conflict with current baseline {}: {}",
-                    current,
-                    merged.conflicts.join("; ")
-                ),
-                "resolve the task history against the current baseline before claiming it",
-            ));
-        }
-        let created = create_merge_commit(
-            root,
-            &merged.tree,
-            current,
-            &parked.head,
-            "Restore parked task commits",
-        )?;
-        if !created.success() || created.stdout.trim().is_empty() {
-            return Err(Error::fault(
-                "git::parked-merge-failed",
-                created.detail("create parked task restore commit"),
-            ));
-        }
-        created.stdout.trim().to_owned()
-    };
-    if restored != *current {
-        materialize_and_update(root, &restored, current, "restore parked task commits")?;
-    }
-    Ok(restored)
 }
 
 /// Safely advance a clean lane while durably observing the exact target first.
@@ -1063,17 +995,21 @@ struct MergeTree {
 }
 
 fn merge_tree(root: &Path, left: &str, right: &str) -> Result<MergeTree, Error> {
-    let merged = run(
-        root,
-        &[
-            "merge-tree",
-            "--write-tree",
-            "-z",
-            "--no-messages",
-            left,
-            right,
-        ],
-    )?;
+    merge_tree_from(root, None, left, right)
+}
+
+/// Three-way merge tree over an explicit base, or the merge base when `None`.
+fn merge_tree_from(
+    root: &Path,
+    base: Option<&str>,
+    left: &str,
+    right: &str,
+) -> Result<MergeTree, Error> {
+    let base = base.map(|base| format!("--merge-base={base}"));
+    let mut args = vec!["merge-tree", "--write-tree", "-z", "--no-messages"];
+    args.extend(base.as_deref());
+    args.extend([left, right]);
+    let merged = run(root, &args)?;
     let mut fields = merged.stdout.split('\0');
     let tree = fields.next().unwrap_or_default().trim().to_owned();
     let conflicts = fields
@@ -1247,6 +1183,7 @@ mod transaction;
 use transaction::*;
 mod command;
 use command::*;
+mod transplant;
 
 #[cfg(test)]
 mod tests;

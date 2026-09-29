@@ -194,6 +194,7 @@ pub(in crate::board_command) fn claim_free(
         origin_context: None,
         next,
         phase: None,
+        transplant: None,
     };
     finish_release(bus, command, task, write, answer, parked)
 }

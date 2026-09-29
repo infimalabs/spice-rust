@@ -576,7 +576,7 @@ pub struct ClaimRebound {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskParkedCommits {
-    /// Exact task baseline the commits were authored from.
+    /// Newest published commit the lane shared; release returned the lane here.
     pub baseline: String,
     /// Original saved tip, recoverable by object ID while Git retains it.
     pub head: String,

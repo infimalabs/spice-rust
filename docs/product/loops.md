@@ -41,18 +41,27 @@ Voluntary release is one guarded Git-and-journal transition:
 
 ```mermaid
 flowchart LR
-  A["active self-held claim"] --> C{"lane clean and<br/>baseline is ancestor?"}
+  A["active self-held claim"] --> C{"lane clean?"}
   C -- no --> X["refusal;<br/>claim and lane unchanged"]
-  C -- yes --> P["journal exact commit SHA<br/>while Git retains object"]
-  P --> R["reset lane to<br/>claim baseline"]
+  C -- yes --> P["journal exact SHAs of lane commits<br/>the published upstream lacks"]
+  P --> R["reset lane to newest<br/>published lane commit"]
   R --> F["claim&#58;&#58;freed records<br/>recovery coordinates"]
-  F --> N["next claim restores commits<br/>directly from saved SHA"]
+  F --> N["next claim cherry-picks them<br/>onto its fast-forwarded HEAD"]
 ```
 
-The saved commit is intentionally unreachable: Spice creates no stash or
-preservation ref. Recovery is opportunistic while Git retains the object under
-its normal pruning grace period. If the object is gone, the claim refuses
-without moving the lane or board.
+Release needs no claim-time baseline. However far a relaunch fast-forwarded the
+lane, the parked commits are exactly the lane commits the published upstream
+does not contain; a lane with none keeps its HEAD. Without an upstream, the
+claim-time head stands in for published history.
+
+The saved commits are intentionally unreachable: Spice creates no stash or
+preservation ref. The next claim replays them oldest first onto whatever HEAD it
+fast-forwarded to, and its answer's `transplant` names each commit applied with
+its new identity, each whose changes were already present, and each Git no
+longer holds. A conflict does not refuse the claim: Git's own cherry-pick stays
+paused in the worktree with the rest of the replay queued behind it, and the
+answer names the commit, its conflicted paths, and the commits still queued, so
+the claimant resolves it.
 
 Deferral by the holder uses that same release transaction before recording the
 deferral. Deferral by another actor changes scheduling only; it does not take
@@ -116,13 +125,13 @@ flowchart TD
    foreground command outliving a fixed lease. A lease iced on the canonical
    indefinite horizon is the one live lease that never rolls.
 - `task free` and self-deferral never strand committed work on a lane. A clean
-  release retains commits under the task, resets the lane to its claim baseline,
-  and records the exact baseline, head, commit list, and ref with
-  `claim::freed`. The next claim restores that history before possession is
-  recorded and consumes the ref only after the claim commits.
-- Dirty lanes, divergent release baselines, restore conflicts, and failed
-  guarded journal writes are atomic refusals: the claim, lane, and task-owned
-  ref return to their pre-command state.
+  release parks the commits the published upstream lacks under the task,
+  resets the lane to the newest published commit it shares, and records that
+  baseline, head, and commit list with `claim::freed`. The next claim replays
+  them onto its own baseline before possession is recorded.
+- Dirty lanes and failed guarded journal writes are atomic refusals: the claim
+  and lane return to their pre-command state, including abandoning a paused
+  replay.
 - A peer-authored deferral does not release another actor's claim.
 - Every phase transition is accepted into the durable task journal and appears
    through the board projection, including a transition that changes no tree.
