@@ -198,17 +198,6 @@ impl RtkHealthState {
     }
 }
 
-/// Hook route a retired harness launch once recorded for RTK.
-///
-/// No current launch records it; the field survives only so journaled
-/// declarations keep re-encoding to their canonical bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-enum RtkHookState {
-    /// The launch installed Spice under that harness's `PreToolUse`.
-    Installed,
-}
-
 /// Exact launch-time RTK health verdict published by the resident.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -222,13 +211,6 @@ pub struct RtkHealth {
         deserialize_with = "crate::optional::present"
     )]
     version: Option<String>,
-    /// Historical harness installation, carried for canonical re-encoding only.
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "crate::optional::present"
-    )]
-    hook: Option<RtkHookState>,
     /// Source-grounded launch verdict and any advisory version observation detail.
     detail: String,
 }
@@ -239,7 +221,6 @@ impl RtkHealth {
         Self {
             state,
             version,
-            hook: None,
             detail: detail.into(),
         }
     }

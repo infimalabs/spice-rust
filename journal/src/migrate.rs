@@ -15,6 +15,7 @@ mod lane_predicates;
 mod release_notes;
 mod renewal_organization;
 mod residency_lineage;
+mod rtk_hook_state;
 mod speech_playback;
 mod steering_identity;
 mod steering_microseconds;
@@ -636,6 +637,7 @@ const MIGRATIONS: &[(u32, MigrationStep)] = &[
     (28, MigrationStep::Rust(generation_index::migrate)),
     (29, MigrationStep::Rust(speech_playback::migrate)),
     (30, MigrationStep::Rust(transcript_session_sources::migrate)),
+    (31, MigrationStep::Rust(rtk_hook_state::migrate)),
 ];
 
 /// Schema 27 to 28: task generations and claim acknowledgements.
@@ -1023,8 +1025,8 @@ BEGIN
     SELECT RAISE(ABORT, 'cursor head cannot move backward');
 END;
 
-INSERT INTO journal_schema(singleton, version, state) VALUES (1, 31, 'finalized');
+INSERT INTO journal_schema(singleton, version, state) VALUES (1, 32, 'finalized');
 INSERT INTO cursor_head(singleton, seq, wake) VALUES (1, NULL, NULL);
 INSERT INTO steering_index(singleton, indexed_seq) VALUES (1, NULL);
-PRAGMA user_version = 31;
+PRAGMA user_version = 32;
 "#;

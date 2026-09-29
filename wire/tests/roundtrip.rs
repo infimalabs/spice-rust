@@ -861,22 +861,6 @@ fn a_reversed_committed_range_does_not_decode() {
     );
 }
 
-fn assert_pre_hook_rtk_health_decodes(complete: &serde_json::Value) {
-    let mut pre_hook = complete.clone();
-    pre_hook["rtk"]
-        .as_object_mut()
-        .expect("RTK fixture is an object")
-        .remove("hook");
-    let bytes = serde_json::to_vec(&pre_hook).expect("fixture encodes");
-    let recorded = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
-        .expect("a declaration recorded before hook health still decodes");
-    assert_eq!(
-        serde_json::to_value(recorded).expect("the declaration encodes")["rtk"],
-        pre_hook["rtk"],
-        "compatibility does not invent hook installation"
-    );
-}
-
 #[test]
 fn a_declared_session_requires_one_complete_launch_identity() {
     let pre_extension = br#"{
@@ -913,7 +897,6 @@ fn a_declared_session_requires_one_complete_launch_identity() {
         "rtk": {
             "state": "active",
             "version": "0.45.0",
-            "hook": "installed",
             "detail": "rewrite protocol and answer fidelity passed"
         },
         "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c4",
@@ -944,10 +927,18 @@ fn a_declared_session_requires_one_complete_launch_identity() {
     assert_eq!(
         serde_json::to_value(&launch).expect("the launch identity encodes")["rtk"],
         complete["rtk"],
-        "a retired harness's recorded hook route re-encodes unchanged"
+        "the current launch identity re-encodes unchanged"
     );
 
-    assert_pre_hook_rtk_health_decodes(&complete);
+    let mut retired_hook = complete.clone();
+    retired_hook["rtk"]["hook"] = serde_json::json!("installed");
+    assert!(
+        wire::decode::<wire::body::LaneSessionDeclared>(
+            &serde_json::to_vec(&retired_hook).expect("retired fixture encodes")
+        )
+        .is_err(),
+        "the retired hook state must cross the journal migration before wire decoding"
+    );
 
     let mut pre_note = complete.clone();
     pre_note
