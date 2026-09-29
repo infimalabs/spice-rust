@@ -250,6 +250,20 @@ fn prompt_results_preserve_identity_lifecycle_and_structured_provider_failure() 
                 && outcome.session_settled
     ));
 
+    let failed_without_detail = decoded(
+        br#"{"type":"prompt_result","id":"prompt-plain-error","agentInvoked":false,"status":"error","sessionSettled":true}"#,
+    );
+    assert!(failed_without_detail.events().is_empty());
+    assert!(matches!(
+        failed_without_detail
+            .context()
+            .and_then(|context| context.prompt_outcome.as_ref()),
+        Some(outcome)
+            if !outcome.agent_invoked
+                && outcome.status == PromptStatus::Error
+                && outcome.session_settled
+    ));
+
     let aborted = decoded(
         br#"{"type":"prompt_result","id":"prompt-9","agentInvoked":false,"status":"aborted","sessionSettled":true}"#,
     );
