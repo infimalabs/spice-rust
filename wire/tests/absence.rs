@@ -16,7 +16,7 @@ const LANE: &str = r#"{
   "team": "018f82d4-6f59-7d06-92e3-bce913116302",
   "worktree": "/worktrees/lane-a",
   "life": "drive",
-  "vendor": "claude",
+  "vendor": "omp",
   "lineage": [],
   "capabilities": [],
   "disposition": "vacant"
@@ -29,7 +29,7 @@ const CURSOR: &str = r#"{}"#;
 const INGESTED: &str = r#"{
   "kind": "journal::ingested",
   "lane": "018f82d4-6f59-7d06-92e3-bce913116305",
-  "vendor": "claude",
+  "vendor": "omp",
   "stream": "session",
   "source": "018f82d4-6f59-7d06-92e3-bce913116306",
   "from": { "member": 1, "offset": 0 },

@@ -10,9 +10,8 @@ use listen::{
 use std::ops::ControlFlow;
 use tape::{Locus, Tape};
 
-const PROSE: &[u8] =
-    br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"working"}}"#;
-const CLAUDE_MULTI_EVENT: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"working"},{"type":"tool_use","id":"tool-1","name":"shell","input":{"command":"cargo test"}}]}}"#;
+const PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"working"}],"stopReason":"stop"}}"#;
+const MULTI_EVENT: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"working"},{"type":"toolCall","id":"tool-1","name":"bash","arguments":{"command":"cargo test"}}],"stopReason":"toolUse"}}"#;
 const TEST_BOUNDARY_ALLOWANCE: u64 = 256 * 1024;
 const TEST_SOURCE_LIMIT: u64 = 128 * 1024;
 const TEST_RECORD_LIMIT: usize = 32 * 1024;
@@ -38,7 +37,7 @@ fn a_sealed_tail_cannot_hide_whole_member_decompression_behind_a_small_window() 
     tape.seal().unwrap();
     let error = scan_tail(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         TailBudget::new(
             SMALL_WINDOW_BYTES,
             TEST_SOURCE_LIMIT,
@@ -130,7 +129,7 @@ fn oversized_and_delimiter_free_tails_stop_at_the_same_byte_ceiling() {
         tape.tee(&bytes).expect("large record is durable");
         let error = scan_tail(
             scratch.path(),
-            Dialect::Codex,
+            Dialect::Omp,
             TailBudget::new(
                 SMALL_WINDOW_BYTES,
                 TEST_SOURCE_LIMIT,
@@ -189,7 +188,7 @@ fn a_window_that_begins_inside_a_record_pays_for_its_retreat_once() {
         TEST_DURATION,
     )
     .expect("bounded tail");
-    let tail = scan_tail(scratch.path(), Dialect::Codex, budget)
+    let tail = scan_tail(scratch.path(), Dialect::Omp, budget)
         .expect("one retreat over the record is affordable");
     assert_eq!(
         tail.start.next,
@@ -234,7 +233,7 @@ fn a_window_inside_the_tapes_first_record_retreats_to_byte_zero() {
         TEST_DURATION,
     )
     .expect("bounded tail");
-    let tail = scan_tail(scratch.path(), Dialect::Codex, budget)
+    let tail = scan_tail(scratch.path(), Dialect::Omp, budget)
         .expect("the tape's first record is crossable");
     assert_eq!(tail.start.next, Position::start());
     assert_eq!(
@@ -254,7 +253,7 @@ fn tail_record_allowance_refuses_before_decoding_an_extra_record() {
         .expect("three records are durable");
     let error = scan_tail(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         TailBudget::new(
             u64::try_from(prose.len() * RECORD_FIXTURE_COUNT).expect("window fits"),
             TEST_BOUNDARY_ALLOWANCE,
@@ -289,7 +288,7 @@ fn wall_exhaustion_carries_every_tail_work_counter() {
 
     let error = scan_tail(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         TailBudget::new(
             SMALL_WINDOW_BYTES,
             TEST_SOURCE_LIMIT,
@@ -330,10 +329,10 @@ fn tail_work_is_constant_as_older_sparse_history_grows() {
         TEST_DURATION,
     )
     .expect("bounded tail");
-    let first = scan_tail(scratch.path(), Dialect::Codex, budget).expect("first bounded tail");
+    let first = scan_tail(scratch.path(), Dialect::Omp, budget).expect("first bounded tail");
     tape.tee(&season)
         .expect("more older-shaped residue is durable");
-    let second = scan_tail(scratch.path(), Dialect::Codex, budget).expect("second bounded tail");
+    let second = scan_tail(scratch.path(), Dialect::Omp, budget).expect("second bounded tail");
 
     assert_eq!(first.work.source_bytes, second.work.source_bytes);
     assert_eq!(first.work.records, second.work.records);
@@ -386,12 +385,12 @@ fn complete_events_and_residue_advance_while_a_partial_record_does_not() {
     let tape = Tape::open(scratch.path()).expect("tape opens");
     let prose = line(PROSE);
     let residue = b"not-json\n";
-    let partial = br#"{"type":"turn.failed"#;
+    let partial = br#"{"type":"agent_end"#;
     tape.tee(&prose).expect("typed record is durable");
     tape.tee(residue).expect("residue record is durable");
     tape.tee(partial).expect("partial record is durable");
 
-    let first = scan(scratch.path(), Dialect::Codex, None).expect("initial scan succeeds");
+    let first = scan(scratch.path(), Dialect::Omp, None).expect("initial scan succeeds");
 
     assert_eq!(first.records.len(), 2, "both complete records advance");
     assert_eq!(
@@ -436,9 +435,9 @@ fn complete_events_and_residue_advance_while_a_partial_record_does_not() {
         RecordPayload::Residue(_)
     ));
 
-    let suffix = b",\"error\":{\"message\":\"stopped\"}}\n";
+    let suffix = b",\"messages\":[]}\n";
     tape.tee(suffix).expect("partial record completes");
-    let resumed = scan(scratch.path(), Dialect::Codex, Some(&first.checkpoint))
+    let resumed = scan(scratch.path(), Dialect::Omp, Some(&first.checkpoint))
         .expect("scan resumes at the prior complete boundary");
     assert_eq!(resumed.records.len(), 1);
     assert!(resumed.pending.is_empty());
@@ -450,12 +449,10 @@ fn complete_events_and_residue_advance_while_a_partial_record_does_not() {
 fn scan_preserves_context_and_locus_for_a_zero_event_turn_start() {
     let scratch = Scratch::new("turn-start-context");
     let tape = Tape::open(scratch.path()).expect("tape opens");
-    let started = line(
-        br#"{"timestamp":"2026-08-09T01:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}"#,
-    );
+    let started = line(br#"{"timestamp":"2026-08-09T01:00:00Z","type":"agent_start"}"#);
     tape.tee(&started).expect("turn start is durable");
 
-    let scanned = scan(scratch.path(), Dialect::Codex, None).expect("turn start scans");
+    let scanned = scan(scratch.path(), Dialect::Omp, None).expect("turn start scans");
 
     let [record] = scanned.records.as_slice() else {
         panic!("turn start remains one record")
@@ -463,7 +460,6 @@ fn scan_preserves_context_and_locus_for_a_zero_event_turn_start() {
     assert_eq!(record.locus, Locus::new(1, 0, started.len() as u64));
     let context = record.context.as_ref().expect("typed context survives");
     assert_eq!(context.timestamp.as_deref(), Some("2026-08-09T01:00:00Z"));
-    assert_eq!(context.turn_id.as_deref(), Some("turn-1"));
     assert_eq!(context.turn, Some(listen::TurnMoment::Started));
     assert!(matches!(&record.payload, RecordPayload::Events(events) if events.is_empty()));
     scratch.remove();
@@ -480,7 +476,7 @@ fn tail_scan_starts_near_eof_and_its_source_checkpoint_reads_only_appends() {
 
     let tail = scan_tail(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         tail_budget(u64::try_from(prose.len() * RECORD_FIXTURE_COUNT).expect("window fits")),
     )
     .expect("tail scan succeeds");
@@ -491,7 +487,7 @@ fn tail_scan_starts_near_eof_and_its_source_checkpoint_reads_only_appends() {
     assert_eq!(tail.scan.records.len(), 3);
 
     tape.tee(&prose).expect("one append is durable");
-    let appended = scan(scratch.path(), Dialect::Codex, Some(&tail.scan.checkpoint))
+    let appended = scan(scratch.path(), Dialect::Omp, Some(&tail.scan.checkpoint))
         .expect("source checkpoint resumes");
     assert_eq!(appended.records.len(), 1, "only the append is decoded");
     scratch.remove();
@@ -505,19 +501,19 @@ fn bounded_history_windows_end_at_the_supplied_checkpoint_without_overlap() {
     for _ in 0..12 {
         tape.tee(&prose).expect("history record is durable");
     }
-    let complete = scan(scratch.path(), Dialect::Codex, None).expect("season scans");
+    let complete = scan(scratch.path(), Dialect::Omp, None).expect("season scans");
     let before = complete.records[9].next.clone();
     let bytes = u64::try_from(prose.len() * 3).expect("window fits");
     tape.tee(&prose)
         .expect("an append after the history boundary is durable");
 
-    let newer = scan_before(scratch.path(), Dialect::Codex, &before, tail_budget(bytes))
+    let newer = scan_before(scratch.path(), Dialect::Omp, &before, tail_budget(bytes))
         .expect("newer history window scans");
     assert_eq!(newer.scan.records.len(), 3);
     assert_eq!(newer.scan.checkpoint, before);
     let older = scan_before(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         &newer.start,
         tail_budget(bytes),
     )
@@ -536,12 +532,12 @@ fn tail_checkpoint_stays_before_an_unterminated_record_until_it_completes() {
     let scratch = Scratch::new("tail-pending");
     let tape = Tape::open(scratch.path()).expect("tape opens");
     tape.tee(&line(PROSE)).expect("older prose is durable");
-    let partial = br#"{"type":"turn.failed"#;
+    let partial = br#"{"type":"agent_end"#;
     tape.tee(partial).expect("partial record is durable");
 
     let tail = scan_tail(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         tail_budget(PENDING_WINDOW_BYTES),
     )
     .expect("tail scan succeeds");
@@ -554,7 +550,7 @@ fn tail_checkpoint_stays_before_an_unterminated_record_until_it_completes() {
 
     tape.tee(b",\"error\":{\"message\":\"stopped\"}}\n")
         .expect("partial record completes");
-    let completed = scan(scratch.path(), Dialect::Codex, Some(&tail.scan.checkpoint))
+    let completed = scan(scratch.path(), Dialect::Omp, Some(&tail.scan.checkpoint))
         .expect("completion resumes from the safe boundary");
     assert_eq!(completed.records.len(), 1);
     scratch.remove();
@@ -575,7 +571,7 @@ fn tail_window_crosses_sealed_members_without_reopening_the_season_start() {
 
     let tail = scan_tail(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         tail_budget(u64::try_from(prose.len() * MULTI_MEMBER_WINDOW_RECORDS).expect("window fits")),
     )
     .expect("cross-member tail scans");
@@ -611,7 +607,7 @@ fn tail_window_crosses_sealed_members_without_reopening_the_season_start() {
     }
     let grown = scan_tail(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         tail_budget(u64::try_from(prose.len() * MULTI_MEMBER_WINDOW_RECORDS).expect("window fits")),
     )
     .expect("grown multi-member tail scans");
@@ -640,7 +636,7 @@ fn sealed_member_discovery_stops_at_the_same_pass_ceiling_as_the_index_grows() {
         fs::write(scratch.path().join("index"), index).expect("large index is published");
         let error = scan_tail(
             scratch.path(),
-            Dialect::Codex,
+            Dialect::Omp,
             TailBudget::new(
                 SMALL_WINDOW_BYTES,
                 TEST_SOURCE_LIMIT,
@@ -687,7 +683,7 @@ fn oversized_index_refuses_before_extent_parsing() {
 
     let error = scan_tail(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         TailBudget::new(
             1,
             INDEX_BYTE_LIMIT,
@@ -727,7 +723,7 @@ fn one_record_can_cross_a_seal_without_losing_identity_or_exact_spans() {
     tape.tee(&line(&PROSE[split..]))
         .expect("record suffix is durable");
 
-    let scanned = scan(scratch.path(), Dialect::Codex, None).expect("cross-member scan succeeds");
+    let scanned = scan(scratch.path(), Dialect::Omp, None).expect("cross-member scan succeeds");
 
     assert_eq!(scanned.checkpoint.source, source);
     let RecordPayload::Events(events) = &scanned.records[0].payload else {
@@ -745,12 +741,12 @@ fn same_generation_retreat_and_gap_are_refused() {
     let tape = Tape::open(scratch.path()).expect("tape opens");
     let complete = line(PROSE);
     tape.tee(&complete).expect("record is durable");
-    let scanned = scan(scratch.path(), Dialect::Codex, None).expect("initial scan succeeds");
+    let scanned = scan(scratch.path(), Dialect::Omp, None).expect("initial scan succeeds");
 
     fs::write(scratch.path().join("000000000001.plain"), b"short")
         .expect("fixture retreats the active member");
     assert!(matches!(
-        scan(scratch.path(), Dialect::Codex, Some(&scanned.checkpoint)),
+        scan(scratch.path(), Dialect::Omp, Some(&scanned.checkpoint)),
         Err(ScanError::CheckpointRetreated { .. })
     ));
 
@@ -762,7 +758,7 @@ fn same_generation_retreat_and_gap_are_refused() {
         },
     };
     assert!(matches!(
-        scan(scratch.path(), Dialect::Codex, Some(&gap)),
+        scan(scratch.path(), Dialect::Omp, Some(&gap)),
         Err(ScanError::CheckpointGap { .. })
     ));
     scratch.remove();
@@ -774,12 +770,12 @@ fn a_replacement_generation_can_only_begin_at_byte_zero() {
     let path = scratch.path().join("selected");
     let tape = Tape::open(&path).expect("first generation opens");
     tape.tee(&line(PROSE)).expect("first generation grows");
-    let old = scan(&path, Dialect::Codex, None).expect("first generation scans");
+    let old = scan(&path, Dialect::Omp, None).expect("first generation scans");
     fs::remove_dir_all(&path).expect("first generation is removed");
     let replacement = Tape::open(&path).expect("replacement generation opens");
 
     assert!(matches!(
-        scan(&path, Dialect::Codex, Some(&old.checkpoint)),
+        scan(&path, Dialect::Omp, Some(&old.checkpoint)),
         Err(ScanError::SourceChanged { .. })
     ));
 
@@ -787,7 +783,7 @@ fn a_replacement_generation_can_only_begin_at_byte_zero() {
         source: old.checkpoint.source,
         next: Position::start(),
     };
-    let restarted = scan(&path, Dialect::Codex, Some(&reset))
+    let restarted = scan(&path, Dialect::Omp, Some(&reset))
         .expect("another generation may begin only at byte zero");
     assert_eq!(
         restarted.checkpoint.source,
@@ -812,7 +808,7 @@ fn missing_malformed_and_unreadable_source_identity_all_refuse_scanning() {
 
         assert!(
             matches!(
-                scan(scratch.path(), Dialect::Codex, None),
+                scan(scratch.path(), Dialect::Omp, None),
                 Err(ScanError::Tape { .. })
             ),
             "{label} identity did not refuse ingestion"
@@ -850,7 +846,7 @@ fn consumers_receive_only_public_typed_events_and_checkpoints() {
     tape.tee(&line(PROSE)).expect("record is durable");
 
     let consumed = consume_public_scan(
-        scan(scratch.path(), Dialect::Codex, None).expect("public scan succeeds"),
+        scan(scratch.path(), Dialect::Omp, None).expect("public scan succeeds"),
     );
 
     assert_eq!(consumed.len(), 1);
@@ -862,12 +858,12 @@ fn consumers_receive_only_public_typed_events_and_checkpoints() {
 fn event_ordinals_distinguish_events_sharing_the_same_record_spans() {
     let scratch = Scratch::new("ordinals");
     let tape = Tape::open(scratch.path()).expect("tape opens");
-    tape.tee(&line(CLAUDE_MULTI_EVENT))
+    tape.tee(&line(MULTI_EVENT))
         .expect("multi-event record is durable");
 
-    let scanned = scan(scratch.path(), Dialect::Claude, None).expect("record scans");
+    let scanned = scan(scratch.path(), Dialect::Omp, None).expect("record scans");
     let RecordPayload::Events(events) = &scanned.records[0].payload else {
-        panic!("current Claude record became residue");
+        panic!("current omp record became residue");
     };
 
     assert_eq!(
@@ -886,7 +882,7 @@ const NEEDLE: &str = "needle-7Qx";
 const SEARCH_CHUNK_BYTES: usize = 1024 * 1024;
 
 fn needle_prose(label: &str) -> Vec<u8> {
-    format!(r#"{{"type":"item.completed","item":{{"id":"item-1","type":"agent_message","text":"{NEEDLE} {label}"}}}}"#)
+    format!(r#"{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"{NEEDLE} {label}"}}],"stopReason":"stop"}}}}"#)
         .into_bytes()
 }
 
@@ -921,7 +917,11 @@ fn search_decodes_only_needle_records_newest_first_across_chunks_and_seals() {
     let tape = Tape::open(scratch.path()).expect("tape opens");
     tape.tee(&line(&needle_prose("one"))).expect("oldest match");
     let crossing = line(&needle_prose("two"));
-    let split = crossing.len() - 12;
+    let split = crossing
+        .windows(NEEDLE.len())
+        .position(|window| window == NEEDLE.as_bytes())
+        .expect("the record names the needle")
+        + "needle".len();
     assert!(
         crossing[..split].ends_with(b"needle"),
         "the seal splits the needle"
@@ -946,7 +946,7 @@ fn search_decodes_only_needle_records_newest_first_across_chunks_and_seals() {
     let mut visited = Vec::new();
     let search = search_tail(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         NEEDLE.as_bytes(),
         search_budget(16 * 1024 * 1024),
         |record| {
@@ -980,7 +980,7 @@ fn search_window_stops_before_older_history() {
 
     let search = search_tail(
         scratch.path(),
-        Dialect::Codex,
+        Dialect::Omp,
         NEEDLE.as_bytes(),
         search_budget(4 * 1024),
         |_| panic!("a match beyond the window is visited"),

@@ -28,8 +28,8 @@ impl Transcript {
         commands(
             &[ResolvedSource {
                 path: self.0.clone(),
-                vendor: Vendor::inferred(listen::Dialect::Claude),
-                dialect: Some(listen::Dialect::Claude),
+                vendor: Vendor::inferred(listen::Dialect::Omp),
+                dialect: Some(listen::Dialect::Omp),
                 thread: None,
             }],
             CommandOptions {
@@ -49,38 +49,53 @@ impl Drop for Transcript {
     }
 }
 
-fn record(second: u32, role: &str, content: Value) -> Value {
+fn record(second: u32, message: Value) -> Value {
     json!({
-        "type": role,
-        "uuid": format!("00000000-0000-4000-8000-{second:012}"),
+        "type": "message",
+        "id": format!("entry-{second}"),
         "timestamp": format!("2026-09-19T02:13:{second:02}.000Z"),
-        "message": {"type": "message", "role": role, "content": [content]}
+        "message": message,
     })
 }
 
 fn call(second: u32, id: &str, command: &str) -> Value {
     record(
         second,
-        "assistant",
         json!({
-            "type": "tool_use", "id": id, "name": "Bash", "input": {"command": command}
+            "role": "assistant",
+            "content": [{
+                "type": "toolCall", "id": id, "name": "bash", "arguments": {"command": command}
+            }],
+            "stopReason": "toolUse",
         }),
     )
 }
 
 fn result(second: u32, id: &str, output: &str, error: Option<bool>) -> Value {
-    let mut block = json!({"type": "tool_result", "tool_use_id": id, "content": output});
+    let mut message = json!({
+        "role": "toolResult",
+        "toolCallId": id,
+        "toolName": "bash",
+        "content": [{"type": "text", "text": output}],
+    });
     if let Some(error) = error {
-        block["is_error"] = json!(error);
+        message["isError"] = json!(error);
     }
-    record(second, "user", block)
+    record(second, message)
+}
+
+/// A bash result that states its exit code structurally, as omp does.
+fn exited(second: u32, id: &str, code: i32) -> Value {
+    let mut value = result(second, id, "failed", Some(true));
+    value["message"]["details"] = json!({"exitCode": code});
+    value
 }
 
 #[test]
 fn explicit_completion_without_exit_code_is_not_missing_history() {
     let transcript = Transcript::new(&[
         call(1, "old", "old"),
-        result(2, "old", "Process exited with code 7", Some(true)),
+        exited(2, "old", 7),
         call(3, "success", "success"),
         result(4, "success", "done", Some(false)),
         call(5, "failure", "failure"),
@@ -88,12 +103,7 @@ fn explicit_completion_without_exit_code_is_not_missing_history() {
         call(7, "unreported", "unreported"),
         result(8, "unreported", "unreported", None),
         call(9, "running", "running"),
-        result(
-            10,
-            "running",
-            "Process running with session ID 42",
-            Some(false),
-        ),
+        result(10, "running", "Command still running", Some(false)),
         call(11, "pending", "pending"),
     ]);
     let Report::Commands { rows, .. } = transcript.report(5, true, false, false) else {

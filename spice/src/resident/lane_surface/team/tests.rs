@@ -13,7 +13,7 @@ fn lane(lane: u8, team: u8) -> wire::LaneResidency {
         name: None,
         worktree: format!("/fleet/main-{lane}"),
         life: "drive".to_owned(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
         occupant: None,

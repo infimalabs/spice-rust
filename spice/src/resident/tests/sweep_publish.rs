@@ -2,11 +2,11 @@
 
 use super::*;
 
-const CODEX_FIRST: &[u8] = br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"first answer without a notice"}}
+const FIRST: &[u8] = br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"first answer without a notice"}]}}
 "#;
-const CODEX_SECOND: &[u8] = br#"{"timestamp":"2030-04-12T18:44:10.271Z","type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"second answer without a notice"}}
+const SECOND: &[u8] = br#"{"timestamp":"2030-04-12T18:44:10.271Z","type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"second answer without a notice"}]}}
 "#;
-const CODEX_THIRD: &[u8] = br#"{"timestamp":"2030-04-12T18:44:11.271Z","type":"item.completed","item":{"id":"item-3","type":"agent_message","text":"third answer with the notice"}}
+const THIRD: &[u8] = br#"{"timestamp":"2030-04-12T18:44:11.271Z","type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"third answer with the notice"}]}}
 "#;
 
 /// A notice is a wake-up: the records whose own notices the kernel refused are
@@ -21,13 +21,11 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
     let occupant = test_uuid(6);
     let epoch = test_uuid(4);
     canvas_announcement::seat_ingestion_residency(&bus, lane, epoch);
-    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the lane tape opens");
-    let first = tape.tee(CODEX_FIRST).expect("the first record is durable");
-    let second = tape
-        .tee(CODEX_SECOND)
-        .expect("the second record is durable");
-    let third = tape.tee(CODEX_THIRD).expect("the third record is durable");
+    let first = tape.tee(FIRST).expect("the first record is durable");
+    let second = tape.tee(SECOND).expect("the second record is durable");
+    let third = tape.tee(THIRD).expect("the third record is durable");
     let mut seats = Seats::new();
     seats
         .seat_detached(
@@ -54,7 +52,7 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
         &mut seats,
         &surfaces,
         None,
-        &noticed(lane, occupant, CODEX_THIRD, third),
+        &noticed(lane, occupant, THIRD, third),
         CaptureViews::new(&message_state, &mut diagnostics),
     )
     .expect("the surviving notice is accepted");
@@ -108,7 +106,7 @@ fn a_surviving_notice_presents_every_record_its_sweep_accounted() {
         &mut seats,
         &surfaces,
         None,
-        &noticed(lane, occupant, CODEX_FIRST, first),
+        &noticed(lane, occupant, FIRST, first),
         CaptureViews::new(&message_state, &mut diagnostics),
     )
     .expect("a late notice for an accounted record is accepted");
@@ -140,7 +138,7 @@ pub(super) fn noticed(
         boundary: sill::RecordBoundary::Complete,
         locus,
         declaration: None,
-        decoded: listen::decode(listen::Dialect::Codex, bytes, locus)
+        decoded: listen::decode(listen::Dialect::Omp, bytes, locus)
             .expect("the fixture record decodes under its own locus"),
     }
 }

@@ -30,9 +30,9 @@ fn present_and_not_yet_due_kinds_do_not_alarm() {
         .is_empty()
     );
 
-    let record = br#"{"type":"item.started","item":{"id":"call-1","type":"command_execution","command":"cargo test","aggregated_output":"","exit_code":null,"status":"in_progress"}}"#;
+    let record = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"call-1","name":"bash","arguments":{"command":"cargo test"}}],"stopReason":"toolUse"}}"#;
     let present = listen::decode(
-        listen::Dialect::Codex,
+        listen::Dialect::Omp,
         record,
         listen::Locus::new(0, 0, record.len() as u64),
     )
@@ -89,7 +89,7 @@ fn activity_without_decoded_context_is_a_typed_contradiction() {
     let lane = lane();
     let residue_record = br#"{"type":"future.record"}"#;
     let residue = listen::decode(
-        listen::Dialect::Codex,
+        listen::Dialect::Omp,
         residue_record,
         listen::Locus::new(0, 0, residue_record.len() as u64),
     )

@@ -198,11 +198,14 @@ impl RtkHealthState {
     }
 }
 
-/// Harness route that can submit ordinary tool commands to RTK.
+/// Hook route a retired harness launch once recorded for RTK.
+///
+/// No current launch records it; the field survives only so journaled
+/// declarations keep re-encoding to their canonical bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum RtkHookState {
-    /// The supervised launch installs Spice under Codex `PreToolUse`.
+enum RtkHookState {
+    /// The launch installed Spice under that harness's `PreToolUse`.
     Installed,
 }
 
@@ -219,7 +222,7 @@ pub struct RtkHealth {
         deserialize_with = "crate::optional::present"
     )]
     version: Option<String>,
-    /// Separately observed harness installation; executable launch alone does not set it.
+    /// Historical harness installation, carried for canonical re-encoding only.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -241,13 +244,6 @@ impl RtkHealth {
         }
     }
 
-    /// Record that the rendered vendor launch installs the RTK hook route.
-    #[must_use]
-    pub fn with_hook(mut self, hook: RtkHookState) -> Self {
-        self.hook = Some(hook);
-        self
-    }
-
     /// Whether the configured executable launched during the initial probe.
     #[must_use]
     pub const fn active(&self) -> bool {
@@ -264,12 +260,6 @@ impl RtkHealth {
     #[must_use]
     pub fn version(&self) -> Option<&str> {
         self.version.as_deref()
-    }
-
-    /// Harness hook state observed independently from executable launchability.
-    #[must_use]
-    pub const fn hook(&self) -> Option<RtkHookState> {
-        self.hook
     }
 
     /// Source-grounded launch verdict and any advisory version observation detail.

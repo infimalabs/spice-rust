@@ -703,7 +703,7 @@ fn rust_doc_markdown_allowances_are_exact_and_each_states_its_reason() {
         assert_eq!(allowance.kind(), kind);
         assert!(allowance.reason().contains(reason));
 
-        let source = source.unwrap_or("vendor/src/claude.rs");
+        let source = source.unwrap_or("vendor/src/omp.rs");
         let text = format!("/// The fixture or external surface names `{target}`.");
         let admitted =
             scan_rust_doc_markdown_citations(source, &text, &[]).expect("declared citation scans");

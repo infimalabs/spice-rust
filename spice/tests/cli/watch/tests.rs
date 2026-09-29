@@ -11,7 +11,7 @@ fn outcome(observations: Vec<Observation>) -> StreamOutcome {
 fn prose(tape: &Path, span: Span, text: &str) -> Observation {
     Observation::Event {
         lane: "lane-a".to_owned(),
-        dialect: Dialect::Codex,
+        dialect: Dialect::Omp,
         tape: tape.to_path_buf(),
         spans: vec![span],
         event: SurfaceEvent::Prose {
@@ -24,7 +24,7 @@ fn prose(tape: &Path, span: Span, text: &str) -> Observation {
 
 #[test]
 fn reconciliation_requires_the_exact_post_tee_identity_and_payload() {
-    let expected_tape = PathBuf::from("/fixture-root/lane-a/codex");
+    let expected_tape = PathBuf::from("/fixture-root/lane-a/omp");
     let expected_span = Span {
         member: 4,
         offset: 91,
@@ -35,9 +35,9 @@ fn reconciliation_requires_the_exact_post_tee_identity_and_payload() {
         span: expected_span,
     };
     let unrelated = prose(
-        Path::new("/fixture-root/lane-b/codex"),
+        Path::new("/fixture-root/lane-b/omp"),
         expected_span,
-        CODEX_PROSE_TEXT,
+        PROSE_TEXT,
     );
     let wrong_span = prose(
         &expected_tape,
@@ -46,13 +46,13 @@ fn reconciliation_requires_the_exact_post_tee_identity_and_payload() {
             offset: 90,
             length: 17,
         },
-        CODEX_PROSE_TEXT,
+        PROSE_TEXT,
     );
     let wrong_payload = prose(&expected_tape, expected_span, "not the durable target");
-    let exact = prose(&expected_tape, expected_span, CODEX_PROSE_TEXT);
+    let exact = prose(&expected_tape, expected_span, PROSE_TEXT);
     let canary = Observation::Canary {
         lane: "lane-a".to_owned(),
-        dialect: Dialect::Codex,
+        dialect: Dialect::Omp,
         tape: expected_tape,
         expected: EventKind::Session,
     };
@@ -81,13 +81,13 @@ mod unix {
         let pid = process.id();
         await_exit(&events);
         let target = outcome(vec![prose(
-            Path::new("/fixture-root/lane-a/codex"),
+            Path::new("/fixture-root/lane-a/omp"),
             Span {
                 member: 1,
                 offset: 0,
                 length: 99,
             },
-            CODEX_PROSE_TEXT,
+            PROSE_TEXT,
         )]);
         let watch = WatchProcess {
             process: Some(process),
@@ -109,7 +109,7 @@ mod unix {
         assert!(diagnostic.contains("exited naturally before explicit fixture termination"));
         assert!(diagnostic.contains("exit status: 17"));
         assert!(diagnostic.contains("fatal-after-event"));
-        assert!(diagnostic.contains(CODEX_PROSE_TEXT));
+        assert!(diagnostic.contains(PROSE_TEXT));
         assert!(diagnostic.contains("cleanup_errors=[]"));
         assert!(!process_exists(pid), "natural child {pid} was not reaped");
     }

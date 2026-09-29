@@ -60,7 +60,7 @@ fn result() -> listen::Event {
 
 fn reasoning() -> listen::Event {
     listen::Event::Reasoning(listen::Reasoning {
-        content: listen::ReasoningContent::Opaque,
+        content: listen::ReasoningContent::Plain(vec!["inspect".to_owned()]),
         locus: listen::Locus::new(7, 120, 64),
     })
 }
@@ -189,7 +189,7 @@ fn a_lane_at_rest_between_turns_is_never_prodded_and_its_prod_clears() {
     // At rest nothing arrives to count; a residue record changes nothing.
     let residue = lane::capture::CaptureRecord {
         decoded: listen::Decoded::Residue(listen::Residue {
-            dialect: listen::Dialect::Claude,
+            dialect: listen::Dialect::Omp,
             locus: listen::Locus::new(7, 120, 64),
             kind: listen::ResidueKind::Unknown {
                 discriminator: "progress".to_owned(),

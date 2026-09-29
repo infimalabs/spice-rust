@@ -92,7 +92,7 @@ impl Fixture {
                 name: None,
                 worktree: WORKTREE.to_owned(),
                 life: "drive".to_owned(),
-                vendor: "codex".parse().expect("fixture vendor"),
+                vendor: "omp".parse().expect("fixture vendor"),
                 model: None,
                 effort: None,
                 occupant: Some(occupant),

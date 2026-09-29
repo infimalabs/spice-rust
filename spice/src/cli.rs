@@ -348,8 +348,6 @@ fn coordination_landed(path: &[&str]) -> bool {
             | ["steer", "resend"]
             | ["steer", "recover"]
             | ["inbox"]
-            | ["hook"]
-            | ["ack"]
             | ["consent"]
             | ["consent", "allow"]
             | ["consent", "deny"]

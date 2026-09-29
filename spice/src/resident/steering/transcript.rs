@@ -13,20 +13,8 @@ pub(super) struct TranscriptRecognition {
 }
 
 /// Repair when the lane wrote no authored header as durable assistant text.
-const COMMAND_HEADER_REPAIR: &str = "emit an ACK or NAK header in visible assistant prose, ensure it \
-     is durably present on the transcript, then invoke ack";
-
-/// OMP retires interjected steering from prose itself, without an ack command.
-const INTERJECTED_HEADER_REPAIR: &str = "send the ACK or NAK header in visible assistant prose and let that \
+const HEADER_REPAIR: &str = "send the ACK or NAK header in visible assistant prose and let that \
      message land; the durable assistant text must name the key and disposition";
-
-fn header_repair(vendor: &wire::Name) -> &'static str {
-    if vendor.as_str() == "omp" {
-        INTERJECTED_HEADER_REPAIR
-    } else {
-        COMMAND_HEADER_REPAIR
-    }
-}
 
 /// Characters of the newest assistant text the refusal quotes back.
 const QUOTED_LINE: usize = 80;
@@ -160,7 +148,7 @@ impl TranscriptEvidence {
         vendor: &wire::Name,
         token: &str,
     ) -> Result<Self, Outcome<CommandAnswer>> {
-        let repair = header_repair(vendor);
+        let repair = HEADER_REPAIR;
         let deadline = Clock::now() + SEARCH_DURATION;
         let path = paths.tape.join(lane.to_string()).join(vendor.as_str());
         match fs::metadata(&path) {
@@ -216,7 +204,6 @@ impl TranscriptEvidence {
     pub(super) fn recognize(
         &self,
         token: &str,
-        disposition: Option<Disposition>,
         standing: &impl steer::Standing,
     ) -> Result<TranscriptRecognition, Outcome<CommandAnswer>> {
         let Some(budget) = self.budget(SEARCH_WINDOW_BYTES, SEARCH_SOURCE_BYTES, SEARCH_PASSES)
@@ -235,7 +222,7 @@ impl TranscriptEvidence {
             self.dialect,
             token.as_bytes(),
             budget,
-            |record| match scan_record(&record, token, disposition, standing) {
+            |record| match scan_record(&record, token, standing) {
                 Err(outcome) => {
                     failure = Some(outcome);
                     ControlFlow::Break(())
@@ -326,18 +313,6 @@ fn search_limited(token: &str, detail: &str, repair: &str) -> Outcome<CommandAns
     )
 }
 
-/// Search the transcript records that carry the key, newest first.
-pub(super) fn transcript_recognition(
-    paths: &RuntimePaths,
-    lane: CanonicalUuid,
-    vendor: &wire::Name,
-    token: &str,
-    disposition: Option<Disposition>,
-    standing: &impl steer::Standing,
-) -> Result<TranscriptRecognition, Outcome<CommandAnswer>> {
-    TranscriptEvidence::read(paths, lane, vendor, token)?.recognize(token, disposition, standing)
-}
-
 struct RecordRecognition {
     event: u32,
     line: u32,
@@ -365,7 +340,6 @@ impl RecordRecognition {
 fn scan_record(
     record: &listen::Record,
     token: &str,
-    disposition: Option<Disposition>,
     standing: &impl steer::Standing,
 ) -> Result<Option<RecordRecognition>, Outcome<CommandAnswer>> {
     let listen::RecordPayload::Events(events) = &record.payload else {
@@ -385,20 +359,6 @@ fn scan_record(
         let Some(recognition) = steer::decisive(&prose.text, token, standing) else {
             continue;
         };
-        if let ScanOutcome::Retired {
-            disposition: observed,
-            ..
-        } = &recognition.outcome
-            && let Some(requested) = disposition
-            && *observed != requested
-        {
-            return Err(refusal(
-                "steer::transcript-disposition-mismatch",
-                Some(format!("{requested:?}").to_lowercase()),
-                Some(format!("{observed:?}").to_lowercase()),
-                "make the ack command disposition match the latest transcript marker",
-            ));
-        }
         let recognition = RecordRecognition {
             event: checked_locus_part(event_index)?,
             line: checked_locus_part(recognition.locus.line)?,

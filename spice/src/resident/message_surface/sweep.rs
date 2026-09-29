@@ -104,61 +104,24 @@ pub(super) fn scanned_capture_record(
 }
 
 /// Recognize, steer, and present every swept record in tape order.
-#[allow(
-    clippy::too_many_arguments,
-    reason = "one sweep crosses the taste, steering, and Canvas surfaces for one occupant"
-)]
 pub(super) fn present_swept<P: AgentMessagePublisher>(
     bus: &Bus,
     epoch: CanonicalUuid,
     surfaces: &CaptureSurfaces<'_, P>,
     recognition: &mut TasteRecognition<'_>,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
     swept: &[Cow<'_, lane::capture::CaptureRecord>],
     views: &mut CaptureViews<'_>,
 ) -> CommandResult<()> {
-    // Session authority enriches presentation; capture admission decided
-    // freshness. Its absence keeps the non-disclosing count preview.
-    let worktree = session_worktree(bus, epoch, lane, occupant);
     for record in swept {
         recognize(bus, epoch, surfaces, recognition, record, views.diagnostic)?;
         let steering = steering_ledger(bus, record)?;
-        present(
-            surfaces,
-            record,
-            steering.as_ref(),
-            worktree.as_deref(),
-            views,
-        )?;
+        present(surfaces, record, steering.as_ref(), views)?;
         let steps = lock_state(views.state)?
             .narration
             .observe(surfaces.narration, record);
         narration::record(bus, surfaces.paths, epoch, steps, views.diagnostic)?;
     }
     Ok(())
-}
-
-/// The worktree the lane's current session names for this occupant.
-fn session_worktree(
-    bus: &Bus,
-    epoch: CanonicalUuid,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
-) -> Option<PathBuf> {
-    bus.residency_head()
-        .ok()
-        .flatten()
-        .filter(|head| head.body().epoch == epoch)
-        .and_then(|head| {
-            head.body()
-                .lanes
-                .iter()
-                .find(|row| row.lane == lane)
-                .and_then(|row| row.session.as_ref())
-                .filter(|session| session.occupant == occupant)
-                .map(|session| PathBuf::from(&session.worktree))
-        })
 }
 
 /// Recognize one record's taste candidates under the configured adjudication.
@@ -225,7 +188,6 @@ pub(super) fn present<P: AgentMessagePublisher>(
     surfaces: &CaptureSurfaces<'_, P>,
     record: &lane::capture::CaptureRecord,
     steering: Option<&PresentationDirectives>,
-    worktree: Option<&Path>,
     views: &mut CaptureViews<'_>,
 ) -> CommandResult<()> {
     let presented = publish_agent_messages_in(
@@ -233,7 +195,6 @@ pub(super) fn present<P: AgentMessagePublisher>(
         record,
         &mut *lock_state(views.state)?,
         steering,
-        worktree,
         None,
         None,
     );

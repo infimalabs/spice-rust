@@ -11,8 +11,7 @@ use sill::{
     StreamPolicy, WaitPolicy,
 };
 use vendor::{
-    Attribution, ContractError, Effort, Launch, OMP, Process, RecordStream, Resume, SessionId,
-    SteeringHook, SteeringKey, omp,
+    ContractError, Effort, Launch, OMP, Process, RecordStream, Resume, SessionId, SteeringKey, omp,
 };
 
 const SESSION: &[u8] = br#"{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{"model":{"id":"claude-opus-5","contextWindow":1000000},"sessionId":"01a0a807-666f-7524-be0d-2ee476b6c15c","isStreaming":false}}"#;
@@ -34,20 +33,13 @@ fn fixture(resume: Resume) -> Launch {
         skill: SKILL.to_owned(),
         model: MODEL.to_owned(),
         effort: Effort::XHigh,
-        personality: None,
         fast_mode: Some(false),
-        model_context_window: None,
         auto_compact_window_tokens: Some(220_000),
         config_overlay: Some(CONFIG_OVERLAY.into()),
         lsp: Some(false),
-        attribution: Attribution::Harness,
-        hook: SteeringHook {
-            command: "/usr/bin/spice hook omp".to_owned(),
-        },
         steering_key: Some(SteeringKey {
             token: STEERING_TOKEN.to_owned(),
         }),
-        mcp: None,
         resume,
     }
 }
@@ -402,23 +394,7 @@ fn omp_resumes_by_the_exact_session_and_the_vendor_value_renders_the_same_record
 }
 
 #[test]
-fn omp_refuses_knobs_it_has_no_seam_for_instead_of_ignoring_them() {
-    let mut personality = fixture(Resume::Fresh);
-    personality.personality = Some("terse".to_owned());
-    let mut window = fixture(Resume::Fresh);
-    window.model_context_window = Some(1_000_000);
-    for (launch, path) in [
-        (personality, "vendor.omp.personality"),
-        (window, "vendor.omp.model_context_window"),
-    ] {
-        assert_eq!(
-            omp::record("/opt/omp", &launch).expect_err("refused"),
-            ContractError::Unsupported {
-                path,
-                vendor: "oh-my-pi"
-            }
-        );
-    }
+fn omp_refuses_an_unspellable_binary() {
     assert!(matches!(
         omp::record("", &fixture(Resume::Fresh)),
         Err(ContractError::Spec(_))

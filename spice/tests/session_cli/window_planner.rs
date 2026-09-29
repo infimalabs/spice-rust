@@ -1,76 +1,49 @@
 use super::*;
 use serde_json::{Value, json};
 
+fn compacted(timestamp: &str, id: &str) -> Value {
+    omp_compaction(timestamp, id, "", id)
+}
+
 fn planner_tail_rows() -> Vec<Value> {
     vec![
-        codex_event("2026-02-01T00:10:00Z", "compacted", json!({})),
-        codex_event(
-            "2026-02-01T00:19:00Z",
-            "event_msg",
-            json!({"type": "task_started", "turn_id": "straddle"}),
-        ),
-        codex_message(
+        omp_header(THREAD, "2026-02-01T00:09:59.000Z"),
+        compacted("2026-02-01T00:10:00Z", "c1"),
+        omp_user(
             "2026-02-01T00:19:10Z",
-            "user",
-            None,
+            "straddle",
             "This turn starts before the second boundary.",
         ),
-        codex_event("2026-02-01T00:20:00Z", "compacted", json!({})),
-        codex_message(
+        compacted("2026-02-01T00:20:00Z", "c2"),
+        omp_text(
             "2026-02-01T00:20:10Z",
-            "assistant",
-            Some("commentary"),
+            "a1",
             "The same turn continues after the boundary.",
+            "toolUse",
         ),
-        codex_event(
-            "2026-02-01T00:21:00Z",
-            "event_msg",
-            json!({"type": "task_complete", "turn_id": "straddle"}),
-        ),
-        codex_event(
-            "2026-02-01T00:22:00Z",
-            "event_msg",
-            json!({"type": "task_started", "turn_id": "after"}),
-        ),
-        codex_message(
+        omp_assistant("2026-02-01T00:21:00Z", "a2", json!([]), "stop"),
+        omp_user(
             "2026-02-01T00:22:10Z",
-            "user",
-            None,
+            "after",
             "This turn belongs only to the open tail window.",
         ),
-        codex_event(
-            "2026-02-01T00:23:00Z",
-            "event_msg",
-            json!({"type": "task_complete", "turn_id": "after"}),
-        ),
+        omp_assistant("2026-02-01T00:23:00Z", "a3", json!([]), "stop"),
     ]
 }
 
 fn planner_surrounding_rows() -> Vec<Value> {
+    let mut tail = planner_tail_rows();
     let mut rows = vec![
-        codex_event(
-            "2026-02-01T00:00:00Z",
-            "event_msg",
-            json!({"type": "task_started", "turn_id": "ignored-before"}),
-        ),
-        codex_message(
+        tail.remove(0),
+        omp_user("2026-02-01T00:00:00Z", "ignored-before", "An older prompt."),
+        omp_text(
             "2026-02-01T00:00:10Z",
-            "assistant",
-            Some("final_answer"),
+            "a0",
             "Older assistant text must not become the selected compaction predecessor.",
-        ),
-        codex_event(
-            "2026-02-01T00:01:00Z",
-            "event_msg",
-            json!({"type": "task_complete", "turn_id": "ignored-before"}),
-        ),
-        codex_event(
-            "2026-02-01T00:09:59Z",
-            "session_meta",
-            json!({"type": "session_meta"}),
+            "stop",
         ),
     ];
-    rows.extend(planner_tail_rows());
+    rows.extend(tail);
     rows
 }
 
@@ -96,15 +69,16 @@ fn without_sources(mut value: Value) -> Value {
     value
 }
 
-fn window_turn_ids(window: &Value) -> Vec<String> {
+/// Each window turn named by the prompt that opened it.
+fn window_prompts(window: &Value) -> Vec<String> {
     window["turns"]
         .as_array()
         .expect("window turns are typed")
         .iter()
         .map(|turn| {
-            turn["turn_id"]
+            turn["dialogue"][0]["text"]
                 .as_str()
-                .expect("fixture turns carry ids")
+                .expect("fixture turns open on a prompt")
                 .to_owned()
         })
         .collect()
@@ -149,8 +123,12 @@ fn sweep_windows_share_boundary_straddling_turns() {
         window_compaction_timestamps(&windows[1]),
         ["2026-02-01T00:20:00.000Z"]
     );
-    assert_eq!(window_turn_ids(&windows[0]), ["straddle"]);
-    assert_eq!(window_turn_ids(&windows[1]), ["straddle", "after"]);
+    let straddle = "This turn starts before the second boundary.";
+    assert_eq!(window_prompts(&windows[0]), [straddle]);
+    assert_eq!(
+        window_prompts(&windows[1]),
+        [straddle, "This turn belongs only to the open tail window."]
+    );
 
     scratch.remove();
 }
@@ -162,40 +140,21 @@ fn sweep_does_not_copy_exact_boundary_starts_backward() {
     write_jsonl(
         &transcript,
         &[
-            codex_event("2026-02-01T00:10:00Z", "compacted", json!({})),
-            codex_event(
-                "2026-02-01T00:19:00Z",
-                "event_msg",
-                json!({"type": "task_started", "turn_id": "before"}),
-            ),
-            codex_message(
+            omp_header(THREAD, "2026-02-01T00:00:00.000Z"),
+            compacted("2026-02-01T00:10:00Z", "c1"),
+            omp_user(
                 "2026-02-01T00:19:10Z",
-                "user",
-                None,
+                "before",
                 "This turn stays before the boundary.",
             ),
-            codex_event(
-                "2026-02-01T00:19:30Z",
-                "event_msg",
-                json!({"type": "task_complete", "turn_id": "before"}),
-            ),
-            codex_event("2026-02-01T00:20:00Z", "compacted", json!({})),
-            codex_event(
+            omp_assistant("2026-02-01T00:19:30Z", "a1", json!([]), "stop"),
+            compacted("2026-02-01T00:20:00Z", "c2"),
+            omp_user(
                 "2026-02-01T00:20:00Z",
-                "event_msg",
-                json!({"type": "task_started", "turn_id": "boundary-start"}),
-            ),
-            codex_message(
-                "2026-02-01T00:20:05Z",
-                "user",
-                None,
+                "boundary-start",
                 "This turn starts exactly at the boundary.",
             ),
-            codex_event(
-                "2026-02-01T00:20:30Z",
-                "event_msg",
-                json!({"type": "task_complete", "turn_id": "boundary-start"}),
-            ),
+            omp_assistant("2026-02-01T00:20:30Z", "a2", json!([]), "stop"),
         ],
     );
     let input = transcript.to_string_lossy().into_owned();
@@ -208,32 +167,23 @@ fn sweep_does_not_copy_exact_boundary_starts_backward() {
     let windows = sweep["windows"].as_array().expect("windows are typed");
 
     assert_eq!(windows.len(), 2);
-    assert_eq!(window_turn_ids(&windows[0]), ["before"]);
-    assert_eq!(window_turn_ids(&windows[1]), ["boundary-start"]);
+    assert_eq!(
+        window_prompts(&windows[0]),
+        ["This turn stays before the boundary."]
+    );
+    assert_eq!(
+        window_prompts(&windows[1]),
+        ["This turn starts exactly at the boundary."]
+    );
 
     write_jsonl(
         &transcript,
         &[
-            codex_event(
-                "2026-02-01T00:30:00Z",
-                "event_msg",
-                json!({"type": "task_started", "turn_id": "later-first"}),
-            ),
-            codex_event(
-                "2026-02-01T00:31:00Z",
-                "event_msg",
-                json!({"type": "task_complete", "turn_id": "later-first"}),
-            ),
-            codex_event(
-                "2026-02-01T00:20:00Z",
-                "event_msg",
-                json!({"type": "task_started", "turn_id": "earlier-second"}),
-            ),
-            codex_event(
-                "2026-02-01T00:21:00Z",
-                "event_msg",
-                json!({"type": "task_complete", "turn_id": "earlier-second"}),
-            ),
+            omp_header(THREAD, "2026-02-01T00:00:00.000Z"),
+            omp_user("2026-02-01T00:30:00Z", "later-first", "Later first."),
+            omp_assistant("2026-02-01T00:31:00Z", "a1", json!([]), "stop"),
+            omp_user("2026-02-01T00:20:00Z", "earlier-second", "Earlier second."),
+            omp_assistant("2026-02-01T00:21:00Z", "a2", json!([]), "stop"),
         ],
     );
     for action in ["briefing", "sweep", "commits"] {
@@ -247,8 +197,9 @@ fn sweep_does_not_copy_exact_boundary_starts_backward() {
     write_jsonl(
         &transcript,
         &[
-            codex_event("2026-02-01T00:30:00Z", "compacted", json!({})),
-            codex_event("2026-02-01T00:20:00Z", "compacted", json!({})),
+            omp_header(THREAD, "2026-02-01T00:00:00.000Z"),
+            compacted("2026-02-01T00:30:00Z", "c1"),
+            compacted("2026-02-01T00:20:00Z", "c2"),
         ],
     );
     refusal(
@@ -334,28 +285,11 @@ fn sweep_keeps_one_labelled_window_without_severing_compactions() {
     write_jsonl(
         &transcript,
         &[
-            codex_event(
-                "2026-02-02T00:00:00Z",
-                "event_msg",
-                json!({"type": "task_started", "turn_id": "first"}),
-            ),
-            codex_message("2026-02-02T00:00:10Z", "user", None, "First prompt."),
-            codex_event(
-                "2026-02-02T00:01:00Z",
-                "event_msg",
-                json!({"type": "task_complete", "turn_id": "first"}),
-            ),
-            codex_event(
-                "2026-02-02T00:02:00Z",
-                "event_msg",
-                json!({"type": "task_started", "turn_id": "second"}),
-            ),
-            codex_message("2026-02-02T00:02:10Z", "user", None, "Second prompt."),
-            codex_event(
-                "2026-02-02T00:03:00Z",
-                "event_msg",
-                json!({"type": "task_complete", "turn_id": "second"}),
-            ),
+            omp_header(THREAD, "2026-02-02T00:00:00.000Z"),
+            omp_user("2026-02-02T00:00:10Z", "first", "First prompt."),
+            omp_assistant("2026-02-02T00:01:00Z", "a1", json!([]), "stop"),
+            omp_user("2026-02-02T00:02:10Z", "second", "Second prompt."),
+            omp_assistant("2026-02-02T00:03:00Z", "a2", json!([]), "stop"),
         ],
     );
     let input = transcript.to_string_lossy().into_owned();
@@ -369,7 +303,10 @@ fn sweep_keeps_one_labelled_window_without_severing_compactions() {
 
     assert_eq!(windows.len(), 1);
     assert_eq!(windows[0]["index"], 1);
-    assert_eq!(window_turn_ids(&windows[0]), ["first", "second"]);
+    assert_eq!(
+        window_prompts(&windows[0]),
+        ["First prompt.", "Second prompt."]
+    );
     assert_eq!(windows[0]["compactions"].as_array().map(Vec::len), Some(0));
 
     scratch.remove();

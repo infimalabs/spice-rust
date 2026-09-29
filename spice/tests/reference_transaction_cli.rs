@@ -548,11 +548,10 @@ fn spice_run(root: &Path, arguments: &[&str], lane: Option<&str>) -> Output {
         .args(arguments)
         .current_dir(root)
         .env_remove(steer::hook::LANE)
-        .env_remove(vendor::CLAUDE.thread_id_environment())
-        .env_remove(vendor::CODEX.thread_id_environment());
+        .env_remove(vendor::OMP.thread_id_environment());
     if let Some(lane) = lane {
         command.env(steer::hook::LANE, lane).env(
-            vendor::CLAUDE.thread_id_environment(),
+            vendor::OMP.thread_id_environment(),
             "018f7777-7777-7444-8888-999999999999",
         );
     }

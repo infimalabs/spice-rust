@@ -471,12 +471,10 @@ impl NativeInvocation<'_> {
             | ["steer", "cancel"]
             | ["steer", "resend"]
             | ["steer", "recover"]
-            | ["ack"]
             | ["inbox"] => deliver(
                 &steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE)),
                 form,
             ),
-            ["hook"] => dispatch_hook(leaf, contract, form),
             ["trust"] => deliver(&trust_command::report(contract, configuration), form),
             ["trust", "pend"] => deliver(&trust_command::pend(contract, configuration), form),
             ["trust", "grant"] => deliver(&trust_command::rule(leaf, contract, true), form),
@@ -487,41 +485,6 @@ impl NativeInvocation<'_> {
             ["taste", "mine"] => deliver(&taste_command::mine(contract, configuration), form),
             _ => {}
         }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn dispatch_hook(leaf: &clap::ArgMatches, contract: &cli::Contract, form: Form) {
-    let harness = leaf
-        .get_one::<String>("HARNESS")
-        .expect("clap requires a hook harness");
-    let invocation = match steering_command::read_hook_invocation(&mut io::stdin().lock(), harness)
-    {
-        Ok(invocation) => invocation,
-        Err(error) => deliver_fault(render_fault(error), Form::Text),
-    };
-    match invocation {
-        steering_command::HookInvocation::Steering => {
-            let outcome =
-                steering_command::run(leaf, contract, bootstrap_environment(steer::hook::LANE));
-            deliver_inbox_hook(&outcome, harness, form)
-        }
-        steering_command::HookInvocation::PreTool(request) => {
-            let executable = bootstrap_environment(spice::rtk::EXECUTABLE_VARIABLE);
-            match request.answer(executable.as_deref()) {
-                Ok(reply) => {
-                    if let Some(diagnostic) = reply.diagnostic() {
-                        let _ = writeln!(io::stderr().lock(), "{diagnostic}");
-                    }
-                    let mut stdout = io::stdout().lock();
-                    let _ = stdout.write_all(reply.document());
-                    let _ = stdout.flush();
-                    terminate_code(REPLY_EXIT)
-                }
-                Err(error) => deliver_fault(render_fault(error), Form::Text),
-            }
-        }
-        steering_command::HookInvocation::Ignore => terminate_code(REPLY_EXIT),
     }
 }
 
@@ -1043,44 +1006,6 @@ fn deliver_commit_message(run: gate_command::CommitMessageRun, form: Form) -> ! 
         );
     }
     deliver_commit_gate(run.outcome(), form)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn deliver_inbox_hook(
-    outcome: &Outcome<wire::intent::CommandAnswer>,
-    harness: &str,
-    form: Form,
-) -> ! {
-    match outcome {
-        Outcome::Reply(reply) => {
-            let working_state = match &reply.body {
-                wire::intent::CommandAnswer::Inbox(inbox) => inbox
-                    .lanes
-                    .as_slice()
-                    .first()
-                    .filter(|_| inbox.lanes.len() == 1)
-                    .and_then(|lane| {
-                        spice::session_meter::LiveMeter::working_state_for_lane(
-                            Path::new("."),
-                            lane.lane,
-                        )
-                        .ok()
-                    }),
-                _ => None,
-            };
-            match steering_command::hook_document(&reply.body, harness, working_state.as_ref()) {
-                Ok(Some(document)) => {
-                    let mut stdout = io::stdout().lock();
-                    let _ = stdout.write_all(&document);
-                    let _ = stdout.flush();
-                    terminate_code(REPLY_EXIT);
-                }
-                Ok(None) => terminate_code(REPLY_EXIT),
-                Err(error) => deliver_fault(render_fault(error), Form::Text),
-            }
-        }
-        Outcome::Refusal(_) | Outcome::Fault(_) => deliver(outcome, form),
-    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]

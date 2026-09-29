@@ -23,7 +23,7 @@ fn declaration(occupant: u64, offset: u64) -> body::LaneSessionDeclared {
         lane: uuid(1),
         occupant: uuid(occupant),
         worktree: format!("/worktrees/{occupant}"),
-        vendor: "codex".parse().unwrap(),
+        vendor: "omp".parse().unwrap(),
         launch: None,
         epoch: uuid(8),
         stream: "session".to_owned(),

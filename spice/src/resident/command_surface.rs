@@ -267,14 +267,6 @@ impl<'a> Surface<'a> {
                 recover,
                 &mut effects,
             )),
-            (CommandKind::SteerDispose, Intent::SteerDispose(dispose)) => Some(steering::dispose(
-                self.bus,
-                self.paths,
-                self.epoch,
-                command,
-                dispose,
-                &mut effects,
-            )),
             _ => None,
         }?;
         Some(CommandDispatch::with_effects(outcome, effects))

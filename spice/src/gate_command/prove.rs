@@ -687,25 +687,14 @@ fn normalized_action_environment(values: &[(OsString, OsString)]) -> Vec<(OsStri
 /// twice describes the same toolchain as one that prepended it once.
 fn normalized_search_path(value: &OsStr) -> OsString {
     let mut seen = Vec::new();
-    let retained = std::env::split_paths(value)
-        .filter(|path| !codex_launcher_path(path))
-        .filter(|path| {
-            if seen.contains(path) {
-                return false;
-            }
-            seen.push(path.clone());
-            true
-        });
+    let retained = std::env::split_paths(value).filter(|path| {
+        if seen.contains(path) {
+            return false;
+        }
+        seen.push(path.clone());
+        true
+    });
     std::env::join_paths(retained).unwrap_or_else(|_| value.to_owned())
-}
-
-fn codex_launcher_path(path: &Path) -> bool {
-    path.parent()
-        .is_some_and(|parent| parent.ends_with(".codex/tmp/arg0"))
-        && path
-            .file_name()
-            .and_then(OsStr::to_str)
-            .is_some_and(|name| name.starts_with("codex-arg0"))
 }
 
 fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {

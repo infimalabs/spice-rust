@@ -958,18 +958,18 @@ mod tests {
         fs::write(
             &path,
             concat!(
-                "{\"timestamp\":\"2026-01-01T00:00:01Z\",\"type\":\"compacted\",\"payload\":{}}\n",
-                "{\"timestamp\":\"2026-01-01T00:00:02Z\",\"type\":\"event_msg\",\"payload\":{\"type\":\"context_compacted\"}}\n",
-                "{\"timestamp\":\"2026-01-01T00:00:03Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"x\"}]}}\n",
-                "{\"timestamp\":\"2026-01-01T00:00:04Z\",\"type\":\"response_item\",\"payload\":{\"type\":\"function_call\",\"name\":\"exec_command\",\"call_id\":\"c\",\"arguments\":\"{\\\"cmd\\\":\\\"\\\"}\"}}\n",
-                "{\"timestamp\":\"2026-01-01T00:00:05Z\",\"type\":\"compacted\"",
+                "{\"type\":\"compaction\",\"id\":\"c1\",\"timestamp\":\"2026-01-01T00:00:01Z\",\"summary\":\"s\",\"firstKeptEntryId\":\"e0\",\"tokensBefore\":10}\n",
+                "{\"type\":\"message\",\"id\":\"u\",\"timestamp\":\"2026-01-01T00:00:02Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"go\"}]}}\n",
+                "{\"type\":\"message\",\"id\":\"a\",\"timestamp\":\"2026-01-01T00:00:03Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}],\"stopReason\":\"toolUse\"}}\n",
+                "{\"type\":\"message\",\"id\":\"t\",\"timestamp\":\"2026-01-01T00:00:04Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"c\",\"name\":\"bash\",\"arguments\":{\"command\":\"\"}}],\"stopReason\":\"toolUse\"}}\n",
+                "{\"type\":\"compaction\",\"id\":\"c2\",\"timestamp\":\"2026-01-01T00:00:05Z\"",
             ),
         )
         .expect("live transcript is written");
         ResolvedSource {
             path,
             vendor: Vendor::UNKNOWN,
-            dialect: Some(listen::Dialect::Codex),
+            dialect: Some(listen::Dialect::Omp),
             thread: Some("018f7777-7777-7444-8888-999999999999".to_owned()),
         }
     }

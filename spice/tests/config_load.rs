@@ -121,11 +121,11 @@ fn repository_loader_ignores_the_python_owned_document() {
         root.join("spice.toml"),
         b"[lane]\nvendor = 'python-collision'\n",
     );
-    write(root.join("spice-rust.toml"), b"[lane]\nvendor = 'codex'\n");
+    write(root.join("spice-rust.toml"), b"[lane]\nvendor = 'omp'\n");
 
     let resolved = load(&root, &[]).expect("Rust reads its own tracked document");
 
-    assert_eq!(resolved.root().lane().vendor().as_str(), "codex");
+    assert_eq!(resolved.root().lane().vendor().as_str(), "omp");
     assert_eq!(
         fs::read_to_string(root.join("spice.toml")).unwrap(),
         "[lane]\nvendor = 'python-collision'\n",
@@ -200,13 +200,13 @@ fn main_worktree_reads_only_the_three_exact_paths_and_passes_typed_flags() {
     fs::create_dir(&start).expect("create start");
     write(
         root.join("spice-rust.toml"),
-        b"[lane]\nvendor = \"codex\"\n[listen]\nwindow = \"2m\"\n",
+        b"[lane]\nvendor = \"omp\"\n[listen]\nwindow = \"2m\"\n",
     );
     let container = absolute("container");
     let runner = absolute("runner");
     write(
         worktree_path(&root),
-        b"[vendor.codex]\nmodel = 'lane-model'\neffort = 'xhigh'\n",
+        b"[vendor.omp]\nmodel = 'lane-model'\neffort = 'xhigh'\n",
     );
     write(
         local_path(&root),
@@ -271,13 +271,13 @@ fn main_worktree_reads_only_the_three_exact_paths_and_passes_typed_flags() {
         [("alpha", 2)]
     );
     assert_eq!(path_source(&resolved, "lane.vendor"), ConfigSource::Flag);
-    assert_eq!(resolved.root().vendor().codex().model(), "lane-model");
+    assert_eq!(resolved.root().vendor().omp().model(), "lane-model");
     assert_eq!(
-        resolved.root().vendor().codex().effort(),
+        resolved.root().vendor().omp().effort(),
         vendor::Effort::XHigh
     );
     assert_eq!(
-        path_source(&resolved, "vendor.codex.model"),
+        path_source(&resolved, "vendor.omp.model"),
         ConfigSource::Worktree
     );
     assert_eq!(path_source(&resolved, "listen.window"), ConfigSource::Local);
@@ -297,7 +297,7 @@ fn linked_worktrees_select_their_own_tracked_worktree_and_shared_local_intent() 
     let second = linked_worktree(&scratch, &common, "second");
     write(
         first.join("spice-rust.toml"),
-        b"[lane]\nvendor = \"codex\"\n[listen]\nwindow = \"2m\"\n",
+        b"[lane]\nvendor = \"omp\"\n[listen]\nwindow = \"2m\"\n",
     );
     write(
         second.join("spice-rust.toml"),
@@ -309,11 +309,11 @@ fn linked_worktrees_select_their_own_tracked_worktree_and_shared_local_intent() 
     );
     write(
         worktree_path(&first),
-        b"[vendor.codex]\nmodel = 'first-model'\n",
+        b"[vendor.omp]\nmodel = 'first-model'\n",
     );
     write(
         worktree_path(&second),
-        b"[vendor.codex]\nmodel = 'second-model'\n",
+        b"[vendor.omp]\nmodel = 'second-model'\n",
     );
     write(origin.join("spice-rust.toml"), b"[tasks]\nwrong = true\n");
     write(
@@ -324,15 +324,15 @@ fn linked_worktrees_select_their_own_tracked_worktree_and_shared_local_intent() 
     let first = load(first.join("src"), &[]).expect("first linked worktree");
     let second = load(second.join("src"), &[]).expect("second linked worktree");
 
-    assert_eq!(first.root().lane().vendor().as_str(), "codex");
+    assert_eq!(first.root().lane().vendor().as_str(), "omp");
     assert_eq!(second.root().lane().vendor().as_str(), "gemini");
-    assert_eq!(first.root().vendor().codex().model(), "first-model");
-    assert_eq!(second.root().vendor().codex().model(), "second-model");
+    assert_eq!(first.root().vendor().omp().model(), "first-model");
+    assert_eq!(second.root().vendor().omp().model(), "second-model");
     assert_eq!(first.root().listen().window_word().to_string(), "5m");
     assert_eq!(second.root().listen().window_word().to_string(), "5m");
     assert_eq!(path_source(&first, "lane.vendor"), ConfigSource::Tracked);
     assert_eq!(
-        path_source(&first, "vendor.codex.model"),
+        path_source(&first, "vendor.omp.model"),
         ConfigSource::Worktree
     );
     assert_eq!(path_source(&first, "listen.window"), ConfigSource::Local);

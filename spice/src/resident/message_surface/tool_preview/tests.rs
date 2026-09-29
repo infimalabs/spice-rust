@@ -1,7 +1,5 @@
 use super::*;
 
-mod file_change;
-
 /// Raw event identity retained only when no typed call preview is available.
 const VENDOR_ID: &str = "toolu_01ABCdefGHIjklMNOpqrs";
 const COMPACT_VENDOR_ID: &str = "toolu_01A…lMNOpqrs";
@@ -239,17 +237,14 @@ fn an_update_reports_the_running_call_and_still_answers_its_result() {
     assert_eq!(
         activity(
             lane(1),
-            &tool(
-                VENDOR_ID,
-                update("command_execution", r#"{"command":"cargo test"}"#)
-            ),
+            &tool(VENDOR_ID, update("bash", r#"{"command":"cargo test"}"#)),
             &mut previews
         ),
-        "cargo test update"
+        "bash: cargo test update"
     );
     assert_eq!(
         activity(lane(1), &tool(VENDOR_ID, succeeded()), &mut previews),
-        "cargo test succeeded"
+        "bash: cargo test succeeded"
     );
 }
 
@@ -332,64 +327,15 @@ fn a_preview_within_the_bound_is_not_elided() {
         "a preview at the bound is whole: {preview}"
     );
 
-    let lone = activity_preview("", &format!(r#""{}""#, "z".repeat(MAX_CHARS * 2)));
+    let lone = ordinary_call_preview("", &format!(r#""{}""#, "z".repeat(MAX_CHARS * 2)));
     assert_eq!(lone.chars().count(), MAX_CHARS);
     assert!(lone.starts_with("tool: z"));
     assert_eq!(informative_tokens(&lone), MIN_INFORMATIVE_TOKENS);
 }
 
 #[test]
-fn generic_command_execution_names_suppress_only_informative_commands() {
-    for (name, arguments) in [
-        ("exec", r#"{"cmd":"cargo test:all --url https://host:443"}"#),
-        (
-            "exec_command",
-            r#"{"cmd":"cargo test:all --url https://host:443"}"#,
-        ),
-        (
-            "command_execution",
-            r#"{"command":"cargo test:all --url https://host:443"}"#,
-        ),
-    ] {
-        assert_eq!(
-            activity_preview(name, arguments),
-            "cargo test:all --url https://host:443",
-            "{name}",
-        );
-    }
-    assert_eq!(
-        activity_preview(
-            "exec_command",
-            r#"{"command":["cargo","test:all","--url","https://host:443"]}"#,
-        ),
-        "cargo test:all --url https://host:443",
-    );
-    assert_eq!(
-        activity_preview("command_execution", "cargo test:all --url https://host:443",),
-        "cargo test:all --url https://host:443",
-    );
-    assert_eq!(
-        activity_preview("unknown_command", r#"{"command":"cargo test:all"}"#),
-        "unknown_command: cargo test:all",
-    );
-    assert_eq!(activity_preview("exec", "null"), "exec: null");
-    assert_eq!(activity_preview("exec_command", "17"), "exec_command: 17");
-    assert_eq!(activity_preview("exec", "{malformed"), "exec command");
-    assert_eq!(
-        activity_preview("exec_command", "{malformed"),
-        "exec_command command"
-    );
-    assert_eq!(
-        activity_preview("command_execution", "cargo test --locked"),
-        "cargo test --locked"
-    );
-}
-
-#[test]
 fn every_generic_activity_keeps_two_informative_tokens() {
     for (name, arguments, expected) in [
-        ("exec", "", "exec command"),
-        ("exec", r#"{"cmd":"pwd"}"#, "exec: pwd"),
         ("Read", "", "Read tool"),
         ("tool", "", "event-raw activity"),
         ("", r#""status""#, "event-raw: status"),
@@ -420,29 +366,29 @@ fn shell_families_remain_visible_without_discarding_their_commands() {
             "shell: git status --short",
         ),
     ] {
-        assert_eq!(activity_preview(name, arguments), expected, "{name}");
+        assert_eq!(ordinary_call_preview(name, arguments), expected, "{name}");
     }
-    assert_eq!(activity_preview("Bash", ""), "Bash shell");
-    assert_eq!(activity_preview("zsh", ""), "zsh shell");
+    assert_eq!(ordinary_call_preview("Bash", ""), "Bash shell");
+    assert_eq!(ordinary_call_preview("zsh", ""), "zsh shell");
 }
 
 #[test]
-fn empty_current_exec_call_remains_visible_through_its_correlated_result() {
+fn an_empty_call_remains_visible_through_its_correlated_result() {
     let mut previews = CallPreviews::default();
     assert_eq!(
         activity(
             lane(1),
-            &tool("current-exec", call("exec", "")),
+            &tool("current-bash", call("bash", "")),
             &mut previews
         ),
-        "exec command",
+        "bash shell",
     );
     assert_eq!(
         activity(
             lane(1),
-            &tool("current-exec", result(listen::ToolResult::Unreported),),
+            &tool("current-bash", result(listen::ToolResult::Unreported)),
             &mut previews,
         ),
-        "exec command completed",
+        "bash shell completed",
     );
 }

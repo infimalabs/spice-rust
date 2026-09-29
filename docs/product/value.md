@@ -42,10 +42,8 @@ their own meaning.
 flowchart TD
   O["operator sends"] --> J["journal accepts one directive fact<br/>atomically"]
   J --> B{"authenticated delivery reader"}
-  B --> V["vendor post-tool hook"]
   B --> S["command-driven supervisor<br/>startup catch-up or resident kick"]
-  V --> K["agent ACKs or declines<br/>operator may cancel"]
-  S --> K
+  S --> K["agent ACKs or declines<br/>operator may cancel"]
   K --> T["journal records the typed disposition"]
   T --> E(("settled"))
   J --> D["lapsed, or PendingInbox terminal-wake<br/>deadlettering from retained live standing,<br/>remains explicit and recoverable"]
@@ -53,10 +51,8 @@ flowchart TD
 ```
 
 The directive is accepted in the journal before any delivery reader is
-notified. Delivery is eligible at both the vendor's post-tool hook and the
-command-driven supervisor. Both obtain the current authenticated journal inbox
-directly, not a filesystem copy. Vendor hooks consult a locked durable
-hook-delivery record. The supervisor catches up at occupant start and reads
+notified. Delivery runs through the command-driven supervisor, which obtains the
+current authenticated journal inbox directly, not a filesystem copy. It catches up at occupant start and reads
 again on resident kicks, with occupant-local deduplication, nudge, interruption,
 and compaction behavior. A *read* never changes disposition. `acked`, `declined`,
 `canceled`, `lapsed`, `deadlettered`, and recovery are distinct durable facts,
@@ -98,8 +94,7 @@ flowchart LR
   S -- "acked, declined,<br/>or canceled" --> D[retired]
 ```
 
-Unanswered steering re-surfaces at an admitted post-tool or top-level shell
-boundary when a named horizon from its publication time has elapsed. Every
+Unanswered steering re-surfaces through the supervisor when a named horizon from its publication time has elapsed. Every
 unanswered directive follows the same horizons and cadence. Escalation retains
 one stable lineage key, so a resend reads as one thread of insistence rather
 than a pile of duplicates.

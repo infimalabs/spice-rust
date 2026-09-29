@@ -124,8 +124,6 @@ pub fn observation(
         RecordStream::Stdout => OutputStream::Stdout,
         RecordStream::Stderr => OutputStream::Stderr,
     };
-    let transport = (record.dialect() == listen::Dialect::Omp)
-        .then(|| Mutex::new(vendor::omp::frame::FrameDecoder::default()));
     Observation::new(
         stream,
         frame_limit,
@@ -138,7 +136,7 @@ pub fn observation(
             tape,
             reporter,
             stage: AtomicU8::new(DeliveryStage::Decode as u8),
-            transport,
+            transport: Mutex::new(vendor::omp::frame::FrameDecoder::default()),
         }),
     )
 }
@@ -157,7 +155,7 @@ struct LaneObserver {
     tape: Tape,
     reporter: Arc<dyn CaptureReporter>,
     stage: AtomicU8,
-    transport: Option<Mutex<vendor::omp::frame::FrameDecoder>>,
+    transport: Mutex<vendor::omp::frame::FrameDecoder>,
 }
 
 impl RecordObserver for LaneObserver {
@@ -166,13 +164,11 @@ impl RecordObserver for LaneObserver {
     }
 
     fn finish(&self) -> Result<(), ObserveError> {
-        if let Some(transport) = &self.transport {
-            transport
-                .lock()
-                .map_err(|_| ObserveError::new("OMP transport lock poisoned"))?
-                .finish()
-                .map_err(|error| ObserveError::new(error.to_string()))?;
-        }
+        self.transport
+            .lock()
+            .map_err(|_| ObserveError::new("OMP transport lock poisoned"))?
+            .finish()
+            .map_err(|error| ObserveError::new(error.to_string()))?;
         Ok(())
     }
 
@@ -204,18 +200,14 @@ impl LaneObserver {
     fn receive(&self, bytes: &[u8], boundary: RecordBoundary) -> Result<(), ObserveError> {
         self.stage
             .store(DeliveryStage::Decode as u8, Ordering::Relaxed);
-        let bytes = if let Some(transport) = &self.transport {
-            let Some(bytes) = transport
-                .lock()
-                .map_err(|_| ObserveError::new("OMP transport lock poisoned"))?
-                .push(bytes)
-                .map_err(|error| ObserveError::new(error.to_string()))?
-            else {
-                return Ok(());
-            };
-            bytes
-        } else {
-            Cow::Borrowed(bytes)
+        let Some(bytes) = self
+            .transport
+            .lock()
+            .map_err(|_| ObserveError::new("OMP transport lock poisoned"))?
+            .push(bytes)
+            .map_err(|error| ObserveError::new(error.to_string()))?
+        else {
+            return Ok(());
         };
         let boundary = if matches!(bytes, Cow::Owned(_)) {
             RecordBoundary::Complete

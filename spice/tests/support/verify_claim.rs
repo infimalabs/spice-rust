@@ -84,7 +84,7 @@ fn install_residency(journal: &mut Journal, repository: &Repository, authority: 
             name: None,
             worktree,
             life: "drive".to_owned(),
-            vendor: "codex".parse().expect("verify fixture vendor"),
+            vendor: "omp".parse().expect("verify fixture vendor"),
             model: None,
             effort: None,
             occupant: Some(occupant),

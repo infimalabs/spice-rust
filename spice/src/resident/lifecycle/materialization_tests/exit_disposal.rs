@@ -16,21 +16,21 @@ use crate::resident::{RuntimePaths, lane_surface};
 /// The key `operator_direction_write` addresses to the fixture lane.
 const DIRECTION_KEY: &str = "1kKRRsDS";
 
-const NARRATION: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"Reading the request before answering it."}]}}
+const NARRATION: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reading the request before answering it."}],"stopReason":"toolUse"}}
 "#;
-const TURN_ENDING_ACK: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: Resumed and finished the request."}]}}
+const TURN_ENDING_ACK: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: Resumed and finished the request."}],"stopReason":"stop"}}
 "#;
-const TURN_ENDING_NAK: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"NAK 1kKRRsDS: The request names a lane this worktree does not hold."}]}}
+const TURN_ENDING_NAK: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"NAK 1kKRRsDS: The request names a lane this worktree does not hold."}],"stopReason":"stop"}}
 "#;
-const TURN_ENDING_SILENCE: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"Finished without answering the direction."}]}}
+const TURN_ENDING_SILENCE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Finished without answering the direction."}],"stopReason":"stop"}}
 "#;
-/// The ack command captured as the only record of its assistant message, with
+/// A tool call captured as the only record of its assistant message, with
 /// the header spelled inside the tool input and nowhere else on the tape.
-const SAME_MESSAGE_TOOL_ACK: &[u8] = br#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"tool_use","id":"toolu_fixture_ack","name":"Bash","input":{"command":"spice ack 1kKRRsDS","description":"ACK 1kKRRsDS: Resumed and finished the request."}}]}}
+const SAME_MESSAGE_TOOL_ACK: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"toolCall","id":"call_fixture_ack","name":"bash","arguments":{"command":"true","description":"ACK 1kKRRsDS: Resumed and finished the request."}}],"stopReason":"toolUse"}}
 "#;
 /// The operator's own message carrying the header, captured as a user record
 /// newer than anything the occupant said.
-const OPERATOR_ACK: &[u8] = br#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"ACK 1kKRRsDS: Resumed and finished the request."}]}}
+const OPERATOR_ACK: &[u8] = br#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"ACK 1kKRRsDS: Resumed and finished the request."}]}}
 "#;
 
 #[test]
@@ -54,7 +54,7 @@ fn a_turn_ending_ack_in_the_final_transcript_retires_the_key_when_the_exit_is_ac
     assert_eq!(fixture.direction_head().disposition, Disposition::Acked);
     assert!(
         fixture.pending_keys().is_empty(),
-        "nothing waits for a successor to run the ack command"
+        "nothing waits for a successor to answer the key"
     );
     let locus = fixture.acked_locus();
     assert_eq!(locus.source, Some(fixture.tape_source()));
@@ -168,7 +168,7 @@ fn a_header_spelled_only_inside_the_final_tool_call_is_not_evidence_and_leaves_t
     assert_eq!(
         fact_kinds(&fixture.bus)[before.len()..],
         [wire::FactKind::LaneExited],
-        "the ack command captured as a tool call is not the acknowledgment"
+        "a header inside tool input is not the acknowledgment"
     );
     assert_eq!(fixture.direction_head().disposition, Disposition::Live);
     assert_eq!(fixture.pending_keys(), [DIRECTION_KEY]);
@@ -247,7 +247,7 @@ impl ExitFixture {
         );
         record_exited_for_tests(&paths, lane(), occupant, session(&root, occupant))
             .expect("the supervisor exit record writes");
-        let tape = tape::Tape::open(paths.tape.join(lane().to_string()).join("claude"))
+        let tape = tape::Tape::open(paths.tape.join(lane().to_string()).join("omp"))
             .expect("the lane tape opens");
         for record in records {
             tape.tee(record).expect("the transcript record is captured");
@@ -319,7 +319,7 @@ impl ExitFixture {
     }
 
     fn tape(&self) -> tape::Tape {
-        tape::Tape::open_existing(self.paths.tape.join(lane().to_string()).join("claude"))
+        tape::Tape::open_existing(self.paths.tape.join(lane().to_string()).join("omp"))
             .expect("the lane tape reopens")
     }
 

@@ -218,9 +218,8 @@ sequenceDiagram
 ### Closed loop: Steering item
 
 The journal-owned disposition, journal-owned presentation stage, and disposable
-delivery projection are orthogonal. A vendor post-tool observation may advance
-its locked durable hook-delivery record; a top-level shell read does not. Neither
-becomes a directive-lifecycle transition.
+delivery projection are orthogonal. No delivery read becomes a
+directive-lifecycle transition.
 
 ```mermaid
 stateDiagram-v2
@@ -251,17 +250,14 @@ Delivery is a direct read of that live standing:
 
 ```mermaid
 flowchart LR
-  J["journal standing is LIVE"] --> H["authenticated vendor-hook read"]
-  J --> S["authenticated supervisor read<br/>at startup or resident kick"]
-  H --> HR["readout under locked<br/>hook-delivery suppression"]
+  J["journal standing is LIVE"] --> S["authenticated supervisor read<br/>at startup or resident kick"]
   S --> SR["occupant-local dedupe, nudge,<br/>interruption, and compaction reset"]
-  HR --> O["observation only;<br/>journal disposition and stage unchanged"]
-  SR --> O
+  SR --> O["observation only;<br/>journal disposition and stage unchanged"]
 ```
 
 **Invariant —** Publish is one accepted journal transaction and is durable before
 delivery readers are notified. The journal's current pending heads are the inbox;
-hooks, supervisors, and the `inbox` command authenticate and read them directly.
+supervisors and the `inbox` command authenticate and read them directly.
 
 **Invariant —** Reads never change disposition. At every live presentation stage,
 `acked`, `declined`, `canceled`, `lapsed`, and `deadlettered` are the same

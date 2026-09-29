@@ -1,4 +1,4 @@
-//! Pure admission of the landed vendor launch configurations.
+//! Pure admission of the oh-my-pi launch configuration.
 
 use serde::de::{Deserializer, Error as _};
 use serde::ser::Serializer;
@@ -6,14 +6,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::Effort;
 
-/// Claude's compiled model selection.
-pub const DEFAULT_CLAUDE_MODEL: &str = "claude-opus-5";
-/// Codex's compiled model selection.
-pub const DEFAULT_CODEX_MODEL: &str = "gpt-5.6-sol";
-/// GPT-5.6 Sol's documented full 1,050,000-token context window.
-///
-/// <https://developers.openai.com/api/docs/models/gpt-5.6-sol>
-pub const DEFAULT_CODEX_MODEL_CONTEXT_WINDOW: u64 = 1_050_000;
 /// oh-my-pi's compiled model selection, matched fuzzily by omp itself.
 pub const DEFAULT_OMP_MODEL: &str = "claude-opus-5";
 /// Input tokens beyond which OpenAI bills a request at long-context rates.
@@ -23,26 +15,16 @@ const OPENAI_LONG_CONTEXT_TOKENS: u64 = 272_000;
 /// bills that million at one rate, so the boundary a Claude must not cross
 /// is its own window, not a price.
 const CLAUDE_HAIKU_CONTEXT_TOKENS: u64 = 200_000;
-/// The least Claude has been seen to compact short of the window it is told,
-/// rounded down: 69 lane compactions against 200,000 landed between 166,418
-/// and 175,600 tokens.
+/// The least a Claude has been seen to compact short of the window it is
+/// told, rounded down: 69 lane compactions against 200,000 landed between
+/// 166,418 and 175,600 tokens.
 const CLAUDE_LEAST_SHORTFALL_TOKENS: u64 = 20_000;
-/// The window Claude is asked to compact against.
-///
-/// Claude takes its window from the environment without regard to the model,
-/// so it is told the one a Claude Haiku tolerates: the trigger lands under
-/// Haiku's window with the rounding and the last exchange's growth to spare,
-/// and a million-token Claude compacts there too.
-pub const DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS: u64 =
-    CLAUDE_HAIKU_CONTEXT_TOKENS + CLAUDE_LEAST_SHORTFALL_TOKENS;
-/// The window Codex is asked to compact against: OpenAI's boundary itself,
-/// since Codex triggers at 95% of it.
-pub const DEFAULT_CODEX_AUTO_COMPACT_WINDOW_TOKENS: u64 = OPENAI_LONG_CONTEXT_TOKENS;
 /// The window oh-my-pi is asked to compact against for a Claude Haiku, or
 /// for a spelling that names no model spice knows: what a 200,000-token
 /// window tolerates, since omp clamps a threshold beneath the model's window
 /// and past that compacts only once a request has overflowed.
-pub const DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS: u64 = DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS;
+pub const DEFAULT_OMP_AUTO_COMPACT_WINDOW_TOKENS: u64 =
+    CLAUDE_HAIKU_CONTEXT_TOKENS + CLAUDE_LEAST_SHORTFALL_TOKENS;
 /// The window oh-my-pi is asked to compact against for a million-token
 /// model, OpenAI's or Anthropic's: OpenAI's boundary, the window omp's own
 /// registry declares for the Codex-served GPT models whose long-context
@@ -131,168 +113,13 @@ fn admitted_string<'de, D: Deserializer<'de>>(
     Ok(value)
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-enum ClaudeEffort {
-    Low,
-    Medium,
-    #[default]
-    High,
-    Xhigh,
-    Max,
-}
-
-impl ClaudeEffort {
-    const fn launch(self) -> Effort {
-        match self {
-            Self::Low => Effort::Low,
-            Self::Medium => Effort::Medium,
-            Self::High => Effort::High,
-            Self::Xhigh => Effort::XHigh,
-            Self::Max => Effort::Max,
-        }
-    }
-}
-
-/// Values the current Claude launch dialect can honor.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct ClaudeConfig {
-    binary: Binary,
-    model: LaunchValue,
-    effort: ClaudeEffort,
-    #[serde(deserialize_with = "positive_window")]
-    auto_compact_window_tokens: u64,
-}
-
-impl Default for ClaudeConfig {
-    fn default() -> Self {
-        Self {
-            binary: Binary::new("claude"),
-            model: LaunchValue::new(DEFAULT_CLAUDE_MODEL),
-            effort: ClaudeEffort::High,
-            auto_compact_window_tokens: DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS,
-        }
-    }
-}
-
-impl ClaudeConfig {
-    /// Executable selected for Claude.
-    #[must_use]
-    pub const fn binary(&self) -> &Binary {
-        &self.binary
-    }
-
-    /// Concrete Claude model spelling.
-    #[must_use]
-    pub fn model(&self) -> &str {
-        self.model.as_str()
-    }
-
-    /// Claude-supported reasoning effort.
-    #[must_use]
-    pub const fn effort(&self) -> Effort {
-        self.effort.launch()
-    }
-
-    /// Positive child auto-compaction window.
-    #[must_use]
-    pub const fn auto_compact_window_tokens(&self) -> u64 {
-        self.auto_compact_window_tokens
-    }
-}
-
-/// Values the current Codex launch dialect can honor.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct CodexConfig {
-    binary: Binary,
-    model: LaunchValue,
-    effort: Effort,
-    #[serde(deserialize_with = "codex_context_window")]
-    model_context_window: u64,
-    #[serde(deserialize_with = "codex_window")]
-    auto_compact_window_tokens: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    personality: Option<LaunchValue>,
-    fast_mode: bool,
-}
-
-impl Default for CodexConfig {
-    fn default() -> Self {
-        Self {
-            binary: Binary::new("codex"),
-            model: LaunchValue::new(DEFAULT_CODEX_MODEL),
-            effort: Effort::High,
-            model_context_window: DEFAULT_CODEX_MODEL_CONTEXT_WINDOW,
-            auto_compact_window_tokens: DEFAULT_CODEX_AUTO_COMPACT_WINDOW_TOKENS,
-            personality: None,
-            fast_mode: false,
-        }
-    }
-}
-
-impl CodexConfig {
-    /// Executable selected for Codex.
-    #[must_use]
-    pub const fn binary(&self) -> &Binary {
-        &self.binary
-    }
-
-    /// Concrete Codex model spelling.
-    #[must_use]
-    pub fn model(&self) -> &str {
-        self.model.as_str()
-    }
-
-    /// Codex reasoning effort.
-    #[must_use]
-    pub const fn effort(&self) -> Effort {
-        self.effort
-    }
-
-    /// Full context window stated on every supervised Codex launch.
-    #[must_use]
-    pub const fn model_context_window(&self) -> u64 {
-        self.model_context_window
-    }
-
-    /// The window Codex is asked to compact against.
-    #[must_use]
-    pub const fn auto_compact_window_tokens(&self) -> u64 {
-        self.auto_compact_window_tokens
-    }
-
-    /// Automatic compaction threshold: Codex's own 95% of the window it is
-    /// asked to compact against, not of the model's full context window.
-    ///
-    /// Dividing before multiplying makes `floor(window * 95 / 100)` exact
-    /// without allowing an admitted signed-64-bit Codex value to overflow.
-    #[must_use]
-    pub const fn model_auto_compact_token_limit(&self) -> u64 {
-        codex_auto_compact_token_limit(self.auto_compact_window_tokens)
-    }
-
-    /// Optional Codex personality spelling.
-    #[must_use]
-    pub fn personality(&self) -> Option<&str> {
-        self.personality.as_ref().map(LaunchValue::as_str)
-    }
-
-    /// Explicit Codex fast-mode disposition.
-    #[must_use]
-    pub const fn fast_mode(&self) -> bool {
-        self.fast_mode
-    }
-}
-
 /// Values the current oh-my-pi RPC launch dialect can honor.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct OmpConfig {
     binary: Binary,
     model: LaunchValue,
-    effort: ClaudeEffort,
+    effort: Effort,
     fast_mode: bool,
     lsp: bool,
     #[serde(
@@ -307,7 +134,7 @@ impl Default for OmpConfig {
         Self {
             binary: Binary::new("omp"),
             model: LaunchValue::new(DEFAULT_OMP_MODEL),
-            effort: ClaudeEffort::High,
+            effort: Effort::High,
             fast_mode: false,
             lsp: false,
             auto_compact_window_tokens: None,
@@ -331,7 +158,7 @@ impl OmpConfig {
     /// Thinking level omp is launched with.
     #[must_use]
     pub const fn effort(&self) -> Effort {
-        self.effort.launch()
+        self.effort
     }
 
     /// Explicit oh-my-pi fast-mode disposition: its priority service tier.
@@ -380,74 +207,19 @@ impl OmpConfig {
     }
 }
 
-/// The closed set of vendor configurations with landed Rust renderers.
+/// The launch configurations with landed Rust renderers.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Config {
-    claude: ClaudeConfig,
-    codex: CodexConfig,
     omp: OmpConfig,
 }
 
 impl Config {
-    /// Admitted Claude launch values.
-    #[must_use]
-    pub const fn claude(&self) -> &ClaudeConfig {
-        &self.claude
-    }
-
-    /// Admitted Codex launch values.
-    #[must_use]
-    pub const fn codex(&self) -> &CodexConfig {
-        &self.codex
-    }
-
     /// Admitted oh-my-pi launch values.
     #[must_use]
     pub const fn omp(&self) -> &OmpConfig {
         &self.omp
     }
-}
-
-fn positive_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
-    let value = u64::deserialize(deserializer)?;
-    if value == 0 {
-        Err(D::Error::custom(
-            "Claude auto-compaction window must be positive",
-        ))
-    } else {
-        Ok(value)
-    }
-}
-
-fn codex_context_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
-    let value = u64::deserialize(deserializer)?;
-    if value == 0 {
-        return Err(D::Error::custom(
-            "Codex model context window must be positive",
-        ));
-    }
-    if value > i64::MAX as u64 {
-        return Err(D::Error::custom(
-            "Codex model context window must fit Codex's signed 64-bit configuration",
-        ));
-    }
-    Ok(value)
-}
-
-fn codex_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
-    let value = u64::deserialize(deserializer)?;
-    if value > i64::MAX as u64 {
-        return Err(D::Error::custom(
-            "Codex auto-compaction window must fit Codex's signed 64-bit configuration",
-        ));
-    }
-    if codex_auto_compact_token_limit(value) == 0 {
-        return Err(D::Error::custom(
-            "Codex auto-compaction window must yield a positive 95% auto-compaction limit",
-        ));
-    }
-    Ok(value)
 }
 
 fn omp_window<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
@@ -506,24 +278,9 @@ pub const fn omp_auto_compact_threshold_tokens(window: u64) -> u64 {
     window.saturating_sub(reserve)
 }
 
-/// Derive Codex's automatic compaction threshold without overflowing.
-#[must_use]
-pub const fn codex_auto_compact_token_limit(context_window: u64) -> u64 {
-    let hundreds = context_window / 100;
-    let remainder = context_window % 100;
-    hundreds * 95 + remainder * 95 / 100
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn codex(auto_compact_window_tokens: u64) -> CodexConfig {
-        serde_json::from_value(serde_json::json!({
-            "auto_compact_window_tokens": auto_compact_window_tokens,
-        }))
-        .expect("Codex configuration admits")
-    }
 
     fn omp(auto_compact_window_tokens: u64) -> Result<OmpConfig, serde_json::Error> {
         serde_json::from_value(serde_json::json!({
@@ -620,22 +377,5 @@ mod tests {
             serde_json::from_value(serde_json::json!({"auto_compact_window_tokens": null}))
                 .expect("a null window admits");
         assert_eq!(unset.auto_compact_window_tokens(), 272_000);
-    }
-
-    #[test]
-    fn codex_compaction_limit_is_exact_for_non_round_and_boundary_windows() {
-        let non_round = codex(101);
-        assert_eq!(non_round.model_auto_compact_token_limit(), 95);
-
-        let boundary = codex(i64::MAX as u64);
-        assert_eq!(
-            boundary.model_auto_compact_token_limit(),
-            8_762_203_435_012_037_016
-        );
-        assert!(boundary.model_auto_compact_token_limit() < boundary.auto_compact_window_tokens());
-        assert_eq!(
-            CodexConfig::default().model_auto_compact_token_limit(),
-            258_400
-        );
     }
 }

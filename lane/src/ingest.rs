@@ -547,8 +547,8 @@ mod tests {
 
     const LANE: &str = "018f82d4-6f59-7d06-92e3-bce913116305";
     const PROSE: &[u8] =
-        br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"working"}}"#;
-    const USAGE: &[u8] = br#"{"type":"turn.completed","usage":{"input_tokens":11,"cached_input_tokens":7,"cache_write_input_tokens":3,"output_tokens":5,"reasoning_output_tokens":2}}"#;
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"working"}],"stopReason":"stop"}}"#;
+    const USAGE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[],"usage":{"input":11,"output":5,"cacheRead":7,"cacheWrite":3},"stopReason":"stop"}}"#;
     const RESIDUE: &[u8] = b"not-json";
 
     /// A pending record is only pending until its delimiter arrives.
@@ -945,10 +945,10 @@ mod tests {
     fn ingestion(root: &Path) -> Ingestion {
         Ingestion {
             lane: LANE.parse().expect("fixture lane"),
-            vendor: "codex".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             stream: "session".to_owned(),
             root: root.to_path_buf(),
-            dialect: Dialect::Codex,
+            dialect: Dialect::Omp,
             actor: Actor::Spice,
             origin: format!("lane:{LANE}").parse().expect("lane origin"),
             at: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
@@ -969,7 +969,7 @@ mod tests {
     }
 
     fn head(journal: &Journal) -> Option<TranscriptSourceHead> {
-        let vendor = "codex".parse().expect("fixture vendor");
+        let vendor = "omp".parse().expect("fixture vendor");
         let lane: CanonicalUuid = LANE.parse().expect("fixture lane");
         journal
             .read(|read| {

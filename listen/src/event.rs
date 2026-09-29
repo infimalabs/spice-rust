@@ -148,8 +148,6 @@ pub enum ProseRole {
 pub enum ReasoningContent {
     /// Plain reasoning text reported by the vendor.
     Plain(Vec<String>),
-    /// A reasoning item exists, but its text is encrypted or withheld.
-    Opaque,
 }
 
 /// A reasoning moment.

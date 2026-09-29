@@ -101,23 +101,6 @@ impl LiveMeter {
         })
     }
 
-    /// Read ordinary hook status through one authenticated lane identity.
-    pub fn working_state_for_lane(
-        root: &Path,
-        selected: wire::CanonicalUuid,
-    ) -> Result<WorkingState, String> {
-        let repository = crate::repository::Repository::discover(root)
-            .map_err(|error| format!("working-state repository is unavailable: {error}"))?;
-        let state = repository
-            .admit_state()
-            .map_err(|error| format!("working-state paths are unavailable: {error}"))?;
-        let reader = JournalReader::open(state.journal())
-            .map_err(|error| format!("working-state journal is unavailable: {error}"))?;
-        reader
-            .read(move |read| collect_selected(read, selected))
-            .map_err(|error| format!("working-state board is unavailable: {error}"))
-    }
-
     /// Collect and reduce one current board observation.
     ///
     /// Every error is intended to become silence at the wrapper boundary.
@@ -227,34 +210,6 @@ fn collect(
         });
     };
     collect_lane(read, &residency, lane, actor, prior_active)
-}
-
-fn collect_selected(
-    read: &journal::JournalRead<'_>,
-    selected: wire::CanonicalUuid,
-) -> Result<WorkingState, journal::GuardError> {
-    let Some(residency) = read
-        .residency_head()?
-        .filter(|head| head.body().state == ResidentState::Seated)
-    else {
-        return Ok(WorkingState::default());
-    };
-    let Some(lane) = residency
-        .body()
-        .lanes
-        .iter()
-        .find(|lane| lane.lane == selected)
-    else {
-        return Ok(WorkingState::default());
-    };
-    let Some(session) = &lane.session else {
-        return Ok(WorkingState::default());
-    };
-    let actor = ProcessActor {
-        vendor: session.vendor.to_string(),
-        identity: session.identity.clone(),
-    };
-    collect_lane(read, &residency, lane, &actor, None).map(|observation| observation.state)
 }
 
 fn collect_lane(

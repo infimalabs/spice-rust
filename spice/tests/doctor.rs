@@ -145,7 +145,7 @@ fn healthy_fixture() -> HealthyFixture {
 
     let repository = Scratch::repository("healthy");
     repository.tracked("[lane]\nlease = \"20m\"\n");
-    repository.worktree("[vendor.codex]\nmodel = 'lane-model'\n");
+    repository.worktree("[vendor.omp]\nmodel = 'lane-model'\n");
     let journal = repository
         .path()
         .join(".git/.spice-rs/data/spicejournal.sqlite3");
@@ -431,9 +431,10 @@ fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, re
             .any(|row| { row.path == "listen.window" && row.source == ConfigSource::Local })
     );
     assert!(
-        report.provenance.iter().any(|row| {
-            row.path == "vendor.codex.model" && row.source == ConfigSource::Worktree
-        })
+        report
+            .provenance
+            .iter()
+            .any(|row| { row.path == "vendor.omp.model" && row.source == ConfigSource::Worktree })
     );
     assert!(
         report
@@ -448,7 +449,7 @@ fn assert_locations_configuration_and_provenance(report: &DoctorReport<Root>, re
             .any(|row| row.source == ConfigSource::Builtin)
     );
     assert_eq!(report.configuration.lane().lease().to_string(), "20m");
-    assert_eq!(report.configuration.vendor().codex().model(), "lane-model");
+    assert_eq!(report.configuration.vendor().omp().model(), "lane-model");
     assert_eq!(
         report.configuration.listen().window_word().to_string(),
         "45s"

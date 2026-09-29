@@ -20,10 +20,7 @@ mod recovery;
 #[path = "session_cli/window_planner.rs"]
 mod window_planner;
 
-use fixtures::{
-    assert_commit_rows, assert_filtered_timeline, codex_event, codex_message,
-    codex_message_content, token_payload, transcript_event,
-};
+use fixtures::{assert_commit_rows, assert_filtered_timeline};
 
 const REFUSAL_EXIT: i32 = 2;
 
@@ -76,10 +73,6 @@ fn invoke_in(
     let mut command = Command::new(env!("CARGO_BIN_EXE_spice"));
     command
         .args(argv)
-        .env_remove("CODEX_THREAD_ID") // env-policy: allow
-        .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
-        .env_remove("CODEX_HOME")
-        .env_remove("CLAUDE_CONFIG_DIR")
         .env_remove("PI_CODING_AGENT_DIR")
         .env_remove(vendor::omp::SESSION_ENVIRONMENT)
         .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
@@ -195,311 +188,191 @@ fn append_jsonl(path: &Path, rows: &[Value]) {
     }
 }
 
-fn codex_first_turn_rows() -> Vec<Value> {
-    let command_arguments = json!({
-        "cmd": "cargo check | rg error",
-        "workdir": "/repo",
+/// The omp thread the shared transcript fixture declares.
+const THREAD: &str = "01a0a943-9fda-77b0-bf4e-10879cc619e1";
+
+fn omp_header(id: &str, timestamp: &str) -> Value {
+    json!({"type": "session", "version": 3, "id": id, "timestamp": timestamp, "cwd": "/repo"})
+}
+
+fn omp_entry(timestamp: &str, id: &str, message: Value) -> Value {
+    json!({"type": "message", "id": id, "parentId": null, "timestamp": timestamp, "message": message})
+}
+
+fn omp_user(timestamp: &str, id: &str, text: &str) -> Value {
+    omp_entry(
+        timestamp,
+        id,
+        json!({"role": "user", "content": [{"type": "text", "text": text}]}),
+    )
+}
+
+fn omp_assistant(timestamp: &str, id: &str, content: Value, stop: &str) -> Value {
+    omp_entry(
+        timestamp,
+        id,
+        json!({"role": "assistant", "content": content, "stopReason": stop}),
+    )
+}
+
+fn omp_text(timestamp: &str, id: &str, text: &str, stop: &str) -> Value {
+    omp_assistant(timestamp, id, json!([{"type": "text", "text": text}]), stop)
+}
+
+fn omp_call(timestamp: &str, id: &str, call: &str, tool: &str, arguments: Value) -> Value {
+    omp_assistant(
+        timestamp,
+        id,
+        json!([{"type": "toolCall", "id": call, "name": tool, "arguments": arguments}]),
+        "toolUse",
+    )
+}
+
+fn omp_result(timestamp: &str, id: &str, call: &str, tool: &str, exit_code: Option<i32>) -> Value {
+    let mut message = json!({
+        "role": "toolResult",
+        "toolCallId": call,
+        "toolName": tool,
+        "content": [{"type": "text", "text": "done"}],
+        "isError": exit_code.is_some_and(|code| code != 0),
+    });
+    if let Some(code) = exit_code {
+        message["details"] = json!({"exitCode": code});
+    }
+    omp_entry(timestamp, id, message)
+}
+
+fn with_usage(mut entry: Value, input: u64, cached: u64, output: u64) -> Value {
+    entry["message"]["usage"] =
+        json!({"input": input, "output": output, "cacheRead": cached, "cacheWrite": 0});
+    entry
+}
+
+/// One persisted omp compaction; `kept` names the entry it kept, which is
+/// what distinguishes one compaction from another.
+fn omp_compaction(timestamp: &str, id: &str, summary: &str, kept: &str) -> Value {
+    json!({
+        "type": "compaction",
+        "id": id,
+        "parentId": null,
+        "timestamp": timestamp,
+        "summary": summary,
+        "firstKeptEntryId": kept,
+        "tokensBefore": 200,
     })
-    .to_string();
-    let patch_arguments = json!({
-        "input": concat!(
-            "*** Begin Patch\n",
-            "*** Update File: spice/src/session.rs\n",
-            "@@\n-old\n+new\n",
-            "*** End Patch",
-        ),
-    })
-    .to_string();
+}
+
+const COMPACTION_SUMMARY: &str = concat!(
+    "1. Primary Request and Intent\n",
+    "- preserve session forensics\n",
+    "2. Work Completed\n",
+    "- first turn",
+);
+
+fn omp_rows(thread: &str) -> Vec<Value> {
     vec![
-        codex_event(
-            "2026-01-01T00:00:00Z",
-            "session_meta",
-            json!({"type": "session_meta"}),
-        ),
-        codex_event(
-            "2026-01-01T00:00:01Z",
-            "event_msg",
-            json!({"type": "task_started", "turn_id": "turn-one"}),
-        ),
-        codex_message(
+        omp_header(thread, "2026-01-01T00:00:00.000Z"),
+        omp_user(
             "2026-01-01T00:00:02Z",
-            "user",
-            None,
+            "u1",
             "Please implement parity; it must preserve evidence.",
         ),
-        codex_message(
-            "2026-01-01T00:00:03Z",
-            "assistant",
-            Some("commentary"),
-            "I am inspecting the transcript.",
-        ),
-        codex_event(
-            "2026-01-01T00:00:04Z",
-            "response_item",
-            json!({
-                "type": "function_call",
-                "name": "exec_command",
-                "call_id": "command-one",
-                "arguments": command_arguments,
-            }),
-        ),
-        codex_event(
-            "2026-01-01T00:00:05Z",
-            "response_item",
-            json!({
-                "type": "function_call_output",
-                "call_id": "command-one",
-                "output": "Process exited with code 1\nfinal output",
-            }),
-        ),
-        codex_event(
-            "2026-01-01T00:00:06Z",
-            "response_item",
-            json!({
-                "type": "function_call",
-                "name": "apply_patch",
-                "call_id": "patch-one",
-                "arguments": patch_arguments,
-            }),
-        ),
-        codex_event(
-            "2026-01-01T00:00:07Z",
-            "response_item",
-            token_payload(100, 40, 20, 5, 125),
-        ),
-        codex_message(
-            "2026-01-01T00:00:08Z",
-            "assistant",
-            Some("final_answer"),
-            "Committed abcdef1 after verification.",
-        ),
-        codex_event(
-            "2026-01-01T00:00:09Z",
-            "event_msg",
-            json!({
-                "type": "task_complete",
-                "turn_id": "turn-one",
-                "last_agent_message": "Committed abcdef1 after verification.",
-            }),
-        ),
-        codex_event("2026-01-01T00:00:10Z", "compacted", json!({})),
-    ]
-}
-
-fn codex_second_turn_rows() -> Vec<Value> {
-    vec![
-        codex_event(
-            "2026-01-01T00:00:11Z",
-            "event_msg",
-            json!({"type": "task_started", "turn_id": "turn-two"}),
-        ),
-        codex_message(
-            "2026-01-01T00:00:12Z",
-            "user",
-            None,
-            concat!(
-                "This session is being continued from a previous conversation\n",
-                "1. Primary Request and Intent\n",
-                "- preserve session forensics\n",
-                "2. Work Completed\n",
-                "- first turn",
+        with_usage(
+            omp_assistant(
+                "2026-01-01T00:00:03Z",
+                "a1",
+                json!([
+                    {"type": "text", "text": "I am inspecting the transcript."},
+                    {"type": "toolCall", "id": "command-one", "name": "bash",
+                        "arguments": {"command": "cargo check | rg error", "cwd": "/repo"}},
+                ]),
+                "toolUse",
             ),
+            100,
+            40,
+            20,
         ),
-        codex_message(
+        omp_result("2026-01-01T00:00:05Z", "r1", "command-one", "bash", Some(1)),
+        omp_call(
+            "2026-01-01T00:00:06Z",
+            "a2",
+            "patch-one",
+            "write",
+            json!({"path": "spice/src/session.rs", "content": "new"}),
+        ),
+        omp_result("2026-01-01T00:00:07Z", "r2", "patch-one", "write", None),
+        with_usage(
+            omp_text(
+                "2026-01-01T00:00:08Z",
+                "a3",
+                "Committed abcdef1 after verification.",
+                "stop",
+            ),
+            140,
+            60,
+            30,
+        ),
+        omp_compaction("2026-01-01T00:00:10Z", "c1", COMPACTION_SUMMARY, "u2"),
+        omp_user(
             "2026-01-01T00:00:13Z",
-            "user",
-            None,
+            "u2",
             "Finish the second window without losing identity.",
         ),
-        codex_event(
+        omp_call(
             "2026-01-01T00:00:14Z",
-            "event_msg",
-            json!({
-                "type": "exec_command_end",
-                "turn_id": "turn-two",
-                "command": "spice run -- cargo test | spice run -- rg ok",
-                "cwd": "/repo",
-                "exit_code": 0,
-                "status": "completed",
-            }),
+            "a4",
+            "command-two",
+            "shell",
+            json!({"command": "spice run -- cargo test | spice run -- rg ok"}),
         ),
-        codex_event(
+        omp_result(
+            "2026-01-01T00:00:14.500Z",
+            "r3",
+            "command-two",
+            "shell",
+            Some(0),
+        ),
+        omp_call(
             "2026-01-01T00:00:15Z",
-            "event_msg",
-            json!({
-                "type": "web_search_end",
-                "call_id": "ws-session-parity",
-                "query": "session parity",
-                "action": {
-                    "type": "search",
-                    "query": "session parity",
-                    "queries": ["session parity"],
-                },
-            }),
+            "a5",
+            "search-one",
+            "web_search",
+            json!({"query": "session parity"}),
         ),
-        codex_event(
-            "2026-01-01T00:00:15.001Z",
-            "response_item",
-            json!({
-                "type": "web_search_call",
-                "status": "completed",
-                "action": {
-                    "type": "search",
-                    "query": "session parity",
-                    "queries": ["session parity"],
-                },
-            }),
-        ),
-        codex_event(
-            "2026-01-01T00:00:16Z",
-            "response_item",
-            token_payload(140, 60, 30, 10, 180),
-        ),
-        codex_message(
-            "2026-01-01T00:00:17Z",
-            "assistant",
-            Some("final_answer"),
-            "Commit 1234abc completes the port.",
-        ),
-        codex_event(
-            "2026-01-01T00:00:18Z",
-            "event_msg",
-            json!({
-                "type": "task_complete",
-                "turn_id": "turn-two",
-                "last_agent_message": "Commit 1234abc after abcdef1, not 1234567.",
-            }),
-        ),
-    ]
-}
-
-fn codex_aborted_turn_rows() -> Vec<Value> {
-    vec![
-        codex_event(
-            "2026-01-01T00:00:19Z",
-            "event_msg",
-            json!({"type": "task_started", "turn_id": "turn-three"}),
-        ),
-        codex_message(
-            "2026-01-01T00:00:20Z",
-            "user",
+        omp_result(
+            "2026-01-01T00:00:15.500Z",
+            "r4",
+            "search-one",
+            "web_search",
             None,
-            "Interrupt this turn cleanly.",
         ),
-        codex_event(
-            "2026-01-01T00:00:21Z",
-            "event_msg",
-            json!({
-                "type": "turn_aborted",
-                "turn_id": "turn-three",
-                "reason": "interrupted",
-            }),
+        omp_text(
+            "2026-01-01T00:00:17Z",
+            "a6",
+            "Commit 1234abc completes the port.",
+            "stop",
         ),
+        omp_user("2026-01-01T00:00:20Z", "u3", "Interrupt this turn cleanly."),
+        omp_assistant("2026-01-01T00:00:21Z", "a7", json!([]), "aborted"),
     ]
 }
 
-fn codex_rows() -> Vec<Value> {
-    let mut rows = codex_first_turn_rows();
-    rows.extend(codex_second_turn_rows());
-    rows.extend(codex_aborted_turn_rows());
-    rows
-}
-
-fn claude_rows() -> Vec<Value> {
+fn omp_peer_rows() -> Vec<Value> {
     vec![
-        transcript_event(
-            "2026-01-02T00:00:01Z",
-            "user",
-            json!({
-                "promptId": "prompt-one",
-                "message": {"type": "message", "role": "user", "content": [{
-                    "type": "text",
-                    "text": "Can you inspect Claude evidence?",
-                }]},
-            }),
+        omp_header(
+            "01a0a943-9fda-77b0-bf4e-10879cc619e2",
+            "2026-01-02T00:00:00.000Z",
         ),
-        transcript_event(
-            "2026-01-02T00:00:02Z",
-            "assistant",
-            json!({"message": {"type": "message", "role": "assistant",
-                "content": [
-                    {"type": "text", "text": "I will inspect it."},
-                    {
-                        "type": "tool_use",
-                        "id": "claude-command",
-                        "name": "Bash",
-                        "input": {
-                            "command": "spice run -- cargo check",
-                            "cwd": "/repo",
-                        },
-                    },
-                ],
-                "usage": {
-                    "input_tokens": 20,
-                    "cache_read_input_tokens": 5,
-                    "output_tokens": 8,
-                },
-            }}),
-        ),
-        transcript_event(
-            "2026-01-02T00:00:03Z",
-            "user",
-            json!({
-                "promptId": "prompt-one",
-                "message": {"type": "message", "role": "user", "content": [{
-                    "type": "tool_result",
-                    "tool_use_id": "claude-command",
-                    "content": "Process exited with code 0",
-                }]},
-            }),
-        ),
-        transcript_event(
-            "2026-01-02T00:00:04Z",
-            "assistant",
-            json!({"message": {"type": "message", "role": "assistant",
-                "content": [{"type": "text", "text": "Claude evidence is intact."}],
-                "stop_reason": "end_turn",
-                "usage": {
-                    "input_tokens": 25,
-                    "cache_read_input_tokens": 6,
-                    "output_tokens": 9,
-                },
-            }}),
-        ),
-        transcript_event(
-            "2026-01-02T00:00:05Z",
-            "summary",
-            json!({"summary": concat!(
-                "This session is being continued from a previous conversation\n",
-                "1. Primary Request and Intent\n",
-                "- preserve Claude discovery\n",
-                "2. Work Completed\n",
-                "- inspection",
-            )}),
-        ),
-        transcript_event(
+        omp_user(
             "2026-01-02T00:00:06Z",
-            "user",
-            json!({
-                "promptId": "prompt-two",
-                "message": {"type": "message", "role": "user", "content": [{
-                    "type": "text",
-                    "text": "Finish Claude reconstruction.",
-                }]},
-            }),
+            "u1",
+            "Finish the peer reconstruction.",
         ),
-        transcript_event(
+        omp_text(
             "2026-01-02T00:00:07Z",
-            "assistant",
-            json!({"message": {"type": "message", "role": "assistant",
-                "content": [{"type": "text", "text": "Committed fedcba9 after abcdef1."}],
-                "stop_reason": "end_turn",
-                "usage": {
-                    "input_tokens": 30,
-                    "cache_read_input_tokens": 8,
-                    "output_tokens": 10,
-                },
-            }}),
+            "a1",
+            "Committed fedcba9 after abcdef1.",
+            "stop",
         ),
     ]
 }
@@ -520,10 +393,8 @@ fn assert_recall_and_commands(file: &str, start: &str, end: &str) {
             end,
             "--contains",
             "preserve evidence",
-            "--turn-id",
-            "turn-one",
             "--tool",
-            "apply_patch",
+            "write",
             "--max-lines",
             "40",
             "--max-bytes",
@@ -590,8 +461,6 @@ fn assert_compactions_and_messages(file: &str, start: &str, end: &str) {
             end,
             "--contains",
             "must preserve",
-            "--turn-id",
-            "turn-one",
             "--side",
             "user",
             "--side",
@@ -627,10 +496,8 @@ fn assert_phases_slices_and_summary(file: &str, start: &str, end: &str) {
             end,
             "--contains",
             "preserve evidence",
-            "--turn-id",
-            "turn-one",
             "--tool",
-            "apply_patch",
+            "write",
             "--limit",
             "2",
             "--examples",
@@ -684,10 +551,8 @@ fn assert_sweep_and_timeline(file: &str, start: &str, end: &str) {
             end,
             "--contains",
             "preserve evidence",
-            "--turn-id",
-            "turn-one",
             "--tool",
-            "apply_patch",
+            "write",
             "--count",
             "2",
             "--deadline-seconds",
@@ -714,10 +579,8 @@ fn assert_sweep_and_timeline(file: &str, start: &str, end: &str) {
             end,
             "--contains",
             "preserve evidence",
-            "--turn-id",
-            "turn-one",
             "--tool",
-            "apply_patch",
+            "write",
             "--limit",
             "2",
             "--max-text",
@@ -751,10 +614,8 @@ fn assert_tokens_turns_and_pipelines(file: &str, start: &str, end: &str) {
             end,
             "--contains",
             "preserve evidence",
-            "--turn-id",
-            "turn-one",
             "--tool",
-            "apply_patch",
+            "write",
             "--limit",
             "2",
             "--view",
@@ -764,7 +625,6 @@ fn assert_tokens_turns_and_pipelines(file: &str, start: &str, end: &str) {
         "turns",
     );
     assert_eq!(turns["rows"].as_array().map(Vec::len), Some(1));
-    assert_eq!(turns["rows"][0]["turn_id"], "turn-one");
 
     let all_commands = reply_forms(
         &strings(&["session", "commands", file, "--limit", "5"]),
@@ -781,8 +641,8 @@ fn assert_tokens_turns_and_pipelines(file: &str, start: &str, end: &str) {
 #[test]
 fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     let scratch = Scratch::new("query-family");
-    let transcript = scratch.path().join("codex-session.jsonl");
-    write_jsonl(&transcript, &codex_rows());
+    let transcript = scratch.path().join("omp-session.jsonl");
+    write_jsonl(&transcript, &omp_rows(THREAD));
     let file = transcript.to_string_lossy().into_owned();
     let start = "2026-01-01T00:00:00Z";
     let end = "2026-01-01T00:00:18Z";
@@ -794,8 +654,8 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     append_jsonl(
         &transcript,
         &[
-            codex_event("2026-01-02T00:00:00Z", "compacted", json!({})),
-            codex_event("2026-01-02T00:00:01Z", "compacted", json!({})),
+            omp_compaction("2026-01-02T00:00:00Z", "c2", COMPACTION_SUMMARY, "later-2"),
+            omp_compaction("2026-01-02T00:00:01Z", "c3", COMPACTION_SUMMARY, "later-3"),
         ],
     );
     let latest = reply_forms(
@@ -808,17 +668,13 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     let tail = (0..=4_096)
         .flat_map(|index| {
             let timestamp = format!("2026-01-03T00:00:00.{index:06}Z");
-            let turn = format!("tail-{index}");
             [
-                codex_event(
+                omp_user(&timestamp, &format!("tail-user-{index}"), "tail prompt"),
+                omp_text(
                     &timestamp,
-                    "event_msg",
-                    json!({"type": "task_started", "turn_id": turn}),
-                ),
-                codex_event(
-                    &timestamp,
-                    "event_msg",
-                    json!({"type": "task_complete", "turn_id": turn}),
+                    &format!("tail-final-{index}"),
+                    "tail final",
+                    "stop",
                 ),
             ]
         })
@@ -833,12 +689,12 @@ fn every_session_query_accepts_current_filters_and_crosses_both_forms() {
     scratch.remove();
 }
 
-fn assert_codex_final_rows(codex: &str) {
+fn assert_final_rows(file: &str) {
     let oldest = reply_forms(
         &strings(&[
             "session",
             "messages",
-            codex,
+            file,
             "--side",
             "assistant",
             "--phase-kind",
@@ -848,7 +704,7 @@ fn assert_codex_final_rows(codex: &str) {
         &[],
         "messages",
     );
-    assert_eq!(oldest["rows"].as_array().map(Vec::len), Some(3));
+    assert_eq!(oldest["rows"].as_array().map(Vec::len), Some(2));
     assert_eq!(
         oldest["rows"][0]["text"],
         "Committed abcdef1 after verification."
@@ -858,152 +714,41 @@ fn assert_codex_final_rows(codex: &str) {
         "Commit 1234abc completes the port."
     );
     assert_eq!(
-        oldest["rows"][2]["text"],
-        "Commit 1234abc after abcdef1, not 1234567."
-    );
-    assert_eq!(
         reply_forms(
-            &strings(&["session", "messages", codex, "--limit", "1"]),
+            &strings(&["session", "messages", file, "--limit", "1"]),
             &[],
             "messages"
         )["rows"][0]["text"],
         "Interrupt this turn cleanly."
     );
-}
 
-fn assert_codex_turn_and_recall_rows(codex: &str) {
-    let codex_turns = reply_forms(
-        &strings(&["session", "turns", codex, "--view", "full"]),
+    let turns = reply_forms(
+        &strings(&["session", "turns", file, "--view", "full"]),
         &[],
         "turns",
     );
-    let codex_turns = codex_turns["rows"]
-        .as_array()
-        .expect("Codex turns are typed");
-    assert_eq!(codex_turns.len(), 3);
-    let first_final_count = codex_turns[0]["dialogue"]
-        .as_array()
-        .expect("turn dialogue is typed")
-        .iter()
-        .filter(|message| message["text"] == "Committed abcdef1 after verification.")
-        .count();
-    assert_eq!(
-        first_final_count, 1,
-        "the repeated Codex final crosses once"
-    );
-    let second_assistant = codex_turns[1]["dialogue"]
-        .as_array()
-        .expect("turn dialogue is typed")
-        .iter()
-        .filter(|message| message["side"] == "assistant")
-        .map(|message| message["text"].as_str().expect("dialogue text is typed"))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        second_assistant,
-        [
-            "Commit 1234abc completes the port.",
-            "Commit 1234abc after abcdef1, not 1234567.",
-        ]
-    );
-    assert_eq!(codex_turns[2]["turn_id"], "turn-three");
-    assert_eq!(codex_turns[2]["completed"], true);
-
-    let codex_recall = reply_forms(
-        &strings(&[
-            "session",
-            "briefing",
-            codex,
-            "--start",
-            "2026-01-01T00:00:00Z",
-            "--turn-id",
-            "turn-one",
-        ]),
-        &[],
-        "recall",
-    );
-    let recall_dialogue = codex_recall["window"]["turns"][0]["dialogue"]
-        .as_array()
-        .expect("recall dialogue is typed");
-    assert_eq!(
-        recall_dialogue
-            .iter()
-            .filter(|message| message["text"] == "Committed abcdef1 after verification.")
-            .count(),
-        1,
-        "recall projects the repeated Codex final once"
-    );
-}
-
-fn assert_claude_identity_rows(codex: &str, claude: &str) {
-    let tokens = reply_forms(&strings(&["session", "tokens", claude]), &[], "tokens");
-    assert_eq!(tokens["usage"][0]["snapshots"], 3);
-    assert_eq!(tokens["usage"][0]["input"], 75);
-    assert_eq!(tokens["usage"][0]["cached"], 19);
-    assert_eq!(tokens["usage"][0]["output"], 27);
-
-    let claude_messages = reply_forms(
-        &strings(&[
-            "session",
-            "messages",
-            claude,
-            "--turn-id",
-            "prompt-one",
-            "--side",
-            "user",
-            "--oldest-first",
-        ]),
-        &[],
-        "messages",
-    );
-    assert_eq!(claude_messages["rows"].as_array().map(Vec::len), Some(1));
-    assert_eq!(claude_messages["rows"][0]["turn_id"], "prompt-one");
-
-    let claude_turns = reply_forms(
-        &strings(&[
-            "session",
-            "turns",
-            claude,
-            "--turn-id",
-            "prompt-one",
-            "--view",
-            "full",
-        ]),
-        &[],
-        "turns",
-    );
-    assert_eq!(claude_turns["rows"].as_array().map(Vec::len), Some(1));
-    assert_eq!(claude_turns["rows"][0]["turn_id"], "prompt-one");
-
-    assert_filtered_timeline(codex, claude);
-
-    let recall = reply_forms(
-        &strings(&["session", "briefing", claude, "--turn-id", "prompt-two"]),
-        &[],
-        "recall",
-    );
-    assert_eq!(recall["window"]["turns"].as_array().map(Vec::len), Some(1));
-    assert_eq!(recall["window"]["turns"][0]["turn_id"], "prompt-two");
+    let turns = turns["rows"].as_array().expect("turns are typed");
+    assert_eq!(turns.len(), 3);
+    assert_eq!(turns[2]["completed"], true, "an aborted turn still ends");
 }
 
 #[test]
-fn provider_turn_identity_and_final_deduplication_cross_query_folds() {
-    let scratch = Scratch::new("provider-identity");
-    let codex_path = scratch.path().join("codex.jsonl");
-    let claude_path = scratch.path().join("claude.jsonl");
-    write_jsonl(&codex_path, &codex_rows());
-    write_jsonl(&claude_path, &claude_rows());
-    let codex = codex_path.to_string_lossy();
-    let claude = claude_path.to_string_lossy();
+fn commits_finals_and_timelines_fold_across_sources() {
+    let scratch = Scratch::new("cross-source");
+    let primary_path = scratch.path().join("primary.jsonl");
+    let peer_path = scratch.path().join("peer.jsonl");
+    write_jsonl(&primary_path, &omp_rows(THREAD));
+    write_jsonl(&peer_path, &omp_peer_rows());
+    let primary = primary_path.to_string_lossy();
+    let peer = peer_path.to_string_lossy();
     let commits = reply_forms(
-        &strings(&["session", "commits", &codex, &claude, "--limit", "3"]),
+        &strings(&["session", "commits", &primary, &peer, "--limit", "3"]),
         &[],
         "commits",
     );
-    assert_commit_rows(&commits, &codex, &claude);
-
-    assert_codex_final_rows(&codex);
-    assert_codex_turn_and_recall_rows(&codex);
-    assert_claude_identity_rows(&codex, &claude);
+    assert_commit_rows(&commits, &primary, &peer);
+    assert_final_rows(&primary);
+    assert_filtered_timeline(&primary, &peer);
 
     scratch.remove();
 }
@@ -1012,26 +757,22 @@ fn provider_turn_identity_and_final_deduplication_cross_query_folds() {
 fn token_reporting_contains_invalid_time_and_keeps_an_unknown_context_unknown() {
     let scratch = Scratch::new("token-admission");
     let path = scratch.path().join("usage.jsonl");
-    let invalid = codex_event(
-        "not-a-timestamp",
-        "response_item",
-        json!({
-            "type": "token_count",
-            "info": {
-                "last_token_usage": {
-                    "input_tokens": 999,
-                    "total_tokens": 999,
-                },
-                "model_context_window": 200_000,
-            },
-        }),
+    let invalid = with_usage(
+        omp_text("not-a-timestamp", "a1", "spent", "stop"),
+        999,
+        0,
+        0,
     );
-    let valid_unknown = codex_event(
-        "2026-01-01T00:00:01Z",
-        "response_item",
-        token_payload(7, 0, 2, 0, 9),
+    let valid_unknown = with_usage(
+        omp_text("2026-01-01T00:00:01Z", "a1", "spent", "stop"),
+        7,
+        0,
+        2,
     );
-    write_jsonl(&path, &[invalid]);
+    write_jsonl(
+        &path,
+        &[omp_header(THREAD, "2026-01-01T00:00:00.000Z"), invalid],
+    );
 
     let invalid_tokens = reply_forms(
         &strings(&["session", "tokens", &path.to_string_lossy()]),
@@ -1042,8 +783,14 @@ fn token_reporting_contains_invalid_time_and_keeps_an_unknown_context_unknown() 
     assert_eq!(invalid_tokens["usage"][0]["source"], "TOTAL");
     assert_eq!(invalid_tokens["usage"][0]["snapshots"], 0);
     assert_eq!(invalid_tokens["residues"][0]["kind"], "timestamp-invalid");
-    assert_eq!(invalid_tokens["residues"][0]["line"], 1);
-    write_jsonl(&path, &[valid_unknown]);
+    assert_eq!(invalid_tokens["residues"][0]["line"], 2);
+    write_jsonl(
+        &path,
+        &[
+            omp_header(THREAD, "2026-01-01T00:00:00.000Z"),
+            valid_unknown,
+        ],
+    );
 
     let tokens = reply_forms(
         &strings(&["session", "tokens", &path.to_string_lossy()]),

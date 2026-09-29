@@ -1,9 +1,9 @@
 //! Private local projections of the steering media an occupant is told about.
 //!
 //! An interjection names each attachment by reference; the occupant can only
-//! look at the bytes through a readable file. This mirrors the shell-hook
-//! route's retention: a path stays readable while this occupant's compaction
-//! generation lasts, and a new occupant retires what its predecessor saw.
+//! look at the bytes through a readable file. A path stays readable while this
+//! occupant's compaction generation lasts, and a new occupant retires what its
+//! predecessor saw.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;

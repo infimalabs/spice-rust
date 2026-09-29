@@ -44,7 +44,7 @@ const CASES: &[Case] = &[
     case(
         "session context",
         &[
-            "session", "context", "retained", "--lane", UUID, "--vendor", "codex", "--stream",
+            "session", "context", "retained", "--lane", UUID, "--vendor", "omp", "--stream",
             "session", "--source", UUID, "--member", "1", "--offset", "0",
         ],
     ),
@@ -188,7 +188,6 @@ const CASES: &[Case] = &[
     case("steer resend", &["steer", "resend", UUID]),
     case("steer recover", &["steer", "recover", UUID]),
     case("inbox", &["inbox"]),
-    case("hook", &["hook", "codex"]),
     case("recall", &["recall"]),
     case("consent", &["consent"]),
     case("consent allow", &["consent", "allow", UUID]),
@@ -215,7 +214,6 @@ const CASES: &[Case] = &[
         output: OutputKind::ChildStream,
         expected: ExpectedOutcome::Generic,
     },
-    case("ack", &["ack", "ready"]),
     case("config", &["config"]),
     Case {
         path: "config migrate-tasks",
@@ -455,11 +453,7 @@ fn invoke(root: &Path, case: &Case, json: bool) -> Output {
     }
     command
         .current_dir(root)
-        .env_remove("CODEX_THREAD_ID") // env-policy: allow
-        .env_remove("CLAUDE_CODE_SESSION_ID") // env-policy: allow
         .env_remove("SPICE_AGENT_VENDOR") // env-policy: allow
-        .env("CODEX_HOME", root.join("absent-codex-home"))
-        .env("CLAUDE_CONFIG_DIR", root.join("absent-claude-home"))
         .env(spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE, root)
         .env(
             spice::cargo_isolation::NATIVE_CARGO_VARIABLE,

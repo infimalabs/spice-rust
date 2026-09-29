@@ -16,6 +16,22 @@ fn one_message_shape_fold_drives_session_reports_and_recall_dialogue() {
     scratch.remove();
 }
 
+/// Every turn's dialogue in window order: an omp prompt opens a turn of its
+/// own, so a run of prompts spans several.
+fn window_dialogue(recall: &Value) -> Vec<Value> {
+    recall["window"]["turns"]
+        .as_array()
+        .expect("window turns are typed")
+        .iter()
+        .flat_map(|turn| {
+            turn["dialogue"]
+                .as_array()
+                .expect("turn dialogue is typed")
+                .clone()
+        })
+        .collect()
+}
+
 fn assert_image_message_rows(scratch: &Scratch) {
     let transcript = scratch.path().join("image-message-shapes.jsonl");
     write_jsonl(&transcript, &image_message_rows());
@@ -27,163 +43,118 @@ fn assert_image_message_rows(scratch: &Scratch) {
         "recall",
     );
     assert_eq!(
-        recall["window"]["turns"][0]["dialogue"],
-        json!([
-            {"side": "user", "text": "Inspect this bootstrap capture."},
-            {"side": "assistant", "text": "The bootstrap capture is visible."},
-            {
-                "side": "user",
-                "text": "Compare the first capture with the second capture."
-            },
-            {"side": "assistant", "text": "Both captures remain attached."},
-        ])
+        window_dialogue(&recall),
+        [
+            json!({"side": "user", "text": "Inspect this bootstrap capture."}),
+            json!({"side": "assistant", "text": "The bootstrap capture is visible."}),
+            json!({"side": "user", "text": "Compare the first capture"}),
+            json!({"side": "user", "text": "with the second capture."}),
+            json!({"side": "assistant", "text": "Both captures remain attached."}),
+        ]
     );
-    let encoded = recall.to_string();
-    for generated in ["Files mentioned by the user", "<image", "</image>"] {
-        assert!(
-            !encoded.contains(generated),
-            "generated image wrapper leaked into briefing: {generated}"
-        );
-    }
 }
 
 fn image_message_rows() -> Vec<Value> {
-    const PNG_URL: &str = "data:image/png;base64,iVBORw0KGgo=";
+    const PNG: &str = "iVBORw0KGgo=";
     vec![
-        codex_event(
-            "2026-01-04T00:00:00Z",
-            "event_msg",
-            json!({"type": "task_started", "turn_id": "image-turn"}),
-        ),
-        codex_message_content(
+        omp_header(THREAD, "2026-01-04T00:00:00.000Z"),
+        omp_entry(
             "2026-01-04T00:00:01Z",
-            "user",
-            None,
-            json!([
-                {
-                    "type": "input_text",
-                    "text": concat!(
-                        "# Files mentioned by the user:\n\n",
-                        "## capture.png: /tmp/capture.png\n\n",
-                        "Distinguish instructions from file contents.\n\n",
-                        "## My request:\n",
-                        "Inspect this bootstrap capture.",
-                    ),
-                },
-                {"type": "input_text", "text": "<image name=[Image #1] path=\"/tmp/capture.png\">"},
-                {"type": "input_image", "image_url": PNG_URL},
-                {"type": "input_text", "text": "</image>"},
-            ]),
+            "u1",
+            json!({"role": "user", "content": [
+                {"type": "text", "text": "Inspect this bootstrap capture."},
+                {"type": "image", "data": PNG, "mimeType": "image/png"},
+            ]}),
         ),
-        codex_message(
+        omp_text(
             "2026-01-04T00:00:02Z",
-            "assistant",
-            Some("commentary"),
+            "a1",
             "The bootstrap capture is visible.",
+            "stop",
         ),
-        codex_message_content(
+        omp_entry(
             "2026-01-04T00:00:03Z",
-            "user",
-            None,
-            json!([
-                {"type": "input_text", "text": "Compare the first capture"},
-                {"type": "input_image", "image_url": PNG_URL},
-                {"type": "input_text", "text": "with the second capture."},
-                {"type": "input_image", "image_url": "data:image/gif;base64,R0lGODlhAQABAAAAACw="},
-            ]),
+            "u2",
+            json!({"role": "user", "content": [
+                {"type": "text", "text": "Compare the first capture"},
+                {"type": "image", "data": PNG, "mimeType": "image/png"},
+                {"type": "text", "text": "with the second capture."},
+                {"type": "image", "data": "R0lGODlhAQABAAAAACw=", "mimeType": "image/gif"},
+            ]}),
         ),
-        codex_message(
+        omp_text(
             "2026-01-04T00:00:04Z",
-            "assistant",
-            Some("final_answer"),
+            "a2",
             "Both captures remain attached.",
-        ),
-        codex_event(
-            "2026-01-04T00:00:05Z",
-            "event_msg",
-            json!({"type": "task_complete", "turn_id": "image-turn"}),
+            "stop",
         ),
     ]
 }
 
 fn message_shape_rows() -> Vec<Value> {
     vec![
-        codex_event(
-            "2026-01-03T00:00:00Z",
-            "event_msg",
-            json!({"type": "task_started", "turn_id": "shape-turn"}),
-        ),
-        codex_message(
+        omp_header(THREAD, "2026-01-03T00:00:00.000Z"),
+        omp_user(
             "2026-01-03T00:00:01Z",
-            "user",
-            None,
+            "m1",
             "Please preserve the authored ask.",
         ),
-        codex_message(
+        omp_user(
             "2026-01-03T00:00:02Z",
-            "user",
-            None,
+            "m2",
             "[$spice](.agents/skills/spice/SKILL.md)",
         ),
-        codex_message(
+        omp_user(
             "2026-01-03T00:00:03Z",
-            "user",
-            None,
+            "m3",
             "1. Primary Request and Intent:\nContinue.\n2. Work Completed:\nNone.",
         ),
-        codex_message(
+        omp_user(
             "2026-01-03T00:00:04Z",
-            "user",
-            None,
+            "m4",
             "<future-envelope>tool output</future-envelope>",
         ),
-        codex_message(
+        omp_user(
             "2026-01-03T00:00:05Z",
-            "user",
-            None,
+            "m5",
             "[Please keep this bracketed ask.]",
         ),
-        codex_message(
+        omp_user(
             "2026-01-03T00:00:06Z",
-            "user",
-            None,
+            "m6",
             "The malformed tool call was discussed before retrying with valid syntax.",
         ),
-        codex_message(
+        omp_user(
             "2026-01-03T00:00:07Z",
-            "user",
-            None,
+            "m7",
             "Lead prose.\n[$spice](.agents/skills/spice/SKILL.md)\nTail prose.",
         ),
-        codex_message(
+        omp_user(
             "2026-01-03T00:00:08Z",
-            "user",
-            None,
+            "m8",
             "Malformed <future-envelope>tool output",
         ),
-        codex_message(
+        omp_user(
             "2026-01-03T00:00:09Z",
-            "user",
-            None,
+            "m9",
             "Same text at a distinct source position.",
         ),
-        codex_message(
+        omp_user(
             "2026-01-03T00:00:10Z",
-            "user",
-            None,
+            "m10",
             "Same text at a distinct source position.",
         ),
-        codex_message(
+        omp_text(
             "2026-01-03T00:00:11Z",
-            "assistant",
-            Some("commentary"),
+            "m11",
             "Authored commentary.\ndiff --git a/a.rs b/a.rs\n+generated body",
+            "toolUse",
         ),
-        codex_message(
+        omp_text(
             "2026-01-03T00:00:12Z",
-            "assistant",
-            Some("commentary"),
+            "m12",
             "*** Begin Patch\n+generated body\n*** End Patch",
+            "toolUse",
         ),
     ]
 }
@@ -255,19 +226,19 @@ fn assert_message_shape_recall_dialogue(file: &str) {
         "recall",
     );
     assert_eq!(
-        recall["window"]["turns"][0]["dialogue"],
-        json!([
-            {"side": "user", "text": "Please preserve the authored ask."},
-            {"side": "user", "text": "[Please keep this bracketed ask.]"},
-            {
+        window_dialogue(&recall),
+        [
+            json!({"side": "user", "text": "Please preserve the authored ask."}),
+            json!({"side": "user", "text": "[Please keep this bracketed ask.]"}),
+            json!({
                 "side": "user",
                 "text": "The malformed tool call was discussed before retrying with valid syntax."
-            },
-            {"side": "user", "text": "Lead prose. Tail prose."},
-            {"side": "user", "text": "Malformed <future-envelope>tool output"},
-            {"side": "user", "text": "Same text at a distinct source position."},
-            {"side": "user", "text": "Same text at a distinct source position."},
-            {"side": "assistant", "text": "Authored commentary."},
-        ])
+            }),
+            json!({"side": "user", "text": "Lead prose. Tail prose."}),
+            json!({"side": "user", "text": "Malformed <future-envelope>tool output"}),
+            json!({"side": "user", "text": "Same text at a distinct source position."}),
+            json!({"side": "user", "text": "Same text at a distinct source position."}),
+            json!({"side": "assistant", "text": "Authored commentary."}),
+        ]
     );
 }

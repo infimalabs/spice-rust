@@ -57,7 +57,7 @@ pub(super) fn seed_lane_in_team(
         .expect("fixture worktree canonicalizes")
         .to_string_lossy()
         .into_owned();
-    seed_lane_in_team_at(bus, epoch, lane, team, Some(occupant), &worktree, "claude");
+    seed_lane_in_team_at(bus, epoch, lane, team, Some(occupant), &worktree, "omp");
 }
 
 pub(super) fn seed_lane_in_worktree(
@@ -67,7 +67,7 @@ pub(super) fn seed_lane_in_worktree(
     occupant: CanonicalUuid,
     worktree: &str,
 ) {
-    seed_lane_in_team_at(bus, epoch, lane, lane, Some(occupant), worktree, "claude");
+    seed_lane_in_team_at(bus, epoch, lane, lane, Some(occupant), worktree, "omp");
 }
 
 /// Seat one occupied lane run by the named vendor.
@@ -89,7 +89,7 @@ pub(super) fn seed_vacant_lane_in_worktree(
     lane: CanonicalUuid,
     worktree: &str,
 ) {
-    seed_lane_in_team_at(bus, epoch, lane, lane, None, worktree, "claude");
+    seed_lane_in_team_at(bus, epoch, lane, lane, None, worktree, "omp");
 }
 
 fn seed_lane_in_team_at(
@@ -431,12 +431,12 @@ fn announcing_the_canvas_without_a_generation_names_no_endpoint() {
     fs::remove_dir_all(&root).expect("announcement fixture cleanup");
 }
 
-/// Seat one codex lane so the ingestion sweep can find it and its tape.
+/// Seat one lane so the ingestion sweep can find it and its tape.
 pub(super) fn seat_ingestion_residency(bus: &Bus, lane: CanonicalUuid, epoch: CanonicalUuid) {
-    seat_codex_residency(bus, lane, None, epoch);
+    seat_lane_residency(bus, lane, None, epoch);
 }
 
-/// Seat one codex lane whose occupant already declared its session: the row
+/// Seat one lane whose occupant already declared its session: the row
 /// a lane-authenticated reader such as the hook's working state recognizes.
 pub(super) fn seat_occupied_ingestion_residency(
     bus: &Bus,
@@ -444,10 +444,10 @@ pub(super) fn seat_occupied_ingestion_residency(
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
 ) {
-    seat_codex_residency(bus, lane, Some(occupant), epoch);
+    seat_lane_residency(bus, lane, Some(occupant), epoch);
 }
 
-fn seat_codex_residency(
+fn seat_lane_residency(
     bus: &Bus,
     lane: CanonicalUuid,
     occupant: Option<CanonicalUuid>,
@@ -471,7 +471,7 @@ fn seat_codex_residency(
             name: None,
             worktree: "/ingestion/worktree".to_owned(),
             life: "drive".to_owned(),
-            vendor: "codex".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
             occupant,
@@ -481,7 +481,7 @@ fn seat_codex_residency(
                 lane,
                 occupant,
                 worktree: "/ingestion/worktree".to_owned(),
-                vendor: "codex".parse().expect("fixture vendor"),
+                vendor: "omp".parse().expect("fixture vendor"),
                 launch: None,
                 epoch,
                 stream: "stdout".to_owned(),

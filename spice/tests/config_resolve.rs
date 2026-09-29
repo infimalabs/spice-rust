@@ -41,34 +41,18 @@ fn worktree_documents<'a>(
 #[test]
 fn worktree_vendor_model_and_effort_override_tracked_without_admitting_authority() {
     let resolved = resolve(worktree_documents(
-        Some(concat!(
-            "[vendor.claude]\nmodel = 'tracked-claude'\neffort = 'low'\n",
-            "[vendor.codex]\nmodel = 'tracked-codex'\neffort = 'medium'\n",
-        )),
-        Some(concat!(
-            "[vendor.claude]\nmodel = 'lane-claude'\neffort = 'high'\n",
-            "[vendor.codex]\nmodel = 'lane-codex'\neffort = 'xhigh'\n",
-        )),
+        Some("[vendor.omp]\nmodel = 'tracked-model'\neffort = 'low'\n"),
+        Some("[vendor.omp]\nmodel = 'lane-model'\neffort = 'xhigh'\n"),
         None,
     ))
     .expect("worktree launch preferences resolve");
 
-    assert_eq!(resolved.root().vendor().claude().model(), "lane-claude");
+    assert_eq!(resolved.root().vendor().omp().model(), "lane-model");
     assert_eq!(
-        resolved.root().vendor().claude().effort(),
-        vendor::Effort::High
-    );
-    assert_eq!(resolved.root().vendor().codex().model(), "lane-codex");
-    assert_eq!(
-        resolved.root().vendor().codex().effort(),
+        resolved.root().vendor().omp().effort(),
         vendor::Effort::XHigh
     );
-    for path in [
-        "vendor.claude.model",
-        "vendor.claude.effort",
-        "vendor.codex.model",
-        "vendor.codex.effort",
-    ] {
+    for path in ["vendor.omp.model", "vendor.omp.effort"] {
         assert_eq!(path_source(&resolved, path), ConfigSource::Worktree);
     }
 
@@ -76,15 +60,15 @@ fn worktree_vendor_model_and_effort_override_tracked_without_admitting_authority
         None,
         Some(concat!(
             "[commands]\nverify = ['unsafe-tool']\n",
-            "[vendor.codex]\nbinary = '/tmp/codex'\npersonality = 'mutable'\n",
+            "[vendor.omp]\nbinary = '/tmp/omp'\nfast_mode = true\n",
         )),
         None,
     ))
     .expect_err("worktree intent cannot introduce commands or vendor authority");
     for path in [
         "commands.verify",
-        "vendor.codex.binary",
-        "vendor.codex.personality",
+        "vendor.omp.binary",
+        "vendor.omp.fast_mode",
     ] {
         assert!(error.issues().iter().any(|issue| {
             issue.kind() == IssueKind::Policy
@@ -146,7 +130,7 @@ fn missing_and_empty_documents_are_empty_intent() {
     assert!(missing.root().policy().test_engines().is_empty());
     assert!(missing.root().proof().container().is_none());
     assert!(missing.root().proof().runner().is_none());
-    assert_eq!(missing.provenance().len(), 65);
+    assert_eq!(missing.provenance().len(), 54);
     assert!(
         missing
             .provenance()
@@ -342,17 +326,37 @@ fn current_metadata_resolves_and_removed_spellings_refuse() {
                 && issue.path().is_some_and(|found| found.to_string() == path)
         }));
     }
+
+    for retired in ["claude", "codex"] {
+        let document = format!("[vendor.{retired}]\nmodel = 'retired'\n");
+        let error = resolve(documents(Some(&document), None))
+            .expect_err("a retired vendor table must refuse, not sit inert");
+        let issue = error
+            .issues()
+            .iter()
+            .find(|issue| issue.kind() == IssueKind::Unknown)
+            .expect("the retired table is named");
+        assert_eq!(
+            issue.path().map(ToString::to_string),
+            Some(format!("vendor.{retired}"))
+        );
+        assert!(
+            issue.message().contains("omp is the only vendor"),
+            "the refusal names the recovery: {}",
+            issue.message()
+        );
+    }
 }
 
 #[test]
 fn every_two_layer_precedence_pair_is_deterministic() {
-    let tracked = resolve(documents(Some("[lane]\nvendor = \"codex\"\n"), None))
+    let tracked = resolve(documents(Some("[lane]\nvendor = \"fixture\"\n"), None))
         .expect("tracked shadows builtin");
-    assert_eq!(tracked.root().lane().vendor().as_str(), "codex");
+    assert_eq!(tracked.root().lane().vendor().as_str(), "fixture");
     assert_eq!(path_source(&tracked, "lane.vendor"), ConfigSource::Tracked);
     assert_eq!(
         path_builtin(&tracked, "lane.vendor"),
-        Some(Builtin::String("codex"))
+        Some(Builtin::String("omp"))
     );
 
     let local = resolve(documents(None, Some("[listen]\nwindow = \"2m\"\n")))
@@ -370,7 +374,7 @@ fn every_two_layer_precedence_pair_is_deterministic() {
     assert_eq!(path_source(&only_flag, "lane.vendor"), ConfigSource::Flag);
     assert_eq!(
         path_builtin(&only_flag, "lane.vendor"),
-        Some(Builtin::String("codex"))
+        Some(Builtin::String("omp"))
     );
 
     let tracked_local = resolve(documents(
@@ -390,7 +394,7 @@ fn every_two_layer_precedence_pair_is_deterministic() {
     let tracked_flag = resolve(Inputs::new(
         Some(Document::new(
             "spice-rust.toml",
-            "[lane]\nvendor = \"codex\"\n",
+            "[lane]\nvendor = \"fixture\"\n",
         )),
         None,
         std::slice::from_ref(&vendor_flag),
@@ -727,7 +731,7 @@ executable = "tracked-rtk"
 words = ["done"]
 message = "Done."
 enabled = false
-scopes = { paths = ["src/**"], extensions = [".rs"], vendors = ["codex"], models = ["gpt-current"], phases = ["pre-commit-success"] }
+scopes = { paths = ["src/**"], extensions = [".rs"], vendors = ["omp"], models = ["gpt-current"], phases = ["pre-commit-success"] }
 
 [tasks]
 stems = ["app", "board"]
@@ -787,7 +791,7 @@ band = 3
 life = "Steer"
 lease = "20m"
 runtime = "8h"
-vendor = "codex"
+vendor = "omp"
 deaths = 4
 young = "40s"
 hold = "40m"
@@ -796,21 +800,6 @@ narration = 40
 [steer]
 expiry = "12h"
 resend = ["2m", "4m", "6m"]
-
-[vendor.claude]
-binary = "/opt/claude"
-model = "opus"
-effort = "xhigh"
-auto_compact_window_tokens = 123456
-
-[vendor.codex]
-binary = "/opt/codex"
-model = "gpt-current"
-effort = "max"
-model_context_window = 1234567
-auto_compact_window_tokens = 300000
-personality = "pragmatic"
-fast_mode = true
 
 [vendor.omp]
 binary = "/opt/omp"
@@ -903,7 +892,7 @@ fn all_four_layers_use_one_leaf_order() {
         Some(Document::new(
             "spice-rust.toml",
             concat!(
-                "[lane]\nlife = \"Steer\"\nvendor = \"codex\"\n",
+                "[lane]\nlife = \"Steer\"\nvendor = \"omp\"\n",
                 "[listen]\nwindow = \"2m\"\n[lock]\nbusy = 70\n",
             ),
         )),

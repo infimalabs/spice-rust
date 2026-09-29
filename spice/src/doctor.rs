@@ -422,7 +422,7 @@ mod tests {
             namespace: spice::extension::Namespace::Gate,
             name: "mixed",
             provider: "fixture",
-            value: spice::extension::Value::Vendor(&spice::extension::CODEX),
+            value: spice::extension::Value::Vendor(&spice::extension::OMP),
         }];
         let report = extension_report(&mixed);
         assert!(matches!(
@@ -440,7 +440,7 @@ mod tests {
             namespace: spice::extension::Namespace::Vendor,
             name: "broken",
             provider: "fixture",
-            value: spice::extension::Value::Vendor(&spice::extension::CODEX),
+            value: spice::extension::Value::Vendor(&spice::extension::OMP),
         }];
         let report = extension_report(&broken);
         assert!(matches!(
@@ -451,7 +451,7 @@ mod tests {
                 ..
             }] if name == "registry"
                 && reason.contains("broken")
-                && reason.contains("codex")
+                && reason.contains("omp")
         ));
     }
 

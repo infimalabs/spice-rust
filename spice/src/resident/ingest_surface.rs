@@ -202,7 +202,7 @@ fn ingest_lane_transcript(
 mod extension_tests {
     use super::*;
 
-    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
+    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::OMP);
     const FIXTURE_VENDOR: spice::extension::Vendor =
         spice::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration, 2);
     const FIXTURE_DECLARATIONS: &[spice::extension::Declaration] =
@@ -214,14 +214,12 @@ mod extension_tests {
         }];
 
     fn fixture_configuration(root: &spice::config::Root) -> vendor::LaunchValues<'_> {
-        let configured = root.vendor().codex();
+        let configured = root.vendor().omp();
         vendor::LaunchValues {
             binary: configured.binary().as_str(),
             model: configured.model(),
             effort: configured.effort(),
-            personality: configured.personality(),
             fast_mode: Some(configured.fast_mode()),
-            model_context_window: Some(configured.model_context_window()),
             auto_compact_window_tokens: None,
             lsp: None,
         }
@@ -235,6 +233,6 @@ mod extension_tests {
         let selected = ingest_vendor_from(&registry, &name).expect("third declaration resolves");
 
         assert_eq!(selected.name(), "fixture");
-        assert_eq!(selected.dialect(), listen::Dialect::Codex);
+        assert_eq!(selected.dialect(), listen::Dialect::Omp);
     }
 }

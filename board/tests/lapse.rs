@@ -64,7 +64,7 @@ fn opening_boundary() -> body::SourceBoundary {
     body::SourceBoundary::Proven {
         heads: vec![TranscriptSourceHead {
             lane: uuid(20),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             stream: "session".to_owned(),
             source: uuid(23),
             next: body::TranscriptPosition {
@@ -425,7 +425,7 @@ fn seat_residency(write: &mut JournalWrite, fact: journal::PendingFact) {
             name: None,
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
             occupant: Some(uuid(21)),

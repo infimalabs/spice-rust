@@ -38,8 +38,6 @@ mod read_materialization_bounds;
 mod startup;
 #[path = "tests/startup_window.rs"]
 mod startup_window;
-#[path = "tests/steering_dispose.rs"]
-mod steering_dispose;
 #[path = "tests/steering_heard.rs"]
 mod steering_heard;
 #[path = "tests/steering_vacant.rs"]
@@ -191,7 +189,7 @@ fn resident_shutdown_releases_handles_without_ending_lane_work() {
 
     fs::create_dir_all(&paths.tape).expect("tape directory");
     let tape =
-        tape::Tape::open(paths.tape.join(lane.to_string()).join("codex")).expect("live tape opens");
+        tape::Tape::open(paths.tape.join(lane.to_string()).join("omp")).expect("live tape opens");
     tape.tee(b"before resident replacement")
         .expect("supervisor tape captures before shutdown");
 
@@ -548,7 +546,7 @@ fn startup_migrates_one_complete_legacy_subscription_table_and_refuses_partial_a
         name: None,
         worktree: format!("/fixture/{lane}"),
         life: life.to_owned(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
         occupant: None,

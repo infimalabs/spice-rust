@@ -814,16 +814,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "steer::inbox"
     ),
     row!(
-        ["hook"],
-        "hook HARNESS",
-        Lane,
-        Read,
-        [],
-        [Resident],
-        Reply,
-        "steer::inbox"
-    ),
-    row!(
         ["recall"],
         "recall [LANE]",
         OperatorOrLane,
@@ -978,16 +968,6 @@ pub(super) const CONTRACTS: &[Contract] = &[
         CALLER_COMMAND,
         Stream,
         "steer::run"
-    ),
-    row!(
-        ["ack"],
-        "ack KEY [--decline]",
-        Lane,
-        Command,
-        [SteerAcked, SteerDeclined],
-        [Resident, LaneCapability],
-        Reply,
-        "steer::ack"
     ),
     row!(
         ["config"],

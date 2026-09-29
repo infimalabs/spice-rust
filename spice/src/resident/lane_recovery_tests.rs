@@ -58,13 +58,13 @@ const PRE_EXTENSION_RESIDENCY: &[u8] = concat!(
     r#"{"epoch":"018f82d4-6f59-7d06-92e3-000000000001","state":"seated","topology_revision":1,"lanes":[{"#,
     r#""lane":"018f82d4-6f59-7d06-92e3-000000000003","#,
     r#""team":"018f82d4-6f59-7d06-92e3-000000000003","name":"Ava","#,
-    r#""worktree":"/worktrees/predecessor","life":"drive","vendor":"claude","#,
+    r#""worktree":"/worktrees/predecessor","life":"drive","vendor":"omp","#,
     r#""occupant":"018f82d4-6f59-7d06-92e3-000000000004","#,
     r#""lineage":["018f82d4-6f59-7d06-92e3-000000000004"],"#,
     r#""capabilities":["018f82d4-6f59-7d06-92e3-000000000006"],"session":{"#,
     r#""lane":"018f82d4-6f59-7d06-92e3-000000000003","#,
     r#""occupant":"018f82d4-6f59-7d06-92e3-000000000004","#,
-    r#""worktree":"/worktrees/predecessor","vendor":"claude","#,
+    r#""worktree":"/worktrees/predecessor","vendor":"omp","#,
     r#""epoch":"018f82d4-6f59-7d06-92e3-000000000001","stream":"stdout","#,
     r#""identity":"pre-extension-session","#,
     r#""locus":{"member":7,"offset":31,"length":93}},"disposition":"occupied"}]}"#,
@@ -78,7 +78,7 @@ fn occupied_row(fixture: &Fixture) -> wire::LaneResidency {
         name: Some("Ava".to_owned()),
         worktree: PREDECESSOR.into(),
         life: "drive".into(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         model: None,
         effort: None,
         occupant: Some(fixture.ancestor),
@@ -737,7 +737,7 @@ fn proof(expected: Option<&str>) -> Proof {
             lane: uuid(3),
             occupant: uuid(5),
             worktree: SUCCESSOR.into(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             model: "sonnet".into(),
             effort: "high".into(),
             git: "current".into(),
@@ -1075,7 +1075,7 @@ fn proven(fixture: &Fixture) -> ProvenOccupant {
             lane: fixture.lane,
             occupant: fixture.successor,
             worktree: SUCCESSOR.into(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", "high").with_git("current")),
             epoch: fixture.new_epoch,
             stream: "stdout".into(),
@@ -1098,7 +1098,7 @@ fn assert_imported(fixture: &Fixture) {
     assert_eq!(row.lineage, [fixture.ancestor, fixture.successor]);
     assert_eq!(row.disposition, OCCUPIED);
     assert_eq!(row.capabilities, [uuid(6)]);
-    assert_eq!(row.vendor.as_str(), "claude");
+    assert_eq!(row.vendor.as_str(), "omp");
     let session = row.session.as_ref().expect("import declares one authority");
     assert_eq!(session.identity, "successor-session");
     let launch = session
@@ -1280,7 +1280,7 @@ fn exited_session(fixture: &Fixture) -> wire::LaneSession {
         lane: fixture.lane,
         occupant: fixture.ancestor,
         worktree: PREDECESSOR.to_owned(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         launch: None,
         epoch: fixture.old_epoch,
         stream: "stdout".to_owned(),

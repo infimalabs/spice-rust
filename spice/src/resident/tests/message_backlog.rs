@@ -2,17 +2,18 @@
 
 use super::*;
 
-const CODEX_PROSE: &[u8] = br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"durable restart backlog"}}
+const PROSE: &[u8] = br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"durable restart backlog"}]}}
 "#;
-const CODEX_PROSE_WITHOUT_TIME: &[u8] = br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"durable restart backlog"}}
+const PROSE_WITHOUT_TIME: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"durable restart backlog"}],"stopReason":"stop"}}
 "#;
-const CODEX_TURN_COMPLETE_WITHOUT_TIME: &[u8] = br#"{"type":"turn.completed","usage":{"input_tokens":1,"cached_input_tokens":0,"output_tokens":1}}
+const TURN_END: &[u8] = br#"{"type":"agent_end"}
 "#;
-const CODEX_COMPACTION_WITHOUT_TIME: &[u8] = br#"{"type":"compacted"}
+const COMPACTION_WITHOUT_TIME: &[u8] =
+    br#"{"type":"auto_compaction_end","result":{"firstKeptEntryId":"entry-1","tokensBefore":100}}
 "#;
-const CODEX_APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"item.completed","item":{"id":"item-2","type":"agent_message","text":"appended after initial backlog"}}
+const APPEND: &[u8] = br#"{"timestamp":"2030-04-12T18:45:09.271Z","type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"appended after initial backlog"}]}}
 "#;
-const CODEX_DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"item.completed","item":{"id":"item-acks","type":"agent_message","text":"ACK\t1kQwPZtK nope 1kQwPZtM: One response.\nNAK\t1kQwPZtL: Unsafe."}}
+const DISTRIBUTED_ACK: &[u8] = br#"{"timestamp":"2030-04-12T18:46:09.271Z","type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK\t1kQwPZtK nope 1kQwPZtM: One response.\nNAK\t1kQwPZtL: Unsafe."}]}}
 "#;
 
 #[test]
@@ -111,9 +112,9 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
     let lane = test_uuid(5);
     let author = test_uuid(7);
     seat_backlog_residency(&bus, epoch, lane, test_uuid(6), author, &root);
-    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the backlog tape opens");
-    tape.tee(CODEX_PROSE).expect("durable prose is captured");
+    tape.tee(PROSE).expect("durable prose is captured");
     let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let residency = current_residency(&bus, epoch).expect("residency reads");
@@ -159,8 +160,7 @@ fn startup_history_conflict_keeps_accepted_cards_and_publishes_the_remaining_bac
             Vec::new(),
         )
         .expect("accepted card has a later presentation");
-    tape.tee(CODEX_APPEND)
-        .expect("another durable card is captured");
+    tape.tee(APPEND).expect("another durable card is captured");
     diagnostic.clear();
     message_surface::restore_agent_messages_indexed(
         &bus.reader(),
@@ -199,13 +199,13 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
     let empty_lane = test_uuid(6);
     let author = test_uuid(7);
     seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
-    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the backlog tape opens");
-    tape.tee(CODEX_PROSE_WITHOUT_TIME)
+    tape.tee(PROSE_WITHOUT_TIME)
         .expect("durable prose is captured");
-    tape.tee(CODEX_TURN_COMPLETE_WITHOUT_TIME)
+    tape.tee(TURN_END)
         .expect("durable turn completion is captured");
-    tape.tee(CODEX_COMPACTION_WITHOUT_TIME)
+    tape.tee(COMPACTION_WITHOUT_TIME)
         .expect("durable compaction is captured");
     let mut ingest_diagnostic = Vec::new();
     let (observations, _) = ingest_transcripts(
@@ -304,17 +304,17 @@ fn each_resident_generation_restores_a_bounded_tail_then_the_same_complete_compa
     let empty_lane = test_uuid(46);
     let author = test_uuid(47);
     seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
-    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the backlog tape opens");
     let filler = "x".repeat(1_800);
     let mut history = Vec::new();
     for index in 0..300 {
         if matches!(index, 20 | 80 | 220) {
-            history.extend_from_slice(b"{\"type\":\"compacted\"}\n");
+            history.extend_from_slice(COMPACTION_WITHOUT_TIME);
         } else {
             history.extend_from_slice(
                 format!(
-                    "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"message {index} {filler}\"}}}}\n"
+                    "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"message {index} {filler}\"}}]}}}}\n"
                 )
                 .as_bytes(),
             );
@@ -413,7 +413,7 @@ fn startup_fills_the_visible_floor_across_a_sparse_tool_horizon() {
     let empty_lane = test_uuid(51);
     let author = test_uuid(52);
     seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
-    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the sparse backlog tape opens");
     write_sparse_startup_history(&tape);
     let mut ingest_diagnostic = Vec::new();
@@ -500,15 +500,15 @@ fn write_sparse_startup_history(tape: &tape::Tape) {
     for index in 0..30 {
         history.extend_from_slice(
             format!(
-                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"message-{index}\",\"type\":\"agent_message\",\"text\":\"message {index}\"}}}}\n"
+                "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"message {index}\"}}]}}}}\n"
             )
             .as_bytes(),
         );
     }
-    history.extend_from_slice(CODEX_COMPACTION_WITHOUT_TIME);
+    history.extend_from_slice(COMPACTION_WITHOUT_TIME);
     append_hidden_tool_horizon(&mut history);
     history.extend_from_slice(
-        br#"{"type":"item.completed","item":{"id":"current","type":"agent_message","text":"current epoch"}}
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"current epoch"}]}}
 "#,
     );
     tape.tee(&history).expect("sparse history is durable");
@@ -519,7 +519,7 @@ fn append_hidden_tool_horizon(history: &mut Vec<u8>) {
     for index in 0..640 {
         history.extend_from_slice(
             format!(
-                "{{\"type\":\"item.started\",\"item\":{{\"id\":\"call-{index}\",\"type\":\"command_execution\",\"command\":\"echo {filler}\",\"aggregated_output\":\"\",\"exit_code\":null,\"status\":\"in_progress\"}}}}\n"
+                "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"toolCall\",\"id\":\"call-{index}\",\"name\":\"bash\",\"arguments\":{{\"command\":\"echo {filler}\"}}}}],\"stopReason\":\"toolUse\"}}}}\n"
             )
             .as_bytes(),
         );
@@ -569,7 +569,7 @@ fn an_older_history_page_carries_the_durable_observation_of_its_own_window() {
     let empty_lane = test_uuid(86);
     let author = test_uuid(87);
     seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
-    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the backlog tape opens");
 
     let (oldest_observed, newest_observed) = deep_backlog_instants(&bus, &paths, &tape, lane);
@@ -658,7 +658,7 @@ fn deep_backlog_instants(
     tape: &tape::Tape,
     lane: wire::CanonicalUuid,
 ) -> (wire::Instant, wire::Instant) {
-    tape.tee(CODEX_PROSE_WITHOUT_TIME)
+    tape.tee(PROSE_WITHOUT_TIME)
         .expect("the oldest prose is captured");
     let oldest = accounted_instant(bus, paths, lane);
     let filler = "x".repeat(8 * 1024);
@@ -666,7 +666,7 @@ fn deep_backlog_instants(
     for index in 0..160 {
         tape.tee(
             format!(
-                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"message {index} {filler}\"}}}}\n"
+                "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"message {index} {filler}\"}}]}}}}\n"
             )
             .as_bytes(),
         )
@@ -762,9 +762,9 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
     let empty_lane = test_uuid(16);
     let author = test_uuid(17);
     seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
-    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the backlog tape opens");
-    tape.tee(CODEX_PROSE).expect("initial prose is captured");
+    tape.tee(PROSE).expect("initial prose is captured");
     let source = canvas::stream::Source::new(bus.reader(), epoch, 8, quote_presenter());
     let publisher = source.message_publisher();
     let residency = current_residency(&bus, epoch).expect("residency reads");
@@ -779,7 +779,7 @@ fn repeated_backlog_read_resumes_at_its_source_checkpoint_without_missing_an_app
         &mut diagnostic,
     )
     .expect("initial backlog restores");
-    tape.tee(CODEX_APPEND).expect("appended prose is captured");
+    tape.tee(APPEND).expect("appended prose is captured");
     message_surface::restore_agent_messages(
         &paths,
         residency.body(),
@@ -836,12 +836,12 @@ fn history_refuses_a_cursor_after_the_durable_tape_source_is_replaced() {
     let empty_lane = test_uuid(66);
     let author = test_uuid(67);
     seat_backlog_residency(&bus, epoch, lane, empty_lane, author, &root);
-    let tape_path = paths.tape.join(lane.to_string()).join("codex");
+    let tape_path = paths.tape.join(lane.to_string()).join("omp");
     let tape = tape::Tape::open(&tape_path).expect("the backlog tape opens");
     let history = (0..80)
         .map(|index| {
             format!(
-                "{{\"type\":\"item.completed\",\"item\":{{\"id\":\"item-{index}\",\"type\":\"agent_message\",\"text\":\"message {index}\"}}}}\n"
+                "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"message {index}\"}}]}}}}\n"
             )
         })
         .collect::<String>();
@@ -974,10 +974,10 @@ fn horizontal_acknowledgements_publish_live_and_replay_with_stable_context() {
     );
     // The live record names the bytes the tape holds, so the one locus a
     // retirement records governs the live card and every replay alike.
-    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("codex"))
+    let tape = tape::Tape::open(paths.tape.join(lane.to_string()).join("omp"))
         .expect("the backlog tape opens");
     let locus = tape
-        .tee(CODEX_DISTRIBUTED_ACK)
+        .tee(DISTRIBUTED_ACK)
         .expect("distributed acknowledgements are captured");
     let record = mixed_acknowledgement_record(lane, author, locus);
     // Keep the acknowledgement outside the fixed startup scan. The initial
@@ -1196,7 +1196,7 @@ fn assert_mixed_acknowledgement_message(
     assert_eq!(messages[0].text.matches("Unsafe.").count(), 1);
 }
 
-/// Retire `key` the way spice ack does: steer::acked names the transcript
+/// Retire `key` the way prose disposal does: steer::acked names the transcript
 /// locus of the acknowledgement, and the head moves to the acked disposition.
 fn retire_steering(
     bus: &Bus,
@@ -1300,7 +1300,7 @@ fn seat_backlog_residency(
                 name: None,
                 worktree: worktree.clone(),
                 life: "steer".to_owned(),
-                vendor: "codex".parse().expect("fixture vendor"),
+                vendor: "omp".parse().expect("fixture vendor"),
                 model: None,
                 effort: None,
                 occupant: None,

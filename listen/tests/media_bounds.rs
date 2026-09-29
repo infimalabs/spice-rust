@@ -84,37 +84,6 @@ fn omp_user_messages_keep_prose_and_first_eight_images() {
 }
 
 #[test]
-fn claude_user_messages_keep_prose_and_first_eight_images() {
-    let mut content = vec![serde_json::json!({"type": "text", "text": "compare every capture"})];
-    content.extend(DISTINCT_PNGS.map(|data| {
-        serde_json::json!({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/png",
-                "data": data,
-            },
-        })
-    }));
-    let record = serde_json::to_vec(&serde_json::json!({
-        "type": "user",
-        "message": {
-            "role": "user",
-            "content": content,
-        },
-    }))
-    .expect("Claude image prompt fixture encodes");
-    let decoded =
-        decode(Dialect::Claude, &record, locus(&record)).expect("Claude image prompt decodes");
-    let [Event::Prose(prose)] = decoded.events() else {
-        panic!("Claude image prompt remains one prose event");
-    };
-    assert_eq!(prose.role, ProseRole::Operator);
-    assert_eq!(prose.text, "compare every capture");
-    assert_eq!(prose.media.len(), wire::media::MAX_MEDIA_ITEMS);
-}
-
-#[test]
 fn omp_surplus_media_does_not_hide_a_malformed_later_block() {
     let mut content = omp_image_blocks();
     content.push(serde_json::json!({

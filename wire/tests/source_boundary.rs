@@ -32,7 +32,7 @@ fn proven() -> body::SourceBoundary {
     body::SourceBoundary::Proven {
         heads: vec![TranscriptSourceHead {
             lane: uuid("018f82d4-6f59-7d06-92e3-bce913116302"),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             stream: "session".to_owned(),
             source: uuid("018f82d4-6f59-7d06-92e3-bce913116303"),
             next: body::TranscriptPosition {

@@ -109,7 +109,7 @@ generated_paths = [
 # after its last use fails too. That is what makes the vocabulary countable
 # rather than a set of literals accumulating across crates.
 #
-# Session forensics reads the live Codex or Claude identity and the selected
+# Session forensics reads the live omp session identity and the selected
 # agent vendor. `steer` owns the four hook/session names. The configured commit
 # executor owns the staged-path JSON and source-digest handoff names, while the
 # installed pre-commit launcher owns its appliance marker. A supervised launch
@@ -151,8 +151,6 @@ generated_paths = [
 # Keep the environment ledger ordered by serialized name for reviewable diffs.
 env_names = [
     "BASH_ENV",
-    "CLAUDE_CODE_SESSION_ID",
-    "CODEX_THREAD_ID",
     "GIT_CONFIG_COUNT",
     "GIT_CONFIG_SYSTEM",
     "GIT_DIR",

@@ -182,8 +182,7 @@ pub enum AgentActivityKind {
     Tool,
     /// Vendor-visible reasoning rendered in the lane status strip.
     ///
-    /// Claude Code emits mid-turn narration as thinking blocks and Codex
-    /// emits reasoning summaries. Like a tool moment it is lane presence,
+    /// omp relays mid-turn narration as thinking blocks. Like a tool moment it is lane presence,
     /// not a conversation card: never a final answer, an acknowledgement,
     /// nor an automatic speech candidate, and it consumes no visible-card
     /// retention.

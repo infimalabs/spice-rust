@@ -239,7 +239,6 @@ fn launch_plan(
             // `required_skill` admitted the installed copy only because it is
             // byte-identical to this appliance's, so these are its instructions.
             skill: spice::install::skill_instructions().to_owned(),
-            executable: executable.display().to_string(),
             environment,
             lane,
             resume: pinned.resume,
@@ -253,55 +252,36 @@ fn launch_plan(
         spice::agent_launch::ComposeError::UnsupportedVendor(other) => vendor_unsupported(other),
         other => store_fault("lane::launch-invalid", &other.to_string()),
     })?;
-    let rtk = rtk_hook_health(plan.vendor().dialect(), rtk);
     Ok((plan, rtk))
 }
 
 /// The refusal naming every vendor with a landed renderer beside the one asked
-/// for.
+/// for, and the recovery for a lane recorded under a retired harness.
 fn vendor_unsupported(asked: String) -> Outcome<()> {
-    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
-        "lane::vendor-unsupported".to_owned(),
-        Some("lane.vendor".to_owned()),
-        Some(
-            spice::extension::registry()
-                .expect("compiled extension declarations are validated by the test gate")
-                .vendors()
-                .into_iter()
-                .map(|vendor| vendor.name())
-                .collect::<Vec<_>>()
-                .join(" or "),
-        ),
-        Some(asked),
-    )))
-}
-
-fn rtk_hook_health(dialect: listen::Dialect, health: spice::rtk::Health) -> spice::rtk::Health {
-    if dialect != listen::Dialect::Codex {
-        return health;
-    }
-    codex_rtk_hook_health(
-        health,
-        crate::steering_command::validate_codex_rtk_hook_contract(),
-    )
-}
-
-fn codex_rtk_hook_health(
-    health: spice::rtk::Health,
-    contract: Result<(), String>,
-) -> spice::rtk::Health {
-    match contract {
-        Ok(()) => health.with_hook(spice::rtk::HookState::Installed),
-        Err(error) => spice::rtk::Health::new(
-            spice::rtk::HealthState::ProtocolInvalid,
-            health.version().map(str::to_owned),
-            format!(
-                "{}; Codex PreToolUse RTK response is not consumable: {error}",
-                health.detail()
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(
+            "lane::vendor-unsupported".to_owned(),
+            Some("lane.vendor".to_owned()),
+            Some(
+                spice::extension::registry()
+                    .expect("compiled extension declarations are validated by the test gate")
+                    .vendors()
+                    .into_iter()
+                    .map(|vendor| vendor.name())
+                    .collect::<Vec<_>>()
+                    .join(" or "),
             ),
-        ),
-    }
+            Some(asked),
+        )
+        .with_detail(VENDOR_RECOVERY),
+    ))
 }
+
+/// How an operator recovers a lane recorded under a vendor this build cannot
+/// launch: its record stays listable and removable, and a new lane takes the
+/// current vendor.
+pub(super) const VENDOR_RECOVERY: &str = "this lane was recorded under a vendor this build cannot launch; remove it with \
+     `spice lane remove` and add it again with `spice lane add` to run it under omp";
 
 /// Require the initialized Git-common skill before composing any vendor argv.
 fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {
@@ -569,45 +549,6 @@ mod rtk_environment_tests {
                 .entries()
                 .iter()
                 .any(|(name, _)| name == spice::rtk::HISTORY_VARIABLE)
-        );
-    }
-
-    #[test]
-    fn codex_hook_installation_is_reported_separately_from_executable_health() {
-        let launched_only = spice::rtk::Health::new(
-            spice::rtk::HealthState::Active,
-            Some("0.45.0".to_owned()),
-            "fixture executable launched",
-        );
-        assert_eq!(launched_only.hook(), None);
-        let installed = rtk_hook_health(listen::Dialect::Codex, launched_only);
-        assert_eq!(installed.state(), spice::rtk::HealthState::Active);
-        assert_eq!(installed.hook(), Some(spice::rtk::HookState::Installed));
-        assert_eq!(
-            serde_json::to_value(installed).expect("health encodes")["hook"],
-            "installed"
-        );
-    }
-
-    #[test]
-    fn invalid_codex_response_contract_cannot_report_an_installed_hook() {
-        let launched_only = spice::rtk::Health::new(
-            spice::rtk::HealthState::Active,
-            Some("0.45.0".to_owned()),
-            "fixture executable launched",
-        );
-        let rejected = codex_rtk_hook_health(
-            launched_only,
-            Err("updatedInput lacks permissionDecision:allow".to_owned()),
-        );
-
-        assert_eq!(rejected.state(), spice::rtk::HealthState::ProtocolInvalid);
-        assert_eq!(rejected.version(), Some("0.45.0"));
-        assert_eq!(rejected.hook(), None);
-        assert!(
-            rejected
-                .detail()
-                .contains("updatedInput lacks permissionDecision:allow")
         );
     }
 

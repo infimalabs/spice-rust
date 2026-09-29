@@ -10,15 +10,9 @@ use listen::{
 };
 use tape::Tape;
 
-const CODEX_PROSE: &[u8] =
-    br#"{"type":"item.completed","item":{"id":"item-1","type":"agent_message","text":"working"}}"#;
-const CODEX_REASONING: &[u8] =
-    br#"{"type":"item.completed","item":{"id":"item-2","type":"reasoning","text":"inspect"}}"#;
-const DIALECTS: &[(&str, Dialect)] = &[
-    ("codex", Dialect::Codex),
-    ("claude", Dialect::Claude),
-    ("fixture", Dialect::Codex),
-];
+const PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"working"}],"stopReason":"stop"}}"#;
+const REASONING: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"inspect"}],"stopReason":"stop"}}"#;
+const DIALECTS: &[(&str, Dialect)] = &[("omp", Dialect::Omp), ("fixture", Dialect::Omp)];
 
 #[derive(Debug, Eq, PartialEq)]
 struct Entry {
@@ -118,7 +112,7 @@ fn event_count(observations: &[Observation]) -> usize {
 fn a_third_declared_name_changes_discovery_only_through_the_supplied_value() {
     let scratch = Scratch::new("third-declaration");
     let (path, tape) = session(scratch.path(), "lane-a", "fixture");
-    let mut bytes = CODEX_PROSE.to_vec();
+    let mut bytes = PROSE.to_vec();
     bytes.push(b'\n');
     tape.tee(&bytes).expect("fixture record is durable");
 
@@ -130,12 +124,11 @@ fn a_third_declared_name_changes_discovery_only_through_the_supplied_value() {
 #[test]
 fn only_root_lane_vendor_directories_are_sessions() {
     let scratch = Scratch::new("fixed-depth");
-    let (_, tape) = session(scratch.path(), "lane-a", "codex");
-    tape.tee(&record(CODEX_PROSE))
-        .expect("fixture record is durable");
+    let (_, tape) = session(scratch.path(), "lane-a", "omp");
+    tape.tee(&record(PROSE)).expect("fixture record is durable");
     // Source trees under the root may name a module after a vendor; such a
     // directory has no tape identity and must not be adopted as a session.
-    let nested = scratch.path().join("target/copy/vendor/src/codex");
+    let nested = scratch.path().join("target/copy/vendor/src/omp");
     fs::create_dir_all(&nested).expect("nested vendor-named directory is created");
     fs::write(nested.join("lib.rs"), b"// not a tape\n").expect("nested source file is written");
 
@@ -160,7 +153,7 @@ fn only_root_lane_vendor_directories_are_sessions() {
 #[test]
 fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_sealing() {
     let scratch = Scratch::new("watch");
-    let (_, tape) = session(scratch.path(), "lane-a", "codex");
+    let (_, tape) = session(scratch.path(), "lane-a", "omp");
     let mut watch = Watch::new(scratch.path(), DIALECTS.iter().copied());
 
     let empty = watch.poll().expect("empty session is observed");
@@ -169,7 +162,7 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
         [Observation::Absent { .. }]
     ));
 
-    tape.tee(&record(CODEX_PROSE))
+    tape.tee(&record(PROSE))
         .expect("first complete record is durable");
     let first = watch.poll().expect("first cursor delta reads");
     assert_eq!(event_count(&first.observations), 1);
@@ -187,7 +180,7 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
             .is_empty()
     );
 
-    let complete = record(CODEX_REASONING);
+    let complete = record(REASONING);
     let split = complete.len() / 2;
     tape.tee(&complete[..split])
         .expect("partial record prefix is durable");
@@ -203,9 +196,9 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
         .expect("cursor comparison heals the missed wake");
     assert_eq!(event_count(&completed.observations), 1);
 
-    tape.tee(&record(CODEX_PROSE))
+    tape.tee(&record(PROSE))
         .expect("first unobserved record is durable");
-    tape.tee(&record(CODEX_REASONING))
+    tape.tee(&record(REASONING))
         .expect("second unobserved record is durable");
     assert_eq!(
         event_count(
@@ -218,7 +211,7 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
     );
 
     tape.seal().expect("first member seals");
-    tape.tee(&record(CODEX_PROSE))
+    tape.tee(&record(PROSE))
         .expect("next member begins after rotation");
     assert_eq!(
         event_count(
@@ -236,14 +229,18 @@ fn watch_heals_missed_wakes_by_comparing_durable_cursors_across_growth_and_seali
 #[test]
 fn retro_accounts_for_partial_malformed_missing_and_ambiguous_spans() {
     let scratch = Scratch::new("retro");
-    let (codex, tape) = session(scratch.path(), "lane-a", "codex");
+    let (omp_tape, tape) = session(scratch.path(), "lane-a", "omp");
     tape.tee(b"not-json\n")
         .expect("malformed complete record is durable");
-    tape.tee(b"{\"type\":\"item.completed\"")
+    tape.tee(b"{\"type\":\"message_end\"")
         .expect("partial trailing record is durable");
 
-    let replay = retro(scratch.path(), RetroSelector::Path(codex.clone()), DIALECTS)
-        .expect("path replay reads preserved tape");
+    let replay = retro(
+        scratch.path(),
+        RetroSelector::Path(omp_tape.clone()),
+        DIALECTS,
+    )
+    .expect("path replay reads preserved tape");
     assert_eq!(replay.mode, Mode::Retro);
     assert!(replay.observations.iter().any(|observation| matches!(
         observation,
@@ -286,9 +283,9 @@ fn retro_accounts_for_partial_malformed_missing_and_ambiguous_spans() {
         [Observation::Missing { .. }]
     ));
 
-    let (_, claude) = session(scratch.path(), "lane-b", "claude");
-    claude
-        .tee(b"{\"type\":\"system\",\"subtype\":\"compact_boundary\"}\n")
+    let (_, fixture) = session(scratch.path(), "lane-b", "fixture");
+    fixture
+        .tee(b"{\"type\":\"agent_start\"}\n")
         .expect("second session record is durable");
     let ambiguous = retro(
         scratch.path(),
@@ -303,7 +300,7 @@ fn retro_accounts_for_partial_malformed_missing_and_ambiguous_spans() {
     assert!(matches!(
         ambiguous.observations.as_slice(),
         [Observation::Ambiguous { candidates, .. }]
-            if candidates == &vec![codex, scratch.path().join("lane-b/claude")]
+            if candidates == &vec![omp_tape, scratch.path().join("lane-b/fixture")]
     ));
 
     scratch.remove();
@@ -312,9 +309,8 @@ fn retro_accounts_for_partial_malformed_missing_and_ambiguous_spans() {
 #[test]
 fn watch_and_retro_leave_authority_and_discovery_bytes_unchanged() {
     let scratch = Scratch::new("readonly");
-    let (codex, tape) = session(scratch.path(), "lane-a", "codex");
-    tape.tee(&record(CODEX_PROSE))
-        .expect("fixture record is durable");
+    let (omp_tape, tape) = session(scratch.path(), "lane-a", "omp");
+    tape.tee(&record(PROSE)).expect("fixture record is durable");
     for name in ["journal", "claims", "heads", "discovery"] {
         fs::write(scratch.path().join(name), format!("sentinel:{name}\n"))
             .expect("authority sentinel writes");
@@ -326,12 +322,13 @@ fn watch_and_retro_leave_authority_and_discovery_bytes_unchanged() {
         event_count(&watch.poll().expect("watch reads").observations),
         1
     );
-    let replay = retro(scratch.path(), RetroSelector::Path(codex), DIALECTS).expect("retro reads");
+    let replay =
+        retro(scratch.path(), RetroSelector::Path(omp_tape), DIALECTS).expect("retro reads");
     assert_eq!(event_count(&replay.observations), 1);
 
     assert_eq!(snapshot(scratch.path()), before);
 
-    let missing = scratch.path().join("never-created/codex");
+    let missing = scratch.path().join("never-created/omp");
     let mut missing_watch = Watch::new(&missing, DIALECTS.iter().copied());
     assert!(matches!(
         missing_watch
@@ -395,8 +392,8 @@ fn retro_selector_grammar_never_falls_through_to_another_meaning() {
 #[test]
 fn records_keep_one_typed_identity_across_sealed_member_boundaries() {
     let scratch = Scratch::new("cross-member");
-    let (codex, tape) = session(scratch.path(), "lane-a", "codex");
-    let complete = record(CODEX_PROSE);
+    let (omp_tape, tape) = session(scratch.path(), "lane-a", "omp");
+    let complete = record(PROSE);
     let first = complete.len() / 3;
     let second = first * 2;
 
@@ -447,7 +444,7 @@ fn records_keep_one_typed_identity_across_sealed_member_boundaries() {
     )));
     assert!(watch.poll().expect("cursor advances once").is_empty());
 
-    let replay = retro(scratch.path(), RetroSelector::Path(codex), DIALECTS)
+    let replay = retro(scratch.path(), RetroSelector::Path(omp_tape), DIALECTS)
         .expect("retro joins the same fragments");
     assert_eq!(event_count(&replay.observations), 1);
     assert!(replay.observations.iter().all(|observation| !matches!(
@@ -461,8 +458,8 @@ fn records_keep_one_typed_identity_across_sealed_member_boundaries() {
 #[test]
 fn a_sealed_prefix_remains_pending_until_the_active_member_completes_it() {
     let scratch = Scratch::new("sealed-prefix");
-    let (_, tape) = session(scratch.path(), "lane-a", "codex");
-    let complete = record(CODEX_REASONING);
+    let (_, tape) = session(scratch.path(), "lane-a", "omp");
+    let complete = record(REASONING);
     let split = complete.len() / 2;
     tape.tee(&complete[..split])
         .expect("record prefix is durable");
@@ -499,9 +496,9 @@ fn a_sealed_prefix_remains_pending_until_the_active_member_completes_it() {
 #[test]
 fn a_newline_before_rotation_keeps_the_next_split_record_distinct() {
     let scratch = Scratch::new("newline-rotation");
-    let (_, tape) = session(scratch.path(), "lane-a", "codex");
-    let first = record(CODEX_PROSE);
-    let second = record(CODEX_REASONING);
+    let (_, tape) = session(scratch.path(), "lane-a", "omp");
+    let first = record(PROSE);
+    let second = record(REASONING);
     let split = second.len() / 2;
     let mut member = first.clone();
     member.extend_from_slice(&second[..split]);
@@ -537,14 +534,14 @@ fn a_newline_before_rotation_keeps_the_next_split_record_distinct() {
 #[test]
 fn finite_retro_accounts_one_terminal_partial_over_every_member() {
     let scratch = Scratch::new("terminal-partial");
-    let (codex, tape) = session(scratch.path(), "lane-a", "codex");
+    let (omp_tape, tape) = session(scratch.path(), "lane-a", "omp");
     tape.tee(b"{\"type\":")
         .expect("first incomplete fragment is durable");
     tape.seal().expect("first incomplete fragment seals");
-    tape.tee(b"\"item.completed\"")
+    tape.tee(b"\"message_end\"")
         .expect("second incomplete fragment is durable");
 
-    let replay = retro(scratch.path(), RetroSelector::Path(codex), DIALECTS)
+    let replay = retro(scratch.path(), RetroSelector::Path(omp_tape), DIALECTS)
         .expect("finite retro accounts the terminal fragment");
     assert!(matches!(
         replay.observations.as_slice(),
@@ -554,7 +551,7 @@ fn finite_retro_accounts_one_terminal_partial_over_every_member() {
             ..
         }] if spans == &vec![
             Span { member: 1, offset: 0, length: 8 },
-            Span { member: 2, offset: 0, length: 16 },
+            Span { member: 2, offset: 0, length: 13 },
         ]
     ));
 
@@ -564,29 +561,26 @@ fn finite_retro_accounts_one_terminal_partial_over_every_member() {
 #[test]
 fn retro_backfills_tool_media_from_durable_tape_even_when_the_call_is_missing() {
     let scratch = Scratch::new("tool-media-backfill");
-    let (codex, tape) = session(scratch.path(), "lane-a", "codex");
+    let (omp_tape, tape) = session(scratch.path(), "lane-a", "omp");
     let result = serde_json::to_vec(&serde_json::json!({
-        "type": "event_msg",
-        "payload": {
-            "type": "mcp_tool_call_end",
-            "call_id": "call-image",
-            "result": {
-                "Ok": {
-                    "content": [{
-                        "type": "image",
-                        "data": "iVBORw0KGgo=",
-                        "mimeType": "image/png",
-                    }],
-                    "isError": false,
-                },
-            },
+        "type": "message_end",
+        "message": {
+            "role": "toolResult",
+            "toolCallId": "call-image",
+            "toolName": "read",
+            "content": [{
+                "type": "image",
+                "data": "iVBORw0KGgo=",
+                "mimeType": "image/png",
+            }],
+            "isError": false,
         },
     }))
-    .expect("Codex MCP result encodes");
+    .expect("tool image result encodes");
     tape.tee(&record(&result))
         .expect("tool image result is durable");
 
-    let replay = retro(scratch.path(), RetroSelector::Path(codex), DIALECTS)
+    let replay = retro(scratch.path(), RetroSelector::Path(omp_tape), DIALECTS)
         .expect("finite replay reads the durable result");
     assert!(matches!(
         replay.observations.as_slice(),
@@ -611,7 +605,7 @@ fn retro_backfills_tool_media_from_durable_tape_even_when_the_call_is_missing() 
 #[test]
 fn retro_backfills_delivered_directive_media_beside_its_authored_message() {
     let scratch = Scratch::new("directive-media-backfill");
-    let (codex, tape) = session(scratch.path(), "lane-a", "codex");
+    let (omp_tape, tape) = session(scratch.path(), "lane-a", "omp");
     let name = r"operator](capture)\雪.png";
     let media = wire::Media::from_base64(name, "image/png", "iVBORw0KGgo=")
         .expect("fixture attachment admits");
@@ -622,18 +616,17 @@ fn retro_backfills_delivered_directive_media_beside_its_authored_message() {
         media.markdown().expect("fixture Markdown renders"),
     );
     let message = serde_json::to_vec(&serde_json::json!({
-        "type": "response_item",
-        "payload": {
-            "type": "message",
+        "type": "message_end",
+        "message": {
             "role": "user",
-            "content": [{"type": "input_text", "text": text}],
+            "content": [{"type": "text", "text": text}],
         },
     }))
     .expect("delivered directive transcript record encodes");
     tape.tee(&record(&message))
         .expect("delivered directive is durable");
 
-    let replay = retro(scratch.path(), RetroSelector::Path(codex), DIALECTS)
+    let replay = retro(scratch.path(), RetroSelector::Path(omp_tape), DIALECTS)
         .expect("finite replay reads the authored directive");
     assert!(matches!(
         replay.observations.as_slice(),
@@ -670,9 +663,6 @@ fn every_surface_event_has_one_closed_canonical_wire_shape() {
             content: SurfaceReasoning::Plain {
                 lines: vec!["inspect".to_owned()],
             },
-        },
-        SurfaceEvent::Reasoning {
-            content: SurfaceReasoning::Opaque {},
         },
         SurfaceEvent::Tool {
             call_id: "call-1".to_owned(),
@@ -734,7 +724,6 @@ fn every_surface_event_has_one_closed_canonical_wire_shape() {
             EventKind::Session,
             EventKind::Prose,
             EventKind::Reasoning,
-            EventKind::Reasoning,
             EventKind::Tool,
             EventKind::Tool,
             EventKind::Tool,
@@ -760,8 +749,8 @@ fn stream_identity_refuses_missing_extra_and_unknown_nested_shapes() {
         root: PathBuf::from("root"),
         observations: vec![Observation::Event {
             lane: "lane-a".to_owned(),
-            dialect: Dialect::Codex,
-            tape: PathBuf::from("root/lane-a/codex"),
+            dialect: Dialect::Omp,
+            tape: PathBuf::from("root/lane-a/omp"),
             spans: vec![Span {
                 member: 1,
                 offset: 2,
@@ -851,12 +840,12 @@ fn an_explicit_session_symlink_is_not_discovered_as_preserved_tape() {
     use std::os::unix::fs::symlink;
 
     let scratch = Scratch::new("symlink");
-    let (codex, tape) = session(scratch.path(), "lane-a", "codex");
-    tape.tee(&record(CODEX_PROSE))
+    let (omp_tape, tape) = session(scratch.path(), "lane-a", "omp");
+    tape.tee(&record(PROSE))
         .expect("real fixture record is durable");
-    let alias = scratch.path().join("lane-b/codex");
+    let alias = scratch.path().join("lane-b/omp");
     fs::create_dir(alias.parent().expect("alias has a parent")).expect("alias parent exists");
-    symlink(&codex, &alias).expect("fixture symlink exists");
+    symlink(&omp_tape, &alias).expect("fixture symlink exists");
 
     let replay = retro(scratch.path(), RetroSelector::Path(alias), DIALECTS)
         .expect("a symlink is accounted without being followed");

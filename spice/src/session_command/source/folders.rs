@@ -1,4 +1,4 @@
-//! The folder a vendor names for one working directory, and the transcripts
+//! The folder oh-my-pi names for one working directory, and the transcripts
 //! it files there.
 
 use std::fs;
@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use super::Environment;
 
-/// The transcripts a vendor keeps for `thread` beneath the folder named by
+/// The transcripts omp keeps for `thread` beneath the folder named by
 /// the working directory this process was asked from, when any are there.
 ///
 /// Resolving one's own live thread is by far the most common lookup, and
@@ -17,7 +17,6 @@ use super::Environment;
 /// root exactly as if this were never tried.
 pub(super) fn working_directory_transcripts(
     sessions: &Path,
-    folders: vendor::WorkingDirectoryFolders,
     thread: &str,
     environment: &Environment,
 ) -> Vec<PathBuf> {
@@ -27,40 +26,24 @@ pub(super) fn working_directory_transcripts(
     let regular = |path: &Path| {
         fs::symlink_metadata(path).is_ok_and(|metadata| metadata.file_type().is_file())
     };
-    match folders {
-        vendor::WorkingDirectoryFolders::ClaudeProjects => {
-            let folder = sessions.join(
-                cwd.to_string_lossy()
-                    .replace(std::path::MAIN_SEPARATOR, "-"),
-            );
-            ["jsonl", "jsonl.gz"]
-                .into_iter()
-                .map(|extension| folder.join(format!("{thread}.{extension}")))
-                .find(|path| regular(path))
-                .into_iter()
-                .collect()
-        }
-        vendor::WorkingDirectoryFolders::OmpSessions => {
-            let Some(folder) = omp_session_folder(cwd, environment) else {
-                return Vec::new();
-            };
-            let Ok(entries) = fs::read_dir(sessions.join(folder)) else {
-                return Vec::new();
-            };
-            let suffixes = [format!("_{thread}.jsonl"), format!("_{thread}.jsonl.gz")];
-            let mut matches = entries
-                .flatten()
-                .map(|entry| entry.path())
-                .filter(|path| {
-                    let name = path.file_name().map(|name| name.to_string_lossy());
-                    name.is_some_and(|name| suffixes.iter().any(|suffix| name.ends_with(suffix)))
-                        && regular(path)
-                })
-                .collect::<Vec<_>>();
-            matches.sort();
-            matches
-        }
-    }
+    let Some(folder) = omp_session_folder(cwd, environment) else {
+        return Vec::new();
+    };
+    let Ok(entries) = fs::read_dir(sessions.join(folder)) else {
+        return Vec::new();
+    };
+    let suffixes = [format!("_{thread}.jsonl"), format!("_{thread}.jsonl.gz")];
+    let mut matches = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            let name = path.file_name().map(|name| name.to_string_lossy());
+            name.is_some_and(|name| suffixes.iter().any(|suffix| name.ends_with(suffix)))
+                && regular(path)
+        })
+        .collect::<Vec<_>>();
+    matches.sort();
+    matches
 }
 
 /// The folder oh-my-pi names for `cwd`: `-` and the path relative to the

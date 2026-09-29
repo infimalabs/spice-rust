@@ -163,12 +163,12 @@ fn false_disable_inventory_fails_when_a_declared_path_has_no_consumer() {
 
     assert_eq!(
         evidence.declared(),
-        &[config_path(&["vendor", "codex", "fast_mode"])]
+        &[config_path(&["vendor", "omp", "fast_mode"])]
     );
     assert!(evidence.observed().is_empty());
     assert!(evidence.violations().is_empty());
     assert_eq!(arm.standing(), CoreStanding::Failed);
-    assert!(arm.diagnostic().contains("missing=vendor.codex.fast_mode"));
+    assert!(arm.diagnostic().contains("missing=vendor.omp.fast_mode"));
 
     repository.remove();
 }
@@ -181,7 +181,7 @@ fn false_disable_inventory_passes_with_canonical_honored_paths() {
     let evidence = false_disable_evidence(arm);
     let expected = [
         config_path(&["alpha", "feature", "enabled"]),
-        config_path(&["vendor", "codex", "fast_mode"]),
+        config_path(&["vendor", "omp", "fast_mode"]),
     ];
 
     assert_eq!(evidence.declared(), expected);
@@ -201,7 +201,7 @@ fn false_disable_inventory_authenticates_the_configuration_root_type() {
             "direct.enabled",
             "renamed.enabled",
             "qualified.enabled",
-            "vendor.codex.fast_mode",
+            "vendor.omp.fast_mode",
         ]),
     );
     repository.write(
@@ -238,16 +238,16 @@ fn false_disable_inventory_authenticates_the_configuration_root_type() {
             "mod shadowed {\n",
             "    struct Root;\n",
             "    fn consume(root: &Root) -> bool {\n",
-            "        root.vendor().codex().fast_mode()\n",
+            "        root.vendor().omp().fast_mode()\n",
             "    }\n",
             "}\n",
             "fn generic<Root>(root: &Root) -> bool {\n",
-            "    root.vendor().codex().fast_mode()\n",
+            "    root.vendor().omp().fast_mode()\n",
             "}\n",
             "struct Adapter<Root>(Root);\n",
             "impl<Root> Adapter<Root> {\n",
             "    fn consume(&self, root: &Root) -> bool {\n",
-            "        root.vendor().codex().fast_mode()\n",
+            "        root.vendor().omp().fast_mode()\n",
             "    }\n",
             "}\n",
         ),
@@ -261,7 +261,7 @@ fn false_disable_inventory_authenticates_the_configuration_root_type() {
         config_path(&["direct", "enabled"]),
         config_path(&["qualified", "enabled"]),
         config_path(&["renamed", "enabled"]),
-        config_path(&["vendor", "codex", "fast_mode"]),
+        config_path(&["vendor", "omp", "fast_mode"]),
     ];
     let observed = [
         config_path(&["direct", "enabled"]),
@@ -272,7 +272,7 @@ fn false_disable_inventory_authenticates_the_configuration_root_type() {
     assert_eq!(evidence.declared(), declared);
     assert_eq!(evidence.observed(), observed);
     assert_eq!(arm.standing(), CoreStanding::Failed);
-    assert!(arm.diagnostic().contains("missing=vendor.codex.fast_mode"));
+    assert!(arm.diagnostic().contains("missing=vendor.omp.fast_mode"));
 
     repository.remove();
 }
@@ -353,7 +353,7 @@ fn false_disable_inventory_seeds_an_inherent_method_parameter() {
     let repository = contract_repository("core-false-disable-inherent");
     repository.write(
         "spice/src/config.rs",
-        &false_disable_registry(&["vendor.codex.fast_mode"]),
+        &false_disable_registry(&["vendor.omp.fast_mode"]),
     );
     repository.write(
         "spice/src/launcher.rs",
@@ -362,7 +362,7 @@ fn false_disable_inventory_seeds_an_inherent_method_parameter() {
             "struct Launcher;\n",
             "impl Launcher {\n",
             "    fn compose(&self, root: &Root) -> bool {\n",
-            "        let configured = root.vendor().codex();\n",
+            "        let configured = root.vendor().omp();\n",
             "        configured.fast_mode()\n",
             "    }\n",
             "}\n",
@@ -373,7 +373,7 @@ fn false_disable_inventory_seeds_an_inherent_method_parameter() {
     let report = acquired(&repository, ClaimCapture::Idle, ActorCapture::Absent);
     let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
     let evidence = false_disable_evidence(arm);
-    let expected = [config_path(&["vendor", "codex", "fast_mode"])];
+    let expected = [config_path(&["vendor", "omp", "fast_mode"])];
 
     assert_eq!(evidence.declared(), expected);
     assert_eq!(evidence.observed(), expected);
@@ -406,7 +406,6 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
     let arm = acquired_arm(&report, GateId::ConfigFalseDisable);
     let evidence = false_disable_evidence(arm);
     let expected = [
-        config_path(&["vendor", "codex", "fast_mode"]),
         config_path(&["vendor", "omp", "fast_mode"]),
         config_path(&["vendor", "omp", "lsp"]),
     ];
@@ -420,7 +419,7 @@ fn current_false_disable_registry_and_consumer_are_one_inventory() {
 
 fn false_disable_repository(label: &str, honored: bool) -> Tree {
     let repository = contract_repository(label);
-    let mut paths = vec!["vendor.codex.fast_mode"];
+    let mut paths = vec!["vendor.omp.fast_mode"];
     if honored {
         paths.push("alpha.feature.enabled");
     }
@@ -431,7 +430,7 @@ fn false_disable_repository(label: &str, honored: bool) -> Tree {
             concat!(
                 "use crate::config::Root;\n",
                 "fn consume(root: &Root) -> bool {\n",
-                "    let configured = root.vendor().codex();\n",
+                "    let configured = root.vendor().omp();\n",
                 "    let fast = configured.fast_mode();\n",
                 "    let feature = root.alpha().feature();\n",
                 "    fast || feature.enabled()\n",
@@ -487,7 +486,7 @@ fn tracked_trust_inventory_fails_with_one_untracked_policy_source() {
     let evidence = tracked_trust_evidence(arm);
     let expected = [
         config_path(&["lane", "vendor"]),
-        config_path(&["vendor", "codex", "binary"]),
+        config_path(&["vendor", "omp", "binary"]),
     ];
 
     assert_eq!(evidence.declared(), expected);
@@ -497,7 +496,7 @@ fn tracked_trust_inventory_fails_with_one_untracked_policy_source() {
     };
     assert_eq!(violation.code(), "config-tracked-trust::untracked-source");
     assert!(!violation.detail().trim().is_empty());
-    assert!(violation.detail().contains("vendor.codex.binary"));
+    assert!(violation.detail().contains("vendor.omp.binary"));
     assert_eq!(arm.standing(), CoreStanding::Failed);
 
     repository.remove();
@@ -525,12 +524,12 @@ fn tracked_trust_inventory_passes_when_every_policy_source_is_tracked() {
     assert!(
         evidence
             .declared()
-            .contains(&config_path(&["vendor", "codex", "binary"]))
+            .contains(&config_path(&["vendor", "omp", "binary"]))
     );
     assert!(
         !evidence
             .declared()
-            .contains(&config_path(&["vendor", "codex", "model"]))
+            .contains(&config_path(&["vendor", "omp", "model"]))
     );
     assert!(
         !evidence
@@ -573,14 +572,14 @@ fn focused_inventories_use_the_declared_split_registry_and_ignore_a_decoy() {
     repository.write("spice/src/config.rs", "mod registry;\npub struct Root;\n");
     repository.write(
         "spice/src/config/registry.rs",
-        &false_disable_registry(&["vendor.codex.fast_mode"]),
+        &false_disable_registry(&["vendor.omp.fast_mode"]),
     );
     repository.write(
         "spice/src/consumer.rs",
         concat!(
             "use crate::config::Root;\n",
             "fn consume(root: &Root) -> bool {\n",
-            "    root.vendor().codex().fast_mode()\n",
+            "    root.vendor().omp().fast_mode()\n",
             "}\n",
         ),
     );
@@ -647,7 +646,7 @@ fn write_registry_decoy(repository: &Tree) {
         concat!(
             "macro_rules! configuration_registry { ($($tokens:tt)*) => {}; }\n",
             "configuration_registry! {\n",
-            "    fixed \"vendor.codex.fast_mode\" {\n",
+            "    fixed \"vendor.omp.fast_mode\" {\n",
             "        kind: Boolean,\n",
             "        builtin: Some(Builtin::Boolean(false)),\n",
             "        layers: LOCAL,\n",
@@ -674,14 +673,14 @@ fn untracked_trust_repository(label: &str) -> Tree {
             "configuration_registry! {\n",
             "    fixed \"lane.vendor\" {\n",
             "        kind: String,\n",
-            "        builtin: Some(Builtin::String(\"codex\")),\n",
+            "        builtin: Some(Builtin::String(\"omp\")),\n",
             "        layers: TRACKED_FLAG,\n",
             "        class: Policy,\n",
             "        flag: None,\n",
             "    }\n",
-            "    fixed \"vendor.codex.binary\" {\n",
+            "    fixed \"vendor.omp.binary\" {\n",
             "        kind: String,\n",
-            "        builtin: Some(Builtin::String(\"codex\")),\n",
+            "        builtin: Some(Builtin::String(\"omp\")),\n",
             "        layers: LOCAL,\n",
             "        class: Policy,\n",
             "        flag: None,\n",

@@ -11,12 +11,6 @@ use crate::ConfigSource;
 /// [`Ord`] ranks them by this declaration order.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 pub enum SpiceVariable {
-    /// Claude session identity selected for transcript forensics.
-    #[serde(rename = "CLAUDE_CODE_SESSION_ID")] // env-policy: allow
-    ClaudeSession,
-    /// Codex thread identity selected for transcript forensics.
-    #[serde(rename = "CODEX_THREAD_ID")] // env-policy: allow
-    CodexThread,
     /// Preferred agent vendor selected for transcript forensics.
     #[serde(rename = "SPICE_AGENT_VENDOR")] // env-policy: allow
     AgentVendor,
@@ -91,8 +85,6 @@ impl SpiceVariable {
     /// Keeping this order aligned with both checked configuration ledgers makes
     /// additions produce one local diff instead of a merge-only reorder.
     pub const ALL: &[Self] = &[
-        Self::ClaudeSession,
-        Self::CodexThread,
         Self::AgentVendor,
         Self::AppSourceIdentity,
         Self::GateTestCargoMetadataMarker,
@@ -121,9 +113,7 @@ impl SpiceVariable {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::ClaudeSession => "CLAUDE_CODE_SESSION_ID", // env-policy: allow
-            Self::CodexThread => "CODEX_THREAD_ID",          // env-policy: allow
-            Self::AgentVendor => "SPICE_AGENT_VENDOR",       // env-policy: allow
+            Self::AgentVendor => "SPICE_AGENT_VENDOR", // env-policy: allow
             Self::AppSourceIdentity => "SPICE_APP_SOURCE_IDENTITY", // env-policy: allow
             Self::GateTestCargoMetadataMarker => {
                 "SPICE_GATE_TEST_CARGO_METADATA_MARKER" // env-policy: allow
@@ -586,7 +576,7 @@ mod tests {
             r#","source":"worktree-configuration","bounds":"not-executed""#,
             r#","cancellation":"not-executed","network":"not-executed""#,
             r#","observation":{"status":"ready"}}]}]"#,
-            r#","extensions":[{"namespace":"vendor","name":"codex""#,
+            r#","extensions":[{"namespace":"vendor","name":"omp""#,
             r#","provider":"vendor","observation":{"status":"ready"}}]}"#,
         );
 

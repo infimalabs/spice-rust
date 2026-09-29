@@ -49,11 +49,7 @@ pub const PACKAGED_ENV_INCLUDES: &[&str] = &[
     "**/*.sh",
     "**/*.zsh",
 ];
-const PACKAGED_ENV_NAME_PATTERNS: &[&str] = &[
-    "SPICE_[A-Z0-9_]+",
-    "CODEX_THREAD_ID",        // env-policy: allow
-    "CLAUDE_CODE_SESSION_ID", // env-policy: allow
-];
+const PACKAGED_ENV_NAME_PATTERNS: &[&str] = &["SPICE_[A-Z0-9_]+"];
 const PACKAGED_ENV_FAMILY_SUFFIXES: &[(&str, &[&str])] = &[
     ("python", &[".py"]),
     ("csharp", &[".cs"]),

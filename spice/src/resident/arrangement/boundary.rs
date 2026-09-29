@@ -36,7 +36,7 @@ fn recorded_sources(bus: &Bus, kind: wire::FactKind) -> Option<serde_json::Value
 fn accounted_head(lane: CanonicalUuid, source: CanonicalUuid) -> wire::TranscriptSourceHead {
     wire::TranscriptSourceHead {
         lane,
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         stream: "session".to_owned(),
         source,
         next: wire::body::TranscriptPosition {
@@ -58,7 +58,7 @@ fn expected_sources(lane: CanonicalUuid, source: CanonicalUuid) -> serde_json::V
             "proven": {
                 "heads": [{
                     "lane": lane.to_string(),
-                    "vendor": "claude",
+                    "vendor": "omp",
                     "stream": "session",
                     "source": source.to_string(),
                     "next": { "member": 1, "offset": 4096 },

@@ -170,33 +170,6 @@ fn runtime_environment_names_are_rust_specific() {
     }
 }
 
-/// A predecessor lane with the same UUID does not activate this runtime.
-#[test]
-fn predecessor_lane_environment_does_not_activate_rust_hook_context() {
-    let fixture = Fixture::seeded("lane-environment");
-    let before = fixture.predecessor_identity();
-    let lane = "018f82d4-6f59-7d06-92e3-bce9131163c7";
-
-    let output = fixture.invoke_with_predecessor_environment(&["--json", "hook", "claude"], lane);
-
-    assert!(
-        !output.status.success(),
-        "predecessor lane context must not satisfy Rust hook admission: {output:?}"
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stdout.contains("steer::lane-context-absent")
-            || stderr.contains("steer::lane-context-absent"),
-        "refusal must be missing Rust lane context, stdout={stdout:?} stderr={stderr:?}",
-    );
-    assert_eq!(
-        fixture.predecessor_identity(),
-        before,
-        "refused Rust hook read or changed predecessor state"
-    );
-}
-
 /// Running this port leaves every predecessor file byte-for-byte as found.
 ///
 /// The run is first proved to have resolved this exact state root. That is the
@@ -386,17 +359,6 @@ impl Fixture {
     fn invoke(&self, args: &[&str]) -> Output {
         let mut command = self.command();
         command.args(args).output().expect("run the spice binary")
-    }
-
-    fn invoke_with_predecessor_environment(&self, args: &[&str], lane: &str) -> Output {
-        let mut command = self.command();
-        command
-            .args(args)
-            .env(PREDECESSOR_HOOKS_ENV, self.predecessor_root().join("hooks"))
-            .env(PREDECESSOR_LANE_ENV, lane)
-            .env(PREDECESSOR_NATIVE_SHELL_ENV, "/bin/sh")
-            .output()
-            .expect("run the spice binary with predecessor environment")
     }
 
     fn command(&self) -> Command {

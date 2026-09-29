@@ -216,7 +216,6 @@ mod tests {
     const OMP_WIDGET: &str =
         r#"{"type":"extension_ui_request","id":"1583f94d24ebac0b","method":"setWidget"}"#;
     const OMP_AGENT_END: &str = r#"{"type":"agent_end","messages":[]}"#;
-    const CLAUDE_RATE_LIMIT_ALLOWED: &str = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}"#;
 
     fn refused_wake(tape: &tape::Tape, session: &str) -> wire::TapeLocus {
         write(tape, r#"{"type":"ready","protocolVersion":1}"#);
@@ -364,53 +363,6 @@ mod tests {
             closing_word(&scratch.0, &spice::extension::OMP, &last_member_only)
                 .expect("the sealed tape reads"),
             LastWord::Failure(REFUSAL.to_owned())
-        );
-    }
-
-    #[test]
-    fn a_claude_exit_ends_on_its_result_error_behind_an_allowed_rate_limit_report() {
-        let scratch = Scratch::new();
-        let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
-        let declared = write(
-            &tape,
-            r#"{"type":"system","subtype":"init","session_id":"018f7777-7777-7444-8888-999999999999"}"#,
-        );
-        write(&tape, CLAUDE_RATE_LIMIT_ALLOWED);
-        write(
-            &tape,
-            &format!(
-                r#"{{"type":"result","subtype":"error_during_execution","is_error":true,"errors":["{REFUSAL}"]}}"#
-            ),
-        );
-        write(&tape, CLAUDE_RATE_LIMIT_ALLOWED);
-
-        assert_eq!(
-            closing_word(&scratch.0, &spice::extension::CLAUDE, &declared)
-                .expect("the retained tape reads"),
-            LastWord::Failure(REFUSAL.to_owned())
-        );
-
-        write(
-            &tape,
-            r#"{"type":"result","subtype":"success","is_error":false,"result":"done"}"#,
-        );
-        write(&tape, CLAUDE_RATE_LIMIT_ALLOWED);
-        assert_eq!(
-            closing_word(&scratch.0, &spice::extension::CLAUDE, &declared)
-                .expect("the retained tape reads"),
-            LastWord::Failure(REFUSAL.to_owned()),
-            "a success result carries no event, so the newest event is still the error"
-        );
-
-        write(
-            &tape,
-            r#"{"type":"assistant","message":{"type":"message","role":"assistant","content":[{"type":"text","text":"recovered"}],"usage":{"input_tokens":7,"cache_read_input_tokens":5,"cache_creation_input_tokens":3,"output_tokens":2}}}"#,
-        );
-        assert_eq!(
-            closing_word(&scratch.0, &spice::extension::CLAUDE, &declared)
-                .expect("the retained tape reads"),
-            LastWord::Answered,
-            "prose after the error is the newer word"
         );
     }
 

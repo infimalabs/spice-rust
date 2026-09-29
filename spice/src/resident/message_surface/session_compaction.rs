@@ -31,10 +31,8 @@ use presentation::publish;
 
 /// Per-resident cursors over canonical session JSONL files.
 ///
-/// Codex's `exec --json` stream does not expose the `compacted` record stored
-/// in its rollout, so selected-stream capture cannot manufacture this view.
-/// this reader records Codex boundaries into lane authority, projects typed
-/// compaction events into Canvas, and folds adjacent tool evidence only to
+/// Projects the typed compaction events a lane's preserved session records
+/// into Canvas, folding adjacent tool evidence into each boundary.
 pub(in crate::resident) struct SessionCompactions {
     environment: crate::session_command::Environment,
     cursors: BTreeMap<CanonicalUuid, Cursor>,
@@ -54,7 +52,6 @@ enum ReportKey {
 struct Cursor {
     thread: String,
     path: PathBuf,
-    worktree: PathBuf,
     dialect: listen::Dialect,
     author: CanonicalUuid,
     member: u64,
@@ -66,8 +63,6 @@ struct Cursor {
     prefix: blake3::Hasher,
     guard: Option<RecordGuard>,
     validation: Option<PrefixValidation>,
-    startup_recovery: Option<listen::Locus>,
-    startup_search: Option<HistoryCheckpoint>,
     failure: Option<FileObservation>,
 }
 
@@ -176,69 +171,26 @@ impl SessionCompactions {
     /// Record and publish every newly completed structured boundary for current sessions.
     pub(in crate::resident) fn synchronize(
         &mut self,
-        bus: &Bus,
-        epoch: CanonicalUuid,
         selection: (&wire::ResidencyHead, CanonicalUuid),
         publisher: &impl AgentMessagePublisher,
         state: &Mutex<MessageState>,
         diagnostic: &mut dyn io::Write,
     ) -> CommandResult<()> {
         let (residency, lane) = selection;
-        self.synchronize_selected_with(
-            residency,
-            Some(lane),
-            diagnostic,
-            |lane, occupant, thread, locus| {
-                lane_surface::recover_session_compaction(bus, epoch, lane, occupant, thread, locus)
-                    .map(drop)
-            },
-            |record, lane, author, worktree| {
-                publish(
-                    record,
-                    lane,
-                    author,
-                    worktree,
-                    publisher,
-                    &mut *lock_state(state)?,
-                )
-            },
-        )
+        self.synchronize_selected_with(residency, Some(lane), diagnostic, |record, lane, author| {
+            publish(record, lane, author, publisher, &mut *lock_state(state)?)
+        })
     }
 
-    #[cfg(test)]
-    fn synchronize_with<F>(
-        &mut self,
-        residency: &wire::ResidencyHead,
-        publisher: &impl AgentMessagePublisher,
-        state: &mut MessageState,
-        diagnostic: &mut dyn io::Write,
-        recover: F,
-    ) -> CommandResult<()>
-    where
-        F: FnMut(CanonicalUuid, CanonicalUuid, &str, listen::Locus) -> CommandResult<()>,
-    {
-        self.synchronize_selected_with(
-            residency,
-            None,
-            diagnostic,
-            recover,
-            |record, lane, author, worktree| {
-                publish(record, lane, author, worktree, publisher, state)
-            },
-        )
-    }
-
-    fn synchronize_selected_with<F, P>(
+    fn synchronize_selected_with<P>(
         &mut self,
         residency: &wire::ResidencyHead,
         selected: Option<CanonicalUuid>,
         diagnostic: &mut dyn io::Write,
-        mut recover: F,
         mut present: P,
     ) -> CommandResult<()>
     where
-        F: FnMut(CanonicalUuid, CanonicalUuid, &str, listen::Locus) -> CommandResult<()>,
-        P: FnMut(CompactionRecord, CanonicalUuid, CanonicalUuid, &Path) -> CommandResult<()>,
+        P: FnMut(CompactionRecord, CanonicalUuid, CanonicalUuid) -> CommandResult<()>,
     {
         let current = residency
             .lanes
@@ -254,42 +206,17 @@ impl SessionCompactions {
             .filter(|(lane, _)| selected.is_none_or(|selected| selected == *lane))
         {
             self.ensure_cursor(lane, session, diagnostic);
-            let Some((scanned, startup_recovery, path, worktree, author, dialect, thread)) =
-                self.cursors.get_mut(&lane).map(|cursor| {
-                    let path = cursor.path.clone();
-                    let worktree = cursor.worktree.clone();
-                    let author = cursor.author;
-                    let dialect = cursor.dialect;
-                    let thread = cursor.thread.clone();
-                    let scanned = scan_once_per_source(cursor);
-                    let startup_recovery = matches!(&scanned, ScanAttempt::Complete(_))
-                        .then(|| cursor.startup_recovery.take())
-                        .flatten();
-                    (
-                        scanned,
-                        startup_recovery,
-                        path,
-                        worktree,
-                        author,
-                        dialect,
-                        thread,
-                    )
-                })
-            else {
+            let Some((scanned, path, author)) = self.cursors.get_mut(&lane).map(|cursor| {
+                let path = cursor.path.clone();
+                let author = cursor.author;
+                (scan_once_per_source(cursor), path, author)
+            }) else {
                 continue;
             };
             match scanned {
                 ScanAttempt::Complete(records) => {
-                    if dialect == listen::Dialect::Codex
-                        && let Some(locus) = startup_recovery
-                    {
-                        recover(lane, author, &thread, locus)?;
-                    }
                     for record in records {
-                        if dialect == listen::Dialect::Codex && startup_recovery.is_none() {
-                            recover(lane, author, &thread, record.locus())?;
-                        }
-                        canvas_diagnostic(present(record, lane, author, &worktree), diagnostic)?;
+                        canvas_diagnostic(present(record, lane, author), diagnostic)?;
                     }
                 }
                 ScanAttempt::Latched => {}
@@ -301,17 +228,6 @@ impl SessionCompactions {
             }
         }
         Ok(())
-    }
-
-    #[cfg(test)]
-    fn synchronize_display_only(
-        &mut self,
-        residency: &wire::ResidencyHead,
-        publisher: &impl AgentMessagePublisher,
-        state: &mut MessageState,
-        diagnostic: &mut dyn io::Write,
-    ) -> CommandResult<()> {
-        self.synchronize_with(residency, publisher, state, diagnostic, |_, _, _, _| Ok(()))
     }
 
     fn ensure_cursor(
@@ -335,13 +251,7 @@ impl SessionCompactions {
                 self.reported.remove(&lane);
                 self.cursors.insert(
                     lane,
-                    Cursor::new(
-                        session.identity.clone(),
-                        path,
-                        session.worktree.clone().into(),
-                        dialect,
-                        session.occupant,
-                    ),
+                    Cursor::new(session.identity.clone(), path, dialect, session.occupant),
                 );
             }
             Err(error) => self.report_once(
@@ -393,18 +303,11 @@ impl SessionCompactions {
 }
 
 impl Cursor {
-    fn new(
-        thread: String,
-        path: PathBuf,
-        worktree: PathBuf,
-        dialect: listen::Dialect,
-        author: CanonicalUuid,
-    ) -> Self {
+    fn new(thread: String, path: PathBuf, dialect: listen::Dialect, author: CanonicalUuid) -> Self {
         Self {
             member: session_member(&thread),
             thread,
             path,
-            worktree,
             dialect,
             author,
             initialized: false,
@@ -415,8 +318,6 @@ impl Cursor {
             prefix: blake3::Hasher::new(),
             guard: None,
             validation: None,
-            startup_recovery: None,
-            startup_search: None,
             failure: None,
         }
     }
@@ -479,19 +380,10 @@ impl CompactionRecord {
 
 fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     if !cursor.initialized {
-        if cursor.dialect == listen::Dialect::Codex {
-            return bootstrap_codex(cursor, BOOTSTRAP_BOUNDARY_LIMIT);
-        }
         return bootstrap(cursor, BOOTSTRAP_BOUNDARY_LIMIT);
     }
     if cursor.validation.is_some() {
         return advance_validation(cursor);
-    }
-    if cursor.dialect == listen::Dialect::Codex
-        && cursor.startup_search.is_some()
-        && File::open(&cursor.path)?.metadata()?.len() == cursor.next
-    {
-        return advance_codex_startup_search(cursor);
     }
     let mut file = File::open(&cursor.path)?;
     if file.metadata()?.len() < cursor.next || !guard_matches(&mut file, cursor)? {
@@ -517,9 +409,6 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     if records.is_empty() {
         return Ok(records);
     }
-    if cursor.dialect == listen::Dialect::Codex {
-        cursor.startup_search = None;
-    }
     let stamp = FileStamp::read(reader.get_ref())?;
     drop(reader);
     cursor.validation = Some(PrefixValidation {
@@ -537,42 +426,6 @@ fn scan(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
     advance_validation(cursor)
 }
 
-/// Find the latest durable Codex boundary by paging backward, independently
-/// of the visible Canvas tail. Older context epochs cannot change that boundary.
-fn bootstrap_codex(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<CompactionRecord>> {
-    let checkpoint = history_checkpoint(&cursor.path)?;
-    let page = bootstrap_before(cursor, visible_limit, &checkpoint, HistoryRead::Cursor)?;
-    let latest = page.latest;
-    cursor.startup_recovery = latest;
-    cursor.startup_search =
-        (latest.is_none() && page.start > 0).then(|| checkpoint.retreat(page.start));
-    Ok(page.records)
-}
-
-fn advance_codex_startup_search(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {
-    let checkpoint = cursor
-        .startup_search
-        .clone()
-        .expect("Codex startup search advances only while pending");
-    let mut recovery = Cursor::new(
-        cursor.thread.clone(),
-        cursor.path.clone(),
-        cursor.worktree.clone(),
-        cursor.dialect,
-        cursor.author,
-    );
-    let page = bootstrap_before(&mut recovery, 0, &checkpoint, HistoryRead::Page)?;
-    if let Some(boundary) = page.latest {
-        cursor.startup_recovery = Some(boundary);
-        cursor.startup_search = None;
-    } else if page.start == 0 {
-        cursor.startup_search = None;
-    } else {
-        cursor.startup_search = Some(checkpoint.retreat(page.start));
-    }
-    Ok(Vec::new())
-}
-
 /// Seed a new resident from the bounded initial visible tail Canvas presents.
 ///
 /// A forward replay from byte zero makes the hundredth boundary pay for the
@@ -581,13 +434,11 @@ fn advance_codex_startup_search(cursor: &mut Cursor) -> io::Result<Vec<Compactio
 fn bootstrap(cursor: &mut Cursor, visible_limit: usize) -> io::Result<Vec<CompactionRecord>> {
     let checkpoint = history_checkpoint(&cursor.path)?;
     let page = bootstrap_before(cursor, visible_limit, &checkpoint, HistoryRead::Cursor)?;
-    cursor.startup_search = None;
     Ok(page.records)
 }
 
 struct HistoryPage {
     records: Vec<CompactionRecord>,
-    latest: Option<listen::Locus>,
     start: u64,
     work: HistoryWork,
 }
@@ -646,7 +497,7 @@ fn bootstrap_before(
     let start = source.older.saturating_add(selected as u64);
     prepare_history_cursor(cursor, seat);
     let mut work = source.work;
-    let (records, latest) = decode_history_records(
+    let records = decode_history_records(
         cursor,
         &source.bytes[selected..],
         visible_limit,
@@ -663,7 +514,6 @@ fn bootstrap_before(
     cursor.prefix = blake3::Hasher::new();
     Ok(HistoryPage {
         records,
-        latest,
         start,
         work,
     })
@@ -785,7 +635,7 @@ fn decode_history_records(
     stamp: FileStamp,
     started: Instant,
     work: &mut HistoryWork,
-) -> io::Result<(Vec<CompactionRecord>, Option<listen::Locus>)> {
+) -> io::Result<Vec<CompactionRecord>> {
     let mut records = Vec::new();
     let mut visible = Vec::new();
     for record in bytes.split_inclusive(|byte| *byte == b'\n') {
@@ -803,9 +653,8 @@ fn decode_history_records(
         visible.push((offset, count));
         work.decoded_records = work.decoded_records.saturating_add(1);
     }
-    let latest = records.last().map(CompactionRecord::locus);
     retain_visible_history(&mut records, &visible, visible_limit, cursor.next);
-    Ok((records, latest))
+    Ok(records)
 }
 
 fn finish_failed_history_decode(
@@ -996,8 +845,6 @@ fn reset(cursor: &mut Cursor) {
     cursor.prefix = blake3::Hasher::new();
     cursor.guard = None;
     cursor.validation = None;
-    cursor.startup_recovery = None;
-    cursor.startup_search = None;
 }
 
 fn advance_validation(cursor: &mut Cursor) -> io::Result<Vec<CompactionRecord>> {

@@ -613,7 +613,7 @@ configuration_registry! {
     }
     fixed "lane.vendor" {
         kind: String,
-        builtin: Some(Builtin::String("codex")),
+        builtin: Some(Builtin::String("omp")),
         layers: TRACKED_FLAG,
         class: Policy,
         flag: Some(FlagMapping::new(&["lane", "add"], "--vendor")),
@@ -656,89 +656,6 @@ configuration_registry! {
     fixed "steer.resend" {
         kind: DurationList,
         builtin: Some(Builtin::Strings(&["60s", "1800s", "3600s"])),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
-    fixed "vendor.claude.binary" {
-        kind: String,
-        builtin: Some(Builtin::String("claude")),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
-    fixed "vendor.claude.model" {
-        kind: String,
-        builtin: Some(Builtin::String(vendor::DEFAULT_CLAUDE_MODEL)),
-        layers: TRACKED_WORKTREE,
-        class: WorktreeLocal,
-        flag: None,
-    }
-    fixed "vendor.claude.effort" {
-        kind: String,
-        builtin: Some(Builtin::String("high")),
-        layers: TRACKED_WORKTREE,
-        class: WorktreeLocal,
-        flag: None,
-    }
-    fixed "vendor.claude.auto_compact_window_tokens" {
-        kind: UnsignedInteger,
-        builtin: Some(Builtin::UnsignedInteger(
-            vendor::DEFAULT_CLAUDE_AUTO_COMPACT_WINDOW_TOKENS,
-        )),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
-    fixed "vendor.codex.binary" {
-        kind: String,
-        builtin: Some(Builtin::String("codex")),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
-    fixed "vendor.codex.model" {
-        kind: String,
-        builtin: Some(Builtin::String(vendor::DEFAULT_CODEX_MODEL)),
-        layers: TRACKED_WORKTREE,
-        class: WorktreeLocal,
-        flag: None,
-    }
-    fixed "vendor.codex.effort" {
-        kind: String,
-        builtin: Some(Builtin::String("high")),
-        layers: TRACKED_WORKTREE,
-        class: WorktreeLocal,
-        flag: None,
-    }
-    fixed "vendor.codex.model_context_window" {
-        kind: UnsignedInteger,
-        builtin: Some(Builtin::UnsignedInteger(
-            vendor::DEFAULT_CODEX_MODEL_CONTEXT_WINDOW,
-        )),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
-    fixed "vendor.codex.auto_compact_window_tokens" {
-        kind: UnsignedInteger,
-        builtin: Some(Builtin::UnsignedInteger(
-            vendor::DEFAULT_CODEX_AUTO_COMPACT_WINDOW_TOKENS,
-        )),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
-    fixed "vendor.codex.personality" {
-        kind: String,
-        builtin: Some(Builtin::Absent),
-        layers: TRACKED,
-        class: Policy,
-        flag: None,
-    }
-    fixed "vendor.codex.fast_mode" {
-        kind: Boolean,
-        builtin: Some(Builtin::Boolean(false)),
         layers: TRACKED,
         class: Policy,
         flag: None,

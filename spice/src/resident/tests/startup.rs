@@ -449,7 +449,7 @@ fn lane_add_seats_a_vacant_lane_without_starting_an_occupant() {
         name: Some("new lane".to_owned()),
         worktree: repository.worktree_root().display().to_string(),
         life: "drive".to_owned(),
-        vendor: "claude".parse().expect("fixture vendor"),
+        vendor: "omp".parse().expect("fixture vendor"),
         model: Some("claude-sonnet-5".to_owned()),
         effort: Some("low".to_owned()),
         resume: None,

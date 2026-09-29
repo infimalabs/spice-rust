@@ -3,7 +3,6 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use rusqlite::{Connection, OpenFlags};
 use wire::Refusal;
 
 use super::{Environment, model::Vendor};
@@ -20,10 +19,6 @@ const SEARCH_MATCH_LIMIT: usize = 64;
 const SEARCH_ISSUE_LIMIT: usize = 32;
 const SEARCH_DIAGNOSTIC_BYTES_LIMIT: usize = 64 * 1024;
 const SEARCH_ELAPSED_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
-const INDEX_ROW_LIMIT: usize = 128;
-const INDEX_PATH_BYTES_LIMIT: usize = 64 * 1024;
-const INDEX_DIAGNOSTIC_BYTES_LIMIT: usize = 8 * 1024;
-const INDEX_ELAPSED_LIMIT: std::time::Duration = std::time::Duration::from_secs(1);
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedSource {
     pub(crate) path: PathBuf,
@@ -284,10 +279,9 @@ fn preferred_vendor(
         .expect("thread resolution requires at least one declared vendor")
 }
 
-/// Every transcript `vendor` keeps for the canonical dashed `thread`, in
-/// the order its layout admits: state index, then the project directory
-/// keyed by the working directory, then the bounded walk of its sessions
-/// root.
+/// Every transcript `vendor` keeps for the canonical dashed `thread`: the
+/// folder keyed by the working directory first, then the bounded walk of its
+/// sessions root.
 pub(super) fn find_thread(
     thread: &str,
     vendor: &'static spice::extension::Vendor,
@@ -305,163 +299,23 @@ pub(super) fn find_thread(
         environment,
         layout.default_home,
     )?;
-    let mut state_failure = None;
-    if let Some(vendor::TranscriptIndex::CodexStateV5 { file }) = layout.state_index {
-        let state = root.join(file);
-        match fs::symlink_metadata(&state) {
-            Ok(metadata) if metadata.file_type().is_file() => {
-                match codex_state_path(&state, &lookup) {
-                    Ok(Some(indexed)) => return Ok(vec![indexed]),
-                    Ok(None) => {}
-                    Err(StateIndexError::Invalid(error)) => {
-                        state_failure = Some(index_issue(format!("{}: {error}", state.display())));
-                    }
-                    Err(StateIndexError::Refused(error)) => {
-                        return Err(index_issue(format!("{}: {error}", state.display())));
-                    }
-                }
-            }
-            Ok(_) => {
-                state_failure = Some(index_issue(format!(
-                    "{} state database {} is not a real regular file",
-                    vendor.label(),
-                    state.display()
-                )));
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                state_failure = Some(index_issue(format!(
-                    "missing {} state database {}",
-                    vendor.label(),
-                    state.display()
-                )))
-            }
-            Err(error) => {
-                state_failure = Some(index_issue(format!("{}: {error}", state.display())))
-            }
-        }
+    let sessions = root.join(layout.sessions_directory);
+    let direct = folders::working_directory_transcripts(&sessions, thread, environment);
+    if !direct.is_empty() {
+        return Ok(direct);
     }
-    if let Some(folders) = layout.working_directory_folders {
-        let direct = folders::working_directory_transcripts(
-            &root.join(layout.sessions_directory),
-            folders,
-            thread,
-            environment,
-        );
-        if !direct.is_empty() {
-            return Ok(direct);
-        }
-    }
-    let discovered = match find_named_transcript(&root.join(layout.sessions_directory), &lookup) {
-        Ok(matches) => matches,
-        Err(error) => {
-            return Err(state_failure.map_or_else(
-                || error.to_string(),
-                |failure| format!("{failure}; {error}"),
-            ));
-        }
-    };
-    let paths = discovered.into_iter().collect::<BTreeSet<_>>();
+    let paths = find_named_transcript(&sessions, &lookup)
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .collect::<BTreeSet<_>>();
     if !paths.is_empty() {
         return Ok(paths.into_iter().collect());
     }
-    Err(state_failure.unwrap_or_else(|| {
-        format!(
-            "{} thread {thread} is absent beneath {}",
-            vendor.name(),
-            root.join(layout.sessions_directory).display()
-        )
-    }))
-}
-
-enum StateIndexError {
-    Invalid(String),
-    Refused(String),
-}
-
-fn index_issue(issue: String) -> String {
-    if issue.len() <= INDEX_DIAGNOSTIC_BYTES_LIMIT {
-        issue
-    } else {
-        format!("thread index exceeded the {INDEX_DIAGNOSTIC_BYTES_LIMIT}-byte diagnostic limit")
-    }
-}
-
-fn check_index_elapsed(started: std::time::Instant) -> Result<(), StateIndexError> {
-    if started.elapsed() > INDEX_ELAPSED_LIMIT {
-        Err(StateIndexError::Refused(format!(
-            "thread index exceeded the {INDEX_ELAPSED_LIMIT:?} elapsed-work limit"
-        )))
-    } else {
-        Ok(())
-    }
-}
-
-fn codex_state_path(state: &Path, thread: &str) -> Result<Option<PathBuf>, StateIndexError> {
-    let started = std::time::Instant::now();
-    let connection = Connection::open_with_flags(
-        state,
-        OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
-    check_index_elapsed(started)?;
-    let mut statement = connection
-        .prepare("SELECT rollout_path FROM threads WHERE replace(lower(id), '-', '') = ?1")
-        .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
-    check_index_elapsed(started)?;
-    let mut rows = statement
-        .query([thread])
-        .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
-    check_index_elapsed(started)?;
-    let mut found: Option<PathBuf> = None;
-    let mut row_count = 0_usize;
-    let mut path_bytes = 0_usize;
-    while let Some(row) = rows
-        .next()
-        .map_err(|error| StateIndexError::Invalid(error.to_string()))?
-    {
-        check_index_elapsed(started)?;
-        row_count = row_count.saturating_add(1);
-        if row_count > INDEX_ROW_LIMIT {
-            return Err(StateIndexError::Refused(format!(
-                "thread index exceeded the {INDEX_ROW_LIMIT}-row lookup limit"
-            )));
-        }
-        let spelling = row
-            .get::<_, String>(0)
-            .map_err(|error| StateIndexError::Invalid(error.to_string()))?;
-        path_bytes = path_bytes.saturating_add(spelling.len());
-        if path_bytes > INDEX_PATH_BYTES_LIMIT {
-            return Err(StateIndexError::Refused(format!(
-                "thread index exceeded the {INDEX_PATH_BYTES_LIMIT}-byte path limit"
-            )));
-        }
-        let path = PathBuf::from(&spelling);
-        let metadata = fs::symlink_metadata(&path).map_err(|error| {
-            StateIndexError::Invalid(format!(
-                "indexed transcript {spelling:?} is unavailable: {error}"
-            ))
-        })?;
-        if !metadata.file_type().is_file() || !transcript_extension(&path) {
-            return Err(StateIndexError::Invalid(format!(
-                "indexed transcript {spelling:?} is not a real regular JSONL file"
-            )));
-        }
-        let canonical = path.canonicalize().map_err(|error| {
-            StateIndexError::Invalid(format!(
-                "indexed transcript {spelling:?} cannot be canonicalized: {error}"
-            ))
-        })?;
-        if found.as_ref().is_some_and(|known| known != &canonical) {
-            return Err(StateIndexError::Refused(format!(
-                "thread index is ambiguous between {} and {}",
-                found.as_ref().expect("checked path").display(),
-                canonical.display()
-            )));
-        }
-        found = Some(canonical);
-    }
-    check_index_elapsed(started)?;
-    Ok(found)
+    Err(format!(
+        "{} thread {thread} is absent beneath {}",
+        vendor.name(),
+        sessions.display()
+    ))
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -820,14 +674,14 @@ mod tests {
 
     use super::{
         Environment, SEARCH_DEPTH, SEARCH_ENTRY_LIMIT, canonical_thread, find_named_transcript,
-        find_thread, live_vendor_labels, resolve_inputs, resolve_thread_from_registry,
+        find_thread, live_vendor_labels, resolve_thread_from_registry,
     };
     use crate::session_command::VendorEnvironment;
 
     const THREAD: &str = "0123456789abcdef0123456789abcdef";
     const THREAD_DASHED: &str = "01234567-89ab-cdef-0123-456789abcdef";
     const THREAD_UPPER: &str = "01234567-89AB-CDEF-0123-456789ABCDEF";
-    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::CODEX);
+    const FIXTURE_DIALECT: vendor::Vendor = vendor::Vendor::named("fixture", &vendor::OMP);
     const FIXTURE_VENDOR: spice::extension::Vendor =
         spice::extension::Vendor::new(&FIXTURE_DIALECT, fixture_configuration, 2);
     const FIXTURE_DECLARATIONS: &[spice::extension::Declaration] =
@@ -848,14 +702,12 @@ mod tests {
     }
 
     fn fixture_configuration(root: &spice::config::Root) -> vendor::LaunchValues<'_> {
-        let configured = root.vendor().codex();
+        let configured = root.vendor().omp();
         vendor::LaunchValues {
             binary: configured.binary().as_str(),
             model: configured.model(),
             effort: configured.effort(),
-            personality: configured.personality(),
             fast_mode: Some(configured.fast_mode()),
-            model_context_window: Some(configured.model_context_window()),
             auto_compact_window_tokens: None,
             lsp: None,
         }
@@ -885,20 +737,6 @@ mod tests {
         }
     }
 
-    fn claude_environment(home: &Path, cwd: Option<&Path>) -> Environment {
-        Environment {
-            vendors: vec![VendorEnvironment {
-                vendor: &spice::extension::CLAUDE,
-                identity: None,
-                home: Some(home.to_path_buf()),
-            }],
-            preferred_vendor: None,
-            home: None,
-            cwd: cwd.map(Path::to_path_buf),
-            temp: None,
-        }
-    }
-
     /// An omp home at `root` seen from `cwd`, with the operator home and
     /// temporary directory oh-my-pi names folders relative to.
     pub(super) fn omp_environment(
@@ -920,6 +758,22 @@ mod tests {
         }
     }
 
+    /// An omp home at the scratch root with no working directory, so
+    /// discovery has no folder to guess and walks the sessions root.
+    fn walk_environment(scratch: &Scratch) -> Environment {
+        Environment {
+            vendors: vec![VendorEnvironment {
+                vendor: &spice::extension::OMP,
+                identity: None,
+                home: Some(scratch.path().to_path_buf()),
+            }],
+            preferred_vendor: None,
+            home: None,
+            cwd: None,
+            temp: None,
+        }
+    }
+
     /// An omp home whose sessions root holds more sibling folders than the
     /// bounded walk will ever list, plus the fixture thread filed the way
     /// oh-my-pi files it beneath `folder`: a timestamped transcript beside
@@ -937,106 +791,12 @@ mod tests {
         transcript
     }
 
-    fn codex_environment(home: &Path) -> Environment {
-        Environment {
-            vendors: vec![VendorEnvironment {
-                vendor: &spice::extension::CODEX,
-                identity: None,
-                home: Some(home.to_path_buf()),
-            }],
-            preferred_vendor: None,
-            home: None,
-            cwd: None,
-            temp: None,
-        }
-    }
-
-    /// A Claude home whose projects root holds more sibling directories than
-    /// the bounded walk will ever list, plus the fixture thread beneath the
-    /// directory keyed by `cwd`; the walk alone cannot reach it.
-    fn overflowing_claude_projects(scratch: &Scratch, cwd: &Path) -> PathBuf {
-        let projects = scratch.path().join("projects");
-        for index in 0..=SEARCH_ENTRY_LIMIT {
-            fs::create_dir_all(projects.join(format!("unrelated-project-{index}")))
-                .expect("bounded decoy project directory exists");
-        }
-        let directory = projects.join(
-            cwd.to_string_lossy()
-                .replace(std::path::MAIN_SEPARATOR, "-"),
-        );
-        fs::create_dir_all(&directory).expect("fixture project directory exists");
-        let transcript = directory.join(format!("{THREAD_DASHED}.jsonl"));
-        fs::write(&transcript, b"\n").expect("fixture transcript exists");
-        transcript
-    }
-
-    fn write_codex_state(home: &Path, paths: &[&Path]) {
-        let state = rusqlite::Connection::open(home.join("state_5.sqlite"))
-            .expect("Codex state fixture opens");
-        state
-            .execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)", [])
-            .expect("Codex state fixture schema");
-        for path in paths {
-            state
-                .execute(
-                    "INSERT INTO threads (id, rollout_path) VALUES (?1, ?2)",
-                    (THREAD, path.to_string_lossy().as_ref()),
-                )
-                .expect("Codex state fixture row");
-        }
-    }
-
-    #[test]
-    fn indexed_codex_paths_survive_a_depth_limited_sessions_tree() {
-        let scratch = Scratch::new("indexed-depth");
-        let indexed = scratch.path().join("indexed.jsonl");
-        fs::write(&indexed, b"\n").expect("indexed transcript exists");
-        write_codex_state(scratch.path(), &[&indexed]);
-        let mut directory = scratch.path().join("sessions");
-        for depth in 0..=SEARCH_DEPTH {
-            directory = directory.join(format!("level-{depth}"));
-        }
-        fs::create_dir_all(&directory).expect("deep Codex session branch exists");
-
-        assert_eq!(
-            find_thread(
-                THREAD,
-                &spice::extension::CODEX,
-                &codex_environment(scratch.path()),
-            )
-            .expect("incomplete discovery cannot erase indexed authority"),
-            [indexed.canonicalize().expect("indexed path canonicalizes")],
-        );
-    }
-
-    #[test]
-    fn ambiguous_codex_index_refuses_without_walking_the_complete_sessions_tree() {
-        let scratch = Scratch::new("indexed-ambiguous");
-        let sessions = scratch.path().join("sessions");
-        fs::create_dir_all(&sessions).expect("Codex sessions directory exists");
-        let first = sessions.join("first.jsonl");
-        let second = sessions.join("second.jsonl");
-        for path in [&first, &second] {
-            fs::write(path, b"\n").expect("Codex transcript exists");
-        }
-        write_codex_state(scratch.path(), &[&first, &second]);
-
-        let error = find_thread(
-            THREAD,
-            &spice::extension::CODEX,
-            &codex_environment(scratch.path()),
-        )
-        .expect_err("a second canonical index path is bounded ambiguity");
-        assert!(error.contains("ambiguous"), "{error}");
-        assert!(!error.contains(" absent "), "{error}");
-    }
-
     #[cfg(unix)]
     #[test]
-    fn unreadable_directory_is_not_reported_as_an_absent_claude_thread() {
+    fn unreadable_directory_is_not_reported_as_an_absent_thread() {
         let scratch = Scratch::new("unreadable");
-        let projects = scratch.path().join("projects");
-        let denied = projects.join("denied");
+        let sessions = scratch.path().join("sessions");
+        let denied = sessions.join("denied");
         fs::create_dir_all(&denied).expect("denied branch exists");
         let original = fs::metadata(&denied)
             .expect("denied branch metadata")
@@ -1046,11 +806,7 @@ mod tests {
         fs::set_permissions(&denied, blocked).expect("deny fixture branch reads");
 
         let read_result = fs::read_dir(&denied);
-        let lookup = find_thread(
-            THREAD,
-            &spice::extension::CLAUDE,
-            &claude_environment(scratch.path(), None),
-        );
+        let lookup = find_thread(THREAD, &spice::extension::OMP, &walk_environment(&scratch));
         fs::set_permissions(&denied, original).expect("restore fixture permissions");
         let read_error = read_result
             .expect_err("fixture must force a real read_dir failure")
@@ -1064,8 +820,7 @@ mod tests {
     #[test]
     fn directory_beyond_the_search_bound_is_not_reported_as_absence() {
         let scratch = Scratch::new("depth");
-        let projects = scratch.path().join("projects");
-        let mut directory = projects.clone();
+        let mut directory = scratch.path().join("sessions");
         for depth in 0..=SEARCH_DEPTH {
             directory = directory.join(format!("level-{depth}"));
         }
@@ -1073,12 +828,8 @@ mod tests {
         fs::write(directory.join(format!("thread-{THREAD}.jsonl")), b"\n")
             .expect("deep transcript exists");
 
-        let error = find_thread(
-            THREAD,
-            &spice::extension::CLAUDE,
-            &claude_environment(scratch.path(), None),
-        )
-        .expect_err("a bounded-out hit cannot become absence");
+        let error = find_thread(THREAD, &spice::extension::OMP, &walk_environment(&scratch))
+            .expect_err("a bounded-out hit cannot become absence");
 
         assert!(
             error.contains(&format!("search depth {SEARCH_DEPTH} was reached")),
@@ -1086,96 +837,6 @@ mod tests {
         );
         assert!(error.contains(&directory.display().to_string()), "{error}");
         assert!(!error.contains(" absent "), "{error}");
-    }
-
-    #[test]
-    fn a_live_thread_resolves_directly_beneath_its_own_working_directory() {
-        let scratch = Scratch::new("cwd-direct");
-        let cwd = PathBuf::from("/fixture/worktree");
-        let directory = scratch.path().join("projects").join("-fixture-worktree");
-        fs::create_dir_all(&directory).expect("fixture project directory exists");
-        let transcript = directory.join(format!("{THREAD_DASHED}.jsonl"));
-        fs::write(&transcript, b"\n").expect("fixture transcript exists");
-
-        let found = find_thread(
-            THREAD_DASHED,
-            &spice::extension::CLAUDE,
-            &claude_environment(scratch.path(), Some(&cwd)),
-        )
-        .expect("the guessed path exists");
-
-        assert_eq!(found, vec![transcript]);
-    }
-
-    #[test]
-    fn a_working_directory_reaches_past_the_entry_bound_a_bare_walk_refuses() {
-        let scratch = Scratch::new("cwd-unbounded");
-        let cwd = PathBuf::from("/fixture/worktree");
-        let transcript = overflowing_claude_projects(&scratch, &cwd);
-
-        let error = find_thread(
-            THREAD_DASHED,
-            &spice::extension::CLAUDE,
-            &claude_environment(scratch.path(), None),
-        )
-        .expect_err("a projects root wide enough to model this machine still overflows");
-        assert!(
-            error.contains(&format!("{SEARCH_ENTRY_LIMIT}-entry limit")),
-            "{error}"
-        );
-
-        let found = find_thread(
-            THREAD_DASHED,
-            &spice::extension::CLAUDE,
-            &claude_environment(scratch.path(), Some(&cwd)),
-        )
-        .expect("the direct guess never walks the decoys the search above overflowed on");
-        assert_eq!(found, vec![transcript]);
-    }
-
-    #[test]
-    fn a_thread_argument_resolves_through_the_working_directory_in_either_spelling() {
-        let scratch = Scratch::new("cwd-argument");
-        let cwd = PathBuf::from("/fixture/worktree");
-        let transcript = overflowing_claude_projects(&scratch, &cwd);
-        let registry = spice::extension::registry().expect("compiled registry is coherent");
-        let environment = claude_environment(scratch.path(), Some(&cwd));
-
-        for spelling in [THREAD, THREAD_DASHED] {
-            let resolved = resolve_thread_from_registry(spelling, &environment, &registry)
-                .expect("the working directory reaches the thread without a walk");
-            assert_eq!(resolved.len(), 1, "{spelling}");
-            assert_eq!(
-                resolved[0].vendor,
-                super::Vendor::declared(&spice::extension::CLAUDE)
-            );
-            assert_eq!(resolved[0].thread.as_deref(), Some(THREAD_DASHED));
-            assert_eq!(
-                resolved[0].path,
-                transcript
-                    .canonicalize()
-                    .expect("fixture transcript canonicalizes")
-            );
-        }
-    }
-
-    #[test]
-    fn a_thread_absent_from_the_working_directory_still_refuses_on_the_bounded_walk() {
-        let scratch = Scratch::new("cwd-absent");
-        let cwd = PathBuf::from("/fixture/worktree");
-        let transcript = overflowing_claude_projects(&scratch, &cwd);
-        fs::remove_file(&transcript).expect("fixture transcript removed");
-        let registry = spice::extension::registry().expect("compiled registry is coherent");
-        let environment = claude_environment(scratch.path(), Some(&cwd));
-
-        let refusal = resolve_thread_from_registry(THREAD_DASHED, &environment, &registry)
-            .expect_err("no guess hits, so the walk runs and overflows");
-        assert_eq!(refusal.reason(), "session::thread-unresolved");
-        let detail = refusal.explanation();
-        assert!(
-            detail.contains(&format!("{SEARCH_ENTRY_LIMIT}-entry limit")),
-            "{detail}"
-        );
     }
 
     #[test]
@@ -1245,31 +906,6 @@ mod tests {
     }
 
     #[test]
-    fn codex_keeps_state_failure_beside_the_incomplete_session_path() {
-        let scratch = Scratch::new("codex-depth");
-        let sessions = scratch.path().join("sessions");
-        let mut directory = sessions.clone();
-        for depth in 0..=SEARCH_DEPTH {
-            directory = directory.join(format!("level-{depth}"));
-        }
-        fs::create_dir_all(&directory).expect("deep Codex session branch exists");
-
-        let error = find_thread(
-            THREAD,
-            &spice::extension::CODEX,
-            &codex_environment(scratch.path()),
-        )
-        .expect_err("Codex cannot erase either failed lookup path");
-
-        assert!(
-            error.contains(&scratch.path().join("state_5.sqlite").display().to_string()),
-            "{error}"
-        );
-        assert!(error.contains(&directory.display().to_string()), "{error}");
-        assert!(!error.contains(" absent "), "{error}");
-    }
-
-    #[test]
     fn complete_walk_returns_every_matching_transcript_in_order() {
         let scratch = Scratch::new("complete");
         let root = scratch.path().join("sessions");
@@ -1296,11 +932,11 @@ mod tests {
         let scratch = Scratch::new("third-declaration");
         let sessions = scratch.path().join("sessions");
         fs::create_dir_all(&sessions).expect("fixture sessions exist");
-        let transcript = sessions.join(format!("rollout-{THREAD}.jsonl"));
+        let transcript = sessions.join(format!("2026-08-09T01-00-00-000Z_{THREAD_DASHED}.jsonl"));
         fs::write(
             &transcript,
             concat!(
-                r#"{"timestamp":"2026-08-09T01:00:00Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-fixture"}}"#,
+                r#"{"type":"message","id":"u1","parentId":null,"timestamp":"2026-08-09T01:00:00.000Z","message":{"role":"user","content":[{"type":"text","text":"fixture turn"}],"timestamp":1786237200000}}"#,
                 "\n",
             ),
         )
@@ -1324,7 +960,7 @@ mod tests {
             .expect("third declaration resolves its transcript");
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].vendor, super::Vendor::declared(fixture));
-        assert_eq!(resolved[0].dialect, Some(listen::Dialect::Codex));
+        assert_eq!(resolved[0].dialect, Some(listen::Dialect::Omp));
         assert_eq!(resolved[0].thread.as_deref(), Some(THREAD_DASHED));
         assert_eq!(
             resolved[0].path,
@@ -1353,48 +989,6 @@ mod tests {
     }
 
     #[test]
-    fn dual_ambient_identities_follow_declared_codex_first_precedence() {
-        let scratch = Scratch::new("ambient-precedence");
-        let codex = scratch
-            .path()
-            .join("sessions")
-            .join(format!("codex-{THREAD}.jsonl"));
-        let claude = scratch
-            .path()
-            .join("projects")
-            .join(format!("claude-{THREAD}.jsonl"));
-        fs::create_dir_all(codex.parent().expect("Codex parent")).expect("Codex root exists");
-        fs::create_dir_all(claude.parent().expect("Claude parent")).expect("Claude root exists");
-        fs::write(&codex, b"\n").expect("Codex transcript exists");
-        fs::write(&claude, b"\n").expect("Claude transcript exists");
-        let identity = Some(std::ffi::OsString::from(THREAD));
-        let home = Some(scratch.path().as_os_str().to_owned());
-        let environment = Environment::new(
-            vec![
-                VendorEnvironment::new(&spice::extension::CLAUDE, identity.clone(), home.clone()),
-                VendorEnvironment::new(&spice::extension::CODEX, identity, home),
-            ],
-            None,
-            None,
-            None,
-            None,
-        );
-
-        let resolved = resolve_inputs(&[], &environment)
-            .expect("both valid ambient identities resolve one declared winner");
-        assert_eq!(resolved.len(), 1);
-        assert_eq!(
-            resolved[0].vendor,
-            super::Vendor::declared(&spice::extension::CODEX)
-        );
-        assert_eq!(resolved[0].dialect, Some(listen::Dialect::Codex));
-        assert_eq!(
-            resolved[0].path,
-            codex.canonicalize().expect("Codex transcript path")
-        );
-    }
-
-    #[test]
     fn the_ambient_hint_names_every_declared_vendor_once_in_row_order() {
         let registry = spice::extension::registry().expect("compiled registry is coherent");
         let declared = registry.session_vendors();
@@ -1410,7 +1004,7 @@ mod tests {
         );
 
         let labels = live_vendor_labels(&environment);
-        assert_eq!(labels, "Codex, Claude, oh-my-pi");
+        assert_eq!(labels, "oh-my-pi");
         for vendor in declared {
             assert_eq!(
                 labels.matches(vendor.label()).count(),

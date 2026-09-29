@@ -235,10 +235,10 @@ fn decode_row(
         Err(RecordDecodeError::Invalid { kind }) => {
             return Ok((dialect, decode_residue(source, line, kind)));
         }
-        Err(error @ (RecordDecodeError::Unowned | RecordDecodeError::Disagreement { .. })) => {
+        Err(error @ (RecordDecodeError::Unowned | RecordDecodeError::Retired { .. })) => {
             let kind = match &error {
                 RecordDecodeError::Unowned => "dialect-unowned",
-                RecordDecodeError::Disagreement { .. } => "dialect-disagreement",
+                RecordDecodeError::Retired { .. } => "dialect-retired",
                 _ => unreachable!("the matched decoder error variants are exhaustive"),
             };
             return Ok((
@@ -368,7 +368,7 @@ fn transcript_residue(
 
 fn record_refusal(path: &Path, line: u64, error: &RecordDecodeError) -> Refusal {
     let reason = match error {
-        RecordDecodeError::Disagreement { .. } => "session::transcript-dialect-disagreement",
+        RecordDecodeError::Retired { .. } => "session::transcript-dialect-retired",
         RecordDecodeError::Invalid { .. } => "session::transcript-evidence-invalid",
         RecordDecodeError::Unowned => "session::transcript-dialect-unowned",
         RecordDecodeError::Locus(_) => "session::transcript-locus-invalid",
@@ -1108,10 +1108,7 @@ fn register_tool_call(
         .tool_calls
         .entry(name.to_owned())
         .or_default() += 1;
-    if matches!(
-        name,
-        "apply_patch" | "Edit" | "Write" | "MultiEdit" | "file_change" | "edit" | "write"
-    ) {
+    if matches!(name, "edit" | "write") {
         dataset.turns[index].patch_count = dataset.turns[index].patch_count.saturating_add(1);
         for path in tool_paths(arguments) {
             if !dataset.turns[index].touched_files.contains(&path) {
@@ -1120,20 +1117,11 @@ fn register_tool_call(
             dataset.turns[index].touched_files.insert(path);
         }
     }
-    if matches!(name, "web_search" | "web.run" | "WebSearch") {
+    if name == "web_search" {
         dataset.turns[index].web_search_count =
             dataset.turns[index].web_search_count.saturating_add(1);
     }
-    let command = if matches!(
-        name,
-        "exec_command"
-            | "command_execution"
-            | "Bash"
-            | "bash"
-            | "shell"
-            | "local_shell"
-            | "container.exec"
-    ) {
+    let command = if matches!(name, "bash" | vendor::omp::SHELL_TOOL) {
         let (command, cwd) = tool_command(arguments);
         let command_index = dataset.commands.len();
         let command = CommandRecord {
@@ -1165,58 +1153,26 @@ fn register_tool_call(
 
 fn tool_command(arguments: &str) -> (String, Option<String>) {
     let parsed = serde_json::from_str::<Value>(arguments).unwrap_or(Value::Null);
-    let command = parsed
-        .get("cmd")
-        .or_else(|| parsed.get("command"))
-        .map(render_command)
-        .unwrap_or_else(|| "-".to_owned());
-    let cwd = parsed
-        .get("workdir")
-        .or_else(|| parsed.get("cwd"))
-        .and_then(Value::as_str)
-        .map(str::to_owned);
+    let command = parsed.get("command").map_or_else(
+        || "-".to_owned(),
+        |value| {
+            value
+                .as_str()
+                .map_or_else(|| value.to_string(), str::to_owned)
+        },
+    );
+    let cwd = parsed.get("cwd").and_then(Value::as_str).map(str::to_owned);
     (command, cwd)
-}
-
-fn render_command(value: &Value) -> String {
-    match value {
-        Value::String(value) => value.clone(),
-        Value::Array(values) => values
-            .iter()
-            .filter_map(Value::as_str)
-            .collect::<Vec<_>>()
-            .join(" "),
-        _ => value.to_string(),
-    }
 }
 
 fn tool_paths(arguments: &str) -> Vec<String> {
     let parsed = serde_json::from_str::<Value>(arguments).unwrap_or(Value::Null);
-    let mut paths = ["file_path", "path"]
+    parsed
+        .get("path")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
         .into_iter()
-        .filter_map(|key| parsed.get(key).and_then(Value::as_str).map(str::to_owned))
-        .collect::<Vec<_>>();
-    if let Some(changes) = parsed.get("changes").and_then(Value::as_array) {
-        paths.extend(changes.iter().filter_map(|change| {
-            change
-                .get("path")
-                .or_else(|| change.get("file_path"))
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        }));
-    }
-    if let Some(patch) = parsed.get("input").and_then(Value::as_str) {
-        for line in patch.lines() {
-            if let Some(path) = line
-                .strip_prefix("*** Update File: ")
-                .or_else(|| line.strip_prefix("*** Add File: "))
-                .or_else(|| line.strip_prefix("*** Delete File: "))
-            {
-                paths.push(path.to_owned());
-            }
-        }
-    }
-    dedupe(paths)
+        .collect()
 }
 
 fn complete_tool_call(
@@ -1256,10 +1212,12 @@ fn complete_tool_call(
     }
     if let Some(command) = pending.command {
         dataset.commands[command].exit_code = outcome.exit_code;
-        let status = if outcome.output.as_deref().is_some_and(|output| {
-            output.contains("Process running with session ID")
-                || output.contains("Script running with cell ID")
-        }) {
+        // The lane's shell ends a command it kept as a job with this line.
+        let status = if outcome
+            .output
+            .as_deref()
+            .is_some_and(|output| output.ends_with("Command still running"))
+        {
             "running"
         } else if outcome.exit_code.is_some() || outcome.result != ToolResult::Unreported {
             "completed"

@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use super::*;
-use spice::quote::TranscriptSessions;
 
 mod history;
 mod progress;
@@ -31,9 +30,6 @@ const STARTUP_WINDOW_BYTES: u64 = 1024 * 1024;
 const HISTORY_WINDOW_BYTES: u64 = 8 * 1024 * 1024;
 /// Tape index bytes one scan may read; a member row is tens of bytes.
 const TAIL_INDEX_BYTES: u64 = 64 * 1024;
-/// Dialect whose admitted record is the longest, and so the one every ceiling
-/// shared across lanes and windows is sized from.
-const WIDEST_DIALECT: listen::Dialect = listen::Dialect::Omp;
 const TAIL_RECORD_LIMIT: usize = 256 * 1024;
 /// Bounded reads one scan may spend outside its boundary retreat: the tape
 /// index, the extents it enumerates, and each extent the window itself reads.
@@ -46,40 +42,22 @@ const TAIL_DURATION: Duration = Duration::from_secs(5);
 /// where this request stopped rather than rescanning.
 const HISTORY_READ_LIMIT: usize = (HISTORY_REQUEST_BYTES / HISTORY_WINDOW_BYTES) as usize;
 const STARTUP_LANE_READ_LIMIT: usize = 8;
-const STARTUP_SOURCE_BYTE_LIMIT: u64 =
-    startup_source_bytes(WIDEST_DIALECT) * STARTUP_LANE_READ_LIMIT as u64;
+const STARTUP_SOURCE_BYTE_LIMIT: u64 = STARTUP_SOURCE_BYTES * STARTUP_LANE_READ_LIMIT as u64;
 
-/// Longest record one dialect can land on a tape, with the delimiter the tape
-/// carries after it.
+/// Longest record a tape can hold, with the delimiter the tape carries after
+/// it.
 ///
 /// OMP capture tees a reassembled logical record: physical RPC frames stay
 /// bounded at [`vendor::omp::frame::MAX_FRAME_BYTES`] while the record those
-/// chunks carry reaches [`vendor::omp::frame::MAX_REASSEMBLED_BYTES`]. Every
-/// other dialect is teed as captured, so its record ends at the physical
-/// capture limit. Sizing the allowance per dialect is what keeps one vendor's
-/// transport from widening the budget every other lane reads under.
-const fn record_bytes(dialect: listen::Dialect) -> u64 {
-    let logical = match dialect {
-        listen::Dialect::Omp => vendor::omp::frame::MAX_REASSEMBLED_BYTES,
-        listen::Dialect::Claude | listen::Dialect::Codex => lane_surface::CAPTURE_LIMIT,
-    };
-    logical as u64 + 1
-}
+/// chunks carry reaches [`vendor::omp::frame::MAX_REASSEMBLED_BYTES`].
+const RECORD_BYTES: u64 = vendor::omp::frame::MAX_REASSEMBLED_BYTES as u64 + 1;
 
 /// Bytes one scan may spend beyond its window: the tape index it reads to
 /// find the newest members, then one longest record, when the window it was
 /// asked for begins inside that record.
-const fn tail_boundary_bytes(dialect: listen::Dialect) -> u64 {
-    TAIL_INDEX_BYTES + record_bytes(dialect)
-}
-
-const fn startup_source_bytes(dialect: listen::Dialect) -> u64 {
-    STARTUP_WINDOW_BYTES + tail_boundary_bytes(dialect)
-}
-
-const fn history_source_bytes(dialect: listen::Dialect) -> u64 {
-    HISTORY_WINDOW_BYTES + tail_boundary_bytes(dialect)
-}
+const TAIL_BOUNDARY_BYTES: u64 = TAIL_INDEX_BYTES + RECORD_BYTES;
+const STARTUP_SOURCE_BYTES: u64 = STARTUP_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
+const HISTORY_SOURCE_BYTES: u64 = HISTORY_WINDOW_BYTES + TAIL_BOUNDARY_BYTES;
 
 /// Bounded reads one scan may perform: one for every boundary chunk its
 /// source allowance can pay for, since a retreat over one longest record
@@ -88,12 +66,12 @@ const fn tail_passes(source_bytes: u64) -> usize {
     (source_bytes / listen::BOUNDARY_CHUNK_BYTES + 1) as usize + TAIL_EXTENT_PASSES
 }
 
-fn startup_budget(dialect: listen::Dialect) -> listen::TailBudget {
-    tail_budget(STARTUP_WINDOW_BYTES, startup_source_bytes(dialect))
+fn startup_budget() -> listen::TailBudget {
+    tail_budget(STARTUP_WINDOW_BYTES, STARTUP_SOURCE_BYTES)
 }
 
-fn history_budget(dialect: listen::Dialect) -> listen::TailBudget {
-    tail_budget(HISTORY_WINDOW_BYTES, history_source_bytes(dialect))
+fn history_budget() -> listen::TailBudget {
+    tail_budget(HISTORY_WINDOW_BYTES, HISTORY_SOURCE_BYTES)
 }
 
 fn tail_budget(window_bytes: u64, source_bytes: u64) -> listen::TailBudget {
@@ -114,7 +92,6 @@ pub(in crate::resident) struct BacklogReader {
     startup_work: StartupWork,
     state: MessageState,
     steering: PresentationDirectives,
-    sessions: TranscriptSessions,
 }
 
 impl BacklogReader {
@@ -136,8 +113,6 @@ impl BacklogReader {
                 ..MessageState::default()
             },
             steering,
-            sessions: TranscriptSessions::from_snapshot(snapshot)
-                .map_err(|error| store_fault("canvas::message-sessions-invalid", &error))?,
         })
     }
 
@@ -155,16 +130,10 @@ struct StartupWork {
 }
 
 impl StartupWork {
-    /// Whether one more lane reading under `dialect` fits the startup ceiling.
-    ///
-    /// A lane is admitted against its own allowance, so a dialect whose
-    /// records are short keeps its place in the ceiling the widest one sets.
-    fn admits_lane(self, dialect: listen::Dialect) -> bool {
+    /// Whether one more lane's allowance fits the startup ceiling.
+    fn admits_lane(self) -> bool {
         self.lanes < STARTUP_LANE_READ_LIMIT
-            && self
-                .source_bytes
-                .saturating_add(startup_source_bytes(dialect))
-                <= STARTUP_SOURCE_BYTE_LIMIT
+            && self.source_bytes.saturating_add(STARTUP_SOURCE_BYTES) <= STARTUP_SOURCE_BYTE_LIMIT
     }
 
     fn begin_lane(&mut self) {
@@ -221,12 +190,7 @@ fn restore_agent_messages_with(
         .map_err(|error| store_fault("canvas::message-publish-failed", &error.to_string()))?;
     let mut available = Vec::new();
     for row in &residency.lanes {
-        // A row naming no installed vendor reads nothing below, but it is
-        // admitted against the widest allowance rather than a dialect nobody
-        // resolved.
-        let dialect = super::super::ingest_vendor(&row.vendor)
-            .map_or(WIDEST_DIALECT, |vendor| vendor.dialect());
-        if !reader.startup_work.admits_lane(dialect) {
+        if !reader.startup_work.admits_lane() {
             break;
         }
         reader.startup_work.begin_lane();
@@ -336,7 +300,6 @@ struct DurableHistory {
     hydration: Mutex<Hydration>,
     bus: Option<bus::BusReader>,
     steering: PresentationDirectives,
-    sessions: TranscriptSessions,
 }
 
 /// Observation times known to this provider, and how far each lane's walk got.
@@ -364,7 +327,6 @@ enum LaneWalk {
 #[derive(Debug)]
 struct DurableLane {
     tape: std::path::PathBuf,
-    worktree: std::path::PathBuf,
     dialect: listen::Dialect,
     author: CanonicalUuid,
     source: Option<listen::Checkpoint>,
@@ -374,7 +336,6 @@ struct DurableLane {
 #[derive(Debug)]
 struct DurableSession {
     path: std::path::PathBuf,
-    worktree: std::path::PathBuf,
     dialect: listen::Dialect,
     thread: String,
     source: session_compaction::HistoryCheckpoint,
@@ -410,7 +371,6 @@ impl DurableHistory {
                         let source = session_compaction::history_checkpoint(&path).ok()?;
                         Some(DurableSession {
                             path,
-                            worktree: session.worktree.clone().into(),
                             dialect,
                             thread: session.identity.clone(),
                             source,
@@ -425,7 +385,6 @@ impl DurableHistory {
                             .tape
                             .join(row.lane.to_string())
                             .join(row.vendor.as_str()),
-                        worktree: row.worktree.clone().into(),
                         dialect,
                         author,
                         source: reader.cursors.get(&row.lane).cloned(),
@@ -443,7 +402,6 @@ impl DurableHistory {
             }),
             bus: bus.cloned(),
             steering: reader.steering.clone(),
-            sessions: reader.sessions.clone(),
         }
     }
 }
@@ -537,7 +495,6 @@ impl DurableHistory {
         let scan = session_compaction::retained_messages(
             session_compaction::HistoryRequest {
                 path: session.path.clone(),
-                worktree: session.worktree.clone(),
                 dialect: session.dialect,
                 thread: session.thread.clone(),
                 lane,
@@ -606,14 +563,12 @@ impl DurableHistory {
                 ..MessageState::default()
             },
             steering,
-            sessions: self.sessions.clone(),
         };
         let mut diagnostic = Vec::new();
         publish_scan(
             scan,
             lane,
             source.author,
-            &source.worktree,
             &messages,
             &mut reader,
             &mut diagnostic,
@@ -702,10 +657,9 @@ struct TapeHistoryScan {
 }
 
 fn tape_continuation(scan: &TapeHistoryScan, before: &wire::AgentMessage) -> listen::Checkpoint {
-    const WIDEST_SOURCE_BYTES: u64 = history_source_bytes(WIDEST_DIALECT);
-    debug_assert!(scan.work.source_bytes <= WIDEST_SOURCE_BYTES * HISTORY_READ_LIMIT as u64);
+    debug_assert!(scan.work.source_bytes <= HISTORY_SOURCE_BYTES * HISTORY_READ_LIMIT as u64);
     debug_assert!(scan.work.records <= TAIL_RECORD_LIMIT * HISTORY_READ_LIMIT);
-    debug_assert!(scan.work.passes <= tail_passes(WIDEST_SOURCE_BYTES) * HISTORY_READ_LIMIT);
+    debug_assert!(scan.work.passes <= tail_passes(HISTORY_SOURCE_BYTES) * HISTORY_READ_LIMIT);
     let end = scan.end.clone();
     let anchor = before.chronology_key();
     // Physical progress, not the anchor, is what the next page resumes from:
@@ -852,15 +806,7 @@ fn restore_lane(
         hydrate_observations(bus, row.lane, &scan, reader)?;
         hydrate_steering_presentations(bus, &scan, &mut reader.steering)?;
     }
-    publish_scan(
-        scan,
-        row.lane,
-        author,
-        Path::new(&row.worktree),
-        publisher,
-        reader,
-        diagnostic,
-    )?;
+    publish_scan(scan, row.lane, author, publisher, reader, diagnostic)?;
     Ok(Some(work))
 }
 
@@ -1046,7 +992,6 @@ fn publish_scan(
     scan: listen::Scan,
     lane: CanonicalUuid,
     author: CanonicalUuid,
-    fallback_worktree: &Path,
     publisher: &impl AgentMessagePublisher,
     reader: &mut BacklogReader,
     diagnostic: &mut dyn io::Write,
@@ -1066,10 +1011,6 @@ fn publish_scan(
         let listen::RecordPayload::Events(events) = &record.payload else {
             continue;
         };
-        let worktree = reader
-            .sessions
-            .worktree_at(lane, source, record.locus)
-            .unwrap_or(fallback_worktree);
         let decoded = events
             .iter()
             .map(|sourced| {
@@ -1085,7 +1026,6 @@ fn publish_scan(
                 lane,
                 author,
                 source: Some(source),
-                worktree: Some(worktree),
                 locus: record.locus,
                 context,
                 events: &decoded,
@@ -1137,7 +1077,7 @@ fn tail_backlog(
     tape: &Path,
     dialect: listen::Dialect,
 ) -> Result<listen::TailScan, listen::ScanError> {
-    listen::scan_tail(tape, dialect, startup_budget(dialect))
+    listen::scan_tail(tape, dialect, startup_budget())
 }
 
 fn visible_message(message: &wire::AgentMessage) -> bool {

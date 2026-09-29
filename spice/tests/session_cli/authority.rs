@@ -5,12 +5,13 @@ use board::allocate::{Mint, mint};
 use journal::{FactCause, Journal, JournalWrite};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
+use vendor::omp::SESSION_ENVIRONMENT;
 use wire::{
     Actor, CanonicalUuid, Disposition, Instant, LaneResidency, Origin, Phase, Producer,
     ResidencyHead, ResidentState, SteeringHead, TaskStamp, WorkflowHead, body,
 };
 
-use super::{Scratch, codex_rows, reply_forms_in, strings, write_jsonl};
+use super::{Scratch, THREAD, omp_rows, reply_forms_in, strings, write_jsonl};
 
 const SESSION_PROJECT: &str = "spice.session";
 
@@ -27,23 +28,15 @@ fn authority_path(root: &Path) -> PathBuf {
     root.join(".git/.spice-rs/data/spicejournal.sqlite3")
 }
 
-fn seed_codex_transcripts(root: &Path, threads: &[String]) -> PathBuf {
-    let home = root.join("codex-home");
-    let sessions = home.join("sessions");
-    fs::create_dir_all(&sessions).expect("fixture Codex session root is created");
-    let state = Connection::open(home.join("state_5.sqlite")).expect("fixture Codex state opens");
-    state
-        .execute("CREATE TABLE threads (id TEXT, rollout_path TEXT)", [])
-        .expect("fixture Codex thread index is created");
+/// An omp home holding one session file per thread, filed where omp files
+/// the sessions of an unrelated working directory.
+fn seed_omp_transcripts(root: &Path, threads: &[String]) -> PathBuf {
+    let home = root.join("omp-home");
+    let folder = home.join("sessions/-fixture");
+    fs::create_dir_all(&folder).expect("fixture omp session root is created");
     for thread in threads {
-        let transcript = sessions.join(format!("rollout-{thread}.jsonl"));
-        write_jsonl(&transcript, &codex_rows());
-        state
-            .execute(
-                "INSERT INTO threads (id, rollout_path) VALUES (?1, ?2)",
-                params![thread, transcript.to_string_lossy()],
-            )
-            .expect("fixture Codex thread is indexed");
+        let transcript = folder.join(format!("2026-01-01T00-00-00-000Z_{thread}.jsonl"));
+        write_jsonl(&transcript, &omp_rows(thread));
     }
     home
 }
@@ -455,7 +448,7 @@ fn invoke_meter_child(root: &Path, thread: &str) -> super::Spoken {
     super::invoke_in(
         Some(root),
         &arguments,
-        &[("CODEX_THREAD_ID", thread.to_owned())], // env-policy: allow
+        &[(SESSION_ENVIRONMENT, thread.to_owned())],
     )
 }
 
@@ -596,7 +589,7 @@ fn recall_lanes(
             name: None,
             worktree: "/fixture".to_owned(),
             life: "drive".to_owned(),
-            vendor: "codex".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
             occupant: Some(occupant),
@@ -606,7 +599,7 @@ fn recall_lanes(
                 lane,
                 occupant,
                 worktree: "/fixture".to_owned(),
-                vendor: "codex".parse().expect("fixture vendor"),
+                vendor: "omp".parse().expect("fixture vendor"),
                 launch: None,
                 epoch,
                 stream: "session".to_owned(),
@@ -625,7 +618,7 @@ fn recall_lanes(
             name: None,
             worktree: "/fixture-peer".to_owned(),
             life: "drive".to_owned(),
-            vendor: "codex".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
             occupant: Some(peer_occupant),
@@ -720,10 +713,13 @@ fn ambient_and_explicit_matching_threads_bind_authority_to_the_live_identity_rea
     let live = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &live);
-    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&live));
+    let omp_home = seed_omp_transcripts(scratch.path(), std::slice::from_ref(&live));
     let environment = [
-        ("CODEX_THREAD_ID", live.clone()), // env-policy: allow
-        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+        (SESSION_ENVIRONMENT, live.clone()),
+        (
+            "PI_CODING_AGENT_DIR",
+            omp_home.to_string_lossy().into_owned(),
+        ),
     ];
     let before = fact_count(&authority);
 
@@ -759,97 +755,19 @@ fn ambient_and_explicit_matching_threads_bind_authority_to_the_live_identity_rea
 }
 
 #[test]
-fn preferred_live_vendor_identity_wins_over_another_populated_vendor() {
-    let scratch = Scratch::new("authority-preferred-live-vendor");
-    fake_repository(scratch.path());
-    let live = uuid(0xaa).to_string();
-    let stale = uuid(0xbb).to_string();
-    let authority = authority_path(scratch.path());
-    seed_recall_authority(&authority, &live);
-    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&live));
-    let environment = [
-        ("CODEX_THREAD_ID", stale),                  // env-policy: allow
-        ("CLAUDE_CODE_SESSION_ID", live.clone()),    // env-policy: allow
-        ("SPICE_AGENT_VENDOR", "claude".to_owned()), // env-policy: allow
-        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
-    ];
-    let before = fact_count(&authority);
-
-    let recall = reply_forms_in(
-        Some(scratch.path()),
-        &strings(&["session", "briefing", &live, "--deadline-seconds", "5"]),
-        &environment,
-        "recall",
-    );
-
-    assert_eq!(recall["sources"][0]["thread"], live);
-    assert_eq!(recall["authorities"]["held_work"]["thread"], live);
-    assert_eq!(recall["authorities"]["asks"][0]["key"], "1kAsk001");
-    assert_eq!(
-        recall["authorities"]["held_work"]["own_claim"]["title"],
-        "Compose Rust briefings"
-    );
-    assert_eq!(fact_count(&authority), before, "briefing appends no facts");
-
-    scratch.remove();
-}
-
-#[test]
-fn multiple_live_vendor_identities_without_preference_leave_authority_unknown() {
-    let scratch = Scratch::new("authority-ambiguous-live-vendors");
-    fake_repository(scratch.path());
-    let selected = uuid(0xaa).to_string();
-    let other = uuid(0xbb).to_string();
-    let authority = authority_path(scratch.path());
-    seed_recall_authority(&authority, &selected);
-    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
-    let environment = [
-        ("CODEX_THREAD_ID", other),                   // env-policy: allow
-        ("CLAUDE_CODE_SESSION_ID", selected.clone()), // env-policy: allow
-        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
-    ];
-    let before = fact_count(&authority);
-
-    let recall = reply_forms_in(
-        Some(scratch.path()),
-        &strings(&["session", "briefing", &selected, "--deadline-seconds", "5"]),
-        &environment,
-        "recall",
-    );
-
-    assert_eq!(recall["sources"][0]["thread"], selected);
-    assert_eq!(recall["authorities"]["held_work"]["thread"], Value::Null);
-    assert_eq!(recall["authorities"]["held_work"]["lane"], Value::Null);
-    assert_eq!(recall["authorities"]["held_work"]["own_claim"], Value::Null);
-    assert!(recall["authorities"].get("asks").is_none());
-    let unknown = recall["authorities"]["unknowns"]
-        .as_array()
-        .expect("ambiguous live environment is explicit")
-        .iter()
-        .find(|row| row["probe"] == "live-thread-identity")
-        .expect("live identity ambiguity is reported");
-    assert!(
-        unknown["detail"]
-            .as_str()
-            .is_some_and(|detail| detail.contains("multiple live vendor identities"))
-    );
-    assert_eq!(fact_count(&authority), before, "briefing appends no facts");
-
-    scratch.remove();
-}
-
-#[test]
-fn preferred_vendor_without_identity_does_not_fall_back_to_another_vendor() {
+fn preferred_vendor_without_identity_leaves_authority_unknown() {
     let scratch = Scratch::new("authority-missing-preferred-live-vendor");
     fake_repository(scratch.path());
     let selected = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &selected);
-    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
+    let omp_home = seed_omp_transcripts(scratch.path(), std::slice::from_ref(&selected));
     let environment = [
-        ("CODEX_THREAD_ID", selected.clone()), // env-policy: allow
-        ("SPICE_AGENT_VENDOR", "claude".to_owned()), // env-policy: allow
-        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+        ("SPICE_AGENT_VENDOR", "omp".to_owned()), // env-policy: allow
+        (
+            "PI_CODING_AGENT_DIR",
+            omp_home.to_string_lossy().into_owned(),
+        ),
     ];
 
     let recall = reply_forms_in(
@@ -869,9 +787,9 @@ fn preferred_vendor_without_identity_does_not_fall_back_to_another_vendor() {
             .iter()
             .any(|row| {
                 row["probe"] == "live-thread-identity"
-                    && row["detail"]
-                        .as_str()
-                        .is_some_and(|detail| detail.contains("CLAUDE_CODE_SESSION_ID is absent"))
+                    && row["detail"].as_str().is_some_and(|detail| {
+                        detail.contains(&format!("{SESSION_ENVIRONMENT} is absent"))
+                    })
             })
     );
 
@@ -886,10 +804,13 @@ fn explicit_foreign_transcript_preserves_evidence_without_impersonating_its_acto
     let foreign = uuid(0xbb).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &live);
-    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&foreign));
+    let omp_home = seed_omp_transcripts(scratch.path(), std::slice::from_ref(&foreign));
     let environment = [
-        ("CODEX_THREAD_ID", live.clone()), // env-policy: allow
-        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+        (SESSION_ENVIRONMENT, live.clone()),
+        (
+            "PI_CODING_AGENT_DIR",
+            omp_home.to_string_lossy().into_owned(),
+        ),
     ];
     let before = fact_count(&authority);
 
@@ -935,10 +856,13 @@ fn ambiguous_multi_thread_evidence_does_not_make_current_authority_ambiguous() {
     let foreign = uuid(0xbb).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &live);
-    let codex_home = seed_codex_transcripts(scratch.path(), &[live.clone(), foreign.clone()]);
+    let omp_home = seed_omp_transcripts(scratch.path(), &[live.clone(), foreign.clone()]);
     let environment = [
-        ("CODEX_THREAD_ID", live.clone()), // env-policy: allow
-        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+        (SESSION_ENVIRONMENT, live.clone()),
+        (
+            "PI_CODING_AGENT_DIR",
+            omp_home.to_string_lossy().into_owned(),
+        ),
     ];
     let before = fact_count(&authority);
 
@@ -984,10 +908,13 @@ fn malformed_live_identity_stays_unknown_instead_of_using_selected_transcript_id
     let selected = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &selected);
-    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
+    let omp_home = seed_omp_transcripts(scratch.path(), std::slice::from_ref(&selected));
     let environment = [
-        ("CODEX_THREAD_ID", "malformed-live-thread".to_owned()), // env-policy: allow
-        ("CODEX_HOME", codex_home.to_string_lossy().into_owned()),
+        (SESSION_ENVIRONMENT, "malformed-live-thread".to_owned()),
+        (
+            "PI_CODING_AGENT_DIR",
+            omp_home.to_string_lossy().into_owned(),
+        ),
     ];
     let before = fact_count(&authority);
 
@@ -1028,8 +955,11 @@ fn absent_live_identity_keeps_current_authority_unknown_during_historical_recove
     let selected = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &selected);
-    let codex_home = seed_codex_transcripts(scratch.path(), std::slice::from_ref(&selected));
-    let environment = [("CODEX_HOME", codex_home.to_string_lossy().into_owned())];
+    let omp_home = seed_omp_transcripts(scratch.path(), std::slice::from_ref(&selected));
+    let environment = [(
+        "PI_CODING_AGENT_DIR",
+        omp_home.to_string_lossy().into_owned(),
+    )];
     let before = fact_count(&authority);
 
     let recall = reply_forms_in(
@@ -1074,8 +1004,8 @@ fn absent_live_identity_keeps_current_authority_unknown_during_historical_recove
 fn recall_authority_probe_is_read_only_when_repository_state_is_absent() {
     let scratch = Scratch::new("authority-absent");
     fake_repository(scratch.path());
-    let transcript = scratch.path().join("codex.jsonl");
-    write_jsonl(&transcript, &codex_rows());
+    let transcript = scratch.path().join("omp.jsonl");
+    write_jsonl(&transcript, &omp_rows(THREAD));
 
     let recall = reply_forms_in(
         Some(scratch.path()),
@@ -1118,11 +1048,11 @@ fn recall_authority_probe_is_read_only_when_repository_state_is_absent() {
 fn recall_authority_sources_asks_and_held_work_from_exact_state_authorities() {
     let scratch = Scratch::new("authority-present");
     fake_repository(scratch.path());
-    let transcript = scratch.path().join("codex.jsonl");
-    write_jsonl(&transcript, &codex_rows());
+    let transcript = scratch.path().join("omp.jsonl");
+    write_jsonl(&transcript, &omp_rows(THREAD));
     let thread = uuid(0xaa).to_string();
     seed_recall_authority(&authority_path(scratch.path()), &thread);
-    let environment = [("CODEX_THREAD_ID", thread.clone())]; // env-policy: allow
+    let environment = [(SESSION_ENVIRONMENT, thread.clone())];
 
     let recall = reply_forms_in(
         Some(scratch.path()),
@@ -1226,13 +1156,13 @@ fn creator_and_claim_briefings_do_not_append_claim_facts_or_duplicate_the_actor_
     fake_repository(scratch.path());
     let creator_transcript = scratch.path().join("creator.jsonl");
     let claim_transcript = scratch.path().join("claim.jsonl");
-    write_jsonl(&creator_transcript, &codex_rows());
-    write_jsonl(&claim_transcript, &codex_rows());
+    write_jsonl(&creator_transcript, &omp_rows(THREAD));
+    write_jsonl(&claim_transcript, &omp_rows(THREAD));
     let thread = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &thread);
     let actor = Actor::Lane(uuid(0xaa));
-    let environment = [("CODEX_THREAD_ID", thread.clone())]; // env-policy: allow
+    let environment = [(SESSION_ENVIRONMENT, thread.clone())];
 
     let before_claim_facts = claim_won_facts(&authority);
     assert_eq!(active_claims_for(&authority, &actor), 1);
@@ -1293,8 +1223,8 @@ fn creator_and_claim_briefings_do_not_append_claim_facts_or_duplicate_the_actor_
 fn recall_ignores_corrupt_fact_and_retired_steering_outside_the_exact_locus() {
     let scratch = Scratch::new("authority-bounded-corruption");
     fake_repository(scratch.path());
-    let transcript = scratch.path().join("codex.jsonl");
-    write_jsonl(&transcript, &codex_rows());
+    let transcript = scratch.path().join("omp.jsonl");
+    write_jsonl(&transcript, &omp_rows(THREAD));
     let thread = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &thread);
@@ -1324,7 +1254,7 @@ fn recall_ignores_corrupt_fact_and_retired_steering_outside_the_exact_locus() {
             "--deadline-seconds",
             "5",
         ]),
-        &[("CODEX_THREAD_ID", thread)], // env-policy: allow
+        &[(SESSION_ENVIRONMENT, thread)],
         "recall",
     );
 
@@ -1346,8 +1276,8 @@ fn recall_ignores_corrupt_fact_and_retired_steering_outside_the_exact_locus() {
 fn a_failed_steering_probe_does_not_hide_independent_board_answers() {
     let scratch = Scratch::new("authority-probe-isolation");
     fake_repository(scratch.path());
-    let transcript = scratch.path().join("codex.jsonl");
-    write_jsonl(&transcript, &codex_rows());
+    let transcript = scratch.path().join("omp.jsonl");
+    write_jsonl(&transcript, &omp_rows(THREAD));
     let thread = uuid(0xaa).to_string();
     let authority = authority_path(scratch.path());
     seed_recall_authority(&authority, &thread);
@@ -1369,7 +1299,7 @@ fn a_failed_steering_probe_does_not_hide_independent_board_answers() {
             "--deadline-seconds",
             "5",
         ]),
-        &[("CODEX_THREAD_ID", thread)], // env-policy: allow
+        &[(SESSION_ENVIRONMENT, thread)],
         "recall",
     );
 

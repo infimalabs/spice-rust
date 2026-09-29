@@ -3,7 +3,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
-use vendor::{Attribution, Effort, Launch, Resume, SteeringHook};
+use vendor::{Effort, Launch, Resume};
 
 #[derive(Default)]
 struct Reports(Mutex<Vec<CaptureRecord>>);
@@ -25,7 +25,7 @@ struct Fixture {
 }
 
 impl Fixture {
-    fn new(dialect: listen::Dialect) -> Self {
+    fn new() -> Self {
         static NEXT: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "spice-lane-capture-{}-{}",
@@ -38,26 +38,14 @@ impl Fixture {
             skill: "skill".to_owned(),
             model: "fixture".to_owned(),
             effort: Effort::XHigh,
-            personality: None,
             fast_mode: Some(false),
-            model_context_window: (dialect == listen::Dialect::Codex).then_some(1_000_000),
             auto_compact_window_tokens: Some(220_000),
-            config_overlay: (dialect == listen::Dialect::Omp).then(|| root.join("omp.yml")),
-            lsp: (dialect == listen::Dialect::Omp).then_some(false),
-            attribution: Attribution::Harness,
-            hook: SteeringHook {
-                command: "spice hook omp".to_owned(),
-            },
+            config_overlay: Some(root.join("omp.yml")),
+            lsp: Some(false),
             steering_key: None,
-            mcp: None,
             resume: Resume::Fresh,
         };
-        let record = match dialect {
-            listen::Dialect::Omp => vendor::omp::record("omp", &launch),
-            listen::Dialect::Codex => vendor::codex::record("codex", &launch),
-            listen::Dialect::Claude => unreachable!(),
-        }
-        .unwrap();
+        let record = vendor::omp::record("omp", &launch).unwrap();
         let reports = Arc::new(Reports::default());
         let observer = LaneObserver {
             lane: "575c6f37-462a-423f-824a-3ae83ba2d448".parse().unwrap(),
@@ -66,8 +54,7 @@ impl Fixture {
             record,
             reporter: reports.clone(),
             stage: AtomicU8::new(DeliveryStage::Decode as u8),
-            transport: (dialect == listen::Dialect::Omp)
-                .then(|| Mutex::new(vendor::omp::frame::FrameDecoder::default())),
+            transport: Mutex::new(vendor::omp::frame::FrameDecoder::default()),
         };
         Self {
             root,
@@ -109,7 +96,7 @@ fn large(value: serde_json::Value) -> Vec<u8> {
 
 #[test]
 fn reassembled_session_and_content_survive_byte_exact_tape_replay() {
-    let fixture = Fixture::new(listen::Dialect::Omp);
+    let fixture = Fixture::new();
     let session = large(serde_json::json!({"type":"response", "command":"get_state",
         "success":true, "data":{"sessionId":"exact-session"}}));
     let prose = large(serde_json::json!({"type":"message_end", "message":{
@@ -151,7 +138,7 @@ fn reassembled_session_and_content_survive_byte_exact_tape_replay() {
 
 #[test]
 fn eof_with_a_missing_chunk_has_neither_tape_record_nor_session_declaration() {
-    let fixture = Fixture::new(listen::Dialect::Omp);
+    let fixture = Fixture::new();
     let session = large(serde_json::json!({"type":"response", "command":"get_state",
         "success":true, "data":{"sessionId":"never-declared"}}));
     fixture.chunks(&session, true);
@@ -167,7 +154,7 @@ fn eof_with_a_missing_chunk_has_neither_tape_record_nor_session_declaration() {
 
 #[test]
 fn chunked_partials_are_still_restated_and_never_replayed_twice() {
-    let fixture = Fixture::new(listen::Dialect::Omp);
+    let fixture = Fixture::new();
     fixture.chunks(&large(serde_json::json!({"type":"message_update"})), false);
     let complete = b"{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"whole\"}]}}\n";
     fixture
@@ -185,7 +172,7 @@ fn chunked_partials_are_still_restated_and_never_replayed_twice() {
 
 #[test]
 fn terminal_omp_text_update_is_retained_as_non_presented_prose_evidence() {
-    let fixture = Fixture::new(listen::Dialect::Omp);
+    let fixture = Fixture::new();
     let evidence = br#"{"type":"message_update","assistantMessageEvent":{"type":"text_end","content":"ACK 1kQnrzNZ: Applied."},"message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kQnrzNZ: Applied."}]}}
 "#;
     let settled = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"Acknowledged the direction."},{"type":"toolCall","id":"call-1","name":"read","arguments":{"path":"Cargo.toml"}}],"stopReason":"toolUse"}}
@@ -216,13 +203,13 @@ fn terminal_omp_text_update_is_retained_as_non_presented_prose_evidence() {
 }
 
 #[test]
-fn non_omp_capture_preserves_terminal_and_truncated_boundaries() {
-    let fixture = Fixture::new(listen::Dialect::Codex);
+fn capture_preserves_terminal_and_truncated_boundaries() {
+    let fixture = Fixture::new();
     fixture
         .observer
         .receive(b"{\"type\":", RecordBoundary::Truncated)
         .unwrap();
-    let terminal = b"{\"type\":\"thread.started\",\"thread_id\":\"codex-session\"}";
+    let terminal = br#"{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{"sessionId":"terminal-session"}}"#;
     fixture
         .observer
         .receive(terminal, RecordBoundary::Terminal)
@@ -233,7 +220,7 @@ fn non_omp_capture_preserves_terminal_and_truncated_boundaries() {
     assert_eq!(reports[1].boundary, RecordBoundary::Terminal);
     assert_eq!(
         reports[1].declaration.as_ref().unwrap().session.as_str(),
-        "codex-session"
+        "terminal-session"
     );
     assert_eq!(
         fixture.observer.tape.read(reports[1].locus).unwrap(),

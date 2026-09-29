@@ -23,7 +23,7 @@ fn watch_follows_a_real_filesystem_notification_then_reconciles_tape() {
 
     watch.assert_initial_cursor();
     watch.await_readiness(scratch.path());
-    let locus = match tape.tee(&record(CODEX_PROSE)) {
+    let locus = match tape.tee(&record(PROSE)) {
         Ok(locus) => locus,
         Err(error) => watch.fail(format!("post-readiness tape write failed: {error}")),
     };
@@ -66,14 +66,14 @@ impl ExpectedTapeEvent {
                 observation,
                 Observation::Event {
                     lane,
-                    dialect: Dialect::Codex,
+                    dialect: Dialect::Omp,
                     tape,
                     spans,
                     event: SurfaceEvent::Prose { text, phase, media },
                 } if lane == "lane-a"
                     && tape == &self.tape
                     && spans.as_slice() == [self.span]
-                    && text == CODEX_PROSE_TEXT
+                    && text == PROSE_TEXT
                     && phase.is_none()
                     && media.is_empty()
             )

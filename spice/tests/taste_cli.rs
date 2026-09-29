@@ -316,7 +316,7 @@ fn disabled_scoped_rows_remain_visible_and_drop_preserves_the_complete_row() {
                 "words = [\"branch\"]\n",
                 "message = \"Keep one current path.\"\n",
                 "enabled = false\n",
-                "scopes = {{ paths = [\"src/**\"], vendors = [\"codex\"], phases = [\"pre-commit-success\"] }}\n",
+                "scopes = {{ paths = [\"src/**\"], vendors = [\"omp\"], phases = [\"pre-commit-success\"] }}\n",
             ),
             POLICY,
         ),
@@ -337,7 +337,7 @@ fn disabled_scoped_rows_remain_visible_and_drop_preserves_the_complete_row() {
         serde_json::json!({
             "paths": ["src/**"],
             "extensions": [],
-            "vendors": ["codex"],
+            "vendors": ["omp"],
             "models": [],
             "phases": ["pre-commit-success"],
         })
@@ -355,7 +355,7 @@ fn disabled_scoped_rows_remain_visible_and_drop_preserves_the_complete_row() {
     assert!(description.contains("enabled = false"), "{description}");
     assert!(
         description.contains(
-            "scopes = { paths = [\"src/**\"], vendors = [\"codex\"], phases = [\"pre-commit-success\"] }"
+            "scopes = { paths = [\"src/**\"], vendors = [\"omp\"], phases = [\"pre-commit-success\"] }"
         ),
         "{description}",
     );
@@ -386,12 +386,12 @@ fn live_fires_count_each_stable_directive_once_and_keep_one_durable_vendor() {
     assert_eq!(fires[1]["key"], FIRST_DIRECTIVE);
     assert_eq!(fires[1]["standing"], "acked");
     assert_eq!(fires[1]["compaction"], 10);
-    assert!(fires.iter().all(|fire| fire["vendor"] == "claude"));
+    assert!(fires.iter().all(|fire| fire["vendor"] == "omp"));
     // Two occupant generations, one seat: a renewal cannot split the vendor.
     assert_ne!(fires[0]["occupant"], fires[1]["occupant"]);
     assert_eq!(
         zeta["vendors"],
-        serde_json::json!([{"vendor": "claude", "fires": 2, "acked": 1, "declined": 1}])
+        serde_json::json!([{"vendor": "omp", "fires": 2, "acked": 1, "declined": 1}])
     );
     assert_eq!(
         zeta["recurrence"],
@@ -411,7 +411,7 @@ fn live_fires_count_each_stable_directive_once_and_keep_one_durable_vendor() {
     assert_eq!(alpha["fires"][0]["standing"], "live");
     assert_eq!(
         alpha["vendors"],
-        serde_json::json!([{"vendor": "claude", "fires": 1, "acked": 0, "declined": 0}])
+        serde_json::json!([{"vendor": "omp", "fires": 1, "acked": 0, "declined": 0}])
     );
     assert_eq!(alpha["recurrence"], serde_json::json!([]));
     assert_eq!(alpha["judgments"][0]["verdict"], "cleared");
@@ -445,7 +445,7 @@ fn live_fires_count_each_stable_directive_once_and_keep_one_durable_vendor() {
     // The reminder's own locus, not the transcript locus the decline was read
     // at: the operator narrows a bag by rereading the prose that fired it.
     assert!(
-        cited.contains("- tape 1+40 event 0 line 20 column 1 on claude"),
+        cited.contains("- tape 1+40 event 0 line 20 column 1 on omp"),
         "{cited}"
     );
     assert!(!cited.contains("line 11 column 1"), "{cited}");
@@ -781,7 +781,7 @@ fn seed_fires(fixture: &Fixture) {
         "01",
         |write, origin, at| {
             write
-                .fact(seated("claude"), FactCause::Root)
+                .fact(seated("omp"), FactCause::Root)
                 .expect("lane seating");
             publish_reminder(
                 write,

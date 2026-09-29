@@ -871,13 +871,8 @@ fn assert_pre_hook_rtk_health_decodes(complete: &serde_json::Value) {
     let recorded = wire::decode::<wire::body::LaneSessionDeclared>(&bytes)
         .expect("a declaration recorded before hook health still decodes");
     assert_eq!(
-        recorded
-            .launch
-            .expect("launch identity remains")
-            .rtk
-            .expect("executable health remains")
-            .hook(),
-        None,
+        serde_json::to_value(recorded).expect("the declaration encodes")["rtk"],
+        pre_hook["rtk"],
         "compatibility does not invent hook installation"
     );
 }
@@ -888,7 +883,7 @@ fn a_declared_session_requires_one_complete_launch_identity() {
         "lane":"018f82d4-6f59-7d06-92e3-bce9131163c2",
         "occupant":"018f82d4-6f59-7d06-92e3-bce9131163c3",
         "worktree":"/worktrees/lane-a",
-        "vendor":"claude",
+        "vendor":"omp",
         "epoch":"018f82d4-6f59-7d06-92e3-bce9131163c4",
         "stream":"stdout",
         "identity":"session-a",
@@ -938,15 +933,18 @@ fn a_declared_session_requires_one_complete_launch_identity() {
             launch.effort.as_str(),
             launch.git.as_deref(),
             launch.rtk.as_ref().map(wire::body::RtkHealth::state),
-            launch.rtk.as_ref().and_then(wire::body::RtkHealth::hook),
         ),
         (
             "gpt-5-codex",
             "high",
             Some("current"),
             Some(wire::body::RtkHealthState::Active),
-            Some(wire::body::RtkHookState::Installed),
         )
+    );
+    assert_eq!(
+        serde_json::to_value(&launch).expect("the launch identity encodes")["rtk"],
+        complete["rtk"],
+        "a retired harness's recorded hook route re-encodes unchanged"
     );
 
     assert_pre_hook_rtk_health_decodes(&complete);

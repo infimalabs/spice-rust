@@ -81,7 +81,7 @@ fn residency() -> ResidencyHead {
             name: None,
             worktree: "/worktrees/lane-a".to_owned(),
             life: "drive".to_owned(),
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             model: None,
             effort: None,
             occupant: Some(uuid(21)),
@@ -171,7 +171,7 @@ fn source_boundary(lane: CanonicalUuid) -> body::SourceBoundary {
     body::SourceBoundary::Proven {
         heads: vec![wire::TranscriptSourceHead {
             lane,
-            vendor: "claude".parse().expect("fixture vendor"),
+            vendor: "omp".parse().expect("fixture vendor"),
             stream: "session".to_owned(),
             source: uuid(23),
             next: body::TranscriptPosition {

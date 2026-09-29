@@ -64,14 +64,14 @@ impl AdvisoryRtkFixture {
         .expect("fixture RTK writes");
         executable(&rtk);
 
-        let vendor = root.join("fake-claude");
+        let vendor = root.join("fake-omp");
         write_vendor(&vendor);
         fs::write(
             root.join("spice-rust.toml"),
             format!(
                 concat!(
                     "[lane]\nlease = \"20s\"\n\n",
-                    "[vendor.claude]\nbinary = {:?}\n\n",
+                    "[vendor.omp]\nbinary = {:?}\n\n",
                     "[rtk]\nexecutable = {:?}\n",
                 ),
                 vendor.display().to_string(),
@@ -93,7 +93,7 @@ impl AdvisoryRtkFixture {
             lane: uuid(2),
             occupant: uuid(3),
             capability: uuid(4),
-            vendor: "claude".parse().expect("fixture vendor name"),
+            vendor: "omp".parse().expect("fixture vendor name"),
             reads: OnceCell::new(),
         }
     }
@@ -153,9 +153,14 @@ fn write_vendor(path: &Path) {
             concat!(
                 "#!/bin/sh\n",
                 "set -eu\n",
-                "printf '%s\\n' '",
-                "{{\"type\":\"system\",\"subtype\":\"init\",",
-                "\"session_id\":\"{}\"}}'\n",
+                "session={}\n",
+                "while [ \"$#\" -gt 1 ]; do\n",
+                "  if [ \"$1\" = --resume ]; then session=$2; fi\n",
+                "  shift\n",
+                "done\n",
+                "printf '%s\\n' '{{\"type\":\"ready\",\"protocolVersion\":1}}'\n",
+                "printf '{{\"id\":\"spice-state\",\"type\":\"response\",\"command\":\"get_state\",",
+                "\"success\":true,\"data\":{{\"sessionId\":\"%s\"}}}}\\n' \"$session\"\n",
             ),
             SESSION,
         ),
