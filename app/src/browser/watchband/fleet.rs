@@ -117,7 +117,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_>) -> H
                         }
                         TeamMode::Work => render_tasks(render.runtime, &empty_team, &[]),
                         TeamMode::Dash => {
-                            render_details(&empty_team, &[], mode)
+                            render_details(render.runtime, &empty_team, &[], mode)
                         }
                     }}
                 </div>
@@ -215,7 +215,8 @@ pub(super) fn render_populated_fleet(
                                             team,
                                             &team_standings,
                                         ),
-                        TeamMode::Dash => render_details(
+                                        TeamMode::Dash => render_details(
+                                            render.runtime,
                                             team,
                                             &team_standings,
                                             mode,

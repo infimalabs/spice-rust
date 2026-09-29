@@ -441,12 +441,17 @@ struct HistoryPaging<'a> {
     revision: u64,
 }
 
-fn render_details(team: &crate::runtime::LaneRow, standings: &[Standing], mode: TeamMode) -> Html {
+fn render_details(
+    runtime: &CanvasRuntime,
+    team: &crate::runtime::LaneRow,
+    standings: &[Standing],
+    mode: TeamMode,
+) -> Html {
     html! {
         <div class="team-detail-pane">
             <div class="team-detail-grid">
                 {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
-                    render_agent_details(member, standing, mode)
+                    render_agent_details(runtime, member, standing, mode)
                 })}
             </div>
         </div>
@@ -606,6 +611,7 @@ fn lease_countdown(expiry: Option<i64>, class: &'static str, vacant: &'static st
 }
 
 fn render_agent_details(
+    runtime: &CanvasRuntime,
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     mode: TeamMode,
@@ -614,6 +620,20 @@ fn render_agent_details(
         .occupant
         .map(|value| value.to_string())
         .unwrap_or_else(|| "vacant".to_owned());
+    let presence = watchband::member_presence(runtime, member, standing);
+    let presence_label = if presence.state == watchband::MemberPresenceState::Working {
+        standing.handle.as_ref().map_or_else(
+            || presence.state.label().to_owned(),
+            |handle| format!("working on {handle}"),
+        )
+    } else {
+        presence.state.label().to_owned()
+    };
+    let presence_age = lease_age(
+        presence.since_millis,
+        "team-presence-age",
+        "age unavailable",
+    );
     html! {
         <article
             class="team-detail-card"
@@ -621,6 +641,7 @@ fn render_agent_details(
             data-agent-lane={standing.lane.to_string()}
             data-agent-occupant={occupant.clone()}
             data-accent={standing.accent.to_string()}
+            data-agent-presence={presence.state.key()}
             title={watchband::standing_title(standing)}
         >
             <header>
@@ -639,8 +660,11 @@ fn render_agent_details(
                             <dd>{format!("{} pending", standing.pending)}</dd>
                         </div>
                         <div>
-                            <dt>{"Liveness"}</dt>
-                            <dd>{standing.liveness.as_str()}</dd>
+                            <dt>{"Presence"}</dt>
+                            <dd>
+                                <span class="team-presence-state">{presence_label}</span>
+                                {presence_age}
+                            </dd>
                         </div>
                         <div>
                             <dt>{"Model / residency policy"}</dt>

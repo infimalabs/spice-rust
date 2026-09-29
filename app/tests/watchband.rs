@@ -1,11 +1,13 @@
-use app::runtime::{LaneMember, LaneRow};
+use app::Session;
+use app::runtime::{CanvasRuntime, LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, FIELD_BUDGET, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop, TeamTaskSectionState,
-    UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, dissolve_team,
-    elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept,
-    latest_lane_prose, leaf, one_line, remaining_label, remaining_label_deadline_millis,
-    reported_tasks, short, split_member, split_team, standing_title, standings, task_mentions,
-    teams, ticker_chunks, ticker_line, topology, truncate,
+    ACCENTS, FIELD_BUDGET, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop,
+    TeamTaskSectionState, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams,
+    dissolve_team, elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept,
+    latest_lane_prose, leaf, member_presence, one_line, remaining_label,
+    remaining_label_deadline_millis, reported_tasks, short, split_member, split_team,
+    standing_title, standings, task_mentions, teams, ticker_chunks, ticker_line, topology,
+    truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -47,6 +49,89 @@ fn spell(delta: i64) -> String {
     let millis = delta.rem_euclid(1_000);
     let (hour, minute, second) = (seconds / 3_600, seconds % 3_600 / 60, seconds % 60);
     format!("2026-08-05T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
+}
+
+fn canvas_runtime() -> (Session, CanvasRuntime) {
+    let session = Session::open(uuid(OCCUPANT), uuid(EPOCH));
+    let accepted = session
+        .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
+        .expect("acceptance is admitted");
+    let runtime = CanvasRuntime::new(&accepted);
+    (session, runtime)
+}
+
+fn apply_agent_message(
+    session: &Session,
+    runtime: &mut CanvasRuntime,
+    lane: &str,
+    author: &str,
+    authored: &str,
+) {
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "stream": "messages",
+        "v": 1,
+        "id": TEAM_THREE,
+        "epoch": EPOCH,
+        "limit": 256,
+        "generation": {
+            "generation": 1,
+            "horizon": 1,
+            "messages": [{
+                "lane": lane,
+                "author": author,
+                "locus": {"member": 1, "offset": 1, "length": 4, "event": 0},
+                "authored": authored,
+                "text": "done",
+            }],
+            "frontiers": [{"lane": lane, "state": "complete"}],
+        },
+    }))
+    .expect("message frame serializes");
+    let admitted = session
+        .admit_stream(&bytes)
+        .expect("message frame is admitted");
+    runtime.apply_stream_frame(&admitted);
+}
+
+fn apply_lane_fact(
+    session: &Session,
+    runtime: &mut CanvasRuntime,
+    position: u64,
+    at: &str,
+    fact: serde_json::Value,
+) {
+    let envelope = serde_json::json!({
+        "v": 1,
+        "seq": position,
+        "at": at,
+        "actor": "spice",
+        "origin": format!("lane:{LANE_A}"),
+        "fact": fact,
+    });
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "stream": "fact",
+        "v": 1,
+        "id": TEAM_THREE,
+        "epoch": EPOCH,
+        "fact": envelope,
+    }))
+    .expect("fact frame serializes");
+    let admitted = session
+        .admit_stream(&bytes)
+        .expect("fact frame is admitted");
+    runtime.apply_stream_frame(&admitted);
+}
+
+fn standing_for(member: &LaneMember) -> app::watchband::Standing {
+    let team = LaneRow {
+        lane: member.lane,
+        subscription: wire::intent::TeamLife::Steer,
+        members: vec![member.clone()],
+    };
+    standings(&[team], &[], &[])
+        .into_iter()
+        .next()
+        .expect("one member produces one standing")
 }
 
 fn lane(id: &str, worktree: &str) -> LaneRow {
@@ -207,6 +292,95 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
         },
     }))
     .expect("the fixture spells a board task")
+}
+
+#[test]
+fn presence_prefers_a_claim_then_current_occupant_activity() {
+    let (session, mut runtime) = canvas_runtime();
+    apply_agent_message(&session, &mut runtime, LANE_A, OCCUPANT, &spell(0));
+
+    let mut lane_member = member(LANE_A, "main-a");
+    lane_member.liveness = wire::intent::LaneLiveness::Running;
+    let mut standing = standing_for(&lane_member);
+
+    let idle = member_presence(&runtime, &lane_member, &standing);
+    assert_eq!(idle.state, MemberPresenceState::Idle);
+    assert_eq!(
+        idle.since_millis,
+        Some(at(
+            i64::try_from(wire::intent::LANE_QUIET_HORIZON_MILLIS).unwrap()
+        )),
+        "idle begins at the resident's shared quiet boundary"
+    );
+
+    standing.handle = Some("CANVAS-1kKRSfyV".to_owned());
+    standing.held_since = Some(at(-300_000));
+    let claimed = member_presence(&runtime, &lane_member, &standing);
+    assert_eq!(claimed.state, MemberPresenceState::Working);
+    assert_eq!(claimed.since_millis, standing.held_since);
+
+    standing.handle = None;
+    standing.held_since = None;
+    lane_member.liveness = wire::intent::LaneLiveness::Working;
+    let active = member_presence(&runtime, &lane_member, &standing);
+    assert_eq!(active.state, MemberPresenceState::Working);
+    assert_eq!(active.since_millis, Some(at(0)));
+}
+
+#[test]
+fn presence_dates_successor_start_and_vacancy_from_durable_lane_facts() {
+    let (session, mut runtime) = canvas_runtime();
+    apply_agent_message(&session, &mut runtime, LANE_A, OCCUPANT, &spell(0));
+    apply_lane_fact(
+        &session,
+        &mut runtime,
+        1,
+        &spell(1_000),
+        serde_json::json!({
+            "kind": "lane::started",
+            "lane": LANE_A,
+            "occupant": TEAM_TWO,
+            "epoch": EPOCH,
+            "group": 1,
+            "fresh_session": true,
+        }),
+    );
+
+    let mut successor = member(LANE_A, "main-a");
+    successor.occupant = Some(uuid(TEAM_TWO));
+    successor.liveness = wire::intent::LaneLiveness::Running;
+    let starting = member_presence(&runtime, &successor, &standing_for(&successor));
+    assert_eq!(starting.state, MemberPresenceState::Starting);
+    assert_eq!(
+        starting.since_millis,
+        Some(at(1_000)),
+        "predecessor activity cannot make its successor idle"
+    );
+
+    apply_lane_fact(
+        &session,
+        &mut runtime,
+        2,
+        &spell(2_000),
+        serde_json::json!({
+            "kind": "lane::exited",
+            "lane": LANE_A,
+            "occupant": TEAM_TWO,
+            "code": 0,
+        }),
+    );
+    successor.occupant = None;
+    successor.liveness = wire::intent::LaneLiveness::Vacant;
+    let mut stale_claim = standing_for(&successor);
+    stale_claim.handle = Some("CANVAS-1kKRSfyV".to_owned());
+    stale_claim.held_since = Some(at(-300_000));
+    let vacant = member_presence(&runtime, &successor, &stale_claim);
+    assert_eq!(
+        vacant.state,
+        MemberPresenceState::Vacant,
+        "a retained claim cannot make an absent occupant present"
+    );
+    assert_eq!(vacant.since_millis, Some(at(2_000)));
 }
 
 #[test]
