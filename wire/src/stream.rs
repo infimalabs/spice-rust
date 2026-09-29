@@ -187,10 +187,41 @@ pub enum AgentActivityKind {
     /// nor an automatic speech candidate, and it consumes no visible-card
     /// retention.
     Reasoning,
+    /// Structured provider failure rendered as a conversation card.
+    Failure,
     /// A new agent turn rendered as a full-width stream divider.
     Turn,
     /// Context compaction boundary rendered as a full-width stream divider.
     Compaction,
+}
+
+/// Structured provider cause carried by a failed agent activity.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentProviderError {
+    /// Provider identity reported by the vendor, when supplied.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub provider: Option<String>,
+    /// Model identity reported by the vendor, when supplied.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub model: Option<String>,
+    /// Provider HTTP status reported by the vendor, when supplied.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub http_status: Option<u16>,
+    /// Whether retrying the failed prompt may succeed.
+    pub retryable: bool,
 }
 
 /// Why one assistant message is eligible for automatic Speak playback.
@@ -396,7 +427,10 @@ impl AgentActivityKind {
     /// they carry media, which callers check separately.
     #[must_use]
     pub const fn is_visible(self) -> bool {
-        matches!(self, Self::Prose | Self::Turn | Self::Compaction)
+        matches!(
+            self,
+            Self::Prose | Self::Failure | Self::Turn | Self::Compaction
+        )
     }
 
     /// Whether this activity separates adjacent transcript epochs in the UI.
@@ -504,8 +538,16 @@ pub struct AgentMessage {
     /// Whether the vendor explicitly marked this prose as the final answer.
     #[serde(default, skip_serializing_if = "is_false")]
     pub final_answer: bool,
-    /// Visible assistant prose, concise tool preview, or boundary label.
+    /// Visible assistant prose, provider failure, concise tool preview, or
+    /// boundary label.
     pub text: String,
+    /// Structured provider cause reported for a failed activity.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub provider_error: Option<AgentProviderError>,
     /// Resident-authenticated semantic markers at exact byte ranges in
     /// [`Self::text`].
     ///
@@ -647,6 +689,7 @@ mod message_retention_tests {
             activity: AgentActivityKind::Prose,
             final_answer: false,
             text: "fixture".to_owned(),
+            provider_error: None,
             classifications: Vec::new(),
             quote_target: None,
             directive_contexts: Vec::new(),

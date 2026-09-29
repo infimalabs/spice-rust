@@ -114,6 +114,7 @@ fn a_settled_turn_promotes_only_its_latest_assistant_message() {
     let messages = publish_records(&[
         br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"working through it"}],"stopReason":"toolUse"}}"#,
         br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"settled final"}],"stopReason":"stop"}}"#,
+        br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"completed","sessionSettled":true}"#,
     ]);
     let messages = messages.0.lock().expect("message lock");
     assert_eq!(messages.len(), 2);
@@ -133,7 +134,8 @@ fn a_settled_turn_promotes_only_its_latest_assistant_message() {
 #[test]
 fn a_failed_turn_leaves_its_assistant_message_nonfinal() {
     let messages = publish_records(&[
-        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"not a final answer"}],"stopReason":"error","errorMessage":"model failed"}}"#,
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"not a final answer"}],"stopReason":"error"}}"#,
+        br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"error","sessionSettled":true,"error":{"message":"model failed","provider":"openai","model":"gpt-5.4","httpStatus":429,"retryable":true}}"#,
     ]);
     let messages = messages.0.lock().expect("message lock");
     let prose = messages
@@ -142,6 +144,20 @@ fn a_failed_turn_leaves_its_assistant_message_nonfinal() {
         .expect("the failed turn's prose publishes");
     assert!(!prose.final_answer);
     assert!(prose.automatic_speech.is_none());
+    let failure = messages
+        .iter()
+        .find(|message| message.activity == wire::AgentActivityKind::Failure)
+        .expect("the structured provider failure publishes");
+    assert_eq!(failure.text, "model failed");
+    assert_eq!(
+        failure.provider_error,
+        Some(wire::AgentProviderError {
+            provider: Some("openai".to_owned()),
+            model: Some("gpt-5.4".to_owned()),
+            http_status: Some(429),
+            retryable: true,
+        })
+    );
 }
 
 /// Publish `records` in tape order and return every card they produced.
@@ -182,99 +198,27 @@ fn omp_terminal_text_evidence_does_not_publish_a_duplicate_card() {
 }
 
 #[test]
-fn prose_carrying_a_terminal_stop_reason_is_final_on_first_publish() {
+fn prompt_result_raises_the_previous_prose_once() {
     let publisher = Messages::default();
     let mut state = MessageState::default();
-    let records = [
-        OMP_TURN_START.as_bytes(),
-        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"settled answer"}],"usage":{"input":1,"output":1},"stopReason":"stop"}}"#.as_slice(),
-    ];
-    let mut offset = 0;
-    for bytes in records {
-        let record = capture_record(bytes, offset);
-        offset += bytes.len() as u64;
-        publish_agent_messages(&publisher, &record, &mut state, None)
-            .expect("transcript record publishes");
-    }
-
-    let messages = publisher.0.lock().expect("message lock");
-    let prose = messages.last().expect("the turn's prose publishes");
-    assert_eq!(prose.activity, wire::AgentActivityKind::Prose);
-    assert_eq!(prose.text, "settled answer");
-    assert!(
-        prose.final_answer,
-        "the record's own stop reason paints FINAL"
-    );
-    assert_eq!(
-        *publisher.1.lock().expect("revision lock"),
-        0,
-        "a card final on first publish needs no revision round trip",
-    );
-}
-
-#[test]
-fn a_content_free_stop_raises_the_previous_prose_once() {
-    let publisher = Messages::default();
-    let mut state = MessageState::default();
-    let prose = br#"{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"streamed answer"}],"stopReason":"toolUse"}}"#;
+    let prose = br#"{"type":"message","message":{"role":"assistant","content":[{"type":"text","text":"streamed answer"}],"stopReason":"stop"}}"#;
     let record = capture_record(prose, 0);
     publish_agent_messages(&publisher, &record, &mut state, None).expect("the prose publishes");
     {
         let messages = publisher.0.lock().expect("message lock");
         let prose = messages.last().expect("the prose publishes");
-        assert!(
-            !prose.final_answer,
-            "no record has proved the turn ended yet"
-        );
+        assert!(!prose.final_answer);
         assert_eq!(*publisher.1.lock().expect("revision lock"), 0);
     }
 
-    let stop = br#"{"type":"message","message":{"role":"assistant","content":[],"usage":{"input":1,"output":1},"stopReason":"stop"}}"#;
-    let record = capture_record(stop, prose.len() as u64);
-    publish_agent_messages(&publisher, &record, &mut state, None).expect("the stop publishes");
+    let completed = br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"completed","sessionSettled":true}"#;
+    let record = capture_record(completed, prose.len() as u64);
+    publish_agent_messages(&publisher, &record, &mut state, None)
+        .expect("the prompt result publishes");
 
     let messages = publisher.0.lock().expect("message lock");
     let prose = messages.last().expect("the prose remains");
     assert_eq!(prose.text, "streamed answer");
-    assert!(prose.final_answer, "the turn-ending record raises the card");
-    assert_eq!(
-        *publisher.1.lock().expect("revision lock"),
-        1,
-        "exactly one revision, on the record that ended the turn",
-    );
-}
-
-#[test]
-fn terminal_assistant_prose_preserves_final_answer_state() {
-    let publisher = Messages::default();
-    let prose = listen::Event::Prose(listen::Prose {
-        role: listen::ProseRole::Assistant,
-        text: "settled final".to_owned(),
-        phase: Some("final_answer".to_owned()),
-        media: Vec::new(),
-        locus: listen::Locus::new(1, 0, 1),
-    });
-
-    publish_agent_event(
-        &publisher,
-        AgentEvent {
-            lane: lane(),
-            author: lane(),
-            source: Some(TEST_TAPE_SOURCE.parse().expect("fixture source")),
-            ordinal: 0,
-            decoded: &prose,
-            authored: None,
-            observed: None,
-            observations: &MessageObservations::default(),
-            unavailable_tool_terminals: &[],
-        },
-        &mut CallPreviews::default(),
-        None,
-    )
-    .expect("final prose publishes");
-
-    let messages = publisher.0.lock().expect("message lock");
-    assert_eq!(messages.len(), 1);
-    assert_eq!(messages[0].text, "settled final");
-    assert!(messages[0].final_answer);
+    assert!(prose.final_answer);
+    assert_eq!(*publisher.1.lock().expect("revision lock"), 1);
 }

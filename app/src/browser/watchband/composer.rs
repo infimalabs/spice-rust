@@ -649,6 +649,7 @@ fn agent_message_presentation<'a>(
     );
     let card_label = match message.activity {
         wire::AgentActivityKind::Turn => unreachable!("turn events are not message cards"),
+        wire::AgentActivityKind::Failure => format!("Provider failure from {attribution}"),
         wire::AgentActivityKind::Compaction => format!("Context compacted by {footer_label}"),
         wire::AgentActivityKind::Tool => media_description.as_ref().map_or_else(
             || format!("Tool result from {attribution}"),

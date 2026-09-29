@@ -396,6 +396,7 @@ mod tests {
             activity: wire::AgentActivityKind::Prose,
             final_answer: false,
             text: "quoted prose".to_owned(),
+            provider_error: None,
             classifications: Vec::new(),
             quote_target: None,
             directive_contexts: Vec::new(),

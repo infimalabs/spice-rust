@@ -1,12 +1,11 @@
 //! The word an exiting occupant's transcript ends on.
 //!
-//! An occupant whose turn the vendor refused writes that refusal as its last
-//! event and exits cleanly, so its exit status says nothing and the notice for
-//! the refusal may still be unread when the exit is accounted. The tape is
-//! durable before either notice is sent, so the exit reads the tape itself:
-//! the newest event the occupant wrote, scanned back from the tail through the
-//! session declaration that opened it, decides whether the exit ended on the
-//! vendor's word, on the occupant's own answer, or on nothing at all.
+//! An occupant whose prompt the vendor refused can exit cleanly, so its exit
+//! status says nothing and the notice for the refusal may still be unread when
+//! the exit is accounted. The tape is durable before either notice is sent.
+//! A typed prompt result, once the session is settled, is the sole authority
+//! for the turn; records without that current contract leave the exit
+//! undecided.
 
 use super::*;
 
@@ -16,17 +15,15 @@ use super::*;
 /// only when they sit behind large tool results.
 const TAIL_BYTES: u64 = 1024 * 1024;
 
-/// What the newest event an exiting occupant wrote says about its exit.
+/// What an exiting occupant's authoritative prompt result says about its exit.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum LastWord {
     /// The vendor refused the turn, in these words.
     Failure(String),
-    /// The vendor answered: the occupant's newest event is assistant prose,
-    /// reasoning, a tool exchange, reported usage, or a compaction.
+    /// The vendor completed a settled prompt.
     Answered,
-    /// Nothing decides the exit: the occupant wrote no event past its
-    /// declaration, its newest word is the operator's own prompt, or its
-    /// transcript could not be read.
+    /// Nothing decides the exit: the current prompt did not settle, no current
+    /// prompt result exists, or the transcript could not be read.
     Silent,
 }
 
@@ -76,8 +73,8 @@ pub(super) fn exit_word(
     }
 }
 
-/// The word the newest event at or after `declared` is, read from the tape
-/// under `root` with the vendor's dialect.
+/// The word the newest authoritative prompt result at or after `declared`
+/// carries, read with the vendor's dialect.
 pub(super) fn closing_word(
     root: &Path,
     vendor: &spice::extension::Vendor,
@@ -86,6 +83,7 @@ pub(super) fn closing_word(
     let tape = tape::Tape::open_existing(root).map_err(|error| error.to_string())?;
     let extents = tape.extents().map_err(|error| error.to_string())?;
     let mut remaining = TAIL_BYTES;
+    let mut settled = false;
     for extent in extents.into_iter().rev() {
         if extent.member < declared.member || remaining == 0 {
             break;
@@ -117,22 +115,33 @@ pub(super) fn closing_word(
             let decoded = vendor
                 .decode(&bytes[from..to], locus)
                 .map_err(|error| error.to_string())?;
-            let Some(newest) = decoded.events().last() else {
+            let Some(context) = decoded.context() else {
                 continue;
             };
-            return Ok(match newest {
-                listen::Event::Failure(failure) => LastWord::Failure(failure.message.clone()),
-                listen::Event::Prose(prose) if prose.role == listen::ProseRole::Operator => {
-                    LastWord::Silent
-                }
-                listen::Event::Session(_) => LastWord::Silent,
-                listen::Event::Prose(_)
-                | listen::Event::ProseEvidence(_)
-                | listen::Event::Reasoning(_)
-                | listen::Event::Tool(_)
-                | listen::Event::Usage(_)
-                | listen::Event::Compaction(_) => LastWord::Answered,
-            });
+            settled |= context.session_settled;
+            if let Some(outcome) = &context.prompt_outcome {
+                return Ok(match outcome.status {
+                    listen::PromptStatus::Completed if outcome.session_settled || settled => {
+                        LastWord::Answered
+                    }
+                    listen::PromptStatus::Error => decoded
+                        .events()
+                        .iter()
+                        .find_map(|event| match event {
+                            listen::Event::Failure(failure) => {
+                                Some(LastWord::Failure(failure.message.clone()))
+                            }
+                            _ => None,
+                        })
+                        .unwrap_or(LastWord::Silent),
+                    listen::PromptStatus::Completed | listen::PromptStatus::Aborted => {
+                        LastWord::Silent
+                    }
+                });
+            }
+            if context.turn == Some(listen::TurnMoment::Started) {
+                return Ok(LastWord::Silent);
+            }
         }
     }
     Ok(LastWord::Silent)
@@ -201,18 +210,20 @@ mod tests {
         )
     }
 
-    fn omp_assistant(stop: &str, text: &str, error: Option<&str>) -> String {
-        let error = error.map_or(String::new(), |error| {
-            format!(r#","errorMessage":"{error}""#)
+    fn omp_prompt_result(status: &str, settled: bool, error: Option<&str>) -> String {
+        let error = error.map_or(String::new(), |message| {
+            format!(
+                r#","error":{{"message":"{message}","provider":"openai","model":"gpt-5.4","httpStatus":429,"retryable":true}}"#
+            )
         });
         format!(
-            r#"{{"type":"message_end","message":{{"role":"assistant","content":[{{"type":"text","text":"{text}"}}],"usage":{{"input":40,"output":0}},"stopReason":"{stop}"{error}}}}}"#
+            r#"{{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"{status}","sessionSettled":{settled}{error}}}"#
         )
     }
 
+    const OMP_SESSION_SETTLED: &str = r#"{"type":"session_settled","reason":"prompt_complete"}"#;
+
     const OMP_USER: &str = r#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"continue"}]}}"#;
-    const OMP_TURN_END: &str =
-        r#"{"type":"turn_end","message":{"role":"assistant","content":[],"stopReason":"error"}}"#;
     const OMP_WIDGET: &str =
         r#"{"type":"extension_ui_request","id":"1583f94d24ebac0b","method":"setWidget"}"#;
     const OMP_AGENT_END: &str = r#"{"type":"agent_end","messages":[]}"#;
@@ -220,43 +231,8 @@ mod tests {
     fn refused_wake(tape: &tape::Tape, session: &str) -> wire::TapeLocus {
         write(tape, r#"{"type":"ready","protocolVersion":1}"#);
         let declared = write(tape, &omp_declaration(session));
-        write(tape, r#"{"type":"agent_start"}"#);
-        write(tape, r#"{"type":"turn_start"}"#);
-        write(tape, OMP_USER);
-        write(tape, &omp_assistant("error", "", Some(REFUSAL)));
-        write(tape, OMP_TURN_END);
-        write(tape, OMP_WIDGET);
-        write(tape, OMP_AGENT_END);
+        write(tape, &omp_prompt_result("error", true, Some(REFUSAL)));
         declared
-    }
-
-    #[test]
-    fn a_wake_whose_only_turn_the_vendor_refused_ends_on_the_vendor_error() {
-        let scratch = Scratch::new();
-        let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
-        let declared = refused_wake(&tape, "018f82d4-6f59-7d06-92e3-bce9131163c2");
-
-        let word = closing_word(&scratch.0, &spice::extension::OMP, &declared)
-            .expect("the retained tape reads");
-        assert_eq!(word, LastWord::Failure(REFUSAL.to_owned()));
-    }
-
-    #[test]
-    fn a_turn_that_ended_on_prose_is_an_answer() {
-        let scratch = Scratch::new();
-        let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
-        let declared = write(
-            &tape,
-            &omp_declaration("018f82d4-6f59-7d06-92e3-bce9131163c2"),
-        );
-        write(&tape, OMP_USER);
-        write(&tape, &omp_assistant("stop", "done", None));
-        write(&tape, OMP_TURN_END);
-        write(&tape, OMP_AGENT_END);
-
-        let word = closing_word(&scratch.0, &spice::extension::OMP, &declared)
-            .expect("the retained tape reads");
-        assert_eq!(word, LastWord::Answered);
     }
 
     #[test]
@@ -274,6 +250,71 @@ mod tests {
         let word = closing_word(&scratch.0, &spice::extension::OMP, &declared)
             .expect("the retained tape reads");
         assert_eq!(word, LastWord::Silent);
+    }
+
+    #[test]
+    fn prompt_completion_requires_the_reported_session_to_settle() {
+        let scratch = Scratch::new();
+        let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
+        let declared = write(
+            &tape,
+            &omp_declaration("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+        );
+        write(&tape, &omp_prompt_result("completed", false, None));
+
+        assert_eq!(
+            closing_word(&scratch.0, &spice::extension::OMP, &declared)
+                .expect("the retained tape reads"),
+            LastWord::Silent,
+            "a completed prompt with live background work has not settled"
+        );
+
+        write(&tape, OMP_SESSION_SETTLED);
+        assert_eq!(
+            closing_word(&scratch.0, &spice::extension::OMP, &declared)
+                .expect("the retained tape reads"),
+            LastWord::Answered,
+            "the later typed settlement completes the prompt"
+        );
+    }
+
+    #[test]
+    fn a_new_prompt_prevents_reusing_the_preceding_settled_result() {
+        let scratch = Scratch::new();
+        let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
+        let declared = write(
+            &tape,
+            &omp_declaration("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+        );
+        write(&tape, &omp_prompt_result("completed", true, None));
+        write(&tape, r#"{"type":"agent_start"}"#);
+
+        assert_eq!(
+            closing_word(&scratch.0, &spice::extension::OMP, &declared)
+                .expect("the retained tape reads"),
+            LastWord::Silent,
+            "the newest prompt has no result of its own"
+        );
+    }
+
+    #[test]
+    fn prompt_result_provider_failure_is_the_exit_word() {
+        let scratch = Scratch::new();
+        let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
+        let declared = write(
+            &tape,
+            &omp_declaration("018f82d4-6f59-7d06-92e3-bce9131163c2"),
+        );
+        write(
+            &tape,
+            &omp_prompt_result("error", true, Some("capacity exhausted")),
+        );
+
+        assert_eq!(
+            closing_word(&scratch.0, &spice::extension::OMP, &declared)
+                .expect("the retained tape reads"),
+            LastWord::Failure("capacity exhausted".to_owned())
+        );
     }
 
     #[test]
@@ -300,12 +341,6 @@ mod tests {
             LastWord::Silent,
             "the successor wrote no event after its declaration"
         );
-        assert_eq!(
-            closing_word(&scratch.0, &spice::extension::OMP, &predecessor)
-                .expect("the retained tape reads"),
-            LastWord::Silent,
-            "the successor's declaration is now the newest word on the tape"
-        );
         let beyond = wire::TapeLocus {
             member: successor.member,
             offset: successor.offset + 4096,
@@ -324,7 +359,7 @@ mod tests {
         let tape = tape::Tape::open(&scratch.0).expect("fixture tape opens");
         write(
             &tape,
-            &omp_assistant("error", "", Some("an earlier occupant's refusal")),
+            &omp_prompt_result("error", true, Some("an earlier occupant's refusal")),
         );
         let declared = write(
             &tape,
@@ -333,9 +368,7 @@ mod tests {
         tape.seal().expect("first member seals");
         write(&tape, OMP_USER);
         tape.seal().expect("second member seals");
-        write(&tape, &omp_assistant("error", "", Some(REFUSAL)));
-        write(&tape, OMP_TURN_END);
-        write(&tape, OMP_AGENT_END);
+        write(&tape, &omp_prompt_result("error", true, Some(REFUSAL)));
         assert_eq!(declared.member, 1);
 
         assert_eq!(

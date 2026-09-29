@@ -97,7 +97,7 @@ impl Streaks {
                 _ => {}
             }
         }
-        if context.turn == Some(listen::TurnMoment::Completed) {
+        if context.prompt_outcome.is_some() {
             streak.clear(record, NarrationRelief::Turn, &mut steps);
             streak.active_since = None;
         }

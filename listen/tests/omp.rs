@@ -123,7 +123,7 @@ fn assistant_messages_type_prose_reasoning_tool_calls_and_usage() {
         [Event::Prose(prose), Event::Usage(usage)]
             if prose.role == ProseRole::Assistant
                 && prose.text == "done"
-                && prose.phase.as_deref() == Some("final_answer")
+                && prose.phase.is_none()
                 && usage.input_tokens == 7
                 && usage.cached_input_tokens == 5
                 && usage.cache_write_input_tokens == 3

@@ -34,6 +34,19 @@ fn record(
     }
 }
 
+fn prompt_completed(lane: CanonicalUuid, occupant: CanonicalUuid) -> lane::capture::CaptureRecord {
+    let mut record = record(lane, occupant, None, Vec::new());
+    let listen::Decoded::Events { context, .. } = &mut record.decoded else {
+        unreachable!("the fixture is decoded events");
+    };
+    context.prompt_outcome = Some(listen::PromptOutcome {
+        agent_invoked: true,
+        status: listen::PromptStatus::Completed,
+        session_settled: true,
+    });
+    record
+}
+
 fn call(name: &str) -> listen::Event {
     listen::Event::Tool(listen::Tool {
         call_id: format!("call-{name}"),
@@ -169,14 +182,13 @@ fn a_lane_at_rest_between_turns_is_never_prodded_and_its_prod_clears() {
 
     let prodded = streaks.observe(BOUND, &tools(lane, occupant, 3));
     assert_eq!(prodded.len(), 1);
-    let completed = record(
-        lane,
-        occupant,
-        Some(listen::TurnMoment::Completed),
-        vec![call("Bash")],
+    assert_eq!(
+        streaks.observe(BOUND, &tools(lane, occupant, 1)),
+        Vec::new(),
+        "the fourth call remains below the next prod threshold"
     );
-    // The closing record's own call still counts (4 < 6), then the turn end
-    // clears the prod the streak drew.
+    let completed = prompt_completed(lane, occupant);
+    // The typed prompt result clears the prod the streak drew.
     assert_eq!(
         streaks.observe(BOUND, &completed),
         vec![Step::Cleared(NarrationCleared {

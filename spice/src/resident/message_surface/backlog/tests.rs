@@ -72,7 +72,7 @@ fn a_settled_turn_materializes_history_as_one_final_card() {
             "{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",",
             "\"content\":[{\"type\":\"text\",\"text\":\"settled final\"}],",
             "\"usage\":{\"input\":1,\"output\":1},\"stopReason\":\"stop\"}}\n",
-            "{\"type\":\"agent_end\"}\n",
+            "{\"type\":\"prompt_result\",\"id\":\"prompt-7\",\"agentInvoked\":true,\"status\":\"completed\",\"sessionSettled\":true}\n",
         )
         .as_bytes(),
     )
@@ -263,6 +263,7 @@ fn merged_history_fixture() -> MergedHistoryFixture {
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
         text: "future".to_owned(),
+        provider_error: None,
         classifications: Vec::new(),
         quote_target: None,
         directive_contexts: Vec::new(),
@@ -734,6 +735,7 @@ fn card_at(member: u64, second: usize) -> wire::AgentMessage {
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
         text: format!("card {second}"),
+        provider_error: None,
         classifications: Vec::new(),
         quote_target: None,
         directive_contexts: Vec::new(),
@@ -1084,6 +1086,7 @@ fn paired_boundary_fixture() -> (PathBuf, DurableHistory, CanonicalUuid, wire::A
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
         text: "future".to_owned(),
+        provider_error: None,
         classifications: Vec::new(),
         quote_target: None,
         directive_contexts: Vec::new(),

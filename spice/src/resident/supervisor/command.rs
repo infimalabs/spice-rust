@@ -4,9 +4,9 @@
 //! A vendor launched over a command stream reads nothing from its arguments
 //! after start. The supervisor owns the pipe: it writes the opening request,
 //! obtains the current authenticated steering inbox from the resident when
-//! kicked, answers dialogs, and drops the pipe once the agent's turn completes
-//! so the child drains and exits on its own. A drain interrupts the turn over
-//! the same pipe before any signal is sent. A confirm dialog becomes one
+//! kicked, answers dialogs, and drops the pipe once the admitted prompt has
+//! settled so the child drains and exits on its own. A drain interrupts the
+//! turn over the same pipe before any signal is sent. A confirm dialog becomes one
 //! consent request the resident decides; a call on the lane's shell runs in
 //! the lane's own terminal and answers with what the command said; every other
 //! dialog is declined, since nobody at the lane can compose a choice or text
@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use listen::{Decoded, Dialog, Event, ProseRole, TurnMoment};
+use listen::{Decoded, Dialog, Event, ProseRole};
 use serde::{Deserialize, Serialize};
 use vendor::omp::{JobCall, ShellCall};
 use wire::{CanonicalUuid, Disposition};
@@ -483,11 +483,14 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .clear();
         }
         self.nudge_hidden_acknowledgements(decoded);
-        let completed = decoded
-            .context()
-            .and_then(|context| context.turn)
-            .is_some_and(|turn| turn == TurnMoment::Completed);
-        if completed {
+        let settled = decoded.context().is_some_and(|context| {
+            context.session_settled
+                || context
+                    .prompt_outcome
+                    .as_ref()
+                    .is_some_and(|outcome| outcome.session_settled)
+        });
+        if settled {
             self.close();
         }
         asked

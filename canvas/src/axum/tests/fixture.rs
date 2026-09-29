@@ -14,6 +14,7 @@ pub(super) fn agent_message(author: u8, offset: u64, text: &str) -> wire::AgentM
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
         text: text.to_owned(),
+        provider_error: None,
         classifications: Vec::new(),
         quote_target: None,
         directive_contexts: Vec::new(),
