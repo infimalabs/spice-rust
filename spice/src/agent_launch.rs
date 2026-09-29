@@ -28,6 +28,9 @@ pub struct Inputs {
     pub vendor: Name,
     /// Neutral skill prompt with no operator prose.
     pub prompt: String,
+    /// The verified skill's instructions, carried whole where a vendor has a
+    /// system prompt that survives compaction.
+    pub skill: String,
     /// Current Spice executable spelling used by the hook.
     pub executable: String,
     /// Explicit child environment admitted by the resident rim.
@@ -182,6 +185,7 @@ fn compose_with_registry(
         launch: vendor::Launch {
             cwd: inputs.worktree,
             prompt: inputs.prompt,
+            skill: inputs.skill,
             model: inputs.model.unwrap_or_else(|| configured.model.to_owned()),
             effort: inputs.effort.unwrap_or(configured.effort),
             personality: configured.personality.map(str::to_owned),
@@ -293,6 +297,7 @@ mod tests {
                 worktree: PathBuf::from("/work/tree"),
                 vendor: "fixture".parse().expect("fixture vendor name"),
                 prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
+                skill: "skill".to_owned(),
                 executable: "spice".to_owned(),
                 environment: Environment::empty(),
                 lane: LANE.parse().expect("fixture lane"),
@@ -322,6 +327,7 @@ mod tests {
             worktree: PathBuf::from("/work/tree"),
             vendor: "fixture".parse().expect("fixture vendor name"),
             prompt: "[$spice](.agents/skills/spice/SKILL.md)".to_owned(),
+            skill: "skill".to_owned(),
             executable: "spice".to_owned(),
             environment: Environment::empty(),
             lane: LANE.parse().expect("fixture lane"),

@@ -1297,6 +1297,30 @@ pub fn installed_skill(repository: &Repository) -> PathBuf {
     repository.common_dir().join(SKILL_PATH)
 }
 
+/// Hard ceiling on the skill Claude and omp carry whole in every system prompt.
+///
+/// The skill is paid for on every request of every lane, so a skill that
+/// outgrows this fails the build rather than silently taxing each turn. The
+/// working target is half of it.
+const SKILL_BYTES_CEILING: usize = 16 * 1024;
+const _: () = assert!(
+    SKILL.len() <= SKILL_BYTES_CEILING,
+    "spice/agent/SKILL.md exceeds the 16 KiB it may occupy in every agent's system prompt"
+);
+
+/// The installed skill's instructions: its body without the frontmatter.
+///
+/// The frontmatter is catalogue metadata for skill loaders; an agent handed the
+/// skill inline needs only the instructions after it.
+#[must_use]
+pub fn skill_instructions() -> &'static str {
+    SKILL
+        .strip_prefix("---\n")
+        .and_then(|rest| rest.split_once("\n---\n"))
+        .map_or(SKILL, |(_, body)| body)
+        .trim()
+}
+
 /// Installed Git hook directory shared by every linked worktree.
 #[must_use]
 pub fn installed_git_hooks(repository: &Repository) -> PathBuf {

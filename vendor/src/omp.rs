@@ -16,8 +16,8 @@ use listen::Dialect;
 use serde::Serialize;
 use sill::Running;
 
-use crate::claude::SKILL_SYSTEM_PROMPT_PREAMBLE;
-use crate::launch::Launch;
+use crate::claude::{SKILL_SYSTEM_PROMPT_PREAMBLE, SKILL_TURN_PROMPT_PREAMBLE, anchored};
+use crate::launch::{Launch, SteeringKey};
 use crate::{ContractError, LaunchError, Process, Record, RecordStream};
 
 /// Human-facing vendor spelling carried by every refusal.
@@ -374,19 +374,35 @@ struct SessionHeader<'a> {
     cwd: &'a str,
 }
 
-/// The skill preamble, the start prompt, and this worktree's steering anchor.
+/// The appended system prompt: the skill in full, then this worktree's
+/// steering anchor.
 ///
 /// Steering reaches omp as an interjected user message rather than on tool
 /// stderr, so the anchor names that channel; the token is otherwise the same
 /// one Claude's prompt carries.
 #[must_use]
 pub fn system_prompt(launch: &Launch) -> String {
-    let mut prompt = format!("{SKILL_SYSTEM_PROMPT_PREAMBLE}\n\n{}", launch.prompt);
-    if let Some(key) = &launch.steering_key {
-        prompt.push_str("\n\n");
-        prompt.push_str(&key.interjection_line());
-    }
-    prompt
+    anchored(
+        SKILL_SYSTEM_PROMPT_PREAMBLE,
+        &launch.skill,
+        launch
+            .steering_key
+            .as_ref()
+            .map(SteeringKey::interjection_line),
+    )
+}
+
+/// The turn prompt: the neutral start prompt behind the same anchor.
+#[must_use]
+pub fn turn_prompt(launch: &Launch) -> String {
+    anchored(
+        SKILL_TURN_PROMPT_PREAMBLE,
+        &launch.prompt,
+        launch
+            .steering_key
+            .as_ref()
+            .map(SteeringKey::interjection_line),
+    )
 }
 
 /// The request lines that open a launch: the wire, the queue dispositions,
@@ -401,8 +417,8 @@ pub fn system_prompt(launch: &Launch) -> String {
 /// that depends on how steering drains states them rather than inheriting
 /// them. The lane's shell is registered next so the first turn's schema
 /// carries it; the state reply declares the session; the prompt starts the
-/// turn with the same composed system prompt the arguments carry, so the
-/// agent re-grounds in the skill.
+/// turn by naming the skill the system prompt already carries, so the agent
+/// re-grounds in it.
 ///
 /// A refused command answers `success: false`, which the lane reads as a
 /// vendor failure and reaps; a refused negotiation therefore ends the launch
@@ -439,7 +455,7 @@ pub fn opening_request(launch: &Launch) -> Vec<u8> {
     bytes.extend(request_line(&Request {
         id: PROMPT_REQUEST_ID.to_owned(),
         kind: "prompt",
-        message: Some(system_prompt(launch)),
+        message: Some(turn_prompt(launch)),
         streaming_behavior: None,
     }));
     bytes
