@@ -248,7 +248,7 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             published: published(1),
             lane: lane(),
             text: concat!(
-                "[REVIEW] Peer feedback for CANVAS-1kKRRsDR:\n\n",
+                "[REVIEW] CANVAS-1kKRRsDR\n\n",
                 "> preserve the finding\n\n",
                 "Keep working the current task."
             )
@@ -260,7 +260,7 @@ fn acknowledged_review_feedback_earns_a_source_bound_semantic_badge() {
             quote_target: quote_target(
                 "1kQnrzNZ",
                 concat!(
-                    "[REVIEW] Peer feedback for CANVAS-1kKRRsDR:\n\n",
+                    "[REVIEW] CANVAS-1kKRRsDR\n\n",
                     "> preserve the finding\n\n",
                     "Keep working the current task."
                 ),

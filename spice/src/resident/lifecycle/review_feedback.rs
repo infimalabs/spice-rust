@@ -293,7 +293,7 @@ fn feedback_text(handle: &wire::TaskHandle, finding: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "[REVIEW] Peer feedback for {handle}:\n\n{quoted}\n\n\
+        "[REVIEW] {handle}\n\n{quoted}\n\n\
          Verbalize and internalize all noteworthy findings as working guidance—there is \
          nothing else to capture or act on because follow-ups are already boarded!—continue \
          working your current task."
