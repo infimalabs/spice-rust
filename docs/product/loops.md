@@ -37,6 +37,22 @@ stateDiagram-v2
   lapsed --> [*]
 ```
 
+Voluntary release is one guarded Git-and-journal transition:
+
+```mermaid
+flowchart LR
+  A["active self-held claim"] --> C{"lane clean and<br/>baseline is ancestor?"}
+  C -- no --> X["refusal;<br/>claim and lane unchanged"]
+  C -- yes --> P["retain commits on<br/>task-owned ref"]
+  P --> R["reset lane to<br/>claim baseline"]
+  R --> F["claim&#58;&#58;freed records<br/>recovery coordinates"]
+  F --> N["next claim restores commits<br/>and consumes task-owned ref"]
+```
+
+Deferral by the holder uses that same release transaction before recording the
+deferral. Deferral by another actor changes scheduling only; it does not take
+possession from the holder or move that holder's lane.
+
 The surrounding fact and command vocabulary does not add dispositions:
 
 ```mermaid
@@ -94,6 +110,15 @@ flowchart TD
    rolling horizon, so a lapse follows the occupant leaving rather than one long
    foreground command outliving a fixed lease. A lease iced on the canonical
    indefinite horizon is the one live lease that never rolls.
+- `task free` and self-deferral never strand committed work on a lane. A clean
+  release retains commits under the task, resets the lane to its claim baseline,
+  and records the exact baseline, head, commit list, and ref with
+  `claim::freed`. The next claim restores that history before possession is
+  recorded and consumes the ref only after the claim commits.
+- Dirty lanes, divergent release baselines, restore conflicts, and failed
+  guarded journal writes are atomic refusals: the claim, lane, and task-owned
+  ref return to their pre-command state.
+- A peer-authored deferral does not release another actor's claim.
 - Every phase transition is accepted into the durable task journal and appears
    through the board projection, including a transition that changes no tree.
 - When integration must synthesize a new mutating landing, it creates exactly one

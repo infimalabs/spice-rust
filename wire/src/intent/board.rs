@@ -611,6 +611,13 @@ pub struct BoardTask {
         deserialize_with = "crate::optional::present"
     )]
     pub git_context: Option<TaskGitContext>,
+    /// Commits retained on the task-owned ref after an explicit release.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub parked_commits: Option<crate::body::TaskParkedCommits>,
 }
 
 /// Server-resolved public task route metadata for one board snapshot.
@@ -670,6 +677,7 @@ impl BoardTask {
             explicit_release: false,
             claim_context: None,
             git_context: None,
+            parked_commits: None,
         }
     }
     /// Attach whether the current claim head records an explicit release.
@@ -685,9 +693,11 @@ impl BoardTask {
         mut self,
         claim_context: Option<TaskClaimContext>,
         git_context: Option<TaskGitContext>,
+        parked_commits: Option<crate::body::TaskParkedCommits>,
     ) -> Self {
         self.claim_context = claim_context;
         self.git_context = git_context;
+        self.parked_commits = parked_commits;
         self
     }
 

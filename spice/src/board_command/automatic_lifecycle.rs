@@ -340,6 +340,7 @@ pub(crate) fn release_automatic(
             body::ClaimFreed {
                 task: automatic.task.clone(),
                 actor: actor.clone(),
+                parked: None,
             },
             FactCause::Root,
         )

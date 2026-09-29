@@ -223,6 +223,7 @@ fn free(journal: &mut Journal, command: u8) {
             body::ClaimFreed {
                 task: born(),
                 actor: actor.clone(),
+                parked: None,
             },
             FactCause::Root,
         )

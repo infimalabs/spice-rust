@@ -1049,6 +1049,7 @@ fn free_claim(fixture: &Fixture) {
             body::ClaimFreed {
                 task: stamp.clone(),
                 actor,
+                parked: None,
             },
             FactCause::Root,
         )

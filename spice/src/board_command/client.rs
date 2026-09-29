@@ -379,7 +379,7 @@ fn client_defer(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    mutate_task(repository, contract, matches, |task, heads| {
+    mutate_task_from_board(repository, contract, matches, |board, task, heads| {
         let wait = required(matches, "UNTIL")
             .parse::<wire::Instant>()
             .map_err(|error| {
@@ -393,9 +393,27 @@ fn client_defer(
             task: task.clone(),
             wait,
         };
+        let mut expected = vec![workflow_witness(heads), deferral_witness(heads)];
+        if heads.claim.as_ref().is_some_and(|claim| {
+            claim.body.disposition == ClaimDisposition::Active
+                && claim.body.actor == board.principal
+        }) {
+            let (lane, occupant) = actor_seat(board)?;
+            let lease = heads.lease.as_ref().ok_or_else(|| {
+                protocol_fault("claim::lease-missing", "an active claim has no lease head")
+            })?;
+            expected.extend([
+                claim_witness(heads),
+                Witness::Lease {
+                    task: heads.statement.body.born.clone(),
+                    head: lease.position,
+                },
+                residency_witness(board, lane, occupant),
+            ]);
+        }
         Ok((
             CommandKind::TaskDefer,
-            vec![workflow_witness(heads), deferral_witness(heads)],
+            expected,
             serde_json::to_value(body).expect("typed intent encodes"),
         ))
     })
@@ -447,9 +465,6 @@ fn client_free(
                 "name a task carrying a current live claim",
             )
         })?;
-        if let Err(error) = spice::task_git::prepare_free(repository, &task.to_string()) {
-            return Err(task_git_outcome(error));
-        }
         let mut expected = vec![claim_witness(heads)];
         if heads.workflow.body.phase.as_str() == "review"
             && heads.workflow.body.assignment.as_ref() == Some(&board.principal)
@@ -1033,13 +1048,13 @@ pub(crate) fn dispatch_with_repository(
             task_delete(bus, command, delete, projects, allocation)
         }
         wire::intent::Intent::TaskDefer(defer) => {
-            task_defer(bus, command, defer, projects, allocation)
+            task_defer(bus, command, defer, repository, projects, allocation)
         }
         wire::intent::Intent::TaskWake(wake) => {
             task_wake(bus, command, wake, repository, projects, allocation)
         }
         wire::intent::Intent::TaskRef(task) if command.kind() == CommandKind::ClaimFree => {
-            claim_free(bus, command, task, projects, allocation)
+            claim_free(bus, command, task, repository, projects, allocation)
         }
         wire::intent::Intent::TaskDepends(depends) => {
             task_depends(bus, command, depends, projects, allocation)

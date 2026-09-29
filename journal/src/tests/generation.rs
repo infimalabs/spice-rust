@@ -256,6 +256,7 @@ fn free(journal: &mut Journal, task: &TaskStamp) {
             ClaimFreed {
                 task: task.clone(),
                 actor: Actor::Operator,
+                parked: None,
             },
             FactCause::Existing(head.claimed),
         )

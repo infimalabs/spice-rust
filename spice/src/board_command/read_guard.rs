@@ -4,12 +4,14 @@ mod guard;
 pub(super) use guard::guard_allocation;
 use guard::{refuse_active_claim_conflict, witnesses_hold};
 mod capture;
+mod context;
 pub(super) use capture::guard_capture;
 mod task_detail;
 pub(super) use task_detail::read_task_detail;
 mod task_relations;
 pub(super) use task_relations::read_task_relations;
 mod task_selection;
+use context::{route_actor_identity, task_contexts, task_creator_teams, task_origin_threads};
 #[cfg(test)]
 pub(in crate::board_command) use task_selection::history_cursor_order;
 use task_selection::{TaskSelection, retain_family, selected_tasks};
@@ -228,6 +230,12 @@ impl TaskProjection<'_> {
                 .at(head.position)
                 .is_some_and(|envelope| envelope.fact.kind() == wire::FactKind::ClaimFreed)
         });
+        let parked_commits = claim.as_ref().and_then(|head| {
+            self.facts
+                .at(head.position)
+                .and_then(|envelope| envelope.fact.read::<body::ClaimFreed>())
+                .and_then(|freed| freed.parked)
+        });
         let claim_context = current_claim_context(
             &statement.body.born,
             claim.as_ref().map(|head| &head.body),
@@ -276,7 +284,7 @@ impl TaskProjection<'_> {
             lease,
         )
         .with_explicit_release(explicit_release)
-        .with_context(claim_context, git_context);
+        .with_context(claim_context, git_context, parked_commits);
         Ok((entry, task))
     }
 }
@@ -566,113 +574,6 @@ fn actor_route_with_occupant(
     })
 }
 
-fn route_actor_identity(identity: &str) -> Option<String> {
-    if let Ok(identity) = identity.parse::<wire::CanonicalUuid>() {
-        return Some(identity.to_string());
-    }
-    (!identity.is_empty()
-        && identity
-            .bytes()
-            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))
-    .then(|| identity.to_owned())
-}
-
-fn task_origin_threads<'a>(
-    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
-    residency: &wire::ResidencyHead,
-    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
-) -> Result<std::collections::BTreeMap<wire::TaskStamp, String>, Outcome<CommandAnswer>> {
-    let mut occupants = std::collections::BTreeMap::new();
-    let mut sessions = std::collections::BTreeMap::new();
-    let mut origins = std::collections::BTreeMap::new();
-    for fact in facts {
-        if let Some(declared) = fact.fact.read::<body::LaneSessionDeclared>() {
-            sessions.insert((declared.lane, declared.occupant), declared.identity);
-            continue;
-        }
-        if let Some(started) = fact.fact.read::<body::LaneStarted>() {
-            occupants.insert(started.lane, started.occupant);
-            continue;
-        }
-        let Some(added) = fact.fact.read::<body::TaskAdded>() else {
-            continue;
-        };
-        if selected.is_some_and(|tasks| !tasks.contains(&added.task)) {
-            continue;
-        }
-        let actor = match fact.actor {
-            wire::Actor::Operator => "operator".to_owned(),
-            wire::Actor::Spice => "spice".to_owned(),
-            wire::Actor::Lane(lane) => {
-                let occupant = occupants.get(&lane).copied().or_else(|| {
-                    residency
-                        .lanes
-                        .iter()
-                        .find(|row| row.lane == lane && row.session.is_none())
-                        .and_then(|row| row.occupant)
-                });
-                let occupant = occupant.ok_or_else(|| {
-                    protocol_fault(
-                        "board::task-origin-occupant-missing",
-                        "a lane task has no authoritative creating occupant",
-                    )
-                })?;
-                match sessions.get(&(lane, occupant)) {
-                    Some(identity) => route_actor_identity(identity).ok_or_else(|| {
-                        protocol_fault(
-                            "board::task-origin-session-invalid",
-                            "the creating vendor session identity cannot name an actor task route",
-                        )
-                    })?,
-                    None => occupant.to_string(),
-                }
-            }
-        };
-        if origins.insert(added.task.clone(), actor).is_some() {
-            return Err(protocol_fault(
-                "board::task-origin-duplicate",
-                &format!("task {} has more than one creation fact", added.task),
-            ));
-        }
-    }
-    Ok(origins)
-}
-
-fn task_creator_teams<'a>(
-    facts: impl IntoIterator<Item = &'a wire::Envelope<wire::AnyFact>>,
-    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
-) -> Result<
-    std::collections::BTreeMap<wire::TaskStamp, Option<wire::CanonicalUuid>>,
-    Outcome<CommandAnswer>,
-> {
-    let mut creators = std::collections::BTreeMap::new();
-    for envelope in facts {
-        let Some(added) = envelope.fact.read::<body::TaskAdded>() else {
-            continue;
-        };
-        if selected.is_some_and(|tasks| !tasks.contains(&added.task)) {
-            continue;
-        }
-        let creator = match envelope.actor {
-            Actor::Lane(_) => added.creation.creator_team(),
-            Actor::Operator | Actor::Spice if added.creation.creator_team().is_none() => None,
-            Actor::Operator | Actor::Spice => {
-                return Err(protocol_fault(
-                    "board::task-creator-team-invalid",
-                    "a non-lane task creation names a creator team",
-                ));
-            }
-        };
-        if creators.insert(added.task.clone(), creator).is_some() {
-            return Err(protocol_fault(
-                "board::task-creator-duplicate",
-                &format!("task {} has more than one creation fact", added.task),
-            ));
-        }
-    }
-    Ok(creators)
-}
-
 pub(super) fn claim_transcript_recovery(
     won: &body::ClaimWon,
     sessions: &std::collections::BTreeMap<
@@ -723,92 +624,6 @@ pub(super) fn claim_transcript_recovery(
             reason: "session-declaration-missing".to_owned(),
         },
     }
-}
-
-fn task_contexts(
-    facts: &bus::TaskFacts,
-    selected: Option<&std::collections::BTreeSet<wire::TaskStamp>>,
-) -> (
-    ClaimContexts,
-    std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskGitContext>,
-) {
-    let mut sessions = std::collections::BTreeMap::new();
-    let mut claims = std::collections::BTreeMap::new();
-    let mut git = std::collections::BTreeMap::new();
-    for envelope in facts.iter() {
-        if let Some(declaration) = envelope.fact.read::<body::LaneSessionDeclared>() {
-            sessions.insert(
-                (
-                    declaration.lane,
-                    declaration.occupant,
-                    declaration.vendor,
-                    declaration.epoch,
-                ),
-                declaration.identity,
-            );
-            continue;
-        }
-        if let Some(won) = envelope.fact.read::<body::ClaimWon>() {
-            if selected.is_some_and(|tasks| !tasks.contains(&won.task)) {
-                continue;
-            }
-            let task = won.task.clone();
-            if let Some(boundary) = won.git.clone() {
-                git.insert(
-                    task.clone(),
-                    wire::intent::TaskGitContext {
-                        fact: envelope.seq,
-                        kind: wire::intent::TaskGitContextKind::Claim,
-                        boundary,
-                    },
-                );
-            }
-            let recovery = claim_transcript_recovery(&won, &sessions);
-            claims.insert(
-                envelope.seq,
-                (
-                    task,
-                    wire::intent::TaskClaimContext {
-                        claimed: envelope.seq,
-                        lane: won.lane,
-                        occupant: won.occupant,
-                        epoch: won.epoch,
-                        source: won.source,
-                        recovery,
-                    },
-                ),
-            );
-            continue;
-        }
-        if let Some(done) = envelope.fact.read::<body::TaskDone>()
-            && selected.is_none_or(|tasks| tasks.contains(&done.task))
-            && let Some(boundary) = done.git
-        {
-            git.insert(
-                done.task,
-                wire::intent::TaskGitContext {
-                    fact: envelope.seq,
-                    kind: wire::intent::TaskGitContextKind::Completion,
-                    boundary,
-                },
-            );
-            continue;
-        }
-        if let Some(reviewed) = envelope.fact.read::<body::TaskReviewed>()
-            && selected.is_none_or(|tasks| tasks.contains(&reviewed.task))
-            && let Some(boundary) = reviewed.git
-        {
-            git.insert(
-                reviewed.task,
-                wire::intent::TaskGitContext {
-                    fact: envelope.seq,
-                    kind: wire::intent::TaskGitContextKind::Review,
-                    boundary,
-                },
-            );
-        }
-    }
-    (claims, git)
 }
 
 pub(super) fn positioned<T: Clone>(head: &journal::JournalHead<T>) -> Positioned<T> {
@@ -1281,6 +1096,72 @@ pub(super) fn allocation_subscription(
         ));
     }
     Ok(subscription.effective(residency.team_members(seat.team)))
+}
+
+pub(super) enum PreparedTaskGit {
+    Release(spice::task_git::ParkedRelease),
+    Claim(spice::task_git::ClaimPreparation),
+}
+
+impl PreparedTaskGit {
+    fn commit(self) -> Result<(), spice::task_git::Error> {
+        match self {
+            Self::Release(_) => Ok(()),
+            Self::Claim(prepared) => prepared.commit(),
+        }
+    }
+
+    fn rollback(self) -> Result<(), spice::task_git::Error> {
+        match self {
+            Self::Release(prepared) => prepared.rollback(),
+            Self::Claim(prepared) => prepared.rollback(),
+        }
+    }
+}
+
+pub(super) fn committed_with_task_git(
+    bus: &Bus,
+    write: JournalWrite,
+    body: CommandAnswer,
+    prepared: PreparedTaskGit,
+) -> Outcome<CommandAnswer> {
+    match bus.commit(write) {
+        Ok(CommitOutcome::Committed(commit)) => {
+            if let Err(error) = prepared.commit() {
+                return task_git_outcome(error);
+            }
+            Outcome::Reply(Reply {
+                position: ReplyPosition::Committed(SeqRange {
+                    first: seq(commit.first()),
+                    last: seq(commit.last()),
+                }),
+                body,
+            })
+        }
+        Ok(CommitOutcome::Refused(refusal)) => {
+            if let Err(error) = prepared.rollback() {
+                return task_git_outcome(error);
+            }
+            Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+                "board::witness-moved".to_owned(),
+                Some("current durable heads".to_owned()),
+                None,
+                Some(refusal.reason().to_owned()),
+            )))
+        }
+        Ok(CommitOutcome::Fault(fault)) => {
+            if let Err(error) = prepared.rollback() {
+                return task_git_outcome(error);
+            }
+            store_fault("board::commit-failed", fault.detail())
+        }
+        Err(error) => {
+            if let Err(error) = prepared.rollback() {
+                return task_git_outcome(error);
+            }
+            store_fault("board::bus-closed", &error.to_string())
+        }
+    }
 }
 
 pub(super) fn committed(
