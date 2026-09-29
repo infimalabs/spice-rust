@@ -772,7 +772,7 @@ impl Server {
                 "Canvas version app identity disagrees with the current served generation",
             ));
         }
-        let listener = tokio::net::TcpListener::bind(requested).await?;
+        let listener = listener::listen_exclusively(requested).await?;
         let (authority, origin) = reachable_as(listener.local_addr()?);
         let (commands, receiver) = control::channel(class_capacity);
         let (closed, _) = watch::channel(false);
