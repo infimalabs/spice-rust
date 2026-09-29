@@ -150,6 +150,7 @@ pub(super) fn task_taste_review(
             text: (*text).to_owned(),
             phase: None,
             media: Vec::new(),
+            external_media: Vec::new(),
             locus: listen::Locus::new(0, 0, text.len() as u64),
         });
         let hits = applicable.hits(&event, &context).map_err(|error| {

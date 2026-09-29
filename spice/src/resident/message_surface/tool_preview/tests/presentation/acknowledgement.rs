@@ -680,6 +680,7 @@ fn system_acknowledgment_badge_reaches_canvas_without_speech_eligibility() {
         text: "ACK dRyzkGX8b: Accepted revision 44.".to_owned(),
         phase: None,
         media: Vec::new(),
+        external_media: Vec::new(),
         locus: event().locus,
     });
     let publisher = Messages::default();
@@ -905,6 +906,7 @@ fn repeated_acknowledgement_keeps_context_without_reearning_speech() {
                 text: text.to_owned(),
                 phase: None,
                 media: Vec::new(),
+                external_media: Vec::new(),
                 locus: later.locus,
             },
             Some(&directives),
@@ -1207,6 +1209,7 @@ fn acknowledged_context_survives_transcript_source_replacement() {
                 text: text.to_owned(),
                 phase: None,
                 media: Vec::new(),
+                external_media: Vec::new(),
                 locus: replacement.locus,
             },
             Some(&directives),
@@ -1254,6 +1257,7 @@ fn repeated_lane_seal_acknowledgements_render_without_fabricating_a_directive() 
                     text: text.clone(),
                     phase: None,
                     media: Vec::new(),
+                    external_media: Vec::new(),
                     locus: acknowledged.locus,
                 },
                 Some(&directives),

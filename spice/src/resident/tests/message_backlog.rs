@@ -1090,6 +1090,7 @@ fn mixed_acknowledgement_record(
                 .to_owned(),
                 phase: None,
                 media: Vec::new(),
+                external_media: Vec::new(),
                 locus,
             })],
         },

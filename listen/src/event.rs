@@ -154,6 +154,69 @@ pub struct SessionDeclaration {
     pub locus: Locus,
 }
 
+const SHA256_HEX_LENGTH: usize = 64;
+
+/// Provider-owned reference to image bytes stored outside the transcript.
+///
+/// The decoder validates the reference grammar but deliberately does not read
+/// the external store. A session-file consumer resolves it against the
+/// vendor's own state root before presenting or retaining the media.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExternalMedia {
+    name: String,
+    content_type: String,
+    sha256: String,
+}
+
+impl ExternalMedia {
+    /// Operator-facing or tool-supplied label.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Exact declared image media type.
+    #[must_use]
+    pub fn content_type(&self) -> &str {
+        &self.content_type
+    }
+
+    /// Lower-case SHA-256 identity naming the provider-owned blob.
+    #[must_use]
+    pub fn sha256(&self) -> &str {
+        &self.sha256
+    }
+
+    pub(crate) fn admit(
+        name: impl Into<String>,
+        content_type: impl Into<String>,
+        reference: &str,
+    ) -> Option<Self> {
+        let name = name.into();
+        let content_type = content_type.into();
+        let sha256 = reference.strip_prefix("blob:sha256:")?;
+        if name.is_empty()
+            || name.len() > wire::media::MAX_MEDIA_NAME_BYTES
+            || name.chars().any(char::is_control)
+            || !matches!(
+                content_type.as_str(),
+                "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+            )
+            || sha256.len() != SHA256_HEX_LENGTH
+            || !sha256
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return None;
+        }
+        Some(Self {
+            name,
+            content_type,
+            sha256: sha256.to_owned(),
+        })
+    }
+}
+
 /// Visible transcript text.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Prose {
@@ -165,6 +228,8 @@ pub struct Prose {
     pub phase: Option<String>,
     /// Admitted media blocks carried beside this authored text.
     pub media: Vec<wire::Media>,
+    /// Provider-owned media references awaiting source-aware resolution.
+    pub external_media: Vec<ExternalMedia>,
     /// Source bytes.
     pub locus: Locus,
 }
@@ -237,6 +302,8 @@ pub struct ToolOutcome {
     pub exit_code: Option<i32>,
     /// Admitted media blocks carried by this exact result.
     pub media: Vec<wire::Media>,
+    /// Provider-owned media references awaiting source-aware resolution.
+    pub external_media: Vec<ExternalMedia>,
 }
 
 /// Vendor knowledge of a tool result.

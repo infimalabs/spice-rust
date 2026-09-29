@@ -33,7 +33,7 @@ pub const MAX_MEDIA_BYTES: usize = 8 * 1_024 * 1_024;
 pub const MAX_MEDIA_DATA_URL_BYTES: usize = 3 * 1024 * 1024;
 
 /// Maximum UTF-8 bytes retained for an operator-facing media name.
-const MAX_MEDIA_NAME_BYTES: usize = 255;
+pub const MAX_MEDIA_NAME_BYTES: usize = 255;
 
 /// Maximum encoded bytes in one agent-facing media reference.
 ///
@@ -313,6 +313,37 @@ impl Media {
         )
     }
 
+    /// Build canonical media from decoded bytes without a base64 round trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error for an invalid name, size, unsupported type, or
+    /// mismatch between the declared type and byte signature.
+    pub fn from_bytes(
+        name: impl Into<String>,
+        content_type: impl Into<String>,
+        bytes: &[u8],
+    ) -> Result<Self, MediaError> {
+        let name = name.into();
+        let content_type = content_type.into();
+        validate_name(&name)?;
+        validate_type(&content_type)?;
+        validate_bytes(&content_type, bytes)?;
+        let payload_length = bytes.len().div_ceil(3) * 4;
+        let mut data_url = String::with_capacity(
+            "data:".len() + content_type.len() + ";base64,".len() + payload_length,
+        );
+        data_url.push_str("data:");
+        data_url.push_str(&content_type);
+        data_url.push_str(";base64,");
+        STANDARD.encode_string(bytes, &mut data_url);
+        Ok(Self {
+            name,
+            content_type,
+            data_url,
+        })
+    }
+
     /// Validate this value at an emitting boundary.
     ///
     /// # Errors
@@ -381,15 +412,8 @@ impl Media {
     ///
     /// Returns the exact shared media admission error.
     pub fn decoded_bytes(&self) -> Result<Vec<u8>, MediaError> {
-        if self.name.is_empty()
-            || self.name.len() > MAX_MEDIA_NAME_BYTES
-            || self.name.chars().any(char::is_control)
-        {
-            return Err(MediaError::Name);
-        }
-        if !supported_type(&self.content_type) {
-            return Err(MediaError::UnsupportedType(self.content_type.clone()));
-        }
+        validate_name(&self.name)?;
+        validate_type(&self.content_type)?;
         let prefix = format!("data:{};base64,", self.content_type);
         let payload = self
             .data_url
@@ -410,19 +434,7 @@ impl Media {
         // The standard engine requires canonical padding and refuses nonzero
         // trailing bits, so a payload that decodes has exactly one spelling.
         let bytes = STANDARD.decode(payload).map_err(|_| MediaError::Base64)?;
-        if bytes.is_empty() || bytes.len() > MAX_MEDIA_BYTES {
-            return Err(MediaError::Size {
-                observed: bytes.len(),
-                maximum: MAX_MEDIA_BYTES,
-            });
-        }
-        let observed = observed_type(&bytes).ok_or(MediaError::UnrecognizedBytes)?;
-        if observed != self.content_type {
-            return Err(MediaError::TypeMismatch {
-                declared: self.content_type.clone(),
-                observed: observed.to_owned(),
-            });
-        }
+        validate_bytes(&self.content_type, &bytes)?;
         Ok(bytes)
     }
 }
@@ -606,6 +618,37 @@ fn unescape_markdown_label(label: &str) -> String {
         }
     }
     restored
+}
+
+fn validate_name(name: &str) -> Result<(), MediaError> {
+    if name.is_empty() || name.len() > MAX_MEDIA_NAME_BYTES || name.chars().any(char::is_control) {
+        return Err(MediaError::Name);
+    }
+    Ok(())
+}
+
+fn validate_type(content_type: &str) -> Result<(), MediaError> {
+    if !supported_type(content_type) {
+        return Err(MediaError::UnsupportedType(content_type.to_owned()));
+    }
+    Ok(())
+}
+
+fn validate_bytes(content_type: &str, bytes: &[u8]) -> Result<(), MediaError> {
+    if bytes.is_empty() || bytes.len() > MAX_MEDIA_BYTES {
+        return Err(MediaError::Size {
+            observed: bytes.len(),
+            maximum: MAX_MEDIA_BYTES,
+        });
+    }
+    let observed = observed_type(bytes).ok_or(MediaError::UnrecognizedBytes)?;
+    if observed != content_type {
+        return Err(MediaError::TypeMismatch {
+            declared: content_type.to_owned(),
+            observed: observed.to_owned(),
+        });
+    }
+    Ok(())
 }
 
 fn supported_type(content_type: &str) -> bool {

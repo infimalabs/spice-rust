@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use sha2::{Digest as _, Sha256};
 use std::fs;
 
 fn damaged_fixture(scratch: &Scratch) -> String {
@@ -524,6 +525,110 @@ fn briefing_collapses_repeated_residues_without_losing_the_window() {
             {"side": "user", "text": "retain the current ask"},
             {"side": "assistant", "text": "window remains intact"},
         ])
+    );
+
+    scratch.remove();
+}
+
+const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+fn external_image_records(data: &str) -> Vec<serde_json::Value> {
+    vec![
+        omp_header(THREAD, "2026-09-29T01:00:00.000Z"),
+        omp_user("2026-09-29T01:00:01Z", "u1", "Inspect the captured image."),
+        omp_call(
+            "2026-09-29T01:00:02Z",
+            "a1",
+            "call-image",
+            "read",
+            json!({"path": "capture.png"}),
+        ),
+        omp_entry(
+            "2026-09-29T01:00:03Z",
+            "r1",
+            json!({
+                "role": "toolResult",
+                "toolCallId": "call-image",
+                "toolName": "read",
+                "content": [
+                    {"type": "text", "text": "Read image [image/png]"},
+                    {
+                        "type": "image",
+                        "data": data,
+                        "mimeType": "image/png",
+                        "name": "capture.png",
+                    },
+                ],
+                "isError": false,
+            }),
+        ),
+        omp_text("2026-09-29T01:00:04Z", "a2", "The image is intact.", "stop"),
+    ]
+}
+
+#[test]
+fn briefing_resolves_omp_external_image_blobs_from_the_session_state_root() {
+    let scratch = Scratch::new("briefing-external-media");
+    let sessions = scratch.path().join("sessions/team");
+    let blobs = scratch.path().join("blobs");
+    fs::create_dir_all(&sessions).expect("session directory creates");
+    fs::create_dir_all(&blobs).expect("blob directory creates");
+    let digest = format!("{:x}", Sha256::digest(PNG_SIGNATURE));
+    fs::write(blobs.join(&digest), PNG_SIGNATURE).expect("OMP blob writes");
+    let transcript = sessions.join("thread.jsonl");
+    write_jsonl(
+        &transcript,
+        &external_image_records(&format!("blob:sha256:{digest}")),
+    );
+
+    let file = transcript.to_string_lossy().into_owned();
+    let recall = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
+    assert_eq!(recall["residues"], json!([]));
+    assert_eq!(
+        recall["window"]["turns"][0]["dialogue"],
+        json!([
+            {"side": "user", "text": "Inspect the captured image."},
+            {"side": "assistant", "text": "The image is intact."},
+        ])
+    );
+
+    scratch.remove();
+}
+
+#[test]
+fn briefing_distinguishes_missing_and_mismatched_omp_external_image_blobs() {
+    let scratch = Scratch::new("briefing-invalid-external-media");
+    let sessions = scratch.path().join("sessions/team");
+    let blobs = scratch.path().join("blobs");
+    fs::create_dir_all(&sessions).expect("session directory creates");
+    fs::create_dir_all(&blobs).expect("blob directory creates");
+    let digest = format!("{:x}", Sha256::digest(PNG_SIGNATURE));
+    let transcript = sessions.join("thread.jsonl");
+    write_jsonl(
+        &transcript,
+        &external_image_records(&format!("blob:sha256:{digest}")),
+    );
+    let file = transcript.to_string_lossy().into_owned();
+
+    let missing = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
+    assert_eq!(missing["residues"][0]["kind"], "media-blob-missing");
+    assert_eq!(
+        missing["window"]["turns"][0]["dialogue"],
+        json!([
+            {"side": "user", "text": "Inspect the captured image."},
+            {"side": "assistant", "text": "The image is intact."},
+        ])
+    );
+
+    fs::write(blobs.join(&digest), b"not the referenced image").expect("bad OMP blob writes");
+    let mismatched = reply_forms(&strings(&["session", "briefing", &file]), &[], "recall");
+    assert_eq!(
+        mismatched["residues"][0]["kind"],
+        "media-blob-digest-mismatch"
+    );
+    assert_eq!(
+        mismatched["window"]["turns"][0]["dialogue"],
+        missing["window"]["turns"][0]["dialogue"],
     );
 
     scratch.remove();

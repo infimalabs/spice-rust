@@ -287,9 +287,11 @@ fn message_update(record: &Object, locus: Locus) -> Events {
         return Ok(Vec::new());
     }
     let text = string(update, "content")?.to_owned();
+    let content = media::decompose(OwnedContent::AuthoredText(&text))?;
     Ok(vec![Event::ProseEvidence(Prose {
         role: ProseRole::Assistant,
-        media: media::decompose(OwnedContent::AuthoredText(&text))?.media,
+        media: content.media,
+        external_media: content.external_media,
         text,
         phase: None,
         locus,
@@ -314,26 +316,29 @@ fn user(message: &Object, locus: Locus) -> Events {
         match string(block, "type")? {
             "text" => events.push(operator_prose(string(block, "text")?, locus)?),
             "image" => {
-                let media = media::decompose(OwnedContent::ProviderValue {
+                let content = media::decompose(OwnedContent::ProviderValue {
                     value,
                     default_name: "message-image",
-                })?
-                .media;
+                })?;
                 if let Some(Event::Prose(prose)) = events.last_mut() {
-                    prose.media.extend(media);
-                    prose.media.truncate(wire::media::MAX_MEDIA_ITEMS);
+                    if prose.media.len() + prose.external_media.len() < wire::media::MAX_MEDIA_ITEMS
+                    {
+                        prose.media.extend(content.media);
+                        prose.external_media.extend(content.external_media);
+                    }
                     wire::media::validate_media(&prose.media).map_err(|_| {
                         ResidueKind::Malformed {
                             field: "message.content[].media",
                             expected: "at most eight admitted images",
                         }
                     })?;
-                } else if !media.is_empty() {
+                } else if !content.media.is_empty() || !content.external_media.is_empty() {
                     events.push(Event::Prose(Prose {
                         role: ProseRole::Operator,
                         text: String::new(),
                         phase: Some("prompt".to_owned()),
-                        media,
+                        media: content.media,
+                        external_media: content.external_media,
                         locus,
                     }));
                 }
@@ -350,9 +355,11 @@ fn user(message: &Object, locus: Locus) -> Events {
 }
 
 fn operator_prose(text: &str, locus: Locus) -> Result<Event, ResidueKind> {
+    let content = media::decompose(OwnedContent::AuthoredText(text))?;
     Ok(Event::Prose(Prose {
         role: ProseRole::Operator,
-        media: media::decompose(OwnedContent::AuthoredText(text))?.media,
+        media: content.media,
+        external_media: content.external_media,
         text: text.to_owned(),
         phase: Some("prompt".to_owned()),
         locus,
@@ -381,9 +388,11 @@ fn assistant(message: &Object, locus: Locus) -> Events {
         match string(block, "type")? {
             "text" => {
                 let text = string(block, "text")?.to_owned();
+                let content = media::decompose(OwnedContent::AuthoredText(&text))?;
                 events.push(Event::Prose(Prose {
                     role: ProseRole::Assistant,
-                    media: media::decompose(OwnedContent::AuthoredText(&text))?.media,
+                    media: content.media,
+                    external_media: content.external_media,
                     text,
                     phase: None,
                     locus,
@@ -438,6 +447,7 @@ fn tool_result(message: &Object, locus: Locus) -> Events {
             output: Some(content.text),
             exit_code,
             media: content.media,
+            external_media: content.external_media,
         }),
         locus,
     })])

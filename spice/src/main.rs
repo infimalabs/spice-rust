@@ -73,6 +73,8 @@ mod run_meter;
 #[cfg(not(target_arch = "wasm32"))]
 mod session_command;
 #[cfg(not(target_arch = "wasm32"))]
+mod session_media;
+#[cfg(not(target_arch = "wasm32"))]
 mod steering_command;
 #[cfg(not(target_arch = "wasm32"))]
 mod steering_read;

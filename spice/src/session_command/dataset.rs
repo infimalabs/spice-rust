@@ -223,7 +223,7 @@ fn decode_row(
         ));
     }
     let locus = listen::Locus::new(line, 0, buffer.len() as u64);
-    let detected = match listen::decode_record(dialect, buffer, locus) {
+    let mut detected = match listen::decode_record(dialect, buffer, locus) {
         Ok(detected) => detected,
         Err(RecordDecodeError::Locus(error)) => {
             return Err(record_refusal(
@@ -248,6 +248,19 @@ fn decode_row(
             ));
         }
     };
+    if let Err(error) = crate::session_media::resolve(&mut detected.decoded, &source.path) {
+        let observed = detected.dialect;
+        return Ok((
+            Some(observed),
+            DecodedRow::Residue(transcript_residue(
+                source,
+                line,
+                error.kind(),
+                error.to_string(),
+                error.recovery(),
+            )),
+        ));
+    }
     let observed = detected.dialect;
     let row = match detected.decoded {
         Decoded::Residue(residue) => decode_residue(source, line, residue.kind),

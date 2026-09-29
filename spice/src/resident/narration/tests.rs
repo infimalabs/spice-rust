@@ -67,6 +67,7 @@ fn result() -> listen::Event {
             output: None,
             exit_code: None,
             media: Vec::new(),
+            external_media: Vec::new(),
         }),
         locus: listen::Locus::new(7, 120, 64),
     })
@@ -85,6 +86,7 @@ fn prose(role: listen::ProseRole, text: &str) -> listen::Event {
         text: text.to_owned(),
         phase: None,
         media: Vec::new(),
+        external_media: Vec::new(),
         locus: listen::Locus::new(7, 120, 64),
     })
 }
