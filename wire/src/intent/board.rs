@@ -94,6 +94,8 @@ pub enum BoardRead {
         dependencies: bool,
         /// Also select every active claim held by the authenticated principal.
         claims: bool,
+        /// Also return the durable notes on each named task in `tasks`.
+        notes: bool,
     },
     /// Trust rulings and residency authority, without task rows.
     Trust,
@@ -754,6 +756,10 @@ pub struct BoardAnswer {
         deserialize_with = "crate::optional::present"
     )]
     pub history: Option<TaskHistoryPage>,
+    /// Durable notes on the named tasks of a [`BoardRead::Tasks`] read that
+    /// asked for them, each task's notes in ascending journal position.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub notes: std::collections::BTreeMap<crate::TaskStamp, Vec<TaskDetailNote>>,
     /// Current executable-configuration trust heads in ascending digest order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trust: Vec<Positioned<crate::TrustHead>>,

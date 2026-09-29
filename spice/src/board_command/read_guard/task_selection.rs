@@ -62,6 +62,7 @@ pub(super) fn selected_tasks(
             tasks,
             dependencies,
             claims,
+            notes: _,
         } => Ok(TaskSelection {
             tasks: Some(context_tasks(
                 observed,

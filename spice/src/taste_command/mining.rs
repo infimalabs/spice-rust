@@ -130,6 +130,7 @@ pub(crate) fn mine(
             tasks,
             dependencies: false,
             claims: false,
+            notes: false,
         },
     ) {
         Ok(board) => board,

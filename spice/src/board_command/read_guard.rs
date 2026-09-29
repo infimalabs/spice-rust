@@ -127,6 +127,7 @@ fn validated_snapshot_from_with_occupant(
             tasks,
             offer: Vec::new(),
             origins: Default::default(),
+            notes: Default::default(),
             history: None,
             trust: positioned_trust(observed),
             appliance,
@@ -975,6 +976,21 @@ pub(super) fn read_board(
                 .cmp(&left.workflow.position)
                 .then_with(|| left.statement.body.born.cmp(&right.statement.body.born))
         });
+    }
+    if let BoardRead::Tasks {
+        tasks, notes: true, ..
+    } = read
+    {
+        // Only named rows the snapshot admitted, so a hidden task's notes stay hidden.
+        let named = snapshot
+            .answer
+            .tasks
+            .iter()
+            .map(|task| &task.statement.body.born)
+            .filter(|born| tasks.contains(born))
+            .cloned()
+            .collect();
+        snapshot.answer.notes = task_detail::task_notes(&observed, &named);
     }
     snapshot.answer.history = history;
     snapshot_reply(

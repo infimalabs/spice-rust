@@ -92,6 +92,80 @@ fn task_detail_returns_one_task_and_ordered_attributed_notes() {
 }
 
 #[test]
+fn task_show_prints_only_the_named_tasks_notes() {
+    let (root, bus, epoch, _) = fixture("task-show-notes", 1);
+    let shown_born = stamp("task-show-notes-shown");
+    let shown = add_born(&bus, epoch, shown_born.clone(), "Shown task");
+    let dependency_born = stamp("task-show-notes-dependency");
+    let dependency = add_born(&bus, epoch, dependency_born.clone(), "Dependency task");
+    super::hidden::add_dependency(&bus, epoch, &shown, &dependency);
+    let note = |task: &TaskHandle, born: &wire::TaskStamp, text: &str| {
+        assert_committed(issue(
+            &bus,
+            epoch,
+            Actor::Operator,
+            CommandKind::TaskNote,
+            vec![Witness::Existence { task: born.clone() }],
+            &TaskNote {
+                task: task.clone(),
+                note: text.to_owned(),
+            },
+        ));
+    };
+    note(&shown, &shown_born, "first line\n\nthird line");
+    note(&dependency, &dependency_born, "dependency evidence");
+    note(&shown, &shown_born, "later evidence");
+
+    let read = |notes: bool| match issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Tasks {
+            tasks: vec![shown_born.clone()],
+            dependencies: true,
+            claims: false,
+            notes,
+        },
+    ) {
+        Outcome::Reply(Reply {
+            body: CommandAnswer::Board(answer),
+            ..
+        }) => answer,
+        other => panic!("task board read did not reply: {other:?}"),
+    };
+
+    let answer = read(true);
+    assert!(
+        answer
+            .tasks
+            .iter()
+            .any(|task| task.statement.body.born == dependency_born)
+    );
+    assert_eq!(answer.notes.keys().collect::<Vec<_>>(), [&shown_born]);
+    let texts = answer.notes[&shown_born]
+        .iter()
+        .map(|note| note.text.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(texts, ["first line\n\nthird line", "later evidence"]);
+    let text = task_show_with_origin(
+        &answer,
+        at(&answer, &shown),
+        &[],
+        &answer.notes[&shown_born],
+        None,
+    );
+    assert!(text.contains("notes:\n  "));
+    assert!(text.contains("    first line\n\n    third line\n"));
+    assert!(text.contains("    later evidence"));
+    assert!(!text.contains("dependency evidence"));
+    assert!(read(false).notes.is_empty());
+
+    clean(&root, bus);
+}
+
+#[test]
 fn task_detail_carries_browser_renderable_artifacts_without_text_sidecars() {
     let (root, bus, epoch, _) = fixture("task-detail-media", 0);
     let born = stamp("task-detail-media");

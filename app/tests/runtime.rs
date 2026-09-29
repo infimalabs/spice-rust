@@ -286,6 +286,7 @@ fn board_response(
         recent_cell: None,
         offer: Vec::new(),
         origins: Default::default(),
+        notes: Default::default(),
         schema: 1,
         cursor: seq(4),
         principal: wire::Actor::Operator,

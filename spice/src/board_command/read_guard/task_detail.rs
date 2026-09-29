@@ -39,19 +39,9 @@ pub(in crate::board_command) fn read_task_detail(
         Ok(media) => media,
         Err(outcome) => return outcome,
     };
-    let notes = observed
-        .facts()
-        .iter()
-        .filter_map(|envelope| {
-            let noted = envelope.fact.read::<body::TaskNoted>()?;
-            (noted.task == detail.task).then(|| wire::intent::TaskDetailNote {
-                position: envelope.seq,
-                at: envelope.at,
-                author: envelope.actor.clone(),
-                text: noted.note.clone(),
-            })
-        })
-        .collect();
+    let notes = task_notes(&observed, &selected)
+        .remove(&detail.task)
+        .unwrap_or_default();
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::TaskDetail(Box::new(wire::intent::TaskDetailAnswer {
@@ -60,6 +50,32 @@ pub(in crate::board_command) fn read_task_detail(
             notes,
         })),
     )
+}
+
+/// Every durable note on the named tasks, each task's in ascending journal
+/// position, read in one pass over the snapshot's facts.
+pub(super) fn task_notes(
+    observed: &bus::TaskSnapshot,
+    tasks: &std::collections::BTreeSet<wire::TaskStamp>,
+) -> std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskDetailNote>> {
+    let mut notes = std::collections::BTreeMap::<_, Vec<_>>::new();
+    for envelope in observed.facts().iter() {
+        let Some(noted) = envelope.fact.read::<body::TaskNoted>() else {
+            continue;
+        };
+        if tasks.contains(&noted.task) {
+            notes
+                .entry(noted.task)
+                .or_default()
+                .push(wire::intent::TaskDetailNote {
+                    position: envelope.seq,
+                    at: envelope.at,
+                    author: envelope.actor.clone(),
+                    text: noted.note,
+                });
+        }
+    }
+    notes
 }
 
 fn task_media(

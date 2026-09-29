@@ -59,6 +59,7 @@ pub(super) fn client_recover(
             ],
             dependencies: true,
             claims: true,
+            notes: false,
         },
     ) {
         Ok(board) => board,
@@ -285,6 +286,7 @@ fn reconcile_client_recovery(
             tasks: vec![sealed.task.clone()],
             dependencies: false,
             claims: true,
+            notes: false,
         },
     ) {
         Ok(board) => board,
