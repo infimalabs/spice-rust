@@ -391,6 +391,15 @@ work. Empty lanes remain visible. The same keyed cards move between lanes
 without disturbing unchanged cards, and opening one uses the shared task detail
 layer with focus returned to its launching card.
 
+Below those lanes, one directive ledger joins the team's browser-owned
+submissions to the resident inbox by stable directive or fanout identity. A
+fanout remains one row with per-member delivery state as it moves from queued
+through delivery to acknowledgment, decline, lapse, cancellation, or terminal
+delivery failure; recent retirements therefore replace state in place instead
+of making the row jump.
+Any work whose origin names one of the row's steering keys appears on that row
+and opens the same shared task detail layer.
+
 
 ### The team console
 

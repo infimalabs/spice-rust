@@ -60,12 +60,6 @@
   .team-mode { padding-inline: 4px; }
   .team-mode-badge { display: none; }
   .team-task-workspace { padding-inline: 8px; }
-  .team-task-member { max-width: 100%; }
-  .team-direction-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: 4px 8px;
-  }
-  .team-direction-preview { grid-column: 1 / -1; grid-row: 2; }
   .page-heading { align-items: start; }
   .page-heading h1 { font-size: 1.35rem; }
   th, td { padding: 10px; }
