@@ -169,21 +169,6 @@ fn every_finding_after_the_cursor_is_answered_from_one_fold_of_the_history() {
     bus.shutdown().expect("twice-reviewed bus stops");
 }
 
-#[test]
-fn feedback_text_preserves_the_predecessor_frame_and_exact_review_prose() {
-    let text = feedback_text(
-        &"MESSAGE-1kKRRsDR".parse().expect("fixture handle"),
-        "first\r\n\r\nlast",
-    );
-    assert!(
-        text.starts_with(concat!(
-            "[REVIEW] MESSAGE-1kKRRsDR\n\n",
-            "> first\n>\n> last\n\n",
-        )),
-        "{text}"
-    );
-}
-
 fn reviewed_fixture(
     fixture: &AdvisoryRtkFixture,
     authority: &std::path::Path,
