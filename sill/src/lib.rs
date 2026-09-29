@@ -1,9 +1,12 @@
-//! Process and advisory-lock floor with typed lock configuration.
+//! Process, advisory-lock, and interface-address floor with typed lock
+//! configuration.
 
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_arch = "wasm32")))]
 compile_error!("sill supports the Linux and macOS release targets plus wasm contract checks");
 
 pub mod config;
+#[cfg(unix)]
+mod interface;
 mod lock;
 mod observe;
 #[cfg(unix)]
@@ -16,6 +19,8 @@ mod surface;
 pub use config::{
     ConfigError, ConfiguredPath, ExitCode, ExitStatuses, LockConfig, LockTarget, ShardCount,
 };
+#[cfg(unix)]
+pub use interface::local_addresses;
 pub use lock::{Acquisition, Availability, LockFile, LockName, LockNameError, Possession};
 pub use observe::{
     Observation, ObservationFailure, ObservationSpecError, ObservationStall, ObserveError,
