@@ -236,9 +236,15 @@ fn decode_row(
             return Ok((dialect, decode_residue(source, line, kind)));
         }
         Err(error @ (RecordDecodeError::Unowned | RecordDecodeError::Retired { .. })) => {
-            let kind = match &error {
-                RecordDecodeError::Unowned => "dialect-unowned",
-                RecordDecodeError::Retired { .. } => "dialect-retired",
+            let (kind, recovery) = match &error {
+                RecordDecodeError::Unowned => (
+                    "dialect-unowned",
+                    "select the owning vendor decoder to interpret this record; surrounding typed history remains available",
+                ),
+                RecordDecodeError::Retired { .. } => (
+                    "dialect-retired",
+                    "this build decodes only omp transcripts; read this record with a release that still carries its harness decoder; surrounding typed history remains available",
+                ),
                 _ => unreachable!("the matched decoder error variants are exhaustive"),
             };
             return Ok((
@@ -248,7 +254,7 @@ fn decode_row(
                     line,
                     kind,
                     error.to_string(),
-                    "select the owning vendor decoder to interpret this record; surrounding typed history remains available",
+                    recovery,
                 )),
             ));
         }
