@@ -710,6 +710,11 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
+        ClientAction::TeamSettled { request } => {
+            refresh::send_team_settled(principal, writer, actions, request)
+                .await
+                .map(|_| None)
+        }
         ClientAction::GlobalSettings(settings) => {
             send_global_settings(principal, writer, actions, settings)
                 .await

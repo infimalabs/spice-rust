@@ -16,6 +16,10 @@ pub(crate) enum ClientAction {
     WorkHistory {
         request: crate::runtime::WorkHistoryRequest,
     },
+    /// Read one page of the work one team recently settled.
+    TeamSettled {
+        request: crate::runtime::TeamSettledRequest,
+    },
     /// Fetch the next retained page behind one member's oldest visible card.
     MessageHistory {
         generation: u64,

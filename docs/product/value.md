@@ -391,13 +391,19 @@ work. Empty lanes remain visible. The same keyed cards move between lanes
 without disturbing unchanged cards, and opening one uses the shared task detail
 layer with focus returned to its launching card.
 
+A fourth lane, Settled, shows the work the team finished most recently: tasks
+it created or whose last winning claim a current member held, newest first,
+with a control that appends older pages. The team-scoped history read runs
+only while that team's Work pane is on screen, and runs again only once an
+open-board refresh shows work leaving the open board or the connection
+resumes. Settled cards are the same shared cards and open the same detail
+layer.
 Below the lanes, a Kept jobs table lists every command a member keeps beyond
 the call that started it, across the whole team and oldest first. Each row
 names the member in its accent, ticks the job's age from the moment its key
 encodes, shows the command on one line with the full text on hover, and says
 whether it is still running or ended unheard. A standing change updates its
 row in place; with nothing kept, the table holds one fixed-height empty line.
-
 
 ### The team console
 

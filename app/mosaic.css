@@ -1298,6 +1298,11 @@ a.relative-age {
   container-type: inline-size;
   min-width: 0;
 }
+.team-work-older {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
 .team-task-section { min-width: 0; }
 .team-task-section > header {
   display: flex;

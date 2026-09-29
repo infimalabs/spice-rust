@@ -74,6 +74,7 @@ pub(super) fn render_team(
         agents: controls,
         selected_task,
         select_task,
+        team_settled,
         ..
     } = render;
     let surface = surface.read();
@@ -134,6 +135,7 @@ pub(super) fn render_team(
         .collect::<Vec<_>>();
     let render = FleetRender {
         work,
+        team_settled,
         selected_task,
         select_task,
         runtime,
@@ -155,6 +157,30 @@ pub(super) fn render_team(
         return render_empty_fleet(team_fleet, &render);
     }
     render_populated_fleet(&teams, &standings, team_fleet, &render)
+}
+
+/// Teams whose Work pane is on screen: the fleet is shown and the team is in
+/// Work mode. Only these read their settled work.
+pub(super) fn work_shown_teams(
+    surface: &SurfaceData,
+    controls: &TeamControls,
+    fleet_shown: bool,
+) -> Vec<CanonicalUuid> {
+    if !fleet_shown {
+        return Vec::new();
+    }
+    let surface = surface.read();
+    let Some(lanes) = surface.as_ref().and_then(CanvasRuntime::lanes) else {
+        return Vec::new();
+    };
+    lanes
+        .lanes
+        .iter()
+        .filter(|team| {
+            team.teamed() && controls.current(team.lane, team.subscription).mode == TeamMode::Work
+        })
+        .map(|team| team.lane)
+        .collect()
 }
 
 #[hook]
@@ -485,8 +511,18 @@ fn render_tasks(
     standings: &[Standing],
     selected: Option<&wire::TaskStamp>,
     select: &Callback<wire::TaskStamp>,
+    settled: Option<&super::team_settled::Controls>,
 ) -> Html {
     let work = work.map(|projection| crate::work::team_work(projection, team));
+    let settled_state = runtime.team_settled(team.lane);
+    let settled_work = settled_state
+        .and_then(crate::runtime::TeamSettledState::pages)
+        .map(crate::work::WorkProjection::from_board);
+    let settled = settled.map(|controls| team_work::Settled {
+        state: settled_state,
+        work: settled_work.as_ref(),
+        controls,
+    });
     let queued = standings
         .iter()
         .filter(|standing| standing.pending > 0)
@@ -525,7 +561,7 @@ fn render_tasks(
                     <strong>{policy}</strong>
                 </div>
             </header>
-            {render_team_work_lanes(work.as_ref(), team.lane, &cards)}
+            {render_team_work_lanes(work.as_ref(), team.lane, &cards, settled.as_ref())}
             {render_team_jobs(standings, team.lane)}
             <section class="team-task-section" aria-labelledby={format!("direction-queue-{}", team.lane)}>
                 <header>

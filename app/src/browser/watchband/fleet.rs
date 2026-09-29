@@ -60,6 +60,7 @@ impl TeamMode {
 
 pub(super) struct FleetRender<'a, 'w> {
     pub(super) work: Option<&'a crate::work::WorkProjection<'w>>,
+    pub(super) team_settled: &'a super::super::team_settled::Controls,
     pub(super) selected_task: &'a UseStateHandle<Option<wire::TaskStamp>>,
     pub(super) select_task: &'a Callback<wire::TaskStamp>,
     pub(super) runtime: &'a CanvasRuntime,
@@ -125,6 +126,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                             &[],
                             (**render.selected_task).as_ref(),
                             render.select_task,
+                            None,
                         ),
                         TeamMode::Dash => {
                             render_details(render.runtime, &empty_team, &[])
@@ -227,6 +229,7 @@ pub(super) fn render_populated_fleet(
                                             &team_standings,
                                             (**render.selected_task).as_ref(),
                                             render.select_task,
+                                            Some(render.team_settled),
                                         ),
                                         TeamMode::Dash => render_details(
                                             render.runtime,

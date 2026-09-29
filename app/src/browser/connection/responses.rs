@@ -265,11 +265,8 @@ fn apply_command_response(
             runtime.apply_task_relations(&key, &admitted);
             CommandApplication::ordinary(false)
         }
-        PendingKind::WorkHistory { request } => {
-            let admitted: crate::Admitted<Response<wire::intent::BoardAnswer>> =
-                admit_response(session, bytes)?;
-            runtime.apply_work_history(&request, &admitted);
-            CommandApplication::ordinary(false)
+        kind @ (PendingKind::WorkHistory { .. } | PendingKind::TeamSettled { .. }) => {
+            apply_history_response(session, runtime, kind, bytes)?
         }
         // A read of the lane table and an arrangement of it answer with the
         // same authoritative table, so successful replies apply identically.
@@ -453,6 +450,23 @@ fn apply_scalar_response(
         }
         PendingKind::Vendors => runtime.apply_vendor_catalog(&admit_response(session, bytes)?),
         _ => unreachable!("scalar response partition is closed"),
+    }
+    Ok(CommandApplication::ordinary(false))
+}
+
+/// Board history pages: the global Work archive and one team's settled work.
+fn apply_history_response(
+    session: &Session,
+    runtime: &mut CanvasRuntime,
+    kind: PendingKind,
+    bytes: &[u8],
+) -> Result<CommandApplication, String> {
+    let admitted: crate::Admitted<Response<wire::intent::BoardAnswer>> =
+        admit_response(session, bytes)?;
+    match kind {
+        PendingKind::WorkHistory { request } => runtime.apply_work_history(&request, &admitted),
+        PendingKind::TeamSettled { request } => runtime.apply_team_settled(&request, &admitted),
+        _ => unreachable!("history response partition is closed"),
     }
     Ok(CommandApplication::ordinary(false))
 }
