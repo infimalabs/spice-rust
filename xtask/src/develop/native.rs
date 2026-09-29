@@ -54,12 +54,45 @@ pub(super) fn perform(
     output: &mut impl Write,
 ) -> Result<RefreshReport, RefreshError> {
     let repository = Repository::discover(Path::new("."))?;
+    refuse_seated_lane(&repository, request.lane.as_deref())?;
     writeln!(output, "building canvas app")?;
     crate::app(environment, output)?;
     let stamp = source_stamp(repository.worktree_root())?;
     writeln!(output, "source stamp {stamp}")?;
     let built = build(request.release, request.symbols, &stamp, output)?;
     install_built(&repository, built, request, output)
+}
+
+/// Refuse a refresh from a lane this repository seats, before anything builds.
+///
+/// Only the operator republishes this repository's appliance and stops or
+/// restarts its resident: every seated lane runs that appliance, so one lane
+/// replacing it takes the resident out from under all of them. A lane shell may
+/// still refresh a scratch repository that has never seated it. Seating is read
+/// from the runtime's own per-lane state, so the refusal holds whether or not
+/// the resident is serving. A binding that is not a lane identity cannot be
+/// shown to be unseated and refuses too.
+fn refuse_seated_lane(repository: &Repository, lane: Option<&OsStr>) -> Result<(), RefreshError> {
+    let Some(lane) = lane else {
+        return Ok(());
+    };
+    let text = lane.to_string_lossy();
+    let seated = match text.parse::<wire::CanonicalUuid>() {
+        Ok(identity) => {
+            let state = repository.admit_state().map_err(InstallError::from)?;
+            let name = identity.to_string();
+            state
+                .lane_families()
+                .iter()
+                .any(|family| fs::symlink_metadata(family.join(&name)).is_ok())
+        }
+        Err(_) => true,
+    };
+    if seated {
+        Err(RefreshError::LaneSeated(text.into_owned()))
+    } else {
+        Ok(())
+    }
 }
 
 /// Publish one completed build and reconcile the resident around that cutover.
@@ -872,21 +905,14 @@ fn resident_stop_executable(
 /// captured and dropped. Its diagnostics are captured too and republished here:
 /// an inherited stream puts the refusal wherever the parent's happens to go,
 /// which is not this command's own report and is not what the error carries.
-fn resident_stop_command(installed: &Path) -> Command {
-    let mut command = Command::new(installed);
-    command
-        .arg("down")
-        .env_remove(wire::SpiceVariable::Lane.as_str());
-    command
-}
-
 fn stop(
     repository: &Repository,
     installed: &Path,
     output: &mut impl Write,
 ) -> Result<(), RefreshError> {
     writeln!(output, "stopping resident")?;
-    let answer = resident_stop_command(installed)
+    let answer = Command::new(installed)
+        .arg("down")
         .current_dir(repository.worktree_root())
         .output()?;
     if !answer.status.success() {

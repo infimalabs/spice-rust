@@ -44,6 +44,8 @@ pub struct RefreshRequest {
     pub restart: bool,
     /// Arguments forwarded verbatim to the detached `spice up` launcher.
     pub up_arguments: Vec<OsString>,
+    /// Lane binding of the invoking shell, when a supervised lane runs it.
+    pub lane: Option<OsString>,
 }
 
 /// What one completed refresh published.
@@ -84,6 +86,8 @@ pub fn refresh(
 pub enum RefreshError {
     /// The repository under the working directory did not resolve.
     Repository(spice::repository::ResolveError),
+    /// A lane this repository seats asked to replace its appliance.
+    LaneSeated(String),
     /// `cargo build` reported failure.
     Build,
     /// The source commit's committer instant could not order this build.
@@ -149,6 +153,10 @@ impl fmt::Display for RefreshError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Repository(error) => write!(formatter, "repository unresolved: {error}"),
+            Self::LaneSeated(lane) => write!(
+                formatter,
+                "resident::operator-install-only; lane {lane} is seated in this repository, and only the operator republishes its appliance or stops and restarts its resident: run the install from an operator shell, or refresh a scratch repository that has never seated this lane"
+            ),
             Self::Build => write!(formatter, "cargo build failed"),
             Self::SourceStamp(detail) => write!(formatter, "source stamp refused: {detail}"),
             Self::App(error) => write!(formatter, "canvas app build failed: {error}"),
