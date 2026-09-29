@@ -15,6 +15,9 @@
 //! would report every live resident as a stranger, and each refusal it raised
 //! would look exactly like the defect this record exists to catch.
 
+use std::fmt;
+use std::net::SocketAddr;
+
 use wire::CanonicalUuid;
 
 /// What a holder names before it has a generation to name.
@@ -25,6 +28,79 @@ use wire::CanonicalUuid;
 /// reads the whole startup interval as the mismatch it is rather than as a
 /// record it may trust.
 const PENDING_EPOCH: &str = "pending";
+/// Smallest bearer token the resident accepts.
+pub const AUTH_TOKEN_MIN_BYTES: usize = 16;
+/// Largest bearer token the resident accepts.
+pub const AUTH_TOKEN_MAX_BYTES: usize = 256;
+
+/// Access policy a running resident must preserve across a developer refresh.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResidentAccess {
+    /// Only callers originating on this machine are admitted.
+    Local,
+    /// The operator explicitly consented to unauthenticated network access.
+    Insecure,
+    /// Every caller must present the operator's bearer token.
+    Authenticated,
+}
+
+impl ResidentAccess {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Insecure => "insecure",
+            Self::Authenticated => "authenticated",
+        }
+    }
+
+    fn parse(value: &str) -> Option<Self> {
+        match value {
+            "local" => Some(Self::Local),
+            "insecure" => Some(Self::Insecure),
+            "authenticated" => Some(Self::Authenticated),
+            _ => None,
+        }
+    }
+}
+
+/// Exact live bind and access policy needed to restart one resident.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ResidentLaunch {
+    listen: SocketAddr,
+    access: ResidentAccess,
+}
+
+impl ResidentLaunch {
+    /// Build restart metadata after the kernel has resolved an ephemeral port.
+    #[must_use]
+    pub const fn new(listen: SocketAddr, access: ResidentAccess) -> Self {
+        Self { listen, access }
+    }
+
+    /// Address the resident actually bound.
+    #[must_use]
+    pub const fn listen(self) -> SocketAddr {
+        self.listen
+    }
+
+    /// Access policy the resident applies at that address.
+    #[must_use]
+    pub const fn access(self) -> ResidentAccess {
+        self.access
+    }
+}
+
+/// A holder carried launch metadata but it was not one complete supported value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LaunchRecordError;
+
+impl fmt::Display for LaunchRecordError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("resident holder launch metadata is malformed")
+    }
+}
+
+impl std::error::Error for LaunchRecordError {}
 
 /// The record a resident publishes while it possesses the lock.
 pub fn holder_record(pid: u32, epoch: Option<CanonicalUuid>) -> String {
@@ -32,6 +108,63 @@ pub fn holder_record(pid: u32, epoch: Option<CanonicalUuid>) -> String {
         Some(epoch) => format!("pid={pid};epoch={epoch}"),
         None => format!("pid={pid};epoch={PENDING_EPOCH}"),
     }
+}
+/// The record a resident publishes once its listening socket is bound.
+#[must_use]
+pub fn launched_holder_record(pid: u32, epoch: CanonicalUuid, launch: ResidentLaunch) -> String {
+    format!(
+        "{};launch={},{}",
+        holder_record(pid, Some(epoch)),
+        launch.access.as_str(),
+        launch.listen
+    )
+}
+
+/// Launch metadata a complete holder record carries.
+///
+/// Records written by older residents carry no `launch` field and answer
+/// `Ok(None)`. A present field is strict: silently ignoring damaged metadata
+/// could restart a wildcard listener on loopback or drop authentication.
+pub fn holder_launch(record: &[u8]) -> Result<Option<ResidentLaunch>, LaunchRecordError> {
+    let line = std::str::from_utf8(record)
+        .map_err(|_| LaunchRecordError)?
+        .lines()
+        .next()
+        .ok_or(LaunchRecordError)?;
+    let mut launch = line
+        .split(';')
+        .filter_map(|field| field.trim().strip_prefix("launch="));
+    let Some(value) = launch.next() else {
+        return Ok(None);
+    };
+    if launch.next().is_some() {
+        return Err(LaunchRecordError);
+    }
+    let (access, listen) = value.split_once(',').ok_or(LaunchRecordError)?;
+    let access = ResidentAccess::parse(access).ok_or(LaunchRecordError)?;
+    let listen = listen
+        .parse::<SocketAddr>()
+        .map_err(|_| LaunchRecordError)?;
+    let policy_mismatches_address = match access {
+        ResidentAccess::Local => !listen.ip().is_loopback(),
+        ResidentAccess::Insecure => listen.ip().is_loopback(),
+        ResidentAccess::Authenticated => false,
+    };
+    if listen.port() == 0 || policy_mismatches_address {
+        return Err(LaunchRecordError);
+    }
+    Ok(Some(ResidentLaunch { listen, access }))
+}
+
+/// Whether a bearer token satisfies the resident's public token contract.
+#[must_use]
+pub fn auth_token_is_valid(token: &str) -> bool {
+    (AUTH_TOKEN_MIN_BYTES..=AUTH_TOKEN_MAX_BYTES).contains(&token.len())
+        && token.bytes().all(is_token_byte)
+}
+
+const fn is_token_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
 }
 
 /// The generation a holder record names, if it names a complete one.
@@ -100,13 +233,16 @@ mod tests {
             panic!("a lock file nothing else has seen cannot be contended");
         };
 
-        possession
-            .rewrite_record(holder_record(4321, Some(uuid(1))).as_bytes())
-            .expect("long holder record writes");
-        assert_eq!(
-            holder_epoch(&std::fs::read(&path).expect("long record reads")),
-            Some(uuid(1))
+        let launch = ResidentLaunch::new(
+            "[::]:8767".parse().expect("fixture address"),
+            ResidentAccess::Insecure,
         );
+        possession
+            .rewrite_record(launched_holder_record(4321, uuid(1), launch).as_bytes())
+            .expect("long holder record writes");
+        let published = std::fs::read(&path).expect("long record reads");
+        assert_eq!(holder_epoch(&published), Some(uuid(1)));
+        assert_eq!(holder_launch(&published), Ok(Some(launch)));
 
         possession
             .rewrite_record(holder_record(7, None).as_bytes())
@@ -121,9 +257,32 @@ mod tests {
             None,
             "a holder that has not minted its generation names none"
         );
+        assert_eq!(
+            holder_launch(&padded),
+            Ok(None),
+            "a pending holder must not retain the previous generation's launch"
+        );
 
         drop(possession);
         std::fs::remove_file(&path).expect("fixture cleanup");
+    }
+
+    #[test]
+    fn launch_metadata_round_trips_without_exposing_an_authentication_secret() {
+        let launch = ResidentLaunch::new(
+            "0.0.0.0:8767".parse().expect("fixture address"),
+            ResidentAccess::Authenticated,
+        );
+        let record = launched_holder_record(7, uuid(3), launch);
+
+        assert_eq!(holder_epoch(record.as_bytes()), Some(uuid(3)));
+        assert_eq!(holder_launch(record.as_bytes()), Ok(Some(launch)));
+        assert!(!record.contains("token"));
+        assert_eq!(
+            holder_launch(format!("pid=7;epoch={};launch=local,0.0.0.0:8767", uuid(3)).as_bytes()),
+            Err(LaunchRecordError),
+            "a local policy cannot describe a remotely reachable bind"
+        );
     }
 
     /// Nothing but a complete generation is read as one.

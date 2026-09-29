@@ -9,7 +9,10 @@ use journal::{FactCause, GuardError, JournalGuard, JournalWrite};
 use lane::occupant::Seats;
 use sill::{Acquisition, LockFile, LockName, Possession};
 use spice::repository::Repository;
-use spice::resident_lock::holder_record;
+use spice::resident_lock::{
+    AUTH_TOKEN_MAX_BYTES, AUTH_TOKEN_MIN_BYTES, ResidentAccess, ResidentLaunch,
+    auth_token_is_valid, holder_record, launched_holder_record,
+};
 use tokio::sync::oneshot;
 use wire::intent::{CommandAnswer, Intent, RecognitionAnswer, ReleasePublish, StateAnswer};
 use wire::{
