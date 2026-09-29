@@ -1,5 +1,9 @@
 use super::*;
 fn seed_steering_origin(bus: &Bus, key: &str) {
+    seed_steering_directive(bus, key, uuid(16_201));
+}
+
+fn seed_steering_directive(bus: &Bus, key: &str, directive: CanonicalUuid) {
     let published: Instant = "2030-04-12T18:44:09.271Z"
         .parse()
         .expect("fixture publication instant");
@@ -8,7 +12,7 @@ fn seed_steering_origin(bus: &Bus, key: &str) {
         .expect("fixture expiry instant");
     let sent = body::SteerSent {
         from: None,
-        directive: uuid(16_201),
+        directive,
         fanout: None,
         key: key.to_owned(),
         lane: uuid(16_202),
@@ -109,23 +113,30 @@ fn add_and_claim_causal_parent(
     )) else {
         panic!("claim win must hydrate the claimed task");
     };
-    let expected_origin = concat!(
-        "origin_steering key 1kLGp2NJ\n",
-        "origin_steering_text:\n",
-        "Preserve this directive\nverbatim across hydration.\n",
-        "origin_steering_attachments operator capture.png",
+    let expected_origin = format!(
+        "origin_steering key 1kLGp2NJ\n\
+         origin_steering_directive {} lane={} author=operator published=2030-04-12T18:44:09.271Z\n\
+         origin_steering_text:\n\
+         Preserve this directive\nverbatim across hydration.\n\
+         origin_steering_attachments operator capture.png\n\
+         origin_steering_answer unavailable live",
+        uuid(16_201),
+        uuid(16_202),
     );
-    assert_eq!(claim.origin_context.as_deref(), Some(expected_origin));
+    assert_eq!(
+        claim.origin_context.as_deref(),
+        Some(expected_origin.as_str())
+    );
     let claimed = board(bus, epoch, lane.clone());
     let shown = task_show_with_origin(
         &claimed,
         at(&claimed, &parent),
         &[],
-        &[],
+        TaskShowHistory::default(),
         claim.origin_context.as_deref(),
     );
     assert!(
-        shown.contains(expected_origin),
+        shown.contains(&expected_origin),
         "task show prints the same resolved origin hydration"
     );
     (parent, lane, ack)
@@ -296,23 +307,226 @@ fn shape_case_162_builds_a_causal_tree_and_refuses_ungrounded_creation() {
     clean(&root, bus);
 }
 
-#[test]
-fn resolved_steering_origin_renders_verbatim_directive_and_attachment_name() {
-    let (root, bus, _epoch, _seats) = fixture("task-resolved-steering-origin", 0);
-    seed_steering_origin(&bus, "1kLGp2NJ");
-    let origin = "ack:1kLGp2NJ".parse().expect("fixture steering origin");
-    let output = task_steering_origin_output(&bus, &origin)
+/// Commit `declared` sessions on one tape, then retire `key` by an
+/// acknowledgment at member 1 offset 40 of that tape.
+fn answer_steering_origin(bus: &Bus, key: &str, source: CanonicalUuid, declared: &[(&str, u64)]) {
+    let lane = uuid(16_202);
+    let epoch = uuid(16_204);
+    let origin: wire::Origin = format!("resident:{epoch}")
+        .parse()
+        .expect("resident fixture origin");
+    let at = fixture_instant("acknowledgment fixture instant");
+    for (identity, offset) in declared {
+        let mut write = JournalWrite::new(
+            Actor::Spice,
+            origin.clone(),
+            at,
+            Producer::ResidentRecognition,
+        );
+        write
+            .fact(
+                body::LaneSessionDeclared {
+                    lane,
+                    occupant: uuid(16_205),
+                    worktree: "/fixture/worktree".to_owned(),
+                    vendor: "omp".parse().expect("fixture vendor"),
+                    launch: None,
+                    epoch,
+                    stream: "stdout".to_owned(),
+                    source: Some(source),
+                    identity: (*identity).to_owned(),
+                    member: 1,
+                    offset: *offset,
+                    length: 5,
+                },
+                FactCause::Root,
+            )
+            .expect("session declaration builds");
+        assert!(matches!(
+            bus.commit(write).expect("session declaration commits"),
+            CommitOutcome::Committed(_)
+        ));
+    }
+    let lookup = key.to_owned();
+    let head = bus
+        .read(move |read| read.steering_key(&lookup))
         .expect("steering index reads")
-        .expect("ack origin renders");
-    assert_eq!(
-        output.as_ref(),
-        concat!(
-            "origin_steering key 1kLGp2NJ\n",
-            "origin_steering_text:\n",
-            "Preserve this directive\nverbatim across hydration.\n",
-            "origin_steering_attachments operator capture.png",
-        )
+        .expect("seeded directive");
+    let mut write = JournalWrite::new(
+        Actor::Lane(lane),
+        head.body().origin.clone(),
+        at,
+        Producer::AckScanner,
     );
+    let pending = write
+        .fact(
+            body::SteerAcked {
+                directive: head.body().directive,
+                key: key.to_owned(),
+                lane,
+                epoch,
+                locus: body::TranscriptLocus {
+                    source: Some(source),
+                    member: 1,
+                    offset: 40,
+                    length: 7,
+                    event: 0,
+                    line: 1,
+                    column: 1,
+                },
+            },
+            FactCause::Existing(head.position()),
+        )
+        .expect("acknowledgment builds");
+    let mut acked = head.body().clone();
+    acked.disposition = wire::Disposition::Acked;
+    write.steering_head(pending, move |_| acked);
+    let outcome = bus.commit(write).expect("acknowledgment commits");
+    assert!(
+        matches!(outcome, CommitOutcome::Committed(_)),
+        "{outcome:?}"
+    );
+}
+
+/// Add one task under `ack:1kLGp2NJ`, note it under `ack:1kLGp2NK`, and read
+/// it back with its notes.
+fn add_task_noted_under_a_second_ask(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    born: &wire::TaskStamp,
+) -> BoardAnswer {
+    assert_committed(issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskAdd,
+        vec![Witness::Absence { task: born.clone() }],
+        &TaskAdd {
+            title: "Follow an acknowledged ask".to_owned(),
+            project: Some("board.origin".to_owned()),
+            description: None,
+            acceptance: vec!["the ask is traceable".to_owned()],
+            requirements: wire::EnvironmentRequirements::default(),
+            origin: Some("ack:1kLGp2NJ".parse().expect("steering origin")),
+            flow: Some("todo,review".to_owned()),
+            depends: Vec::new(),
+            claim: false,
+        },
+    ));
+    // A note written under another directive carries that directive's key.
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        "ack:1kLGp2NK".parse().expect("note origin"),
+        fixture_instant("note fixture instant"),
+        Producer::CommandDoor,
+    );
+    write
+        .fact(
+            body::TaskNoted {
+                task: born.clone(),
+                note: "observed under a second ask".to_owned(),
+            },
+            FactCause::Root,
+        )
+        .expect("note builds");
+    assert!(matches!(
+        bus.commit(write).expect("note commits"),
+        CommitOutcome::Committed(_)
+    ));
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Board(answer),
+        ..
+    }) = issue(
+        bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::Tasks {
+            tasks: vec![born.clone()],
+            dependencies: false,
+            claims: false,
+            notes: true,
+        },
+    )
+    else {
+        panic!("task read answers a board");
+    };
+    *answer
+}
+
+#[test]
+fn task_show_follows_every_acknowledged_key_to_the_session_that_answered_it() {
+    let (root, bus, epoch, _seats) = fixture("task-acknowledgment-provenance", 0);
+    let source = uuid(16_206);
+    seed_steering_directive(&bus, "1kLGp2NJ", uuid(16_201));
+    seed_steering_directive(&bus, "1kLGp2NK", uuid(16_203));
+    // The answer names the session declared at or before its record, not a
+    // later declaration on the same tape.
+    answer_steering_origin(
+        &bus,
+        "1kLGp2NJ",
+        source,
+        &[("creator-session", 10), ("later-session", 50)],
+    );
+    let born = stamp("ORIGIN-ackshow");
+    let task = TaskHandle::for_project("board.origin", &born);
+    let answer = add_task_noted_under_a_second_ask(&bus, epoch, &born);
+    let acknowledgments = &answer.acknowledgments[&born];
+    assert_eq!(
+        acknowledgments
+            .iter()
+            .map(|row| (row.kind, row.key.as_str()))
+            .collect::<Vec<_>>(),
+        [
+            (wire::FactKind::TaskAdded, "1kLGp2NJ"),
+            (wire::FactKind::TaskNoted, "1kLGp2NK"),
+        ]
+    );
+    let keys = task_acknowledgment_keys(
+        &at(&answer, &task).statement.body.provenance,
+        acknowledgments,
+    );
+    let context = bus
+        .read(move |read| {
+            ["1kLGp2NJ", "1kLGp2NK"]
+                .iter()
+                .map(|key| {
+                    read_steering_provenance(read, key)
+                        .map(|provenance| render_task_steering_origin(key, provenance.as_ref()))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .expect("steering provenance reads")
+        .join("\n");
+    assert_eq!(keys, ["1kLGp2NJ", "1kLGp2NK"]);
+    let shown = task_show_with_origin(
+        &answer,
+        at(&answer, &task),
+        &[],
+        TaskShowHistory {
+            notes: &answer.notes[&born],
+            acknowledgments,
+        },
+        Some(&context),
+    );
+    let (added, noted) = (acknowledgments[0].position, acknowledgments[1].position);
+    assert!(shown.contains(&format!(
+        "acknowledgment ack:1kLGp2NJ task::added@{added}\n\
+         acknowledgment ack:1kLGp2NK task::noted@{noted}\n\
+         origin_steering key 1kLGp2NJ\n"
+    )));
+    assert!(shown.contains(&format!(
+        "origin_steering_answer acked lane={lane} at=2030-04-12T18:44:09.271Z\n\
+         spice session context creator-session --lane {lane} --vendor omp --stream session \
+         --source {source} --member 1 --offset 40\n\
+         origin_steering key 1kLGp2NK\n",
+        lane = uuid(16_202),
+    )));
+    assert!(shown.contains("origin_steering_answer unavailable live\n"));
+    assert!(shown.contains(&format!(
+        "  {noted} 2030-04-12T18:44:09.271Z operator ack:1kLGp2NK\n    observed under a second ask"
+    )));
     clean(&root, bus);
 }
 

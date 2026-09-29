@@ -169,6 +169,18 @@ pub struct TaskDetailNote {
     pub text: String,
 }
 
+/// One task-history fact caused by an acknowledged steering directive.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskAcknowledgment {
+    /// Position of the task or claim fact whose origin names the key.
+    pub position: crate::Seq,
+    /// Kind of that fact.
+    pub kind: crate::FactKind,
+    /// Steering key the fact's `ack:` origin names.
+    pub key: String,
+}
+
 /// Current evidence and complete durable notes for one selected task.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -870,6 +882,10 @@ pub struct BoardAnswer {
     /// asked for them, each task's notes in ascending journal position.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub notes: std::collections::BTreeMap<crate::TaskStamp, Vec<TaskDetailNote>>,
+    /// Every task or claim fact on those named tasks whose origin is an
+    /// acknowledged steering key, each task's in ascending journal position.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub acknowledgments: std::collections::BTreeMap<crate::TaskStamp, Vec<TaskAcknowledgment>>,
     /// Current executable-configuration trust heads in ascending digest order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trust: Vec<Positioned<crate::TrustHead>>,

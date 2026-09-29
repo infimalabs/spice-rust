@@ -39,7 +39,8 @@ pub(in crate::board_command) fn read_task_detail(
         Ok(media) => media,
         Err(outcome) => return outcome,
     };
-    let notes = task_notes(&observed, &selected)
+    let notes = task_record(&observed, &selected)
+        .notes
         .remove(&detail.task)
         .unwrap_or_default();
     snapshot_reply(
@@ -52,19 +53,31 @@ pub(in crate::board_command) fn read_task_detail(
     )
 }
 
-/// Every durable note on the named tasks, each task's in ascending journal
-/// position, read in one pass over the snapshot's facts.
-pub(super) fn task_notes(
+/// Durable history on the named tasks, each task's rows in ascending journal
+/// position.
+#[derive(Default)]
+pub(super) struct TaskRecord {
+    /// Every durable note.
+    pub(super) notes:
+        std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskDetailNote>>,
+    /// Every task or claim fact whose origin is an acknowledged steering key.
+    pub(super) acknowledgments:
+        std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskAcknowledgment>>,
+}
+
+/// Read the named tasks' notes and acknowledgment origins in one pass over
+/// the snapshot's facts.
+pub(super) fn task_record(
     observed: &bus::TaskSnapshot,
     tasks: &std::collections::BTreeSet<wire::TaskStamp>,
-) -> std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskDetailNote>> {
-    let mut notes = std::collections::BTreeMap::<_, Vec<_>>::new();
+) -> TaskRecord {
+    let mut record = TaskRecord::default();
     for envelope in observed.facts().iter() {
-        let Some(noted) = envelope.fact.read::<body::TaskNoted>() else {
-            continue;
-        };
-        if tasks.contains(&noted.task) {
-            notes
+        if let Some(noted) = envelope.fact.read::<body::TaskNoted>()
+            && tasks.contains(&noted.task)
+        {
+            record
+                .notes
                 .entry(noted.task)
                 .or_default()
                 .push(wire::intent::TaskDetailNote {
@@ -74,8 +87,33 @@ pub(super) fn task_notes(
                     text: noted.note,
                 });
         }
+        let Some(key) = super::task_steering_origin_token(&envelope.origin) else {
+            continue;
+        };
+        let kind = envelope.fact.kind();
+        let Some(("task" | "claim", _)) = kind.as_str().split_once("::") else {
+            continue;
+        };
+        let Some(task) = envelope
+            .fact
+            .body()
+            .get("task")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|task| task.parse::<wire::TaskStamp>().ok())
+        else {
+            continue;
+        };
+        if tasks.contains(&task) {
+            record.acknowledgments.entry(task).or_default().push(
+                wire::intent::TaskAcknowledgment {
+                    position: envelope.seq,
+                    kind,
+                    key: key.to_owned(),
+                },
+            );
+        }
     }
-    notes
+    record
 }
 
 fn task_media(

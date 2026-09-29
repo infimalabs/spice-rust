@@ -118,6 +118,24 @@ Git boundary, the task renders its fact identity and a shell-executable
 transcript content remain in their native authorities; task rows carry only
 provenance and recovery coordinates.
 
+### Acknowledgment provenance links
+
+Every task or claim fact carries a causal origin, and an `ack:KEY` origin names
+the steering directive a lane acknowledged when it did the work. `task show`
+lists each distinct key on the record, the task's own origin first, as one
+`acknowledgment ack:KEY` line naming every fact that key caused, and marks
+each note written under a key with that key. Each key then resolves to its
+directive: identity, addressed lane, authoring actor, publication instant,
+verbatim text, and attachment names. An acknowledged or declined directive
+also renders the answering lane and instant plus a shell-executable
+`spice session context` command at the answering transcript record, naming the
+session that lane declared on that exact tape generation at or before the
+record. That window holds the delivered ask and the lane's answer; the task's
+own creation context then continues the trail. A live, lapsed, canceled, or
+dead-lettered directive, a legacy locus without a tape generation, or a tape
+with no prior declaration renders its specific unavailability reason instead
+of guessing a session.
+
 ### The window
 
 ```mermaid

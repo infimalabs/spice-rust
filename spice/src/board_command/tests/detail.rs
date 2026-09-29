@@ -153,7 +153,10 @@ fn task_show_prints_only_the_named_tasks_notes() {
         &answer,
         at(&answer, &shown),
         &[],
-        &answer.notes[&shown_born],
+        TaskShowHistory {
+            notes: &answer.notes[&shown_born],
+            acknowledgments: &[],
+        },
         None,
     );
     assert!(text.contains("notes:\n  "));
