@@ -52,6 +52,7 @@ mod task_detail;
 mod task_relations;
 mod view;
 mod watchband;
+mod work_card;
 mod work_history;
 
 use crate::PendingKind;

@@ -121,11 +121,11 @@ impl WorkMapState {
         self.mode
     }
 
-    pub(super) fn pinned(&self, task: &TaskStamp) -> bool {
+    pub(in crate::browser) fn pinned(&self, task: &TaskStamp) -> bool {
         self.pinned.contains(task)
     }
 
-    pub(super) fn pin_limit_reached(&self) -> bool {
+    pub(in crate::browser) fn pin_limit_reached(&self) -> bool {
         self.pinned.len() >= MAX_PINNED_ROOTS
     }
 

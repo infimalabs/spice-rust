@@ -180,7 +180,7 @@ pub(super) fn render_workspace(
                 data-active={mosaic_active.to_string()}
             >
                 <main class={classes!("mosaic-content", mosaic_active.then_some("content"))}>
-                    {watchband::render_team(render)}
+                    {watchband::render_team(render, work)}
                 </main>
             </div>
             if let Some(active_axis) = active_axis {

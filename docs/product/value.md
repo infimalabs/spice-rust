@@ -369,6 +369,12 @@ lanes remain visible, status is textual as well as colored, and narrow layouts
 collapse from four columns to two and then one. Task detail and relationship
 views preserve the same identity and evidence.
 
+The global board and each team Work pane render the same task-card identity,
+status, ownership, and selection contract. Team panes use the compact density;
+activating either card opens the one shared detail layer, whose close returns
+focus to the card that launched it.
+
+
 ### The team console
 
 Chat tiles one console per live team. Its ordered surface exposes team identity

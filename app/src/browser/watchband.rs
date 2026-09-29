@@ -5,7 +5,8 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::closure::Closure;
 use web_sys::{DragEvent, HtmlInputElement, PointerEvent};
 
-use super::clock::{Age, Countdown};
+use super::clock::Age;
+use super::work_card::{self, Density};
 use super::*;
 use crate::composer_drafts::ComposerDraft;
 use crate::watchband::{
@@ -55,7 +56,10 @@ pub(super) struct BroadcastTarget {
 /// the team contains. Only a team earns a surface: an agent seated alone under
 /// its own identity is not a formation, so it draws no surface here and stays
 /// reachable through the global menu and each team's import list instead.
-pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
+pub(super) fn render_team(
+    render: &view::CanvasRender<'_>,
+    work: Option<&crate::work::WorkProjection<'_>>,
+) -> Html {
     let view::CanvasRender {
         connection,
         surface,
@@ -66,6 +70,8 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
         team_controls,
         composer_drag,
         agents: controls,
+        selected_task,
+        select_task,
         ..
     } = render;
     let surface = surface.read();
@@ -125,6 +131,9 @@ pub(super) fn render_team(render: &view::CanvasRender<'_>) -> Html {
         .filter(|team| team.teamed())
         .collect::<Vec<_>>();
     let render = FleetRender {
+        work,
+        selected_task,
+        select_task,
         runtime,
         epoch: lanes.epoch,
         topology_revision: lanes.topology_revision,
@@ -455,24 +464,43 @@ fn render_details(team: &crate::runtime::LaneRow, standings: &[Standing], mode: 
 
 fn render_tasks(
     runtime: &CanvasRuntime,
+    work: Option<&crate::work::WorkProjection<'_>>,
     team: &crate::runtime::LaneRow,
     standings: &[Standing],
+    selected: Option<&wire::TaskStamp>,
+    select: &Callback<wire::TaskStamp>,
 ) -> Html {
-    let active = standings
-        .iter()
-        .filter(|standing| standing.handle.is_some())
-        .collect::<Vec<_>>();
+    let active = work.map_or_else(Vec::new, |work| {
+        standings
+            .iter()
+            .filter_map(|standing| {
+                work.tasks().iter().find(|task| {
+                    matches!(
+                        task.working_claimant(),
+                        Some(wire::Actor::Lane(lane)) if *lane == standing.lane
+                    )
+                })
+            })
+            .collect::<Vec<_>>()
+    });
     let queued = standings
         .iter()
         .filter(|standing| standing.pending > 0)
         .collect::<Vec<_>>();
-    let active_state = TeamTaskSectionState::active(runtime.board().is_some(), active.len());
+    let active_state = TeamTaskSectionState::active(work.is_some(), active.len());
     let direction_state = TeamTaskSectionState::direction(runtime.inbox().is_some(), queued.len());
     let policy = TeamLife::from(team.subscription).label();
-    let active_summary = runtime.board().map_or_else(
+    let active_summary = work.map_or_else(
         || "Task state unavailable".to_owned(),
         |_| format!("{} active", active.len()),
     );
+    let cards = work_card::Controls {
+        selected,
+        select,
+        lanes: runtime.lanes(),
+        density: Density::Compact,
+        map: None,
+    };
     html! {
         <main class="team-task-workspace" aria-label="Team tasks">
             <header class="team-task-summary">
@@ -499,9 +527,9 @@ fn render_tasks(
                 if let Some(message) = active_state.message() {
                     <p class="team-task-empty" role={active_state.unavailable().then_some("status")}>{message}</p>
                 } else {
-                    <ol class="team-task-list">
-                        {for active.into_iter().map(render_task_row)}
-                    </ol>
+                    <div class="team-task-card-list">
+                        {for active.into_iter().map(|task| work_card::render(task, &cards))}
+                    </div>
                 }
             </section>
             <section class="team-task-section" aria-labelledby={format!("direction-queue-{}", team.lane)}>
@@ -520,40 +548,6 @@ fn render_tasks(
                 }
             </section>
         </main>
-    }
-}
-
-fn render_task_row(standing: &Standing) -> Html {
-    let handle = standing.handle.clone().unwrap_or_default();
-    let title = standing
-        .task_title
-        .clone()
-        .unwrap_or_else(|| "Task title unavailable".to_owned());
-    let phase = standing
-        .phase
-        .clone()
-        .unwrap_or_else(|| "unknown".to_owned());
-    let expiry = lease_countdown(standing.expires_at, "team-task-age", "unavailable");
-    html! {
-        <li
-            class="team-task-row"
-            data-task-handle={handle.clone()}
-            data-agent-lane={standing.lane.to_string()}
-            data-accent={standing.accent.to_string()}
-        >
-            <div class="team-task-row-main">
-                <code>{handle}</code>
-                <strong class="team-task-title">{title}</strong>
-            </div>
-            <div class="team-task-row-meta">
-                <span class="team-task-member">
-                    <span class="agent-presence" aria-hidden="true"></span>
-                    <span class="team-task-member-name">{standing.label.clone()}</span>
-                </span>
-                <span class="team-task-phase">{phase}</span>
-                <span class="team-task-renewed">{"expires "}{expiry}</span>
-            </div>
-        </li>
     }
 }
 
@@ -586,20 +580,6 @@ fn lease_age(instant: Option<i64>, class: &'static str, vacant: &'static str) ->
             <span
                 class={class}
                 data-age-slot={watchband::AGE_SLOT_WIDTH.to_string()}
-            >{vacant}</span>
-        },
-    }
-}
-
-/// One authoritative lease expiry as a ticking countdown.
-fn lease_countdown(expiry: Option<i64>, class: &'static str, vacant: &'static str) -> Html {
-    match expiry {
-        Some(expiry) => html! { <Countdown {expiry} class={class} /> },
-        None => html! {
-            <span
-                class={class}
-                data-age-slot={watchband::AGE_SLOT_WIDTH.to_string()}
-                data-age-clock="countdown"
             >{vacant}</span>
         },
     }
