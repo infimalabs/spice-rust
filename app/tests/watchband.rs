@@ -64,8 +64,8 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         worktree: worktree.to_owned(),
         speech: wire::SpeechPlayback::Disabled {},
         life: "docker".to_owned(),
-        vendor: "codex".parse().expect("the fixture spells a vendor name"),
-        model: Some("gpt-5.2-codex".to_owned()),
+        vendor: "omp".parse().expect("the fixture spells a vendor name"),
+        model: Some("openai-codex/gpt-5.2-codex".to_owned()),
         effort: Some("high".to_owned()),
         occupant: Some(uuid(OCCUPANT)),
         session: Some("session-fixture".to_owned()),
@@ -225,8 +225,8 @@ fn a_standing_joins_the_lane_table_the_inbox_and_the_board() {
 
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0].worktree, "main-c");
-    assert_eq!(rows[0].vendor, "codex");
-    assert_eq!(rows[0].model.as_deref(), Some("gpt-5.2-codex"));
+    assert_eq!(rows[0].vendor, "omp");
+    assert_eq!(rows[0].model.as_deref(), Some("openai-codex/gpt-5.2-codex"));
     assert_eq!(rows[0].effort.as_deref(), Some("high"));
     assert_eq!(rows[0].thread, Some(uuid(OCCUPANT)));
     assert_eq!(rows[0].session.as_deref(), Some("session-fixture"));
@@ -496,7 +496,7 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
     assert_eq!(
         standing_title(&standing),
         format!(
-            "Codex vendor; model: gpt-5.2-codex; effort: high; thread: {OCCUPANT}; \
+            "OpenAI / gpt-5.2-codex; effort: high; thread: {OCCUPANT}; \
              session: session-fixture"
         )
     );
@@ -506,7 +506,7 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
     assert_eq!(
         standing_title(&standing),
         format!(
-            "Codex vendor; model: unrecorded; effort: unrecorded; thread: {OCCUPANT}; \
+            "model unrecorded; effort: unrecorded; thread: {OCCUPANT}; \
              session: session-fixture"
         )
     );
@@ -526,7 +526,7 @@ fn a_standing_title_names_recorded_and_unrecorded_launches_without_substitution(
     assert_eq!(
         standing_title(&standing),
         format!(
-            "Codex vendor; model: unrecorded; effort: unrecorded; thread: {OCCUPANT}; \
+            "model unrecorded; effort: unrecorded; thread: {OCCUPANT}; \
              session: session-fixture; waiting on 2 jobs (1 running, 1 unheard)"
         )
     );

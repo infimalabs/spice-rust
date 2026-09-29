@@ -56,7 +56,7 @@ fn lane_rows() -> Vec<StaleRow> {
                 "team": LANE,
                 "worktree": "/tmp/lane",
                 "life": "continuous",
-                "vendor": "codex",
+                "vendor": "omp",
             }),
             [false, true, true],
         ),
@@ -114,7 +114,7 @@ fn journal_and_team_rows() -> Vec<StaleRow> {
             serde_json::json!({
                 "kind": "journal::ingested",
                 "lane": LANE,
-                "vendor": "codex",
+                "vendor": "omp",
                 "stream": "transcript",
                 "source": REQUEST,
                 "from": {"member": 0, "offset": 0},
@@ -159,7 +159,7 @@ fn unread_namespace_rows() -> Vec<StaleRow> {
             [false, false, false],
         ),
         (
-            serde_json::json!({"kind": "vendor::armed", "vendor": "codex", "version": "0.1.0"}),
+            serde_json::json!({"kind": "vendor::armed", "vendor": "omp", "version": "0.1.0"}),
             [false, false, false],
         ),
         (

@@ -367,7 +367,7 @@ mod tests {
             worktree: format!("worktree-{lane}"),
             speech: wire::SpeechPlayback::Disabled {},
             life: "steer".to_owned(),
-            vendor: "claude".parse().expect("the fixture spells a vendor name"),
+            vendor: "omp".parse().expect("the fixture spells a vendor name"),
             model: Some("sonnet".to_owned()),
             effort: Some("high".to_owned()),
             occupant: occupant.map(uuid),

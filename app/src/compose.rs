@@ -30,12 +30,6 @@ pub enum Refusal {
         /// What an accepted value for that field looks like.
         hint: &'static str,
     },
-    /// The vendor field does not spell a name the wire accepts.
-    #[error("Vendor must be one lower-case word, so {written:?} cannot name one.")]
-    Vendor {
-        /// Text as the operator wrote it, before any normalisation.
-        written: String,
-    },
     /// The task field does not spell the wire's task-handle grammar.
     #[error(
         "Task must be `<UPPER-STEM>-<stamp>` with an eight- or nine-character canonical task stamp, so {written:?} cannot name one."
@@ -58,7 +52,7 @@ pub struct Seat {
     pub worktree: String,
     /// Life the seated agent takes, spelled as the lane crate spells it.
     pub life: String,
-    /// Vendor name, normalised to the one lower-case word the wire requires.
+    /// Vendor the resident catalogue offers.
     pub vendor: wire::Name,
 }
 
@@ -99,21 +93,30 @@ pub struct Note {
     pub text: String,
 }
 
-/// Compose a seat request, or say why this input cannot make one.
+/// The vendor a new seat runs on: the resident catalogue's one row.
 ///
-/// The vendor is folded to lower case exactly as the life is, because
-/// [`wire::Name`] accepts only lower-case words and `Claude` and `claude` can
-/// have meant nothing different. Folding is not forgiveness: a vendor holding
-/// a space, a digit, or a hyphen still spells no name, and is refused by name.
+/// omp is the only harness, so the form offers no choice. A catalogue holding
+/// anything but exactly one vendor names no seat vendor, and the form stays
+/// disabled rather than guessing among rows.
+#[must_use]
+pub fn seat_vendor(
+    catalog: &wire::intent::VendorCatalogAnswer,
+) -> Option<&wire::intent::VendorChoice> {
+    match catalog.vendors.as_slice() {
+        [vendor] => Some(vendor),
+        _ => None,
+    }
+}
+
+/// Compose a seat request on `vendor`, or say why this input cannot make one.
 ///
 /// Fields are checked in the order the form lists them, so an operator filling
 /// it top to bottom is never sent back up past a field they already passed.
 ///
 /// # Errors
 ///
-/// Returns [`Refusal::Missing`] for any blank field, and [`Refusal::Vendor`]
-/// when the vendor is written but does not spell a name even folded.
-pub fn seat(name: &str, worktree: &str, vendor: &str, life: &str) -> Result<Seat, Refusal> {
+/// Returns [`Refusal::Missing`] for any blank field.
+pub fn seat(name: &str, worktree: &str, vendor: wire::Name, life: &str) -> Result<Seat, Refusal> {
     let name = match name.trim() {
         "" => None,
         configured => Some(configured.to_owned()),
@@ -125,19 +128,6 @@ pub fn seat(name: &str, worktree: &str, vendor: &str, life: &str) -> Result<Seat
             hint: "give the absolute path of a worktree in this repository",
         });
     }
-    let written = vendor.trim();
-    if written.is_empty() {
-        return Err(Refusal::Missing {
-            field: "Vendor",
-            hint: "one lower-case word such as claude or codex",
-        });
-    }
-    let vendor = written
-        .to_ascii_lowercase()
-        .parse::<wire::Name>()
-        .map_err(|_| Refusal::Vendor {
-            written: written.to_owned(),
-        })?;
     let life = life.trim().to_ascii_lowercase();
     if life.is_empty() {
         return Err(Refusal::Missing {

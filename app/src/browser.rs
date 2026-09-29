@@ -1105,12 +1105,10 @@ fn use_agent_controls(
     speech: AgentSpeechControls,
 ) -> view::AgentControls {
     let seat = view::SeatDraft {
-        vendor: use_state(String::new),
         life: use_state(|| wire::intent::TeamLife::Steer.as_str().to_owned()),
         effort: use_state(String::new),
         notice: use_state(Notice::none),
     };
-    use_seat_vendor(&surface, seat.vendor.clone());
     view::AgentControls {
         submit_seat: seat_submit(sender, surface, seat.clone()),
         seat,
@@ -1119,35 +1117,6 @@ fn use_agent_controls(
         suppress_automatic_speech: speech.suppress_automatic,
         speech_message: speech.message,
     }
-}
-
-/// Hold the seat draft's vendor on a name the resident actually offers.
-///
-/// The catalogue arrives with hydration and can change with the resident
-/// generation, so the draft adopts the first offered vendor whenever the one
-/// it holds is not in the current catalogue. Without it the form would open
-/// on a vendor spelling nothing admits.
-#[hook]
-fn use_seat_vendor(surface: &UseStateHandle<SurfaceData>, vendor: UseStateHandle<String>) {
-    let offered: Vec<String> = surface
-        .read()
-        .as_ref()
-        .and_then(CanvasRuntime::vendor_catalog)
-        .map(|catalog| {
-            catalog
-                .vendors
-                .iter()
-                .map(|choice| choice.name.to_string())
-                .collect()
-        })
-        .unwrap_or_default();
-    use_effect_with(offered, move |offered| {
-        if let Some(first) = offered.first()
-            && !offered.contains(&*vendor)
-        {
-            vendor.set(first.clone());
-        }
-    });
 }
 
 fn seat_submit(
@@ -1170,15 +1139,20 @@ fn seat_submit(
         let name = value("seat-name");
         let worktree = value("seat-worktree");
         let model = value("seat-model");
-        let Some(topology_revision) = surface
-            .read()
-            .as_ref()
-            .and_then(|runtime| runtime.lanes())
-            .map(|lanes| lanes.topology_revision)
+        let (Some(topology_revision), Some(vendor)) =
+            surface.read().as_ref().map_or((None, None), |runtime| {
+                (
+                    runtime.lanes().map(|lanes| lanes.topology_revision),
+                    runtime
+                        .vendor_catalog()
+                        .and_then(compose::seat_vendor)
+                        .map(|vendor| vendor.name.clone()),
+                )
+            })
         else {
             return;
         };
-        match compose::seat(&name, &worktree, &draft.vendor, &draft.life) {
+        match compose::seat(&name, &worktree, vendor, &draft.life) {
             Ok(seat) => {
                 let Ok(lane) = random_uuid() else {
                     return;

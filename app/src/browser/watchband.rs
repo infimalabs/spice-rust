@@ -624,7 +624,7 @@ fn render_agent_details(
             <header>
                 <span class="agent-presence"></span>
                 <strong>{standing.label.clone()}</strong>
-                <span>{standing.vendor.clone()}</span>
+                <span>{watchband::model_display(standing.model.as_deref())}</span>
             </header>
             {match mode {
                 TeamMode::Dash => html! {
@@ -641,8 +641,12 @@ fn render_agent_details(
                             <dd>{standing.liveness.as_str()}</dd>
                         </div>
                         <div>
-                            <dt>{"Vendor / residency policy"}</dt>
-                            <dd>{format!("{} / {}", standing.vendor, standing.life)}</dd>
+                            <dt>{"Model / residency policy"}</dt>
+                            <dd>{format!(
+                                "{} / {}",
+                                watchband::model_display(standing.model.as_deref()),
+                                standing.life
+                            )}</dd>
                         </div>
                         {for standing.jobs.iter().map(|job| html! {
                             <div>

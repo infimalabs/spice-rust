@@ -253,7 +253,6 @@ fn flow_summary(work: &WorkProjection<'_>, scope: &WorkScope) -> String {
 /// The seat form's fields as the operator has written them so far.
 #[derive(Clone)]
 pub(super) struct SeatDraft {
-    pub(super) vendor: UseStateHandle<String>,
     pub(super) life: UseStateHandle<String>,
     pub(super) effort: UseStateHandle<String>,
     pub(super) notice: UseStateHandle<Notice>,
@@ -263,29 +262,8 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
     let can_seat = runtime.is_some_and(|runtime| runtime.offers(CommandKind::LaneSeat));
     let draft = &controls.seat;
     let catalog = runtime.and_then(CanvasRuntime::vendor_catalog);
-    let selected = catalog.and_then(|catalog| {
-        catalog
-            .vendors
-            .iter()
-            .find(|vendor| vendor.name.as_str() == draft.vendor.trim())
-    });
+    let selected = catalog.and_then(crate::compose::seat_vendor);
     let ready = can_seat && selected.is_some() && !draft.life.trim().is_empty();
-    // A model spelling belongs to the vendor that resolves it, so choosing
-    // another vendor drops one the operator selected for the previous.
-    let choose_vendor = {
-        let vendor = draft.vendor.clone();
-        Callback::from(move |event: Event| {
-            let select: web_sys::HtmlSelectElement = event.target_unchecked_into();
-            vendor.set(select.value());
-            if let Some(model) = web_sys::window()
-                .and_then(|window| window.document())
-                .and_then(|document| document.get_element_by_id("seat-model"))
-                .and_then(|element| element.dyn_into::<web_sys::HtmlInputElement>().ok())
-            {
-                model.set_value("");
-            }
-        })
-    };
     let default_model = selected.map_or("", |vendor| vendor.default_model.as_str());
     let default_effort = selected.map_or("", |vendor| vendor.default_effort.as_str());
     html! {
@@ -299,20 +277,6 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                 <label>
                     <span title="Worktree">{"Worktree"}</span>
                     <input id="seat-worktree" type="text" placeholder="/absolute/path/to/worktree" />
-                </label>
-                <label>
-                    <span title="Vendor">{"Vendor"}</span>
-                    <select value={(*draft.vendor).clone()} onchange={choose_vendor}>
-                        {for catalog.into_iter().flat_map(|catalog| catalog.vendors.iter()).map(|vendor| {
-                            let name = vendor.name.to_string();
-                            html! {
-                                <option
-                                    value={name.clone()}
-                                    selected={name == *draft.vendor}
-                                >{vendor.label.clone()}</option>
-                            }
-                        })}
-                    </select>
                 </label>
                 <label>
                     <span title="Life">{"Life"}</span>
@@ -329,7 +293,7 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                 <label>
                     <span title="Model">{"Model"}</span>
                     <input id="seat-model" type="text" list="lane-models"
-                        placeholder={format!("vendor default ({default_model})")} />
+                        placeholder={format!("default ({default_model})")} />
                 </label>
                 <datalist id="lane-models">
                     <option value={default_model.to_owned()} />
@@ -339,7 +303,7 @@ pub(super) fn render_seat_panel(runtime: Option<&CanvasRuntime>, controls: &Agen
                     <select value={(*draft.effort).clone()}
                         onchange={state_from_select(draft.effort.clone())}>
                         <option value="" selected={draft.effort.is_empty()}>
-                            {format!("vendor default ({default_effort})")}
+                            {format!("default ({default_effort})")}
                         </option>
                         {for catalog.into_iter().flat_map(|catalog| catalog.efforts.iter()).map(|effort| html! {
                             <option
@@ -654,7 +618,7 @@ fn render_topology_group(
 }
 
 /// One lane in the chat's tile language: accent-dealt name, presence, the
-/// "pending, liveness" line, the held task, kept jobs, and the vendor emblem.
+/// "pending, liveness" line, the held task, kept jobs, and the provider emblem.
 /// Every row is always drawn so a tile's geometry never follows its data.
 fn render_topology_agent(
     member: &crate::runtime::LaneMember,
@@ -688,7 +652,7 @@ fn render_topology_agent(
                 }
             }</p>
             <p>{crate::watchband::jobs_kept(&standing.jobs).unwrap_or_else(|| "\u{a0}".to_owned())}</p>
-            <p class="dash-overview-agent-model">{standing.model.clone().unwrap_or_else(|| standing.vendor.clone())}</p>
+            <p class="dash-overview-agent-model">{crate::watchband::model_display(standing.model.as_deref())}</p>
             {super::watchband::render_composer_vendor_icon(standing, "dash")}
         </article>
     }

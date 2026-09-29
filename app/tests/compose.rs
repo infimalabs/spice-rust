@@ -15,84 +15,55 @@ use app::compose::{self, Notice, Refusal};
 /// only have come from the field it spoiled. A helper that spoiled two at once
 /// would pass whichever check ran first and prove nothing about the other.
 const WORKTREE: &str = "/tmp/lane";
-const VENDOR: &str = "claude";
 const LIFE: &str = "steer";
 
-#[test]
-fn a_complete_seat_form_is_accepted_with_its_fields_intact() {
-    let seat = compose::seat("  Ava  ", WORKTREE, VENDOR, LIFE).expect("a complete form seats");
-    assert_eq!(seat.name.as_deref(), Some("Ava"));
-    assert_eq!(seat.worktree, WORKTREE);
-    assert_eq!(seat.life, "steer");
-    assert_eq!(seat.vendor.as_str(), "claude");
+fn vendor() -> wire::Name {
+    "omp".parse().expect("the fixture spells a vendor name")
 }
 
-/// A capitalised vendor is folded rather than refused.
-///
-/// This is the trip the operator actually hits: the field is free text with no
-/// datalist, the vendors have proper names, and `wire::Name` takes only
-/// lower-case words. Typing Claude the way it is written everywhere else once
-/// produced no request and no message at all.
-#[test]
-fn a_capitalised_vendor_is_folded_to_the_lower_case_name_the_wire_takes() {
-    let seat = compose::seat("", WORKTREE, "Claude", LIFE).expect("a capitalised vendor seats");
-    assert_eq!(seat.vendor.as_str(), "claude");
-
-    let shouted = compose::seat("", WORKTREE, "CODEX", LIFE).expect("a shouted vendor seats");
-    assert_eq!(shouted.vendor.as_str(), "codex");
-}
-
-/// Folding case is not forgiving everything else.
-///
-/// Lower-casing makes the common trip work, and it would be easy for that to
-/// become a vendor field that accepts anything and reports its refusal from
-/// the resident a network round trip later, or not at all.
-#[test]
-fn a_vendor_that_is_not_one_word_is_refused_and_quoted_back_as_written() {
-    for written in ["my agent", "gpt-5", "clau.de", "claudé", "claude2"] {
-        let refusal = compose::seat("", WORKTREE, written, LIFE)
-            .expect_err("a vendor that is not one lower-case word is refused");
-        assert_eq!(
-            refusal,
-            Refusal::Vendor {
-                written: written.to_owned()
-            },
-            "{written:?}"
-        );
-        let sentence = refusal.to_string();
-        assert!(sentence.contains("lower-case word"), "{sentence}");
-        assert!(sentence.contains(&format!("{written:?}")), "{sentence}");
+fn choice(name: &str) -> wire::intent::VendorChoice {
+    wire::intent::VendorChoice {
+        name: name.parse().expect("the fixture spells a vendor name"),
+        label: name.to_owned(),
+        default_model: "claude-opus-5".to_owned(),
+        default_effort: "high".to_owned(),
     }
 }
 
-/// A vendor is trimmed like every other field before it is judged.
-///
-/// Otherwise a trailing space picked up from a paste would be reported as a
-/// vendor that is not one word, quoting a value that looks correct to read.
+/// A seat runs on the catalogue's one vendor; any other catalogue offers no
+/// seat vendor rather than a guess among rows.
 #[test]
-fn a_vendor_is_trimmed_before_it_is_judged() {
-    let seat = compose::seat("", WORKTREE, "  Claude\n", LIFE).expect("a padded vendor seats");
-    assert_eq!(seat.vendor.as_str(), "claude");
+fn a_seat_vendor_is_the_catalogue_s_only_row() {
+    let catalog = |vendors| wire::intent::VendorCatalogAnswer {
+        vendors,
+        efforts: vec!["high".to_owned()],
+    };
+    let single = catalog(vec![choice("omp")]);
+    assert_eq!(
+        compose::seat_vendor(&single).map(|vendor| vendor.name.as_str()),
+        Some("omp")
+    );
+    assert_eq!(compose::seat_vendor(&catalog(Vec::new())), None);
+    assert_eq!(
+        compose::seat_vendor(&catalog(vec![choice("omp"), choice("other")])),
+        None
+    );
 }
 
 #[test]
-fn a_blank_vendor_is_refused_by_name_rather_than_quoted_as_nothing() {
-    let refusal = compose::seat("", WORKTREE, "   ", LIFE).expect_err("a blank vendor refuses");
-    assert_eq!(
-        refusal,
-        Refusal::Missing {
-            field: "Vendor",
-            hint: "one lower-case word such as claude or codex",
-        },
-        "a blank vendor is a missing field, not a malformed one"
-    );
+fn a_complete_seat_form_is_accepted_with_its_fields_intact() {
+    let seat = compose::seat("  Ava  ", WORKTREE, vendor(), LIFE).expect("a complete form seats");
+    assert_eq!(seat.name.as_deref(), Some("Ava"));
+    assert_eq!(seat.worktree, WORKTREE);
+    assert_eq!(seat.life, "steer");
+    assert_eq!(seat.vendor.as_str(), "omp");
 }
 
 #[test]
 fn a_blank_worktree_is_refused_by_name_with_the_shape_of_a_good_one() {
     for written in ["", "   ", "\t"] {
         let refusal =
-            compose::seat("", written, VENDOR, LIFE).expect_err("a blank worktree refuses");
+            compose::seat("", written, vendor(), LIFE).expect_err("a blank worktree refuses");
         let sentence = refusal.to_string();
         assert!(sentence.starts_with("Worktree is required"), "{sentence}");
         assert!(sentence.contains("absolute path"), "{sentence}");
@@ -101,7 +72,7 @@ fn a_blank_worktree_is_refused_by_name_with_the_shape_of_a_good_one() {
 
 #[test]
 fn a_blank_life_is_refused_by_name_and_lists_the_lives_on_offer() {
-    let refusal = compose::seat("", WORKTREE, VENDOR, "  ").expect_err("a blank life refuses");
+    let refusal = compose::seat("", WORKTREE, vendor(), "  ").expect_err("a blank life refuses");
     let sentence = refusal.to_string();
     assert!(sentence.starts_with("Life is required"), "{sentence}");
     for life in ["steer", "drive", "drain"] {
@@ -114,23 +85,21 @@ fn a_blank_life_is_refused_by_name_and_lists_the_lives_on_offer() {
 /// Order is a decision, not an accident: the operator fills this form top to
 /// bottom, and a refusal that skips to the last field they touched sends them
 /// back up past ones they had already finished. The form renders Worktree,
-/// then Vendor, then Life, and these three calls each leave every later field
-/// broken too, so any other precedence changes which one is named.
+/// then Life, and the first call leaves the later field broken too, so any
+/// other precedence changes which one is named.
 #[test]
 fn refusals_arrive_in_the_order_the_form_lists_its_fields() {
-    let named = |worktree, vendor, life| match compose::seat("", worktree, vendor, life) {
+    let named = |worktree, life| match compose::seat("", worktree, vendor(), life) {
         Err(Refusal::Missing { field, .. }) => field,
-        Err(Refusal::Vendor { .. }) => "Vendor",
         other => panic!("a broken form refuses: {other:?}"),
     };
-    assert_eq!(named("", "My Agent", ""), "Worktree");
-    assert_eq!(named(WORKTREE, "My Agent", ""), "Vendor");
-    assert_eq!(named(WORKTREE, VENDOR, ""), "Life");
+    assert_eq!(named("", ""), "Worktree");
+    assert_eq!(named(WORKTREE, ""), "Life");
 }
 
 /// The selection fields never refuse: blank leaves the vendor's own value in
-/// force, and the effort is folded the way the vendor field is, while the
-/// model is handed on as written because the vendor resolves it.
+/// force, and the effort is folded to lower case, while the model is handed on
+/// as written because the vendor resolves it.
 #[test]
 fn a_seat_selection_is_absent_when_blank_and_folded_when_written() {
     assert_eq!(compose::selection("", "  "), compose::Selection::default());
