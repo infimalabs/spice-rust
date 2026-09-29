@@ -59,13 +59,7 @@
   .team-mode { padding-inline: 4px; }
   .team-mode-badge { display: none; }
   .team-task-workspace { padding-inline: 8px; }
-  .team-task-row { grid-template-columns: minmax(0, 1fr); gap: 6px; }
-  .team-task-row-meta {
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    justify-items: start;
-  }
   .team-task-member { max-width: 100%; }
-  .team-task-renewed { grid-column: auto; justify-self: end; }
   .team-direction-row {
     grid-template-columns: minmax(0, 1fr) auto;
     gap: 4px 8px;

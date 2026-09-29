@@ -1,6 +1,7 @@
 //! Contextual detail drawer for one durable Work task identity over any page.
 
 use super::super::clock::{TaskTimePresentation, task_time};
+use super::super::work_card;
 use super::*;
 use crate::TaskRelationsState;
 use crate::runtime::LaneView;
@@ -274,7 +275,7 @@ fn render_activity(
                         <li class="work-note-card" key={note.position.to_string()} data-note-position={note.position.to_string()}>
                             <header>
                                 <strong title={note.author.to_string()}>
-                                    {work_board::actor_name(&note.author, render.lanes)}
+                                    {work_card::actor_name(&note.author, render.lanes)}
                                 </strong>
                                 {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
                             </header>
@@ -336,7 +337,7 @@ fn actor_fact(
     html! {
         <div>
             <dt>{label}</dt>
-            <dd title={actor.to_string()}>{work_board::actor_name(actor, lanes)}{suffix}</dd>
+            <dd title={actor.to_string()}>{work_card::actor_name(actor, lanes)}{suffix}</dd>
         </div>
     }
 }

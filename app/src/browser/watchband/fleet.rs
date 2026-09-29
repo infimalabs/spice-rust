@@ -58,7 +58,10 @@ impl TeamMode {
     }
 }
 
-pub(super) struct FleetRender<'a> {
+pub(super) struct FleetRender<'a, 'w> {
+    pub(super) work: Option<&'a crate::work::WorkProjection<'w>>,
+    pub(super) selected_task: &'a UseStateHandle<Option<wire::TaskStamp>>,
+    pub(super) select_task: &'a Callback<wire::TaskStamp>,
     pub(super) runtime: &'a CanvasRuntime,
     pub(super) epoch: CanonicalUuid,
     pub(super) topology_revision: u64,
@@ -75,7 +78,7 @@ pub(super) struct FleetRender<'a> {
     pub(super) composer_drag: &'a PrimaryComposerDragState,
 }
 
-pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_>) -> Html {
+pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) -> Html {
     let empty_team = crate::runtime::LaneRow {
         lane: render.epoch,
         subscription: wire::intent::TeamLife::Steer,
@@ -115,7 +118,14 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_>) -> H
                         TeamMode::Chat => {
                             empty("No teams are assigned. Open Import agent to create an agent.")
                         }
-                        TeamMode::Work => render_tasks(render.runtime, &empty_team, &[]),
+                        TeamMode::Work => render_tasks(
+                            render.runtime,
+                            render.work,
+                            &empty_team,
+                            &[],
+                            (**render.selected_task).as_ref(),
+                            render.select_task,
+                        ),
                         TeamMode::Dash => {
                             render_details(&empty_team, &[], mode)
                         }
@@ -130,7 +140,7 @@ pub(super) fn render_populated_fleet(
     teams: &[&crate::runtime::LaneRow],
     standings: &[watchband::Standing],
     fleet: &NodeRef,
-    render: &FleetRender<'_>,
+    render: &FleetRender<'_, '_>,
 ) -> Html {
     let dismiss = team_menu_dismissal(render.team_controls);
     html! {
@@ -212,8 +222,11 @@ pub(super) fn render_populated_fleet(
                                     {match mode {
                                         TeamMode::Work => render_tasks(
                                             render.runtime,
+                                            render.work,
                                             team,
                                             &team_standings,
+                                            (**render.selected_task).as_ref(),
+                                            render.select_task,
                                         ),
                         TeamMode::Dash => render_details(
                                             team,
@@ -411,7 +424,7 @@ fn render_team_toolbar(
     mode: TeamMode,
     team: &crate::runtime::LaneRow,
     standings: &[Standing],
-    render: &FleetRender<'_>,
+    render: &FleetRender<'_, '_>,
 ) -> Html {
     let pip_stack = crate::pip_layout::PipStack::new(standings.len());
     let can_arrange = render.can_arrange_teams && watchband::teams(&render.topology).count() > 1;
