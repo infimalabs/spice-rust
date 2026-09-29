@@ -476,23 +476,17 @@ pub(super) fn steering_ledger(
     bus: &Bus,
     record: &lane::capture::CaptureRecord,
 ) -> CommandResult<Option<PresentationDirectives>> {
-    let required = record.decoded.events().iter().any(|event| {
-        matches!(
-            event,
-            listen::Event::Prose(prose)
-                if prose.role == listen::ProseRole::Assistant
-                    && steer::has_acknowledgement(&prose.text)
-        )
-    });
-    if !required {
+    let authored = || {
+        record
+            .decoded
+            .events()
+            .iter()
+            .filter_map(listen::Event::assistant_text)
+    };
+    if !authored().any(steer::has_acknowledgement) {
         return Ok(None);
     }
-    let keys = steering_keys(record.decoded.events().iter().filter_map(|event| {
-        let listen::Event::Prose(prose) = event else {
-            return None;
-        };
-        (prose.role == listen::ProseRole::Assistant).then_some(prose.text.as_str())
-    }));
+    let keys = steering_keys(authored());
     let presentations = load_steering_presentations(&bus.reader(), &keys)?;
     PresentationDirectives::from_presentations(&presentations)
         .map(Some)
