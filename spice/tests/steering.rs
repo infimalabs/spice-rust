@@ -43,7 +43,7 @@ impl Fixture {
         let root = fixture_root::claim(&std::env::temp_dir(), "steering-process");
         let runtime = root.join(".git/.spice-rs");
         let cargo_home = root.join("fixture-cargo-home");
-        fs::create_dir(root.join(".git")).expect("fixture git directory");
+        gix::init(&root).expect("initialize fixture repository in process");
         fs::create_dir(&cargo_home).expect("fixture bootstrap Cargo home");
         fs::write(
             root.join("Cargo.toml"),

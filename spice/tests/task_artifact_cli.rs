@@ -33,7 +33,7 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let root = fixture_root::claim(&std::env::temp_dir(), "task-artifact-cli");
-        fs::create_dir(root.join(".git")).expect("create repository fixture");
+        gix::init(&root).expect("initialize repository fixture in process");
         staged_app::seed(&root);
         fs::write(root.join("spice-rust.toml"), "[tasks]\nstems = [\"rim\"]\n")
             .expect("write task project policy");

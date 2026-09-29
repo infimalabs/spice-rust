@@ -26,7 +26,7 @@ mod renewal;
 mod submission;
 mod vendor;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use composer_drag::ComposerDragSession;
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
 pub use submission::{SubmissionAuthority, SubmissionTarget};
@@ -704,7 +704,7 @@ pub fn agent_message_label<'a>(worktree: &'a str, name: Option<&'a str>) -> &'a 
         .unwrap_or(UNKNOWN_AGENT_LABEL)
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) const fn agent_activity_name(activity: wire::AgentActivityKind) -> &'static str {
     match activity {
         wire::AgentActivityKind::Prose => "prose",

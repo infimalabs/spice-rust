@@ -29,7 +29,7 @@ impl TaskPill {
         format!("{}·{}·{}", self.ready, self.active, self.unavailable)
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn title(&self) -> String {
         format!(
             "{}: {} ready, {} active or in flight, {} blocked or deferred",

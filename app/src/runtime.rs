@@ -28,7 +28,7 @@ mod message_cards;
 mod publication;
 mod stream;
 mod work_history;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use publication::CanvasSurface;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
 pub use work_history::{WorkHistoryRequest, WorkHistoryState, work_history_completion_cutoff};
@@ -738,7 +738,7 @@ impl CanvasRuntime {
     /// old capability never crosses an authority boundary. The first message
     /// snapshot merges by durable card identity, retaining deep history and
     /// allocation identity while replacing content the new generation changed.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn rehydrate(accepted: &Admitted<Accepted>, previous: &Self) -> Self {
         let mut next = Self::new(accepted);
         if previous.principal.actor() == &Actor::Operator
@@ -834,7 +834,7 @@ impl CanvasRuntime {
         self.message_history.get(&lane).copied()
     }
     /// Admitted completion generation for one member-local history request.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     #[must_use]
     pub(crate) fn message_history_completion(&self, lane: CanonicalUuid) -> u64 {
         self.message_history_completions
@@ -908,7 +908,7 @@ impl CanvasRuntime {
     ///
     /// A failed read holds no geometry to keep, so it is dropped rather than
     /// parked as loading: the demand hook then reads it again.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn invalidate_task_relations(&mut self, relations: &BTreeSet<TaskRelationKind>) {
         let mut invalidated = false;
         self.task_relations.retain(|key, state| {
@@ -924,7 +924,7 @@ impl CanvasRuntime {
     }
 
     /// Drop one unavailable lens so the demand hook reads it again.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn retry_task_relations(&mut self, key: &TaskRelationsKey) -> bool {
         if !matches!(
             self.task_relations.get(key),
@@ -938,7 +938,7 @@ impl CanvasRuntime {
     }
 
     /// Generation that re-arms the active demand hook after cache eviction.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     #[must_use]
     pub(crate) const fn task_relations_revision(&self) -> u64 {
         self.task_relations_revision
@@ -1309,17 +1309,17 @@ impl Stale {
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn retain_task_details(&mut self, mut retain: impl FnMut(&wire::TaskStamp) -> bool) {
         self.task_details.retain(|task| retain(task));
     }
     /// Mark one selected task detail for a demand-driven re-read.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn invalidate_task_detail_read(&mut self, task: wire::TaskStamp) {
         self.task_details.insert(task);
     }
     /// Evict changed typed families; the active demand hook alone re-requests.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn resolve_task_relations(&mut self, runtime: &mut CanvasRuntime, changed: bool) {
         if changed {
             runtime.invalidate_task_relations(&self.task_relation_kinds);
@@ -1328,7 +1328,7 @@ impl Stale {
     }
 
     /// Hold terminal paging until a changed task snapshot has been refreshed.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn resolve_work_history(&self, runtime: &mut CanvasRuntime, changed: bool) {
         if changed && self.board {
             runtime.invalidate_work_history();

@@ -72,7 +72,7 @@ impl Fixture {
             std::process::id(),
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
-        fs::create_dir_all(requested.join(".git")).expect("fixture Git directory");
+        gix::init(&requested).expect("initialize fixture repository in process");
         let root = fs::canonicalize(requested).expect("fixture root canonicalizes");
         staged_app::seed(&root);
         fs::write(root.join("spice-rust.toml"), POLICY).expect("tracked taste policy");
