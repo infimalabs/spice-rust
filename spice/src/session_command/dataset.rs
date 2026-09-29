@@ -235,26 +235,15 @@ fn decode_row(
         Err(RecordDecodeError::Invalid { kind }) => {
             return Ok((dialect, decode_residue(source, line, kind)));
         }
-        Err(error @ (RecordDecodeError::Unowned | RecordDecodeError::Retired { .. })) => {
-            let (kind, recovery) = match &error {
-                RecordDecodeError::Unowned => (
-                    "dialect-unowned",
-                    "select the owning vendor decoder to interpret this record; surrounding typed history remains available",
-                ),
-                RecordDecodeError::Retired { .. } => (
-                    "dialect-retired",
-                    "this build decodes only omp transcripts; read this record with a release that still carries its harness decoder; surrounding typed history remains available",
-                ),
-                _ => unreachable!("the matched decoder error variants are exhaustive"),
-            };
+        Err(error @ RecordDecodeError::Unowned) => {
             return Ok((
                 dialect,
                 DecodedRow::Residue(transcript_residue(
                     source,
                     line,
-                    kind,
+                    "dialect-unowned",
                     error.to_string(),
-                    recovery,
+                    "select the owning vendor decoder to interpret this record; surrounding typed history remains available",
                 )),
             ));
         }
@@ -374,7 +363,6 @@ fn transcript_residue(
 
 fn record_refusal(path: &Path, line: u64, error: &RecordDecodeError) -> Refusal {
     let reason = match error {
-        RecordDecodeError::Retired { .. } => "session::transcript-dialect-retired",
         RecordDecodeError::Invalid { .. } => "session::transcript-evidence-invalid",
         RecordDecodeError::Unowned => "session::transcript-dialect-unowned",
         RecordDecodeError::Locus(_) => "session::transcript-locus-invalid",

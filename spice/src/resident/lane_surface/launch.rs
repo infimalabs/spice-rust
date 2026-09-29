@@ -256,32 +256,23 @@ fn launch_plan(
 }
 
 /// The refusal naming every vendor with a landed renderer beside the one asked
-/// for, and the recovery for a lane recorded under a retired harness.
+/// for.
 fn vendor_unsupported(asked: String) -> Outcome<()> {
-    Outcome::Refusal(Refusal::bare(
-        wire::RefusalDiagnostic::new(
-            "lane::vendor-unsupported".to_owned(),
-            Some("lane.vendor".to_owned()),
-            Some(
-                spice::extension::registry()
-                    .expect("compiled extension declarations are validated by the test gate")
-                    .vendors()
-                    .into_iter()
-                    .map(|vendor| vendor.name())
-                    .collect::<Vec<_>>()
-                    .join(" or "),
-            ),
-            Some(asked),
-        )
-        .with_detail(VENDOR_RECOVERY),
-    ))
+    Outcome::Refusal(Refusal::bare(wire::RefusalDiagnostic::new(
+        "lane::vendor-unsupported".to_owned(),
+        Some("lane.vendor".to_owned()),
+        Some(
+            spice::extension::registry()
+                .expect("compiled extension declarations are validated by the test gate")
+                .vendors()
+                .into_iter()
+                .map(|vendor| vendor.name())
+                .collect::<Vec<_>>()
+                .join(" or "),
+        ),
+        Some(asked),
+    )))
 }
-
-/// How an operator recovers a lane recorded under a vendor this build cannot
-/// launch: its record stays listable and removable, and a new lane takes the
-/// current vendor.
-pub(super) const VENDOR_RECOVERY: &str = "this lane was recorded under a vendor this build cannot launch; remove it with \
-     `spice lane remove` and add it again with `spice lane add` to run it under omp";
 
 /// Require the initialized Git-common skill before composing any vendor argv.
 fn required_skill(repository: &Repository) -> CommandResult<PathBuf> {

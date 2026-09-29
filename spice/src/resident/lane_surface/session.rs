@@ -497,7 +497,7 @@ fn session_vendor(vendor: &wire::Name) -> CommandResult<&'static spice::extensio
             "lane::session-vendor-unsupported",
             Some(expected),
             Some(vendor.as_str().to_owned()),
-            super::launch::VENDOR_RECOVERY,
+            "resume a lane recorded under a vendor this build declares",
         ));
     };
     Ok(declared)

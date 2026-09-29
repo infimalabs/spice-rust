@@ -89,15 +89,14 @@ fn absent_cargo_lock_launches_without_rust_environment_or_tool_probe() {
 }
 
 #[test]
-fn zero_config_repository_without_a_lock_composes_default_omp_and_refuses_retired_vendors() {
+fn zero_config_repository_without_a_lock_composes_default_omp_and_refuses_other_vendors() {
     let fixture = AdvisoryRtkFixture::new();
     for path in ["Cargo.lock", "Cargo.toml", "spice-rust.toml"] {
         fs::remove_file(fixture.root.join(path)).expect("remove Rust fixture input");
     }
     let worktree = fixture.root.to_str().expect("fixture worktree is UTF-8");
     let omp: wire::Name = "omp".parse().expect("default vendor name");
-    let retired: [wire::Name; 2] =
-        ["claude", "codex"].map(|name| name.parse().expect("retired vendor name"));
+    let other: wire::Name = "other".parse().expect("unsupported vendor name");
     let request = |vendor| OccupantLaunchRequest {
         worktree,
         vendor,
@@ -113,23 +112,15 @@ fn zero_config_repository_without_a_lock_composes_default_omp_and_refuses_retire
     occupant_launch(&fixture.paths, request(&omp), fixture.reporter())
         .expect("zero-config non-Rust repository composes default omp");
 
-    for recorded in &retired {
-        let Err(Outcome::Refusal(refusal)) =
-            occupant_launch(&fixture.paths, request(recorded), fixture.reporter())
-        else {
-            panic!("a lane recorded under {recorded} must refuse to wake");
-        };
-        let diagnostic = refusal.diagnostic().expect("the refusal is diagnosed");
-        assert_eq!(diagnostic.reason(), "lane::vendor-unsupported");
-        assert_eq!(diagnostic.expected(), Some("omp"));
-        assert_eq!(diagnostic.observed(), Some(recorded.as_str()));
-        assert!(
-            diagnostic
-                .detail()
-                .is_some_and(|detail| detail.contains("spice lane remove")),
-            "the refusal names the recovery: {diagnostic:?}"
-        );
-    }
+    let Err(Outcome::Refusal(refusal)) =
+        occupant_launch(&fixture.paths, request(&other), fixture.reporter())
+    else {
+        panic!("a lane recorded under an unsupported vendor must refuse to wake");
+    };
+    let diagnostic = refusal.diagnostic().expect("the refusal is diagnosed");
+    assert_eq!(diagnostic.reason(), "lane::vendor-unsupported");
+    assert_eq!(diagnostic.expected(), Some("omp"));
+    assert_eq!(diagnostic.observed(), Some("other"));
 }
 
 #[test]

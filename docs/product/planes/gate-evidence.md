@@ -94,8 +94,8 @@ configured pre-commit checks the current grant before executing repository
 commands, while reusable action keys remain bound to the resolved execution
 authorities they prove. Policy-consuming focused actions bind complete policy
 through their input manifests. Pended, granted, and revoked
-transitions do not change those content identities. Agent-runtime variables
-(`CODEX_*`, `CLAUDE_CODE_*`, and `SPICE_AGENT_VENDOR`), shell-hook variables,
+transitions do not change those content identities. The agent-vendor variable
+(`SPICE_AGENT_VENDOR`), shell-hook variables,
 and Spice command-routing executables are producer or invocation context and
 are excluded from compiler environments. Arbitrary build inputs and native
 compiler/tool paths remain retained.

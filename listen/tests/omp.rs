@@ -417,27 +417,13 @@ fn an_unreassembled_transport_envelope_is_residue_not_silent_content() {
 }
 
 #[test]
-fn a_retired_harness_record_is_refused_by_name_rather_than_decoded_as_omp() {
-    let claude = br#"{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"done"}]}}"#;
-    let codex = br#"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"t"}}"#;
-    for (record, harness, discriminator) in [
-        (&claude[..], "claude", "assistant"),
-        (&codex[..], "codex", "event_msg"),
-    ] {
-        for expected in [None, Some(Dialect::Omp)] {
-            assert_eq!(
-                decode_record(expected, record, locus(record)),
-                Err(RecordDecodeError::Retired {
-                    harness,
-                    discriminator: discriminator.to_owned(),
-                }),
-                "{harness} under {expected:?}"
-            );
-        }
+fn a_record_omp_does_not_own_is_refused_without_an_explicit_dialect() {
+    let future = br#"{"type":"future_record"}"#;
+    let bare_message = br#"{"type":"message","role":"assistant","content":"done"}"#;
+    for record in [&future[..], &bare_message[..]] {
+        assert_eq!(
+            decode_record(None, record, locus(record)),
+            Err(RecordDecodeError::Unowned)
+        );
     }
-    let unowned = br#"{"type":"future_record"}"#;
-    assert_eq!(
-        decode_record(None, unowned, locus(unowned)),
-        Err(RecordDecodeError::Unowned)
-    );
 }

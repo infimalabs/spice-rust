@@ -83,13 +83,6 @@ pub enum RecordDecodeError {
     },
     /// No explicit or structurally detectable dialect owned the record.
     Unowned,
-    /// The record envelope belongs to a harness this build no longer decodes.
-    Retired {
-        /// Retired harness whose envelope the record carries.
-        harness: &'static str,
-        /// Top-level discriminator that proved the ownership.
-        discriminator: String,
-    },
 }
 
 impl fmt::Display for RecordDecodeError {
@@ -99,14 +92,6 @@ impl fmt::Display for RecordDecodeError {
             Self::Invalid { kind } => write!(formatter, "invalid unowned record: {kind:?}"),
             Self::Unowned => formatter
                 .write_str("record has neither an explicit dialect nor a uniquely owned envelope"),
-            Self::Retired {
-                harness,
-                discriminator,
-            } => write!(
-                formatter,
-                "{harness} record {discriminator:?} belongs to a retired harness; only omp \
-                 transcripts decode"
-            ),
         }
     }
 }
@@ -147,15 +132,13 @@ pub fn restated(dialect: Dialect, bytes: &[u8]) -> bool {
 
 /// Decode one record using an explicit dialect or its uniquely owned envelope.
 ///
-/// The JSON value is parsed exactly once. A record whose envelope belongs to a
-/// retired harness is refused by name rather than decoded as omp, whether or
-/// not the caller named a dialect. Without an explicit dialect, records whose
-/// envelope is not uniquely owned are refused.
+/// The JSON value is parsed exactly once. Without an explicit dialect, records
+/// whose envelope is not uniquely owned are refused.
 ///
 /// # Errors
 ///
-/// Returns [`RecordDecodeError`] when the locus is invalid, no dialect owns the
-/// envelope, or the envelope belongs to a retired harness.
+/// Returns [`RecordDecodeError`] when the locus is invalid or no dialect owns
+/// the envelope.
 pub fn decode_record(
     expected: Option<Dialect>,
     bytes: &[u8],
@@ -173,16 +156,10 @@ pub fn decode_record(
         .and_then(|object| object.get("type"))
         .and_then(Value::as_str);
     let dialect = match (expected, discriminator.map(owner)) {
-        (_, Some(Owner::Retired(harness))) => {
-            return Err(RecordDecodeError::Retired {
-                harness,
-                discriminator: discriminator.unwrap_or_default().to_owned(),
-            });
-        }
         (Some(expected), _) => expected,
         (None, Some(Owner::Omp)) => Dialect::Omp,
-        // omp's session entry nests its message; the bare top-level form is
-        // another harness's legacy envelope and stays unowned.
+        // omp's session entry nests its message; a bare top-level form is not
+        // omp's and stays unowned.
         (None, Some(Owner::SessionEntry))
             if envelope
                 .and_then(|object| object.get("message"))
@@ -254,19 +231,11 @@ enum Owner {
     Omp,
     /// omp's session `message` entry, owned only when its envelope nests one.
     SessionEntry,
-    /// A harness this build no longer decodes, named for the refusal.
-    Retired(&'static str),
     Unknown,
 }
 
 fn owner(discriminator: &str) -> Owner {
     match discriminator {
-        "assistant" | "stream_event" | "user" | "system" | "result" | "summary"
-        | "rate_limit_event" | "attachment" | "last-prompt" | "ai-title" | "mode"
-        | "queue-operation" | "atis-latch" => Owner::Retired("claude"),
-        "thread.started" | "item.started" | "item.updated" | "item.completed"
-        | "turn.completed" | "turn.failed" | "session_meta" | "event_msg" | "response_item"
-        | "compacted" | "turn_context" | "world_state" => Owner::Retired("codex"),
         "ready"
         | "agent_start"
         | "agent_end"

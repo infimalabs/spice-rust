@@ -11,10 +11,6 @@ const HOME: &str = "HOME";
 const CARGO_HOME: &str = "CARGO_HOME";
 const RUSTUP_HOME: &str = "RUSTUP_HOME";
 pub(super) const SHELL_HOOK_PREFIX: &[u8] = b"SPICE_SHELL_HOOK_"; // env-policy: allow
-pub(super) const AGENT_RUNTIME_PREFIXES: [&[u8]; 2] = [
-    b"CLAUDE_CODE_", // env-policy: allow
-    b"CODEX_",       // env-policy: allow
-];
 
 const OPERATIONAL_ROUTING: [&str; 9] = [
     wire::SpiceVariable::AgentVendor.as_str(),
@@ -108,9 +104,6 @@ fn retained(name: &OsStr) -> bool {
 pub fn operational_routing(name: &OsStr) -> bool {
     let bytes = name.as_encoded_bytes();
     bytes.starts_with(SHELL_HOOK_PREFIX)
-        || AGENT_RUNTIME_PREFIXES
-            .iter()
-            .any(|prefix| bytes.starts_with(prefix))
         || OPERATIONAL_ROUTING
             .iter()
             .any(|candidate| name == OsStr::new(candidate))

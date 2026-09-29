@@ -25,8 +25,8 @@ pub(crate) use acquire::{acquire_metric_arm_with_bounds, acquire_metrics_with_bo
 pub use baseline::{BaselineCapture, CommittedTexts};
 pub use declaration::{
     ArmDeclaration, KeyShape, MetricDeclaration, MetricId, MetricUnit, ParserDeclaration, ParserId,
-    RUST_DOC_MARKDOWN_CITATION_ALLOWANCES, RustDocMarkdownCitationAllowance,
-    RustDocMarkdownCitationAllowanceKind, STRUCTURAL_ARMS, STRUCTURAL_METRICS, ScopeDeclaration,
+    RUST_DOC_MARKDOWN_CITATION_ALLOWANCES, RustDocMarkdownCitationAllowance, STRUCTURAL_ARMS,
+    STRUCTURAL_METRICS, ScopeDeclaration,
 };
 pub use evidence::{
     EvidenceError, EvidenceState, FunctionKey, LatchBinding, MEASUREMENT_FINDING_LIMIT,
