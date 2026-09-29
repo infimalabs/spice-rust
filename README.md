@@ -47,14 +47,15 @@ spice up
 resident generation:
 
 ```json
-{"endpoint":"http://127.0.0.1:8767","epoch":"..."}
+{"endpoint":"http://127.0.0.1:53817","epoch":"..."}
 ```
 
 `--open` opens the browser. `up --foreground` keeps process, signals, endpoint
 output, and terminal outcome attached. Detached diagnostics append to Git-common
 `.spice-rs/resident.log`; `spice down` drains the resident, withdraws discovery,
-and releases its lock. `--host IP` and `--port PORT` override the loopback
-address and default port; `--port 0` selects a free port.
+and releases its lock. `up` listens on loopback at a free port the kernel
+picks; `--host IP` and `--port PORT` name the address instead, and a named port
+keeps the same URL across restarts.
 
 A non-loopback listener requires `--allow-insecure-bind`. Add a bearer token of
 16–256 ASCII letters, digits, hyphens, periods, underscores, or tildes unless

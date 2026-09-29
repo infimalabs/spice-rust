@@ -263,32 +263,22 @@ impl Drop for PublishedDiscovery {
     }
 }
 
-/// The address the surface listens on when the operator names neither flag.
+/// The address the surface listens on when nothing names one.
 ///
-/// The port is fixed rather than ephemeral because the operator's browser holds
-/// the URL: a port the kernel picks is a different address after every restart,
-/// which invalidates every bookmark and open tab. Loopback stays the default
-/// because reaching this surface from another machine is a decision only the
-/// operator can make, and `--host` is how they make it.
-///
-/// This successor uses a port separate from the Python predecessor so both
-/// residents can run without requiring the operator to name `--port` on every
-/// invocation.
-pub(super) const DEFAULT_LISTEN: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8767);
+/// Loopback, because reaching this surface from another machine is a decision
+/// only the operator can make with `--host`. The kernel picks the port, so a
+/// resident started in another repository, or a demo, never contends for a port
+/// another resident already answers on. An operator who wants a URL that
+/// survives restarts names it with `--port`; discovery and the `up` answer carry
+/// whatever was bound.
+pub(crate) const EPHEMERAL_LOOPBACK: SocketAddr =
+    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 /// Bounds on an operator-supplied bearer token for a non-loopback bind.
 ///
 /// Stated rather than inlined so the refusal text and the check cannot come to
 /// name two different lengths.
 const AUTH_TOKEN_MIN_BYTES: usize = 16;
 const AUTH_TOKEN_MAX_BYTES: usize = 256;
-
-/// The address a caller that owns no operator intent should listen on.
-///
-/// A demo is not the operator's surface and must not take the port theirs
-/// answers on, so it asks the kernel for one nobody is using.
-pub(crate) const EPHEMERAL_LOOPBACK: SocketAddr =
-    SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
 
 pub(crate) struct CanvasBinding {
     listen: SocketAddr,
@@ -390,13 +380,13 @@ pub(super) fn requested_listen(leaf: &clap::ArgMatches) -> CommandResult<SocketA
                 host,
             )
         })?,
-        None => DEFAULT_LISTEN.ip(),
+        None => EPHEMERAL_LOOPBACK.ip(),
     };
     let port = match leaf.get_one::<String>("port") {
         Some(port) => port.parse::<u16>().map_err(|_| {
             listen_refusal("resident::port-invalid", "one port from 0 to 65535", port)
         })?,
-        None => DEFAULT_LISTEN.port(),
+        None => EPHEMERAL_LOOPBACK.port(),
     };
     Ok(SocketAddr::new(host, port))
 }

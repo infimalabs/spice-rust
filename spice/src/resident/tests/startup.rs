@@ -90,34 +90,29 @@ fn admitted_lane_seat(
     .expect("operator lane seat command admits")
 }
 
-/// The surface listens exactly where the operator requested or at one stable default.
+/// The surface listens exactly where the operator requested, each half
+/// defaulting on its own to loopback and a kernel-picked port.
 ///
-/// Both halves are load-bearing. An operator reaching this surface from another
-/// machine has to be able to say which address it answers on, and an operator
-/// who says nothing has to get the same URL back after a restart: an ephemeral
-/// port would hand them a new address every time, which no bookmark, open tab,
-/// or written-down instruction survives.
+/// An operator reaching this surface from another machine has to be able to say
+/// which address it answers on, and naming only one half must not discard the
+/// other half's default.
 #[test]
-fn the_listen_address_is_what_was_asked_for_or_one_stable_default() {
-    assert_eq!(listen_for(&["spice", "up"]), Ok(DEFAULT_LISTEN));
-    assert_eq!(DEFAULT_LISTEN.port(), 8767);
-    assert_ne!(
-        DEFAULT_LISTEN.port(),
-        0,
-        "an ephemeral default port changes the URL on every restart"
-    );
+fn the_listen_address_is_what_was_asked_for_or_an_ephemeral_loopback() {
+    assert_eq!(listen_for(&["spice", "up"]), Ok(EPHEMERAL_LOOPBACK));
+    assert_eq!(EPHEMERAL_LOOPBACK.port(), 0);
+    assert!(EPHEMERAL_LOOPBACK.ip().is_loopback());
 
     assert_eq!(
         listen_for(&["spice", "up", "--host", "0.0.0.0"]),
         Ok(SocketAddr::new(
             IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-            DEFAULT_LISTEN.port()
+            EPHEMERAL_LOOPBACK.port()
         )),
         "a named host keeps the default port"
     );
     assert_eq!(
         listen_for(&["spice", "up", "--port", "9000"]),
-        Ok(SocketAddr::new(DEFAULT_LISTEN.ip(), 9000)),
+        Ok(SocketAddr::new(EPHEMERAL_LOOPBACK.ip(), 9000)),
         "a named port keeps the default host"
     );
     assert_eq!(
