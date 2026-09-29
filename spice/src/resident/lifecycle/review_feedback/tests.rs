@@ -177,7 +177,7 @@ fn feedback_text_preserves_the_predecessor_frame_and_exact_review_prose() {
     );
     assert!(
         text.starts_with(concat!(
-            "[REVIEW] Peer feedback for MESSAGE-1kKRRsDR:\n\n",
+            "[REVIEW] MESSAGE-1kKRRsDR\n\n",
             "> first\n>\n> last\n\n",
         )),
         "{text}"
