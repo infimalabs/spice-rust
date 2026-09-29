@@ -20,6 +20,7 @@ mod math;
 mod quotes;
 mod tables;
 mod taste_quotes;
+mod terminal;
 
 pub(crate) struct RenderedMarkdown {
     pub(crate) html: String,
@@ -207,6 +208,48 @@ pub(crate) fn render_received_with_quotes(
     quote_agents: &QuoteAgents,
     quote_sources: &QuoteSources,
 ) -> RenderedMarkdown {
+    render(
+        markdown,
+        classifications,
+        directives,
+        quotes,
+        quote_agents,
+        quote_sources,
+        false,
+    )
+}
+
+/// Render one assistant prose card: received text as
+/// [`render_received_with_quotes`] renders it, except that a card ending in
+/// prose presents its terminal colon as a period.
+pub(crate) fn render_prose_card(
+    markdown: &str,
+    classifications: &[MessageClassification],
+    directives: &[MessageDirective],
+    quotes: &[wire::QuotePresentation],
+    quote_agents: &QuoteAgents,
+    quote_sources: &QuoteSources,
+) -> RenderedMarkdown {
+    render(
+        markdown,
+        classifications,
+        directives,
+        quotes,
+        quote_agents,
+        quote_sources,
+        true,
+    )
+}
+
+fn render(
+    markdown: &str,
+    classifications: &[MessageClassification],
+    directives: &[MessageDirective],
+    quotes: &[wire::QuotePresentation],
+    quote_agents: &QuoteAgents,
+    quote_sources: &QuoteSources,
+    terminal_period: bool,
+) -> RenderedMarkdown {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_FOOTNOTES
         | Options::ENABLE_STRIKETHROUGH
@@ -296,6 +339,10 @@ pub(crate) fn render_received_with_quotes(
             _ if task_code_block => vec![event],
             _ => inline_task_chips(event),
         });
+    let mut events = events.collect::<Vec<_>>();
+    if terminal_period {
+        terminal::period(&mut events);
+    }
     let mut html = String::new();
     pulldown_cmark::html::push_html(&mut html, tables::align_by_attribute(events));
     RenderedMarkdown {
