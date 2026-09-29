@@ -1,11 +1,11 @@
 use app::runtime::{LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, FIELD_BUDGET, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop, TeamTaskSectionState,
-    UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, dissolve_team,
-    elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept,
-    latest_lane_prose, leaf, one_line, remaining_label, remaining_label_deadline_millis,
-    reported_tasks, short, split_member, split_team, standing_title, standings, task_mentions,
-    teams, ticker_chunks, ticker_line, topology, truncate,
+    ACCENTS, FIELD_BUDGET, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop, UNKNOWN_AGENT_LABEL, accent,
+    arrangement, badge, can_leave_all_teams, dissolve_team, elapsed_label,
+    elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept, latest_lane_prose, leaf,
+    one_line, remaining_label, remaining_label_deadline_millis, reported_tasks, short,
+    split_member, split_team, standing_title, standings, task_mentions, teams, ticker_chunks,
+    ticker_line, topology, truncate,
 };
 use wire::CanonicalUuid;
 use wire::intent::{BoardTask, LaneInbox};
@@ -109,37 +109,6 @@ fn inbox(id: &str, directives: &[(&str, Option<&str>)]) -> LaneInbox {
         "pending": pending,
     }))
     .expect("the fixture spells a lane inbox")
-}
-
-#[test]
-fn org_task_sections_distinguish_unavailable_empty_and_ready_snapshots() {
-    let active_unavailable = TeamTaskSectionState::active(false, 0);
-    let direction_ready = TeamTaskSectionState::direction(true, 2);
-    assert_eq!(
-        active_unavailable.message(),
-        Some("Task snapshot unavailable.")
-    );
-    assert!(active_unavailable.unavailable());
-    assert_eq!(direction_ready.message(), None);
-    assert!(!direction_ready.unavailable());
-
-    let active_ready = TeamTaskSectionState::active(true, 1);
-    let direction_unavailable = TeamTaskSectionState::direction(false, 0);
-    assert_eq!(active_ready.message(), None);
-    assert_eq!(
-        direction_unavailable.message(),
-        Some("Direction snapshot unavailable.")
-    );
-    assert!(direction_unavailable.unavailable());
-
-    assert_eq!(
-        TeamTaskSectionState::active(true, 0).message(),
-        Some("No active tasks for this team.")
-    );
-    assert_eq!(
-        TeamTaskSectionState::direction(true, 0).message(),
-        Some("No queued direction.")
-    );
 }
 
 /// A board task whose claim names `lane` and whose lease began `held` ago.

@@ -1288,6 +1288,16 @@ a.relative-age {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .7rem;
 }
+.team-work-flow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 1fr));
+  align-items: start;
+  gap: 8px;
+}
+.team-work-lane {
+  container-type: inline-size;
+  min-width: 0;
+}
 .team-task-section { min-width: 0; }
 .team-task-section > header {
   display: flex;

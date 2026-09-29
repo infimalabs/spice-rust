@@ -20,6 +20,7 @@ mod fleet;
 mod mosaic_view;
 mod state;
 mod team_menu;
+mod team_work;
 mod vendor_icon;
 
 pub(super) use command_preview::use_command_modifier_preview;
@@ -37,6 +38,7 @@ pub(super) use fleet::use_team_menu_escape;
 use fleet::{FleetRender, TeamMode, carries_team, render_empty_fleet, render_populated_fleet};
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
+use team_work::render_team_work_lanes;
 pub(super) use vendor_icon::{render_composer_vendor_icon, render_dash_vendor_icon};
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
@@ -480,29 +482,21 @@ fn render_tasks(
     selected: Option<&wire::TaskStamp>,
     select: &Callback<wire::TaskStamp>,
 ) -> Html {
-    let active = work.map_or_else(Vec::new, |work| {
-        standings
-            .iter()
-            .filter_map(|standing| {
-                work.tasks().iter().find(|task| {
-                    matches!(
-                        task.working_claimant(),
-                        Some(wire::Actor::Lane(lane)) if *lane == standing.lane
-                    )
-                })
-            })
-            .collect::<Vec<_>>()
-    });
+    let work = work.map(|projection| crate::work::team_work(projection, team));
     let queued = standings
         .iter()
         .filter(|standing| standing.pending > 0)
         .collect::<Vec<_>>();
-    let active_state = TeamTaskSectionState::active(work.is_some(), active.len());
     let direction_state = TeamTaskSectionState::direction(runtime.inbox().is_some(), queued.len());
     let policy = TeamLife::from(team.subscription).label();
-    let active_summary = work.map_or_else(
+    let work_summary = work.as_ref().map_or_else(
         || "Task state unavailable".to_owned(),
-        |_| format!("{} active", active.len()),
+        |work| {
+            format!(
+                "{} open",
+                work.up_next().len() + work.in_flight().len() + work.waiting().len()
+            )
+        },
     );
     let cards = work_card::Controls {
         selected,
@@ -516,7 +510,7 @@ fn render_tasks(
             <header class="team-task-summary">
                 <div>
                     <span class="team-task-eyebrow">{"Team work"}</span>
-                    <strong>{active_summary}</strong>
+                    <strong>{work_summary}</strong>
                 </div>
                 <div
                     class="team-task-policy"
@@ -527,21 +521,7 @@ fn render_tasks(
                     <strong>{policy}</strong>
                 </div>
             </header>
-            <section class="team-task-section" aria-labelledby={format!("active-tasks-{}", team.lane)}>
-                <header>
-                    <h3 id={format!("active-tasks-{}", team.lane)}>{"Active tasks"}</h3>
-                    if !active.is_empty() {
-                        <span>{active.len()}</span>
-                    }
-                </header>
-                if let Some(message) = active_state.message() {
-                    <p class="team-task-empty" role={active_state.unavailable().then_some("status")}>{message}</p>
-                } else {
-                    <div class="team-task-card-list">
-                        {for active.into_iter().map(|task| work_card::render(task, &cards))}
-                    </div>
-                }
-            </section>
+            {render_team_work_lanes(work.as_ref(), team.lane, &cards)}
             <section class="team-task-section" aria-labelledby={format!("direction-queue-{}", team.lane)}>
                 <header>
                     <h3 id={format!("direction-queue-{}", team.lane)}>{"Direction queue"}</h3>
