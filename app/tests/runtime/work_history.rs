@@ -1,6 +1,6 @@
 use super::*;
 
-fn terminal_history_task(
+pub(super) fn terminal_history_task(
     stamp: &str,
     title: &str,
     workflow: u64,
@@ -20,7 +20,7 @@ fn terminal_history_task(
     task
 }
 
-fn history_page_answer(
+pub(super) fn history_page_answer(
     session: &Session,
     open: &app::Admitted<Response<wire::intent::BoardAnswer>>,
     before: Option<wire::intent::TaskHistoryCursor>,

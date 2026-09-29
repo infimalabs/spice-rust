@@ -94,6 +94,7 @@ pub(super) struct CanvasRender<'a> {
     pub detail_closing: bool,
     pub work_map: &'a UseStateHandle<WorkMapState>,
     pub work_history: &'a work_history::Controls,
+    pub team_settled: &'a super::team_settled::Controls,
     pub detail_close: &'a NodeRef,
     pub detail_sheet: &'a NodeRef,
     pub notes: &'a NoteComposers,

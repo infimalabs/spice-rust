@@ -50,6 +50,7 @@ mod navigation;
 mod overlay;
 mod task_detail;
 mod task_relations;
+mod team_settled;
 mod view;
 mod watchband;
 mod work_card;
@@ -600,6 +601,7 @@ struct CanvasAppState {
     work_detail: task_detail::Controls,
     task_inspector: message_task_inspector::Controls,
     work_history: work_history::Controls,
+    team_settled: team_settled::Controls,
     work_map: UseStateHandle<view::WorkMapState>,
     speech_status: UseStateHandle<SpeechStatus>,
     agents: view::AgentControls,
@@ -660,6 +662,7 @@ impl CanvasAppState {
                 detail_closing: *self.work_detail.closing,
                 work_map: &self.work_map,
                 work_history: &self.work_history,
+                team_settled: &self.team_settled,
                 detail_close: &self.work_detail.close_ref,
                 detail_sheet: &self.work_detail.sheet_ref,
                 notes: &self.work_detail.notes,
@@ -716,6 +719,15 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     );
     let task_inspector = message_task_inspector::use_controls(&surface, &work_detail, &navigate);
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
+    let team_settled = team_settled::use_controls(
+        sender.clone(),
+        surface.clone(),
+        watchband::work_shown_teams(
+            &surface,
+            &team_controls,
+            properties.destination == CanvasDestination::Chat,
+        ),
+    );
     let work_map = use_state(view::WorkMapState::default);
     let speech_status = use_state(SpeechStatus::default);
     let speech_message = use_state(|| None::<String>);
@@ -755,6 +767,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
             work_detail,
             task_inspector,
             work_history,
+            team_settled,
             work_map,
             speech_status,
             agents,

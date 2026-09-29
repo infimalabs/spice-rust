@@ -391,6 +391,13 @@ work. Empty lanes remain visible. The same keyed cards move between lanes
 without disturbing unchanged cards, and opening one uses the shared task detail
 layer with focus returned to its launching card.
 
+A fourth lane, Settled, shows the work the team finished most recently: tasks
+it created or whose last winning claim a current member held, newest first,
+with a control that appends older pages. The team-scoped history read runs
+only while that team's Work pane is on screen, and runs again only once an
+open-board refresh shows work leaving the open board or the connection
+resumes. Settled cards are the same shared cards and open the same detail
+layer.
 
 ### The team console
 

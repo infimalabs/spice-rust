@@ -209,6 +209,7 @@ impl PendingKind {
             Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
             | Self::WorkHistory { .. }
+            | Self::TeamSettled { .. }
             | Self::LaneSeat
             | Self::LaneRenewal { .. }
             | Self::WakeSubmission { .. }
@@ -431,6 +432,7 @@ impl ClientAction {
             | Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
             | Self::WorkHistory { .. }
+            | Self::TeamSettled { .. }
             | Self::MessageHistory { .. }
             | Self::RenewLane { .. }
             | Self::ConfigureTeam { .. } => 0,
@@ -443,6 +445,7 @@ impl ClientAction {
             Self::TaskDetail { .. }
                 | Self::TaskRelations { .. }
                 | Self::WorkHistory { .. }
+                | Self::TeamSettled { .. }
                 | Self::MessageHistory { .. }
         )
     }

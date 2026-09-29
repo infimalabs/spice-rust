@@ -27,10 +27,12 @@ mod message_cards;
 #[cfg(any(target_arch = "wasm32", test))]
 mod publication;
 mod stream;
+mod team_settled;
 mod work_history;
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use publication::CanvasSurface;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
+pub use team_settled::{TeamSettledRequest, TeamSettledState};
 pub use work_history::{WorkHistoryRequest, WorkHistoryState, work_history_completion_cutoff};
 pub(crate) type QuoteTasks = BTreeMap<String, Vec<wire::TaskHandle>>;
 
@@ -674,6 +676,9 @@ pub struct CanvasRuntime {
     task_relations: BTreeMap<TaskRelationsKey, TaskRelationsState>,
     task_relations_revision: u64,
     work_history: WorkHistoryState,
+    /// Settled-work pages per Canvas team whose Work pane was shown.
+    team_settled: BTreeMap<CanonicalUuid, TeamSettledState>,
+    team_settled_revision: u64,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
     settings: ScopedValue<GlobalSettingsAnswer>,
@@ -713,6 +718,8 @@ impl CanvasRuntime {
             task_relations: BTreeMap::new(),
             task_relations_revision: 0,
             work_history: WorkHistoryState::default(),
+            team_settled: BTreeMap::new(),
+            team_settled_revision: 0,
             lane_position: None,
             inbox: ScopedValue::new(accepted),
             settings: ScopedValue::new(accepted),
@@ -768,6 +775,7 @@ impl CanvasRuntime {
             if self.work_history.active() {
                 self.evict_work_history(true);
             }
+            self.stale_team_settled();
             self.task_details.values_mut().for_each(refresh_task_detail);
             self.task_relations
                 .retain(|_, state| refresh_task_relations(state, false));
@@ -1022,6 +1030,7 @@ impl CanvasRuntime {
 
     pub fn apply_board(&mut self, admitted: &Admitted<Response<BoardAnswer>>) {
         self.apply_response(admitted, |runtime, answer| {
+            runtime.settle_team_work(answer);
             runtime
                 .board
                 .replace(admitted.scope(), BoardView::from(answer));
