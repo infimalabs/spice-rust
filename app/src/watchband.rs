@@ -211,6 +211,49 @@ pub fn jobs_kept(jobs: &[wire::intent::LaneJob]) -> Option<String> {
     ))
 }
 
+/// One command a team member keeps, beside the member that keeps it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TeamJob<'a> {
+    /// Member keeping the job, for its accent and name.
+    pub member: &'a Standing,
+    /// The kept job as the lane read reported it.
+    pub job: &'a wire::intent::LaneJob,
+}
+
+impl TeamJob<'_> {
+    /// Row identity that survives a standing change, so a table updates the
+    /// row in place rather than replacing it.
+    #[must_use]
+    pub fn key(&self) -> String {
+        format!("{}/{}", self.member.lane, self.job.id)
+    }
+
+    /// Epoch milliseconds the job started, decoded from its key.
+    #[must_use]
+    pub fn started_millis(&self) -> Option<i64> {
+        self.job
+            .started_micros()
+            .map(|micros| micros.div_euclid(1_000))
+    }
+}
+
+/// Every job the given members keep, oldest first.
+///
+/// Job keys are fixed-width moment codes whose order is start order, so the
+/// key orders the table; member lane breaks a tie between two lanes that
+/// started a job in the same microsecond.
+#[must_use]
+pub fn team_jobs(members: &[Standing]) -> Vec<TeamJob<'_>> {
+    let mut jobs = members
+        .iter()
+        .flat_map(|member| member.jobs.iter().map(move |job| TeamJob { member, job }))
+        .collect::<Vec<_>>();
+    jobs.sort_by(|left, right| {
+        (&left.job.id, left.member.lane).cmp(&(&right.job.id, right.member.lane))
+    });
+    jobs
+}
+
 /// The fraction of a team's width, at either edge, that joins rather than
 /// reorders.
 ///

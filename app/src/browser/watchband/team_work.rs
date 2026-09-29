@@ -81,3 +81,64 @@ pub(super) fn render_team_work_lanes(
         </div>
     }
 }
+
+/// Every command the team's members keep, oldest first, one keyed row each.
+pub(super) fn render_team_jobs(standings: &[Standing], team: wire::CanonicalUuid) -> Html {
+    let jobs = watchband::team_jobs(standings);
+    html! {
+        <section
+            class="team-task-section team-jobs"
+            aria-labelledby={format!("kept-jobs-{team}")}
+        >
+            <header>
+                <h3 id={format!("kept-jobs-{team}")}>{"Kept jobs"}</h3>
+                if !jobs.is_empty() {
+                    <span>{jobs.len()}</span>
+                }
+            </header>
+            if jobs.is_empty() {
+                <p class="team-task-empty">{"No kept jobs."}</p>
+            } else {
+                <table class="team-job-table">
+                    <thead>
+                        <tr>
+                            <th scope="col">{"Member"}</th>
+                            <th scope="col">{"Started"}</th>
+                            <th scope="col">{"Command"}</th>
+                            <th scope="col">{"Standing"}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {for jobs.iter().map(render_team_job)}
+                    </tbody>
+                </table>
+            }
+        </section>
+    }
+}
+
+fn render_team_job(row: &watchband::TeamJob<'_>) -> Html {
+    let standing = row.job.standing.as_str();
+    html! {
+        <tr
+            key={row.key()}
+            class="team-job-row"
+            data-agent-lane={row.member.lane.to_string()}
+            data-accent={row.member.accent.to_string()}
+            data-job={row.job.id.clone()}
+            data-job-standing={standing}
+        >
+            <td>
+                <span class="team-task-member">
+                    <span class="agent-presence" aria-hidden="true"></span>
+                    <strong class="team-task-member-name">{row.member.label.clone()}</strong>
+                </span>
+            </td>
+            <td>{lease_age(row.started_millis(), "team-job-age", "unknown")}</td>
+            <td class="team-job-command" title={row.job.command.clone()}>
+                <code>{row.job.command.clone()}</code>
+            </td>
+            <td class="team-job-standing">{standing}</td>
+        </tr>
+    }
+}
