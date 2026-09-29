@@ -632,7 +632,14 @@ fn agent_message_presentation<'a>(
         &message.directive_contexts,
     )
     .expect("message media passed admission before browser rendering");
-    let rendered_markdown = crate::composer_markdown::render_received_with_quotes(
+    // A prose card presents its terminal colon as a period; tool, reasoning,
+    // and boundary cards render verbatim.
+    let render = if message.activity == wire::AgentActivityKind::Prose {
+        crate::composer_markdown::render_prose_card
+    } else {
+        crate::composer_markdown::render_received_with_quotes
+    };
+    let rendered_markdown = render(
         &shown_text,
         &shown_classifications,
         &shown_directives,
