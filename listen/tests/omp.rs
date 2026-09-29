@@ -26,6 +26,7 @@ const TRANSCRIPT_SESSION: &[u8] = br#"{"type":"session","version":3,"id":"01a0a8
 const TRANSCRIPT_MESSAGE: &[u8] = br#"{"type":"message","id":"93bc66b5","parentId":"1ded9227","timestamp":"2026-09-16T02:24:25.341Z","message":{"role":"assistant","content":[{"type":"text","text":"echo: second thing"}],"usage":{"input":120,"output":9,"cacheRead":0,"cacheWrite":0},"stopReason":"stop"}}"#;
 const PROMPT_COMPLETED: &[u8] = br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"completed","sessionSettled":false}"#;
 const PROMPT_FAILED: &[u8] = br#"{"type":"prompt_result","id":"prompt-8","agentInvoked":true,"status":"error","sessionSettled":true,"error":{"message":"capacity exhausted","provider":"anthropic","model":"claude-opus-5-5","retryable":true,"httpStatus":529}}"#;
+const SIGN_OUT: &[u8] = br#"{"type":"notice","level":"warning","message":"Anthropic account ops@example.com was signed out automatically. Run /login to sign in again.","source":"auth"}"#;
 
 /// Every event kind the decoder produces, each from the record that carries it.
 const KINDS: &[(&[u8], EventKind)] = &[
@@ -37,6 +38,7 @@ const KINDS: &[(&[u8], EventKind)] = &[
     (PROSE, EventKind::Usage),
     (COMPACTION, EventKind::Compaction),
     (FAILURE, EventKind::Failure),
+    (SIGN_OUT, EventKind::SignOut),
 ];
 
 /// Frames the lane sees on every turn that carry nothing the tape types.
@@ -317,6 +319,21 @@ fn dialogs_that_wait_on_an_answer_are_named_while_notices_are_not() {
         None
     );
     assert_eq!(dialog(br#"{"type":"agent_start"}"#), None);
+}
+
+#[test]
+fn an_auth_notice_is_a_sign_out_naming_the_account_while_other_warnings_stay_silent() {
+    let record = decoded(SIGN_OUT);
+    let [Event::SignOut(sign_out)] = record.events() else {
+        panic!("an auth notice decodes to one sign-out");
+    };
+    assert_eq!(
+        sign_out.message,
+        "Anthropic account ops@example.com was signed out automatically. Run /login to sign in again."
+    );
+    assert_eq!(sign_out.login, "omp login");
+    let warning = br#"{"type":"notice","level":"warning","message":"Plan autosave failed: disk full Continuing with implementation.","source":"plan-yolo"}"#;
+    assert!(decoded(warning).events().is_empty());
 }
 
 #[test]

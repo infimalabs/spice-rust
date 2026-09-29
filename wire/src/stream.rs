@@ -191,6 +191,9 @@ pub enum AgentActivityKind {
     Turn,
     /// Context compaction boundary rendered as a full-width stream divider.
     Compaction,
+    /// The vendor signed an account out; the card names the account and the
+    /// login the operator must run before the lane can work on it again.
+    SignOut,
 }
 
 /// Why one assistant message is eligible for automatic Speak playback.
@@ -396,7 +399,10 @@ impl AgentActivityKind {
     /// they carry media, which callers check separately.
     #[must_use]
     pub const fn is_visible(self) -> bool {
-        matches!(self, Self::Prose | Self::Turn | Self::Compaction)
+        matches!(
+            self,
+            Self::Prose | Self::Turn | Self::Compaction | Self::SignOut
+        )
     }
 
     /// Whether this activity separates adjacent transcript epochs in the UI.

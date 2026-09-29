@@ -425,6 +425,7 @@ impl LaneActivity {
             AgentActivityKind::Reasoning => ("reasoning", "thinking"),
             AgentActivityKind::Turn => ("turn", "new turn"),
             AgentActivityKind::Compaction => ("compaction", "compaction"),
+            AgentActivityKind::SignOut => ("sign-out", "signed out"),
         };
         let detail = match message.activity {
             AgentActivityKind::Prose => {

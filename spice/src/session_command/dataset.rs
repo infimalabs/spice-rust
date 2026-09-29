@@ -553,7 +553,7 @@ fn reduce_event(
 ) -> Result<(), Refusal> {
     let timestamp = record_timestamp(record);
     match event {
-        Event::Session(_) => {}
+        Event::Session(_) | Event::SignOut(_) => {}
         Event::Prose(prose) => reduce_prose(record, prose, storage, work, at)?,
         Event::ProseEvidence(_) => {}
         Event::Reasoning(_) => {

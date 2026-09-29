@@ -20,11 +20,13 @@ pub enum EventKind {
     Compaction,
     /// A vendor-reported failure.
     Failure,
+    /// The vendor signed an account out; the operator must sign it back in.
+    SignOut,
 }
 
 impl EventKind {
     /// Every kind in stable canary order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Session,
         Self::Prose,
         Self::Reasoning,
@@ -32,6 +34,7 @@ impl EventKind {
         Self::Usage,
         Self::Compaction,
         Self::Failure,
+        Self::SignOut,
     ];
 
     /// Stable spelling carried by canary evidence.
@@ -45,6 +48,7 @@ impl EventKind {
             Self::Usage => "usage",
             Self::Compaction => "compaction",
             Self::Failure => "failure",
+            Self::SignOut => "sign_out",
         }
     }
 }
@@ -69,6 +73,8 @@ pub enum Event {
     Compaction(Compaction),
     /// Vendor failure.
     Failure(Failure),
+    /// Vendor account sign-out awaiting the operator's login.
+    SignOut(SignOut),
 }
 
 impl Event {
@@ -83,6 +89,7 @@ impl Event {
             Self::Usage(_) => EventKind::Usage,
             Self::Compaction(_) => EventKind::Compaction,
             Self::Failure(_) => EventKind::Failure,
+            Self::SignOut(_) => EventKind::SignOut,
         }
     }
 
@@ -97,6 +104,7 @@ impl Event {
             Self::Usage(event) => event.locus,
             Self::Compaction(event) => event.locus,
             Self::Failure(event) => event.locus,
+            Self::SignOut(event) => event.locus,
         }
     }
 
@@ -307,6 +315,19 @@ pub struct Failure {
     pub message: String,
     /// Structured provider cause, when the vendor supplied one.
     pub provider: Option<ProviderError>,
+    /// Source bytes.
+    pub locus: Locus,
+}
+
+/// An account the vendor signed out on its own, which every run on that
+/// account needs the operator to sign back in.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SignOut {
+    /// Vendor notice naming the affected account.
+    pub message: String,
+    /// Terminal command that signs the vendor back in. The vendor's own
+    /// notice names an in-session command a headless lane cannot run.
+    pub login: String,
     /// Source bytes.
     pub locus: Locus,
 }

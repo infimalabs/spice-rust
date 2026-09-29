@@ -80,6 +80,7 @@ fn event_kind_spellings_are_stable() {
             "usage",
             "compaction",
             "failure",
+            "sign_out",
         ]
     );
 }

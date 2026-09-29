@@ -20,7 +20,8 @@ pub use canary::{Alarm, Canary};
 pub use config::{Config, ConfigError};
 pub use event::{
     Compaction, Event, EventKind, Failure, Prose, ProseRole, ProviderError, Reasoning,
-    ReasoningContent, SessionDeclaration, Tool, ToolMoment, ToolOutcome, ToolResult, Usage,
+    ReasoningContent, SessionDeclaration, SignOut, Tool, ToolMoment, ToolOutcome, ToolResult,
+    Usage,
 };
 pub use omp::PROTOCOL_VERSION as OMP_PROTOCOL_VERSION;
 pub use residue::{
