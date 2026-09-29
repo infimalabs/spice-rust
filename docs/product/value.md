@@ -382,6 +382,15 @@ status, ownership, and selection contract. Team panes use the compact density;
 activating either card opens the one shared detail layer, whose close returns
 focus to the card that launched it.
 
+### The team Work pane
+
+Each team projects its open work into three stable lanes: Up next follows the
+resident's offer order, In flight shows work claimed by a member with that
+member's name and accent, and Waiting collects blocked, deferred, and review
+work. Empty lanes remain visible. The same keyed cards move between lanes
+without disturbing unchanged cards, and opening one uses the shared task detail
+layer with focus returned to its launching card.
+
 
 ### The team console
 
