@@ -71,7 +71,6 @@
     gap: 4px 8px;
   }
   .team-direction-preview { grid-column: 1 / -1; grid-row: 2; }
-  .team-detail-grid { grid-template-columns: 1fr; }
   .page-heading { align-items: start; }
   .page-heading h1 { font-size: 1.35rem; }
   th, td { padding: 10px; }

@@ -116,9 +116,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_>) -> H
                             empty("No teams are assigned. Open Import agent to create an agent.")
                         }
                         TeamMode::Work => render_tasks(render.runtime, &empty_team, &[]),
-                        TeamMode::Dash => {
-                            render_details(&empty_team, &[], mode)
-                        }
+                        TeamMode::Dash => render_details(&empty_team, &[]),
                     }}
                 </div>
             </section>
@@ -215,11 +213,9 @@ pub(super) fn render_populated_fleet(
                                             team,
                                             &team_standings,
                                         ),
-                        TeamMode::Dash => render_details(
-                                            team,
-                                            &team_standings,
-                                            mode,
-                                        ),
+                                        TeamMode::Dash => {
+                                            render_details(team, &team_standings)
+                                        }
                                         TeamMode::Chat => Html::default(),
                                     }}
                                 </div>

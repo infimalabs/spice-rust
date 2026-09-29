@@ -351,7 +351,7 @@ the discovery happens after the one step that cannot be undone.
 
 ### The Canvas view rail
 
-Info, Work, and Chat are the sole global and team panel names. The selected
+Dash, Work, and Chat are the sole global and team panel names. The selected
 global destination is the `page` URL query, so browser history, reload, and
 copied URLs restore it; an absent legacy query opens Chat. Existing team,
 speech, and narration state keeps its current format. Following a quote link
@@ -372,13 +372,25 @@ views preserve the same identity and evidence.
 ### The team console
 
 Chat tiles one console per live team. Its ordered surface exposes team identity
-and liveness, the Info/Work/Chat rail, pane-specific member standing, and the
+and liveness, the Dash/Work/Chat rail, pane-specific member standing, and the
 lane-attributed message stream. Each member lane remains the concrete address
 of one worktree; the team is never a broadcast identity.
 
 Seat and import share one panel, including for an empty fleet. Moving one member
 to a new team preserves its siblings and allocation policy. Leaving all teams
 moves only that member to its lane identity and preserves its seat.
+
+### The team Dash
+
+Dash keeps one member box per lane in canonical team order. Every box reserves
+the same geometry for the member accent, name, provider glyph, and presence, so
+live state changes do not resize or reorder the roster. Agent channel, occupant,
+worktree, residency policy, and session identifiers remain available through a
+per-member seat-details disclosure that scrolls inside its own box.
+
+A separate Flow frame below the roster owns the space where team work will be
+projected. Keeping roster identity and flow in distinct regions lets later flow
+updates change without moving the people who perform them.
 
 ### Lane, team, occupant
 

@@ -36,7 +36,7 @@ pub(super) use fleet::use_team_menu_escape;
 use fleet::{FleetRender, TeamMode, carries_team, render_empty_fleet, render_populated_fleet};
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
-pub(super) use vendor_icon::render_composer_vendor_icon;
+pub(super) use vendor_icon::{render_composer_vendor_icon, render_dash_vendor_icon};
 
 const MAX_ATTACHMENTS: usize = wire::media::MAX_MEDIA_ITEMS;
 const MAX_ATTACHMENT_BYTES: f64 = wire::media::MAX_MEDIA_BYTES as f64;
@@ -441,15 +441,25 @@ struct HistoryPaging<'a> {
     revision: u64,
 }
 
-fn render_details(team: &crate::runtime::LaneRow, standings: &[Standing], mode: TeamMode) -> Html {
+fn render_details(team: &crate::runtime::LaneRow, standings: &[Standing]) -> Html {
+    debug_assert_eq!(
+        team.members.len(),
+        standings.len(),
+        "one standing belongs to every team member"
+    );
+    let flow_heading = format!("team-dash-flow-{}", team.lane);
     html! {
-        <div class="team-detail-pane">
-            <div class="team-detail-grid">
+        <main class="team-dash-frame" aria-label="Team Dash">
+            <section class="team-dash-roster" aria-label="Team roster">
                 {for team.members.iter().zip(standings.iter()).map(|(member, standing)| {
-                    render_agent_details(member, standing, mode)
+                    render_agent_details(member, standing)
                 })}
-            </div>
-        </div>
+            </section>
+            <section class="team-dash-flow" aria-labelledby={flow_heading.clone()}>
+                <header><h3 id={flow_heading}>{"Flow"}</h3></header>
+                <div class="team-dash-flow-body"></div>
+            </section>
+        </main>
     }
 }
 
@@ -605,65 +615,58 @@ fn lease_countdown(expiry: Option<i64>, class: &'static str, vacant: &'static st
     }
 }
 
-fn render_agent_details(
-    member: &crate::runtime::LaneMember,
-    standing: &Standing,
-    mode: TeamMode,
-) -> Html {
+fn render_agent_details(member: &crate::runtime::LaneMember, standing: &Standing) -> Html {
+    debug_assert_eq!(
+        member.lane, standing.lane,
+        "standings retain canonical member order"
+    );
     let occupant = member
         .occupant
         .map(|value| value.to_string())
         .unwrap_or_else(|| "vacant".to_owned());
+    let session = standing
+        .session
+        .clone()
+        .unwrap_or_else(|| "unbound".to_owned());
+    let status = member.status(standing.pending);
     html! {
         <article
-            class="team-detail-card"
-            tabindex="-1"
+            key={standing.lane.to_string()}
+            class="team-dash-member"
             data-agent-lane={standing.lane.to_string()}
-            data-agent-occupant={occupant.clone()}
+            data-lane-status={status.key()}
             data-accent={standing.accent.to_string()}
-            title={watchband::standing_title(standing)}
         >
-            <header>
-                <span class="agent-presence"></span>
+            <header class="team-dash-member-header">
+                {view::render_member_presence(status)}
                 <strong>{standing.label.clone()}</strong>
-                <span>{watchband::model_display(standing.model.as_deref())}</span>
+                {render_dash_vendor_icon(standing)}
             </header>
-            {match mode {
-                TeamMode::Dash => html! {
-                    <dl>
-                        <div><dt>{"Agent channel"}</dt><dd>{standing.lane.to_string()}</dd></div>
-                        <div><dt>{"Occupant"}</dt><dd>{occupant}</dd></div>
-                        <div><dt>{"Worktree"}</dt><dd>{standing.worktree.clone()}</dd></div>
-                        <div>
-                            <dt>{"Pending"}</dt>
-                            <dd>{format!("{} pending", standing.pending)}</dd>
-                        </div>
-                        <div>
-                            <dt>{"Liveness"}</dt>
-                            <dd>{standing.liveness.as_str()}</dd>
-                        </div>
-                        <div>
-                            <dt>{"Model / residency policy"}</dt>
-                            <dd>{format!(
-                                "{} / {}",
-                                watchband::model_display(standing.model.as_deref()),
-                                standing.life
-                            )}</dd>
-                        </div>
-                        {for standing.jobs.iter().map(|job| html! {
-                            <div>
-                                <dt>
-                                    {"Job "}
-                                    <code>{job.id.clone()}</code>
-                                    {format!(" ({})", job.standing.as_str())}
-                                </dt>
-                                <dd>{job.command.clone()}</dd>
-                            </div>
-                        })}
-                    </dl>
-                },
-                TeamMode::Chat | TeamMode::Work => Html::default(),
-            }}
+            <details class="team-dash-member-disclosure">
+                <summary>{"Seat details"}</summary>
+                <dl>
+                    <div>
+                        <dt>{"Agent channel"}</dt>
+                        <dd><code>{standing.lane.to_string()}</code></dd>
+                    </div>
+                    <div>
+                        <dt>{"Occupant"}</dt>
+                        <dd><code>{occupant}</code></dd>
+                    </div>
+                    <div>
+                        <dt>{"Worktree"}</dt>
+                        <dd><code>{standing.worktree.clone()}</code></dd>
+                    </div>
+                    <div>
+                        <dt>{"Residency policy"}</dt>
+                        <dd>{standing.life.clone()}</dd>
+                    </div>
+                    <div>
+                        <dt>{"Session"}</dt>
+                        <dd><code>{session}</code></dd>
+                    </div>
+                </dl>
+            </details>
         </article>
     }
 }
