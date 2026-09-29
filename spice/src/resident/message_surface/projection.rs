@@ -72,12 +72,11 @@ pub(super) fn publish_agent_record(
     steering: Option<&PresentationDirectives>,
 ) -> CommandResult<()> {
     begin_agent_record(publisher, &record, state)?;
-    let successful_terminal = record.context.turn == Some(listen::TurnMoment::Completed)
-        && record
-            .events
-            .iter()
-            .any(|(_, event)| matches!(event, listen::Event::Usage(_)));
-    let mut explicit_final = false;
+    let successful_terminal = record
+        .context
+        .prompt_outcome
+        .as_ref()
+        .is_some_and(|outcome| outcome.status == listen::PromptStatus::Completed);
     for &(ordinal, decoded) in record.events {
         let Some(projected) = project_agent_event(
             AgentEvent {
@@ -106,12 +105,6 @@ pub(super) fn publish_agent_record(
             publish_message(publisher, published)?;
             continue;
         }
-        if published.final_answer {
-            explicit_final = true;
-            if revise_repeated_final(publisher, record.lane, &published, state)? {
-                continue;
-            }
-        }
         publish_message(publisher, published.clone())?;
         if let Some(pending) = pending {
             state.pending.remember(pending);
@@ -126,14 +119,18 @@ pub(super) fn publish_agent_record(
         );
     }
     if successful_terminal
-        && !explicit_final
         && let Some(previous) = state.prose.get(&record.lane)
         && previous.published.author == record.author
-        && !previous.published.final_answer
     {
         revise_final_message(publisher, previous.terminal.clone())?;
     }
-    if record.context.turn == Some(listen::TurnMoment::Completed) {
+    if record.context.session_settled
+        || record
+            .context
+            .prompt_outcome
+            .as_ref()
+            .is_some_and(|outcome| outcome.session_settled)
+    {
         state.prose.remove(&record.lane);
     }
     let source = record
@@ -158,34 +155,6 @@ pub(super) fn publish_agent_record(
         .and_modify(|known| *known = (*known).max(next))
         .or_insert(next);
     Ok(())
-}
-
-/// Raise the previous card to final when the final answer repeats its prose,
-/// answering whether that card stood in for the repeated one.
-fn revise_repeated_final(
-    publisher: &impl AgentMessagePublisher,
-    lane: CanonicalUuid,
-    published: &wire::AgentMessage,
-    state: &mut MessageState,
-) -> CommandResult<bool> {
-    let Some(previous) = state.prose.get(&lane) else {
-        return Ok(false);
-    };
-    if !same_prose(&previous.published, published) {
-        return Ok(false);
-    }
-    if !previous.published.final_answer {
-        let terminal = previous.terminal.clone();
-        revise_final_message(publisher, terminal.clone())?;
-        state.prose.insert(
-            lane,
-            ProseState {
-                published: terminal.clone(),
-                terminal,
-            },
-        );
-    }
-    Ok(true)
 }
 
 fn begin_agent_record(
@@ -237,6 +206,7 @@ fn publish_turn_boundary(
             activity: AgentActivityKind::Turn,
             final_answer: false,
             text: "New turn".to_owned(),
+            provider_error: None,
             classifications: Vec::new(),
             quote_target: None,
             directive_contexts: Vec::new(),
@@ -247,13 +217,6 @@ fn publish_turn_boundary(
             media: Vec::new(),
         },
     )
-}
-
-fn same_prose(left: &wire::AgentMessage, right: &wire::AgentMessage) -> bool {
-    left.author == right.author
-        && left.text == right.text
-        && left.classifications == right.classifications
-        && left.media == right.media
 }
 
 fn publish_message(
@@ -291,9 +254,9 @@ pub(super) fn publish_agent_event(
 
 struct ProjectedEvent {
     activity: AgentActivityKind,
-    final_answer: bool,
     locus: listen::Locus,
     text: String,
+    provider_error: Option<wire::AgentProviderError>,
     classifications: Vec<wire::MessageClassification>,
     directive_contexts: Vec<wire::MessageDirective>,
     automatic_speech: Option<wire::AutomaticSpeech>,
@@ -322,9 +285,9 @@ fn project_agent_event(
     } = event;
     let ProjectedEvent {
         activity,
-        final_answer,
         locus,
         text,
+        provider_error,
         classifications,
         directive_contexts,
         automatic_speech,
@@ -357,8 +320,9 @@ fn project_agent_event(
         authored_synthetic,
         observed,
         activity,
-        final_answer,
+        final_answer: false,
         text,
+        provider_error,
         classifications,
         quote_target,
         directive_contexts,
@@ -400,9 +364,9 @@ fn project_event_body(
             project_prose_presentation(&prose, steering, presentation_event)?;
         return Ok(Some(ProjectedEvent {
             activity: AgentActivityKind::Prose,
-            final_answer: prose.phase.as_deref() == Some("final_answer"),
             locus: prose.locus,
             text: presented.text,
+            provider_error: None,
             classifications: presented.classifications,
             directive_contexts: presented.directive_contexts,
             automatic_speech,
@@ -416,8 +380,8 @@ fn project_event_body(
             let text = tool_preview::message_text(tool, activity, &media);
             ProjectedEvent {
                 activity: AgentActivityKind::Tool,
-                final_answer: false,
                 locus: tool.locus,
+                provider_error: None,
                 text,
                 classifications: Vec::new(),
                 directive_contexts: Vec::new(),
@@ -430,7 +394,7 @@ fn project_event_body(
             locus,
         }) => ProjectedEvent {
             activity: AgentActivityKind::Reasoning,
-            final_answer: false,
+            provider_error: None,
             locus: *locus,
             text: reasoning_preview(parts),
             classifications: Vec::new(),
@@ -440,13 +404,31 @@ fn project_event_body(
         },
         listen::Event::Compaction(compaction) => ProjectedEvent {
             activity: AgentActivityKind::Compaction,
-            final_answer: false,
             locus: compaction.locus,
             text: compaction
                 .summary
                 .clone()
                 .filter(|summary| !summary.trim().is_empty())
                 .unwrap_or_else(|| "Context compacted".to_owned()),
+            provider_error: None,
+            classifications: Vec::new(),
+            directive_contexts: Vec::new(),
+            automatic_speech: None,
+            media: Vec::new(),
+        },
+        listen::Event::Failure(failure) => ProjectedEvent {
+            activity: AgentActivityKind::Failure,
+            locus: failure.locus,
+            text: failure.message.clone(),
+            provider_error: failure
+                .provider
+                .as_ref()
+                .map(|provider| wire::AgentProviderError {
+                    provider: provider.provider.clone(),
+                    model: provider.model.clone(),
+                    http_status: provider.http_status,
+                    retryable: provider.retryable,
+                }),
             classifications: Vec::new(),
             directive_contexts: Vec::new(),
             automatic_speech: None,
@@ -454,7 +436,7 @@ fn project_event_body(
         },
         listen::Event::SignOut(sign_out) => ProjectedEvent {
             activity: AgentActivityKind::SignOut,
-            final_answer: false,
+            provider_error: None,
             locus: sign_out.locus,
             text: format!(
                 "{}\n\nSign in from a terminal with `{}`.",

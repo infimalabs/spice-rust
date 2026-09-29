@@ -1,4 +1,4 @@
-//! An exit whose only turn ended on the vendor's error.
+//! Occupant exits decided by the typed prompt lifecycle.
 
 use std::fs;
 use std::path::PathBuf;
@@ -23,19 +23,19 @@ const DECLARATION: &[u8] = br#"{"id":"spice-state","type":"response","command":"
 "#;
 const PROMPT: &[u8] = br#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"Resume the claim."}]}}
 "#;
-const REFUSED_RESULT: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[],"stopReason":"error","errorMessage":"Refusal (reasoning_extraction): This request was blocked by our content filtering policy."}}
+const REFUSED_RESULT: &[u8] = br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"error","sessionSettled":true,"error":{"message":"Refusal (reasoning_extraction): This request was blocked by our content filtering policy.","provider":"anthropic","model":"claude-opus-4-6","httpStatus":400,"retryable":false}}
 "#;
 const TRAILING_WIDGET: &[u8] =
     br#"{"type":"extension_ui_request","id":"1583f94d24ebac0b","method":"setWidget"}
 "#;
 const FINISHED_PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Finished the claim."}],"stopReason":"stop","usage":{"input":7,"cacheRead":5,"cacheWrite":3,"output":2}}}
 "#;
-const FINISHED_RESULT: &[u8] = br#"{"type":"agent_end","messages":[]}
+const FINISHED_RESULT: &[u8] = br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"completed","sessionSettled":true}
 "#;
 /// The occupant's answer headed with the key `operator_direction_write` addresses to the lane.
 const ACKED_PROSE: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kKRRsDS: Finished the claim."}],"stopReason":"stop","usage":{"input":7,"cacheRead":5,"cacheWrite":3,"output":2}}}
 "#;
-const ACKED_RESULT: &[u8] = br#"{"type":"agent_end","messages":[]}
+const ACKED_RESULT: &[u8] = br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"completed","sessionSettled":true}
 "#;
 
 #[test]

@@ -698,6 +698,7 @@ pub fn agent_message_label<'a>(worktree: &'a str, name: Option<&'a str>) -> &'a 
 pub(crate) const fn agent_activity_name(activity: wire::AgentActivityKind) -> &'static str {
     match activity {
         wire::AgentActivityKind::Prose => "prose",
+        wire::AgentActivityKind::Failure => "failure",
         wire::AgentActivityKind::Tool => "tool",
         wire::AgentActivityKind::Reasoning => "reasoning",
         wire::AgentActivityKind::Turn => "turn",

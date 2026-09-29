@@ -45,6 +45,7 @@ fn message(lane: u8, offset: u64) -> AgentMessage {
         activity: wire::AgentActivityKind::Prose,
         final_answer: false,
         text: format!("lane {lane:02x} message {offset}"),
+        provider_error: None,
         classifications: Vec::new(),
         quote_target: None,
         directive_contexts: Vec::new(),

@@ -929,11 +929,13 @@ fn a_drain_interrupts_the_turn_and_ends_the_input() {
 }
 
 #[test]
-fn the_end_of_the_turn_closes_the_stream_and_later_deliveries_are_dropped() {
+fn a_settled_prompt_closes_the_stream_and_later_deliveries_are_dropped() {
     let scratch = Scratch::new("closed");
     let sink = Sink::default();
     let driver = make_driver(sink.clone(), &scratch, None);
-    driver.observe(&decoded(br#"{"type":"agent_end","messages":[]}"#));
+    driver.observe(&decoded(
+        br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"completed","sessionSettled":true}"#,
+    ));
 
     scratch.publish(b"<key>\ndirective=d1\nstop\n</key>\n");
     driver.deliver_inbox();
@@ -941,6 +943,28 @@ fn the_end_of_the_turn_closes_the_stream_and_later_deliveries_are_dropped() {
     assert!(sink.frames().is_empty(), "nothing reaches a closed stream");
     assert_eq!(
         driver.open(b"late\n").expect_err("closed").kind(),
+        io::ErrorKind::BrokenPipe
+    );
+}
+
+#[test]
+fn an_unsettled_prompt_keeps_input_until_the_session_settles() {
+    let scratch = Scratch::new("settling");
+    let sink = Sink::default();
+    let driver = make_driver(sink, &scratch, None);
+    driver.observe(&decoded(br#"{"type":"agent_end","messages":[]}"#));
+    driver.observe(&decoded(
+        br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"completed","sessionSettled":false}"#,
+    ));
+    driver
+        .open(b"{\"type\":\"still_open\"}\n")
+        .expect("unsettled background work keeps the command stream open");
+
+    driver.observe(&decoded(
+        br#"{"type":"session_settled","reason":"prompt_complete"}"#,
+    ));
+    assert_eq!(
+        driver.open(b"late\n").expect_err("settled").kind(),
         io::ErrorKind::BrokenPipe
     );
 }

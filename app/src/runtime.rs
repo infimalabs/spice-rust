@@ -421,6 +421,7 @@ impl LaneActivity {
     fn from_message(message: &AgentMessage) -> Self {
         let (class, title) = match message.activity {
             AgentActivityKind::Prose => ("prose", "assistant"),
+            AgentActivityKind::Failure => ("failure", "provider failure"),
             AgentActivityKind::Tool => ("tool", "tool"),
             AgentActivityKind::Reasoning => ("reasoning", "thinking"),
             AgentActivityKind::Turn => ("turn", "new turn"),

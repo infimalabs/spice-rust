@@ -360,10 +360,7 @@ fn operator_prose(text: &str, locus: Locus) -> Result<Event, ResidueKind> {
 }
 
 fn assistant(message: &Object, locus: Locus) -> Events {
-    let stop_reason = optional_string(message, "stopReason")?;
-    let phase = stop_reason
-        .is_some_and(|reason| matches!(reason, "stop" | "length"))
-        .then(|| "final_answer".to_owned());
+    let _stop_reason = optional_string(message, "stopReason")?;
     let content = array(message, "content")?;
     // A provider can settle the prose before a tool call as a paraphrased
     // reasoning block. The call's intent then holds the message's only
@@ -388,7 +385,7 @@ fn assistant(message: &Object, locus: Locus) -> Events {
                     role: ProseRole::Assistant,
                     media: media::decompose(OwnedContent::AuthoredText(&text))?.media,
                     text,
-                    phase: phase.clone(),
+                    phase: None,
                     locus,
                 }));
             }
@@ -414,15 +411,6 @@ fn assistant(message: &Object, locus: Locus) -> Events {
     }
     if let Some(usage) = message.get("usage").and_then(Value::as_object) {
         events.push(Event::Usage(usage_event(usage, locus)?));
-    }
-    if stop_reason == Some("error") {
-        events.push(Event::Failure(Failure {
-            message: optional_string(message, "errorMessage")?
-                .unwrap_or("vendor reported an error")
-                .to_owned(),
-            provider: None,
-            locus,
-        }));
     }
     Ok(events)
 }

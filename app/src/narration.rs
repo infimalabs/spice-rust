@@ -61,6 +61,7 @@ fn card_segments(activity: AgentActivityKind, text: &str) -> Vec<String> {
         AgentActivityKind::Prose => segments(text),
         AgentActivityKind::Tool
         | AgentActivityKind::Reasoning
+        | AgentActivityKind::Failure
         | AgentActivityKind::Turn
         | AgentActivityKind::Compaction
         | AgentActivityKind::SignOut => Vec::new(),

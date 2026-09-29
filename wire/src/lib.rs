@@ -116,11 +116,11 @@ pub use reply::{
     ThreadReport, Version,
 };
 pub use stream::{
-    AgentActivityKind, AgentMessage, AutomaticSpeech, AutomaticSpeechKind, MESSAGE_FLOOR,
-    MessageBoundary, MessageClassification, MessageClassificationKind, MessageDirective,
-    MessageHistoryCursor, MessageLocus, REVIEW_FEEDBACK_CONTROL_PREFIX, StreamAdmissionError,
-    StreamCursor, StreamFact, StreamFrame, StreamRequest, TranscriptGeneration,
-    TranscriptLaneFrontier, TranscriptLaneState, TrustView, ViewSubject,
+    AgentActivityKind, AgentMessage, AgentProviderError, AutomaticSpeech, AutomaticSpeechKind,
+    MESSAGE_FLOOR, MessageBoundary, MessageClassification, MessageClassificationKind,
+    MessageDirective, MessageHistoryCursor, MessageLocus, REVIEW_FEEDBACK_CONTROL_PREFIX,
+    StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest,
+    TranscriptGeneration, TranscriptLaneFrontier, TranscriptLaneState, TrustView, ViewSubject,
     parse_review_feedback_control, review_feedback_control, superseded_boundaries,
     valid_message_classifications, valid_message_directives,
 };

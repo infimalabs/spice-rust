@@ -6,7 +6,7 @@ const PROSE: &[u8] = br#"{"timestamp":"2030-04-12T18:44:09.271Z","type":"message
 "#;
 const PROSE_WITHOUT_TIME: &[u8] = br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"durable restart backlog"}],"stopReason":"stop"}}
 "#;
-const TURN_END: &[u8] = br#"{"type":"agent_end"}
+const PROMPT_RESULT: &[u8] = br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"completed","sessionSettled":true}
 "#;
 const COMPACTION_WITHOUT_TIME: &[u8] =
     br#"{"type":"auto_compaction_end","result":{"firstKeptEntryId":"entry-1","tokensBefore":100}}
@@ -203,7 +203,7 @@ fn each_resident_generation_restores_durable_prose_before_canvas_subscription() 
         .expect("the backlog tape opens");
     tape.tee(PROSE_WITHOUT_TIME)
         .expect("durable prose is captured");
-    tape.tee(TURN_END)
+    tape.tee(PROMPT_RESULT)
         .expect("durable turn completion is captured");
     tape.tee(COMPACTION_WITHOUT_TIME)
         .expect("durable compaction is captured");

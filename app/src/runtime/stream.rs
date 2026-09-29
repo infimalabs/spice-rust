@@ -581,6 +581,7 @@ mod message_retention_tests {
             activity: AgentActivityKind::Prose,
             final_answer: false,
             text: offset.to_string(),
+            provider_error: None,
             classifications: Vec::new(),
             quote_target: None,
             directive_contexts: Vec::new(),

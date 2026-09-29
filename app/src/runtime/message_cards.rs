@@ -22,6 +22,7 @@ impl From<&AgentMessage> for MessageCardKey {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MessageCardKind {
     Prose,
+    Failure,
     ToolMedia,
     Compaction,
     SignOut,
@@ -36,6 +37,7 @@ struct MessageCardFingerprint<'a> {
     observed: Option<&'a wire::Instant>,
     text: &'a str,
     final_answer: bool,
+    provider_error: Option<&'a wire::AgentProviderError>,
     classifications: &'a [wire::MessageClassification],
     automatic_speech: Option<&'a wire::AutomaticSpeech>,
     unavailable_tool_terminals: &'a [String],
@@ -45,6 +47,7 @@ struct MessageCardFingerprint<'a> {
 fn card_kind(message: &AgentMessage) -> Option<MessageCardKind> {
     match message.activity {
         AgentActivityKind::Prose => Some(MessageCardKind::Prose),
+        AgentActivityKind::Failure => Some(MessageCardKind::Failure),
         AgentActivityKind::Tool if !message.media.is_empty() => Some(MessageCardKind::ToolMedia),
         AgentActivityKind::Tool | AgentActivityKind::Reasoning | AgentActivityKind::Turn => None,
         AgentActivityKind::Compaction => Some(MessageCardKind::Compaction),
@@ -61,6 +64,7 @@ fn fingerprint(message: &AgentMessage) -> Option<MessageCardFingerprint<'_>> {
         observed: message.observed.as_ref(),
         text: &message.text,
         final_answer: message.final_answer,
+        provider_error: message.provider_error.as_ref(),
         classifications: &message.classifications,
         automatic_speech: message.automatic_speech.as_ref(),
         unavailable_tool_terminals: &message.unavailable_tool_terminals,
@@ -309,6 +313,7 @@ mod tests {
             activity,
             final_answer: false,
             text: offset.to_string(),
+            provider_error: None,
             classifications: Vec::new(),
             quote_target: None,
             directive_contexts: Vec::new(),
