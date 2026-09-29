@@ -1042,3 +1042,4 @@ mod delete;
 // from the board summary and its allocation scenarios.
 mod detail;
 mod relations;
+mod timeline;
