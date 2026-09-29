@@ -16,6 +16,28 @@ pub enum TurnMoment {
     Completed,
 }
 
+/// How an accepted vendor prompt yielded its work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum PromptStatus {
+    /// The prompt's work completed normally.
+    Completed,
+    /// A session transition or explicit abort stopped the prompt.
+    Aborted,
+    /// The prompt ended in a provider or local failure.
+    Error,
+}
+
+/// Terminal lifecycle report for one accepted vendor prompt.
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
+pub struct PromptOutcome {
+    /// Whether the prompt reached an agent run rather than completing locally.
+    pub agent_invoked: bool,
+    /// How the prompt's work ended.
+    pub status: PromptStatus,
+    /// Whether no queued or background work can wake the session again.
+    pub session_settled: bool,
+}
+
 /// Vendor-neutral context shared by every event decoded from one record.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RecordContext {
@@ -33,6 +55,10 @@ pub struct RecordContext {
     /// Identity of the dialog this record withdraws, when the vendor stopped
     /// waiting on one it opened.
     pub withdrawn: Option<String>,
+    /// Terminal prompt lifecycle carried by this record, when present.
+    pub prompt_outcome: Option<PromptOutcome>,
+    /// Whether this record states that the whole session is now quiescent.
+    pub session_settled: bool,
 }
 
 /// A vendor dialog that holds the turn until it is answered.

@@ -6,8 +6,8 @@
 //! envelope beside its own `session` record.
 
 use listen::{
-    Decoded, Dialect, Dialog, Event, EventKind, Locus, ProseRole, RecordDecodeError, ToolMoment,
-    ToolResult, TurnMoment, decode, decode_record, restated,
+    Decoded, Dialect, Dialog, Event, EventKind, Locus, PromptStatus, ProseRole, RecordDecodeError,
+    ToolMoment, ToolResult, TurnMoment, decode, decode_record, restated,
 };
 
 const SESSION: &[u8] = br#"{"id":"spice-state","type":"response","command":"get_state","success":true,"data":{"model":{"id":"claude-opus-5","contextWindow":1000000},"sessionId":"01a0a807-666f-7524-be0d-2ee476b6c15c","sessionFile":"/tmp/sessions/x.jsonl","isStreaming":false}}"#;
@@ -18,11 +18,14 @@ const TOOL_RESULT: &[u8] = br#"{"type":"message_end","message":{"role":"toolResu
 const OPERATOR: &[u8] = br#"{"type":"message_end","message":{"role":"user","content":[{"type":"text","text":"please run it"}],"attribution":"user","timestamp":1789525452570}}"#;
 const PARTIAL: &[u8] = br#"{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":0,"delta":"do","partial":{"role":"assistant","content":[{"type":"text","text":"do"}]}},"message":{"role":"assistant","content":[{"type":"text","text":"do"}]}}"#;
 const TOOL_PARTIAL: &[u8] = br#"{"type":"tool_execution_update","toolCallId":"call_1","toolName":"bash","partialResult":{"content":[{"type":"text","text":"o"}]}}"#;
+const TOOL_STREAM: &[u8] = br#"{"type":"tool_stream_update","toolCallId":"call_1","toolName":"edit","update":{"path":"src/lib.rs","diff":"+done"}}"#;
 const TOOL_END: &[u8] = br#"{"type":"tool_execution_end","toolCallId":"call_1","toolName":"bash","result":{"content":[{"type":"text","text":"ok"}]},"isError":false}"#;
 const COMPACTION: &[u8] = br#"{"type":"auto_compaction_end","action":"context-full","result":{"summary":"so far","firstKeptEntryId":"e1","tokensBefore":900000},"aborted":false,"willRetry":false}"#;
 const FAILURE: &[u8] = br#"{"id":"spice-prompt","type":"response","command":"prompt","success":false,"error":"Agent is already processing"}"#;
 const TRANSCRIPT_SESSION: &[u8] = br#"{"type":"session","version":3,"id":"01a0a807-666f-7524-be0d-2ee476b6c15c","timestamp":"2026-09-16T02:24:12.399Z","cwd":"/work/tree"}"#;
 const TRANSCRIPT_MESSAGE: &[u8] = br#"{"type":"message","id":"93bc66b5","parentId":"1ded9227","timestamp":"2026-09-16T02:24:25.341Z","message":{"role":"assistant","content":[{"type":"text","text":"echo: second thing"}],"usage":{"input":120,"output":9,"cacheRead":0,"cacheWrite":0},"stopReason":"stop"}}"#;
+const PROMPT_COMPLETED: &[u8] = br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"completed","sessionSettled":false}"#;
+const PROMPT_FAILED: &[u8] = br#"{"type":"prompt_result","id":"prompt-8","agentInvoked":true,"status":"error","sessionSettled":true,"error":{"message":"capacity exhausted","provider":"anthropic","model":"claude-opus-5-5","retryable":true,"httpStatus":529}}"#;
 
 /// Every event kind the decoder produces, each from the record that carries it.
 const KINDS: &[(&[u8], EventKind)] = &[
@@ -47,6 +50,22 @@ const SILENT: &[&[u8]] = &[
     br#"{"id":"spice-prompt","type":"response","command":"prompt","success":true}"#,
     br#"{"type":"extension_ui_request","id":"1","method":"setWidget","widgetKey":"x"}"#,
     br#"{"type":"message_end","message":{"role":"custom","customType":"async-result","content":"<system-notice>done</system-notice>"}}"#,
+    // Current run-state and retry telemetry is either represented by the
+    // settled message/prompt result or carries no authored transcript moment.
+    br#"{"type":"session_settled"}"#,
+    br#"{"type":"auto_retry_start","attempt":1,"maxAttempts":3,"delayMs":200,"errorMessage":"busy"}"#,
+    br#"{"type":"auto_retry_end","success":true,"attempt":1}"#,
+    br#"{"type":"retry_fallback_applied","from":"opus","to":"sonnet","role":"default"}"#,
+    br#"{"type":"retry_fallback_succeeded","model":"sonnet","role":"default"}"#,
+    br#"{"type":"model_changed"}"#,
+    br#"{"type":"thinking_level_changed","thinkingLevel":"high"}"#,
+    br#"{"type":"config_warnings_changed"}"#,
+    br#"{"type":"advisor_yielded"}"#,
+    br#"{"type":"ttsr_triggered","rules":[]}"#,
+    br#"{"type":"todo_reminder","todos":[],"attempt":1,"maxAttempts":3}"#,
+    br#"{"type":"todo_auto_clear"}"#,
+    br#"{"type":"goal_updated","goal":null}"#,
+    br#"{"type":"irc_message","message":{"role":"custom","content":"status"}}"#,
 ];
 
 fn locus(bytes: &[u8]) -> Locus {
@@ -194,6 +213,67 @@ fn compaction_and_refusals_are_typed_while_lifecycle_frames_stay_silent() {
 }
 
 #[test]
+fn prompt_results_preserve_identity_lifecycle_and_structured_provider_failure() {
+    let completed = decoded(PROMPT_COMPLETED);
+    assert!(completed.events().is_empty());
+    let context = completed.context().expect("prompt result has context");
+    assert_eq!(context.turn_id.as_deref(), Some("prompt-7"));
+    assert!(matches!(
+        context.prompt_outcome,
+        Some(ref outcome)
+            if outcome.agent_invoked
+                && outcome.status == PromptStatus::Completed
+                && !outcome.session_settled
+    ));
+
+    let failed = decoded(PROMPT_FAILED);
+    assert!(matches!(
+        failed.events(),
+        [Event::Failure(failure)]
+            if failure.message == "capacity exhausted"
+                && matches!(
+                    failure.provider,
+                    Some(ref provider)
+                        if provider.provider.as_deref() == Some("anthropic")
+                            && provider.model.as_deref() == Some("claude-opus-5-5")
+                            && provider.http_status == Some(529)
+                            && provider.retryable
+                )
+    ));
+    let context = failed.context().expect("failed prompt result has context");
+    assert_eq!(context.turn_id.as_deref(), Some("prompt-8"));
+    assert!(matches!(
+        context.prompt_outcome,
+        Some(ref outcome)
+            if outcome.agent_invoked
+                && outcome.status == PromptStatus::Error
+                && outcome.session_settled
+    ));
+
+    let aborted = decoded(
+        br#"{"type":"prompt_result","id":"prompt-9","agentInvoked":false,"status":"aborted","sessionSettled":true}"#,
+    );
+    assert!(aborted.events().is_empty());
+    assert!(matches!(
+        aborted
+            .context()
+            .and_then(|context| context.prompt_outcome.as_ref()),
+        Some(outcome)
+            if !outcome.agent_invoked
+                && outcome.status == PromptStatus::Aborted
+                && outcome.session_settled
+    ));
+
+    let settled = decoded(br#"{"type":"session_settled"}"#);
+    assert!(settled.events().is_empty());
+    assert!(
+        settled
+            .context()
+            .is_some_and(|context| context.session_settled)
+    );
+}
+
+#[test]
 fn dialogs_that_wait_on_an_answer_are_named_while_notices_are_not() {
     let dialog = |bytes: &[u8]| {
         let decoded = decoded(bytes);
@@ -317,6 +397,7 @@ fn session_file_messages_mark_the_turns_their_frames_are_absent_for() {
 /// slot at the top of every file and the bookkeeping it appends as it runs.
 const SESSION_FILE_BOOKKEEPING: &[&[u8]] = &[
     br#"{"type":"title","v":1,"title":"","updatedAt":"2026-09-16T06:43:21.805Z","pad":"   "}"#,
+    br#"{"type":"title_change","id":"n1","parentId":null,"timestamp":"2026-09-16T06:43:21.900Z","title":"Current title","source":"auto"}"#,
     br#"{"type":"credential_pin","id":"c1","parentId":null,"timestamp":"2026-09-16T06:43:22.000Z","provider":"anthropic","hash":"deadbeef"}"#,
     br#"{"type":"model_change","id":"m1","parentId":"c1","timestamp":"2026-09-16T06:43:22.100Z","provider":"anthropic","modelId":"claude-opus-5"}"#,
     br#"{"type":"thinking_level_change","id":"t1","parentId":"m1","timestamp":"2026-09-16T06:43:22.200Z","thinkingLevel":"high"}"#,
@@ -395,7 +476,7 @@ fn boundary(bytes: &[u8]) -> wire::MessageBoundary {
 
 #[test]
 fn partials_are_restated_by_the_frames_that_end_them_and_decode_to_nothing() {
-    for partial in [PARTIAL, TOOL_PARTIAL] {
+    for partial in [PARTIAL, TOOL_PARTIAL, TOOL_STREAM] {
         assert!(restated(Dialect::Omp, partial));
         let decoded = decode(Dialect::Omp, partial, locus(partial)).expect("locus matches");
         assert!(decoded.events().is_empty(), "{decoded:?}");
