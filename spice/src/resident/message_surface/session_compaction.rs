@@ -119,7 +119,6 @@ const AUTHENTICATION_BYTE_BUDGET: usize = VALIDATION_BYTE_BUDGET * 2;
 pub(super) const HISTORY_BYTE_BUDGET: usize = 256 * 1024;
 const HISTORY_RECORD_BUDGET: usize = 128;
 const HISTORY_PASS_BUDGET: u32 = 1;
-const HISTORY_WALL_BUDGET: Duration = Duration::from_millis(50);
 /// Windows one history request may chain, sized from the shared
 /// [`HISTORY_REQUEST_BYTES`] span so this half of a merged page reaches as
 /// far back per request as the tape half does.
@@ -457,7 +456,6 @@ impl HistoryWork {
         self.source_bytes <= HISTORY_BYTE_BUDGET as u64
             && self.decoded_records <= HISTORY_RECORD_BUDGET as u32
             && self.passes <= HISTORY_PASS_BUDGET
-            && self.elapsed <= HISTORY_WALL_BUDGET
     }
 
     fn sampled(mut self, started: Instant) -> Self {
@@ -639,9 +637,8 @@ fn decode_history_records(
     let mut records = Vec::new();
     let mut visible = Vec::new();
     for record in bytes.split_inclusive(|byte| *byte == b'\n') {
-        *work = work.sampled(started);
         if !work.within_limits() {
-            return Err(history_budget_exhausted(*work));
+            return Err(history_budget_exhausted(work.sampled(started)));
         }
         #[cfg(test)]
         BOOTSTRAP_BYTES_DECODED.with(|count| {
