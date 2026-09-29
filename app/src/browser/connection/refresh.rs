@@ -121,6 +121,7 @@ pub(super) async fn send_work_history(
             before: request.before.clone(),
             query: request.query.clone(),
             completed_before: request.completed_before,
+            team: None,
             limit: 50,
         },
     )

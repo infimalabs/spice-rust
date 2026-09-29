@@ -84,6 +84,15 @@ pub enum BoardRead {
             deserialize_with = "crate::optional::present"
         )]
         completed_before: Option<crate::Instant>,
+        /// Include only tasks the Canvas team created, or whose most recent
+        /// winning claim was held by a lane now in that team. Absent reads
+        /// every team's history.
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "crate::optional::present"
+        )]
+        team: Option<crate::CanonicalUuid>,
         /// Maximum rows returned by this page.
         limit: u16,
     },
