@@ -22,6 +22,8 @@ const STEERING_TOKEN: &str = "1kJHh5bb";
 /// Width of the title slot omp rewrites in place at the top of a session file.
 const TITLE_SLOT_BYTES: usize = 256;
 const MODEL: &str = "claude-opus-5";
+/// Stands in for the skill's instructions, which ride the system prompt whole.
+const SKILL: &str = "Answer steering with ACK before any tool.";
 /// Where the lane wrote this occupant's compaction threshold.
 const CONFIG_OVERLAY: &str = "/supervisors/lane/occupant/omp.yml";
 
@@ -29,6 +31,7 @@ fn fixture(resume: Resume) -> Launch {
     Launch {
         cwd: "/worktree".into(),
         prompt: "start".to_owned(),
+        skill: SKILL.to_owned(),
         model: MODEL.to_owned(),
         effort: Effort::XHigh,
         personality: None,
@@ -146,7 +149,7 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
             )
             .expect("JSON"),
             serde_json::json!({"id": "spice-state", "type": "get_state"}),
-            serde_json::json!({"id": "spice-prompt", "type": "prompt", "message": system_prompt}),
+            serde_json::json!({"id": "spice-prompt", "type": "prompt", "message": omp::turn_prompt(&launch)}),
         ]
     );
     assert!(opening.ends_with(b"\n"));
@@ -505,19 +508,29 @@ fn roster(record: &vendor::Record) -> Option<&OsStr> {
 }
 
 #[test]
-fn the_steering_anchor_names_the_interjection_channel_and_steer_requests_carry_it() {
+fn the_skill_rides_the_system_prompt_and_the_turn_prompt_only_names_it() {
     let launch = fixture(Resume::Fresh);
     let system_prompt = omp::system_prompt(&launch);
-    assert!(system_prompt.starts_with(vendor::claude::SKILL_SYSTEM_PROMPT_PREAMBLE));
-    assert!(system_prompt.contains("\n\nstart\n\n"));
+    assert!(system_prompt.contains(SKILL));
     assert!(system_prompt.contains(&format!("<{STEERING_TOKEN}>")));
     assert!(system_prompt.contains("interjected user message"));
     assert!(!system_prompt.contains("stderr"));
 
+    // Every turn re-anchors on the key and names the skill without paying for
+    // its whole text again.
+    let turn_prompt = omp::turn_prompt(&launch);
+    assert!(turn_prompt.contains("\n\nstart\n\n"));
+    assert!(turn_prompt.contains(&format!("<{STEERING_TOKEN}>")));
+    assert!(!turn_prompt.contains(SKILL));
+
     let mut anonymous = launch.clone();
     anonymous.steering_key = None;
     assert!(!omp::system_prompt(&anonymous).contains(STEERING_TOKEN));
+    assert!(!omp::turn_prompt(&anonymous).contains(STEERING_TOKEN));
+}
 
+#[test]
+fn steer_requests_carry_the_steering_block() {
     let steer = omp::steer_request(3, "<1kJHh5bb>\ndirective=d1\nstop\n</1kJHh5bb>\n");
     let frame: serde_json::Value =
         serde_json::from_slice(steer.strip_suffix(b"\n").expect("one line")).expect("JSON");

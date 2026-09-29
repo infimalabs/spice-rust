@@ -179,6 +179,14 @@ pub struct Launch {
     pub cwd: PathBuf,
     /// The neutral start prompt; operator prose never rides it.
     pub prompt: String,
+    /// The spice skill the agent follows, in full.
+    ///
+    /// Claude and omp carry it in their appended system prompt, which a
+    /// compaction never summarizes, so the agent holds the skill from a
+    /// session's first message through every compaction instead of being
+    /// asked to read a file. Codex has no system-prompt seam and is handed the
+    /// prompt alone.
+    pub skill: String,
     /// Vendor model name, already resolved to a concrete spelling.
     pub model: String,
     /// How hard the agent is asked to think.
@@ -217,8 +225,8 @@ pub struct Launch {
     pub hook: SteeringHook,
     /// How the agent authenticates the steering it receives.
     ///
-    /// Claude and omp have a launch seam for it: their system prompts are
-    /// composed here from the prompt and this key. Codex is handed the prompt
+    /// Claude and omp have a launch seam for it: their system and turn prompts
+    /// both end with this key's anchor. Codex is handed the prompt
     /// as written, so a Codex launch anchors its agent through whatever
     /// composed that prompt.
     pub steering_key: Option<SteeringKey>,

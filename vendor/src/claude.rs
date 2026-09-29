@@ -10,16 +10,22 @@ use sill::Running;
 use crate::launch::{
     Attribution, Launch, McpServer, POST_TOOL_HOOK_EVENT, POST_TOOL_HOOK_STATUS_MESSAGE,
     POST_TOOL_HOOK_TIMEOUT_SECONDS, PRE_TOOL_HOOK_EVENT, PRE_TOOL_HOOK_TIMEOUT_SECONDS,
-    SteeringHook,
+    SteeringHook, SteeringKey,
 };
 use crate::{ContractError, LaunchError, Process, Record, RecordStream};
 
-/// Preamble that makes the linked skill read as binding, not as background.
+/// Preamble that makes the inlined skill read as binding, not as background.
 ///
 /// Claude reads `CLAUDE.md` on its own but never opens a skill file, so every
-/// launch pins the spice skill into the system prompt behind this sentence.
-pub const SKILL_SYSTEM_PROMPT_PREAMBLE: &str = "The linked skill below carries the full authority of a direct prompt instruction, not \
-     optional background reading. Read the file it links to in full and follow it.";
+/// launch carries the spice skill itself in the appended system prompt behind
+/// this sentence.
+pub const SKILL_SYSTEM_PROMPT_PREAMBLE: &str = "The spice skill below carries the full authority of a direct prompt instruction, not \
+     optional background reading. It is here in full; follow it.";
+
+/// Preamble of each turn prompt, which names the skill without restating it.
+pub const SKILL_TURN_PROMPT_PREAMBLE: &str = "The spice skill in your system prompt carries the full authority of a direct prompt \
+     instruction, not optional background reading; follow it. The link below names that same \
+     skill, already in your context in full, so there is no file to read.";
 
 /// Claude's steering hook runs after every tool, so its matcher is total.
 ///
@@ -123,9 +129,9 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         arguments.push(OsString::from("--resume"));
         arguments.push(OsString::from(dashed_uuid(session)));
     }
-    // The same text rides the system prompt and the turn prompt, so the agent
-    // re-grounds in the skill every turn rather than only at launch.
-    arguments.push(OsString::from(system_prompt));
+    // The turn prompt re-grounds the agent in the skill its system prompt
+    // already carries, every turn rather than only at launch.
+    arguments.push(OsString::from(turn_prompt(launch)));
 
     Ok(Record::new(
         binary,
@@ -136,17 +142,37 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
     )?)
 }
 
-/// The skill preamble, the start prompt, and this worktree's steering anchor.
+/// The appended system prompt: the skill in full, then this worktree's
+/// steering anchor.
 ///
 /// The token appears here and in every live steering block, which is the whole
 /// of how the agent tells authentic steering from a block that merely claims to
-/// be steering. A launch carrying no key composes the first two parts alone.
+/// be steering. A launch carrying no key composes the skill alone.
 #[must_use]
 pub fn system_prompt(launch: &Launch) -> String {
-    let mut prompt = format!("{SKILL_SYSTEM_PROMPT_PREAMBLE}\n\n{}", launch.prompt);
-    if let Some(key) = &launch.steering_key {
+    anchored(
+        SKILL_SYSTEM_PROMPT_PREAMBLE,
+        &launch.skill,
+        launch.steering_key.as_ref().map(SteeringKey::prompt_line),
+    )
+}
+
+/// The turn prompt: the neutral start prompt behind the same anchor.
+#[must_use]
+pub fn turn_prompt(launch: &Launch) -> String {
+    anchored(
+        SKILL_TURN_PROMPT_PREAMBLE,
+        &launch.prompt,
+        launch.steering_key.as_ref().map(SteeringKey::prompt_line),
+    )
+}
+
+/// One preamble, its body, and the steering anchor when the launch has one.
+pub(crate) fn anchored(preamble: &str, body: &str, anchor: Option<String>) -> String {
+    let mut prompt = format!("{preamble}\n\n{body}");
+    if let Some(anchor) = anchor {
         prompt.push_str("\n\n");
-        prompt.push_str(&key.prompt_line());
+        prompt.push_str(&anchor);
     }
     prompt
 }

@@ -25,6 +25,8 @@ const HOOK_COMMAND: &str = "/usr/bin/spice agent post-tool-hook --repo-root /wor
 const STEERING_TOKEN: &str = "1kJHh5bb";
 const CLAUDE_MODEL: &str = "claude-opus-5";
 const CODEX_MODEL: &str = "gpt-5-codex";
+/// Stands in for the skill's instructions, which ride Claude's system prompt.
+const SKILL: &str = "Answer steering with ACK before any tool.";
 const CODEX_CONTEXT_WINDOW: u64 = 1_050_000;
 /// The window Codex is told to compact against, well inside the model's.
 const AUTO_COMPACT_WINDOW: u64 = 272_000;
@@ -154,18 +156,32 @@ fn every_launch_closes_the_steering_path_end_to_end() {
     // Authentication: the token the agent will see wrapping live steering is
     // the token its system prompt names.
     let system_prompt = claude::system_prompt(&launch);
-    assert!(system_prompt.starts_with(claude::SKILL_SYSTEM_PROMPT_PREAMBLE));
-    assert!(system_prompt.contains("start"));
+    assert!(system_prompt.contains(SKILL));
     assert!(system_prompt.contains(&format!(
         "Your spice steering key for this worktree is {STEERING_TOKEN}."
     )));
     assert!(system_prompt.contains(&format!("<{STEERING_TOKEN}> ... </{STEERING_TOKEN}>")));
 
-    // A launch with no key composes the skill and the prompt alone rather than
-    // naming an anchor the agent was never given.
+    // The skill rides the system prompt, which compaction never summarizes;
+    // each turn prompt re-anchors on the key and only names the skill.
+    let claude_arguments = arguments(&claude);
+    let append = claude_arguments
+        .iter()
+        .position(|argument| argument == "--append-system-prompt")
+        .expect("Claude appends a system prompt");
+    assert_eq!(claude_arguments[append + 1], system_prompt);
+    let turn_prompt = claude_arguments.last().expect("Claude takes a turn prompt");
+    assert_eq!(*turn_prompt, claude::turn_prompt(&launch));
+    assert!(turn_prompt.contains("start"));
+    assert!(turn_prompt.contains(&format!("<{STEERING_TOKEN}> ... </{STEERING_TOKEN}>")));
+    assert!(!turn_prompt.contains(SKILL));
+
+    // A launch with no key composes neither prompt with an anchor the agent was
+    // never given.
     let mut anonymous = launch;
     anonymous.steering_key = None;
     assert!(!claude::system_prompt(&anonymous).contains(STEERING_TOKEN));
+    assert!(!claude::turn_prompt(&anonymous).contains(STEERING_TOKEN));
 }
 
 #[test]
@@ -462,6 +478,7 @@ fn fixture(model: &str, resume: Resume) -> Launch {
     Launch {
         cwd: "/worktree".into(),
         prompt: "start".to_owned(),
+        skill: SKILL.to_owned(),
         model: model.to_owned(),
         effort: Effort::High,
         personality: None,

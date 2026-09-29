@@ -236,6 +236,9 @@ fn launch_plan(
             worktree: repository.worktree_root().to_path_buf(),
             vendor: name.clone(),
             prompt,
+            // `required_skill` admitted the installed copy only because it is
+            // byte-identical to this appliance's, so these are its instructions.
+            skill: spice::install::skill_instructions().to_owned(),
             executable: executable.display().to_string(),
             environment,
             lane,
