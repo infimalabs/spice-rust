@@ -404,8 +404,9 @@ impl<W: Write + Send + 'static> Driver<W> {
             .collect::<Vec<_>>()
             .join(", ");
         let message = format!(
-            "<system-notice>\nReasoning is not acknowledgment. Reply in visible assistant prose \
-             with `ACK {keys}: response` or `NAK {keys}: reason`.\n</system-notice>"
+            "<system-notice>\nReasoning is not acknowledgment. Lead visible assistant prose, and \
+             the first tool intent when the message calls a tool, with `ACK {keys}: response` or \
+             `NAK {keys}: reason`.\n</system-notice>"
         );
         if self.steer(&message).is_ok() {
             reminder.nudged.extend(mentioned);

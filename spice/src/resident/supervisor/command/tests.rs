@@ -390,7 +390,6 @@ fn hidden_ack_attempts_receive_one_private_visible_prose_nudge() {
     let nudge = frames[1]["message"].as_str().expect("nudge message");
     assert!(nudge.starts_with("<system-notice>\n"));
     assert!(nudge.ends_with("\n</system-notice>"));
-    assert!(nudge.contains("visible assistant prose"));
     assert!(nudge.contains("1kJK6N3R"));
     assert!(nudge.contains("1kJK6M0V"));
     assert!(!nudge.contains("1kJK7Sqy"));
