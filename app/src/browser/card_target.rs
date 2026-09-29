@@ -197,7 +197,7 @@ const LAYOUT_PHASE: &str = "data-layout-phase";
 
 /// The rendered element a route names. A card counts only once its layout
 /// commits: while measuring it is hidden, so it can neither be scrolled to
-/// meaningfully nor take focus, and a measuring copy may briefly share its id.
+/// meaningfully nor take focus, and its node may be replaced as the layout commits.
 /// Route targets are ASCII alphanumerics and `-`, so they quote verbatim.
 fn routed_element(document: &web_sys::Document, target: &str) -> Option<web_sys::Element> {
     let nodes = document
