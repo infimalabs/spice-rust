@@ -31,6 +31,7 @@ fn actor_and_active_lane_work_stay_constant_as_inactive_claim_heads_grow() {
                 ClaimFreed {
                     task: task.clone(),
                     actor: Actor::Operator,
+                    parked: None,
                 },
                 FactCause::Existing(head.claimed),
             )
@@ -145,6 +146,7 @@ fn claim_disposition_update_replaces_the_index_predicate_atomically() {
             ClaimFreed {
                 task: peer.clone(),
                 actor: Actor::Operator,
+                parked: None,
             },
             FactCause::Existing(observed.claimed),
         )

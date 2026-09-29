@@ -2,10 +2,11 @@
 //!
 //! Two invariants govern how this system is allowed to touch git. GIT-01: the
 //! agent itself never pulls and never pushes, and its working tree is touched
-//! at exactly three control-plane boundaries. Operator-authored release
-//! publication is a separate, enumerated control plane: planning may inspect
-//! the configured remote, while applying a digest-approved plan may publish
-//! through the tracked release authority. GIT-06: activation is deliberately
+//! at exactly four control-plane boundaries: claim, voluntary release, phase
+//! completion, and launch. Operator-authored release publication is a separate,
+//! enumerated control plane: planning may inspect the configured remote, while
+//! applying a digest-approved plan may publish through the tracked release
+//! authority. GIT-06: activation is deliberately
 //! not another boundary, because it is replayed after every compaction and
 //! would land git work mid-session between two of a live agent's own commands.
 //!
@@ -166,6 +167,8 @@ enum Boundary {
     Claim,
     /// GIT-03, at phase completion: integrate and publish the task boundary.
     PhaseCompletion,
+    /// At voluntary release: retain task commits and reset the lane to its opening.
+    Release,
     /// GIT-04, at agent launch: advance opportunistically and never raise, and
     /// publish the per-worktree git shadow. Two writes, one boundary: the
     /// shadow composes the environment the lane runs under, and the advance
@@ -195,9 +198,9 @@ const ENTRY_POINTS: [(&str, &[(&str, Boundary)]); 2] = [
             ("advance_at_launch", Boundary::Launch),
             ("capture", Boundary::Claim),
             ("prepare_claim", Boundary::Claim),
-            ("prepare_free", Boundary::ReadOnly),
+            ("prepare_task_claim", Boundary::Claim),
+            ("prepare_free", Boundary::Release),
             ("publish_claimed", Boundary::PhaseCompletion),
-            ("stranded_commits", Boundary::ReadOnly),
         ],
     ),
 ];
@@ -329,9 +332,9 @@ fn proof_sources_name_no_caller_mutating_git_operation() {
     );
 }
 
-/// GIT-01 and GIT-06: three writing boundaries, and activation is not one.
+/// GIT-01 and GIT-06: four writing boundaries, and activation is not one.
 #[test]
-fn the_git_writing_boundaries_are_claim_completion_and_launch() {
+fn the_git_writing_boundaries_are_claim_release_completion_and_launch() {
     let sources = workspace_rust_sources();
 
     let found = public_entry_points(&sources);
@@ -357,8 +360,13 @@ fn the_git_writing_boundaries_are_claim_completion_and_launch() {
         .collect::<BTreeSet<_>>();
     assert_eq!(
         writing,
-        BTreeSet::from([Boundary::Claim, Boundary::PhaseCompletion, Boundary::Launch]),
-        "git is touched at exactly three control-plane boundaries"
+        BTreeSet::from([
+            Boundary::Claim,
+            Boundary::Release,
+            Boundary::PhaseCompletion,
+            Boundary::Launch,
+        ]),
+        "git is touched at exactly four control-plane boundaries"
     );
 
     let surface = sources

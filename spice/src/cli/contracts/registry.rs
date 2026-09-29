@@ -566,8 +566,9 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "task defer HANDLE UNTIL",
         OperatorOrLane,
         Command,
-        [TaskDeferred],
-        [Resident],
+        [TaskDeferred, ClaimFreed],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
         Reply,
         "board::task_defer"
     ),
@@ -588,7 +589,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
         OperatorOrLane,
         Command,
         [ClaimFreed],
-        [Resident],
+        [Resident, Toolful],
+        TASK_GIT_TOOLS,
         Reply,
         "board::task_free"
     ),

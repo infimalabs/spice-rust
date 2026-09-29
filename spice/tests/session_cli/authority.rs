@@ -431,6 +431,7 @@ fn free_held_claim(path: &Path) {
             body::ClaimFreed {
                 task: task.clone(),
                 actor,
+                parked: None,
             },
             FactCause::Root,
         )

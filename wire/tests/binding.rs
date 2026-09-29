@@ -699,6 +699,7 @@ fn the_board_task_row_is_the_struct_this_crate_declares() {
                 local_commits: 2,
             },
         }),
+        parked_commits: None,
     };
 
     let encoded = serde_json::to_value(&task).expect("the constructed board task encodes");

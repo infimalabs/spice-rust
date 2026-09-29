@@ -88,6 +88,7 @@ fn reclaiming_a_released_task_preserves_its_new_ready_origin() {
             body::ClaimFreed {
                 task: task.clone(),
                 actor: claim.actor.clone(),
+                parked: None,
             },
             FactCause::Root,
         )

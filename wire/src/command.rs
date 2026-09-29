@@ -289,10 +289,15 @@ impl Law {
         optional: &[],
         authority: Authority::Connected,
     };
-    /// Exact workflow head and current defer disposition.
+    /// Exact workflow and defer disposition. A holder deferring its own task
+    /// additionally witnesses the claim, lease, and occupied residency it releases.
     pub const DEFER: Self = Self {
         required: &[WitnessKind::Workflow, WitnessKind::Deferral],
-        optional: &[],
+        optional: &[
+            WitnessKind::Claim,
+            WitnessKind::Lease,
+            WitnessKind::Residency,
+        ],
         authority: Authority::Connected,
     };
     /// Exact workflow and defer disposition, plus the statement head when a

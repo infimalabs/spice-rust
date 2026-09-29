@@ -36,6 +36,31 @@ fn claim_wake_expected(
     expected
 }
 
+fn capture_task(bus: &Bus, epoch: CanonicalUuid, seat: &Seat, task: &TaskHandle) -> Actor {
+    let lane = Actor::Lane(seat.lane);
+    let available = board(bus, epoch, lane.clone());
+    let heads = at(&available, task);
+    let rule: Name = "capture".parse().expect("capture rule");
+    assert_committed(issue(
+        bus,
+        epoch,
+        lane.clone(),
+        CommandKind::ClaimWin,
+        vec![
+            statement_witness(heads),
+            workflow_witness(heads),
+            claim_witness(heads),
+            Witness::Eligibility { rule: rule.clone() },
+            residency(&available, seat),
+        ],
+        &ClaimWin {
+            rule,
+            recovery: None,
+        },
+    ));
+    lane
+}
+
 fn fact_count(bus: &Bus) -> usize {
     bus.fact_snapshot()
         .expect("fixture facts remain readable")
@@ -159,6 +184,110 @@ fn deferred_wake_claims_in_one_transaction_and_an_existing_claim_refuses_without
             .deferral,
         Some(until),
         "refused claim must leave the task deferred",
+    );
+    clean(&root, bus);
+}
+
+#[test]
+fn self_defer_releases_the_claim_but_peer_defer_leaves_it_held() {
+    let (root, bus, epoch, seats) = fixture("defer-release", 1);
+    let owner = Actor::Lane(seats[0].lane);
+    let peer = Actor::Operator;
+    let task = add(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "DEFER-release01",
+        "Release a self-deferred claim",
+        Some("todo"),
+    );
+    capture_task(&bus, epoch, &seats[0], &task);
+    let held = board(&bus, epoch, owner.clone());
+    let heads = at(&held, &task);
+    let lease = heads.lease.as_ref().expect("claimed task has a lease");
+    let until = instant_after(current_instant().expect("clock"), 300).expect("future instant");
+    let Outcome::Reply(Reply {
+        position: ReplyPosition::Committed(range),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        owner.clone(),
+        CommandKind::TaskDefer,
+        vec![
+            workflow_witness(heads),
+            deferral_witness(heads),
+            claim_witness(heads),
+            Witness::Lease {
+                task: heads.statement.body.born.clone(),
+                head: lease.position,
+            },
+            residency(&held, &seats[0]),
+        ],
+        &TaskDefer {
+            task: task.clone(),
+            wait: until,
+        },
+    )
+    else {
+        panic!("self defer did not commit")
+    };
+    let committed = bus
+        .fact_snapshot()
+        .expect("fixture facts remain readable")
+        .facts()
+        .iter()
+        .filter(|fact| fact.seq >= range.first && fact.seq <= range.last)
+        .map(|fact| fact.fact.kind())
+        .collect::<Vec<_>>();
+    assert!(committed.contains(&wire::FactKind::TaskDeferred));
+    assert!(committed.contains(&wire::FactKind::ClaimFreed));
+    let deferred = board(&bus, epoch, owner.clone());
+    let heads = at(&deferred, &task);
+    assert_eq!(heads.workflow.body.deferral, Some(until));
+    assert_eq!(
+        heads.claim.as_ref().map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Freed),
+    );
+
+    let peer_until =
+        instant_after(current_instant().expect("clock"), 600).expect("future peer instant");
+    assert_committed(issue(
+        &bus,
+        epoch,
+        peer.clone(),
+        CommandKind::TaskWake,
+        vec![workflow_witness(heads), deferral_witness(heads)],
+        &TaskWake {
+            task: task.clone(),
+            into: None,
+            claim: false,
+        },
+    ));
+    capture_task(&bus, epoch, &seats[0], &task);
+    let held = board(&bus, epoch, peer.clone());
+    let heads = at(&held, &task);
+    assert_committed(issue(
+        &bus,
+        epoch,
+        peer,
+        CommandKind::TaskDefer,
+        vec![workflow_witness(heads), deferral_witness(heads)],
+        &TaskDefer {
+            task: task.clone(),
+            wait: peer_until,
+        },
+    ));
+    let peer_deferred = board(&bus, epoch, owner.clone());
+    let heads = at(&peer_deferred, &task);
+    assert_eq!(heads.workflow.body.deferral, Some(peer_until));
+    assert_eq!(
+        heads.claim.as_ref().map(|claim| claim.body.disposition),
+        Some(ClaimDisposition::Active),
+    );
+    assert_eq!(
+        heads.claim.as_ref().map(|claim| &claim.body.actor),
+        Some(&owner),
     );
     clean(&root, bus);
 }

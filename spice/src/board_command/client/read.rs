@@ -456,6 +456,7 @@ pub(in crate::board_command) fn task_show_with_origin(
     lines.extend(claim_context_lines(task));
     lines.push(format!("spice doc ledger {}", statement.handle));
     lines.extend(git_context_lines(task));
+    lines.extend(parked_commit_lines(task));
     let tags = visible_tags(&statement.tags).collect::<Vec<_>>();
     if tags.is_empty() {
         lines.push("tags -".to_owned());
@@ -710,6 +711,20 @@ fn claim_context_lines(task: &BoardTask) -> Vec<String> {
             lines.push(format!("claim_context unavailable {reason}"));
         }
     }
+    lines
+}
+
+fn parked_commit_lines(task: &BoardTask) -> Vec<String> {
+    let Some(parked) = &task.parked_commits else {
+        return Vec::new();
+    };
+    let mut lines = vec![
+        format!("parked_ref {}", parked.reference),
+        format!("parked_baseline {}", parked.baseline),
+        format!("parked_head {}", parked.head),
+        "parked_commits:".to_owned(),
+    ];
+    lines.extend(parked.commits.iter().map(|commit| format!("  - {commit}")));
     lines
 }
 

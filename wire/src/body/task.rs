@@ -572,6 +572,20 @@ pub struct ClaimRebound {
     pub source: SourceBoundary,
 }
 
+/// Repository commits detached from a lane when its task claim was released.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskParkedCommits {
+    /// Task-owned ref retaining the original commit graph.
+    pub reference: String,
+    /// Exact task baseline the commits were authored from.
+    pub baseline: String,
+    /// Original parked tip.
+    pub head: String,
+    /// Original commit identities in oldest-first ancestry order.
+    pub commits: Vec<String>,
+}
+
 /// Possession was released and the task became eligible again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimFreed {
@@ -579,6 +593,13 @@ pub struct ClaimFreed {
     pub task: TaskStamp,
     /// Actor that held the possession.
     pub actor: Actor,
+    /// Commits retained for this task while no lane owns it.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub parked: Option<TaskParkedCommits>,
 }
 
 /// The lease deadline passed and the resident expired possession.

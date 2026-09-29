@@ -101,6 +101,7 @@ pub(in crate::board_command) struct ClaimGrant {
     maximum: Instant,
     git: Option<GitBoundary>,
     source: body::SourceBoundary,
+    prepared_git: Option<spice::task_git::ClaimPreparation>,
 }
 
 /// Resolve the seat, the deadlines and the two boundaries one claim records.
@@ -122,13 +123,15 @@ pub(in crate::board_command) fn claim_grant(
         at,
         expiry,
         maximum,
-        git,
+        git: git.as_ref().map(|git| git.boundary.clone()),
+        prepared_git: git.and_then(|git| git.prepared),
         source,
     })
 }
 /// Claim state prepared for a task made ready in the same transaction.
 pub(super) struct PreparedClaim {
     grant: ClaimGrant,
+    prepared_git: Option<spice::task_git::ClaimPreparation>,
 }
 
 /// Validate and prepare an atomic mutation-and-claim before the journal opens.
@@ -164,7 +167,7 @@ pub(super) fn prepare_capture_claim(
     // Atomic mutations share capture's named-task eligibility and residency
     // authority, but record the clean claim boundary used by allocator claims
     // rather than requiring loose commits to capture.
-    let grant = claim_grant(
+    let mut grant = claim_grant(
         bus,
         command,
         repository,
@@ -172,7 +175,11 @@ pub(super) fn prepare_capture_claim(
         selected,
         Possession::Next,
     )?;
-    Ok(PreparedClaim { grant })
+    let prepared_git = grant.prepared_git.take();
+    Ok(PreparedClaim {
+        grant,
+        prepared_git,
+    })
 }
 
 impl PreparedClaim {
@@ -215,21 +222,33 @@ impl PreparedClaim {
         write: &mut JournalWrite,
         command: &wire::AdmittedCommand,
         selected: &Entry,
-    ) -> Result<(), Outcome<CommandAnswer>> {
-        append_claim_heads(
+    ) -> Result<Option<spice::task_git::ClaimPreparation>, Outcome<CommandAnswer>> {
+        let Self {
+            grant,
+            prepared_git,
+        } = self;
+        if let Err(outcome) = append_claim_heads(
             write,
             command,
             selected,
             selected.born(),
-            self.grant.lane,
-            self.grant.occupant,
-            self.grant.at,
-            self.grant.expiry,
-            self.grant.maximum,
-            self.grant.git,
+            grant.lane,
+            grant.occupant,
+            grant.at,
+            grant.expiry,
+            grant.maximum,
+            grant.git,
             None,
-            self.grant.source,
-        )
+            grant.source,
+        ) {
+            if let Some(prepared) = prepared_git {
+                if let Err(error) = prepared.rollback() {
+                    return Err(task_git_outcome(error));
+                }
+            }
+            return Err(outcome);
+        }
+        Ok(prepared_git)
     }
 }
 
@@ -285,38 +304,55 @@ pub(in crate::board_command) fn commit_claim(
         next,
         possession,
     } = plan;
+    let ClaimGrant {
+        lane,
+        occupant,
+        at,
+        expiry,
+        maximum,
+        git,
+        source,
+        prepared_git,
+    } = grant;
     let task = selected.handle().clone();
     let born = selected.born().clone();
     let origin = match task_origin(&born) {
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
-    let mut write = JournalWrite::new(
-        command.actor().clone(),
-        origin,
-        grant.at,
-        Producer::CommandDoor,
-    );
+    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
     guard_claim(&mut write, &snapshot, command, possession, &task, projects);
     if let Err(outcome) = append_claim_heads(
         &mut write,
         command,
         &selected,
         &born,
-        grant.lane,
-        grant.occupant,
-        grant.at,
-        grant.expiry,
-        grant.maximum,
-        grant.git,
+        lane,
+        occupant,
+        at,
+        expiry,
+        maximum,
+        git,
         win.recovery.clone(),
-        grant.source,
+        source,
     ) {
+        if let Some(prepared) = prepared_git {
+            if let Err(error) = prepared.rollback() {
+                return task_git_outcome(error);
+            }
+        }
         return outcome;
     }
     let origin_context = match task_steering_origin_output(bus, &selected.statement().provenance) {
         Ok(context) => context,
-        Err(outcome) => return outcome,
+        Err(outcome) => {
+            if let Some(prepared) = prepared_git {
+                if let Err(error) = prepared.rollback() {
+                    return task_git_outcome(error);
+                }
+            }
+            return outcome;
+        }
     };
     let answer = claim_answer(command, &selected, &snapshot.entries, next, origin_context);
     if let Err(error) = write.command_result(
@@ -324,9 +360,19 @@ pub(in crate::board_command) fn commit_claim(
         command.epoch(),
         answer.clone(),
     ) {
+        if let Some(prepared) = prepared_git {
+            if let Err(rollback) = prepared.rollback() {
+                return task_git_outcome(rollback);
+            }
+        }
         return store_fault("claim::win-receipt", &error.to_string());
     }
-    committed(bus, write, CommandAnswer::Claim(Box::new(answer)))
+    let body = CommandAnswer::Claim(Box::new(answer));
+    if let Some(prepared) = prepared_git {
+        committed_with_task_git(bus, write, body, PreparedTaskGit::Claim(prepared))
+    } else {
+        committed(bus, write, body)
+    }
 }
 
 /// The exact command a lane runs next on the task it just won.
@@ -563,32 +609,59 @@ fn claim_deadlines() -> Result<(Instant, Instant, Instant), Outcome<CommandAnswe
     Ok((at, expiry, maximum))
 }
 
+pub(in crate::board_command) struct ClaimGit {
+    boundary: GitBoundary,
+    prepared: Option<spice::task_git::ClaimPreparation>,
+}
+
 pub(in crate::board_command) fn claim_git_boundary(
     repository: Option<&Repository>,
     snapshot: &ValidatedSnapshot,
     command: &wire::AdmittedCommand,
     selected: &Entry,
     possession: Possession,
-) -> Result<Option<GitBoundary>, Outcome<CommandAnswer>> {
+) -> Result<Option<ClaimGit>, Outcome<CommandAnswer>> {
     let Some(resident) = repository else {
         return Ok(None);
     };
     let lane = task_repository(snapshot, command, resident)?;
+    let parked = snapshot
+        .answer
+        .tasks
+        .iter()
+        .find(|task| task.statement.body.born == *selected.born())
+        .and_then(|task| task.parked_commits.as_ref());
     let result = match possession {
-        Possession::Capture => {
-            spice::task_git::capture(&lane).map(|capture| Some(capture.boundary))
+        Possession::Capture if parked.is_none() => {
+            spice::task_git::capture(&lane).map(|capture| ClaimGit {
+                boundary: capture.boundary,
+                prepared: None,
+            })
         }
         Possession::Steal => match spice::task_git::capture(&lane) {
-            Ok(capture) => Ok(Some(capture.boundary)),
-            Err(error) if error.reason() == "git::nothing-to-capture" => Ok(None),
+            Ok(capture) => Ok(ClaimGit {
+                boundary: capture.boundary,
+                prepared: None,
+            }),
+            Err(error) if error.reason() == "git::nothing-to-capture" => return Ok(None),
             Err(error) => Err(error),
         },
-        Possession::Next => spice::task_git::prepare_claim(&lane).map(Some),
+        Possession::Next | Possession::Capture => {
+            spice::task_git::prepare_task_claim(&lane, parked).map(|prepared| ClaimGit {
+                boundary: prepared.boundary.clone(),
+                prepared: Some(prepared),
+            })
+        }
         Possession::Recover => {
-            return recovery_git_boundary(&lane, command, selected).map(Some);
+            return recovery_git_boundary(&lane, command, selected).map(|boundary| {
+                Some(ClaimGit {
+                    boundary,
+                    prepared: None,
+                })
+            });
         }
     };
-    result.map_err(task_git_outcome)
+    result.map(Some).map_err(task_git_outcome)
 }
 
 fn recovery_git_boundary(

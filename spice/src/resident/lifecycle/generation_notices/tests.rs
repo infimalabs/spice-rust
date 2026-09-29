@@ -285,6 +285,7 @@ fn end_claim(bus: &Bus, task: &TaskStamp) {
             wire::body::ClaimFreed {
                 task: task.clone(),
                 actor: claim.actor.clone(),
+                parked: None,
             },
             FactCause::Existing(claim.claimed),
         )

@@ -203,6 +203,7 @@ fn seed_free(journal: &mut Journal, fixture: &AllocationFixture) {
             wire::body::ClaimFreed {
                 task: fixture.task.clone(),
                 actor: Actor::Lane(lane),
+                parked: None,
             },
             crate::FactCause::Root,
         )

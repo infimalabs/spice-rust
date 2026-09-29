@@ -274,6 +274,7 @@ fn board_task(
         explicit_release: false,
         claim_context: None,
         git_context: None,
+        parked_commits: None,
     }
 }
 

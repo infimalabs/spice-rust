@@ -217,60 +217,300 @@ pub fn capture(repository: &Repository) -> Result<Capture, Error> {
     })
 }
 
-/// Local commits a claim would strand if its holder released it now.
+/// A release-side Git transition prepared before its board fact commits.
 ///
-/// Deliberately read-only, unlike its siblings: it neither recovers a pending
-/// operation, nor requires a clean tree, nor fetches, because deciding whether
-/// a release is safe must not itself move the lane or reach the network. The
-/// local baseline is the same evidence `prepare_claim` would refuse on later.
-/// A lane with no origin-backed baseline has nothing to strand and answers with
-/// no commits, which is the inert stance `prepare_claim` takes there too.
-pub fn stranded_commits(repository: &Repository) -> Result<Vec<String>, Error> {
-    let root = repository.worktree_root();
-    let Some(target) = resolve_target(root)? else {
-        return Ok(Vec::new());
-    };
-    let listed = required_read(
-        root,
-        &[
-            "log",
-            "--format=%h %s",
-            &format!("{}..HEAD", target.baseline),
-        ],
-        "list local commits",
-    )?;
-    Ok(listed.lines().map(str::to_owned).collect())
+/// The task-owned ref intentionally survives success. If the guarded board
+/// write refuses, `rollback` restores the lane and removes that ref.
+#[derive(Debug)]
+pub struct ParkedRelease {
+    parked: wire::body::TaskParkedCommits,
+    root: PathBuf,
+    before: String,
 }
 
-/// Refuse a voluntary release that would leave task commits owned by nobody.
-///
-/// `prepare_claim` already refuses to hand a lane new work while loose commits
-/// sit outside a claimed boundary. Releasing a claim is the door that creates
-/// those loose commits in the first place, so it refuses on the same evidence
-/// and names both the commits and the way out.
-pub fn prepare_free(repository: &Repository, task: &str) -> Result<(), Error> {
-    let stranded = stranded_commits(repository)?;
-    if stranded.is_empty() {
-        return Ok(());
+impl ParkedRelease {
+    /// Exact durable payload written beside `ClaimFreed`.
+    #[must_use]
+    pub const fn parked(&self) -> &wire::body::TaskParkedCommits {
+        &self.parked
     }
-    Err(Error::refusal(
-        "git::free-loose-commits",
-        format!(
-            "releasing {task} would strand {count} task-owned local commit(s): {listed}",
-            count = stranded.len(),
-            listed = stranded.join("; "),
-        ),
-        format!(
-            "run `spice task reclaim {task}` to recover current residency, then \
-             `spice task done {task}` to record those commits; or reset the lane \
-             to the task baseline before freeing it",
-        ),
-    ))
+
+    /// Undo a prepared release after its board write failed.
+    pub fn rollback(self) -> Result<(), Error> {
+        let current = required_read(&self.root, &["rev-parse", "HEAD"], "read parked lane HEAD")?;
+        if current != self.before {
+            materialize_and_update(
+                &self.root,
+                &self.before,
+                &current,
+                "restore lane after refused task release",
+            )?;
+        }
+        delete_ref(
+            &self.root,
+            &self.parked.reference,
+            &self.parked.head,
+            "remove refused task parking ref",
+        )
+    }
+}
+
+/// Park a holder's committed work and return its lane to the claim baseline.
+///
+/// A clean task with no commits needs no ref and returns `None`. Every failure
+/// after ref creation compensates before returning.
+pub fn prepare_free(
+    repository: &Repository,
+    task: &wire::TaskStamp,
+    opening: Option<&GitBoundary>,
+) -> Result<Option<ParkedRelease>, Error> {
+    let root = repository.worktree_root();
+    recover_pending(root)?;
+    require_clean(root, "task release")?;
+    let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
+    let Some(baseline) = release_baseline(root, opening)? else {
+        return Ok(None);
+    };
+    if !is_ancestor(root, &baseline, &before)? {
+        return Err(Error::refusal(
+            "git::release-baseline-diverged",
+            format!("task baseline {baseline} is not an ancestor of lane HEAD {before}"),
+            "restore the claimed task history before releasing it",
+        ));
+    }
+    let commits = rev_list(root, &baseline, &before)?;
+    if commits.is_empty() {
+        return Ok(None);
+    }
+    let reference = format!("refs/spice/tasks/{task}/parked");
+    if try_read(root, &["rev-parse", "--verify", &reference])?.is_some() {
+        return Err(Error::refusal(
+            "git::parked-ref-exists",
+            format!("task parking ref {reference} already exists"),
+            "claim and restore the task's parked commits before releasing it again",
+        ));
+    }
+    update_ref(root, &reference, &before, "", "create task parking ref")?;
+    if let Err(error) =
+        materialize_and_update(root, &baseline, &before, "return lane to task baseline")
+    {
+        let _ = delete_ref(root, &reference, &before, "remove failed task parking ref");
+        return Err(error);
+    }
+    Ok(Some(ParkedRelease {
+        parked: wire::body::TaskParkedCommits {
+            reference,
+            baseline,
+            head: before.clone(),
+            commits,
+        },
+        root: root.to_path_buf(),
+        before,
+    }))
+}
+
+fn release_baseline(root: &Path, opening: Option<&GitBoundary>) -> Result<Option<String>, Error> {
+    if let Some(opening) = opening {
+        return Ok(Some(opening.head.clone()));
+    }
+    let Some(target) = resolve_target(root)? else {
+        return Ok(None);
+    };
+    Ok(Some(required_read(
+        root,
+        &["rev-parse", &target.baseline],
+        "read release baseline",
+    )?))
+}
+
+fn rev_list(root: &Path, baseline: &str, head: &str) -> Result<Vec<String>, Error> {
+    let listed = required_read(
+        root,
+        &["rev-list", "--reverse", &format!("{baseline}..{head}")],
+        "list task commits",
+    )?;
+    Ok(listed.lines().map(str::to_owned).collect())
 }
 
 /// Safely advance a clean lane before allocator possession is minted.
 pub fn prepare_claim(repository: &Repository) -> Result<GitBoundary, Error> {
     prepare_claim_observed(repository, || Ok(()), |_| Ok(()))
+}
+/// Claim-side Git work prepared before the guarded claim fact commits.
+#[derive(Debug)]
+pub struct ClaimPreparation {
+    pub boundary: GitBoundary,
+    restore: Option<ParkedRestore>,
+}
+
+#[derive(Debug)]
+struct ParkedRestore {
+    root: PathBuf,
+    before: String,
+    restored: String,
+    reference: String,
+    parked_head: String,
+}
+
+impl ClaimPreparation {
+    /// Consume the task-owned ref after the board has durably claimed its work.
+    pub fn commit(self) -> Result<(), Error> {
+        let Some(restore) = self.restore else {
+            return Ok(());
+        };
+        delete_ref(
+            &restore.root,
+            &restore.reference,
+            &restore.parked_head,
+            "consume restored task parking ref",
+        )
+    }
+
+    /// Return the lane to its pre-claim HEAD after a guarded board refusal.
+    pub fn rollback(self) -> Result<(), Error> {
+        let Some(restore) = self.restore else {
+            return Ok(());
+        };
+        let current = required_read(
+            &restore.root,
+            &["rev-parse", "HEAD"],
+            "read restored lane HEAD",
+        )?;
+        if current != restore.restored {
+            return Err(Error::fault(
+                "git::parked-rollback-head-moved",
+                format!(
+                    "restored lane moved from {} to {} before claim rollback",
+                    restore.restored, current
+                ),
+            ));
+        }
+        materialize_and_update(
+            &restore.root,
+            &restore.before,
+            &current,
+            "restore lane after refused parked claim",
+        )
+    }
+}
+
+/// Advance a clean lane and restore one task's parked commits at its claim boundary.
+pub fn prepare_task_claim(
+    repository: &Repository,
+    parked: Option<&wire::body::TaskParkedCommits>,
+) -> Result<ClaimPreparation, Error> {
+    let root = repository.worktree_root();
+    let before = required_read(root, &["rev-parse", "HEAD"], "read pre-claim lane HEAD")?;
+    let mut boundary = prepare_claim(repository)?;
+    let Some(parked) = parked else {
+        return Ok(ClaimPreparation {
+            boundary,
+            restore: None,
+        });
+    };
+    let result = restore_parked(root, parked, &boundary);
+    let restored = match result {
+        Ok(restored) => restored,
+        Err(error) => {
+            let current = required_read(
+                root,
+                &["rev-parse", "HEAD"],
+                "read failed restore lane HEAD",
+            )?;
+            if current != before {
+                materialize_and_update(
+                    root,
+                    &before,
+                    &current,
+                    "restore lane after failed parked claim",
+                )?;
+            }
+            return Err(error);
+        }
+    };
+    boundary.head = restored.clone();
+    boundary.integrated = restored.clone();
+    boundary.local_commits = u32::try_from(parked.commits.len()).unwrap_or(u32::MAX);
+    Ok(ClaimPreparation {
+        boundary,
+        restore: Some(ParkedRestore {
+            root: root.to_path_buf(),
+            before,
+            restored,
+            reference: parked.reference.clone(),
+            parked_head: parked.head.clone(),
+        }),
+    })
+}
+
+fn restore_parked(
+    root: &Path,
+    parked: &wire::body::TaskParkedCommits,
+    boundary: &GitBoundary,
+) -> Result<String, Error> {
+    let retained = required_read(
+        root,
+        &["rev-parse", "--verify", &parked.reference],
+        "read task parking ref",
+    )?;
+    if retained != parked.head {
+        return Err(Error::refusal(
+            "git::parked-ref-moved",
+            format!(
+                "task parking ref {} names {retained}, expected {}",
+                parked.reference, parked.head
+            ),
+            "restore the task-owned ref to its journaled parked head and retry",
+        ));
+    }
+    let commits = rev_list(root, &parked.baseline, &parked.head)?;
+    if commits != parked.commits {
+        return Err(Error::refusal(
+            "git::parked-history-mismatch",
+            format!(
+                "task parking ref {} no longer has its journaled history",
+                parked.reference
+            ),
+            "restore the journaled parked commit graph and retry the claim",
+        ));
+    }
+    let current = &boundary.head;
+    let restored = if is_ancestor(root, current, &parked.head)? {
+        parked.head.clone()
+    } else if is_ancestor(root, &parked.head, current)? {
+        current.clone()
+    } else {
+        let merged = merge_tree(root, current, &parked.head)?;
+        if !merged.conflicts.is_empty() {
+            return Err(Error::refusal(
+                "git::parked-restore-conflict",
+                format!(
+                    "parked task commits conflict with current baseline {}: {}",
+                    current,
+                    merged.conflicts.join("; ")
+                ),
+                "resolve the task history against the current baseline before claiming it",
+            ));
+        }
+        let created = create_merge_commit(
+            root,
+            &merged.tree,
+            current,
+            &parked.head,
+            "Restore parked task commits",
+        )?;
+        if !created.success() || created.stdout.trim().is_empty() {
+            return Err(Error::fault(
+                "git::parked-merge-failed",
+                created.detail("create parked task restore commit"),
+            ));
+        }
+        created.stdout.trim().to_owned()
+    };
+    if restored != *current {
+        materialize_and_update(root, &restored, current, "restore parked task commits")?;
+    }
+    Ok(restored)
 }
 
 /// Safely advance a clean lane while durably observing the exact target first.
@@ -701,6 +941,35 @@ fn ahead_count(root: &Path, baseline: &str) -> Result<u32, Error> {
     value
         .parse()
         .map_err(|_| Error::fault("git::ahead-invalid", format!("Git returned {value:?}")))
+}
+fn update_ref(
+    root: &Path,
+    reference: &str,
+    target: &str,
+    expected: &str,
+    action: &str,
+) -> Result<(), Error> {
+    let updated = run(root, &["update-ref", reference, target, expected])?;
+    if updated.success() {
+        Ok(())
+    } else {
+        Err(Error::fault(
+            "git::parked-ref-update-failed",
+            updated.detail(action),
+        ))
+    }
+}
+
+fn delete_ref(root: &Path, reference: &str, expected: &str, action: &str) -> Result<(), Error> {
+    let deleted = run(root, &["update-ref", "-d", reference, expected])?;
+    if deleted.success() {
+        Ok(())
+    } else {
+        Err(Error::fault(
+            "git::parked-ref-delete-failed",
+            deleted.detail(action),
+        ))
+    }
 }
 
 fn integrate(
