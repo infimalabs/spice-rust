@@ -15,7 +15,12 @@ use std::time::{Duration, Instant};
 
 use spice::install::{self, InstallError};
 use spice::repository::Repository;
+use spice::resident_lock::{
+    ResidentAccess, ResidentLaunch, auth_token_is_valid, holder_epoch, holder_launch,
+};
 use wire::{Digest, TaskStamp};
+
+use super::{RefreshError, RefreshReport, RefreshRequest};
 
 /// Repository-common home for developer-refresh rollback executables.
 const WORKSPACE: &str = "develop";
@@ -33,7 +38,14 @@ const SOURCE_STAMP_ENV: &str = "SPICE_SOURCE_STAMP"; // env-policy: allow
 const MAX_BOOTSTRAP_BYTES: u64 = 64 * 1024;
 /// One local resident identity probe must not hold an install indefinitely.
 const BOOTSTRAP_PROBE_BOUND: Duration = Duration::from_secs(2);
-use super::{RefreshError, RefreshReport, RefreshRequest};
+
+#[derive(Clone, Default)]
+struct RestartBinding {
+    host: Option<String>,
+    port: Option<u16>,
+    allow_insecure_bind: bool,
+    auth_token: Option<OsString>,
+}
 
 /// Build the current tree, republish the appliance, and restart its resident.
 pub(super) fn perform(
@@ -60,8 +72,7 @@ fn install_built(
     let installed = install::installed_binary(repository);
     let before = snapshot_install(repository, &installed)?;
     let schema = schema_recovery_boundary(repository, request.restart)?;
-    let published = read_endpoint(repository);
-    let endpoint = requested_endpoint(request, published.as_deref());
+    let (published, binding) = restart_state(repository, request)?;
 
     // Resolve and preserve the running generation before changing either the
     // installed executable or the transaction rollback. No-resident
@@ -109,6 +120,7 @@ fn install_built(
                 resident_executable: resident_rollback.as_deref(),
                 published: published.as_deref(),
                 restart: request.restart,
+                binding: binding.clone(),
             };
             restore_resident(repository, &unwind, output);
             return Err(error.into());
@@ -121,6 +133,7 @@ fn install_built(
         resident_executable: resident_rollback.as_deref(),
         published: published.as_deref(),
         restart: request.restart,
+        binding: binding.clone(),
     };
     let installing = Instant::now();
     let digest = match refresh_install(repository, &built) {
@@ -138,9 +151,8 @@ fn install_built(
         installing.elapsed()
     );
 
-    let bound = (endpoint.0.as_deref(), endpoint.1);
     let endpoint =
-        match restart_admitting_reappearance(repository, &installed, bound, request, output) {
+        match restart_admitting_reappearance(repository, &installed, &binding, request, output) {
             Ok(endpoint) => endpoint,
             Err(error) => {
                 let Some((journal, before_schema)) = &schema else {
@@ -609,6 +621,8 @@ struct Rollback<'a> {
     published: Option<&'a str>,
     /// Whether this refresh was the kind that stops and starts a resident.
     restart: bool,
+    /// Exact bind, consent, and one-shot authentication needed for restoration.
+    binding: RestartBinding,
 }
 
 /// Return an untouched refusal directly; reinstall only when the receipt or
@@ -658,7 +672,8 @@ fn restore(
     cause
 }
 
-/// Start the restored executable's resident back on the endpoint it had.
+/// Start the restored executable's resident back on the exact bind and access
+/// policy it had.
 ///
 /// A refresh that stopped the resident and then failed leaves the appliance
 /// installed but unserved, so putting the executable back is only half of what
@@ -666,21 +681,17 @@ fn restore(
 /// raised, because the failure worth answering is the one that forced the
 /// restore, not the restore's own aftermath.
 fn restore_resident(repository: &Repository, rollback: &Rollback<'_>, output: &mut impl Write) {
-    if !rollback.restart {
+    if !rollback.restart || rollback.published.is_none() {
         return;
     }
-    let Some((host, port)) = rollback.published.and_then(endpoint_parts) else {
-        return;
-    };
     let _ = writeln!(output, "restarting previous resident");
     let request = RefreshRequest {
         restart: true,
         ..RefreshRequest::default()
     };
-    let bound = (Some(host.as_str()), Some(port));
     let executable = rollback.resident_executable.unwrap_or(rollback.installed);
     if let Err(error) =
-        restart_admitting_reappearance(repository, executable, bound, &request, output)
+        restart_admitting_reappearance(repository, executable, &rollback.binding, &request, output)
     {
         let _ = writeln!(output, "previous resident did not come back: {error}");
     }
@@ -700,27 +711,98 @@ fn read_discovery(repository: &Repository) -> Option<spice::canvas::Discovery> {
     wire::decode(&bytes).ok()
 }
 
+/// Snapshot the live generation's restart contract before any install mutation.
+fn restart_state(
+    repository: &Repository,
+    request: &RefreshRequest,
+) -> Result<(Option<String>, RestartBinding), RefreshError> {
+    let discovery = read_discovery(repository);
+    let published = discovery
+        .as_ref()
+        .map(|discovery| discovery.endpoint.clone());
+    let launch = if request.restart {
+        match discovery.as_ref() {
+            Some(discovery) => match read_resident_launch(repository, discovery) {
+                Ok(launch) => launch,
+                Err(_) if !listening(&discovery.endpoint) => None,
+                Err(error) => return Err(error),
+            },
+            None => None,
+        }
+    } else {
+        None
+    };
+    let binding = requested_binding(request, published.as_deref(), launch)?;
+    Ok((published, binding))
+}
+
+/// Bind and access metadata published by the same resident generation.
+fn read_resident_launch(
+    repository: &Repository,
+    discovery: &spice::canvas::Discovery,
+) -> Result<Option<ResidentLaunch>, RefreshError> {
+    let state = repository
+        .admit_state()
+        .map_err(|error| RefreshError::ResidentLaunchUncertain(error.to_string()))?;
+    let holder = fs::read(state.resident())
+        .map_err(|error| RefreshError::ResidentLaunchUncertain(error.to_string()))?;
+    if holder_epoch(&holder) != Some(discovery.epoch) {
+        return Err(RefreshError::ResidentLaunchUncertain(format!(
+            "holder generation does not match discovery generation {}",
+            discovery.epoch
+        )));
+    }
+    holder_launch(&holder).map_err(|error| RefreshError::ResidentLaunchUncertain(error.to_string()))
+}
+
 /// Endpoint the published discovery names, when a resident published one.
 fn read_endpoint(repository: &Repository) -> Option<String> {
     read_discovery(repository).map(|discovery| discovery.endpoint)
 }
 
-/// Host and port the restarted resident should bind, each honoured on its own.
-///
-/// `up` accepts `--host` and `--port` independently, so an operator who names
-/// one gets it whether or not a resident had published the other. Dropping an
-/// explicit or published port for want of a host would instead leave `up` on a
-/// kernel-picked port, a new URL after every restart.
+/// Exact restart state, with explicit host and port overrides honoured alone.
+fn requested_binding(
+    request: &RefreshRequest,
+    published: Option<&str>,
+    launch: Option<ResidentLaunch>,
+) -> Result<RestartBinding, RefreshError> {
+    let (host, port) = requested_endpoint(request, published, launch);
+    let mut binding = RestartBinding {
+        host,
+        port,
+        ..RestartBinding::default()
+    };
+    let Some(launch) = launch else {
+        return Ok(binding);
+    };
+    binding.allow_insecure_bind = matches!(launch.access(), ResidentAccess::Insecure)
+        || (matches!(launch.access(), ResidentAccess::Authenticated)
+            && !launch.listen().ip().is_loopback());
+    if matches!(launch.access(), ResidentAccess::Authenticated) {
+        let Some(token) = forwarded_option_value(&request.up_arguments, "--auth-token")
+            .and_then(OsStr::to_str)
+            .filter(|token| auth_token_is_valid(token))
+        else {
+            return Err(RefreshError::ResidentAuthTokenRequired);
+        };
+        binding.auth_token = Some(token.into());
+    }
+    Ok(binding)
+}
+
 fn requested_endpoint(
     request: &RefreshRequest,
     published: Option<&str>,
+    launch: Option<ResidentLaunch>,
 ) -> (Option<String>, Option<u16>) {
-    let published = published.and_then(endpoint_parts);
+    let inherited = launch
+        .map(|launch| (launch.listen().ip().to_string(), launch.listen().port()))
+        .or_else(|| published.and_then(endpoint_parts));
     let host = request
         .host
         .clone()
-        .or_else(|| published.as_ref().map(|(host, _)| host.clone()));
-    let port = request.port.or_else(|| published.map(|(_, port)| port));
+        .or_else(|| inherited.as_ref().map(|(host, _)| host.clone()));
+    let port = request.port.or_else(|| inherited.map(|(_, port)| port));
     (host, port)
 }
 
@@ -728,10 +810,11 @@ fn requested_endpoint(
 fn endpoint_parts(endpoint: &str) -> Option<(String, u16)> {
     let authority = endpoint
         .split_once("://")
-        .map_or(endpoint, |(_, rest)| rest);
-    let authority = authority.split('/').next()?;
-    let (host, port) = authority.rsplit_once(':')?;
-    Some((host.to_owned(), port.parse().ok()?))
+        .map_or(endpoint, |(_, rest)| rest)
+        .split('/')
+        .next()?;
+    let address = authority.parse::<SocketAddr>().ok()?;
+    Some((address.ip().to_string(), address.port()))
 }
 
 /// Executable whose command principal can authenticate the resident now live.
@@ -860,13 +943,13 @@ fn refusal_text(diagnostics: &[u8]) -> String {
 fn restart_admitting_reappearance(
     repository: &Repository,
     installed: &Path,
-    endpoint: (Option<&str>, Option<u16>),
+    binding: &RestartBinding,
     request: &RefreshRequest,
     output: &mut impl Write,
 ) -> Result<Option<String>, RefreshError> {
     let mut replaced_predecessor = false;
     loop {
-        match restart(repository, installed, endpoint, request, output) {
+        match restart(repository, installed, binding, request, output) {
             Ok(endpoint) => return Ok(endpoint),
             Err(error) => {
                 let RefreshError::ResidentStartRefused(refusal) = &error else {
@@ -955,7 +1038,7 @@ fn running_resident_version(
 fn restart(
     repository: &Repository,
     installed: &Path,
-    endpoint: (Option<&str>, Option<u16>),
+    binding: &RestartBinding,
     request: &RefreshRequest,
     output: &mut impl Write,
 ) -> Result<Option<String>, RefreshError> {
@@ -963,7 +1046,7 @@ fn restart(
         return Ok(None);
     }
     let starting = Instant::now();
-    let mut command = restart_command(installed, endpoint, request);
+    let mut command = restart_command(installed, binding, request);
     let answer = command.current_dir(repository.worktree_root()).output()?;
     if !answer.status.success() {
         let refusal = refusal_text(&answer.stderr);
@@ -996,24 +1079,34 @@ fn restart(
 }
 
 /// Construct the detached launcher command, with explicit forwarded endpoint
-/// options taking precedence over the endpoint inherited from discovery.
+/// options taking precedence over the bind and access state inherited from the
+/// live resident.
 fn restart_command(
     installed: &Path,
-    endpoint: (Option<&str>, Option<u16>),
+    binding: &RestartBinding,
     request: &RefreshRequest,
 ) -> Command {
     let mut command = Command::new(installed);
     command.args(["--json", "up"]);
-    let (host, port) = endpoint;
     if !forwards_option(&request.up_arguments, "--host")
-        && let Some(host) = host
+        && let Some(host) = binding.host.as_deref()
     {
         command.args(["--host", host]);
     }
     if !forwards_option(&request.up_arguments, "--port")
-        && let Some(port) = port
+        && let Some(port) = binding.port
     {
         command.args(["--port", &port.to_string()]);
+    }
+    if binding.allow_insecure_bind
+        && !forwards_option(&request.up_arguments, "--allow-insecure-bind")
+    {
+        command.arg("--allow-insecure-bind");
+    }
+    if !forwards_option(&request.up_arguments, "--auth-token")
+        && let Some(token) = binding.auth_token.as_deref()
+    {
+        command.args([OsStr::new("--auth-token"), token]);
     }
     command.args(&request.up_arguments);
     command
@@ -1030,6 +1123,23 @@ fn forwards_option(arguments: &[OsString], option: &str) -> bool {
                 .and_then(|argument| argument.strip_prefix(option))
                 .is_some_and(|suffix| suffix.starts_with('='))
     })
+}
+
+fn forwarded_option_value<'a>(arguments: &'a [OsString], option: &str) -> Option<&'a OsStr> {
+    let option_os = OsStr::new(option);
+    for (index, argument) in arguments.iter().enumerate() {
+        if argument == option_os {
+            return arguments.get(index + 1).map(OsString::as_os_str);
+        }
+        if let Some(value) = argument
+            .to_str()
+            .and_then(|argument| argument.strip_prefix(option))
+            .and_then(|suffix| suffix.strip_prefix('='))
+        {
+            return Some(OsStr::new(value));
+        }
+    }
+    None
 }
 
 /// Whether a published endpoint accepts a connection right now.

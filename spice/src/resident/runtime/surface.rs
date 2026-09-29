@@ -107,6 +107,7 @@ async fn start_surface<'a>(
         app,
         version,
         binding,
+        resident_lock,
         open,
         progress,
         endpoint,
@@ -114,7 +115,11 @@ async fn start_surface<'a>(
     } = launch;
     let app_description = app.to_string();
     let CanvasBinding { listen, access } = binding;
-    let CanvasAccess { policy, token } = access;
+    let CanvasAccess {
+        policy,
+        kind,
+        token,
+    } = access;
     let speech_paths = paths.clone();
     let generation = canvas::axum::Generation::new(
         epoch,
@@ -155,6 +160,7 @@ async fn start_surface<'a>(
             &format!("listening on {listen} failed: {error}"),
         )
     })?;
+    record_bound_launch(resident_lock, epoch, &server, kind)?;
     let discovery = server
         .discovery(operator)
         .map_err(|error| environment_fault("canvas::discovery-invalid", &error.to_string()))?;

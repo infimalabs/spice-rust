@@ -51,6 +51,7 @@ struct SurfaceLaunch<'a> {
     app: canvas::AppSource,
     version: wire::Version,
     binding: CanvasBinding,
+    resident_lock: &'a ResidentLock,
     /// Whether the operator asked this start to also open the app.
     ///
     /// Discovery is announced either way, so this is not part of the binding:
@@ -241,6 +242,29 @@ impl ResidentLock {
         self.possession
             .rewrite_record(holder_record(std::process::id(), Some(epoch)).as_bytes())
     }
+
+    pub(super) fn set_launch(
+        &self,
+        epoch: CanonicalUuid,
+        launch: ResidentLaunch,
+    ) -> io::Result<()> {
+        self.possession
+            .rewrite_record(launched_holder_record(std::process::id(), epoch, launch).as_bytes())
+    }
+}
+
+fn record_bound_launch(
+    resident_lock: &ResidentLock,
+    epoch: CanonicalUuid,
+    server: &canvas::axum::Server,
+    access: ResidentAccess,
+) -> CommandResult<()> {
+    let bound = server.local_addr().map_err(|error| {
+        environment_fault("canvas::bound-address-unavailable", &error.to_string())
+    })?;
+    resident_lock
+        .set_launch(epoch, ResidentLaunch::new(bound, access))
+        .map_err(|error| environment_fault("resident::holder-unwritable", &error.to_string()))
 }
 
 impl Drop for ResidentLock {
@@ -273,12 +297,6 @@ impl Drop for PublishedDiscovery {
 /// whatever was bound.
 pub(crate) const EPHEMERAL_LOOPBACK: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
-/// Bounds on an operator-supplied bearer token for a non-loopback bind.
-///
-/// Stated rather than inlined so the refusal text and the check cannot come to
-/// name two different lengths.
-const AUTH_TOKEN_MIN_BYTES: usize = 16;
-const AUTH_TOKEN_MAX_BYTES: usize = 256;
 
 pub(crate) struct CanvasBinding {
     listen: SocketAddr,
@@ -287,6 +305,7 @@ pub(crate) struct CanvasBinding {
 
 pub(super) struct CanvasAccess {
     policy: canvas::axum::Access,
+    kind: ResidentAccess,
     pub(super) token: Option<String>,
 }
 
@@ -317,6 +336,7 @@ impl CanvasBinding {
             listen,
             access: CanvasAccess {
                 policy: canvas::axum::Access::local(),
+                kind: ResidentAccess::Local,
                 token: None,
             },
         }
@@ -431,26 +451,26 @@ fn requested_access_with(
             "add --allow-insecure-bind only when this network exposure is intended",
         ));
     }
-    let policy = token.as_ref().map_or_else(
-        || {
-            if !listen.ip().is_loopback() && allow_insecure {
-                canvas::axum::Access::insecure()
-            } else {
-                canvas::axum::Access::local()
-            }
-        },
-        |token| canvas::axum::Access::authenticated(token.clone()),
-    );
-    Ok(CanvasAccess { policy, token })
-}
-
-fn auth_token_is_valid(token: &str) -> bool {
-    (AUTH_TOKEN_MIN_BYTES..=AUTH_TOKEN_MAX_BYTES).contains(&token.len())
-        && token.bytes().all(is_token_byte)
-}
-
-const fn is_token_byte(byte: u8) -> bool {
-    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+    let kind = if token.is_some() {
+        ResidentAccess::Authenticated
+    } else if !listen.ip().is_loopback() && allow_insecure {
+        ResidentAccess::Insecure
+    } else {
+        ResidentAccess::Local
+    };
+    let policy = match (&kind, &token) {
+        (ResidentAccess::Authenticated, Some(token)) => {
+            canvas::axum::Access::authenticated(token.clone())
+        }
+        (ResidentAccess::Insecure, None) => canvas::axum::Access::insecure(),
+        (ResidentAccess::Local, None) => canvas::axum::Access::local(),
+        _ => unreachable!("access kind and token derive together"),
+    };
+    Ok(CanvasAccess {
+        policy,
+        kind,
+        token,
+    })
 }
 
 fn access_refusal(reason: &str, observed: Option<&str>, detail: &str) -> Outcome<()> {
@@ -581,6 +601,7 @@ fn up_from_with(
                 app,
                 version,
                 binding,
+                resident_lock: &resident_lock,
                 open,
                 progress: &mut progress,
                 endpoint,

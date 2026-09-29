@@ -10,6 +10,7 @@ use gate::test_support::gix;
 
 use super::*;
 mod multi_worktree;
+mod restart_binding;
 
 #[test]
 fn executable_rollback_requires_the_journal_schema_to_be_proven_unchanged() {
@@ -81,6 +82,7 @@ fn a_committed_schema_advance_preserves_the_successor_executable() {
         resident_executable: None,
         published: None,
         restart: false,
+        binding: RestartBinding::default(),
     };
     let mut output = Vec::new();
 
@@ -128,6 +130,7 @@ fn uncertain_schema_recovery_preserves_the_successor_and_names_both_causes() {
             resident_executable: None,
             published: None,
             restart: false,
+            binding: RestartBinding::default(),
         },
         Some(spice::journal_schema::CURRENT - 1),
         Err(inspection),
@@ -242,6 +245,11 @@ impl Fixture {
         discovery
             .publish(state.canvas())
             .expect("scratch discovery publishes");
+        fs::write(
+            state.resident(),
+            spice::resident_lock::holder_record(std::process::id(), Some(identity)),
+        )
+        .expect("scratch holder record publishes");
         discovery
     }
 }
@@ -605,7 +613,7 @@ fn restart_consumes_the_daemon_launchers_typed_readiness_without_a_second_probe(
     let restarted = restart(
         &repository,
         &executable,
-        (Some("127.0.0.1"), Some(43821)),
+        &restart_binding(Some("127.0.0.1"), Some(43821)),
         &request,
         &mut output,
     );
@@ -637,7 +645,7 @@ fn restart_surfaces_the_daemon_launchers_exact_refusal() {
     let restarted = restart(
         &repository,
         &executable,
-        (None, None),
+        &RestartBinding::default(),
         &request,
         &mut output,
     );
@@ -677,7 +685,7 @@ fn a_concurrent_installed_resident_completes_the_restart() {
     let restarted = restart_admitting_reappearance(
         &repository,
         &installed,
-        (Some("127.0.0.1"), Some(address.port())),
+        &restart_binding(Some("127.0.0.1"), Some(address.port())),
         &request,
         &mut output,
     );
@@ -738,7 +746,7 @@ fn a_concurrent_predecessor_is_replaced_by_the_installed_resident() {
     let restarted = restart_admitting_reappearance(
         &repository,
         &installed,
-        (Some("127.0.0.1"), Some(43822)),
+        &restart_binding(Some("127.0.0.1"), Some(43822)),
         &request,
         &mut output,
     );
@@ -754,59 +762,6 @@ fn a_concurrent_predecessor_is_replaced_by_the_installed_resident() {
             && output.contains("stopping resident")
             && output.contains("resident ready at"),
         "the predecessor was not stopped and retried: {output}"
-    );
-}
-
-#[test]
-fn restart_forwards_up_arguments_and_does_not_duplicate_their_endpoint_options() {
-    let request = RefreshRequest {
-        restart: true,
-        up_arguments: ["--host", "0.0.0.0", "--allow-insecure-bind"]
-            .map(OsString::from)
-            .into(),
-        ..RefreshRequest::default()
-    };
-
-    let command = restart_command(
-        Path::new("/installed/spice"),
-        (Some("127.0.0.1"), Some(8767)),
-        &request,
-    );
-    let arguments = command.get_args().collect::<Vec<_>>();
-
-    assert_eq!(
-        arguments,
-        [
-            "--json",
-            "up",
-            "--port",
-            "8767",
-            "--host",
-            "0.0.0.0",
-            "--allow-insecure-bind",
-        ]
-        .map(OsStr::new)
-    );
-}
-
-#[test]
-fn joined_forwarded_endpoint_options_also_override_published_values() {
-    let request = RefreshRequest {
-        restart: true,
-        up_arguments: ["--host=0.0.0.0", "--port=9000"].map(OsString::from).into(),
-        ..RefreshRequest::default()
-    };
-
-    let command = restart_command(
-        Path::new("/installed/spice"),
-        (Some("127.0.0.1"), Some(8767)),
-        &request,
-    );
-    let arguments = command.get_args().collect::<Vec<_>>();
-
-    assert_eq!(
-        arguments,
-        ["--json", "up", "--host=0.0.0.0", "--port=9000"].map(OsStr::new)
     );
 }
 
@@ -1049,6 +1004,7 @@ fn an_untouched_install_refusal_does_not_enter_rollback() {
             resident_executable: None,
             published: None,
             restart: false,
+            binding: RestartBinding::default(),
         },
         &before,
         &mut output,
@@ -1107,6 +1063,7 @@ fn an_untouched_install_refusal_restarts_the_resident_it_stopped() {
             resident_executable: None,
             published: Some("http://127.0.0.1:8767"),
             restart: true,
+            binding: restart_binding(Some("127.0.0.1"), Some(8767)),
         },
         &before,
         &mut output,
@@ -1165,6 +1122,7 @@ fn a_failed_refresh_restores_the_parked_executable_and_reports_its_cause() {
             resident_executable: None,
             published: None,
             restart: false,
+            binding: RestartBinding::default(),
         },
         &mut output,
         RefreshError::ResidentUnready,
@@ -1232,6 +1190,7 @@ fn a_failed_refresh_restarts_the_resident_it_stopped() {
             resident_executable: Some(&resident),
             published: Some(endpoint),
             restart: true,
+            binding: restart_binding(Some("127.0.0.1"), Some(8767)),
         },
         &mut output,
         RefreshError::ResidentUnready,
@@ -1326,7 +1285,7 @@ fn an_explicit_endpoint_overrides_the_published_one() {
     let published = Some("http://127.0.0.1:8767");
     let default = RefreshRequest::default();
     assert_eq!(
-        requested_endpoint(&default, published),
+        requested_endpoint(&default, published, None),
         (Some("127.0.0.1".to_owned()), Some(8767))
     );
 
@@ -1335,7 +1294,7 @@ fn an_explicit_endpoint_overrides_the_published_one() {
         ..RefreshRequest::default()
     };
     assert_eq!(
-        requested_endpoint(&ported, published),
+        requested_endpoint(&ported, published, None),
         (Some("127.0.0.1".to_owned()), Some(8768))
     );
 
@@ -1344,7 +1303,7 @@ fn an_explicit_endpoint_overrides_the_published_one() {
         ..RefreshRequest::default()
     };
     assert_eq!(
-        requested_endpoint(&hosted, published),
+        requested_endpoint(&hosted, published, None),
         (Some("0.0.0.0".to_owned()), Some(8767))
     );
 }
@@ -1354,7 +1313,7 @@ fn an_explicit_endpoint_overrides_the_published_one() {
 #[test]
 fn an_unpublished_endpoint_with_no_override_is_left_unbound() {
     assert_eq!(
-        requested_endpoint(&RefreshRequest::default(), None),
+        requested_endpoint(&RefreshRequest::default(), None, None),
         (None, None)
     );
 }
@@ -1371,7 +1330,7 @@ fn an_explicit_endpoint_survives_an_unpublished_counterpart() {
         ..RefreshRequest::default()
     };
     assert_eq!(
-        requested_endpoint(&ported, None),
+        requested_endpoint(&ported, None, None),
         (None, Some(8768)),
         "an explicitly named port was dropped for want of a host"
     );
@@ -1381,10 +1340,18 @@ fn an_explicit_endpoint_survives_an_unpublished_counterpart() {
         ..RefreshRequest::default()
     };
     assert_eq!(
-        requested_endpoint(&hosted, None),
+        requested_endpoint(&hosted, None, None),
         (Some("127.0.0.1".to_owned()), None),
         "an explicitly named host was dropped for want of a port"
     );
+}
+
+fn restart_binding(host: Option<&str>, port: Option<u16>) -> RestartBinding {
+    RestartBinding {
+        host: host.map(str::to_owned),
+        port,
+        ..RestartBinding::default()
+    }
 }
 
 /// Two fixtures sharing one label take separate roots and leave neither behind.

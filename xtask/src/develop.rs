@@ -2,7 +2,7 @@
 //!
 //! `spice dev xtask -- install` builds the current browser app and native tree,
 //! republishes `.spice-install/bin/spice` through the digest-bound installer,
-//! and restarts the resident on the endpoint it had already published.
+//! and restarts the resident with its exact live bind and access policy.
 //!
 //! The installer derives a refresh when a completed receipt names different
 //! executable bytes, so a rebuilt tree needs nothing withdrawn: the install step
@@ -31,9 +31,9 @@ pub use native::refresh_install;
 /// One developer refresh request.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RefreshRequest {
-    /// Host for the restarted resident, or the published one.
+    /// Host for the restarted resident, or the live resident's bound host.
     pub host: Option<String>,
-    /// Port for the restarted resident, or the published one.
+    /// Port for the restarted resident, or the live resident's bound port.
     pub port: Option<u16>,
     /// Build and install the release profile rather than the development profile.
     pub release: bool,
@@ -111,6 +111,10 @@ pub enum RefreshError {
     ResidentStopRefused(String),
     /// The sole daemon launcher returned its exact startup refusal.
     ResidentStartRefused(String),
+    /// Restart metadata could not be tied to the resident's published generation.
+    ResidentLaunchUncertain(String),
+    /// An authenticated resident cannot be restarted without its bearer token.
+    ResidentAuthTokenRequired,
     /// Startup failed after the journal crossed an irreversible schema boundary.
     #[cfg(not(target_arch = "wasm32"))]
     SchemaAdvanced {
@@ -167,6 +171,14 @@ impl fmt::Display for RefreshError {
             Self::ResidentStartRefused(refusal) => {
                 write!(formatter, "resident start refused: {refusal}")
             }
+            Self::ResidentLaunchUncertain(detail) => write!(
+                formatter,
+                "resident::restart-binding-unavailable; refusing to stop the resident: {detail}"
+            ),
+            Self::ResidentAuthTokenRequired => write!(
+                formatter,
+                "resident::restart-auth-token-required; supply the current resident token after the install delimiter: `-- --auth-token TOKEN`"
+            ),
             #[cfg(not(target_arch = "wasm32"))]
             Self::SchemaAdvanced {
                 before,
