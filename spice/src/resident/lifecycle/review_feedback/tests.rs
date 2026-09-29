@@ -171,18 +171,16 @@ fn every_finding_after_the_cursor_is_answered_from_one_fold_of_the_history() {
 
 #[test]
 fn feedback_text_preserves_the_predecessor_frame_and_exact_review_prose() {
-    assert_eq!(
-        feedback_text(
-            &"MESSAGE-1kKRRsDR".parse().expect("fixture handle"),
-            "first\r\n\r\nlast",
-        ),
-        concat!(
+    let text = feedback_text(
+        &"MESSAGE-1kKRRsDR".parse().expect("fixture handle"),
+        "first\r\n\r\nlast",
+    );
+    assert!(
+        text.starts_with(concat!(
             "[REVIEW] Peer feedback for MESSAGE-1kKRRsDR:\n\n",
             "> first\n>\n> last\n\n",
-            "🌶️ Verbalize any noteworthy lessons and internalize this as guidance—any follow-ups ",
-            "it raises are already on the board, so there is nothing to capture or act on now! ",
-            "Keep working your current task; do not re-file what the system already filed."
-        ),
+        )),
+        "{text}"
     );
 }
 

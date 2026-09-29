@@ -294,9 +294,9 @@ fn feedback_text(handle: &wire::TaskHandle, finding: &str) -> String {
         .join("\n");
     format!(
         "[REVIEW] Peer feedback for {handle}:\n\n{quoted}\n\n\
-         🌶️ Verbalize any noteworthy lessons and internalize this as guidance—any follow-ups \
-         it raises are already on the board, so there is nothing to capture or act on now! \
-         Keep working your current task; do not re-file what the system already filed."
+         Verbalize and internalize all noteworthy findings as working guidance—there is \
+         nothing else to capture or act on because follow-ups are already boarded!—continue \
+         working your current task."
     )
 }
 
