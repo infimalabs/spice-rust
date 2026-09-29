@@ -868,6 +868,12 @@ pub struct LaneJob {
     pub standing: LaneJobStanding,
 }
 
+/// Milliseconds of transcript quiet after which a supervised occupant is idle.
+///
+/// The resident liveness fold and every consumer that dates the corresponding
+/// presence transition share this boundary.
+pub const LANE_QUIET_HORIZON_MILLIS: u64 = 60_000;
+
 /// Dynamic liveness of one lane at the read barrier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

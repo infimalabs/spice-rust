@@ -639,9 +639,11 @@ block-beta
    Tasks shows active work, and Info shows member count. A badge is only present when its
    count is non-zero, so an empty rail means a quiet team.
 - **The member shards are the identity and composer-address summary.** Across
-   Compose and Info they expose the concrete lane/worktree address, agent label,
-   vendor identity, liveness or age, pending direction, and held task as
-   applicable; no individual pane repeats the whole set.
+  Compose and Info they expose the concrete lane/worktree address, agent label,
+  vendor identity, one mutually exclusive presence state with its age, pending
+  direction, and held task as applicable; no individual pane repeats the whole
+  set. Dash presence is `working`, `idle in seat`, `starting`, or `vacant`;
+  active claim ownership is `working on HANDLE`.
 - **The mosaic is the evidence layer.** It answers *what happened*. Every agent
    and compaction card repeats explicit short author/lane plus worktree-leaf
    attribution, including unnamed members; accent is redundant continuity rather
