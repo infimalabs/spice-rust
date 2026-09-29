@@ -354,7 +354,9 @@ the discovery happens after the one step that cannot be undone.
 Info, Work, and Chat are the sole global and team panel names. The selected
 global destination is the `page` URL query, so browser history, reload, and
 copied URLs restore it; an absent legacy query opens Chat. Existing team,
-speech, and narration state keeps its current format.
+speech, and narration state keeps its current format. Following a quote link
+to its quoted message is a history step: Back returns the card that held the
+link to where the reader left it.
 
 ### The global Work page
 

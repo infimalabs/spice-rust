@@ -699,7 +699,13 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     // Keep the portal list under a stable VDOM parent. Mixing keyed portals
     // directly with VRaw replaces the raw nodes when the first portal mounts.
     html! {
-        <div ref={host} class="message-body markdown-body">
+        <div
+            ref={host}
+            class="message-body markdown-body"
+            onclick={Callback::from(|event: MouseEvent| {
+                super::card_target::remember_quote_return(&event);
+            })}
+        >
             {Html::from_html_unchecked(props.html.clone())}
             if !props.sources.is_empty() || !math_slots.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() {
             <span hidden=true>
