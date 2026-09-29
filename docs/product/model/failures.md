@@ -170,10 +170,10 @@ position preserved as new ones arrive.*
 
 **Cases** — a new member joins mid-read (the changed geometry replays
 deterministically, and a reader more than 80px from the top stays anchored); a
-member is renewed (its old messages keep their lane-derived accent); composers
-are reordered (neither colours nor message order change); retained history is
-bounded independently per lane, so one prolific member cannot evict every
-other member's visible cards.
+member is renewed (its old messages retain explicit lane attribution);
+composers are reordered (slot colours follow the new positions while message
+order does not change); retained history is bounded independently per lane, so
+one prolific member cannot evict every other member's visible cards.
 
 ---
 

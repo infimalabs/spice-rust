@@ -582,8 +582,9 @@
 }
 .team-compose .mosaic-message-empty { margin-top: var(--team-composer-block); }
 
-/* Agent columns keep a usable editing width and make their own east/west
-   viewport. The form and page therefore never inherit this overflow. */
+/* Canonical member zero is the main agent. Paint canonical order from the
+   control-adjacent right edge, matching the predecessor, and let RTL overflow
+   keep that edge visible on initial layout. Agent contents remain LTR. */
 .team-surface .team-agents {
   display: grid;
   grid-template-columns: repeat(var(--team-weight, 4), minmax(10rem, 1fr));
@@ -594,6 +595,7 @@
   overflow-x: auto;
   overscroll-behavior-inline: contain;
   scroll-behavior: smooth;
+  direction: rtl;
 }
 
 .team-surface .team-agent {
@@ -602,6 +604,7 @@
   height: var(--team-composer-block-size);
   max-height: var(--team-composer-block-size);
   flex-direction: column;
+  direction: ltr;
   align-self: stretch;
   overflow: hidden;
   border-color: var(--control-line-soft);
