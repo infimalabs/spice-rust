@@ -229,7 +229,7 @@ fn the_occupants_plan_is_the_task_it_holds_rather_than_a_list_only_it_can_read()
     // to say so; every other todo nudge checks the tool first.
     for lsp in [false, true] {
         assert!(
-            omp::config_overlay(170_000, lsp).contains("todo:\n  reminders: false\n"),
+            omp::config_overlay(170_000, lsp, false).contains("todo:\n  reminders: false\n"),
             "an occupant with no todo tool must not be told to complete todo items"
         );
     }
@@ -402,16 +402,31 @@ fn omp_refuses_an_unspellable_binary() {
 }
 
 #[test]
-fn fast_mode_is_the_priority_service_tier_and_must_be_explicit() {
+fn fast_mode_reaches_omps_openai_and_anthropic_priority_boundaries_and_must_be_explicit() {
+    let standard = fixture(Resume::Fresh);
+    let standard_record = omp::record("/opt/omp", &standard).expect("valid standard record");
+    assert_eq!(
+        service_tier(&standard_record),
+        Some(OsStr::new("none")),
+        "OpenAI's runtime override is explicit when fast mode is off"
+    );
+    assert!(
+        omp::config_overlay(170_000, false, false).contains("tier:\n  anthropic: none\n"),
+        "Anthropic's higher-precedence overlay is explicit when fast mode is off"
+    );
+
     let mut fast = fixture(Resume::Fresh);
     fast.fast_mode = Some(true);
-    let record = omp::record("/opt/omp", &fast).expect("valid fast record");
-    let tier = record
-        .arguments()
-        .windows(2)
-        .find(|pair| pair[0] == OsStr::new("--service-tier"))
-        .map(|pair| pair[1].as_os_str());
-    assert_eq!(tier, Some(OsStr::new("priority")));
+    let fast_record = omp::record("/opt/omp", &fast).expect("valid fast record");
+    assert_eq!(
+        service_tier(&fast_record),
+        Some(OsStr::new("priority")),
+        "OpenAI receives its priority service tier"
+    );
+    assert!(
+        omp::config_overlay(170_000, false, true).contains("tier:\n  anthropic: priority\n"),
+        "Anthropic receives the setting omp translates to speed=fast"
+    );
 
     let mut implicit = fixture(Resume::Fresh);
     implicit.fast_mode = None;
@@ -425,11 +440,11 @@ fn fast_mode_is_the_priority_service_tier_and_must_be_explicit() {
 
 #[test]
 fn the_compaction_threshold_rides_an_overlay_the_lane_must_have_written() {
-    // The exact document omp 18.2.1 resolved to a 170,000-token limit through
+    // The exact document omp 18.2.11 resolves to a 170,000-token limit through
     // its `--config` overlay; the layout is omp's own config.yml.
     assert_eq!(
-        omp::config_overlay(170_000, false),
-        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: false\ntodo:\n  reminders: false\n"
+        omp::config_overlay(170_000, false, false),
+        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: false\ntier:\n  anthropic: none\ntodo:\n  reminders: false\n"
     );
 
     let mut unwritten = fixture(Resume::Fresh);
@@ -447,7 +462,7 @@ fn the_language_server_disposition_names_the_tool_and_keeps_its_servers_in_the_l
     let declined = omp::record("/opt/omp", &fixture(Resume::Fresh)).expect("valid record");
     assert_eq!(roster(&declined), Some(OsStr::new(omp::TOOLS)));
     assert!(!omp::TOOLS.split(',').any(|tool| tool == "lsp"));
-    assert!(omp::config_overlay(170_000, false).contains("lsp:\n  enabled: false\n"));
+    assert!(omp::config_overlay(170_000, false, false).contains("lsp:\n  enabled: false\n"));
 
     let mut admitted = fixture(Resume::Fresh);
     admitted.lsp = Some(true);
@@ -461,8 +476,8 @@ fn the_language_server_disposition_names_the_tool_and_keeps_its_servers_in_the_l
     // Shared servers are brokered by a daemon built to outlive one session,
     // which is exactly the process the lane could neither see nor reap.
     assert_eq!(
-        omp::config_overlay(170_000, true),
-        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: true\n  shared: false\ntodo:\n  reminders: false\n"
+        omp::config_overlay(170_000, true, false),
+        "compaction:\n  thresholdTokens: 170000\nlsp:\n  enabled: true\n  shared: false\ntier:\n  anthropic: none\ntodo:\n  reminders: false\n"
     );
 
     let mut implicit = fixture(Resume::Fresh);
@@ -473,6 +488,14 @@ fn the_language_server_disposition_names_the_tool_and_keeps_its_servers_in_the_l
             path: "vendor.omp.lsp"
         }
     );
+}
+
+fn service_tier(record: &vendor::Record) -> Option<&OsStr> {
+    record
+        .arguments()
+        .windows(2)
+        .find(|pair| pair[0] == OsStr::new("--service-tier"))
+        .map(|pair| pair[1].as_os_str())
 }
 
 fn roster(record: &vendor::Record) -> Option<&OsStr> {

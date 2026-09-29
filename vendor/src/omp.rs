@@ -2,9 +2,9 @@
 //!
 //! omp is driven over `--mode rpc`: one JSON command per line on stdin, one
 //! JSON frame per line on stdout. The argument vector fixes the model,
-//! thinking level, service tier, and system prompt; the conversation itself is opened by
-//! the request bytes the supervisor writes once stdin exists, and steering
-//! is interjected the same way for as long as the child lives.
+//! thinking level, OpenAI service tier, and system prompt; the per-run overlay
+//! fixes Anthropic's service tier. The supervisor opens the conversation with
+//! request bytes once stdin exists and interjects steering the same way.
 
 pub mod frame;
 
@@ -218,9 +218,9 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         OsString::from(launch.model.as_str()),
         OsString::from("--thinking"),
         OsString::from(launch.effort.as_str()),
-        // Fast mode is the priority tier on every provider family omp serves;
-        // an explicit `none` keeps the lane's disposition ahead of omp's own
-        // settings when it is off.
+        // This CLI override is OpenAI-specific. Anthropic's independent tier
+        // rides the per-run overlay so both families follow the lane's explicit
+        // disposition instead of omp's persistent settings.
         OsString::from("--service-tier"),
         OsString::from(if fast_mode { "priority" } else { "none" }),
         OsString::from("--tools"),
@@ -248,8 +248,8 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 }
 
 /// The configuration overlay a lane writes before launch, stating the
-/// compaction threshold, the language-server disposition, and the todo
-/// reminder disposition this seat runs.
+/// compaction threshold, Anthropic service tier, language-server disposition,
+/// and todo reminder disposition this seat runs.
 ///
 /// omp reads `compaction.thresholdTokens` ahead of every percentage or
 /// reserve it would otherwise derive, clamped beneath the model's window.
@@ -262,6 +262,10 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 /// external lspmux routing in the child environment; that route is independent
 /// of this overlay. Which servers run stays the worktree's own business.
 ///
+/// The Anthropic tier is explicit in both directions so the lane's global fast
+/// mode wins over omp's persistent setting. OpenAI's independent runtime
+/// override rides [`record`]'s `--service-tier` argument.
+///
 /// Todo reminders are off because this seat carries no todo tool. omp's stop
 /// reminder is the one todo path that never asks whether the tool is in the
 /// roster: it counts the items a resumed session still holds, tells the
@@ -269,12 +273,17 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 /// it. The occupant's plan is the task it holds, and only the allocator
 /// closes that.
 #[must_use]
-pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool) -> String {
+pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool, fast_mode: bool) -> String {
     let mut overlay = format!("compaction:\n  thresholdTokens: {auto_compact_threshold_tokens}\n");
     overlay.push_str(if lsp {
         "lsp:\n  enabled: true\n  shared: false\n"
     } else {
         "lsp:\n  enabled: false\n"
+    });
+    overlay.push_str(if fast_mode {
+        "tier:\n  anthropic: priority\n"
+    } else {
+        "tier:\n  anthropic: none\n"
     });
     overlay.push_str("todo:\n  reminders: false\n");
     overlay
