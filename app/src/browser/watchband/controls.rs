@@ -281,6 +281,12 @@ impl TeamControls {
             })
     }
 
+    pub(in crate::browser) fn mode(&self, team: CanonicalUuid) -> TeamMode {
+        self.teams
+            .get(&team)
+            .map_or(TeamMode::Chat, |team| team.mode)
+    }
+
     pub(super) const fn empty_mode(&self) -> TeamMode {
         self.empty_mode
     }

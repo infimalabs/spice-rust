@@ -1,0 +1,123 @@
+//! Task identities and retained message cards reachable from Work surfaces.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use wire::{CanonicalUuid, TaskHandle};
+
+use super::canonical_task_handle;
+
+/// Canonical task handles an authored message reports, in first-report order.
+///
+/// Markdown punctuation is a boundary rather than part of a handle, so prose
+/// may name one in backticks, parentheses, or at the end of a sentence. The
+/// wire handle parser admits the outer stem/key shape, then `born` admits the
+/// fixed-width base-52 task stamp. Repeated mentions produce one reported
+/// identity even though the browser renders every authored occurrence.
+#[must_use]
+pub fn reported_tasks(text: &str) -> Vec<TaskHandle> {
+    let mut tasks = Vec::new();
+    for (_, task) in task_mentions(text) {
+        if !tasks.contains(&task) {
+            tasks.push(task);
+        }
+    }
+    tasks
+}
+
+/// Canonical task handles and their byte ranges in authored text.
+///
+/// The browser uses the ranges to replace the handle where it was written,
+/// while [`reported_tasks`] retains the de-duplicated identity view used by
+/// non-browser surfaces.
+#[must_use]
+pub fn task_mentions(text: &str) -> Vec<(std::ops::Range<usize>, TaskHandle)> {
+    let mut mentions = Vec::new();
+    let mut start = None;
+    for (index, character) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        if character.is_ascii_alphanumeric() || character == '-' {
+            start.get_or_insert(index);
+        } else if let Some(start) = start.take()
+            && let Some(task) = canonical_task_handle(&text[start..index])
+        {
+            mentions.push((start..index, task));
+        }
+    }
+    mentions
+}
+
+/// Retained message cards a team's Work surface can reach without dead links.
+///
+/// Task mentions and authenticated directive replies share one chronological
+/// projection so rendering many cards does not repeatedly scan message history.
+pub struct WorkMessageLinks<'a> {
+    tasks: BTreeMap<TaskHandle, &'a wire::AgentMessage>,
+    directives: BTreeMap<String, &'a wire::AgentMessage>,
+}
+
+impl<'a> WorkMessageLinks<'a> {
+    /// Newest retained card that mentions `task`.
+    #[must_use]
+    pub fn task(&self, task: &TaskHandle) -> Option<&'a wire::AgentMessage> {
+        self.tasks.get(task).copied()
+    }
+
+    /// Newest retained acknowledgement or decline for any key in one row.
+    #[must_use]
+    pub fn directive(&self, keys: &BTreeSet<String>) -> Option<&'a wire::AgentMessage> {
+        keys.iter()
+            .filter_map(|key| self.directives.get(key).copied())
+            .max_by_key(|message| message.chronology_key())
+    }
+}
+
+/// Index reachable Work links for messages retained by this team's lanes.
+#[must_use]
+pub fn work_message_links<'a>(
+    member_lanes: &BTreeSet<CanonicalUuid>,
+    messages: impl IntoIterator<Item = &'a wire::AgentMessage>,
+) -> WorkMessageLinks<'a> {
+    let mut links = WorkMessageLinks {
+        tasks: BTreeMap::new(),
+        directives: BTreeMap::new(),
+    };
+    for message in messages {
+        if !member_lanes.contains(&message.lane) {
+            continue;
+        }
+        for (_, task) in task_mentions(&message.text) {
+            replace_with_newer(&mut links.tasks, task, message);
+        }
+        let is_reply = message.classifications.iter().any(|classification| {
+            matches!(
+                classification.kind,
+                wire::MessageClassificationKind::Acknowledgement
+                    | wire::MessageClassificationKind::Decline
+            )
+        });
+        if !is_reply {
+            continue;
+        }
+        for context in &message.directive_contexts {
+            if let wire::QuoteTarget::Steering { key, .. } = &context.quote_target {
+                replace_with_newer(&mut links.directives, key.clone(), message);
+            }
+        }
+    }
+    links
+}
+
+fn replace_with_newer<'a, K: Ord>(
+    messages: &mut BTreeMap<K, &'a wire::AgentMessage>,
+    key: K,
+    candidate: &'a wire::AgentMessage,
+) {
+    if messages
+        .get(&key)
+        .is_none_or(|current| current.chronology_key() <= candidate.chronology_key())
+    {
+        messages.insert(key, candidate);
+    }
+}

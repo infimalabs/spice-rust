@@ -218,6 +218,25 @@
   color: var(--accent);
   font: 750 .67rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+.work-card-heading-actions,
+.team-direction-heading-actions {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+}
+.work-message-link {
+  color: var(--link);
+  font: 700 .63rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-decoration: none;
+}
+.work-message-link:hover { text-decoration: underline; }
+.work-message-link:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
 
 .work-card h4 {
   margin: 0;

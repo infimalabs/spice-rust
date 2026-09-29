@@ -19,6 +19,12 @@ pub(super) struct MapControls<'a> {
     pub toggle_root: &'a Callback<wire::TaskStamp>,
 }
 
+pub(super) struct MessageControls<'a> {
+    pub links: &'a watchband::WorkMessageLinks<'a>,
+    pub team: wire::CanonicalUuid,
+    pub follow: &'a Callback<MouseEvent>,
+}
+
 /// What one card reads besides its task.
 pub(super) struct Controls<'a> {
     pub selected: Option<&'a wire::TaskStamp>,
@@ -26,6 +32,7 @@ pub(super) struct Controls<'a> {
     pub lanes: Option<&'a LaneView>,
     pub density: Density,
     pub map: Option<MapControls<'a>>,
+    pub messages: Option<MessageControls<'a>>,
 }
 
 pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
@@ -38,6 +45,17 @@ pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
     let priority = priority_label(&statement.tags);
     let progress = flow_progress(workflow);
     let born = statement.born.clone();
+    let message_target = controls
+        .messages
+        .as_ref()
+        .and_then(|messages| messages.links.task(&statement.handle))
+        .map(super::watchband::agent_message_source_id);
+    let return_id = message_target.as_ref().and_then(|_| {
+        controls
+            .messages
+            .as_ref()
+            .map(|messages| format!("team-work-task-{}-{born}", messages.team))
+    });
     let is_selected = controls.selected == Some(&born);
     let is_pinned = controls
         .map
@@ -51,6 +69,9 @@ pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
     html! {
         <article
             key={born.to_string()}
+            id={return_id}
+            tabindex={message_target.as_ref().map(|_| "-1")}
+            data-card-return-origin={message_target.as_ref().map(|_| "work")}
             class={classes!(
                 "work-card",
                 (controls.density == Density::Compact).then_some("work-card--compact"),
@@ -83,9 +104,22 @@ pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
             ></button>
             <header class="work-card-heading">
                 <span class="work-card-handle">{statement.handle.to_string()}</span>
-                if let Some(priority) = priority {
-                    <span class="work-card-priority" title="Declared priority">{format!("P:{priority}")}</span>
-                }
+                <span class="work-card-heading-actions">
+                    if let Some(priority) = priority {
+                        <span class="work-card-priority" title="Declared priority">{format!("P:{priority}")}</span>
+                    }
+                    if let (Some(target), Some(messages)) = (&message_target, &controls.messages) {
+                        <a
+                            class="work-message-link"
+                            href={crate::view::card_href(target)}
+                            aria-label={format!(
+                                "Open newest message mentioning {} in Chat",
+                                statement.handle,
+                            )}
+                            onclick={messages.follow.clone()}
+                        >{"Chat"}</a>
+                    }
+                </span>
             </header>
             <h4>{row.presentation_title()}</h4>
             <div class="work-card-badges">

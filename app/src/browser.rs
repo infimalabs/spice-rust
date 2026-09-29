@@ -805,6 +805,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
         state.card_target.clone(),
         &state.surface,
         state.card_target_status.clone(),
+        state.team_controls.clone(),
         chat_visible,
     );
     use_mosaic_root_scroll(chat_visible);

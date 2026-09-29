@@ -262,7 +262,7 @@ fn quote_textarea_id(lane_key: &str, identity: &str) -> String {
     format!("composer-quote-{lane_key}-{identity}")
 }
 
-pub(super) fn agent_message_source_id(message: &wire::AgentMessage) -> String {
+pub(in crate::browser) fn agent_message_source_id(message: &wire::AgentMessage) -> String {
     format!(
         "message-{}",
         crate::runtime::agent_message_card_identity(message)

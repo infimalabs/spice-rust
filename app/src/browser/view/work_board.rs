@@ -77,6 +77,7 @@ pub(super) fn render(
             state: map,
             toggle_root: &toggle_map_root,
         }),
+        messages: None,
     };
     let arrangement = **arrangement_state;
     let board_lanes =

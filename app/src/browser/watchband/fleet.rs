@@ -121,16 +121,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                         TeamMode::Chat => {
                             empty("No teams are assigned. Open Import agent to create an agent.")
                         }
-                        TeamMode::Work => render_tasks(
-                            render.runtime,
-                            render.work,
-                            &empty_team,
-                            &[],
-                            (**render.selected_task).as_ref(),
-                            render.select_task,
-                            render.submissions,
-                            None,
-                        ),
+                        TeamMode::Work => render_tasks(render, &empty_team, &[], None),
                         TeamMode::Dash => render_details(
                             &render.surface,
                             render.runtime,
@@ -232,13 +223,9 @@ pub(super) fn render_populated_fleet(
                                 >
                                     {match mode {
                                         TeamMode::Work => render_tasks(
-                                            render.runtime,
-                                            render.work,
+                                            render,
                                             team,
                                             &team_standings,
-                                            (**render.selected_task).as_ref(),
-                                            render.select_task,
-                                            render.submissions,
                                             Some(render.team_settled),
                                         ),
                                         TeamMode::Dash => render_details(

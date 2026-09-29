@@ -29,6 +29,7 @@ mod presence;
 mod provider;
 mod renewal;
 mod submission;
+mod task_links;
 
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use composer_drag::ComposerDragSession;
@@ -36,6 +37,7 @@ pub use presence::{MemberPresence, MemberPresenceState, member_presence};
 pub use provider::{Emblem, Provider, emblem, model_display, model_label, model_provider};
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
 pub use submission::{SubmissionAuthority, SubmissionTarget};
+pub use task_links::{WorkMessageLinks, reported_tasks, task_mentions, work_message_links};
 
 /// Accent slots the band cycles through.
 ///
@@ -974,48 +976,6 @@ pub fn badge(count: usize) -> Option<String> {
     (count > 0).then(|| count.to_string())
 }
 
-/// Canonical task handles an authored message reports, in first-report order.
-///
-/// Markdown punctuation is a boundary rather than part of a handle, so prose
-/// may name one in backticks, parentheses, or at the end of a sentence. The
-/// The wire handle parser admits the outer stem/key shape, then `born` admits
-/// the fixed-width base-52 task stamp. Repeated mentions produce one reported
-/// identity even though the browser renders every authored occurrence.
-#[must_use]
-pub fn reported_tasks(text: &str) -> Vec<TaskHandle> {
-    let mut tasks = Vec::new();
-    for (_, task) in task_mentions(text) {
-        if !tasks.contains(&task) {
-            tasks.push(task);
-        }
-    }
-    tasks
-}
-
-/// Canonical task handles and their byte ranges in authored text.
-///
-/// The browser uses the ranges to replace the handle where it was written,
-/// while [`reported_tasks`] retains the de-duplicated identity view used by
-/// non-browser surfaces.
-#[must_use]
-pub fn task_mentions(text: &str) -> Vec<(std::ops::Range<usize>, TaskHandle)> {
-    let mut mentions = Vec::new();
-    let mut start = None;
-    for (index, character) in text
-        .char_indices()
-        .chain(std::iter::once((text.len(), ' ')))
-    {
-        if character.is_ascii_alphanumeric() || character == '-' {
-            start.get_or_insert(index);
-        } else if let Some(start) = start.take()
-            && let Some(task) = canonical_task_handle(&text[start..index])
-        {
-            mentions.push((start..index, task));
-        }
-    }
-    mentions
-}
-
 /// Admit one current task identity from a broadly parseable handle.
 pub(crate) fn canonical_task_handle(text: &str) -> Option<TaskHandle> {
     let task = text.parse::<TaskHandle>().ok()?;
@@ -1105,7 +1065,7 @@ mod tests {
         lane_accent, quote_label, swap_members, task_elapsed_label,
         task_elapsed_label_deadline_millis, task_remaining_label,
         task_remaining_label_deadline_millis, team_visual_weight, ticker_accessible_label,
-        ticker_chunks, tool_media_description, transfer_member,
+        ticker_chunks, tool_media_description, transfer_member, work_message_links,
     };
 
     fn id(suffix: u8) -> wire::CanonicalUuid {
@@ -1132,6 +1092,108 @@ mod tests {
             wakeable: true,
             jobs: Vec::new(),
         }
+    }
+
+    fn message(lane: wire::CanonicalUuid, offset: u64, text: &str) -> wire::AgentMessage {
+        wire::AgentMessage {
+            lane,
+            author: id(90),
+            locus: wire::MessageLocus {
+                member: 1,
+                offset,
+                length: 1,
+                event: 0,
+            },
+            authored: "2030-04-12T18:44:09.271Z".parse().expect("fixture instant"),
+            authored_synthetic: false,
+            observed: None,
+            activity: wire::AgentActivityKind::Prose,
+            final_answer: false,
+            text: text.to_owned(),
+            provider_error: None,
+            classifications: Vec::new(),
+            quote_target: None,
+            directive_contexts: Vec::new(),
+            quotes: Vec::new(),
+            automatic_speech: None,
+            unavailable_tool_terminals: Vec::new(),
+            boundary: None,
+            media: Vec::new(),
+        }
+    }
+
+    fn directive_reply(
+        lane: wire::CanonicalUuid,
+        offset: u64,
+        key: &str,
+        kind: wire::MessageClassificationKind,
+    ) -> wire::AgentMessage {
+        let marker = kind.marker();
+        let text = format!("{marker} directive");
+        let mut message = message(lane, offset, &text);
+        message.classifications.push(wire::MessageClassification {
+            start: 0,
+            end: u32::try_from(marker.len()).expect("marker fits wire range"),
+            kind,
+        });
+        message.directive_contexts.push(wire::MessageDirective {
+            start: u32::try_from(marker.len() + 1).expect("context start fits wire range"),
+            end: u32::try_from(text.len()).expect("context end fits wire range"),
+            quote_target: wire::QuoteTarget::Steering {
+                key: key.to_owned(),
+                digest: wire::QuoteTarget::text_digest("directive"),
+            },
+            actor: wire::Actor::Operator,
+            authored: "2030-04-12T18:40:00.000Z"
+                .parse()
+                .expect("fixture directive instant"),
+        });
+        message
+    }
+
+    #[test]
+    fn work_links_choose_newest_retained_team_messages_and_no_others() {
+        let task = "WORK-dTppr6bbL"
+            .parse::<wire::TaskHandle>()
+            .expect("fixture task handle");
+        let older = message(id(1), 10, &format!("Started {task}."));
+        let newer = message(id(1), 20, &format!("Finished `{task}`."));
+        let outsider = message(id(2), 30, &format!("Mentioned {task}."));
+        let acknowledged = directive_reply(
+            id(1),
+            40,
+            "dTworkLink",
+            wire::MessageClassificationKind::Acknowledgement,
+        );
+        let declined = directive_reply(
+            id(1),
+            50,
+            "dTworkLink",
+            wire::MessageClassificationKind::Decline,
+        );
+        let messages = [&outsider, &declined, &older, &acknowledged, &newer];
+        let links = work_message_links(&std::collections::BTreeSet::from([id(1)]), messages);
+
+        assert_eq!(
+            links.task(&task).map(|message| message.locus.offset),
+            Some(20)
+        );
+        assert!(
+            links
+                .task(&"WORK-dTppr2McJ".parse().expect("fixture task"))
+                .is_none()
+        );
+        assert_eq!(
+            links
+                .directive(&std::collections::BTreeSet::from(["dTworkLink".to_owned()]))
+                .map(|message| message.locus.offset),
+            Some(50),
+        );
+        assert!(
+            links
+                .directive(&std::collections::BTreeSet::from(["dTmissing".to_owned()]))
+                .is_none()
+        );
     }
 
     #[test]
