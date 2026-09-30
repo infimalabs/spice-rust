@@ -99,6 +99,7 @@ fn lane_row() -> LaneAnswerRow {
         model: Some("claude-opus-4-6".to_owned()),
         seat_model: None,
         effort: Some("high".to_owned()),
+        fast_mode: false,
         git: Some("current".to_owned()),
         rtk: Some(health()),
         occupant: Some(uuid(2)),

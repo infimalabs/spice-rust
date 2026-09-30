@@ -467,6 +467,12 @@ live state changes do not resize or reorder the roster. Agent channel, occupant,
 worktree, residency policy, and session identifiers remain available through a
 per-member seat-details disclosure that scrolls inside its own box.
 
+Recognized provider glyphs are unbadged for ordinary launches and carry a
+small flame only while their current occupant is a recorded Fast mode launch.
+That per-lane mark follows the occupant's launch identity, not the current
+global Fast mode setting. A model with no recognized provider uses the
+standalone omp π identity instead.
+
 The same disclosure carries the member's lane controls. Wake is offered only
 on a vacant seat the resident can seat, Drain only on an occupied one, and
 Remove only on a vacant seat that holds no claim. Renewal and the next-launch

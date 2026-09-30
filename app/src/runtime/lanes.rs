@@ -69,6 +69,8 @@ pub struct LaneMember {
     /// the vendor's configured model. A retune changes this alone.
     pub seat_model: Option<String>,
     pub effort: Option<String>,
+    /// Whether the running occupant was launched in fast mode.
+    pub fast_mode: bool,
     pub occupant: Option<CanonicalUuid>,
     pub session: Option<String>,
     pub disposition: String,
@@ -212,6 +214,7 @@ impl From<&LaneAnswer> for LaneView {
                 model: lane.model.clone(),
                 seat_model: lane.seat_model.clone(),
                 effort: lane.effort.clone(),
+                fast_mode: lane.fast_mode,
                 occupant: lane.occupant,
                 session: lane.session.clone(),
                 disposition: lane.disposition.clone(),

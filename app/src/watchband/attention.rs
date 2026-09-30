@@ -293,6 +293,7 @@ mod tests {
             vendor: "omp".to_owned(),
             model: None,
             effort: None,
+            fast_mode: false,
             thread: None,
             session: None,
             life: "docker".to_owned(),

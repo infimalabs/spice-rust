@@ -167,6 +167,7 @@ pub(in crate::resident) struct DeclarationReporter {
     pub(in crate::resident) vendor: wire::Name,
     pub(in crate::resident) model: String,
     pub(in crate::resident) effort: String,
+    pub(in crate::resident) fast_mode: bool,
     pub(in crate::resident) git: String,
     pub(in crate::resident) rtk: wire::body::RtkHealth,
     pub(in crate::resident) epoch: CanonicalUuid,
@@ -282,6 +283,7 @@ impl CaptureReporter for DeclarationReporter {
             vendor: self.vendor.clone(),
             launch: Some(
                 wire::body::LaneLaunchIdentity::new(self.model.clone(), self.effort.clone())
+                    .with_fast_mode(self.fast_mode)
                     .with_git(self.git.clone())
                     .with_rtk(self.rtk.clone()),
             ),

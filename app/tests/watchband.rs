@@ -153,6 +153,7 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         model: Some("openai-codex/gpt-5.2-codex".to_owned()),
         seat_model: None,
         effort: Some("high".to_owned()),
+        fast_mode: false,
         occupant: Some(uuid(OCCUPANT)),
         session: Some("session-fixture".to_owned()),
         disposition: "seated".to_owned(),

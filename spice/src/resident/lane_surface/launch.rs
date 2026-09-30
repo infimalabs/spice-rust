@@ -101,6 +101,7 @@ pub(in crate::resident) fn occupant_launch(
     let (plan, rtk) = launch_plan(&repository, &resolved, selection)?;
     let model = plan.launch().model.clone();
     let effort = plan.launch().effort.as_str().to_owned();
+    let fast_mode = plan.launch().fast_mode.unwrap_or(false);
     let record = plan
         .record()
         .map_err(|error| store_fault("lane::launch-invalid", &error.to_string()))?;
@@ -133,6 +134,7 @@ pub(in crate::resident) fn occupant_launch(
         vendor: name.clone(),
         model,
         effort,
+        fast_mode,
         git: git.clone(),
         rtk,
         epoch,

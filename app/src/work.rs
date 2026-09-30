@@ -1312,6 +1312,7 @@ pub(crate) mod tests {
             model: None,
             seat_model: None,
             effort: None,
+            fast_mode: false,
             occupant: None,
             session: None,
             disposition: "seated".to_owned(),
