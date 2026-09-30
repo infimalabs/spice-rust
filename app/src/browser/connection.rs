@@ -767,6 +767,11 @@ async fn dispatch_action(
                 .await
                 .map(|_| None)
         }
+        ClientAction::DirectionHistory { request } => {
+            refresh::send_direction_history(principal, writer, actions, request)
+                .await
+                .map(|_| None)
+        }
         ClientAction::WorkHistory { request } => {
             refresh::send_work_history(principal, writer, actions, request)
                 .await

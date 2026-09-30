@@ -466,6 +466,24 @@ status, ownership, and selection contract. Team panes use the compact density;
 activating either card opens the one shared detail layer, whose close returns
 focus to the card that launched it.
 
+Below the board, **Directions** pages the resident's operator-authored history
+newest first, one card per fanout. Search text, agent and team chips, lifecycle
+state chips, and an authored-before date filter the resident read before
+paging; Apply returns to the newest matching page and Clear removes every
+filter. Newer and Older replace one bounded page through durable journal
+cursors, while loading, no-match, refusal, and retry states retain the same
+controls and card grid.
+
+Direction cards use the same sanitized rich Markdown treatment as Chat and the
+team Work ledger. Each card groups its independently evolving recipient badges
+by current team, keeps unknown recipients visible without inventing a link,
+opens caused work in the shared task detail layer, and links an acknowledged
+or declined badge only when the retiring history evidence and a retained
+authenticated reply resolve to that exact team-local Chat card. The mosaic
+holds three columns wide, two at intermediate width, and one on a narrow
+screen without changing newest-first order.
+
+
 ### The team Work pane
 
 Each team projects its open work into three stable lanes: Up next follows the

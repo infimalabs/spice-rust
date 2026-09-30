@@ -4,6 +4,7 @@ use super::*;
 use crate::work::{WorkArrangement, WorkProjection, WorkScope};
 
 pub(super) mod chrome;
+mod direction_history;
 mod quota;
 mod team_menu;
 mod work_board;
@@ -93,6 +94,7 @@ pub(super) struct CanvasRender<'a> {
     pub detail_presented: bool,
     pub detail_closing: bool,
     pub work_map: &'a UseStateHandle<WorkMapState>,
+    pub direction_history: &'a super::direction_history::Controls,
     pub work_history: &'a work_history::Controls,
     pub team_settled: &'a super::team_settled::Controls,
     pub detail_close: &'a NodeRef,
@@ -359,6 +361,16 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
                     },
                 )}
             </section>
+            if let Some(runtime) = runtime {
+                {direction_history::render(
+                    runtime.direction_history(),
+                    runtime.lanes(),
+                    runtime.board(),
+                    runtime.messages(),
+                    render.direction_history,
+                    &render.select_task,
+                )}
+            }
         </div>
     }
 }

@@ -106,6 +106,34 @@ async fn send_board(
     )
     .await
 }
+pub(super) async fn send_direction_history(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    request: &crate::runtime::DirectionHistoryRequest,
+) -> Result<Option<CanonicalUuid>, String> {
+    send_typed(
+        principal,
+        writer,
+        actions,
+        PendingKind::DirectionHistory {
+            request: request.clone(),
+        },
+        CommandKind::SteerHistory,
+        vec![],
+        SteerHistory {
+            window: request.window,
+            query: request.query.clone(),
+            lanes: request.lanes.clone(),
+            dispositions: request.dispositions.clone(),
+            authored_before: request.authored_before,
+            limit: crate::runtime::DIRECTION_HISTORY_PAGE_SIZE,
+        },
+    )
+    .await
+    .map(Some)
+}
+
 pub(super) async fn send_work_history(
     principal: &Principal,
     writer: &mut SocketWriter,

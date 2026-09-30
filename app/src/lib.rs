@@ -103,6 +103,9 @@ pub(crate) enum PendingKind {
     TaskTimeline {
         request: runtime::TaskTimelineRequest,
     },
+    DirectionHistory {
+        request: runtime::DirectionHistoryRequest,
+    },
     WorkHistory {
         request: runtime::WorkHistoryRequest,
     },
