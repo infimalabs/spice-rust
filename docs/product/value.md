@@ -583,6 +583,24 @@ than five minutes. Tasks open the detail layer; direction jumps to the member's
 composer. With nothing due the band is absent, and because it shares the
 fixed-height Flow header, items entering or clearing never move the Flow.
 
+### The team Work direction mosaic
+
+Directions read newest first as message-familiar cards rather than as a
+history table. Each card retains its durable fanout identity, presents the
+available authored body through the same sanitized rich Markdown surface as
+Chat, and names the operator or peer lane that authored it. A bounded retired
+record that retains only a preview says that it is an excerpt instead of
+inventing unavailable body text. Responsive columns repack the cards without
+changing their order, identity, or source data.
+
+Recipient badges keep their lane accent and independent delivery state. An
+acknowledged or declined badge links to that recipient's exact retained Chat
+card; task chips open the shared task detail. In the opposite direction, the
+relative time on a retained Chat quote of an operator direction links through
+a durable team-and-fanout route to the exact Work card. Each crossing records
+its origin so browser Back restores the prior team tab, card, and reading
+position.
+
 ### Lane, team, occupant
 
 Three objects that are easy to conflate and expensive to conflate. The thing
