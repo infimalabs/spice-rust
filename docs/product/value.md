@@ -463,11 +463,13 @@ pane is on screen, and runs again only once an open-board refresh shows work
 leaving the open board or the connection resumes. Settled cards are the same
 shared cards and open the same detail layer.
 Below the lanes, a Kept jobs table lists every command a member keeps beyond
-the call that started it, across the whole team and oldest first. Each row
-names the member in its accent, ticks the job's age from the moment its key
-encodes, shows the command on one line with the full text on hover, and says
-whether it is still running or ended unheard. A standing change updates its
-row in place; with nothing kept, the table holds one fixed-height empty line.
+the call that started it, across the whole team and oldest first. Wide panes
+keep one compact table row per job. Lane-shaped panes preserve the same table
+headers for assistive technology while presenting each job as a labeled,
+accented row: member and standing first, then up to two command lines and the
+started age. The full command remains available on hover. A standing change
+updates its row in place; with nothing kept, the table holds one fixed-height
+empty line.
 
 ### The team console
 
