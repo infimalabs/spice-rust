@@ -320,6 +320,12 @@ schemes lose their destination. A handle the board holds becomes the Chat task
 chip and moves the quick view or drawer to that task; any other handle, and
 anything inside code or link text, stays literal.
 
+In the task observation composer, Enter inserts a newline and Command or
+Control + Enter adds an observation. Holding Shift with that chord instead
+closes the task using the draft as its reason, through the same permissions
+and validation as Close. If Close is unavailable, the chord does not add an
+observation and the draft remains.
+
 Task detail treats admitted ownership facts as navigation. Its project action
 opens the matching Work scope and keeps the task open. Assignment, claim, and
 creator facts open the exact team member in Chat only when topology proves that

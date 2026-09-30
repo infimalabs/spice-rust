@@ -448,14 +448,10 @@ pub(super) fn render_media(media: &[wire::Media]) -> Html {
     }
 }
 
-/// Submit the surrounding observation form on the primary command chord.
+/// Command submits an observation; Shift+Command uses the offered Close action.
 fn note_keyboard_submit(enabled: bool) -> Callback<KeyboardEvent> {
     Callback::from(move |event: KeyboardEvent| {
-        if !enabled
-            || event.key() != "Enter"
-            || !(event.meta_key() || event.ctrl_key())
-            || event.shift_key()
-        {
+        if !enabled || event.key() != "Enter" || !(event.meta_key() || event.ctrl_key()) {
             return;
         }
         let Some(form) = event
@@ -467,7 +463,22 @@ fn note_keyboard_submit(enabled: bool) -> Callback<KeyboardEvent> {
             return;
         };
         event.prevent_default();
-        let _ = form.request_submit();
+        if event.shift_key() {
+            if event.repeat() {
+                return;
+            }
+            let Some(button) = form
+                .query_selector("button[value=\"close\"]:enabled")
+                .ok()
+                .flatten()
+                .and_then(|button| button.dyn_into::<web_sys::HtmlElement>().ok())
+            else {
+                return;
+            };
+            let _ = form.request_submit_with_submitter(Some(&button));
+        } else {
+            let _ = form.request_submit();
+        }
     })
 }
 
