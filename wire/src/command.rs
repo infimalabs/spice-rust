@@ -93,6 +93,8 @@ pub enum CommandKind {
     SteerTell,
     /// Read pending direction visible to the authenticated principal.
     SteerInbox,
+    /// Page operator-authored direction history, one fanout group per row.
+    SteerHistory,
     /// Re-deliver one live directive and catch up any due presentation stages.
     SteerResend,
     /// Restore one lapsed directive without changing its identity.
@@ -604,6 +606,7 @@ impl CommandKind {
         Self::SteerSend,
         Self::SteerTell,
         Self::SteerInbox,
+        Self::SteerHistory,
         Self::SteerResend,
         Self::SteerRecover,
         Self::SteerDispose,
@@ -669,6 +672,7 @@ impl CommandKind {
             | Self::SteerSend
             | Self::SteerTell
             | Self::SteerInbox
+            | Self::SteerHistory
             | Self::SteerResend
             | Self::SteerRecover
             | Self::SteerDispose
@@ -738,6 +742,7 @@ impl CommandKind {
             Self::SteerSend => "steer::send",
             Self::SteerTell => "steer::tell",
             Self::SteerInbox => "steer::inbox",
+            Self::SteerHistory => "steer::history",
             Self::SteerResend => "steer::resend",
             Self::SteerRecover => "steer::recover",
             Self::SteerDispose => "steer::dispose",
@@ -923,6 +928,7 @@ impl CommandKind {
             Self::SteerSend => Law::SEND,
             Self::SteerTell => Law::TELL,
             Self::SteerInbox => Law::READ,
+            Self::SteerHistory => Law::OPERATOR_READ,
             Self::SteerResend => Law::RESEND,
             Self::SteerRecover => Law::RECOVER,
             Self::SteerDispose => Law::DISPOSE,
@@ -966,6 +972,7 @@ impl CommandKind {
                 | Self::GlobalSettingsRead
                 | Self::VendorCatalog
                 | Self::SteerInbox
+                | Self::SteerHistory
                 | Self::ConsentRead
                 | Self::ConsentPolicy
                 | Self::LaneRead

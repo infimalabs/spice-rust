@@ -40,6 +40,8 @@ mod startup;
 mod startup_window;
 #[path = "tests/steering_heard.rs"]
 mod steering_heard;
+#[path = "tests/steering_history.rs"]
+mod steering_history;
 #[path = "tests/steering_tell.rs"]
 mod steering_tell;
 #[path = "tests/steering_vacant.rs"]

@@ -160,6 +160,17 @@ const BODIES: &[(CommandKind, &str)] = &[
     ),
     (CommandKind::SteerInbox, r#"{}"#),
     (
+        CommandKind::SteerHistory,
+        r#"{
+  "window": { "kind": "anchor", "identity": "018f82d4-6f59-7d06-92e3-bce9131163c4" },
+  "query": "parser",
+  "lanes": ["018f82d4-6f59-7d06-92e3-bce9131163c2"],
+  "dispositions": ["live", "canceled"],
+  "authored_before": "2026-08-01T06:07:19.000Z",
+  "limit": 20
+}"#,
+    ),
+    (
         CommandKind::SteerResend,
         r#"{ "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4" }"#,
     ),
@@ -911,6 +922,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::SteerSend,
     BodyShape::SteerTell,
     BodyShape::SteerInbox,
+    BodyShape::SteerHistory,
     BodyShape::DirectiveRef,
     BodyShape::SteerDispose,
     BodyShape::ConsentDecide,
@@ -944,6 +956,7 @@ const ALL_ANSWERS: &[AnswerShape] = &[
     AnswerShape::Doc,
     AnswerShape::Directive,
     AnswerShape::Inbox,
+    AnswerShape::DirectionHistory,
     AnswerShape::Consent,
     AnswerShape::ConsentQueue,
     AnswerShape::ConsentPolicy,

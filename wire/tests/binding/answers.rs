@@ -207,6 +207,33 @@ pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
 }"#,
     ),
     (
+        AnswerShape::DirectionHistory,
+        r#"{
+  "groups": [{
+    "fanout": "018f82d4-6f59-7d06-92e3-bce9131163c6",
+    "position": 41,
+    "preview": "drain the queue",
+    "authored": "2026-08-01T06:07:19.000Z",
+    "recipients": [{
+      "directive": "018f82d4-6f59-7d06-92e3-bce9131163c4",
+      "lane": "018f82d4-6f59-7d06-92e3-bce9131163c2",
+      "key": "1kJJP87B",
+      "disposition": "acked",
+      "retirement": { "position": 44, "at": "2026-08-01T06:09:00.000Z" }
+    }, {
+      "directive": "018f82d4-6f59-7d06-92e3-bce9131163c7",
+      "lane": "018f82d4-6f59-7d06-92e3-bce9131163c5",
+      "key": "1kJJP87C",
+      "disposition": "live"
+    }]
+  }],
+  "limit": 1,
+  "total": 3,
+  "older": 41,
+  "newer": 52
+}"#,
+    ),
+    (
         AnswerShape::Consent,
         r#"{ "request": "018f82d4-6f59-7d06-92e3-bce9131163c4", "answer": "granted" }"#,
     ),

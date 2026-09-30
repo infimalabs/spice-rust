@@ -32,6 +32,7 @@
 | A delivered quote source is unavailable or lies beyond the depth bound | one explicit stub names the unavailable target; the link is never silently omitted or replaced with invented text | [Steering delivery expands authenticated quote links](../invariants/identity.md#steering-delivery-expands-authenticated-quote-links) |
 | Steering delivered on the hot path | no task-database query | [Submit cost does not grow with backlog depth](../invariants/identity.md#steering-submit-cost-does-not-grow-with-backlog-depth) |
 | Item acknowledged | journal history records actor, team-at-send, disposition, and response; no separate inbox cache exists to lose or repair | [The journal inbox is authoritative](../invariants/identity.md#steering-the-journal-inbox-is-authoritative) |
+| Operator pages direction history filtered to one lane | each fanout that addressed that lane arrives whole with every recipient's standing, newest first, with cursors to older and newer groups; peer tells never appear | [Operator direction history pages whole fanouts](../invariants/identity.md#steering-operator-direction-history-pages-whole-fanouts) |
 
 ### Claims and allocation
 

@@ -22,6 +22,7 @@ use super::{
 };
 
 mod exit;
+mod history;
 mod preview;
 mod reply;
 #[cfg(test)]
@@ -30,6 +31,7 @@ mod transcript;
 mod transitions;
 
 pub(super) use exit::{dispose_at_exit, dispose_at_startup, dispose_heard};
+pub(super) use history::history;
 use preview::directive_preview;
 use transitions::evidence_refusal;
 pub(super) use transitions::{cancel, recover, resend, send, tell};
