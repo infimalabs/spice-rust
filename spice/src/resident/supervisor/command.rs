@@ -47,6 +47,9 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// point at it instead of spending it again. A compaction drops the
     /// context, and with it this set.
     told: Mutex<BTreeSet<String>>,
+    /// Successfully delivered keys recognized for this occupant's lifetime,
+    /// even when compaction drops the verbatim telling.
+    recognized: Mutex<BTreeSet<String>>,
     /// Told keys after whose telling the occupant wrote visible prose, so a
     /// resend can say whether it saw a reply at all. Reasoning and tool
     /// arguments are not prose. Cleared with `told`.
@@ -183,6 +186,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
             told: Mutex::new(BTreeSet::new()),
+            recognized: Mutex::new(BTreeSet::new()),
             replied: Mutex::new(BTreeSet::new()),
             reasoning_reminder: Mutex::new(ReasoningReminder::default()),
             seal,
@@ -340,6 +344,15 @@ impl<W: Write + Send + 'static> Driver<W> {
         drop(replied);
         if self.steer(resent.as_deref().unwrap_or(message)).is_ok() {
             told.extend(steer::inbox::keys(message).map(str::to_owned));
+            let mut recognized = self
+                .recognized
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            for key in steer::inbox::keys(message) {
+                if !recognized.contains(key) {
+                    recognized.insert(key.to_owned());
+                }
+            }
             *delivered = Some(rendered);
         }
     }
@@ -426,9 +439,9 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// Correct visible acknowledgment headers that name a key the occupant
     /// does not hold.
     ///
-    /// A header naming a mistyped key, or one retired before this context was
+    /// A header naming a mistyped key, or one retired before this occupant was
     /// told anything, retires nothing, and an occupant that never hears so
-    /// believes it answered. A key still pending, one this context was told,
+    /// believes it answered. A key still pending, one this occupant was told,
     /// and the lane's own seal stay silent: the first retires, and the others
     /// were really given to this occupant. Like the reasoning correction this
     /// writes only a private notice and never reaches journal authority.
@@ -454,11 +467,10 @@ impl<W: Write + Send + 'static> Driver<W> {
             .map(|rendered| steer::inbox::keys(rendered).collect::<Vec<_>>())
             .unwrap_or_default();
         let standing = PendingKeys(pending.iter().filter_map(|key| key.parse().ok()).collect());
-        let told = self
-            .told
+        let recognized = self
+            .recognized
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
+            .unwrap_or_else(PoisonError::into_inner);
         let mut misdirected = self
             .misdirected
             .lock()
@@ -473,7 +485,7 @@ impl<W: Write + Send + 'static> Driver<W> {
                     continue;
                 };
                 if token != self.seal.as_str()
-                    && !told.contains(&token)
+                    && !recognized.contains(&token)
                     && !misdirected.contains(&token)
                 {
                     named.insert(token);

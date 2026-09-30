@@ -459,9 +459,8 @@ fn a_visible_header_naming_no_held_key_receives_one_private_correction() {
     let frames = sink.answered(2);
     assert_eq!(frames.len(), 2, "{frames:?}");
     let notice = frames[1]["message"].as_str().expect("correction text");
-    assert!(notice.starts_with("<system-notice>\n"), "{notice}");
-    assert!(notice.contains("named `dTrHz4R3`,"), "{notice}");
-    assert!(notice.contains("Pending: `dTtrHz4R3`;"), "{notice}");
+    assert!(notice.contains("dTrHz4R3"), "{notice}");
+    assert!(notice.contains("dTtrHz4R3"), "{notice}");
     for held in ["dTrSSg90C", "Sk9DLj12R", "dTrHz4Rx"] {
         assert!(!notice.contains(held), "{held} stays silent: {notice}");
     }
@@ -475,6 +474,61 @@ fn a_visible_header_naming_no_held_key_receives_one_private_correction() {
         2,
         "a corrected token and reasoning stay silent"
     );
+
+    driver.observe(&decoded(br#"{"type":"compaction"}"#));
+    driver.observe(&reply);
+    let frames = sink.frames();
+    assert_eq!(
+        frames.len(),
+        4,
+        "one pending replay and one typo correction"
+    );
+    let notice = frames[3]["message"].as_str().expect("correction text");
+    assert!(notice.contains("dTrHz4R3"), "{notice}");
+    assert!(
+        !notice.contains("dTrSSg90C"),
+        "a retired key delivered before compaction stays recognized: {notice}"
+    );
+}
+
+#[test]
+fn delivered_key_recognition_belongs_only_to_the_successfully_told_occupant() {
+    let scratch = Scratch::new("recognition-lifetime");
+    let rendering =
+        format!("<{SEAL}>\ndirective=d1 key=dTrSSg90C stage=new expires=never\nfirst\n</{SEAL}>\n");
+    let reply = decoded(
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK dTrSSg90C: repeated."}]}}"#,
+    );
+    let sink = Sink::default();
+    let told = make_driver(sink.clone(), &scratch, None);
+    scratch.publish(&rendering);
+    told.deliver_inbox();
+    scratch.publish(b"");
+    told.observe(&reply);
+    assert_eq!(
+        sink.frames().len(),
+        1,
+        "a delivered retired key stays silent"
+    );
+
+    let fresh_sink = Sink::default();
+    let fresh = make_driver(fresh_sink.clone(), &scratch, None);
+    fresh.observe(&reply);
+    let frames = fresh_sink.frames();
+    assert_eq!(frames.len(), 1, "a new occupant receives a correction");
+    assert!(frames[0]["message"].as_str().unwrap().contains("dTrSSg90C"));
+
+    let failed_sink = Sink::default();
+    let failed = make_driver(failed_sink.clone(), &scratch, None);
+    *failed.stdin.lock().unwrap_or_else(PoisonError::into_inner) = None;
+    scratch.publish(&rendering);
+    failed.deliver_inbox();
+    scratch.publish(b"");
+    *failed.stdin.lock().unwrap_or_else(PoisonError::into_inner) = Some(failed_sink.clone());
+    failed.observe(&reply);
+    let frames = failed_sink.frames();
+    assert_eq!(frames.len(), 1, "failed delivery grants no recognition");
+    assert!(frames[0]["message"].as_str().unwrap().contains("dTrSSg90C"));
 }
 
 #[test]

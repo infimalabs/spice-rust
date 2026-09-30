@@ -277,13 +277,16 @@ not moved, so the refusal never sends it to reread a snapshot that shows the
 same key.
 
 **Invariant —** A placed header naming a token the occupant does not hold
-retires nothing and is corrected once. The token is neither pending, nor told
-in the current context, nor the lane seal: a mistyped key, or one retired
-before this context heard it. The supervisor privately names that exact token,
-says it acknowledged nothing, and lists the pending keys. A key this context
-was told stays silent after it retires, so a closing reply may repeat its
-header. The notice is a delivery correction, not journal authority, and
-repeats for a token only after a compaction.
+retires nothing and is corrected once. The token is neither pending, nor
+successfully delivered to this occupant, nor the lane seal: a mistyped key, or
+one retired before this occupant heard it. The supervisor privately names that
+exact token, says it acknowledged nothing, and lists the pending keys. A
+successfully delivered key stays recognized for the occupant's lifetime after
+retirement and compaction, so a closing reply may repeat its header without a
+false correction. Failed delivery grants no recognition, and another occupant
+inherits none. Context-local telling state still resets on compaction so pending
+direction is replayed in full. The notice is a delivery correction, not journal
+authority, and an unknown token is corrected again only after a compaction.
 
 ### Command rewriting
 
