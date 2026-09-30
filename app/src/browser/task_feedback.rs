@@ -6,6 +6,7 @@ use super::*;
 enum PendingFeedback {
     NoteSaving { task: TaskStamp, subject: String },
     NoteReconciling { task: TaskStamp, subject: String },
+    Closing { task: TaskStamp, subject: String },
     Reconnecting { task: TaskStamp },
     DetailRefresh { task: TaskStamp },
     RelationsRefresh { task: TaskStamp },
@@ -16,6 +17,7 @@ impl PendingFeedback {
         match self {
             Self::NoteSaving { task, .. }
             | Self::NoteReconciling { task, .. }
+            | Self::Closing { task, .. }
             | Self::Reconnecting { task }
             | Self::DetailRefresh { task }
             | Self::RelationsRefresh { task } => task,
@@ -30,6 +32,7 @@ impl PendingFeedback {
             Self::NoteReconciling { subject, .. } => {
                 format!("Saved for {subject}; waiting for durable activity…").into()
             }
+            Self::Closing { subject, .. } => format!("Closing {subject}…").into(),
             Self::Reconnecting { .. } => {
                 "Showing admitted detail while reconnecting. Updates and observations will resume when Canvas reconnects.".into()
             }
@@ -47,6 +50,7 @@ impl PendingFeedback {
             Self::NoteSaving { subject, .. } | Self::NoteReconciling { subject, .. } => {
                 Some(format!("Observation saved for {subject}.").into())
             }
+            Self::Closing { subject, .. } => Some(format!("Closed {subject} as completed.").into()),
             Self::Reconnecting { .. }
             | Self::DetailRefresh { .. }
             | Self::RelationsRefresh { .. } => None,
@@ -92,6 +96,10 @@ fn feedback(state: &CanvasAppState) -> Feedback {
                     task: task.clone(),
                     subject: task_subject(runtime, task),
                 }),
+                NoteSubmission::Closing => Some(PendingFeedback::Closing {
+                    task: task.clone(),
+                    subject: task_subject(runtime, task),
+                }),
                 NoteSubmission::Idle | NoteSubmission::Failed(_) => None,
             };
         }
@@ -110,7 +118,8 @@ fn feedback(state: &CanvasAppState) -> Feedback {
                     }),
                     NoteSubmission::Idle
                     | NoteSubmission::Pending { .. }
-                    | NoteSubmission::Reconciling { .. } => None,
+                    | NoteSubmission::Reconciling { .. }
+                    | NoteSubmission::Closing => None,
                 });
         }
         if note_pending.is_some() && note_settled.is_some() {

@@ -56,6 +56,8 @@ pub enum CommandKind {
     TaskEdit,
     /// Withdraw a task from the board with a recorded reason.
     TaskDelete,
+    /// Close a task as completed on the operator's word with a validation.
+    TaskClose,
     /// Append an observation without replacing the statement.
     TaskNote,
     /// Set a wakeable deferral.
@@ -285,6 +287,14 @@ impl Law {
         required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
         optional: &[],
         authority: Authority::Connected,
+    };
+    /// The withdrawal witnesses, because closing likewise decides against the
+    /// current workflow and possession; only the operator may close work it
+    /// does not hold.
+    pub const CLOSE: Self = Self {
+        required: &[WitnessKind::Task, WitnessKind::Workflow, WitnessKind::Claim],
+        optional: &[],
+        authority: Authority::Operator,
     };
     /// Task identity; no statement revision witness, because notes append
     /// rather than replace.
@@ -589,6 +599,7 @@ impl CommandKind {
         Self::TasteProposalAdd,
         Self::TaskEdit,
         Self::TaskDelete,
+        Self::TaskClose,
         Self::TaskNote,
         Self::TaskDefer,
         Self::TaskWake,
@@ -655,6 +666,7 @@ impl CommandKind {
             | Self::TasteProposalAdd
             | Self::TaskEdit
             | Self::TaskDelete
+            | Self::TaskClose
             | Self::TaskNote
             | Self::TaskDefer
             | Self::TaskWake
@@ -719,6 +731,7 @@ impl CommandKind {
             Self::TasteProposalAdd => "taste::proposal-add",
             Self::TaskEdit => "task::edit",
             Self::TaskDelete => "task::delete",
+            Self::TaskClose => "task::close",
             Self::TaskNote => "task::note",
             Self::TaskDefer => "task::defer",
             Self::TaskWake => "task::wake",
@@ -804,6 +817,7 @@ impl CommandKind {
             Self::TaskAdd | Self::TaskOopsAdd | Self::TasteProposalAdd => Law::ADD,
             Self::TaskEdit => Law::EDIT,
             Self::TaskDelete => Law::DELETE,
+            Self::TaskClose => Law::CLOSE,
             Self::TaskNote => Law::NOTE,
             Self::TaskDefer => Law::DEFER,
             Self::TaskWake => Law::WAKE,

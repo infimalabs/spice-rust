@@ -479,6 +479,29 @@ pub struct TaskDeleted {
     pub claimed: Option<Actor>,
 }
 
+/// The operator closed a task as completed without holding its claim.
+///
+/// Completion ordinarily rests on the claimant's proof (`task::done`); this
+/// is the operator's own lever, so the fact records the phase it cut short and
+/// its stated validation instead. `claimed` names the actor whose live claim
+/// the closure overrode, when it overrode one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskClosed {
+    /// Closed task.
+    pub task: TaskStamp,
+    /// Operator's stated evidence or reason the task is complete.
+    pub validation: String,
+    /// Phase the workflow held when the operator closed it.
+    pub phase: Phase,
+    /// Actor whose live claim the closure overrode, when it overrode one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub claimed: Option<Actor>,
+}
+
 /// Exclusive possession was minted from the current eligibility and claim heads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClaimWon {

@@ -592,13 +592,68 @@ fn note_keyboard_submit(enabled: bool) -> Callback<KeyboardEvent> {
     })
 }
 
+/// Whether the operator may close a task from its composer, and whose live
+/// claim that closure takes.
+#[derive(Clone, PartialEq, Eq)]
+pub(super) struct TaskClosure {
+    holder: Option<wire::Actor>,
+}
+
+/// The closure a composer offers for `heads`: none without the capability or
+/// once the task is settled.
+pub(super) fn closure(can_close: bool, heads: &wire::intent::BoardTask) -> Option<TaskClosure> {
+    let settled = matches!(heads.workflow.body.status.as_str(), "completed" | "deleted");
+    (can_close && !settled).then(|| TaskClosure {
+        holder: live_holder(heads),
+    })
+}
+
+fn live_holder(heads: &wire::intent::BoardTask) -> Option<wire::Actor> {
+    heads
+        .claim
+        .as_ref()
+        .filter(|claim| claim.body.disposition == wire::ClaimDisposition::Active)
+        .map(|claim| claim.body.actor.clone())
+}
+
+/// The heads a closure decides against, spelled as the resident's witnesses.
+fn close_witnesses(heads: &wire::intent::BoardTask) -> Vec<wire::Witness> {
+    let task = heads.statement.body.born.clone();
+    vec![
+        wire::Witness::Task {
+            task: task.clone(),
+            head: heads.statement.position,
+        },
+        wire::Witness::Workflow {
+            task: task.clone(),
+            head: heads.workflow.position,
+            phase: heads.workflow.body.phase.clone(),
+        },
+        wire::Witness::Claim {
+            task,
+            head: heads.claim.as_ref().map(|claim| claim.position),
+        },
+    ]
+}
+
+/// The submit button value that sends the draft as a closing validation.
+const CLOSE_SUBMITTER: &str = "close";
+
+fn submitted_close(event: &SubmitEvent) -> bool {
+    event
+        .submitter()
+        .is_some_and(|button| button.get_attribute("value").as_deref() == Some(CLOSE_SUBMITTER))
+}
+
 /// The one observation composer every surface showing `task` renders, bound
 /// to that task and preserving only that task's draft while feedback uses its task-owned toast.
+/// With a `closure`, the same draft can instead close the task as its validation.
 pub(super) fn render_note_composer(
     id: &'static str,
     handle: &str,
     task: &TaskStamp,
     can_note: bool,
+    closure: Option<&TaskClosure>,
     composer: &NoteComposer,
     submit: &Callback<(TaskStamp, SubmitEvent)>,
 ) -> Html {
@@ -608,6 +663,7 @@ pub(super) fn render_note_composer(
         };
     }
     let busy = composer.submission.busy();
+    let closing = composer.submission == NoteSubmission::Closing;
     let form_key = task.to_string();
     let task = task.clone();
     html! {
@@ -624,13 +680,32 @@ pub(super) fn render_note_composer(
                 onkeydown={note_keyboard_submit(!busy)}
             >{composer.draft.clone()}</textarea>
             <button type="submit" class="canvas-compact-control" disabled={busy}>
-                {if busy { "Saving…" } else { "Add observation" }}
+                {if busy && !closing { "Saving…" } else { "Add observation" }}
             </button>
+            if let Some(closure) = closure {
+                <button
+                    type="submit"
+                    class="canvas-compact-control"
+                    value={CLOSE_SUBMITTER}
+                    disabled={busy}
+                    title={closure.holder.as_ref().map(|holder| format!("Closing takes this task from {holder}"))}
+                >
+                    {if closing {
+                        "Closing…"
+                    } else if closure.holder.is_some() {
+                        "Close task from its holder"
+                    } else {
+                        "Close task"
+                    }}
+                </button>
+            }
         </form>
     }
 }
 
-/// Append one observation to the task named by the submitting surface.
+/// Append one observation to the task named by the submitting surface, or
+/// close that task with the draft as its validation when the close button
+/// submitted the form.
 pub(super) fn note_submit_callback(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
@@ -646,7 +721,8 @@ pub(super) fn note_submit_callback(
             .map(|textarea| textarea.value())
             .unwrap_or_default();
         notes.update(&task, |composer| composer.draft.clone_from(&text));
-        let (handle, after) = {
+        let closing = submitted_close(&event);
+        let (handle, after, close) = {
             let data = surface.read();
             let Some(detail) = data
                 .as_ref()
@@ -665,8 +741,26 @@ pub(super) fn note_submit_callback(
             (
                 detail.task.statement.body.handle.clone(),
                 detail.notes.last().map(|note| note.position),
+                closing.then(|| {
+                    (
+                        close_witnesses(&detail.task),
+                        live_holder(&detail.task).is_some(),
+                    )
+                }),
             )
         };
+        if let Some((expected, force_claimed)) = close {
+            queue_close(
+                &sender,
+                &notes,
+                &task,
+                handle,
+                &text,
+                expected,
+                force_claimed,
+            );
+            return;
+        }
         match compose::note(handle.as_str(), &text) {
             Ok(note) => {
                 let Some(id) = action_identity(&sender) else {
@@ -694,6 +788,47 @@ pub(super) fn note_submit_callback(
             Err(refusal) => notes.update(&task, |composer| composer.notice = refusal.into()),
         }
     })
+}
+
+/// Queue one closure whose witnesses are the heads the operator closed from.
+fn queue_close(
+    sender: &SenderHandle,
+    notes: &NoteComposers,
+    task: &TaskStamp,
+    handle: wire::TaskHandle,
+    text: &str,
+    expected: Vec<wire::Witness>,
+    force_claimed: bool,
+) {
+    let validation = match compose::close(text) {
+        Ok(validation) => validation,
+        Err(refusal) => {
+            notes.update(task, |composer| composer.notice = refusal.into());
+            return;
+        }
+    };
+    let queued = action_identity(sender).is_some_and(|id| {
+        admit_action(
+            sender,
+            ClientAction::Close {
+                id,
+                task: handle,
+                validation,
+                expected,
+                force_claimed,
+            },
+        )
+    });
+    notes.update(task, |composer| {
+        composer.notice = Notice::none();
+        composer.submission = if queued {
+            NoteSubmission::Closing
+        } else {
+            NoteSubmission::Failed(
+                "Closure could not be queued; the draft was retained.".to_owned(),
+            )
+        };
+    });
 }
 
 fn retain_note_failure(notes: &NoteComposers, task: &TaskStamp) {

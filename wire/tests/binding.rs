@@ -91,6 +91,10 @@ const BODIES: &[(CommandKind, &str)] = &[
         r#"{ "task": "SPICE-1kKRRsDP", "reason": "filed against the wrong surface" }"#,
     ),
     (
+        CommandKind::TaskClose,
+        r#"{ "task": "SPICE-1kKRRsDP", "validation": "verified in the browser", "force_claimed": true }"#,
+    ),
+    (
         CommandKind::TaskNote,
         r#"{ "task": "SPICE-1kKRRsDP", "note": "the registry row is exhaustive" }"#,
     ),
@@ -906,6 +910,7 @@ const ALL_BODIES: &[BodyShape] = &[
     BodyShape::TasteProposalAdd,
     BodyShape::TaskEdit,
     BodyShape::TaskDelete,
+    BodyShape::TaskClose,
     BodyShape::TaskNote,
     BodyShape::TaskDefer,
     BodyShape::TaskWake,

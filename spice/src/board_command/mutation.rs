@@ -4,8 +4,10 @@ mod claim;
 mod deferral;
 mod edit;
 mod requirements;
+mod settlement;
 mod taste_proposal;
 pub(super) use deferral::{task_defer, task_wake};
+pub(super) use settlement::{task_close, task_delete};
 
 #[cfg(test)]
 pub(super) use claim::Possession;
@@ -626,153 +628,6 @@ pub(super) fn task_note(
         return store_fault("task::note-receipt", &error.to_string());
     }
     committed(bus, write, CommandAnswer::Task(answer))
-}
-
-/// Withdraw a task from the board with a recorded reason.
-///
-/// The journal keeps the statement, so this is a terminal workflow status
-/// rather than a removal: the row stops being allocatable, stops blocking its
-/// dependents, and keeps its history and its reason readable.
-///
-/// A live claim refuses the withdrawal by default, because taking work away
-/// from a lane mid-flight is a decision an operator makes deliberately, not one
-/// they discover afterwards. `force_claimed` makes it, and then the fact names
-/// the actor whose claim was overridden and the claim is freed in the same
-/// transaction -- a lane left holding a withdrawn task would renew its lease
-/// against a row nothing can ever advance.
-pub(super) fn task_delete(
-    bus: &Bus,
-    command: &wire::AdmittedCommand,
-    delete: &TaskDelete,
-    projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
-) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
-    let Some(entry) = task_entry(&snapshot.entries, &delete.task) else {
-        return refusal(
-            "task::unknown",
-            Some(delete.task.to_string()),
-            "read board and name one current task handle",
-        );
-    };
-    if delete.reason.trim().is_empty() {
-        return refusal(
-            "task::delete-reason-empty",
-            Some(entry.handle().to_string()),
-            "state why the task leaves the board",
-        );
-    }
-    match entry.workflow().status.as_str() {
-        "completed" => {
-            return refusal(
-                "task::settled",
-                Some(entry.handle().to_string()),
-                "a completed task is history and stays on the board",
-            );
-        }
-        "deleted" => {
-            return refusal(
-                "task::already-deleted",
-                Some(entry.handle().to_string()),
-                "the task is already withdrawn; read its recorded reason",
-            );
-        }
-        _ => {}
-    }
-    let held = entry
-        .claim()
-        .filter(|claim| claim.disposition == ClaimDisposition::Active);
-    if let Some(claim) = held
-        && !delete.force_claimed
-    {
-        return refusal(
-            "task::delete-claimed",
-            Some(claim.actor.to_string()),
-            "rerun with --force-claimed to withdraw work a lane is holding",
-        );
-    }
-    let claimed = held.map(|claim| claim.actor.clone());
-    let at = match current_instant() {
-        Ok(at) => at,
-        Err(outcome) => return outcome,
-    };
-    let origin = match task_origin(entry.born()) {
-        Ok(origin) => origin,
-        Err(outcome) => return outcome,
-    };
-    let post = projected_deleted_entry(entry, at, claimed.is_some(), projects);
-    let next = next_action(&snapshot, &post);
-    let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
-    guard(&mut write, command.expected().to_vec());
-    let deleted = match write.fact(
-        body::TaskDeleted {
-            task: entry.born().clone(),
-            reason: delete.reason.clone(),
-            claimed: claimed.clone(),
-        },
-        FactCause::Root,
-    ) {
-        Ok(fact) => fact,
-        Err(error) => return store_fault("task::delete-build", &error.to_string()),
-    };
-    let workflow = post.workflow().clone();
-    write.workflow_head(entry.born().clone(), deleted, move |_| workflow);
-    if claimed.is_some() {
-        let claim = post
-            .claim()
-            .expect("a held claim remains as freed history")
-            .clone();
-        write.claim_head(entry.born().clone(), deleted, move |fact| ClaimHead {
-            fact,
-            ..claim
-        });
-    }
-    let answer = wire::intent::TaskAnswer {
-        task: entry.handle().clone(),
-        status: "deleted".to_owned(),
-        guidance: None,
-        completion: None,
-        learning: None,
-        claim: None,
-        next,
-    };
-    if let Err(error) = write.command_result(
-        request(command, delete.clone()),
-        command.epoch(),
-        answer.clone(),
-    ) {
-        return store_fault("task::delete-receipt", &error.to_string());
-    }
-    committed(bus, write, CommandAnswer::Task(answer))
-}
-
-fn projected_deleted_entry(
-    entry: &Entry,
-    at: Instant,
-    release_claim: bool,
-    projects: &ProjectPolicy,
-) -> Entry {
-    let mut workflow = entry.workflow().clone();
-    workflow.status = "deleted".to_owned();
-    workflow.completion = Some(at);
-    workflow.assignment = None;
-    let mut claim = entry.claim().cloned();
-    if let Some(claim) = claim.as_mut()
-        && release_claim
-    {
-        claim.disposition = ClaimDisposition::Freed;
-    }
-    Entry::new(
-        entry.statement().clone(),
-        workflow,
-        claim,
-        entry.lease().cloned(),
-        projects,
-    )
-    .expect("withdrawing an admitted task preserves a valid historical entry")
 }
 
 pub(super) fn task_depends(

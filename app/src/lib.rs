@@ -142,6 +142,9 @@ pub(crate) enum PendingKind {
         text: String,
         after: Option<wire::Seq>,
     },
+    Close {
+        task: wire::TaskStamp,
+    },
 }
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 mod speech;

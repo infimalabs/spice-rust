@@ -283,6 +283,10 @@ fn authored_transition(envelope: &wire::Envelope<wire::AnyFact>) -> Option<Attri
             fact.read::<body::TaskDone>()?.task,
             TaskTimelineEvent::Completed {},
         ),
+        wire::FactKind::TaskClosed => (
+            fact.read::<body::TaskClosed>()?.task,
+            TaskTimelineEvent::Completed {},
+        ),
         wire::FactKind::TaskDeferred => (
             fact.read::<body::TaskDeferred>()?.task,
             TaskTimelineEvent::Deferred {},

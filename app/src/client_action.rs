@@ -83,6 +83,18 @@ pub(crate) enum ClientAction {
         note: String,
         after: Option<wire::Seq>,
     },
+    /// Close one task as completed with the composed text as its validation.
+    ///
+    /// The witnesses are the heads of the detail the operator closed from, so
+    /// a transition or claim landing after that render refuses the closure
+    /// instead of settling work the operator never saw.
+    Close {
+        id: CanonicalUuid,
+        task: TaskHandle,
+        validation: String,
+        expected: Vec<wire::Witness>,
+        force_claimed: bool,
+    },
     /// Direction the operator aimed at one seated lane from its tile.
     ///
     /// The occupant and epoch travel with the message because the residency

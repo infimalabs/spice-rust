@@ -359,6 +359,9 @@ fn apply_mutating_response(
         PendingKind::Note { task, text, after } => {
             apply_note_response(session, handles, runtime, task, text, after, bytes)?
         }
+        PendingKind::Close { task } => {
+            apply_close_response(session, handles, runtime, task, bytes)?
+        }
         _ => unreachable!("read and mutation response partitions are closed"),
     })
 }
@@ -401,6 +404,48 @@ fn apply_note_response(
         outcome => {
             let issue = outcome_issue("Observation was not saved", outcome)
                 .unwrap_or_else(|| "Observation was not saved.".to_owned());
+            handles.notes.update(&task, |composer| {
+                composer.submission = NoteSubmission::Failed(issue);
+            });
+            Ok(CommandApplication::ordinary(false))
+        }
+    }
+}
+
+/// A closed task clears its composer and rereads the detail that now shows it
+/// completed; a refusal keeps the draft with the resident's reason.
+fn apply_close_response(
+    session: &Session,
+    handles: &SurfaceHandles,
+    runtime: &mut CanvasRuntime,
+    task: wire::TaskStamp,
+    bytes: &[u8],
+) -> Result<CommandApplication, String> {
+    let admitted: crate::Admitted<Response<TaskAnswer>> = admit_response(session, bytes)?;
+    match &admitted.get().outcome {
+        wire::Outcome::Reply(reply) => {
+            let answered = reply
+                .body
+                .task
+                .born()
+                .map_err(|error| format!("close answer named a non-canonical task: {error}"))?;
+            if answered != task {
+                handles.notes.update(&task, |composer| {
+                    composer.submission = NoteSubmission::Failed(
+                        "The resident closed a different task; the draft was retained.".to_owned(),
+                    );
+                });
+                return Err("close answer task identity did not match its command".to_owned());
+            }
+            handles
+                .notes
+                .update(&task, |composer| *composer = NoteComposer::default());
+            refresh_task_detail(runtime, &task);
+            Ok(CommandApplication::task_detail(task))
+        }
+        outcome => {
+            let issue = outcome_issue("Task was not closed", outcome)
+                .unwrap_or_else(|| "Task was not closed.".to_owned());
             handles.notes.update(&task, |composer| {
                 composer.submission = NoteSubmission::Failed(issue);
             });

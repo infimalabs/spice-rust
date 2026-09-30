@@ -182,6 +182,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::TasteProposalAdd
         | CommandKind::TaskEdit
         | CommandKind::TaskDelete
+        | CommandKind::TaskClose
         | CommandKind::TaskNote
         | CommandKind::TaskDefer
         | CommandKind::TaskWake
