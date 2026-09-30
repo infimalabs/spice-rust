@@ -203,12 +203,6 @@ fn remember_return(
         return false;
     };
     let state = js_sys::Object::new();
-    // Keep the history library's own entry identity beside the anchor.
-    if let Ok(current) = history.state()
-        && let Some(current) = current.dyn_ref::<js_sys::Object>()
-    {
-        js_sys::Object::assign(&state, current);
-    }
     let anchor = js_sys::Object::new();
     for (name, value) in [
         ("card", JsValue::from(origin.id())),
@@ -511,6 +505,79 @@ fn target_resolution(target: Option<&str>, surface: &SurfaceData) -> TargetResol
             })
         }),
     }
+}
+
+/// Whether retained Chat state holds the card a route names, once the lane
+/// snapshot and a transcript generation are admitted. Chat renders only
+/// teamed lanes, so a card elsewhere is not retained. A creator-context
+/// target stays unsettled while its lane can still page older history.
+fn retained(target: &str, runtime: &CanvasRuntime) -> Option<bool> {
+    let lanes = runtime.lanes()?;
+    runtime.message_generation()?;
+    if let Some(creator) = crate::view::CreatorContextTarget::parse(target) {
+        if creator_message_target(&creator, runtime).is_some() {
+            return Some(true);
+        }
+        return runtime
+            .message_history_target(creator.lane)
+            .is_none()
+            .then_some(false);
+    }
+    let chat_member = |lane: CanonicalUuid| {
+        lanes
+            .lanes
+            .iter()
+            .filter(|team| team.teamed())
+            .any(|team| team.members.iter().any(|member| member.lane == lane))
+    };
+    if let Some(lane) = target.strip_prefix(super::watchband::PRIMARY_TEXTAREA_PREFIX) {
+        return Some(lane.parse().is_ok_and(chat_member));
+    }
+    if let Some(seq) = target.strip_prefix(super::watchband::LIFECYCLE_CARD_PREFIX) {
+        return Some(
+            runtime
+                .lifecycle_boundaries()
+                .iter()
+                .any(|boundary| chat_member(boundary.lane()) && boundary.seq().to_string() == seq),
+        );
+    }
+    Some(runtime.messages().iter().any(|message| {
+        chat_member(message.lane) && super::watchband::agent_message_source_id(message) == target
+    }))
+}
+
+/// Settled retention of the route's card target, recomputed only when the
+/// retained Chat state it reads changes.
+#[hook]
+pub(super) fn use_retention(target: Option<&str>, surface: &SurfaceData) -> Option<bool> {
+    let revision = {
+        let surface = surface.read();
+        surface.as_ref().map(|runtime| {
+            let creator = target
+                .and_then(crate::view::CreatorContextTarget::parse)
+                .map_or(0, |creator| {
+                    runtime.message_history_completion(creator.lane)
+                });
+            (
+                runtime
+                    .lanes()
+                    .map(|lanes| (lanes.epoch, lanes.topology_revision)),
+                runtime.message_generation(),
+                runtime.message_history_revision(),
+                runtime.messages().len(),
+                runtime.lifecycle_boundaries().len(),
+                creator,
+            )
+        })
+    };
+    let surface = surface.clone();
+    *use_memo((target.map(str::to_owned), revision), move |(target, _)| {
+        let surface = surface.read();
+        target
+            .as_deref()
+            .zip(surface.as_ref())
+            .and_then(|(target, runtime)| retained(target, runtime))
+    })
 }
 
 /// Focus a card named by the current route once retained Chat state is ready,

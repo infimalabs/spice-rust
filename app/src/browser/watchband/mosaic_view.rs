@@ -161,12 +161,15 @@ fn same_measured_agent_content(left: &wire::AgentMessage, right: &wire::AgentMes
     crate::composer_markdown::same_measured_shape(&left, &right)
 }
 
+/// Route target prefix of every lane lifecycle boundary card.
+pub(in crate::browser) const LIFECYCLE_CARD_PREFIX: &str = "lane-lifecycle-";
+
 impl ActivityCard {
     fn key(&self) -> String {
         match self {
             Self::Agent { message, .. } => agent_message_source_id(message),
             Self::Lifecycle { boundary, .. } => {
-                format!("lane-lifecycle-{}", boundary.seq())
+                format!("{LIFECYCLE_CARD_PREFIX}{}", boundary.seq())
             }
         }
     }

@@ -254,8 +254,11 @@ pub(super) fn composer_textarea(properties: &ComposerTextareaProps) -> Html {
     }
 }
 
+/// Route target prefix of every member's primary composer.
+pub(in crate::browser) const PRIMARY_TEXTAREA_PREFIX: &str = "composer-primary-";
+
 pub(in crate::browser) fn primary_textarea_id(lane_key: &str) -> String {
-    format!("composer-primary-{lane_key}")
+    format!("{PRIMARY_TEXTAREA_PREFIX}{lane_key}")
 }
 
 fn quote_textarea_id(lane_key: &str, identity: &str) -> String {

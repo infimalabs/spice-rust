@@ -76,8 +76,7 @@ pub(super) struct CanvasRender<'a> {
     pub card_target_notice: Option<String>,
     pub navigate: &'a Callback<navigation::Intent>,
     pub canvas_menu_open: &'a UseStateHandle<bool>,
-    pub work_scope: &'a UseStateHandle<WorkScope>,
-    pub work_scope_notice: &'a UseStateHandle<Option<String>>,
+    pub work_scope: &'a WorkScope,
     pub work_arrangement: &'a UseStateHandle<WorkArrangement>,
     pub identity: &'a UseStateHandle<Option<CanvasIdentity>>,
     pub canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,
@@ -100,10 +99,8 @@ pub(super) struct CanvasRender<'a> {
     pub notes: &'a NoteComposers,
     pub submit_note: Callback<(wire::TaskStamp, SubmitEvent)>,
     pub select_task: Callback<wire::TaskStamp>,
-    pub select_dash_task: Callback<wire::TaskStamp>,
+    pub request_task: Callback<wire::TaskStamp>,
     pub close_task: Callback<()>,
-    pub leave_task: Callback<()>,
-    pub leave_task_for_return: Callback<()>,
     pub retry_relations: Callback<MouseEvent>,
 }
 
@@ -143,9 +140,6 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
                 submissions: &render.submissions.status,
             })}
             {watchband::render_feedback(surface.as_ref(), render.team_controls)}
-            if let Some(notice) = &**render.work_scope_notice {
-                <p class="visually-hidden" role="status" aria-live="polite">{notice}</p>
-            }
             if let Some(notice) = &render.card_target_notice {
                 <p
                     class="visually-hidden"
@@ -396,9 +390,8 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
         notes: render.notes,
         submit_note: render.submit_note.clone(),
         select_task: render.select_task.clone(),
+        request_task: render.request_task.clone(),
         close: render.close_task.clone(),
-        leave: render.leave_task.clone(),
-        leave_for_return: render.leave_task_for_return.clone(),
         retry_relations: render.retry_relations.clone(),
     })
 }

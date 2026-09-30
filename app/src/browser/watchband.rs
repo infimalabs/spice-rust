@@ -33,13 +33,14 @@ use composer::{
     primary_composer_dragging, render_image_indicators, render_quote_shards, team_quote_sources,
 };
 pub(super) use composer::{
-    PrimaryComposerDragState, agent_message_source_id, primary_textarea_id,
-    use_primary_composer_drag_state,
+    PRIMARY_TEXTAREA_PREFIX, PrimaryComposerDragState, agent_message_source_id,
+    primary_textarea_id, use_primary_composer_drag_state,
 };
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
 use controls::{TeamLife, render_team_controls};
 use fleet::{FleetRender, carries_team, render_empty_fleet, render_populated_fleet};
 pub(in crate::browser) use fleet::{TeamMode, use_team_menu_escape};
+pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
 use team_flow::{PageRequest as TeamFlowPageRequest, TeamFlow};
@@ -86,7 +87,6 @@ pub(super) fn render_team(
         agents: controls,
         selected_task,
         select_task,
-        select_dash_task,
         team_settled,
         ..
     } = render;
@@ -151,7 +151,6 @@ pub(super) fn render_team(
         team_settled,
         selected_task,
         select_task,
-        select_dash_task,
         runtime,
         epoch: lanes.epoch,
         topology_revision: lanes.topology_revision,

@@ -32,7 +32,7 @@ pub(super) struct CommandBarRender<'a> {
     pub(super) destination: CanvasDestination,
     pub(super) navigate: &'a Callback<navigation::Intent>,
     pub(super) menu_open: &'a UseStateHandle<bool>,
-    pub(super) work_scope: &'a UseStateHandle<WorkScope>,
+    pub(super) work_scope: &'a WorkScope,
     pub(super) work: Option<&'a WorkProjection<'a>>,
     pub(super) identity: &'a UseStateHandle<Option<CanvasIdentity>>,
     pub(super) canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,

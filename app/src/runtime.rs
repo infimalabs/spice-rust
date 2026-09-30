@@ -444,6 +444,18 @@ impl TaskDetailState {
     pub const fn refreshing(&self) -> bool {
         matches!(self, Self::Refreshing(_))
     }
+
+    /// Whether this settled state proves the durable task exists: an admitted
+    /// answer does, and the resident's unknown-task refusal proves it does
+    /// not. Loading and other refusals settle nothing.
+    #[must_use]
+    pub fn known(&self) -> Option<bool> {
+        match self {
+            Self::Available(_) | Self::Refreshing(_) => Some(true),
+            Self::Unavailable { reason, .. } if reason == "task::detail-unknown" => Some(false),
+            Self::Loading | Self::Unavailable { .. } => None,
+        }
+    }
 }
 
 /// All state rendered by one capability-scoped canvas.
@@ -658,6 +670,13 @@ impl CanvasRuntime {
     #[must_use]
     pub const fn message_history_revision(&self) -> u64 {
         self.message_history_revision
+    }
+
+    /// Last transcript generation admitted atomically; absent until the
+    /// first retained message snapshot lands.
+    #[must_use]
+    pub const fn message_generation(&self) -> Option<u64> {
+        self.message_generation
     }
 
     #[must_use]
@@ -1253,3 +1272,25 @@ pub fn stale_reads(admitted: &Admitted<StreamFrame>) -> Stale {
 
 #[cfg(test)]
 mod topology_tests;
+
+#[cfg(test)]
+mod task_detail_tests {
+    use super::TaskDetailState;
+
+    #[test]
+    fn only_the_resident_unknown_refusal_settles_a_task_as_missing() {
+        let unavailable = |reason: &str| TaskDetailState::Unavailable {
+            reason: reason.to_owned(),
+            detail: None,
+        };
+        assert_eq!(unavailable("task::detail-unknown").known(), Some(false));
+        for transient in [
+            "task::detail-refused",
+            "task::detail-identity-mismatch",
+            "connection::closed",
+        ] {
+            assert_eq!(unavailable(transient).known(), None, "{transient}");
+        }
+        assert_eq!(TaskDetailState::Loading.known(), None);
+    }
+}

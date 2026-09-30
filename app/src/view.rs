@@ -7,7 +7,10 @@
 //! is exhaustive.
 
 #[cfg(any(target_arch = "wasm32", test))]
-use std::borrow::Cow;
+use wire::TaskStamp;
+
+#[cfg(any(target_arch = "wasm32", test))]
+use crate::work::{WorkScope, WorkStemIdentity, WorkVisibility};
 
 /// The complete view vocabulary.
 ///
@@ -208,11 +211,6 @@ pub(crate) const fn canvas_notice(
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-const CARD_TARGET_PATH_PREFIX: &str = "/card/";
-#[cfg(any(target_arch = "wasm32", test))]
-const DIRECTION_TARGET_PATH_PREFIX: &str = "/direction/";
-
-#[cfg(any(target_arch = "wasm32", test))]
 const CREATOR_CONTEXT_TARGET_PREFIX: &str = "creator-context-";
 
 /// A task-creation boundary encoded as one canonical Chat route target.
@@ -339,99 +337,371 @@ impl DirectionTarget {
     pub(crate) fn element_id(&self) -> String {
         format!("team-work-direction-{}-{}", self.team, self.direction)
     }
-
-    fn parse(path: &str) -> Option<Self> {
-        let (team, direction) = path
-            .strip_prefix(DIRECTION_TARGET_PATH_PREFIX)?
-            .split_once('/')?;
-        Some(Self::new(team.parse().ok()?, direction.parse().ok()?))
-    }
-
-    fn path(&self) -> String {
-        format!(
-            "{DIRECTION_TARGET_PATH_PREFIX}{}/{}",
-            self.team, self.direction
-        )
-    }
 }
 
-/// One admitted Canvas URL state.
-///
-/// Global destinations remain the complete navigation vocabulary. Card and
-/// direction targets refine Chat rather than becoming more global
-/// destinations, so opening a permalink cannot select an impossible view.
+/// What a Chat route focuses: one retained card or one team direction.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct CanvasRoute {
-    destination: CanvasDestination,
-    card_target: Option<String>,
-    direction_target: Option<DirectionTarget>,
+pub(crate) enum ChatTarget {
+    Card(String),
+    Direction(DirectionTarget),
+}
+
+/// One admitted Canvas URL state: the complete addressable view.
+///
+/// Global destinations remain the complete navigation vocabulary. A Work
+/// scope and task detail refine Work and a card or direction refines Chat, so
+/// a route can never select an impossible global view. Dash has no subordinate
+/// selection; per-team modes, menus, and arrangement stay browser-local.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CanvasRoute {
+    Dash,
+    Work {
+        scope: WorkScope,
+        task: Option<TaskStamp>,
+    },
+    Chat {
+        target: Option<ChatTarget>,
+    },
+}
+
+/// One history transition a navigation makes.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum RouteStep {
+    Push(CanvasRoute),
+    Replace(CanvasRoute),
+}
+
+/// Settled evidence for the data a route names; `None` until authoritative
+/// state resolves that segment.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RouteEvidence {
+    pub(crate) scope: Option<bool>,
+    pub(crate) task: Option<bool>,
+    pub(crate) card: Option<bool>,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
 impl CanvasRoute {
     #[must_use]
     pub(crate) const fn destination(destination: CanvasDestination) -> Self {
-        Self {
-            destination,
-            card_target: None,
-            direction_target: None,
+        match destination {
+            CanvasDestination::Dash => Self::Dash,
+            CanvasDestination::Work => Self::Work {
+                scope: WorkScope::AllOpen,
+                task: None,
+            },
+            CanvasDestination::Chat => Self::Chat { target: None },
         }
     }
 
     pub(crate) fn card(target: String) -> Option<Self> {
-        valid_card_target(&target).then_some(Self {
-            destination: CanvasDestination::Chat,
-            card_target: Some(target),
-            direction_target: None,
+        valid_card_target(&target).then_some(Self::Chat {
+            target: Some(ChatTarget::Card(target)),
         })
     }
 
     #[must_use]
     pub(crate) const fn direction(target: DirectionTarget) -> Self {
-        Self {
-            destination: CanvasDestination::Chat,
-            card_target: None,
-            direction_target: Some(target),
+        Self::Chat {
+            target: Some(ChatTarget::Direction(target)),
         }
     }
 
+    /// Parse one exact canonical path; any other spelling is not a route.
     #[must_use]
     pub(crate) fn from_path(path: &str) -> Option<Self> {
-        CanvasDestination::from_path(path)
-            .map(Self::destination)
-            .or_else(|| {
-                let target = path.strip_prefix(CARD_TARGET_PATH_PREFIX)?;
-                Self::card(target.to_owned())
-            })
-            .or_else(|| DirectionTarget::parse(path).map(Self::direction))
+        let mut segments = path.strip_prefix('/')?.split('/');
+        match segments.next()? {
+            "dash" => segments.next().is_none().then_some(Self::Dash),
+            "chat" => match (
+                segments.next(),
+                segments.next(),
+                segments.next(),
+                segments.next(),
+            ) {
+                (None, ..) => Some(Self::Chat { target: None }),
+                (Some(CARD_SEGMENT), Some(target), None, _) => Self::card(target.to_owned()),
+                (Some(DIRECTION_SEGMENT), Some(team), Some(direction), None) => {
+                    Some(Self::direction(DirectionTarget::new(
+                        team.parse().ok()?,
+                        direction.parse().ok()?,
+                    )))
+                }
+                _ => None,
+            },
+            "work" => {
+                let rest = segments.collect::<Vec<_>>();
+                let (scope, rest) = match rest.as_slice() {
+                    [visibility, stem, rest @ ..]
+                        if matches!(*visibility, PUBLIC_SEGMENT | HIDDEN_SEGMENT) =>
+                    {
+                        let visibility = if *visibility == PUBLIC_SEGMENT {
+                            WorkVisibility::Public
+                        } else {
+                            WorkVisibility::Hidden
+                        };
+                        let stem = WorkStemIdentity::new(visibility, decode_segment(stem)?);
+                        (WorkScope::Stem(stem), rest)
+                    }
+                    rest => (WorkScope::AllOpen, rest),
+                };
+                let task = match rest {
+                    [] => None,
+                    [TASK_SEGMENT, task] => Some(task.parse().ok()?),
+                    _ => return None,
+                };
+                Some(Self::Work { scope, task })
+            }
+            _ => None,
+        }
     }
 
     #[must_use]
     pub(crate) const fn canvas_destination(&self) -> CanvasDestination {
-        self.destination
+        match self {
+            Self::Dash => CanvasDestination::Dash,
+            Self::Work { .. } => CanvasDestination::Work,
+            Self::Chat { .. } => CanvasDestination::Chat,
+        }
     }
 
     #[must_use]
     pub(crate) fn card_target(&self) -> Option<&str> {
-        self.card_target.as_deref()
+        match self {
+            Self::Chat {
+                target: Some(ChatTarget::Card(card)),
+            } => Some(card),
+            Self::Dash | Self::Work { .. } | Self::Chat { .. } => None,
+        }
     }
 
     #[must_use]
     pub(crate) const fn direction_target(&self) -> Option<&DirectionTarget> {
-        self.direction_target.as_ref()
+        match self {
+            Self::Chat {
+                target: Some(ChatTarget::Direction(target)),
+            } => Some(target),
+            Self::Dash | Self::Work { .. } | Self::Chat { .. } => None,
+        }
     }
 
     #[must_use]
-    pub(crate) fn path(&self) -> Cow<'_, str> {
-        if let Some(target) = &self.card_target {
-            Cow::Owned(format!("{CARD_TARGET_PATH_PREFIX}{target}"))
-        } else if let Some(target) = &self.direction_target {
-            Cow::Owned(target.path())
-        } else {
-            Cow::Borrowed(self.destination.path())
+    pub(crate) const fn work_scope(&self) -> Option<&WorkScope> {
+        match self {
+            Self::Work { scope, .. } => Some(scope),
+            Self::Dash | Self::Chat { .. } => None,
         }
     }
+
+    #[must_use]
+    pub(crate) const fn task(&self) -> Option<&TaskStamp> {
+        match self {
+            Self::Work { task, .. } => task.as_ref(),
+            Self::Dash | Self::Chat { .. } => None,
+        }
+    }
+
+    /// The one canonical path spelling this route.
+    #[must_use]
+    pub(crate) fn path(&self) -> String {
+        match self {
+            Self::Dash => CanvasDestination::Dash.path().to_owned(),
+            Self::Chat { target: None } => CanvasDestination::Chat.path().to_owned(),
+            Self::Chat {
+                target: Some(ChatTarget::Card(card)),
+            } => format!("/chat/{CARD_SEGMENT}/{card}"),
+            Self::Chat {
+                target: Some(ChatTarget::Direction(target)),
+            } => format!(
+                "/chat/{}",
+                direction_quote_source(target.team, target.direction)
+            ),
+            Self::Work { scope, task } => {
+                let mut path = CanvasDestination::Work.path().to_owned();
+                if let Some(stem) = scope.stem() {
+                    path.push('/');
+                    path.push_str(if stem.hidden() {
+                        HIDDEN_SEGMENT
+                    } else {
+                        PUBLIC_SEGMENT
+                    });
+                    path.push('/');
+                    encode_segment(stem.stem(), &mut path);
+                }
+                if let Some(task) = task {
+                    path.push('/');
+                    path.push_str(TASK_SEGMENT);
+                    path.push('/');
+                    path.push_str(&task.to_string());
+                }
+                path
+            }
+        }
+    }
+
+    /// Show one global destination: a new entry unless already there.
+    #[must_use]
+    pub(crate) fn show(&self, destination: CanvasDestination) -> Option<RouteStep> {
+        let next = Self::destination(destination);
+        (*self != next).then_some(RouteStep::Push(next))
+    }
+
+    /// Show one Work scope. Inside Work the scope replaces the entry and an
+    /// open task detail stays open; from elsewhere Work opens as a new entry.
+    #[must_use]
+    pub(crate) fn show_work(&self, scope: WorkScope) -> Option<RouteStep> {
+        match self {
+            Self::Work {
+                scope: current,
+                task,
+            } => (*current != scope).then(|| {
+                RouteStep::Replace(Self::Work {
+                    scope,
+                    task: task.clone(),
+                })
+            }),
+            Self::Dash | Self::Chat { .. } => {
+                Some(RouteStep::Push(Self::Work { scope, task: None }))
+            }
+        }
+    }
+
+    /// Open one task detail under the Work scope that shows it. Opening
+    /// pushes; switching an already-open detail to another task replaces.
+    #[must_use]
+    pub(crate) fn open_task(&self, task: TaskStamp, scope: WorkScope) -> Option<RouteStep> {
+        let open = self.task();
+        if open == Some(&task) {
+            return None;
+        }
+        let next = Self::Work {
+            scope,
+            task: Some(task),
+        };
+        Some(if open.is_some() {
+            RouteStep::Replace(next)
+        } else {
+            RouteStep::Push(next)
+        })
+    }
+
+    /// This route with its task detail closed, when one is open.
+    #[must_use]
+    pub(crate) fn without_task(&self) -> Option<Self> {
+        match self {
+            Self::Work {
+                scope,
+                task: Some(_),
+            } => Some(Self::Work {
+                scope: scope.clone(),
+                task: None,
+            }),
+            Self::Dash | Self::Work { task: None, .. } | Self::Chat { .. } => None,
+        }
+    }
+
+    /// The route replacing this one once settled data refuses a segment,
+    /// with a notice naming the refused identifier. A missing stem leaves
+    /// All open work, a missing task leaves its containing scope, and a
+    /// missing card leaves plain Chat.
+    #[must_use]
+    pub(crate) fn unavailable(&self, evidence: RouteEvidence) -> Option<(Self, String)> {
+        match self {
+            Self::Work {
+                scope: WorkScope::Stem(stem),
+                ..
+            } if evidence.scope == Some(false) => Some((
+                Self::destination(CanvasDestination::Work),
+                format!("Work scope {stem} is no longer available; showing All open work."),
+            )),
+            Self::Work {
+                scope,
+                task: Some(task),
+            } if evidence.task == Some(false) => Some((
+                Self::Work {
+                    scope: scope.clone(),
+                    task: None,
+                },
+                format!("Task {task} is unavailable; closed its detail."),
+            )),
+            Self::Chat {
+                target: Some(ChatTarget::Card(card)),
+            } if evidence.card == Some(false) => Some((
+                Self::destination(CanvasDestination::Chat),
+                format!("Linked card {card} is unavailable in retained Chat history; opened Chat."),
+            )),
+            _ => None,
+        }
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+const CARD_SEGMENT: &str = "card";
+#[cfg(any(target_arch = "wasm32", test))]
+const DIRECTION_SEGMENT: &str = "direction";
+#[cfg(any(target_arch = "wasm32", test))]
+const TASK_SEGMENT: &str = "task";
+#[cfg(any(target_arch = "wasm32", test))]
+const PUBLIC_SEGMENT: &str = "public";
+#[cfg(any(target_arch = "wasm32", test))]
+const HIDDEN_SEGMENT: &str = "hidden";
+
+/// Bytes a route segment carries literally; every other byte is `%XX`.
+#[cfg(any(target_arch = "wasm32", test))]
+const fn unreserved(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn encode_segment(text: &str, into: &mut String) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    for byte in text.bytes() {
+        if unreserved(byte) {
+            into.push(char::from(byte));
+        } else {
+            into.push('%');
+            into.push(char::from(HEX[usize::from(byte >> 4)]));
+            into.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+    }
+}
+
+/// Decode one canonical segment: unreserved bytes literal, every other byte
+/// as uppercase `%XX`, UTF-8, and non-empty. Anything else is refused.
+#[cfg(any(target_arch = "wasm32", test))]
+fn decode_segment(segment: &str) -> Option<String> {
+    const fn hex(byte: u8) -> Option<u8> {
+        match byte {
+            b'0'..=b'9' => Some(byte - b'0'),
+            b'A'..=b'F' => Some(byte - b'A' + 10),
+            _ => None,
+        }
+    }
+    let bytes = segment.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while let Some(&byte) = bytes.get(index) {
+        if byte == b'%' {
+            let value = hex(*bytes.get(index + 1)?)? << 4 | hex(*bytes.get(index + 2)?)?;
+            if unreserved(value) {
+                return None;
+            }
+            decoded.push(value);
+            index += 3;
+        } else if unreserved(byte) {
+            decoded.push(byte);
+            index += 1;
+        } else {
+            return None;
+        }
+    }
+    String::from_utf8(decoded)
+        .ok()
+        .filter(|text| !text.is_empty())
 }
 
 /// One browser location resolved to a usable Canvas route.
@@ -493,7 +763,7 @@ pub(crate) fn normalize_canvas_location(search: &str, hash: &str) -> NormalizedC
     let fragment = hash.strip_prefix('#').unwrap_or(hash);
     if search.is_empty() {
         if let Some(route) = CanvasRoute::from_path(fragment) {
-            let replace = hash.strip_prefix('#') != Some(route.path().as_ref());
+            let replace = hash.strip_prefix('#') != Some(route.path().as_str());
             return NormalizedCanvasLocation {
                 route,
                 replace,
@@ -539,20 +809,22 @@ pub(crate) fn card_href(target: &str) -> String {
     format!("#{}", route.path())
 }
 
+/// Link one quote source: a direction source is itself the Chat route suffix
+/// `direction/{team}/{direction}`; every other source names a card.
 #[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
 pub(crate) fn quote_source_href(source: &str) -> String {
-    source.strip_prefix("direction/").map_or_else(
-        || card_href(source),
-        |direction| format!("#/direction/{direction}"),
-    )
+    source
+        .strip_prefix(DIRECTION_SEGMENT)
+        .filter(|rest| rest.starts_with('/'))
+        .map_or_else(|| card_href(source), |_| format!("#/chat/{source}"))
 }
 
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
 pub(crate) fn direction_quote_source(
     team: wire::CanonicalUuid,
     direction: wire::CanonicalUuid,
 ) -> String {
-    format!("direction/{team}/{direction}")
+    format!("{DIRECTION_SEGMENT}/{team}/{direction}")
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -567,86 +839,172 @@ fn valid_card_target(target: &str) -> bool {
 mod tests {
     use super::{
         CanvasDestination, CanvasNotice, CanvasRoute, ConnectionStage, CreatorContextTarget,
-        DirectionTarget, canvas_notice, normalize_canvas_location, opening_auth_token,
-        quote_source_href,
+        DirectionTarget, RouteEvidence, RouteStep, canvas_notice, normalize_canvas_location,
+        opening_auth_token, quote_source_href,
     };
+    use crate::work::{WorkScope, WorkStemIdentity, WorkVisibility};
 
-    #[test]
-    fn card_routes_refine_chat_and_round_trip_the_exact_target() {
-        let path = "/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1";
-        let route = CanvasRoute::from_path(path).expect("canonical card route parses");
+    const CARD: &str = "message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1";
 
-        assert_eq!(route.canvas_destination(), CanvasDestination::Chat);
-        assert_eq!(
-            route.card_target(),
-            Some("message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1")
-        );
-        assert_eq!(route.path(), path);
+    fn stem(visibility: WorkVisibility, stem: &str) -> WorkScope {
+        WorkScope::Stem(WorkStemIdentity::new(visibility, stem.to_owned()))
+    }
+
+    fn task(stamp: &str) -> wire::TaskStamp {
+        stamp.parse().expect("fixture task stamp")
+    }
+
+    fn work(scope: WorkScope, task: Option<wire::TaskStamp>) -> CanvasRoute {
+        CanvasRoute::Work { scope, task }
     }
 
     #[test]
-    fn card_routes_refuse_missing_or_noncanonical_targets() {
-        for path in [
-            "/card/",
-            "/card/message/agent",
-            "/card/message_agent",
-            "/card/message-agent?copy=true",
+    fn canonical_routes_round_trip_exactly() {
+        for (path, route) in [
+            ("/dash", CanvasRoute::Dash),
+            ("/work", work(WorkScope::AllOpen, None)),
+            (
+                "/work/task/dTv7zpzTN",
+                work(WorkScope::AllOpen, Some(task("dTv7zpzTN"))),
+            ),
+            (
+                "/work/public/canvas",
+                work(stem(WorkVisibility::Public, "canvas"), None),
+            ),
+            (
+                "/work/hidden/oops/task/dTv7zpzT",
+                work(stem(WorkVisibility::Hidden, "oops"), Some(task("dTv7zpzT"))),
+            ),
+            (
+                "/work/public/a%20b%2F%C3%A9.-_~",
+                work(stem(WorkVisibility::Public, "a b/é.-_~"), None),
+            ),
+            ("/chat", CanvasRoute::Chat { target: None }),
+            (
+                "/chat/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1",
+                CanvasRoute::card(CARD.to_owned()).expect("fixture card"),
+            ),
+            (
+                concat!(
+                    "/chat/direction/01234567-89ab-cdef-0123-456789abcdef/",
+                    "fedcba98-7654-3210-fedc-ba9876543210",
+                ),
+                CanvasRoute::direction(direction_fixture()),
+            ),
         ] {
-            assert!(
-                CanvasRoute::from_path(path).is_none(),
-                "{path:?} unexpectedly named a card"
-            );
+            assert_eq!(CanvasRoute::from_path(path), Some(route.clone()), "{path}");
+            assert_eq!(route.path(), path);
         }
+        let card = CanvasRoute::from_path(&format!("/chat/card/{CARD}")).expect("card route");
+        assert_eq!(card.canvas_destination(), CanvasDestination::Chat);
+        assert_eq!(card.card_target(), Some(CARD));
+    }
+
+    fn direction_fixture() -> DirectionTarget {
+        DirectionTarget::new(
+            "01234567-89ab-cdef-0123-456789abcdef"
+                .parse()
+                .expect("fixture team"),
+            "fedcba98-7654-3210-fedc-ba9876543210"
+                .parse()
+                .expect("fixture direction"),
+        )
     }
 
     #[test]
     fn direction_routes_refine_chat_and_name_the_exact_team_card() {
-        let team = "01234567-89ab-cdef-0123-456789abcdef"
-            .parse()
-            .expect("fixture team");
-        let direction = "fedcba98-7654-3210-fedc-ba9876543210"
-            .parse()
-            .expect("fixture direction");
-        let path = concat!(
-            "/direction/01234567-89ab-cdef-0123-456789abcdef/",
-            "fedcba98-7654-3210-fedc-ba9876543210",
-        );
-
-        let route = CanvasRoute::from_path(path).expect("canonical direction route parses");
-
+        let target = direction_fixture();
+        let route = CanvasRoute::direction(target.clone());
         assert_eq!(route.canvas_destination(), CanvasDestination::Chat);
+        assert_eq!(route.direction_target(), Some(&target));
+        assert_eq!(route.card_target(), None);
         assert_eq!(
-            route.direction_target(),
-            Some(&DirectionTarget::new(team, direction))
-        );
-        assert_eq!(route.direction_target().unwrap().team(), team);
-        assert_eq!(route.path(), path);
-        assert_eq!(
-            route.direction_target().unwrap().element_id(),
+            target.element_id(),
             concat!(
                 "team-work-direction-01234567-89ab-cdef-0123-456789abcdef-",
                 "fedcba98-7654-3210-fedc-ba9876543210",
             )
         );
         assert_eq!(
-            quote_source_href(concat!(
-                "direction/01234567-89ab-cdef-0123-456789abcdef/",
-                "fedcba98-7654-3210-fedc-ba9876543210",
+            quote_source_href(&super::direction_quote_source(
+                target.team(),
+                "fedcba98-7654-3210-fedc-ba9876543210"
+                    .parse()
+                    .expect("fixture direction"),
             )),
-            format!("#{path}"),
+            format!("#{}", route.path()),
         );
-        assert!(CanvasRoute::from_path("/direction/not-a-team/not-a-direction").is_none());
-        let location = normalize_canvas_location("", &format!("#{path}"));
-        assert_eq!(
-            location.route().direction_target(),
-            Some(&DirectionTarget::new(team, direction))
-        );
-        assert!(!location.needs_replace());
-        assert_eq!(location.notice(), None);
+        assert_eq!(quote_source_href(CARD), format!("#/chat/card/{CARD}"));
     }
 
     #[test]
-    fn canvas_locations_canonicalize_destination_spellings_without_changing_cards() {
+    fn only_resident_token_fragments_become_opening_credentials() {
+        assert_eq!(
+            opening_auth_token("#remote-token-0123456789"),
+            Some("remote-token-0123456789")
+        );
+        for hash in [
+            "",
+            "#dash",
+            "#/chat",
+            "#/work",
+            "#/chat/card/message-agent-01234567",
+            "#short",
+            "#remote/token/0123456789",
+            &format!("#{}", "a".repeat(257)),
+        ] {
+            assert_eq!(opening_auth_token(hash), None, "{hash}");
+        }
+    }
+
+    #[test]
+    fn stem_visibility_is_part_of_route_identity() {
+        let public = CanvasRoute::from_path("/work/public/oops").expect("public stem");
+        let hidden = CanvasRoute::from_path("/work/hidden/oops").expect("hidden stem");
+        assert_ne!(public, hidden);
+        assert_eq!(
+            public.work_scope(),
+            Some(&stem(WorkVisibility::Public, "oops"))
+        );
+        assert_eq!(
+            hidden.work_scope(),
+            Some(&stem(WorkVisibility::Hidden, "oops"))
+        );
+    }
+
+    #[test]
+    fn malformed_or_noncanonical_segments_are_not_routes() {
+        for path in [
+            "/card/message-agent",
+            "/chat/card/",
+            "/chat/card/message/agent",
+            "/chat/card/message_agent",
+            "/chat/message-agent",
+            "/dash/card/message-agent",
+            "/work/public",
+            "/work/public/",
+            "/work/private/canvas",
+            "/work/public/a%2",
+            "/work/public/a%zz",
+            "/work/public/a%2f",
+            "/work/public/%61",
+            "/work/public/a b",
+            "/work/public/%FF",
+            "/work/task",
+            "/work/task/dTv7zpzTNx",
+            "/work/task/aeiouaeio",
+            "/work/public/canvas/task/dTv7zpzTN/",
+            "/work/public/canvas/card/dTv7zpzTN",
+            "/direction/01234567-89ab-cdef-0123-456789abcdef/fedcba98-7654-3210-fedc-ba9876543210",
+            "/chat/direction/not-a-team/not-a-direction",
+            "/chat/direction/01234567-89ab-cdef-0123-456789abcdef",
+        ] {
+            assert_eq!(CanvasRoute::from_path(path), None, "{path}");
+        }
+    }
+
+    #[test]
+    fn canvas_locations_canonicalize_destination_spellings_without_changing_routes() {
         for (hash, destination, replace) in [
             ("#/chat", CanvasDestination::Chat, false),
             ("#/dash", CanvasDestination::Dash, false),
@@ -664,14 +1022,15 @@ mod tests {
             assert_eq!(location.notice(), None, "{hash}");
         }
 
-        let hash = "#/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1";
-        let location = normalize_canvas_location("", hash);
-        assert_eq!(
-            location.route().card_target(),
-            Some("message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1")
-        );
-        assert!(!location.needs_replace());
-        assert_eq!(location.notice(), None);
+        for hash in [
+            "#/chat/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1",
+            "#/work/hidden/oops/task/dTv7zpzTN",
+        ] {
+            let location = normalize_canvas_location("", hash);
+            assert_eq!(format!("#{}", location.route().path()), hash);
+            assert!(!location.needs_replace(), "{hash}");
+            assert_eq!(location.notice(), None, "{hash}");
+        }
     }
 
     #[test]
@@ -680,13 +1039,11 @@ mod tests {
             ("?page=work", ""),
             ("", "#/unknown"),
             ("", "#/work?scope=all"),
-            ("", "#/card/message/agent"),
+            ("", "#/card/message-agent"),
+            ("", "#/work/public/a%2f"),
         ] {
             let location = normalize_canvas_location(search, hash);
-            assert_eq!(
-                location.route().canvas_destination(),
-                CanvasDestination::Chat
-            );
+            assert_eq!(location.route(), &CanvasRoute::Chat { target: None });
             assert!(location.needs_replace());
             let notice = location.notice().expect("invalid input is named");
             assert!(notice.contains(&format!("{search}{hash}")), "{notice}");
@@ -694,23 +1051,97 @@ mod tests {
     }
 
     #[test]
-    fn only_resident_token_fragments_become_opening_credentials() {
+    fn history_steps_push_openings_and_replace_changes_inside_one_view() {
+        let canvas = stem(WorkVisibility::Public, "canvas");
+        let all = work(WorkScope::AllOpen, None);
+        let open = work(canvas.clone(), Some(task("dTv7zpzTN")));
+        let chat = CanvasRoute::Chat { target: None };
+
+        assert_eq!(chat.show(CanvasDestination::Chat), None);
         assert_eq!(
-            opening_auth_token("#remote-token-0123456789"),
-            Some("remote-token-0123456789")
+            open.show(CanvasDestination::Work),
+            Some(RouteStep::Push(all.clone()))
         );
-        for hash in [
-            "",
-            "#dash",
-            "#/chat",
-            "#/work",
-            "#/card/message-agent-01234567",
-            "#short",
-            "#remote/token/0123456789",
-            &format!("#{}", "a".repeat(257)),
-        ] {
-            assert_eq!(opening_auth_token(hash), None, "{hash}");
-        }
+        assert_eq!(
+            CanvasRoute::card(CARD.to_owned())
+                .expect("fixture card")
+                .show(CanvasDestination::Chat),
+            Some(RouteStep::Push(chat.clone()))
+        );
+
+        assert_eq!(
+            chat.show_work(canvas.clone()),
+            Some(RouteStep::Push(work(canvas.clone(), None)))
+        );
+        assert_eq!(
+            all.show_work(canvas.clone()),
+            Some(RouteStep::Replace(work(canvas.clone(), None)))
+        );
+        assert_eq!(
+            open.show_work(WorkScope::AllOpen),
+            Some(RouteStep::Replace(work(
+                WorkScope::AllOpen,
+                Some(task("dTv7zpzTN"))
+            )))
+        );
+        assert_eq!(open.show_work(canvas.clone()), None);
+
+        assert_eq!(
+            all.open_task(task("dTv7zpzTN"), canvas.clone()),
+            Some(RouteStep::Push(open.clone()))
+        );
+        assert_eq!(
+            open.open_task(task("dTv7xh1gD"), WorkScope::AllOpen),
+            Some(RouteStep::Replace(work(
+                WorkScope::AllOpen,
+                Some(task("dTv7xh1gD"))
+            )))
+        );
+        assert_eq!(open.open_task(task("dTv7zpzTN"), WorkScope::AllOpen), None);
+
+        assert_eq!(open.without_task(), Some(work(canvas, None)));
+        assert_eq!(all.without_task(), None);
+        assert_eq!(chat.without_task(), None);
+    }
+
+    #[test]
+    fn settled_missing_segments_rewrite_to_their_containing_view() {
+        let canvas = stem(WorkVisibility::Hidden, "canvas");
+        let open = work(canvas.clone(), Some(task("dTv7zpzTN")));
+        let card = CanvasRoute::card(CARD.to_owned()).expect("fixture card");
+        let pending = RouteEvidence::default();
+        let settled = |scope, task, card| RouteEvidence { scope, task, card };
+
+        assert_eq!(open.unavailable(pending), None);
+        assert_eq!(card.unavailable(pending), None);
+        assert_eq!(
+            open.unavailable(settled(Some(true), Some(true), None)),
+            None
+        );
+
+        let (next, notice) = open
+            .unavailable(settled(Some(false), None, None))
+            .expect("missing stem refuses");
+        assert_eq!(next, work(WorkScope::AllOpen, None));
+        assert!(notice.contains(".canvas.*"), "{notice}");
+
+        let (next, notice) = open
+            .unavailable(settled(Some(false), Some(false), None))
+            .expect("a missing stem outranks its task");
+        assert_eq!(next, work(WorkScope::AllOpen, None));
+        assert!(notice.contains(".canvas.*"), "{notice}");
+
+        let (next, notice) = open
+            .unavailable(settled(Some(true), Some(false), None))
+            .expect("missing task refuses");
+        assert_eq!(next, work(canvas, None));
+        assert!(notice.contains("dTv7zpzTN"), "{notice}");
+
+        let (next, notice) = card
+            .unavailable(settled(None, None, Some(false)))
+            .expect("missing card refuses");
+        assert_eq!(next, CanvasRoute::Chat { target: None });
+        assert!(notice.contains(CARD), "{notice}");
     }
 
     #[test]

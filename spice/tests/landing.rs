@@ -177,6 +177,7 @@ const CASES: &[Case] = &[
     case("doc ledger", &["doc", "ledger", "READY-12345678"]),
     case("lane", &["lane"]),
     case("lane add", &["lane", "add"]),
+    case("lane list", &["lane", "list"]),
     case("lane drain", &["lane", "drain", UUID]),
     case("lane wake", &["lane", "wake", UUID]),
     case("lane model", &["lane", "model", UUID, "claude-opus-5-5"]),
