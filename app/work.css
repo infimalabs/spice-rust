@@ -667,17 +667,20 @@
 .work-detail-section h3 { margin: 0 0 12px; font-size: .9rem; }
 .work-detail-section h4 { margin: 15px 0 8px; color: var(--muted); font-size: .72rem; text-transform: uppercase; }
 .work-detail-section ul { margin: 8px 0 0; padding-left: 20px; }
-/* Authored contract Markdown: block spacing comes from its own elements, so
-   the source newlines between them must not render as blank lines. */
-.task-contract { min-width: 0; overflow-wrap: anywhere; }
-.task-contract > :first-child { margin-top: 0; }
-.task-contract > :last-child { margin-bottom: 0; }
-.task-contract :is(p, ul, ol, pre, blockquote, table) { margin: 0 0 8px; }
-.task-contract h5 { margin: 12px 0 6px; font-size: .8rem; }
-.task-contract pre { overflow-x: auto; }
-.task-contract a { color: var(--accent); }
+/* Authored task Markdown: block spacing comes from its own elements, so
+   the source newlines between them must not render as blank lines. Wide or
+   long blocks scroll inside their own box instead of stretching the detail. */
+.task-text { min-width: 0; overflow-wrap: anywhere; }
+.task-text > :first-child { margin-top: 0; }
+.task-text > :last-child { margin-bottom: 0; }
+.task-text :is(p, ul, ol, pre, blockquote, table) { margin: 0 0 8px; }
+.task-text h5 { margin: 12px 0 6px; font-size: .8rem; }
+.task-text pre { max-height: 24rem; overflow: auto; }
+.task-text table { display: block; max-width: 100%; overflow-x: auto; }
+.task-text img { max-width: 100%; }
+.task-text a { color: var(--accent); }
 .work-detail-section ul > li + li { margin-top: 4px; }
-.work-detail .task-contract .message-task-chip {
+.work-detail .task-text .message-task-chip {
   display: inline-flex;
   max-width: min(24ch, 100%);
   min-height: 17px;
@@ -693,12 +696,12 @@
   font-weight: 700;
   white-space: nowrap;
 }
-.work-detail .task-contract .message-task-chip:hover { filter: brightness(1.08); }
-.work-detail .task-contract .message-task-chip:focus-visible {
+.work-detail .task-text .message-task-chip:hover { filter: brightness(1.08); }
+.work-detail .task-text .message-task-chip:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-.work-detail .task-contract .message-task-chip-label {
+.work-detail .task-text .message-task-chip-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -765,7 +768,7 @@
   gap: 12px;
 }
 .work-detail-section-heading span { color: var(--muted); font-size: .7rem; }
-.work-note-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.work-note-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin: 0; padding: 0; list-style: none; }
 .work-note-card {
   padding: 10px 11px;
   border: var(--canvas-edge-soft);
@@ -773,7 +776,7 @@
   background: var(--control-surface-soft);
 }
 .work-note-card header { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .68rem; }
-.work-note-card p { margin: 7px 0 0; white-space: pre-wrap; }
+.work-note-card .work-note-body { margin-top: 7px; }
 .work-note-composer { margin-top: 14px; padding-top: 14px; border: var(--canvas-edge-soft); }
 .work-note-composer textarea { min-height: 88px; }
 .work-note-capability { margin: 8px 0 0; color: var(--muted); font-size: .74rem; }
