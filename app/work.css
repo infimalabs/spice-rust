@@ -147,6 +147,14 @@
   scrollbar-gutter: stable;
   scroll-snap-type: inline proximity;
 }
+
+/* Global lanes always reserve one label gutter above their card track. Labels
+   are anchored to their first keyed card, so clustering changes neither the
+   card-track origin nor any card's vertical position. */
+.work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-track {
+  --work-group-label-gutter: 1.35rem;
+  padding-top: calc(5px + var(--work-group-label-gutter));
+}
 .work-lane-track:focus-visible {
   border-radius: var(--canvas-radius-compact);
   outline: 2px solid var(--focus);
@@ -165,23 +173,21 @@
   scroll-snap-align: start;
 }
 
-/* In a horizontal lane, a cluster separator is an inline divider before the
-   cards it names rather than a rule that consumes another board row. */
-.work-lane-cluster {
-  display: grid;
-  flex: 0 0 7rem;
-  place-items: center;
-  align-self: stretch;
+.work-card-cell--grouped { position: relative; }
+.work-card-group-label {
+  position: absolute;
+  inset-inline: 2px 0;
+  bottom: 100%;
+  height: var(--work-group-label-gutter);
   margin: 0;
-  padding-inline: 8px;
-  border-inline: var(--canvas-edge-soft);
+  padding-bottom: 4px;
   color: var(--muted);
   font: 700 .64rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
-  overflow-wrap: anywhere;
-  scroll-snap-align: start;
-  text-align: center;
+  overflow: hidden;
+  pointer-events: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.work-lane-cluster::after { display: none; }
 
 .work-lane-empty {
   display: grid;
