@@ -377,8 +377,10 @@ smaller accounts. Missing, blank, and unrecognized plan tiers count as 20×
 capacity unless an explicit Free (0.2×), named $20 (1×), or 5× tier (including
 OpenAI Pro Lite, the $100 Pro plan) says otherwise. Provider hues follow the
 green, blue, gold, red, teal, and plum accent order used for agents. The outer
-button edge is neutral with neither status, gold for Fast mode, blue for an
-available Canvas update, and red when both apply. Quota colors remain unchanged.
+button edge uses a crisp one-pixel ring plus a half-strength inset edge and a
+restrained shadow in that same color: neutral with neither status, gold for
+Fast mode, blue for an available Canvas update, and red when both apply. Quota
+colors remain unchanged.
 
 ### The global Dash page
 
