@@ -119,7 +119,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Dash => "Agents",
+            Self::Dash => "Dashboard",
             Self::Work => "All work",
             Self::Chat => "Chat",
         }
@@ -148,7 +148,7 @@ impl CanvasDestination {
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
-            Self::Dash => "Agents and resident team topology",
+            Self::Dash => "Resident dashboard for identity, topology, quota, and controls",
             Self::Work => "All work across tasks, claims, deferrals, and reviews",
             Self::Chat => "Chat across persistent team agents",
         }
