@@ -277,6 +277,7 @@ fn insert_receipts(
         origins: Default::default(),
         notes: Default::default(),
         acknowledgments: Default::default(),
+        closures: Default::default(),
         tasks: Vec::new(),
         history: None,
         trust: Vec::new(),

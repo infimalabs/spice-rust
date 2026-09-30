@@ -130,6 +130,7 @@ pub(super) fn client_show(
                                 .get(&task.statement.body.born)
                                 .map_or(&[], Vec::as_slice),
                             acknowledgments,
+                            closure: board.closures.get(&task.statement.body.born),
                         },
                         origin_context.as_deref(),
                     ),
@@ -440,6 +441,7 @@ fn task_show_origin_context(
 pub(in crate::board_command) struct TaskShowHistory<'a> {
     pub(in crate::board_command) notes: &'a [wire::intent::TaskDetailNote],
     pub(in crate::board_command) acknowledgments: &'a [wire::intent::TaskAcknowledgment],
+    pub(in crate::board_command) closure: Option<&'a wire::intent::TaskDetailClosure>,
 }
 
 fn task_flow_line(flow: &[wire::Phase]) -> String {
@@ -561,6 +563,7 @@ pub(in crate::board_command) fn task_show_with_origin(
             ));
         }
     }
+    lines.extend(closure_lines(history.closure));
     lines.extend(note_lines(history));
     lines.extend(phase_guidance_lines(task));
     lines.push(next_command_line(board, task));
@@ -583,6 +586,30 @@ fn acknowledgment_lines(
             format!("acknowledgment ack:{key}{carriers}")
         })
         .collect()
+}
+
+/// An operator closure stands in for the claimant's proof, so its validation
+/// reads as the task's completion evidence.
+fn closure_lines(closure: Option<&wire::intent::TaskDetailClosure>) -> Vec<String> {
+    let Some(closure) = closure else {
+        return Vec::new();
+    };
+    let displaced = closure
+        .claimed
+        .as_ref()
+        .map_or_else(String::new, |actor| format!(" claim-freed={actor}"));
+    let mut lines = vec![format!(
+        "closed {} {} {} phase={}{displaced}",
+        closure.position, closure.at, closure.author, closure.phase
+    )];
+    lines.extend(closure.validation.lines().map(|line| {
+        if line.is_empty() {
+            String::new()
+        } else {
+            format!("    {line}")
+        }
+    }));
+    lines
 }
 
 fn note_lines(history: TaskShowHistory<'_>) -> Vec<String> {

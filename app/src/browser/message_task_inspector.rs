@@ -435,6 +435,11 @@ fn render_available(
                     <h3>{"Activity"}</h3>
                     <span>{format!("{} observations", answer.notes.len())}</span>
                 </div>
+                {task_detail::render_closure_record(
+                    answer.closure.as_ref(),
+                    ToString::to_string,
+                    |task| detail.board_tasks.contains(task),
+                )}
                 if answer.notes.is_empty() {
                     <p class="muted">{"No observations have been recorded."}</p>
                 } else {

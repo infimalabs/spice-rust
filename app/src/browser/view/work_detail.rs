@@ -264,6 +264,11 @@ fn render_activity(
                 <h3>{"Activity"}</h3>
                 <span>{format!("{} observations", answer.notes.len())}</span>
             </div>
+            {task_detail::render_closure_record(
+                answer.closure.as_ref(),
+                |actor| work_card::actor_name(actor, render.lanes),
+                |task| board_has(render.work, task),
+            )}
             if answer.notes.is_empty() {
                 <p class="muted">{"No observations have been recorded."}</p>
             } else {

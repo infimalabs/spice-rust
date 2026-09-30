@@ -21,6 +21,7 @@ fn detail_answer(label: &str, text: &str) -> TaskDetailAnswer {
             author: Actor::Operator,
             text: text.to_owned(),
         }],
+        closure: None,
     }
 }
 

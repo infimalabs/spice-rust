@@ -295,6 +295,7 @@ fn board_response(
         origins: Default::default(),
         notes: Default::default(),
         acknowledgments: Default::default(),
+        closures: Default::default(),
         schema: 1,
         cursor: seq(4),
         principal: wire::Actor::Operator,

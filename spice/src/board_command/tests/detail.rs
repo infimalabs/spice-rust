@@ -156,6 +156,7 @@ fn task_show_prints_only_the_named_tasks_notes() {
         TaskShowHistory {
             notes: &answer.notes[&shown_born],
             acknowledgments: &[],
+            closure: None,
         },
         None,
     );
