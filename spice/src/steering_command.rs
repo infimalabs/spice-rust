@@ -12,7 +12,6 @@ use crate::command_client::{SelectedCommand, execute_steering};
 pub(crate) mod media_projection;
 #[cfg(test)]
 mod tests;
-
 pub(crate) fn run(
     matches: &ArgMatches,
     contract: &crate::cli::Contract,

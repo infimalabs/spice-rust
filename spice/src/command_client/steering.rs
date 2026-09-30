@@ -76,11 +76,7 @@ pub(crate) fn execute_tell(
         .find(|row| row.lane == lane)
         .and_then(|row| row.occupant)
     else {
-        return steering_refusal(
-            "steer::lane-unseated",
-            Some(lane.to_string()),
-            "tell a lane that is seated now",
-        );
+        return lane_list_refusal(Some(lane.to_string()));
     };
     execute_typed(
         repository,

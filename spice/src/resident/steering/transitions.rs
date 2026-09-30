@@ -100,12 +100,7 @@ pub(in crate::resident) fn tell(
         .find(|lane| lane.lane == tell.lane)
         .and_then(|lane| lane.occupant)
     else {
-        return refusal(
-            "steer::lane-unseated",
-            Some("a seated lane".to_owned()),
-            Some(tell.lane.to_string()),
-            "tell a lane that is seated now",
-        );
+        return lane_list_refusal(Some(tell.lane.to_string()));
     };
     publish(
         bus,

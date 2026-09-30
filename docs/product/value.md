@@ -61,6 +61,9 @@ start failure deadletters every pending directive on that lane from its retained
 live stage without requiring prior delivery. No other wake or arbitrary delivery
 failure does. That asymmetry makes supervision auditable: "delivered" and
 "taken" are separate facts, and the gap between them remains visible.
+Both operators and seated agents can read the current lane IDs, seating state,
+and active claim handles with `spice lane list`; a peer-message refusal points
+back to that discovery command when its target is not seated.
 
 **Value:** you can walk away mid-instruction. **Without it:** steering becomes
 fire-and-hope, and the operator becomes the durable store.

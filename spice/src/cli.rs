@@ -350,6 +350,7 @@ fn coordination_landed(path: &[&str]) -> bool {
     matches!(
         path,
         ["lane"]
+            | ["lane", "list"]
             | ["lane", "add"]
             | ["lane", "drain"]
             | ["lane", "wake"]
