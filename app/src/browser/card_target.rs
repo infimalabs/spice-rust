@@ -21,13 +21,13 @@ pub(super) struct Status {
 const RETURN_STATE: &str = "canvasReturn";
 
 /// Preserve the exact Dash row and Flow position a Chat target leaves.
-pub(super) fn remember_team_return(event: &web_sys::MouseEvent, team: CanonicalUuid) {
-    let _ = remember_return(
+pub(super) fn remember_team_return(event: &web_sys::MouseEvent, team: CanonicalUuid) -> bool {
+    remember_return(
         event,
         "a[data-dash-return][href]",
         "[data-dash-return-origin]",
         Some((team, TeamMode::Dash)),
-    );
+    )
 }
 
 /// The element holding a followed card link and its offset inside its scrolling
