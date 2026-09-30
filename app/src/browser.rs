@@ -1,5 +1,5 @@
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use futures_channel::mpsc;
@@ -28,11 +28,7 @@ use crate::client_action::ClientAction;
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
 use crate::runtime::{CanvasSurface, topology_mutation_requires_refresh};
-use crate::speech::{SystemObservers, SystemStart};
-use crate::speech_queue::{
-    Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
-    SpeechRequest, SuppressAutomatic,
-};
+use crate::speech_queue::{NarrationMessage, SpeechQueue, SpeechRequest};
 use crate::work::{WorkArrangement, WorkProjection, WorkScope};
 use crate::{
     Axis, CanvasDestination, CanvasRuntime, Principal, Session, SteerPane, StreamDirective,
@@ -51,6 +47,8 @@ mod mermaid;
 mod message_task_inspector;
 mod navigation;
 mod overlay;
+mod sender;
+mod speech_runtime;
 mod task_detail;
 mod task_relations;
 mod team_settled;
@@ -61,11 +59,19 @@ mod work_card;
 mod work_history;
 
 use crate::PendingKind;
-use crate::action_mailbox::{self, ActionLease, ActionQueue};
-use connection::{request_external_speech, run_surface};
+use crate::action_mailbox::{ActionLease, ActionQueue};
+use connection::run_surface;
+use sender::{
+    SenderHandle, action_identity, admit_action, queue_submission, queue_submissions, random_uuid,
+};
+use speech_runtime::{
+    AgentSpeechControls, NarrationBatch, SpeechRuntime, SpeechStatus, load_narration_cursors,
+    use_agent_speech_controls, use_page_hide_speech_stop, use_speech_failure_toast,
+    use_team_speech_abandonment,
+};
 use view::{CanvasRender, render_canvas};
 use watchband::ComposerAction;
-use watchband::{ComposerDrafts, TeamControlAction, TeamControls, TeamSpeech};
+use watchband::{ComposerDrafts, TeamControlAction, TeamControls};
 
 /// Source identity injected by installed Spice `dev xtask -- app` and verified before publish.
 const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY") {
@@ -74,7 +80,6 @@ const APP_SOURCE_IDENTITY: &str = match option_env!("SPICE_APP_SOURCE_IDENTITY")
     None => "unbound-development-build",
 };
 const CONNECTION_HANDSHAKE_TIMEOUT_MILLIS: u32 = 5_000;
-const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
 
 /// How long the socket may stay silent before the resident is probed.
 ///
@@ -83,18 +88,6 @@ const NARRATION_CURSOR_STORAGE: &str = "spice:narration-cursors:v1";
 /// resident that did not answer rather than a resident with nothing to say.
 const LIVENESS_PROBE_MILLIS: u32 = 15_000;
 
-/// How long a system request waits for the browser to publish its voices.
-///
-/// Engines enumerate voices once per page and announce the list with
-/// `voiceschanged`; the wait covers that first-load window. An engine with no
-/// voices never announces anything, so the wait needs an end.
-const VOICE_PUBLICATION_DEADLINE_MILLIS: u32 = 5_000;
-
-#[derive(Clone)]
-struct SenderHandle {
-    queue: Rc<RefCell<Option<ActionQueue>>>,
-    issue: UseStateHandle<Option<String>>,
-}
 type SocketWriter = futures_util::stream::SplitSink<WebSocket, Message>;
 type SocketReader = futures_util::stream::SplitStream<WebSocket>;
 
@@ -221,277 +214,6 @@ enum Connection {
     Offline(String),
 }
 
-#[derive(Clone, Default, PartialEq)]
-enum SpeechStatus {
-    #[default]
-    Idle,
-    Failed(String),
-}
-
-#[derive(Clone, PartialEq)]
-struct NarrationBatch {
-    team: String,
-    materialization: bool,
-    mode: TeamSpeech,
-    messages: Vec<NarrationMessage>,
-}
-
-#[derive(Clone)]
-struct AgentSpeechControls {
-    speak: Callback<SpeechRequest>,
-    narrate: Callback<NarrationBatch>,
-    suppress_automatic: Callback<()>,
-    message: UseStateHandle<Option<String>>,
-}
-
-#[derive(Clone)]
-struct SpeechRuntime {
-    queue: Rc<RefCell<SpeechQueue>>,
-    controller: Rc<RefCell<crate::speech::Controller>>,
-    status: UseStateHandle<SpeechStatus>,
-    message: UseStateHandle<Option<String>>,
-}
-
-impl SpeechRuntime {
-    fn enqueue(&self, request: SpeechRequest) {
-        let decision = self.queue.borrow_mut().enqueue(request);
-        if let Enqueue::Start(entry) = decision {
-            self.start(entry);
-        }
-    }
-
-    fn toggle_message(&self, request: SpeechRequest) {
-        let was_playing = self.queue.borrow().active_message_key() == request.message_key();
-        self.stop();
-        if !was_playing {
-            self.enqueue(request);
-        }
-    }
-
-    fn start(&self, entry: SpeechEntry) {
-        let generation = self.controller.borrow_mut().begin();
-        self.message.set(entry.message_key().map(str::to_owned));
-        self.status.set(SpeechStatus::Idle);
-        match entry.playback().clone() {
-            wire::SpeechPlayback::Disabled {} => self.finish(entry.id(), None),
-            wire::SpeechPlayback::System {
-                voice,
-                words_per_minute,
-            } => self.start_system(entry, generation, &voice, words_per_minute),
-            wire::SpeechPlayback::External {
-                content_type,
-                available,
-                ..
-            } => {
-                if available {
-                    self.start_external(entry, generation, content_type);
-                } else {
-                    self.finish(
-                        entry.id(),
-                        Some("external speech backend is unavailable".to_owned()),
-                    );
-                }
-            }
-        }
-    }
-
-    fn start_system(
-        &self,
-        entry: SpeechEntry,
-        generation: u64,
-        voice: &str,
-        words_per_minute: u32,
-    ) {
-        let ended = self.clone();
-        let failed = self.clone();
-        let awaiting = self.clone();
-        let id = entry.id();
-        let resumed = entry.clone();
-        let resumed_voice = voice.to_owned();
-        let result = self.controller.borrow_mut().start_system(
-            generation,
-            entry.text(),
-            voice,
-            words_per_minute,
-            SystemObservers {
-                voices: move || {
-                    awaiting.resume_system(
-                        resumed.clone(),
-                        generation,
-                        resumed_voice.clone(),
-                        words_per_minute,
-                    );
-                },
-                ended: move || ended.defer_finish(id, None),
-                failed: move |issue| {
-                    failed.defer_finish(id, Some(issue));
-                },
-            },
-        );
-        match result {
-            Ok(SystemStart::Speaking) => {}
-            // The browser has published no voices yet. This entry stays the
-            // loading queue head until `voiceschanged` resumes it, so the
-            // first utterance of a page load speaks instead of refusing a
-            // voice the browser had not enumerated.
-            Ok(SystemStart::AwaitingVoices) => self.refuse_unpublished_voices(id, generation),
-            Err(error) => self.finish(id, Some(error)),
-        }
-    }
-
-    /// Retry system playback once the browser publishes its voice list.
-    ///
-    /// The resume runs one task after the event: the observing closure is
-    /// owned by the controller, and re-entering [`Self::start_system`]
-    /// directly would drop that closure while it is still running. Stopping
-    /// or superseding the request in the meantime both detaches the observer
-    /// and fails this ownership check, so nothing stale ever starts.
-    fn resume_system(
-        &self,
-        entry: SpeechEntry,
-        generation: u64,
-        voice: String,
-        words_per_minute: u32,
-    ) {
-        let runtime = self.clone();
-        spawn_local(async move {
-            TimeoutFuture::new(0).await;
-            if !runtime.is_current(entry.id(), generation) {
-                return;
-            }
-            runtime.start_system(entry, generation, &voice, words_per_minute);
-        });
-    }
-
-    /// Refuse a request whose browser never publishes any voice.
-    ///
-    /// Waiting on `voiceschanged` is what lets a configured voice arrive
-    /// late, but an engine carrying no voices at all never fires it. Without
-    /// this deadline such a request would hold the queue head silently until
-    /// a global stop, which reads as speech that vanished rather than speech
-    /// this browser cannot give.
-    fn refuse_unpublished_voices(&self, id: u64, generation: u64) {
-        let runtime = self.clone();
-        spawn_local(async move {
-            TimeoutFuture::new(VOICE_PUBLICATION_DEADLINE_MILLIS).await;
-            let awaiting = runtime.controller.borrow().is_awaiting_voices(generation);
-            if !awaiting || !runtime.is_current(id, generation) {
-                return;
-            }
-            runtime.finish(
-                id,
-                Some("this browser published no system voices".to_owned()),
-            );
-        });
-    }
-
-    fn start_external(&self, entry: SpeechEntry, generation: u64, content_type: String) {
-        let runtime = self.clone();
-        spawn_local(async move {
-            let rendered =
-                request_external_speech(entry.worktree(), entry.text(), &content_type).await;
-            if !runtime.is_current(entry.id(), generation) {
-                return;
-            }
-            let bytes = match rendered {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    runtime.finish(entry.id(), Some(error));
-                    return;
-                }
-            };
-            let ended = runtime.clone();
-            let failed = runtime.clone();
-            let paused = runtime.clone();
-            let id = entry.id();
-            let playing = runtime.controller.borrow_mut().start_external(
-                generation,
-                &bytes,
-                &content_type,
-                move || ended.defer_finish(id, None),
-                move || {
-                    failed.defer_finish(id, Some("rendered speech playback failed".to_owned()));
-                },
-                move || paused.external_pause(id),
-            );
-            let playing = match playing {
-                Ok(playing) => playing,
-                Err(error) => {
-                    runtime.finish(id, Some(error));
-                    return;
-                }
-            };
-            if let Err(error) = crate::speech::await_play(playing).await
-                && runtime.is_current(id, generation)
-            {
-                runtime.finish(id, Some(error));
-            }
-        });
-    }
-
-    fn defer_finish(&self, id: u64, failure: Option<String>) {
-        let runtime = self.clone();
-        spawn_local(async move {
-            TimeoutFuture::new(0).await;
-            runtime.finish(id, failure);
-        });
-    }
-
-    fn finish(&self, id: u64, failure: Option<String>) {
-        let advance = self.queue.borrow_mut().finish(id);
-        match advance {
-            Advance::Ignored => {}
-            Advance::Idle => {
-                self.controller.borrow_mut().stop();
-                self.message.set(None);
-                self.status
-                    .set(failure.map_or(SpeechStatus::Idle, SpeechStatus::Failed));
-            }
-            Advance::Start(entry) => self.start(entry),
-        }
-    }
-
-    fn is_current(&self, id: u64, generation: u64) -> bool {
-        self.queue.borrow().is_active(id) && self.controller.borrow().is_current(generation)
-    }
-
-    fn external_pause(&self, id: u64) {
-        let pause = self.queue.borrow_mut().external_pause(id);
-        match pause {
-            ExternalPause::Ignored => {}
-            ExternalPause::Stopped | ExternalPause::Idle => {
-                self.controller.borrow_mut().stop();
-                self.message.set(None);
-                self.status.set(SpeechStatus::Idle);
-            }
-            ExternalPause::Start(entry) => self.start(entry),
-        }
-    }
-
-    fn stop(&self) {
-        self.queue.borrow_mut().stop();
-        self.controller.borrow_mut().stop();
-        self.message.set(None);
-        self.status.set(SpeechStatus::Idle);
-    }
-
-    fn suppress_automatic(&self) {
-        match self.queue.borrow_mut().suppress_automatic() {
-            SuppressAutomatic::Preserved => {}
-            SuppressAutomatic::Idle => {
-                self.controller.borrow_mut().stop();
-                self.message.set(None);
-                self.status.set(SpeechStatus::Idle);
-            }
-            SuppressAutomatic::Start(entry) => self.start(entry),
-        }
-    }
-
-    fn abandon_lane(&self, lane: &str) {
-        self.queue.borrow_mut().abandon_lane(lane);
-    }
-}
-
 impl Connection {
     /// The socket is admitted and the published runtime is the one the
     /// resident serves now. Only this state lends the runtime's offers to a
@@ -603,7 +325,6 @@ struct CanvasAppState {
     team_fleet: NodeRef,
     composer_drafts: UseReducerHandle<ComposerDrafts>,
     submissions: SubmissionHandle,
-    action_issue: UseStateHandle<Option<String>>,
     sender: SenderHandle,
     composer_drag: watchband::PrimaryComposerDragState,
     work_detail: task_detail::Controls,
@@ -705,10 +426,9 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
         queue: use_mut_ref(SubmissionQueue::default),
         status: submission_status.clone(),
     };
-    let action_issue = use_state(|| None::<String>);
     let sender = SenderHandle {
         queue: use_mut_ref(|| None::<ActionQueue>),
-        issue: action_issue.clone(),
+        refusals: toast::use_toaster(),
     };
     let composer_drag = use_composer_drag(&surface);
     let work_detail = task_detail::use_controls(
@@ -768,7 +488,6 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
             team_fleet,
             composer_drafts,
             submissions,
-            action_issue,
             sender,
             composer_drag,
             work_detail,
@@ -807,7 +526,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
     );
     use_team_speech_abandonment(&state.surface, speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime);
-    use_transient_result_toast(&state.action_issue, &state.speech_status);
+    use_speech_failure_toast(&state.speech_status);
     let chat_visible = state.destination == CanvasDestination::Chat;
     card_target::use_target(
         state.card_target.clone(),
@@ -832,27 +551,6 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
         state.work_scope.clone(),
         state.work_scope_notice.clone(),
     );
-}
-
-#[hook]
-fn use_transient_result_toast(
-    action_issue: &UseStateHandle<Option<String>>,
-    speech_status: &UseStateHandle<SpeechStatus>,
-) {
-    let toaster = toast::use_toaster();
-    use_effect_with((**action_issue).clone(), {
-        let toaster = toaster.clone();
-        move |issue| {
-            if let Some(issue) = issue {
-                toaster.settled(issue.clone());
-            }
-        }
-    });
-    use_effect_with((**speech_status).clone(), move |status| {
-        if let SpeechStatus::Failed(issue) = status {
-            toaster.settled(issue.clone());
-        }
-    });
 }
 
 #[function_component(CanvasApp)]
@@ -912,39 +610,6 @@ fn use_work_scope_reconciliation(
 }
 
 #[hook]
-fn use_agent_speech_controls(
-    runtime: Rc<RefCell<SpeechRuntime>>,
-    narration_cursors: Rc<RefCell<NarrationCursors>>,
-    message: UseStateHandle<Option<String>>,
-) -> AgentSpeechControls {
-    let enqueue = {
-        let runtime = runtime.clone();
-        use_memo((), move |_| {
-            Callback::from(move |request: SpeechRequest| runtime.borrow().enqueue(request))
-        })
-    };
-    let speak = {
-        let runtime = runtime.clone();
-        use_memo((), move |_| {
-            Callback::from(move |request: SpeechRequest| runtime.borrow().toggle_message(request))
-        })
-    };
-    let suppress_automatic = use_memo((), move |_| {
-        Callback::from(move |()| runtime.borrow().suppress_automatic())
-    });
-    let narrate = {
-        let enqueue = (*enqueue).clone();
-        use_memo((), move |_| narration_callback(narration_cursors, enqueue))
-    };
-    AgentSpeechControls {
-        speak: (*speak).clone(),
-        narrate: (*narrate).clone(),
-        suppress_automatic: (*suppress_automatic).clone(),
-        message,
-    }
-}
-
-#[hook]
 fn use_surface_connection(sender: SenderHandle, handles: SurfaceHandles) {
     use_effect_with((), move |()| {
         let active = Rc::new(Cell::new(true));
@@ -955,67 +620,6 @@ fn use_surface_connection(sender: SenderHandle, handles: SurfaceHandles) {
             active.set(false);
             sender.queue.borrow_mut().take();
         }
-    });
-}
-
-/// Stop every clip the moment the page is hidden for navigation or close.
-///
-/// System synthesis runs in the operating system speech server, so an
-/// utterance queued by this page keeps playing after the window that queued
-/// it is gone unless the page cancels it on the way out. `pagehide` is the
-/// last event every browser dispatches before a document is unloaded or
-/// frozen, including tab and window close.
-#[hook]
-fn use_page_hide_speech_stop(speech_runtime: SpeechRuntime) {
-    use_effect_with((), move |()| {
-        let registration = web_sys::window().and_then(|window| {
-            let callback =
-                Closure::<dyn FnMut(web_sys::Event)>::new(move |_event: web_sys::Event| {
-                    speech_runtime.stop()
-                });
-            window
-                .add_event_listener_with_callback("pagehide", callback.as_ref().unchecked_ref())
-                .ok()
-                .map(|()| (window, callback))
-        });
-        move || {
-            if let Some((window, callback)) = registration {
-                let _ = window.remove_event_listener_with_callback(
-                    "pagehide",
-                    callback.as_ref().unchecked_ref(),
-                );
-            }
-        }
-    });
-}
-
-#[hook]
-fn use_team_speech_abandonment(
-    surface: &UseStateHandle<SurfaceData>,
-    speech_runtime: SpeechRuntime,
-) {
-    let teams = surface
-        .read()
-        .as_ref()
-        .and_then(CanvasRuntime::lanes)
-        .map(|lanes| {
-            lanes
-                .lanes
-                .iter()
-                .map(|team| team.lane.to_string())
-                .collect::<BTreeSet<_>>()
-        });
-    let previous = use_mut_ref(|| None::<BTreeSet<String>>);
-    use_effect_with(teams, move |teams| {
-        let Some(current) = teams else {
-            return;
-        };
-        if let Some(previous) = previous.borrow().as_ref() {
-            for removed in previous.difference(current) {
-                speech_runtime.abandon_lane(removed);
-            }
-        }
-        *previous.borrow_mut() = Some(current.clone());
     });
 }
 
@@ -1223,55 +827,6 @@ fn seat_submit(
     })
 }
 
-fn load_narration_cursors() -> NarrationCursors {
-    web_sys::window()
-        .and_then(|window| window.local_storage().ok().flatten())
-        .and_then(|storage| storage.get_item(NARRATION_CURSOR_STORAGE).ok().flatten())
-        .and_then(|value| serde_json::from_str::<Vec<(String, String)>>(&value).ok())
-        .map_or_else(NarrationCursors::default, NarrationCursors::restore)
-}
-
-fn store_narration_cursors(cursors: &NarrationCursors) {
-    let Some(storage) = web_sys::window().and_then(|window| window.local_storage().ok().flatten())
-    else {
-        return;
-    };
-    let Ok(value) = serde_json::to_string(&cursors.rows()) else {
-        return;
-    };
-    let _ = storage.set_item(NARRATION_CURSOR_STORAGE, &value);
-}
-
-fn narration_callback(
-    cursors: Rc<RefCell<NarrationCursors>>,
-    speak: Callback<SpeechRequest>,
-) -> Callback<NarrationBatch> {
-    Callback::from(move |batch: NarrationBatch| {
-        let lines = {
-            let mut cursors = cursors.borrow_mut();
-            let lines = cursors.observe(batch.materialization, &batch.messages);
-            store_narration_cursors(&cursors);
-            lines
-        };
-        for line in lines {
-            let text = match batch.mode {
-                TeamSpeech::Quiet => None,
-                TeamSpeech::Speak => line.automatic_speech,
-                TeamSpeech::Narrate => line.narration,
-            };
-            if let Some(text) = text {
-                speak.emit(SpeechRequest::narration(
-                    line.worktree,
-                    line.playback,
-                    batch.team.clone(),
-                    line.key,
-                    text,
-                ));
-            }
-        }
-    })
-}
-
 fn apply_team_configuration(
     session: &Session,
     team_controls: &UseReducerHandle<TeamControls>,
@@ -1326,42 +881,6 @@ fn admit_response<T: for<'de> Deserialize<'de>>(
         .map_err(|fault| format!("{}: {}", fault.reason, fault.detail))
 }
 
-fn random_uuid() -> Result<CanonicalUuid, String> {
-    let mut bytes = [0_u8; 16];
-    web_sys::window()
-        .ok_or_else(|| "browser window is unavailable".to_owned())?
-        .crypto()
-        .map_err(|_| "browser crypto is unavailable".to_owned())?
-        .get_random_values_with_u8_array(&mut bytes)
-        .map_err(|_| "browser random source failed".to_owned())?;
-    bytes[6] = (bytes[6] & 0x0f) | 0x40;
-    bytes[8] = (bytes[8] & 0x3f) | 0x80;
-    format!(
-        concat!(
-            "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-",
-            "{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-        ),
-        bytes[0],
-        bytes[1],
-        bytes[2],
-        bytes[3],
-        bytes[4],
-        bytes[5],
-        bytes[6],
-        bytes[7],
-        bytes[8],
-        bytes[9],
-        bytes[10],
-        bytes[11],
-        bytes[12],
-        bytes[13],
-        bytes[14],
-        bytes[15]
-    )
-    .parse()
-    .map_err(|error| format!("browser command identity was invalid: {error}"))
-}
-
 fn websocket_error(error: WebSocketError) -> String {
     format!("socket failed: {error}")
 }
@@ -1371,100 +890,6 @@ fn binary_message(message: Message) -> Result<Vec<u8>, String> {
         Message::Bytes(bytes) => Ok(bytes),
         Message::Text(_) => Err("resident sent a text frame".to_owned()),
     }
-}
-
-fn admit_action(sender: &SenderHandle, action: ClientAction) -> bool {
-    let clears_issue = action.is_mutation();
-    let topology_id = if action.is_topology_mutation() {
-        let Some(id) = action_identity(sender) else {
-            return false;
-        };
-        Some(id)
-    } else {
-        None
-    };
-    let result = sender
-        .queue
-        .borrow()
-        .as_ref()
-        .ok_or(action_mailbox::ActionAdmissionError::Unavailable)
-        .and_then(|queue| queue.admit(action, topology_id));
-    match result {
-        Ok(()) => {
-            if clears_issue && sender.issue.is_some() {
-                sender.issue.set(None);
-            }
-            true
-        }
-        Err(error) => {
-            sender.issue.set(Some(error.to_string()));
-            false
-        }
-    }
-}
-
-fn action_identity(sender: &SenderHandle) -> Option<CanonicalUuid> {
-    match random_uuid() {
-        Ok(id) => Some(id),
-        Err(error) => {
-            sender.issue.set(Some(error));
-            None
-        }
-    }
-}
-
-fn queue_submission(
-    sender: &SenderHandle,
-    submissions: &SubmissionHandle,
-    submission: Submission,
-) -> bool {
-    let id = submission.id;
-    if let Err(error) = submissions.queue.borrow_mut().enqueue(submission) {
-        sender.issue.set(Some(error));
-        return false;
-    }
-    submissions.publish();
-    if admit_action(sender, ClientAction::DrainSubmissions) {
-        return true;
-    }
-    let removed = submissions.queue.borrow_mut().rollback(id);
-    assert!(
-        removed.is_some(),
-        "a failed submission wake rolls back the enqueue it just made"
-    );
-    submissions.publish();
-    false
-}
-
-fn queue_submissions(
-    sender: &SenderHandle,
-    submissions: &SubmissionHandle,
-    batch: Vec<Submission>,
-) -> bool {
-    if batch.is_empty() {
-        return false;
-    }
-    let identities = batch
-        .iter()
-        .map(|submission| submission.id)
-        .collect::<Vec<_>>();
-    if let Err(error) = submissions.queue.borrow_mut().enqueue_all(batch) {
-        sender.issue.set(Some(error));
-        return false;
-    }
-    submissions.publish();
-    if admit_action(sender, ClientAction::DrainSubmissions) {
-        return true;
-    }
-    for id in identities {
-        let removed = submissions.queue.borrow_mut().rollback(id);
-        assert!(
-            removed.is_some(),
-            "a failed submission wake rolls back every enqueue it just made"
-        );
-    }
-    submissions.publish();
-    false
 }
 
 fn empty(message: &'static str) -> Html {
