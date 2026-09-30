@@ -438,15 +438,19 @@ loaded window. Canvas requires the retained lane to prove the exact recorded
 transcript generation; tasks without that authority or another unambiguous
 transcript boundary omit the action rather than presenting a dead link.
 
-Task descriptions and acceptance criteria render as authored Markdown through
-one sanitized contract renderer, shared by the Chat quick view (description)
-and the full detail drawer (description and every criterion). Paragraphs,
-line breaks, lists, emphasis, code, and safe links keep their shape; raw HTML
-stays literal text and unsafe link schemes lose their destination. A handle the
+Task descriptions, acceptance criteria, and observations render as authored
+Markdown through one sanitized task-text renderer, shared by the Chat quick
+view (description and its recent observations) and the full detail drawer
+(description, every criterion, and every observation). Observation author,
+time, order, and the quick view's recent-observation window are unchanged.
+Paragraphs, line breaks, lists, emphasis, code, and safe links keep their
+shape; wide code blocks and tables scroll inside their own box; raw HTML stays
+literal text and unsafe link schemes lose their destination. A handle the
 admitted board holds becomes the same task chip Chat uses. Activating one moves
 the quick view, or the drawer, to that task, and closing the drawer still
 returns focus to its launching card. A handle the board does not hold, and any
-handle inside code or link text, stays literal, so no chip leads nowhere.
+handle, path, or command inside code or link text, stays literal, so no chip
+leads nowhere.
 
 Deep task detail also treats admitted ownership facts as navigation rather than
 decoration. Its project action opens the matching visibility-qualified Work

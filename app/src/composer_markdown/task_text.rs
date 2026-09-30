@@ -1,12 +1,12 @@
-//! Authored task contracts: descriptions and acceptance criteria.
+//! Authored task text: descriptions, acceptance criteria, and observations.
 //!
-//! Contract text is Markdown written by operators and agents, so it keeps the
+//! Task text is Markdown written by operators and agents, so it keeps the
 //! same sanitization as message cards: raw HTML stays literal text and unsafe
 //! URL schemes lose their destination. A line break is authored structure and
 //! stays one. Only handles that resolve on the admitted board become task
 //! chips; any other handle stays plain text, so no chip leads nowhere. Code
-//! and link text stay literal, so a handle quoted as code or used as a link
-//! label never gains a second, nested control.
+//! and link text stay literal, so a handle, path, or command quoted as code or
+//! used as a link label never gains a second, nested control.
 
 use pulldown_cmark::{CowStr, Event as MarkdownEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
 use wire::TaskStamp;
@@ -15,15 +15,12 @@ use super::{coalesce_text_events, sanitize_markdown_event, tables, task_chip_htm
 use crate::watchband;
 
 /// Headings nest under the detail's own section and subsection headings.
-const CONTRACT_HEADING: HeadingLevel = HeadingLevel::H5;
+const TASK_TEXT_HEADING: HeadingLevel = HeadingLevel::H5;
 
-/// Render one authored contract field as sanitized HTML.
+/// Render one authored task text field as sanitized HTML.
 ///
 /// `resolves` answers whether a task stamp is present on the admitted board.
-pub(crate) fn render_task_contract(
-    markdown: &str,
-    resolves: impl Fn(&TaskStamp) -> bool,
-) -> String {
+pub(crate) fn render_task_text(markdown: &str, resolves: impl Fn(&TaskStamp) -> bool) -> String {
     let options = Options::ENABLE_TABLES
         | Options::ENABLE_STRIKETHROUGH
         | Options::ENABLE_TASKLISTS
@@ -34,13 +31,13 @@ pub(crate) fn render_task_contract(
             MarkdownEvent::Start(Tag::Heading {
                 id, classes, attrs, ..
             }) => MarkdownEvent::Start(Tag::Heading {
-                level: CONTRACT_HEADING,
+                level: TASK_TEXT_HEADING,
                 id,
                 classes,
                 attrs,
             }),
             MarkdownEvent::End(TagEnd::Heading(_)) => {
-                MarkdownEvent::End(TagEnd::Heading(CONTRACT_HEADING))
+                MarkdownEvent::End(TagEnd::Heading(TASK_TEXT_HEADING))
             }
             MarkdownEvent::SoftBreak => MarkdownEvent::HardBreak,
             other => other,

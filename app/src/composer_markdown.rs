@@ -15,11 +15,11 @@ use wire::{Media, MessageClassification, MessageClassificationKind, MessageDirec
 
 use crate::watchband;
 
-pub(crate) mod contract;
 mod diagrams;
 mod math;
 mod quotes;
 mod tables;
+pub(crate) mod task_text;
 mod taste_quotes;
 mod terminal;
 

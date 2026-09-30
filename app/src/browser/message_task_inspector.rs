@@ -42,7 +42,8 @@ struct Commands {
 struct DetailContext {
     detail: Option<TaskDetailState>,
     creator_context: Option<String>,
-    /// Tasks the inspected description names that the admitted board holds.
+    /// Tasks the inspected description and observations name that the
+    /// admitted board holds.
     board_tasks: std::collections::BTreeSet<TaskStamp>,
     can_note: bool,
     note: NoteComposer,
@@ -91,11 +92,13 @@ pub(super) fn use_controls(
     let board_tasks = detail
         .as_ref()
         .and_then(TaskDetailState::answer)
-        .and_then(|answer| answer.task.statement.body.description.as_deref())
         .zip(runtime.as_ref().and_then(|runtime| runtime.board()))
-        .map(|(description, board)| {
-            crate::watchband::task_mentions(description)
+        .map(|(answer, board)| {
+            let description = answer.task.statement.body.description.as_deref();
+            description
                 .into_iter()
+                .chain(answer.notes.iter().map(|note| note.text.as_str()))
+                .flat_map(crate::watchband::task_mentions)
                 .filter_map(|(_, task)| task.born().ok())
                 .filter(|task| {
                     board
@@ -439,7 +442,7 @@ fn render_available(
                                     <span>{format!("Observation {}", note.position)}</span>
                                     {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
                                 </header>
-                                <p>{note.text.clone()}</p>
+                                {task_detail::render_task_text(&note.text, "work-note-body", |task| detail.board_tasks.contains(task))}
                             </li>
                         })}
                     </ol>

@@ -1,4 +1,4 @@
-use super::render_task_contract;
+use super::render_task_text;
 
 const KNOWN: &str = "MOSAIC-1kRYqQxy";
 const ALSO_KNOWN: &str = "CONTROL-1kKbC3j4";
@@ -12,7 +12,7 @@ fn render(markdown: &str) -> String {
             .born()
             .expect("fixture stamp")
     });
-    render_task_contract(markdown, |stamp| known.contains(stamp))
+    render_task_text(markdown, |stamp| known.contains(stamp))
 }
 
 fn chips(html: &str) -> Vec<&str> {
@@ -83,4 +83,21 @@ fn authored_structure_survives_under_the_detail_headings() {
     assert!(html.contains("first line<br />"), "{html}");
     assert!(html.contains("<li>one</li>\n<li>two</li>"), "{html}");
     assert_eq!(chips(&html), [KNOWN]);
+}
+
+#[test]
+fn observation_evidence_stays_faithful_beside_a_resolved_handle() {
+    let html = render(&format!(
+        "Commit 0b42770a9 for {KNOWN}: app/src/view.rs line 12.\n\n```sh\nspice task done {ALSO_KNOWN} --validation \"<ok>\"\n```"
+    ));
+
+    assert_eq!(chips(&html), [KNOWN]);
+    assert!(html.contains("Commit 0b42770a9 for <span"), "{html}");
+    assert!(html.contains("</span>: app/src/view.rs line 12."), "{html}");
+    assert!(
+        html.contains(&format!(
+            "spice task done {ALSO_KNOWN} --validation \"&lt;ok&gt;\""
+        )),
+        "{html}"
+    );
 }

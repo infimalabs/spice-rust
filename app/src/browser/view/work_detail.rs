@@ -189,7 +189,11 @@ fn render_available(
         })
     };
     html! {
-        <div class="work-detail-content">
+        <div
+            class="work-detail-content"
+            onclick={task_detail::task_text_chip_click(&render.select_task)}
+            onkeydown={task_detail::task_text_chip_keydown(&render.select_task)}
+        >
             <div class="work-detail-identity">
                 <code>{statement.handle.to_string()}</code>
                 <chrome::CopyButton
@@ -213,11 +217,7 @@ fn render_available(
             if let Some(notice) = scope_notice {
                 <p class="work-detail-scope" role="status">{notice}</p>
             }
-            <section
-                class="work-detail-section"
-                onclick={task_detail::contract_chip_click(&render.select_task)}
-                onkeydown={task_detail::contract_chip_keydown(&render.select_task)}
-            >
+            <section class="work-detail-section">
                 <h3>{"Contract"}</h3>
                 {task_detail::render_contract(statement, |task| board_has(render.work, task), true)}
             </section>
@@ -288,7 +288,7 @@ fn render_activity(
                                 </strong>
                                 {task_time(&note.at, TaskTimePresentation::DetailedElapsed)}
                             </header>
-                            <p>{note.text.clone()}</p>
+                            {task_detail::render_task_text(&note.text, "work-note-body", |task| board_has(render.work, task))}
                         </li>
                     })}
                 </ol>
