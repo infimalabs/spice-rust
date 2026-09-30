@@ -933,6 +933,11 @@ fn state_from_select(state: UseStateHandle<String>) -> Callback<Event> {
 
 #[wasm_bindgen(start)]
 pub fn start() {
+    if connection::capture_opening_auth_token().expect("capture Canvas opening auth token") {
+        navigation::replace_location(&crate::view::CanvasRoute::destination(
+            CanvasDestination::Chat,
+        ));
+    }
     diagnostics::install();
     let root = web_sys::window()
         .expect("browser window")

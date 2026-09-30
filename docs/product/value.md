@@ -365,12 +365,16 @@ and copied URLs restore the selected destination. A missing fragment, bare
 slashes and trailing or repeated slashes around a known destination are also
 replaced with its canonical route without adding a history entry. An unknown
 fragment or stray URL query opens Chat with working navigation, replaces the
-address with `#/chat`, and names the refused route in a toast. Existing team,
-speech, and narration state keeps its current format. Following a quote link
-to its quoted message is a history step: Back returns the card that held the
-link to where the reader left it. A card link opened in a fresh page brings its
-card into view and focus once Chat hydrates, holding it there as older history
-loads around it until the reader scrolls.
+address with `#/chat`, and names the refused route in a toast.
+An authenticated remote opening captures its one-time fragment into tab-local
+session storage before routing starts, then makes the same `#/chat`
+replacement. Bootstrap and speech requests reuse only that captured token;
+route fragments are never credentials.
+Existing team, speech, and narration state keeps its current format. Following
+a quote link to its quoted message is a history step: Back returns the card
+that held the link to where the reader left it. A card link opened in a fresh
+page brings its card into view and focus once Chat hydrates, holding it there as
+older history loads around it until the reader scrolls.
 
 ### The Spice menu quota well
 
