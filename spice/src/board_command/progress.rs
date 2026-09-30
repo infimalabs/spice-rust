@@ -1125,7 +1125,7 @@ fn doc_task_spec(
             !node.flow.is_empty(),
             &dependencies,
             &plan.snapshot,
-        )?;
+        );
     }
     let taste_review = task_taste_review(
         repository,

@@ -503,7 +503,7 @@ fn task_flow_for_dependencies(
                 "name dependencies carrying canonical birth stamps",
             )
         })?;
-    let witnesses = derive_dependency_flow(&mut flow, add.flow.is_some(), &dependencies, snapshot)?;
+    let witnesses = derive_dependency_flow(&mut flow, add.flow.is_some(), &dependencies, snapshot);
     Ok((flow, witnesses))
 }
 
@@ -515,7 +515,7 @@ pub(super) fn derive_dependency_flow(
     explicit: bool,
     dependencies: &[TaskStamp],
     snapshot: &ValidatedSnapshot,
-) -> Result<Vec<Witness>, Outcome<CommandAnswer>> {
+) -> Vec<Witness> {
     let mut witnesses = Vec::with_capacity(dependencies.len());
     let mut all_review = !dependencies.is_empty();
     for born in dependencies {
@@ -535,26 +535,17 @@ pub(super) fn derive_dependency_flow(
         witnesses.push(workflow_witness(heads));
     }
     if !explicit {
-        omit_review_phase(flow, all_review)?;
+        omit_review_phase(flow, all_review);
     }
-    Ok(witnesses)
+    witnesses
 }
 
-pub(super) fn omit_review_phase(
-    flow: &mut Vec<wire::Phase>,
-    all_review: bool,
-) -> Result<(), Outcome<CommandAnswer>> {
+/// Drop the review phase from a defaulted flow. Every default names a
+/// non-review phase, so the flow stays nonempty.
+pub(super) fn omit_review_phase(flow: &mut Vec<wire::Phase>, all_review: bool) {
     if all_review {
         flow.retain(|phase| phase.as_str() != "review");
-        if flow.is_empty() {
-            return Err(refusal(
-                "task::flow-empty",
-                Some("review".to_owned()),
-                "name at least one non-review workflow phase when creation omits review",
-            ));
-        }
     }
-    Ok(())
 }
 
 fn add_oops_note(

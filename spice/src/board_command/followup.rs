@@ -380,7 +380,7 @@ fn prepare_followup_policy(
             reviewed.phase.as_str() == "review"
                 && reviewed.status == "pending"
                 && reviewed.completion.is_none(),
-        )?;
+        );
     }
     let taste_review = task_taste_review(
         context.repository,
