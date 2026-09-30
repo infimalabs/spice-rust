@@ -171,7 +171,7 @@ fn render_available(
         .find(|task| task.row().statement.body.born == statement.born);
     let copy_identity = {
         let identity = statement.handle.to_string();
-        Callback::from(move |_| chrome::copy_text(&identity))
+        Callback::from(move |_| chrome::copy_text(&identity, drop))
     };
     let scope_notice = projected.and_then(|task| {
         let project = &render.work.projects()[task.project()];
