@@ -204,6 +204,44 @@ fn iso_time(milliseconds: i64) -> String {
         .unwrap_or_else(|| milliseconds.to_string())
 }
 
+fn iso_millis(value: &str) -> Option<i64> {
+    let milliseconds = js_sys::Date::parse(value);
+    milliseconds.is_finite().then_some(milliseconds as i64)
+}
+
+fn render_reset_credit(credit: &wire::QuotaResetCredit) -> Option<Html> {
+    let title = credit.title.as_ref().or(credit.program.as_ref());
+    let text = match (title, credit.remaining_count) {
+        (Some(title), Some(count)) => format!("{title} ({count} remaining)"),
+        (Some(title), None) => title.clone(),
+        (None, Some(count)) => format!("{count} remaining"),
+        (None, None) => return None,
+    };
+    let expiry = credit
+        .expires_at
+        .as_deref()
+        .and_then(|exact| iso_millis(exact).map(|expiry| (expiry, exact)))
+        .map(|(expiry, exact)| {
+            let exact = format!("Expires {exact}");
+            html! {
+                <span class="quota-reset-credit-expiry" title={exact.clone()}>
+                    {"expires "}
+                    <Countdown
+                        {expiry}
+                        class={classes!("dash-overview-quota-age")}
+                        title={exact}
+                    />
+                </span>
+            }
+        });
+    Some(html! {
+        <span class="quota-reset-credit" title={text.clone()}>
+            <span class="quota-reset-credit-label">{text}</span>
+            {expiry}
+        </span>
+    })
+}
+
 fn render_reset_credits(credits: Option<&wire::QuotaResetCredits>) -> Html {
     let Some(credits) = credits else {
         return Html::default();
@@ -215,16 +253,7 @@ fn render_reset_credits(credits: Option<&wire::QuotaResetCredits>) -> Html {
             if let Some(redeemable) = credits.redeemable_count {
                 <span>{format!("{redeemable} redeemable")}</span>
             }
-            {for credits.credits.iter().filter_map(|credit| {
-                let title = credit.title.as_ref().or(credit.program.as_ref());
-                let text = match (title, credit.remaining_count) {
-                    (Some(title), Some(count)) => format!("{title} ({count} remaining)"),
-                    (Some(title), None) => title.clone(),
-                    (None, Some(count)) => format!("{count} remaining"),
-                    (None, None) => return None,
-                };
-                Some(html! { <span class="quota-reset-credit">{text}</span> })
-            })}
+            {for credits.credits.iter().filter_map(render_reset_credit)}
         </p>
     }
 }
