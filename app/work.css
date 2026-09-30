@@ -208,11 +208,16 @@
   container-type: inline-size;
 }
 
+/* A card never outgrows a single image in the lane message stream. The title
+   row alone absorbs that cap, so the handle, badges, facts, and map toggle
+   stay whole. */
 .work-card {
   --work-card-tone: var(--work-in-flight);
   position: relative;
   display: grid;
+  grid-template-rows: auto minmax(0, auto);
   gap: 9px;
+  max-block-size: var(--mosaic-image-large-size);
   padding: 11px;
   border: var(--canvas-edge-soft);
   border-left: 3px solid var(--work-card-tone);
@@ -299,10 +304,18 @@
   outline-offset: 2px;
 }
 
+/* Six lines fill the cap beside owner-only facts and end in an ellipsis; more
+   facts shrink the row further, and the rounding keeps what remains to whole
+   lines. */
 .work-card h4 {
+  display: -webkit-box;
+  max-block-size: round(down, 100%, 1lh);
   margin: 0;
+  overflow: hidden;
   font-size: .84rem;
   line-height: 1.32;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
 }
 
 .work-card-badges {
