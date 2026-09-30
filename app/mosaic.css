@@ -1294,7 +1294,7 @@ a.relative-age {
   .team-work-history :is(.work-history-filter-actions, .work-history-page-actions) button { width: 100%; }
   .team-work-history .work-history-pagination { align-items: stretch; flex-direction: column; }
 }
-.team-work-lanes .work-lane-track { min-height: 0; padding-bottom: 6px; }
+.team-work-lanes .work-lane-track { padding-bottom: 6px; }
 .team-work-lanes .work-lane-empty { min-height: 2rem; }
 .team-task-section { min-width: 0; }
 .team-task-section > header {

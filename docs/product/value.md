@@ -300,8 +300,9 @@ One board shows open work in fixed ready, in-flight, blocked, and deferred
 rows. Cards fill each row in allocator order and scroll horizontally, so churn
 changes contents, not board size or labels. Creation order and project/phase
 clusters rearrange the same keyed cards; each lane reserves a label gutter, so
-rearranging never moves a card vertically. Empty rows remain, status is textual
-as well as colored, and narrow layouts keep labeled rows.
+rearranging never moves a card vertically. Rows keep the card cap's height even
+when empty, status is textual as well as colored, and narrow layouts keep
+labeled rows.
 
 Tasks created from a retained transcript expose one creator-context link on
 their card, Chat quick view, and detail. Its visible label is the live relative

@@ -139,7 +139,6 @@
 
 .work-lane-track {
   min-width: 0;
-  min-height: 12rem;
   padding: 5px 2px 10px;
   overflow-x: scroll;
   overflow-y: clip;
@@ -154,6 +153,12 @@
 .work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-track {
   --work-group-label-gutter: 1.35rem;
   padding-top: calc(5px + var(--work-group-label-gutter));
+}
+/* A global band is one height whether empty or full: its row reserves the
+   card cap, so the first task arriving or the last one settling never moves
+   the bands below. */
+.work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-track > :is(.work-card-list, .work-lane-empty) {
+  min-block-size: var(--mosaic-image-large-size);
 }
 /* Global lane headings pack against the lane rule: every label sits the same
    gap before its badge and every badge the same gap before the rule, so a
@@ -201,7 +206,6 @@
 
 .work-lane-empty {
   display: grid;
-  min-height: 100%;
   margin: 0;
   place-items: center start;
   color: var(--muted);

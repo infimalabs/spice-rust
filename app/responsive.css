@@ -108,7 +108,6 @@
     justify-content: flex-start;
     gap: 5px;
   }
-  .work-lane-track { min-height: 11rem; }
   .work-card-list > .work-card-cell {
     flex-basis: min(16rem, calc(100vw - 7.5rem));
   }
