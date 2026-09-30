@@ -272,6 +272,18 @@ fn move_member(
         head.subscriptions.push(subscription);
     }
     head.lanes[member_index].team = target;
+    if target_exists {
+        // A joining member lands at the tail of its new team. Member order,
+        // and the accents it drives, belong to the team, so a member created
+        // earlier elsewhere must not jump ahead of the team's current members.
+        let row = head.lanes.remove(member_index);
+        let tail = head
+            .lanes
+            .iter()
+            .rposition(|row| row.team == target)
+            .map_or(head.lanes.len(), |last| last + 1);
+        head.lanes.insert(tail, row);
+    }
     if !head.lanes.iter().any(|row| row.team == source) {
         head.subscriptions
             .retain(|subscription| subscription.team != source);

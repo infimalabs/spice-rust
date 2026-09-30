@@ -1097,12 +1097,8 @@ fn render_composer_heading(
                 onlostpointercapture={drag_lost_capture}
             >{prose}</strong>
             {indicators}
-            <details class="agent-action-menu">
-                <summary aria-label={format!("Actions for {}", standing.label)}>
-                    <span class="composer-menu-icon" aria-hidden="true">
-                        <span></span><span></span><span></span>
-                    </span>
-                </summary>
+            <details class="agent-action-menu" data-renewal-pending={renewal.pressed.to_string()}>
+                {render_agent_menu_summary(&standing.label, &renewal)}
                 <div
                     class="agent-action-drawer"
                     data-agent-drawer-target-id={lane.to_string()}
@@ -1156,6 +1152,23 @@ fn render_composer_heading(
                 </div>
             </details>
         </header>
+    }
+}
+
+/// The action menu's button. A standing renewal request marks it, so the
+/// request stays visible after the drawer that placed it closes.
+fn render_agent_menu_summary(agent: &str, renewal: &watchband::AgentRenewalControl) -> Html {
+    let label = if renewal.pressed {
+        format!("Actions for {agent} (renewal requested)")
+    } else {
+        format!("Actions for {agent}")
+    };
+    html! {
+        <summary aria-label={label} title={renewal.pressed.then_some(renewal.detail)}>
+            <span class="composer-menu-icon" aria-hidden="true">
+                <span></span><span></span><span></span>
+            </span>
+        </summary>
     }
 }
 

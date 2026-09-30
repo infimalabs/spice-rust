@@ -385,7 +385,9 @@ flowchart LR
    next start of that lane consumes it and launches a fresh successor; the
    operator can withdraw the mark until then. A live predecessor is
    additionally asked to hand off, and is never forcibly terminated; a vacant
-   lane's predecessor is neither started nor notified.
+   lane's predecessor is neither started nor notified. While the mark stands,
+   the agent's action menu carries it, so the request stays visible after the
+   drawer that placed it closes.
 - A lane names exactly one worktree seat. A team may hold one or many lanes;
    the singular team is the degenerate topology, not a different type.
 - Topology is server truth. The client never mounts a lane from local storage;
@@ -397,7 +399,9 @@ flowchart LR
    main agent and each later member sits one place farther left. Position controls
    composer order and accent slot, while message chronology and explicit lane
    attribution do not derive from position. A member that momentarily fails to
-   resolve keeps its seat rather than re-entering at the tail.
+   resolve keeps its seat rather than re-entering at the tail. A member that
+   joins an existing team enters at its tail, so current members keep their
+   positions and accents; only an explicit arrangement reorders them.
 - `Close team` removes every member from the team through the resident, so
    each member becomes an independent agent and the team leaves the lane table
    in every browser. A refusal leaves the team as it was. No browser hides a

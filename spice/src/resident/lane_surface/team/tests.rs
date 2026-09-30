@@ -82,6 +82,34 @@ fn a_member_moves_between_orgs_and_an_empty_source_subscription_disappears() {
 }
 
 #[test]
+fn a_member_joining_an_existing_team_lands_after_its_current_members() {
+    let mut state = head(&[(1, 1), (2, 1), (3, 1), (4, 4)]);
+    move_member(&mut state, uuid(1), uuid(1)).expect("host leaves team");
+    assert_eq!(
+        grouping(&state),
+        vec![
+            (uuid(1), uuid(1)),
+            (uuid(2), uuid(2)),
+            (uuid(3), uuid(2)),
+            (uuid(4), uuid(4)),
+        ]
+    );
+
+    move_member(&mut state, uuid(1), uuid(2)).expect("former host rejoins");
+
+    assert_eq!(
+        grouping(&state),
+        vec![
+            (uuid(2), uuid(2)),
+            (uuid(3), uuid(2)),
+            (uuid(1), uuid(2)),
+            (uuid(4), uuid(4)),
+        ],
+        "the rejoining member is last, and team order is unchanged"
+    );
+}
+
+#[test]
 fn removing_the_host_rekeys_every_remaining_member_and_preserves_both_policies() {
     let mut state = head(&[(1, 1), (2, 1), (3, 1)]);
 
