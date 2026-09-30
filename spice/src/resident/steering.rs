@@ -826,6 +826,7 @@ fn refusal(
         .with_detail(detail),
     ))
 }
+
 fn lane_list_refusal(observed: Option<String>) -> Outcome<CommandAnswer> {
     Outcome::Refusal(Refusal::repairable(
         wire::SpiceCommand::new("lane", ["list"])
