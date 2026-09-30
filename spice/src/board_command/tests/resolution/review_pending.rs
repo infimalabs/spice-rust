@@ -273,6 +273,67 @@ fn finding_command_replays_once_and_allocator_selects_its_correction() {
     review.finish();
 }
 
+fn correction_add(title: &str, flow: Option<&str>) -> TaskAdd {
+    TaskAdd {
+        title: title.to_owned(),
+        project: Some("board.test".to_owned()),
+        description: None,
+        acceptance: Vec::new(),
+        requirements: wire::EnvironmentRequirements::default(),
+        origin: None,
+        flow: flow.map(str::to_owned),
+        depends: Vec::new(),
+        claim: false,
+    }
+}
+
+#[test]
+fn a_defaulted_correction_omits_review_while_an_explicit_flow_keeps_it() {
+    let review = AssignedReview::new("review-correction-flow");
+    let defaulted: TaskStamp = "1kKRRsDW".parse().expect("defaulted stamp");
+    let explicit: TaskStamp = "1kKRRsDX".parse().expect("explicit stamp");
+    let mut expected = review.expected();
+    for task in [&defaulted, &explicit] {
+        expected.push(Witness::Absence { task: task.clone() });
+    }
+    assert_committed(issue(
+        &review.bus,
+        review.epoch,
+        review.reviewer.clone(),
+        CommandKind::TaskReview,
+        expected,
+        &TaskReview {
+            task: review.reviewed.clone(),
+            finding: "two corrections".to_owned(),
+            note: None,
+            then: vec![
+                ReviewFollowup {
+                    task: defaulted.clone(),
+                    add: correction_add("Defaulted correction", None),
+                },
+                ReviewFollowup {
+                    task: explicit.clone(),
+                    add: correction_add("Material correction", Some("todo,review")),
+                },
+            ],
+            followup: Vec::new(),
+        },
+    ));
+    let current = board(&review.bus, review.epoch, Actor::Operator);
+    let flow = |stamp: &TaskStamp| {
+        at(&current, &TaskHandle::for_project("board.test", stamp))
+            .workflow
+            .body
+            .flow
+            .iter()
+            .map(|phase| phase.as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(flow(&defaulted), ["plan", "todo"]);
+    assert_eq!(flow(&explicit), ["todo", "review"]);
+    review.finish();
+}
+
 #[test]
 fn repeated_finding_reuses_one_completed_correction_without_a_duplicate_edge() {
     let review = AssignedReview::new("review-repeated-finding");

@@ -371,12 +371,17 @@ fn prepare_followup_policy(
     validate_acceptance(&add.acceptance)?;
     let mut flow = task_flow(add.flow.as_deref(), &add.acceptance)?;
     let reviewed = &context.reviewed_task.workflow.body;
-    omit_review_phase(
-        &mut flow,
-        reviewed.phase.as_str() == "review"
-            && reviewed.status == "pending"
-            && reviewed.completion.is_none(),
-    )?;
+    // A defaulted correction of a task awaiting re-review is todo-only: the
+    // parent's own re-review already fails again if the fix falls short. A
+    // flow the reviewer named explicitly is honored as written.
+    if add.flow.is_none() {
+        omit_review_phase(
+            &mut flow,
+            reviewed.phase.as_str() == "review"
+                && reviewed.status == "pending"
+                && reviewed.completion.is_none(),
+        )?;
+    }
     let taste_review = task_taste_review(
         context.repository,
         context.snapshot,

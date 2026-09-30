@@ -81,7 +81,7 @@ fn authored_document_apply_is_atomic_idempotent_and_barrier_bound() {
 }
 
 #[test]
-fn authored_task_creation_omits_review_behind_review_dependencies() {
+fn authored_task_creation_omits_review_behind_review_dependencies_unless_its_flow_is_named() {
     let (root, bus, epoch, seats) = fixture("document-dependency-flow", 1);
     let initial_board = board(&bus, epoch, Actor::Operator);
     let initial = apply_document(
@@ -107,21 +107,23 @@ fn authored_task_creation_omits_review_behind_review_dependencies() {
             "- Review prerequisite\n  Flow: todo, review\n",
             "- Dependent correction\n",
             "  After: review-prerequisite\n",
+            "- Material correction\n",
+            "  After: review-prerequisite\n",
             "  Flow: plan, todo, review\n",
         ),
         &review_board,
     );
-    let dependent = titled(&applied.board, "Dependent correction");
-    assert_eq!(
-        dependent
+    let flow = |title: &str| {
+        titled(&applied.board, title)
             .workflow
             .body
             .flow
             .iter()
-            .map(wire::Phase::as_str)
-            .collect::<Vec<_>>(),
-        ["plan", "todo"],
-    );
+            .map(|phase| phase.as_str().to_owned())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(flow("Dependent correction"), ["plan", "todo"]);
+    assert_eq!(flow("Material correction"), ["plan", "todo", "review"]);
     clean(&root, bus);
 }
 

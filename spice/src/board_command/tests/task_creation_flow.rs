@@ -1,6 +1,6 @@
 use super::*;
 
-fn dependent_add(dependencies: Vec<TaskHandle>) -> TaskAdd {
+fn dependent_add(dependencies: Vec<TaskHandle>, flow: Option<&str>) -> TaskAdd {
     TaskAdd {
         title: "Dependent work".to_owned(),
         project: Some("task.workflow".to_owned()),
@@ -12,7 +12,7 @@ fn dependent_add(dependencies: Vec<TaskHandle>) -> TaskAdd {
                 .parse()
                 .expect("fixture origin"),
         ),
-        flow: Some("plan,todo,review".to_owned()),
+        flow: flow.map(str::to_owned),
         depends: dependencies,
         claim: false,
     }
@@ -23,6 +23,7 @@ fn add_with_dependencies(
     epoch: CanonicalUuid,
     task: &str,
     dependencies: Vec<TaskHandle>,
+    flow: Option<&str>,
 ) -> TaskHandle {
     let born = stamp(task);
     let handle = TaskHandle::for_project("task.workflow", &born);
@@ -32,7 +33,7 @@ fn add_with_dependencies(
         Actor::Operator,
         CommandKind::TaskAdd,
         vec![Witness::Absence { task: born.clone() }],
-        &dependent_add(dependencies),
+        &dependent_add(dependencies, flow),
     ));
     handle
 }
@@ -189,7 +190,7 @@ fn create_and_claim_is_one_transaction_and_active_claim_refusal_is_zero_write() 
 }
 
 #[test]
-fn creation_omits_review_only_when_every_dependency_is_in_review() {
+fn a_defaulted_flow_omits_review_only_when_every_dependency_is_in_review() {
     let (root, bus, epoch, seats) = fixture("creation-dependency-flow", 1);
     let lane = Actor::Lane(seats[0].lane);
     let completed = add(
@@ -212,13 +213,22 @@ fn creation_omits_review_only_when_every_dependency_is_in_review() {
     claim_and_complete_task(&bus, epoch, &seats[0], &lane, &reviewed);
     let todo = todo_task(&bus, epoch, "FLOW-todo0001", "Todo dependency");
 
-    let all_review = add_with_dependencies(&bus, epoch, "FLOW-allreview", vec![reviewed.clone()]);
-    let mixed = add_with_dependencies(&bus, epoch, "FLOW-mixed001", vec![reviewed, todo]);
-    let settled = add_with_dependencies(&bus, epoch, "FLOW-settled01", vec![completed]);
-    let none = add_with_dependencies(&bus, epoch, "FLOW-none0001", Vec::new());
+    let all_review =
+        add_with_dependencies(&bus, epoch, "FLOW-allreview", vec![reviewed.clone()], None);
+    let explicit = add_with_dependencies(
+        &bus,
+        epoch,
+        "FLOW-explicit1",
+        vec![reviewed.clone()],
+        Some("plan,todo,review"),
+    );
+    let mixed = add_with_dependencies(&bus, epoch, "FLOW-mixed001", vec![reviewed, todo], None);
+    let settled = add_with_dependencies(&bus, epoch, "FLOW-settled01", vec![completed], None);
+    let none = add_with_dependencies(&bus, epoch, "FLOW-none0001", Vec::new(), None);
     let current = board(&bus, epoch, Actor::Operator);
 
     assert_eq!(flow(&current, &all_review), ["plan", "todo"]);
+    assert_eq!(flow(&current, &explicit), ["plan", "todo", "review"]);
     assert_eq!(flow(&current, &mixed), ["plan", "todo", "review"]);
     assert_eq!(flow(&current, &settled), ["plan", "todo", "review"]);
     assert_eq!(flow(&current, &none), ["plan", "todo", "review"]);
@@ -238,7 +248,7 @@ fn dependency_phase_movement_refuses_creation_with_the_stale_flow() {
     );
     let born = stamp("FLOW-stale0001");
     let handle = TaskHandle::for_project("task.workflow", &born);
-    let add = dependent_add(vec![dependency.clone()]);
+    let add = dependent_add(vec![dependency.clone()], None);
     let command = fixture_command(
         epoch,
         Actor::Operator,
