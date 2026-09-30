@@ -768,6 +768,8 @@ body:has(.shell--mosaic),
 .team-dash-flow > header {
   display: flex;
   align-items: center;
+  gap: 10px;
+  min-width: 0;
   padding: 0 10px;
   border-bottom: 1px solid var(--control-line-soft);
   background: color-mix(in srgb, var(--panel) 64%, transparent);
@@ -779,6 +781,72 @@ body:has(.shell--mosaic),
   letter-spacing: .05em;
   text-transform: uppercase;
 }
+/* The band shares the fixed flow header row, so items entering or leaving
+   never move the flow beneath it; a long band scrolls sideways instead. */
+.team-dash-attention {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  list-style: none;
+  scrollbar-width: none;
+  align-items: center;
+}
+.team-dash-attention-item { flex: none; }
+.team-dash-attention-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  max-width: 22rem;
+  padding: 0 4px 0 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-slot, var(--accent)) 38%, var(--control-line-soft));
+  border-left: 2px solid var(--accent-slot, var(--accent));
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 8%, var(--panel));
+  color: inherit;
+  font: inherit;
+  text-decoration: none;
+  white-space: nowrap;
+}
+:is(button, a).team-dash-attention-chip { cursor: pointer; }
+:is(button, a).team-dash-attention-chip:hover {
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 16%, var(--panel));
+}
+.team-dash-attention-chip:focus-visible,
+.team-dash-attention-rule:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+.team-dash-attention-copy {
+  min-width: 0;
+  overflow: hidden;
+  font-size: .7rem;
+  text-overflow: ellipsis;
+}
+.team-dash-attention-copy strong { font-weight: 700; }
+.team-dash-attention-issue {
+  color: var(--danger);
+  font: .62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.team-dash-attention-rule {
+  height: 18px;
+  padding: 0 7px;
+  border: 1px solid var(--control-line-soft);
+  border-radius: 2px;
+  background: var(--panel);
+  color: var(--ink);
+  font: 700 .62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer;
+}
+.team-dash-attention-rule[data-answer="granted"] { border-color: color-mix(in srgb, var(--accent) 55%, var(--control-line-soft)); }
+.team-dash-attention-rule[data-answer="denied"] { color: var(--danger); }
+.team-dash-attention-rule:disabled { opacity: .5; cursor: progress; }
 .team-dash-flow-body {
   min-width: 0;
   min-height: 0;

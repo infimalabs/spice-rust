@@ -12,6 +12,7 @@ use super::*;
 use crate::composer_drafts::ComposerDraft;
 use crate::watchband::{self, Standing, SubmissionAuthority, SubmissionTarget};
 
+mod attention;
 mod command_preview;
 mod composer;
 mod controls;
@@ -526,11 +527,13 @@ struct HistoryPaging<'a> {
     revision: u64,
 }
 
-struct DashRender<'a> {
+struct DashRender<'a, 'w> {
     task_inspector: &'a crate::browser::message_task_inspector::Context,
     select: &'a Callback<wire::TaskStamp>,
     request: &'a Callback<TeamFlowPageRequest>,
     controls: &'a UseReducerHandle<TeamControls>,
+    work: Option<&'a crate::work::WorkProjection<'w>>,
+    sender: &'a SenderHandle,
 }
 
 fn render_details(
@@ -538,7 +541,7 @@ fn render_details(
     runtime: &CanvasRuntime,
     team: &crate::runtime::LaneRow,
     standings: &[Standing],
-    render: DashRender<'_>,
+    render: DashRender<'_, '_>,
 ) -> Html {
     debug_assert_eq!(
         team.members.len(),
@@ -551,6 +554,14 @@ fn render_details(
         let team = team.lane;
         Callback::from(move |_| controls.dispatch(TeamControlAction::ShowChat { team }))
     };
+    let attention_items = attention::team_items(runtime, standings, render.work);
+    let attention_view = attention::item_view(&attention::AttentionControls {
+        team: team.lane,
+        runtime,
+        sender: render.sender,
+        task_inspector: render.task_inspector,
+        controls: render.controls,
+    });
     html! {
         <main class="team-dash-frame" aria-label="Team Dash">
             <section class="team-dash-roster" aria-label="Team roster">
@@ -566,7 +577,10 @@ fn render_details(
                 })}
             </section>
             <section class="team-dash-flow" aria-labelledby={flow_heading.clone()}>
-                <header><h3 id={flow_heading}>{"Flow"}</h3></header>
+                <header>
+                    <h3 id={flow_heading}>{"Flow"}</h3>
+                    <attention::AttentionBand items={attention_items} view={attention_view} />
+                </header>
                 <TeamFlow
                     team={team.clone()}
                     standings={standings.to_vec()}

@@ -458,6 +458,18 @@ moving the row under the reader, while newly arriving events appear at the top
 and preserve an existing scroll position. The resident-backed feed rehydrates
 after reload, so Dash remains useful as both live status and workflow history.
 
+The Flow header carries the team's attention band: what needs the operator
+now, and nothing else. Consent requests queued by a member lane come first,
+each allowed or denied in place under operator authority with the witnesses of
+the queue it was drawn from; the ruling lands and the request leaves. Then come
+member-held tasks only a human can move: a claim iced on unmet requirements,
+unclaimed work blocked on those requirements, and finished work waiting in
+review. Work waiting on a sibling dependency needs nobody and does not appear.
+Last come leases within two minutes of expiry and direction waiting longer
+than five minutes. Tasks open the detail layer; direction jumps to the member's
+composer. With nothing due the band is absent, and because it shares the
+fixed-height Flow header, items entering or clearing never move the Flow.
+
 ### Lane, team, occupant
 
 Three objects that are easy to conflate and expensive to conflate. The thing

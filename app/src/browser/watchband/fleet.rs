@@ -133,6 +133,8 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                                 select: render.select_task,
                                 request: &render.timeline_request,
                                 controls: render.team_controls,
+                                work: render.work,
+                                sender: render.sender,
                             },
                         ),
 
@@ -243,6 +245,8 @@ pub(super) fn render_populated_fleet(
                                                 select: render.select_task,
                                                 request: &render.timeline_request,
                                                 controls: render.team_controls,
+                                                work: render.work,
+                                                sender: render.sender,
                                             },
                                         ),
 

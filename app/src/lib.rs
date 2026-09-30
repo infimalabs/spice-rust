@@ -88,6 +88,12 @@ pub(crate) enum PendingKind {
     },
     Settings,
     Vendors,
+    /// The operator's pending consent queue.
+    Consent,
+    /// One operator ruling on a queued consent request.
+    ConsentRuling {
+        request: wire::CanonicalUuid,
+    },
     TaskDetail {
         task: wire::TaskStamp,
     },

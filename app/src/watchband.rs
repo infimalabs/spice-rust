@@ -24,6 +24,8 @@ use wire::{CanonicalUuid, TaskHandle};
 use crate::runtime::LaneRow;
 
 #[cfg(any(target_arch = "wasm32", test))]
+mod attention;
+#[cfg(any(target_arch = "wasm32", test))]
 mod composer_drag;
 mod presence;
 mod provider;
@@ -31,6 +33,11 @@ mod renewal;
 mod submission;
 mod task_links;
 
+#[cfg(any(target_arch = "wasm32", test))]
+pub use attention::{
+    AttentionItem, AttentionSubject, DIRECTION_ATTENTION_MILLIS, LEASE_ATTENTION_MILLIS,
+    TaskAttention, attention_at, team_attention,
+};
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use composer_drag::ComposerDragSession;
 pub use presence::{MemberPresence, MemberPresenceState, member_presence};

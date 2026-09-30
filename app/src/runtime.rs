@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use wire::intent::{
-    BoardAnswer, BoardTask, GlobalSettingsAnswer, InboxAnswer, LaneAnswer, LaneLiveness,
-    TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT,
+    BoardAnswer, BoardTask, ConsentQueueAnswer, GlobalSettingsAnswer, InboxAnswer, LaneAnswer,
+    LaneLiveness, TASK_RELATION_DEPTH_LIMIT, TASK_RELATION_NODE_LIMIT, TASK_RELATION_ROOT_LIMIT,
     TaskDetailAnswer, TaskRelationKind, TaskRelationNodeRef, TaskRelations, TaskRelationsAnswer,
     VendorCatalogAnswer,
 };
@@ -20,18 +20,22 @@ use wire::{
 };
 
 use crate::pane::{Principal, SteerPane};
-use crate::socket::{Admitted, SessionScope};
+use crate::socket::Admitted;
 use crate::watchband;
 
+mod consent;
 mod message_cards;
 #[cfg(any(target_arch = "wasm32", test))]
 mod publication;
+mod scoped;
 mod stream;
 mod task_timeline;
 mod team_settled;
 mod work_history;
+pub use consent::ConsentRuling;
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use publication::CanvasSurface;
+use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
 #[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
 pub(crate) use task_timeline::TaskTimelineRequest;
@@ -337,35 +341,6 @@ impl From<&LaneAnswer> for LaneView {
             refresh_after_millis: answer.refresh_after_millis,
             renewals,
         }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq)]
-struct ScopedValue<T> {
-    scope: SessionScope,
-    value: Option<T>,
-}
-
-impl<T> ScopedValue<T> {
-    fn new(accepted: &Admitted<Accepted>) -> Self {
-        Self {
-            scope: accepted.scope(),
-            value: None,
-        }
-    }
-
-    fn get(&self, principal: &Principal) -> Option<&T> {
-        (self.scope == principal.scope())
-            .then_some(self.value.as_ref())
-            .flatten()
-    }
-
-    fn replace(&mut self, scope: SessionScope, value: T) -> bool {
-        if self.scope != scope {
-            return false;
-        }
-        self.value = Some(value);
-        true
     }
 }
 
@@ -725,6 +700,9 @@ pub struct CanvasRuntime {
     team_settled_revision: u64,
     lane_position: Option<Seq>,
     inbox: ScopedValue<InboxAnswer>,
+    /// Operator consent requests, read whenever a `consent::` fact streams.
+    consent: ScopedValue<ConsentQueueAnswer>,
+    consent_rulings: consent::ConsentRulings,
     settings: ScopedValue<GlobalSettingsAnswer>,
     vendors: ScopedValue<VendorCatalogAnswer>,
     settings_position: Option<Seq>,
@@ -769,6 +747,8 @@ impl CanvasRuntime {
             team_settled_revision: 0,
             lane_position: None,
             inbox: ScopedValue::new(accepted),
+            consent: ScopedValue::new(accepted),
+            consent_rulings: consent::ConsentRulings::new(),
             settings: ScopedValue::new(accepted),
             vendors: ScopedValue::new(accepted),
             settings_position: None,
@@ -824,6 +804,7 @@ impl CanvasRuntime {
                 self.evict_work_history(true);
             }
             self.stale_team_settled();
+            self.reconnect_consent_rulings();
             self.task_details.values_mut().for_each(refresh_task_detail);
             self.task_relations
                 .retain(|_, state| refresh_task_relations(state, false));
@@ -1335,6 +1316,7 @@ pub struct Stale {
     board: bool,
     lanes: bool,
     inbox: bool,
+    consent: bool,
     task_details: BTreeSet<wire::TaskStamp>,
     task_relation_kinds: BTreeSet<TaskRelationKind>,
     task_timelines: bool,
@@ -1364,6 +1346,7 @@ impl Stale {
                 self.lanes = true;
                 self.inbox = true;
             }
+            Some(("consent", _)) => self.consent = true,
             Some(("task", _)) => {
                 self.task_timelines = true;
                 self.board = true;
@@ -1466,12 +1449,19 @@ impl Stale {
         self.inbox
     }
 
+    /// Whether the operator consent queue read went stale.
+    #[must_use]
+    pub const fn consent(&self) -> bool {
+        self.consent
+    }
+
     /// Whether anything needs re-reading at all.
     #[must_use]
     pub fn any(&self) -> bool {
         self.board
             || self.lanes
             || self.inbox
+            || self.consent
             || !self.task_details.is_empty()
             || !self.task_relation_kinds.is_empty()
             || self.task_timelines

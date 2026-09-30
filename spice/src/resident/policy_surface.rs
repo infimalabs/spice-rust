@@ -266,7 +266,9 @@ fn admit_decision(
         .iter()
         .find(|pending| pending.request == decide.request)
         .ok_or_else(|| consent_not_held(decide.request))?;
-    let exact = consent::decision_witnesses(pending, decide.answer).map_err(Outcome::Refusal)?;
+    let exact = pending
+        .decision_witnesses(decide.answer)
+        .map_err(Outcome::Refusal)?;
     if !same_witnesses(command.expected(), &exact) {
         return Err(Outcome::Refusal(Refusal::bare(
             wire::RefusalDiagnostic::new(

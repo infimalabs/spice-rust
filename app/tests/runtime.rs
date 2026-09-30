@@ -9,6 +9,8 @@ use wire::{
     ViewSubject, WireVersion,
 };
 
+#[path = "runtime/consent.rs"]
+mod consent;
 #[path = "runtime/detail.rs"]
 mod detail;
 #[path = "runtime/invalidation_and_chronology.rs"]

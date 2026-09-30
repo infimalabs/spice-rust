@@ -757,6 +757,52 @@ pub struct ConsentPendingAnswer {
     pub budget: Option<ConsentBudgetAnswer>,
 }
 
+impl ConsentPendingAnswer {
+    /// The exact witnesses a terminal operator ruling on this request carries.
+    ///
+    /// Every decider (the CLI, the Canvas, and the resident that re-derives
+    /// them to admit a ruling) builds them here, so the resident refuses a
+    /// ruling whose queue position has moved.
+    ///
+    /// # Errors
+    ///
+    /// Refuses any answer other than granted or denied.
+    pub fn decision_witnesses(
+        &self,
+        answer: Answer,
+    ) -> Result<Vec<crate::Witness>, crate::Refusal> {
+        if !matches!(answer, Answer::Granted | Answer::Denied) {
+            return Err(crate::Refusal::bare(
+                crate::RefusalDiagnostic::new(
+                    "consent::ruling-invalid",
+                    Some(self.request.to_string()),
+                    Some("granted or denied".to_owned()),
+                    Some(format!("{answer:?}").to_lowercase()),
+                )
+                .with_detail("choose allow or deny for the queued request"),
+            ));
+        }
+        let mut witnesses = vec![
+            crate::Witness::Consent {
+                request: self.request,
+                answer: Answer::Queued,
+            },
+            crate::Witness::Rule {
+                name: self.rule.clone(),
+            },
+        ];
+        if answer == Answer::Granted
+            && let Some(budget) = &self.budget
+        {
+            witnesses.push(crate::Witness::Budget {
+                rule: budget.rule.clone(),
+                remaining: budget.remaining,
+            });
+        }
+        Ok(witnesses)
+    }
+}
+
 /// The pending consent queue and all current bounded-rule budgets.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

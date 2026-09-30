@@ -69,7 +69,7 @@ fn render_dash_task(
     }
 }
 
-fn dash_chat_click(
+pub(super) fn dash_chat_click(
     team: CanonicalUuid,
     controls: &UseReducerHandle<TeamControls>,
 ) -> Callback<MouseEvent> {
