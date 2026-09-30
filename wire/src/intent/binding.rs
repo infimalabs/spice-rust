@@ -12,7 +12,7 @@ use super::{
     LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal,
     LaneRenewalAnswer, LaneRetune, LaneSeat, LaneState, RecallAnswer, RecognitionAnswer, Recognize,
     ReleasePublish, StateAnswer, SteerDispose, SteerHistory, SteerInbox, SteerSend, SteerTell,
-    TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDetail,
+    TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskDefer, TaskDelete, TaskDepends, TaskDetail,
     TaskDetailAnswer, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations,
     TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer,
     TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef,
@@ -52,6 +52,8 @@ pub enum BodyShape {
     TaskEdit,
     /// [`TaskDelete`]
     TaskDelete,
+    /// [`TaskClose`]
+    TaskClose,
     /// [`TaskNote`]
     TaskNote,
     /// [`TaskDefer`]
@@ -381,6 +383,7 @@ impl CommandKind {
             | Self::TasteProposalAdd
             | Self::TaskEdit
             | Self::TaskDelete
+            | Self::TaskClose
             | Self::TaskNote
             | Self::TaskDefer
             | Self::TaskWake
@@ -448,6 +451,7 @@ impl CommandKind {
             Self::TasteProposalAdd => Binding::of(B::TasteProposalAdd, A::Task),
             Self::TaskEdit => Binding::of(B::TaskEdit, A::Task),
             Self::TaskDelete => Binding::of(B::TaskDelete, A::Task),
+            Self::TaskClose => Binding::of(B::TaskClose, A::Task),
             Self::TaskNote => Binding::of(B::TaskNote, A::Task),
             Self::TaskDefer => Binding::of(B::TaskDefer, A::Task),
             Self::TaskWake => Binding::of(B::TaskWake, A::Task),
@@ -551,6 +555,8 @@ pub enum Intent {
     TaskEdit(TaskEdit),
     /// [`BodyShape::TaskDelete`]
     TaskDelete(TaskDelete),
+    /// [`BodyShape::TaskClose`]
+    TaskClose(TaskClose),
     /// [`BodyShape::TaskNote`]
     TaskNote(TaskNote),
     /// [`BodyShape::TaskDefer`]
@@ -642,6 +648,7 @@ impl Intent {
             | Self::TasteProposalAdd(_)
             | Self::TaskEdit(_)
             | Self::TaskDelete(_)
+            | Self::TaskClose(_)
             | Self::TaskNote(_)
             | Self::TaskDefer(_)
             | Self::TaskWake(_)
@@ -698,6 +705,7 @@ impl Intent {
             Self::TasteProposalAdd(_) => BodyShape::TasteProposalAdd,
             Self::TaskEdit(_) => BodyShape::TaskEdit,
             Self::TaskDelete(_) => BodyShape::TaskDelete,
+            Self::TaskClose(_) => BodyShape::TaskClose,
             Self::TaskNote(_) => BodyShape::TaskNote,
             Self::TaskDefer(_) => BodyShape::TaskDefer,
             Self::TaskWake(_) => BodyShape::TaskWake,
@@ -779,6 +787,7 @@ impl BodyShape {
                 | Self::TasteProposalAdd
                 | Self::TaskEdit
                 | Self::TaskDelete
+                | Self::TaskClose
                 | Self::TaskNote
                 | Self::TaskDefer
                 | Self::TaskWake
@@ -810,8 +819,8 @@ impl BodyShape {
                 | Self::TasteProposalAdd
                 | Self::TaskEdit
                 | Self::TaskDelete
+                | Self::TaskClose
                 | Self::TaskNote
-                | Self::TaskDefer
         ) {
             self.decode_board_query_body(bytes)
         } else {
@@ -833,14 +842,15 @@ impl BodyShape {
             Self::TasteProposalAdd => Intent::TasteProposalAdd(crate::decode(bytes)?),
             Self::TaskEdit => Intent::TaskEdit(crate::decode(bytes)?),
             Self::TaskDelete => Intent::TaskDelete(crate::decode(bytes)?),
+            Self::TaskClose => Intent::TaskClose(crate::decode(bytes)?),
             Self::TaskNote => Intent::TaskNote(crate::decode(bytes)?),
-            Self::TaskDefer => Intent::TaskDefer(crate::decode(bytes)?),
             _ => unreachable!("board body partition is closed"),
         })
     }
 
     fn decode_board_transition_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
+            Self::TaskDefer => Intent::TaskDefer(crate::decode(bytes)?),
             Self::TaskWake => Intent::TaskWake(crate::decode(bytes)?),
             Self::TaskRef => Intent::TaskRef(crate::decode(bytes)?),
             Self::TaskDepends => Intent::TaskDepends(crate::decode(bytes)?),

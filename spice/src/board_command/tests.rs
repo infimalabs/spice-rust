@@ -1038,6 +1038,9 @@ mod wake_claim;
 // structural reason.
 mod delete;
 
+// Operator closure shares withdrawal's settlement seam but completes the row.
+mod close;
+
 // One selected task's append-only notes are a bounded read contract, separate
 // from the board summary and its allocation scenarios.
 mod detail;

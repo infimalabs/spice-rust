@@ -1051,6 +1051,9 @@ pub(crate) fn dispatch_with_repository(
         wire::intent::Intent::TaskDelete(delete) => {
             task_delete(bus, command, delete, projects, allocation)
         }
+        wire::intent::Intent::TaskClose(close) => {
+            task_close(bus, command, close, projects, allocation)
+        }
         wire::intent::Intent::TaskDefer(defer) => {
             task_defer(bus, command, defer, repository, projects, allocation)
         }

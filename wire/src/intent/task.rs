@@ -206,6 +206,19 @@ pub struct TaskDelete {
     pub force_claimed: bool,
 }
 
+/// Close a task as completed on the operator's word.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskClose {
+    /// Task the operator closes.
+    pub task: TaskHandle,
+    /// Evidence or reason the task is complete; recorded as its validation.
+    pub validation: String,
+    /// Override a live claim rather than refusing the closure.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force_claimed: bool,
+}
+
 /// Append an observation without replacing the statement.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

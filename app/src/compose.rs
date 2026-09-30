@@ -205,6 +205,22 @@ pub fn note(task: &str, text: &str) -> Result<Note, Refusal> {
     Ok(Note { task, text })
 }
 
+/// Compose the validation that closes a task, or say why it cannot be sent.
+///
+/// # Errors
+///
+/// Returns [`Refusal::Missing`] when the validation is blank.
+pub fn close(text: &str) -> Result<String, Refusal> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(Refusal::Missing {
+            field: "Validation",
+            hint: "type the evidence or reason the task is complete",
+        });
+    }
+    Ok(text.to_owned())
+}
+
 /// A refusal held for display, or nothing while the last submission stood.
 ///
 /// The form keeps one of these rather than a bare [`Option<String>`] so that

@@ -193,6 +193,8 @@ vocabulary! {
     TaskEdited = "task::edited" by CommandDoor;
     /// A task was withdrawn from the board with a recorded reason.
     TaskDeleted = "task::deleted" by CommandDoor;
+    /// The operator closed a task as completed with a recorded validation.
+    TaskClosed = "task::closed" by CommandDoor;
 
     /// Exclusive possession was minted from current eligibility and claim heads.
     ClaimWon = "claim::won" by CommandDoor;
@@ -602,6 +604,7 @@ impl AnyFact {
             Decoded::TaskWoken(body) => Some(&body.task),
             Decoded::TaskEdited(body) => Some(&body.task),
             Decoded::TaskDeleted(body) => Some(&body.task),
+            Decoded::TaskClosed(body) => Some(&body.task),
             _ => None,
         }
     }

@@ -233,7 +233,8 @@ impl PendingKind {
             | Self::TeamArrange
             | Self::Steer
             | Self::SteerSubmission { .. }
-            | Self::Note { .. } => None,
+            | Self::Note { .. }
+            | Self::Close { .. } => None,
         }
     }
 }
@@ -435,6 +436,16 @@ impl ClientAction {
                 _ => 0,
             },
             Self::Note { task, note, .. } => task.as_str().len().saturating_add(note.len()),
+            Self::Close {
+                task,
+                validation,
+                expected,
+                ..
+            } => task
+                .as_str()
+                .len()
+                .saturating_add(validation.len())
+                .saturating_add(expected.len() * std::mem::size_of::<wire::Witness>()),
             Self::Steer {
                 message,
                 attachments,

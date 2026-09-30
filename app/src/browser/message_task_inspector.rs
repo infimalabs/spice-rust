@@ -46,6 +46,7 @@ struct DetailContext {
     /// admitted board holds.
     board_tasks: std::collections::BTreeSet<TaskStamp>,
     can_note: bool,
+    can_close: bool,
     note: NoteComposer,
     submit_note: Callback<(TaskStamp, SubmitEvent)>,
 }
@@ -131,6 +132,9 @@ pub(super) fn use_controls(
             can_note: runtime
                 .as_ref()
                 .is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
+            can_close: runtime
+                .as_ref()
+                .is_some_and(|runtime| runtime.offers(CommandKind::TaskClose)),
             note,
             submit_note: task.submit_note.clone(),
         },
@@ -452,6 +456,7 @@ fn render_available(
                     inspection.handle.as_str(),
                     &inspection.task,
                     detail.can_note,
+                    task_detail::closure(detail.can_close, &answer.task).as_ref(),
                     &detail.note,
                     &detail.submit_note,
                 )}

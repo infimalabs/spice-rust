@@ -23,6 +23,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub relations: Option<&'a TaskRelationsState>,
     pub can_read_relations: bool,
     pub can_note: bool,
+    pub can_close: bool,
     pub close_ref: &'a NodeRef,
     pub sheet_ref: &'a NodeRef,
     pub notes: &'a NoteComposers,
@@ -298,6 +299,7 @@ fn render_activity(
                 statement.handle.as_str(),
                 &statement.born,
                 render.can_note,
+                task_detail::closure(render.can_close, &answer.task).as_ref(),
                 &render.notes.shown(&statement.born),
                 &render.submit_note,
             )}

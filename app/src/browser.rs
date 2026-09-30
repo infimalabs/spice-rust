@@ -130,12 +130,17 @@ enum NoteSubmission {
         text: String,
         after: Option<Seq>,
     },
+    /// The composed text was sent as this task's closing validation.
+    Closing,
     Failed(String),
 }
 
 impl NoteSubmission {
     const fn busy(&self) -> bool {
-        matches!(self, Self::Pending { .. } | Self::Reconciling { .. })
+        matches!(
+            self,
+            Self::Pending { .. } | Self::Reconciling { .. } | Self::Closing
+        )
     }
 }
 

@@ -342,6 +342,7 @@ async fn dispatch_client_action(
             lease.action(),
             ClientAction::GlobalSettings(_)
                 | ClientAction::Note { .. }
+                | ClientAction::Close { .. }
                 | ClientAction::Steer { .. }
         ) {
             lease.prepare_pending_transfer();
@@ -827,7 +828,9 @@ async fn dispatch_action(
         ClientAction::ConsentRuling { .. } => {
             unreachable!("consent rulings reserve runtime state before dispatch")
         }
-        action @ (ClientAction::Note { .. } | ClientAction::Steer { .. }) => {
+        action @ (ClientAction::Note { .. }
+        | ClientAction::Close { .. }
+        | ClientAction::Steer { .. }) => {
             dispatch_authored_action(principal, writer, actions, action)
                 .await
                 .map(Some)
@@ -882,6 +885,27 @@ async fn dispatch_authored_action(
             note,
             after,
         } => send_task_note(principal, writer, actions, *id, task, note, *after).await,
+        ClientAction::Close {
+            id,
+            task,
+            validation,
+            expected,
+            force_claimed,
+        } => {
+            send_task_close(
+                principal,
+                writer,
+                actions,
+                *id,
+                expected,
+                BorrowedTaskClose {
+                    task,
+                    validation,
+                    force_claimed: *force_claimed,
+                },
+            )
+            .await
+        }
         ClientAction::Steer {
             id,
             fanout,
@@ -1088,6 +1112,41 @@ async fn send_task_note(
 struct BorrowedTaskNote<'a> {
     task: &'a TaskHandle,
     note: &'a str,
+}
+
+async fn send_task_close(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    id: CanonicalUuid,
+    expected: &[Witness],
+    close: BorrowedTaskClose<'_>,
+) -> Result<CanonicalUuid, String> {
+    let born = close.task.born().map_err(|error| {
+        format!(
+            "task handle {} has no canonical birth stamp: {error}",
+            close.task
+        )
+    })?;
+    send_typed_as(
+        principal,
+        writer,
+        actions,
+        id,
+        PendingKind::Close { task: born },
+        CommandKind::TaskClose,
+        expected.to_vec(),
+        close,
+    )
+    .await
+}
+
+#[derive(Serialize)]
+struct BorrowedTaskClose<'a> {
+    task: &'a TaskHandle,
+    validation: &'a str,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    force_claimed: bool,
 }
 
 #[derive(Serialize)]
