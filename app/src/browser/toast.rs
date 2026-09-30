@@ -28,6 +28,11 @@ impl Toaster {
     pub(super) fn settled(&self, message: impl Into<AttrValue>) {
         self.0.emit((message.into(), true));
     }
+
+    /// Remove the current result without announcing a replacement.
+    pub(super) fn clear(&self) {
+        self.0.emit((AttrValue::default(), false));
+    }
 }
 
 /// The latest result, whether it is still showing, and the handle that

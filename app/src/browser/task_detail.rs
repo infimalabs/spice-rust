@@ -460,7 +460,7 @@ fn note_keyboard_submit(enabled: bool) -> Callback<KeyboardEvent> {
 }
 
 /// The one observation composer every surface showing `task` renders, bound
-/// to that task and showing only that task's draft, refusal, and submission.
+/// to that task and preserving only that task's draft while feedback uses the root toast.
 pub(super) fn render_note_composer(
     id: &'static str,
     handle: &str,
@@ -475,18 +475,6 @@ pub(super) fn render_note_composer(
         };
     }
     let busy = composer.submission.busy();
-    let status = match &composer.submission {
-        NoteSubmission::Idle => Html::default(),
-        NoteSubmission::Pending { .. } => html! {
-            <p class="work-note-pending" role="status">{format!("Saving observation for {handle}…")}</p>
-        },
-        NoteSubmission::Reconciling { .. } => html! {
-            <p class="work-note-pending" role="status">{format!("Saved for {handle}; waiting for durable activity…")}</p>
-        },
-        NoteSubmission::Failed(issue) => html! {
-            <p class="form-refusal" role="alert">{issue}</p>
-        },
-    };
     let form_key = task.to_string();
     let task = task.clone();
     html! {
@@ -505,8 +493,6 @@ pub(super) fn render_note_composer(
             <button type="submit" class="canvas-compact-control" disabled={busy}>
                 {if busy { "Saving…" } else { "Add observation" }}
             </button>
-            {view::render_notice(&composer.notice)}
-            {status}
         </form>
     }
 }
@@ -534,6 +520,13 @@ pub(super) fn note_submit_callback(
                 .and_then(|runtime| runtime.task_detail(&task))
                 .and_then(TaskDetailState::answer)
             else {
+                notes.update(&task, |composer| {
+                    composer.notice = Notice::none();
+                    composer.submission = NoteSubmission::Failed(
+                        "Task detail changed before the observation could be queued; the draft was retained."
+                            .to_owned(),
+                    );
+                });
                 return;
             };
             (
@@ -544,6 +537,7 @@ pub(super) fn note_submit_callback(
         match compose::note(handle.as_str(), &text) {
             Ok(note) => {
                 let Some(id) = action_identity(&sender) else {
+                    retain_note_failure(&sender, &notes, &task);
                     return;
                 };
                 let text = note.text.clone();
@@ -560,9 +554,22 @@ pub(super) fn note_submit_callback(
                         composer.notice = Notice::none();
                         composer.submission = NoteSubmission::Pending { text, after };
                     });
+                } else {
+                    retain_note_failure(&sender, &notes, &task);
                 }
             }
             Err(refusal) => notes.update(&task, |composer| composer.notice = refusal.into()),
         }
     })
+}
+
+fn retain_note_failure(sender: &SenderHandle, notes: &NoteComposers, task: &TaskStamp) {
+    let issue = (*sender.issue)
+        .clone()
+        .unwrap_or_else(|| "Observation could not be queued; the draft was retained.".to_owned());
+    sender.issue.set(None);
+    notes.update(task, |composer| {
+        composer.notice = Notice::none();
+        composer.submission = NoteSubmission::Failed(issue);
+    });
 }
