@@ -156,9 +156,14 @@ fn finite_retro_renders_typed_text_json_and_success_exit() {
     assert_eq!(json.code, Some(0));
     assert!(json.err.is_empty());
     assert_eq!(json.out.iter().filter(|byte| **byte == b'\n').count(), 1);
-    let replayed: StreamOutcome = wire::decode(&json.out).expect("retro emits its typed DTO");
-    assert_eq!(replayed.mode, Mode::Retro);
-    assert!(replayed.observations.iter().any(|observation| {
+    let replayed: Outcome<StreamOutcome> =
+        wire::decode(&json.out).expect("retro emits one typed reply");
+    let Outcome::Reply(replayed) = replayed else {
+        panic!("retro must succeed with a reply");
+    };
+    assert_eq!(replayed.position, ReplyPosition::Direct {});
+    assert_eq!(replayed.body.mode, Mode::Retro);
+    assert!(replayed.body.observations.iter().any(|observation| {
         matches!(
             observation,
             Observation::Event { event, .. } if event.kind() == EventKind::Prose
@@ -169,10 +174,14 @@ fn finite_retro_renders_typed_text_json_and_success_exit() {
     let missing = missing.to_string_lossy().into_owned();
     let missing = invoke(&["--json", "retro", &missing]);
     assert_eq!(missing.code, Some(0));
-    let accounted: StreamOutcome =
-        wire::decode(&missing.out).expect("a missing path remains a typed observation");
+    let accounted: Outcome<StreamOutcome> =
+        wire::decode(&missing.out).expect("a missing path remains one typed reply");
+    let Outcome::Reply(accounted) = accounted else {
+        panic!("a missing path must remain a successful reply");
+    };
+    assert_eq!(accounted.position, ReplyPosition::Direct {});
     assert!(matches!(
-        accounted.observations.as_slice(),
+        accounted.body.observations.as_slice(),
         [Observation::Missing { .. }]
     ));
 

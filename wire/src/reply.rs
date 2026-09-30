@@ -1,6 +1,7 @@
 //! The result triad: one reply names the command and carries one outcome.
 
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeMap;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::envelope::{Seq, WireVersion};
 use crate::fact::AnyFact;
@@ -71,30 +72,47 @@ impl TryFrom<SeqRangeShape> for SeqRange {
 
 /// Where a successful result sits relative to the journal.
 ///
-/// A mutating command commits a range; a read-only command answers from a
-/// snapshot instead; and a daemonless command states directly that no journal
-/// position exists. The three are distinct keys rather than one overloaded
-/// field, so a reader never guesses which it received and no caller needs to
-/// fabricate a sequence for a journal-free answer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(try_from = "ReplyPositionShape")]
+/// A mutating command commits a range, a read-only command answers from a
+/// snapshot, and a daemonless command carries neither coordinate. The two
+/// positioned forms use distinct keys, so a reader never guesses which it
+/// received and no caller fabricates a sequence for a journal-free answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyPosition {
     /// Inclusive range committed by a mutating transaction.
-    #[serde(rename = "seq")]
     Committed(SeqRange),
     /// Snapshot cursor answered by a read-only command.
-    #[serde(rename = "cursor")]
     Snapshot(Seq),
     /// Direct daemonless answer carrying no journal position.
-    ///
-    /// The struct variant deliberately encodes as `"direct": {}`. An empty
-    /// object is the one explicit absence marker; `null` and objects carrying
-    /// sequence-shaped or unknown fields are not alternate spellings.
-    #[serde(rename = "direct")]
     Direct {},
 }
 
-/// The three optional keys are decoded before their exclusivity is checked.
+impl Serialize for ReplyPosition {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut position =
+            serializer.serialize_map(Some(usize::from(!matches!(self, Self::Direct {}))))?;
+        match self {
+            Self::Committed(range) => position.serialize_entry("seq", range)?,
+            Self::Snapshot(cursor) => position.serialize_entry("cursor", cursor)?,
+            Self::Direct {} => {}
+        }
+        position.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for ReplyPosition {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        Self::try_from(ReplyPositionShape::deserialize(deserializer)?)
+            .map_err(serde::de::Error::custom)
+    }
+}
+
+/// The two optional coordinate keys before their exclusivity is checked.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ReplyPositionShape {
@@ -102,29 +120,22 @@ struct ReplyPositionShape {
     seq: Option<SeqRange>,
     #[serde(default, deserialize_with = "crate::optional::present")]
     cursor: Option<Seq>,
-    #[serde(default, deserialize_with = "crate::optional::present")]
-    direct: Option<DirectShape>,
 }
 
-/// The only payload admitted beside the `direct` key.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct DirectShape {}
-
-/// A reply position that names none or more than one journal relationship.
+/// A reply position that carries both journal coordinates.
 #[derive(Debug, thiserror::Error)]
-#[error("reply position must carry exactly one of seq, cursor, or direct")]
+#[error("reply position cannot carry both seq and cursor")]
 struct ReplyPositionShapeError;
 
 impl TryFrom<ReplyPositionShape> for ReplyPosition {
     type Error = ReplyPositionShapeError;
 
     fn try_from(shape: ReplyPositionShape) -> Result<Self, Self::Error> {
-        match (shape.seq, shape.cursor, shape.direct) {
-            (Some(range), None, None) => Ok(Self::Committed(range)),
-            (None, Some(cursor), None) => Ok(Self::Snapshot(cursor)),
-            (None, None, Some(DirectShape {})) => Ok(Self::Direct {}),
-            _ => Err(ReplyPositionShapeError),
+        match (shape.seq, shape.cursor) {
+            (Some(range), None) => Ok(Self::Committed(range)),
+            (None, Some(cursor)) => Ok(Self::Snapshot(cursor)),
+            (None, None) => Ok(Self::Direct {}),
+            (Some(_), Some(_)) => Err(ReplyPositionShapeError),
         }
     }
 }
@@ -132,7 +143,7 @@ impl TryFrom<ReplyPositionShape> for ReplyPosition {
 /// A typed result and its relationship to the journal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reply<B> {
-    /// Committed range, read snapshot, or explicit journal-free position.
+    /// Committed range, read snapshot, or an omitted daemonless position.
     #[serde(flatten)]
     pub position: ReplyPosition,
     /// Kind-specific result.

@@ -23,7 +23,7 @@ use std::io::{self, Write};
 
 use listen::StreamOutcome;
 use serde::Serialize;
-use wire::Outcome;
+use wire::{Outcome, Reply, ReplyPosition};
 
 /// Which rendering of an outcome the caller asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,8 +78,9 @@ impl Rendering {
 /// Callers whose reply type has an explicit human-text variant use
 /// [`render_with_reply_text`] to select that prose without changing `--json`.
 /// Refusals keep their typed arm's output order and faults keep their
-/// one-sentence form. Transcript streams use [`render_stream`] because each
-/// successful wake is the stream document itself rather than a reply envelope.
+/// one-sentence form. Long-running transcript wakes use [`render_stream`]; a
+/// finite transcript command uses [`render_stream_reply`] so its one result
+/// keeps the reply envelope.
 ///
 /// # Errors
 ///
@@ -136,6 +137,27 @@ pub fn render_stream(outcome: &StreamOutcome, form: Form) -> Result<Rendering, S
     let document = match form {
         Form::Text => terminated(outcome.to_string().into_bytes()),
         Form::Json => line(wire::encode(outcome).map_err(|error| error.to_string())?),
+    };
+    Ok(Rendering {
+        stream: Stream::Out,
+        document,
+    })
+}
+
+/// Renders one finite transcript command result in the requested form.
+///
+/// Its human form remains the stream report. Its machine form is a daemonless
+/// reply like every other finite command rather than a bare body.
+pub fn render_stream_reply(outcome: &StreamOutcome, form: Form) -> Result<Rendering, String> {
+    let document = match form {
+        Form::Text => terminated(outcome.to_string().into_bytes()),
+        Form::Json => {
+            let outcome = Outcome::Reply(Reply {
+                position: ReplyPosition::Direct {},
+                body: outcome,
+            });
+            line(wire::encode(&outcome).map_err(|error| error.to_string())?)
+        }
     };
     Ok(Rendering {
         stream: Stream::Out,
@@ -384,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn a_direct_reply_has_the_same_typed_position_in_both_renderings() {
+    fn a_daemonless_reply_keeps_its_type_without_an_empty_position_marker() {
         let outcome = reply();
 
         let text = render(&outcome, Form::Text).expect("direct reply renders as text");
@@ -395,12 +417,11 @@ mod tests {
         let decoded: Outcome<()> =
             wire::decode(&json.document).expect("json rendering decodes as its typed outcome");
         assert_eq!(decoded, outcome);
-        assert!(
-            String::from_utf8(json.document)
-                .expect("wire JSON is utf8")
-                .contains("\"direct\":{}"),
-            "the JSON rendering states that the journal position is directly absent",
-        );
+        let value: serde_json::Value =
+            serde_json::from_slice(&json.document).expect("wire outcome is JSON");
+        assert!(value.get("direct").is_none());
+        assert!(value.get("cursor").is_none());
+        assert!(value.get("seq").is_none());
     }
 
     /// The form selects bytes and never a stream.

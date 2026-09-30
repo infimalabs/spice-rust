@@ -135,7 +135,7 @@ const PROOF_EVIDENCE: &str = concat!(
 );
 
 const DIRECT_PROOF_RESULT: &str = concat!(
-    r#"{"kind":"reply","direct":{},"body":{"target":"x86_64-unknown-linux-musl","#,
+    r#"{"kind":"reply","body":{"target":"x86_64-unknown-linux-musl","#,
     r#""payload":"1111111111111111111111111111111111111111111111111111111111111111","#,
     r#""receipt":"2222222222222222222222222222222222222222222222222222222222222222","#,
     r#""battery":"3333333333333333333333333333333333333333333333333333333333333333","#,
@@ -427,7 +427,7 @@ fn proof_evidence_refuses_missing_null_extra_and_wrong_shaped_identities() {
 }
 
 #[test]
-fn proof_evidence_is_a_direct_result_without_a_fabricated_sequence() {
+fn proof_evidence_is_a_daemonless_result_without_a_fabricated_sequence() {
     let result: Outcome<ProofEvidence> =
         wire::decode(DIRECT_PROOF_RESULT.as_bytes()).expect("direct proof result decodes");
 
@@ -629,7 +629,7 @@ fn a_read_only_reply_carries_a_snapshot_cursor_instead_of_a_range() {
 }
 
 #[test]
-fn a_daemonless_reply_states_that_its_journal_position_is_directly_absent() {
+fn a_daemonless_reply_omits_its_absent_journal_position() {
     let outcome = Outcome::Reply(Reply {
         position: ReplyPosition::Direct {},
         body: DoneResult {
@@ -640,7 +640,7 @@ fn a_daemonless_reply_states_that_its_journal_position_is_directly_absent() {
 
     let encoded = wire::encode(&outcome).expect("direct reply encodes");
     let value: serde_json::Value = serde_json::from_slice(&encoded).expect("wire bytes are json");
-    assert_eq!(value["direct"], serde_json::json!({}));
+    assert!(value.get("direct").is_none());
     assert!(value.get("seq").is_none() && value.get("cursor").is_none());
 
     let decoded: Outcome<DoneResult> = wire::decode(&encoded).expect("direct reply decodes");
@@ -648,53 +648,22 @@ fn a_daemonless_reply_states_that_its_journal_position_is_directly_absent() {
 }
 
 #[test]
-fn direct_absence_has_no_null_unknown_or_sequence_shaped_alias() {
-    for (name, direct) in [
-        ("null", serde_json::Value::Null),
-        ("unknown", serde_json::json!({"unknown": true})),
-        (
-            "committed range",
-            serde_json::json!({"first": 1, "last": 1}),
-        ),
-        ("snapshot cursor", serde_json::json!(1)),
-    ] {
-        let alternate = serde_json::json!({
-            "kind": "reply",
-            "direct": direct,
-            "body": {"task": "SPICE-1kKRRsDP", "status": "checked"}
-        });
-        let bytes = serde_json::to_vec(&alternate).expect("alternate is json");
-
-        assert!(
-            wire::decode::<Outcome<DoneResult>>(&bytes).is_err(),
-            "the {name} spelling must not alias direct absence",
-        );
-    }
-}
-
-#[test]
 fn one_reply_cannot_carry_two_position_keys() {
-    for mixed in [
-        serde_json::json!({"direct": {}, "cursor": 1}),
-        serde_json::json!({"direct": {}, "seq": {"first": 1, "last": 1}}),
-        serde_json::json!({"cursor": 1, "seq": {"first": 1, "last": 1}}),
-    ] {
-        let mut outcome = mixed;
-        let object = outcome
-            .as_object_mut()
-            .expect("position fixture is an object");
-        object.insert("kind".to_owned(), serde_json::json!("reply"));
-        object.insert(
-            "body".to_owned(),
-            serde_json::json!({"task": "SPICE-1kKRRsDP", "status": "checked"}),
-        );
-        let bytes = serde_json::to_vec(&outcome).expect("mixed fixture is json");
+    let mut outcome = serde_json::json!({"cursor": 1, "seq": {"first": 1, "last": 1}});
+    let object = outcome
+        .as_object_mut()
+        .expect("position fixture is an object");
+    object.insert("kind".to_owned(), serde_json::json!("reply"));
+    object.insert(
+        "body".to_owned(),
+        serde_json::json!({"task": "SPICE-1kKRRsDP", "status": "checked"}),
+    );
+    let bytes = serde_json::to_vec(&outcome).expect("mixed fixture is json");
 
-        assert!(
-            wire::decode::<Outcome<DoneResult>>(&bytes).is_err(),
-            "two position keys must not decode by silently choosing one: {outcome}",
-        );
-    }
+    assert!(
+        wire::decode::<Outcome<DoneResult>>(&bytes).is_err(),
+        "two position keys must not decode by silently choosing one: {outcome}",
+    );
 }
 
 #[test]
