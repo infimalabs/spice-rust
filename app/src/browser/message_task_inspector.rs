@@ -408,13 +408,12 @@ fn render_available(
             <div class="work-detail-identity">
                 <code class="message-task-inspector-token" title={handle.clone()}>{handle.clone()}</code>
                 if let Some(href) = creator_context {
-                    <a
-                        class="work-detail-context-link creator-context-link"
-                        data-creator-context="true"
-                        {href}
-                        aria-label={format!("Open creator context for {handle} in Chat")}
-                        onclick={follow_creator}
-                    >{"Creator context"}</a>
+                    {task_detail::creator_context_link(
+                        "work-detail-context-link",
+                        href,
+                        statement,
+                        Some(follow_creator),
+                    )}
                 }
             </div>
             <section class="work-detail-section">
