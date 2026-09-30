@@ -80,6 +80,8 @@
   .work-detail-facts,
   .work-detail-links { grid-template-columns: 1fr; }
   .work-map-task-list { grid-template-columns: 1fr; }
+  .work-direction-finder { grid-template-columns: 1fr; }
+  .work-direction-ledger { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 560px) {
   .work-history-list { grid-template-columns: 1fr; }
@@ -113,6 +115,9 @@
   .work-card { gap: 8px; padding: 12px; }
   .work-history { margin-top: 14px; }
   .work-history-finder { grid-template-columns: 1fr; }
+  .work-direction-fields,
+  .work-direction-ledger { grid-template-columns: 1fr; }
+  .work-directions-heading { align-items: start; }
   .work-history-filter-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .work-history-page-actions { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; }
   .work-history-filter-actions button,

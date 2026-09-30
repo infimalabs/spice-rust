@@ -221,6 +221,7 @@ impl PendingKind {
             Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
             | Self::TaskTimeline { .. }
+            | Self::DirectionHistory { .. }
             | Self::WorkHistory { .. }
             | Self::TeamSettled { .. }
             | Self::ConsentRuling { .. }
@@ -465,6 +466,7 @@ impl ClientAction {
             | Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
             | Self::TaskTimeline { .. }
+            | Self::DirectionHistory { .. }
             | Self::WorkHistory { .. }
             | Self::TeamSettled { .. }
             | Self::ConsentRuling { .. }
@@ -481,6 +483,7 @@ impl ClientAction {
             Self::TaskDetail { .. }
                 | Self::TaskRelations { .. }
                 | Self::TaskTimeline { .. }
+                | Self::DirectionHistory { .. }
                 | Self::WorkHistory { .. }
                 | Self::TeamSettled { .. }
                 | Self::MessageHistory { .. }

@@ -15,8 +15,8 @@ use wasm_bindgen_futures::spawn_local;
 use wire::body::DirectiveAttachment;
 use wire::intent::{
     BoardRead, GlobalSettingsRead, GlobalSettingsSet, LaneAction, LaneRead, LaneRenewal,
-    LaneRetune, LaneState, SteerInbox, SteerSend, TaskAnswer, TeamArrangement, TeamConfigure,
-    TeamLife, VendorCatalog,
+    LaneRetune, LaneState, SteerHistory, SteerInbox, SteerSend, TaskAnswer, TeamArrangement,
+    TeamConfigure, TeamLife, VendorCatalog,
 };
 use wire::{
     CanonicalUuid, CommandKind, Response, Seq, StreamRequest, TaskHandle, TaskStamp, WireVersion,
@@ -43,6 +43,7 @@ mod clipboard;
 mod clock;
 mod connection;
 mod diagnostics;
+mod direction_history;
 mod image_viewer;
 mod mermaid;
 mod message_task_inspector;
@@ -340,6 +341,7 @@ struct CanvasAppState {
     composer_drag: watchband::PrimaryComposerDragState,
     work_detail: task_detail::Controls,
     task_inspector: message_task_inspector::Controls,
+    direction_history: direction_history::Controls,
     work_history: work_history::Controls,
     team_settled: team_settled::Controls,
     work_map: UseStateHandle<view::WorkMapState>,
@@ -395,6 +397,7 @@ impl CanvasAppState {
                 selected_task: &self.work_detail.selected,
                 detail_presented: *self.work_detail.presented,
                 detail_closing: *self.work_detail.closing,
+                direction_history: &self.direction_history,
                 work_map: &self.work_map,
                 work_history: &self.work_history,
                 team_settled: &self.team_settled,
@@ -454,6 +457,11 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
         navigate.reform(|()| navigation::Intent::CloseTask),
     );
     let task_inspector = message_task_inspector::use_controls(&surface, &work_detail, &navigate);
+    let direction_history = direction_history::use_controls(
+        sender.clone(),
+        surface.clone(),
+        properties.destination == CanvasDestination::Work,
+    );
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
     let team_settled = team_settled::use_controls(
         sender.clone(),
@@ -502,6 +510,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
             composer_drag,
             work_detail,
             task_inspector,
+            direction_history,
             work_history,
             team_settled,
             work_map,

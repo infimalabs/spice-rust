@@ -24,6 +24,7 @@ use crate::socket::Admitted;
 use crate::watchband;
 
 mod consent;
+mod direction_history;
 mod lanes;
 mod member_control;
 mod message_cards;
@@ -35,6 +36,10 @@ mod task_timeline;
 mod team_settled;
 mod work_history;
 pub use consent::ConsentRuling;
+pub use direction_history::{
+    DIRECTION_HISTORY_PAGE_SIZE, DirectionHistoryRequest, DirectionHistoryState,
+    direction_history_authored_cutoff,
+};
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
 pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
@@ -473,6 +478,7 @@ pub struct CanvasRuntime {
     task_timelines: BTreeMap<TaskTimelineKey, TaskTimelineState>,
     task_timeline_revision: u64,
     task_relations_revision: u64,
+    direction_history: DirectionHistoryState,
     work_history: WorkHistoryState,
     /// Settled-work pages per Canvas team whose Work pane was shown.
     team_settled: BTreeMap<CanonicalUuid, TeamSettledState>,
@@ -522,6 +528,7 @@ impl CanvasRuntime {
             task_relations_revision: 0,
             task_timelines: BTreeMap::new(),
             task_timeline_revision: 0,
+            direction_history: DirectionHistoryState::default(),
             work_history: WorkHistoryState::default(),
             team_settled: BTreeMap::new(),
             team_settled_revision: 0,
@@ -581,6 +588,7 @@ impl CanvasRuntime {
             self.principal = Principal::admitted(accepted);
             self.message_reconnect_pending = true;
             self.terminal = None;
+            self.invalidate_direction_history();
             if self.work_history.active() {
                 self.evict_work_history(true);
             }
@@ -1108,6 +1116,7 @@ pub struct Stale {
     consent: bool,
     task_details: BTreeSet<wire::TaskStamp>,
     task_relation_kinds: BTreeSet<TaskRelationKind>,
+    direction_history: bool,
     task_timelines: bool,
 }
 
@@ -1122,7 +1131,10 @@ impl Stale {
     /// be a new kind that silently refreshes nothing.
     pub fn widen(&mut self, kind: FactKind) {
         match kind.as_str().split_once("::") {
-            Some(("steer", _)) => self.inbox = true,
+            Some(("steer", _)) => {
+                self.inbox = true;
+                self.direction_history = true;
+            }
             // The inbox is keyed on the lane roster, not only on the steer
             // ledger: the resident builds one row per seated lane and carries
             // that lane's occupant on it, so a lane that arrives, departs or
@@ -1193,6 +1205,13 @@ impl Stale {
             runtime.task_timeline_revision = runtime.task_timeline_revision.saturating_add(1);
         }
     }
+    /// Re-read the newest matching Direction page after any steering mutation.
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
+    pub(crate) fn resolve_direction_history(&self, runtime: &mut CanvasRuntime, changed: bool) {
+        if changed && self.direction_history {
+            runtime.invalidate_direction_history();
+        }
+    }
 
     /// Hold terminal paging until a changed task snapshot has been refreshed.
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
@@ -1253,6 +1272,7 @@ impl Stale {
             || self.consent
             || !self.task_details.is_empty()
             || !self.task_relation_kinds.is_empty()
+            || self.direction_history
             || self.task_timelines
     }
 }

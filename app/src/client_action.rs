@@ -16,6 +16,9 @@ pub(crate) enum ClientAction {
     TaskTimeline {
         request: crate::runtime::TaskTimelineRequest,
     },
+    DirectionHistory {
+        request: crate::runtime::DirectionHistoryRequest,
+    },
     WorkHistory {
         request: crate::runtime::WorkHistoryRequest,
     },
