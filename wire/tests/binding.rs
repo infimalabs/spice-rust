@@ -13,10 +13,10 @@ use std::collections::BTreeSet;
 
 use wire::intent::{
     AnswerShape, BoardStatement, BoardTask, BodyShape, CommandAnswer, Intent, Positioned,
-    ProjectVisibility, TaskDetailAnswer, TaskDetailNote, TaskGuidance, TaskRelationEdge,
-    TaskRelationFrontier, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
-    TaskRelationTruncation, TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry,
-    TaskTimelineEvent,
+    ProjectVisibility, TaskDetailAnswer, TaskDetailClosure, TaskDetailNote, TaskGuidance,
+    TaskRelationEdge, TaskRelationFrontier, TaskRelationKind, TaskRelationNode,
+    TaskRelationNodeRef, TaskRelationTruncation, TaskRelationsAnswer, TaskTimelineAnswer,
+    TaskTimelineEntry, TaskTimelineEvent,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LaneResidency,
@@ -493,6 +493,18 @@ fn task_detail_answer_round_trips_attributed_note_identity() {
             author: Actor::Operator,
             text: "One durable observation.".to_owned(),
         }],
+        closure: Some(TaskDetailClosure {
+            position: seq(9),
+            at: instant("2026-08-01T06:52:03.000Z"),
+            author: Actor::Operator,
+            validation: "Verified in the browser.".to_owned(),
+            phase: "todo".parse().expect("fixture phase"),
+            claimed: Some(Actor::Lane(
+                "018f82d4-6f59-7d06-92e3-bce913116411"
+                    .parse()
+                    .expect("fixture lane"),
+            )),
+        }),
     };
     let bytes = wire::encode(&expected).expect("task detail answer encodes");
     let CommandAnswer::TaskDetail(actual) = AnswerShape::TaskDetail

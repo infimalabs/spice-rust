@@ -39,16 +39,16 @@ pub(in crate::board_command) fn read_task_detail(
         Ok(media) => media,
         Err(outcome) => return outcome,
     };
-    let notes = task_record(&observed, &selected)
-        .notes
-        .remove(&detail.task)
-        .unwrap_or_default();
+    let mut record = task_record(&observed, &selected);
+    let notes = record.notes.remove(&detail.task).unwrap_or_default();
+    let closure = record.closures.remove(&detail.task);
     snapshot_reply(
         snapshot.cursor,
         CommandAnswer::TaskDetail(Box::new(wire::intent::TaskDetailAnswer {
             task,
             media,
             notes,
+            closure,
         })),
     )
 }
@@ -63,10 +63,13 @@ pub(super) struct TaskRecord {
     /// Every task or claim fact whose origin is an acknowledged steering key.
     pub(super) acknowledgments:
         std::collections::BTreeMap<wire::TaskStamp, Vec<wire::intent::TaskAcknowledgment>>,
+    /// The operator's closure of each closed task; a settled task closes once.
+    pub(super) closures:
+        std::collections::BTreeMap<wire::TaskStamp, wire::intent::TaskDetailClosure>,
 }
 
-/// Read the named tasks' notes and acknowledgment origins in one pass over
-/// the snapshot's facts.
+/// Read the named tasks' notes, closures, and acknowledgment origins in one
+/// pass over the snapshot's facts.
 pub(super) fn task_record(
     observed: &bus::TaskSnapshot,
     tasks: &std::collections::BTreeSet<wire::TaskStamp>,
@@ -86,6 +89,21 @@ pub(super) fn task_record(
                     author: envelope.actor.clone(),
                     text: noted.note,
                 });
+        }
+        if let Some(closed) = envelope.fact.read::<body::TaskClosed>()
+            && tasks.contains(&closed.task)
+        {
+            record.closures.insert(
+                closed.task,
+                wire::intent::TaskDetailClosure {
+                    position: envelope.seq,
+                    at: envelope.at,
+                    author: envelope.actor.clone(),
+                    validation: closed.validation,
+                    phase: closed.phase,
+                    claimed: closed.claimed,
+                },
+            );
         }
         let Some(key) = super::task_steering_origin_token(&envelope.origin) else {
             continue;

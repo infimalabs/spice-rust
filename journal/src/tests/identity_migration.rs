@@ -533,6 +533,7 @@ fn insert_legacy_board_receipt(connection: &Connection) {
         origins: Default::default(),
         notes: Default::default(),
         acknowledgments: Default::default(),
+        closures: Default::default(),
         tasks: vec![wire::intent::BoardTask::from_authoritative(
             wire::intent::ProjectVisibility::Public,
             "operator".to_owned(),

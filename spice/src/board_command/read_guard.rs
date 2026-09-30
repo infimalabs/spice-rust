@@ -133,6 +133,7 @@ fn validated_snapshot_from_with_occupant(
             origins: Default::default(),
             notes: Default::default(),
             acknowledgments: Default::default(),
+            closures: Default::default(),
             history: None,
             trust: positioned_trust(observed),
             appliance,
@@ -811,6 +812,7 @@ pub(super) fn read_board(
         let record = task_detail::task_record(&observed, &named);
         snapshot.answer.notes = record.notes;
         snapshot.answer.acknowledgments = record.acknowledgments;
+        snapshot.answer.closures = record.closures;
     }
     snapshot.answer.history = history;
     snapshot_reply(

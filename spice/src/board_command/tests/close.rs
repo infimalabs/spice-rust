@@ -199,9 +199,39 @@ fn a_live_claim_refuses_the_closure_until_it_is_forced_and_then_names_the_holder
             .into_iter()
             .map(|closed| closed.claimed)
             .collect::<Vec<_>>(),
-        vec![Some(lane)],
+        vec![Some(lane.clone())],
         "the forced closure attributes the work it took to the lane that held it"
     );
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::TaskDetail(detail),
+        ..
+    }) = issue(
+        &bus,
+        epoch,
+        Actor::Operator,
+        CommandKind::TaskDetail,
+        Vec::new(),
+        &wire::intent::TaskDetail {
+            task: task.born().expect("fixture stamp"),
+        },
+    )
+    else {
+        panic!("task detail answers with the task");
+    };
+    let closure = detail
+        .closure
+        .expect("task detail reads the closure back, since it records no note");
+    assert_eq!(
+        (
+            closure.author,
+            closure.validation.as_str(),
+            closure.phase.as_str(),
+            closure.claimed
+        ),
+        (Actor::Operator, "done already", "todo", Some(lane)),
+        "the detail names who closed it, why, where it stood, and whose claim it took"
+    );
+    assert!(detail.notes.is_empty(), "the validation is not also a note");
     clean(&root, bus);
 }
 

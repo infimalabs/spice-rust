@@ -507,6 +507,7 @@ fn task_show_follows_every_acknowledged_key_to_the_session_that_answered_it() {
         TaskShowHistory {
             notes: &answer.notes[&born],
             acknowledgments,
+            closure: None,
         },
         Some(&context),
     );

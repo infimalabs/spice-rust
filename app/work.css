@@ -786,6 +786,14 @@
 }
 .work-note-card header { display: flex; justify-content: space-between; gap: 12px; color: var(--muted); font-size: .68rem; }
 .work-note-card .work-note-body { margin-top: 7px; }
+/* The operator's closure is the task's completion evidence, not one more
+   observation, so it carries the completed tone and sits above them. */
+.work-closure-card {
+  margin-bottom: 8px;
+  border-left: 3px solid var(--work-completed);
+}
+.work-closure-card header strong { color: var(--ink); }
+.work-closure-claim { margin: 7px 0 0; color: var(--muted); font-size: .74rem; }
 .work-note-composer { margin-top: 14px; padding-top: 14px; border: var(--canvas-edge-soft); }
 .work-note-composer textarea { min-height: 88px; }
 .work-note-capability { margin: 8px 0 0; color: var(--muted); font-size: .74rem; }

@@ -1,6 +1,7 @@
 //! Selection, focus, and observation lifecycle for contextual task detail.
 
 use super::*;
+use crate::browser::clock::{TaskTimePresentation, task_time};
 pub(super) struct Controls {
     pub selected: UseStateHandle<Option<TaskStamp>>,
     pub presented: UseStateHandle<bool>,
@@ -614,6 +615,36 @@ fn live_holder(heads: &wire::intent::BoardTask) -> Option<wire::Actor> {
         .as_ref()
         .filter(|claim| claim.body.disposition == wire::ClaimDisposition::Active)
         .map(|claim| claim.body.actor.clone())
+}
+
+/// The operator's closure of a task. Closing records no note, so this is the
+/// one place its validation reads back, beside the observations it replaced.
+pub(super) fn render_closure_record(
+    closure: Option<&wire::intent::TaskDetailClosure>,
+    name: impl Fn(&wire::Actor) -> String,
+    resolves: impl Fn(&TaskStamp) -> bool,
+) -> Html {
+    let Some(closure) = closure else {
+        return Html::default();
+    };
+    let displaced = closure
+        .claimed
+        .as_ref()
+        .map(|actor| format!("Took the claim from {}.", name(actor)));
+    html! {
+        <article class="work-note-card work-closure-card" data-closure-position={closure.position.to_string()}>
+            <header>
+                <strong title={closure.author.to_string()}>
+                    {format!("Closed by {} at {}", name(&closure.author), closure.phase)}
+                </strong>
+                {task_time(&closure.at, TaskTimePresentation::DetailedElapsed)}
+            </header>
+            {render_task_text(&closure.validation, "work-note-body", resolves)}
+            if let Some(displaced) = displaced {
+                <p class="work-closure-claim">{displaced}</p>
+            }
+        </article>
+    }
 }
 
 /// The heads a closure decides against, spelled as the resident's witnesses.

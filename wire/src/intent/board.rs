@@ -169,6 +169,29 @@ pub struct TaskDetailNote {
     pub text: String,
 }
 
+/// The operator's closure of a task, read back from its `task::closed` fact.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskDetailClosure {
+    /// Position of the closure fact.
+    pub position: crate::Seq,
+    /// Commit time recorded by the journal.
+    pub at: crate::Instant,
+    /// Principal that closed the task.
+    pub author: Actor,
+    /// Stated evidence or reason the task is complete.
+    pub validation: String,
+    /// Phase the workflow held when the task was closed.
+    pub phase: crate::Phase,
+    /// Actor whose live claim the closure overrode, when it overrode one.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub claimed: Option<Actor>,
+}
+
 /// One task-history fact caused by an acknowledged steering directive.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -192,6 +215,13 @@ pub struct TaskDetailAnswer {
     pub media: Vec<crate::Media>,
     /// Notes ordered by ascending durable journal position.
     pub notes: Vec<TaskDetailNote>,
+    /// The operator's closure, when the task was closed rather than done.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub closure: Option<TaskDetailClosure>,
 }
 
 /// Most roots one relationship read admits.
@@ -886,6 +916,9 @@ pub struct BoardAnswer {
     /// acknowledged steering key, each task's in ascending journal position.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub acknowledgments: std::collections::BTreeMap<crate::TaskStamp, Vec<TaskAcknowledgment>>,
+    /// The operator's closure of each named task that was closed.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub closures: std::collections::BTreeMap<crate::TaskStamp, TaskDetailClosure>,
     /// Current executable-configuration trust heads in ascending digest order.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub trust: Vec<Positioned<crate::TrustHead>>,
