@@ -51,6 +51,49 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
         runtime.is_some_and(|runtime| runtime.lanes().is_some()),
     );
     let task_pills = task_pills(render.work);
+    let all_work_pill = render
+        .work
+        .filter(|_| !task_pills.is_empty())
+        .map(|work| work.counts())
+        .map(|counts| {
+            let navigate = render.navigate.clone();
+            let selected =
+                render.destination == CanvasDestination::Work && render.work_scope.stem().is_none();
+            let ready = counts.ready();
+            let active = counts.in_flight();
+            let unavailable = counts.unavailable();
+            let title = format!(
+                "All open work: {ready} ready, {active} active or in flight, \
+                 {unavailable} blocked or deferred"
+            );
+            html! {
+                <button
+                    class={classes!(
+                        "task-pill",
+                        "task-pill--all",
+                        (active > 0).then_some("active"),
+                        (ready == 0 && active == 0).then_some("dormant"),
+                        selected.then_some("selected"),
+                    )}
+                    type="button"
+                    title={title.clone()}
+                    aria-label={title}
+                    aria-pressed={selected.to_string()}
+                    aria-current={selected.then_some("page")}
+                    data-work-scope="all"
+                    data-ready={ready.to_string()}
+                    data-active={active.to_string()}
+                    data-unavailable={unavailable.to_string()}
+                    onclick={Callback::from(move |_| {
+                        navigate.emit(navigation::Intent::Work(WorkScope::AllOpen));
+                    })}
+                >
+                    <span class="task-pill-count">
+                        {format!("{ready}·{active}·{unavailable}")}
+                    </span>
+                </button>
+            }
+        });
     let connection_label: AttrValue = render.connection.label().into();
     html! {
         <header class="commandbar commandbar--mosaic">
@@ -60,6 +103,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 data-expanded={(**render.menu_open).to_string()}
             >
                 <nav class="task-pill-strip" aria-label="Open task projects">
+                    {all_work_pill}
                     {for task_pills.into_iter().map(|pill| {
                         let navigate = render.navigate.clone();
                         let identity = pill.identity.clone();

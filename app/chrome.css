@@ -92,6 +92,7 @@ body:has(.shell--mosaic),
 .task-pill.active { opacity: .78; }
 .task-pill.dormant { border-color: var(--muted); color: var(--muted); }
 .task-pill.system { border-style: dashed; border-color: var(--triage); color: var(--triage); }
+.task-pill--all { padding-inline: 4px; }
 .task-pill-count {
   padding: 0 5px;
   border-radius: var(--canvas-radius-pill);

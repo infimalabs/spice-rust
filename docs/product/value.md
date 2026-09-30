@@ -380,7 +380,7 @@ green, blue, gold, red, teal, and plum accent order used for agents. The outer
 button edge is neutral with neither status, gold for Fast mode, blue for an
 available Canvas update, and red when both apply. Quota colors remain unchanged.
 
-### The global Dash page
+### The global Agents page
 
 Resident topology presents each team in canonical order from left to right:
 member zero, the team's main agent, starts at the far-left control-flow origin,
@@ -396,6 +396,12 @@ project/phase clusters are alternate arrangements of the same cards. Empty
 lanes remain visible, status is textual as well as colored, and narrow layouts
 collapse from four columns to two and then one. Task detail and relationship
 views preserve the same identity and evidence.
+
+The project-stem pills above Canvas begin with one label-less aggregate pill
+whenever open work exists. Its badge carries the same ready, active, and
+unavailable counts across every stem; selecting it opens All work and clears a
+stem scope, so the global board remains reachable directly from every Canvas
+destination.
 
 The global board and each team Work pane render the same task-card identity,
 status, ownership, and selection contract. Team panes use the compact density;
