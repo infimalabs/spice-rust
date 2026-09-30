@@ -36,6 +36,24 @@
   background: currentColor;
 }
 .agent-action-menu { position: static; }
+/* A requested renewal stays visible after the drawer closes: the menu button
+   takes the member's accent and carries a dot until the request settles. */
+.agent-action-menu[data-renewal-pending="true"] > summary {
+  position: relative;
+  border-color: var(--accent-slot, var(--accent));
+  color: var(--accent-slot, var(--accent));
+}
+.agent-action-menu[data-renewal-pending="true"] > summary::after {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent-slot, var(--accent));
+  box-shadow: 0 0 0 2px var(--panel);
+  content: "";
+}
 .agent-action-menu > summary {
   list-style: none;
   cursor: pointer;
@@ -106,6 +124,25 @@
   font: 11px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;
   white-space: normal;
+}
+.agent-action-drawer button:not(:disabled) {
+  cursor: pointer;
+  transition: background-color .12s ease, border-color .12s ease;
+}
+.agent-action-drawer button:not(:disabled):hover {
+  border-color: var(--accent-slot, var(--accent));
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 14%, var(--panel));
+}
+.agent-action-drawer button:not(:disabled):active {
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 26%, var(--panel));
+  transform: translateY(1px);
+}
+.agent-action-drawer button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.agent-renew-request[aria-pressed="true"]:not(:disabled):hover {
+  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 26%, var(--panel));
 }
 .agent-action-drawer button:disabled { cursor: not-allowed; opacity: .46; }
 .agent-action-drawer button > .agent-renew-blocked { color: var(--danger); }
