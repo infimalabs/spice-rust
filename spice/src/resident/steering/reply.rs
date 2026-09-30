@@ -8,8 +8,10 @@ use super::*;
 /// operator's, the resident's, or taste's, and a reply carries its peer-reply
 /// control, so answering it ends the exchange. The reply joins the
 /// retirement's write, so the journal holds both or neither and a restart can
-/// neither drop nor repeat it. It lands only while the sending lane is seated,
-/// and names the sending lane that must be told once the write commits.
+/// neither drop nor repeat it. It lands whether or not the sending lane is
+/// seated: a sender that asked and ended its turn hears the answer at its next
+/// seat, since a reply, like any peer message, never wakes a lane. It returns
+/// the sending lane that must be told once the write commits.
 #[expect(
     clippy::too_many_arguments,
     reason = "the retirement write, its answered head, and the spoken answer are one reply"
@@ -32,15 +34,10 @@ pub(super) fn append_peer_reply(
         return Ok(None);
     };
     let residency = current_residency(bus, epoch).map_err(typed_outcome)?;
-    let Some(occupant) = residency
-        .body()
-        .lanes
-        .iter()
-        .find(|row| row.lane == sender)
-        .and_then(|row| row.occupant)
-    else {
+    let Some(row) = residency.body().lanes.iter().find(|row| row.lane == sender) else {
         return Ok(None);
     };
+    let occupant = row.occupant;
     let directive = reply_identity(told.directive);
     let (existing, minted_micros) = keyspace(bus, directive)?;
     if existing.is_some() {
@@ -70,7 +67,7 @@ pub(super) fn append_peer_reply(
     };
     let witness = Witness::Residency {
         lane: sender,
-        occupant: Some(occupant),
+        occupant,
         epoch,
     };
     proposal.guard(send_guard(residency.position(), witness, directive, key));

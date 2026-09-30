@@ -198,6 +198,35 @@ impl Peers {
         row.pending.clone()
     }
 
+    /// End the occupant sitting in a lane, as its exit would.
+    fn vacate(&self, lane: u8) {
+        let lane = test_uuid(lane);
+        let observed = current_residency(&self.bus, self.epoch).expect("residency reads");
+        let mut vacant = observed.body().clone();
+        let row = vacant
+            .lanes
+            .iter_mut()
+            .find(|row| row.lane == lane)
+            .expect("fixture lane exists");
+        let occupant = row.occupant.take().expect("the lane is seated");
+        row.disposition = "vacant".to_owned();
+        let mut ending = write(Actor::Spice, self.epoch, Producer::ResidentRecognition)
+            .expect("ending write starts");
+        crate::resident::shutdown::guard_residency(&mut ending, &observed);
+        let exited = ending
+            .fact(
+                wire::body::LaneExited {
+                    lane,
+                    occupant,
+                    code: 0,
+                },
+                FactCause::Existing(observed.position()),
+            )
+            .expect("exit fact is valid");
+        ending.residency_head(exited, move |_| vacant);
+        commit(&self.bus, ending).expect("vacancy commits");
+    }
+
     fn cancel(&self, id: u8, directive: CanonicalUuid) -> Outcome<CommandAnswer> {
         let cancel = wire::intent::DirectiveRef { directive };
         let witness = Witness::Directive {
@@ -423,6 +452,47 @@ fn an_answered_peer_message_replies_once_to_its_seated_sender_and_the_reply_ends
         "one reply, journaled as the answering lane, for the peer message alone"
     );
 
+    peers.finish();
+}
+
+#[test]
+fn a_reply_to_a_sender_that_ended_its_turn_waits_for_its_next_seat() {
+    let peers = Peers::new("steer-tell-reply-vacant");
+    let recipient = test_uuid(RECIPIENT);
+    let (outcome, _) = peers.tell(80, RECIPIENT, "is the parser settled?");
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Directive(told),
+        ..
+    }) = outcome
+    else {
+        panic!("a peer message is durable: {outcome:?}");
+    };
+    peers.vacate(SENDER);
+
+    let heard = peers.answer(
+        RECIPIENT,
+        &[&told.key],
+        &format!("ACK {}: Settled.", told.key),
+    );
+    assert!(
+        peers.pending(RECIPIENT).is_empty(),
+        "the peer message retires: {heard}"
+    );
+    let [reply] = peers
+        .pending(SENDER)
+        .try_into()
+        .unwrap_or_else(|pending| panic!("the vacant sender holds one reply: {pending:?}"));
+    assert_eq!(reply.from, Some(recipient));
+    assert_eq!(reply.text, format!("ACK {}: Settled.", told.key));
+
+    let mut diagnostics = Vec::new();
+    steering::dispose_at_startup(&peers.bus, &peers.paths, peers.epoch, &mut diagnostics)
+        .expect("the restart sweep runs");
+    assert_eq!(
+        peers.pending(SENDER).len(),
+        1,
+        "a restart neither drops nor repeats the waiting reply"
+    );
     peers.finish();
 }
 
