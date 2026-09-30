@@ -7,15 +7,16 @@ use crate::command::CommandKind;
 use super::{
     BoardAnswer, BoardGraph, BoardHandout, BoardRead, ClaimAnswer, ClaimCarry, ClaimRenew,
     ClaimWin, ConsentAnswer, ConsentDecide, ConsentPolicy, ConsentPolicyAnswer, ConsentQueueAnswer,
-    ConsentRead, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply, DocLedger,
-    GlobalSettingsAnswer, GlobalSettingsRead, GlobalSettingsSet, InboxAnswer, LaneAnswer,
-    LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal, LaneRenewalAnswer,
-    LaneRetune, LaneSeat, LaneState, RecallAnswer, RecognitionAnswer, Recognize, ReleasePublish,
-    StateAnswer, SteerDispose, SteerInbox, SteerSend, SteerTell, TaskAdd, TaskAnswer, TaskAssign,
-    TaskDefer, TaskDelete, TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote,
-    TaskOopsAdd, TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
-    TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
-    TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
+    ConsentRead, DirectionHistoryAnswer, DirectiveAnswer, DirectiveRef, DocAnswer, DocApply,
+    DocLedger, GlobalSettingsAnswer, GlobalSettingsRead, GlobalSettingsSet, InboxAnswer,
+    LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal,
+    LaneRenewalAnswer, LaneRetune, LaneSeat, LaneState, RecallAnswer, RecognitionAnswer, Recognize,
+    ReleasePublish, StateAnswer, SteerDispose, SteerHistory, SteerInbox, SteerSend, SteerTell,
+    TaskAdd, TaskAnswer, TaskAssign, TaskDefer, TaskDelete, TaskDepends, TaskDetail,
+    TaskDetailAnswer, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations,
+    TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer,
+    TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef,
+    UpChange, VendorCatalog, VendorCatalogAnswer,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -83,6 +84,8 @@ pub enum BodyShape {
     SteerTell,
     /// [`SteerInbox`]
     SteerInbox,
+    /// [`SteerHistory`]
+    SteerHistory,
     /// [`DirectiveRef`]
     DirectiveRef,
     /// [`SteerDispose`]
@@ -146,6 +149,8 @@ pub enum AnswerShape {
     Directive,
     /// [`InboxAnswer`]
     Inbox,
+    /// [`DirectionHistoryAnswer`]
+    DirectionHistory,
     /// [`ConsentAnswer`]
     Consent,
     /// [`ConsentQueueAnswer`]
@@ -198,6 +203,8 @@ pub enum CommandAnswer {
     Directive(DirectiveAnswer),
     /// [`AnswerShape::Inbox`]
     Inbox(InboxAnswer),
+    /// [`AnswerShape::DirectionHistory`]
+    DirectionHistory(Box<DirectionHistoryAnswer>),
     /// [`AnswerShape::Consent`]
     Consent(ConsentAnswer),
     /// [`AnswerShape::ConsentQueue`]
@@ -241,6 +248,7 @@ impl CommandAnswer {
             Self::Doc(_) => AnswerShape::Doc,
             Self::Directive(_) => AnswerShape::Directive,
             Self::Inbox(_) => AnswerShape::Inbox,
+            Self::DirectionHistory(_) => AnswerShape::DirectionHistory,
             Self::Consent(_) => AnswerShape::Consent,
             Self::ConsentQueue(_) => AnswerShape::ConsentQueue,
             Self::ConsentPolicy(_) => AnswerShape::ConsentPolicy,
@@ -290,7 +298,8 @@ impl AnswerShape {
             | Self::State
             | Self::Recall
             | Self::Taste
-            | Self::Recognition => self.decode_secondary(bytes),
+            | Self::Recognition
+            | Self::DirectionHistory => self.decode_secondary(bytes),
         }
     }
 
@@ -325,6 +334,9 @@ impl AnswerShape {
             Self::Recall => CommandAnswer::Recall(Box::new(crate::decode(bytes)?)),
             Self::Taste => CommandAnswer::Taste(crate::decode(bytes)?),
             Self::Recognition => CommandAnswer::Recognition(crate::decode(bytes)?),
+            Self::DirectionHistory => {
+                CommandAnswer::DirectionHistory(Box::new(crate::decode(bytes)?))
+            }
             _ => unreachable!("answer-shape decode partition is closed"),
         })
     }
@@ -386,6 +398,7 @@ impl CommandKind {
             Self::SteerSend
             | Self::SteerTell
             | Self::SteerInbox
+            | Self::SteerHistory
             | Self::SteerResend
             | Self::SteerRecover
             | Self::SteerDispose
@@ -460,6 +473,7 @@ impl CommandKind {
             Self::SteerSend => Binding::of(B::SteerSend, A::Directive),
             Self::SteerTell => Binding::of(B::SteerTell, A::Directive),
             Self::SteerInbox => Binding::of(B::SteerInbox, A::Inbox),
+            Self::SteerHistory => Binding::of(B::SteerHistory, A::DirectionHistory),
             Self::SteerResend | Self::SteerRecover | Self::SteerCancel => {
                 Binding::of(B::DirectiveRef, A::Directive)
             }
@@ -569,6 +583,8 @@ pub enum Intent {
     SteerTell(SteerTell),
     /// [`BodyShape::SteerInbox`]
     SteerInbox(SteerInbox),
+    /// [`BodyShape::SteerHistory`]
+    SteerHistory(SteerHistory),
     /// [`BodyShape::DirectiveRef`]
     DirectiveRef(DirectiveRef),
     /// [`BodyShape::SteerDispose`]
@@ -642,6 +658,7 @@ impl Intent {
             Self::SteerSend(_)
             | Self::SteerTell(_)
             | Self::SteerInbox(_)
+            | Self::SteerHistory(_)
             | Self::DirectiveRef(_)
             | Self::SteerDispose(_)
             | Self::ConsentDecide(_)
@@ -703,6 +720,7 @@ impl Intent {
             Self::SteerSend(_) => BodyShape::SteerSend,
             Self::SteerTell(_) => BodyShape::SteerTell,
             Self::SteerInbox(_) => BodyShape::SteerInbox,
+            Self::SteerHistory(_) => BodyShape::SteerHistory,
             Self::DirectiveRef(_) => BodyShape::DirectiveRef,
             Self::SteerDispose(_) => BodyShape::SteerDispose,
             Self::ConsentDecide(_) => BodyShape::ConsentDecide,
@@ -844,6 +862,7 @@ impl BodyShape {
             Self::SteerSend
                 | Self::SteerTell
                 | Self::SteerInbox
+                | Self::SteerHistory
                 | Self::DirectiveRef
                 | Self::SteerDispose
                 | Self::ConsentDecide
@@ -865,6 +884,7 @@ impl BodyShape {
             Self::SteerSend => Intent::SteerSend(crate::decode(bytes)?),
             Self::SteerTell => Intent::SteerTell(crate::decode(bytes)?),
             Self::SteerInbox => Intent::SteerInbox(crate::decode(bytes)?),
+            Self::SteerHistory => Intent::SteerHistory(crate::decode(bytes)?),
             Self::DirectiveRef => Intent::DirectiveRef(crate::decode(bytes)?),
             Self::SteerDispose => Intent::SteerDispose(crate::decode(bytes)?),
             Self::ConsentDecide => Intent::ConsentDecide(crate::decode(bytes)?),

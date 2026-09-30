@@ -235,6 +235,9 @@ impl<'a> Surface<'a> {
             (CommandKind::SteerInbox, Intent::SteerInbox(inbox)) => Some(steering::inbox(
                 self.bus, self.paths, self.epoch, command, inbox,
             )),
+            (CommandKind::SteerHistory, Intent::SteerHistory(request)) => {
+                Some(steering::history(self.bus, self.paths, request))
+            }
             (CommandKind::SteerSend, Intent::SteerSend(send)) => Some(steering::send(
                 self.bus,
                 self.epoch,

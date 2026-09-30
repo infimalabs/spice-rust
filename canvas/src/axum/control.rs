@@ -55,6 +55,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::SteerSend
         | CommandKind::SteerTell
         | CommandKind::SteerInbox
+        | CommandKind::SteerHistory
         | CommandKind::SteerResend
         | CommandKind::SteerRecover
         | CommandKind::SteerDispose

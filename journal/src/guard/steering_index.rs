@@ -212,7 +212,7 @@ impl JournalRead<'_> {
         row.map(|row| self.decode_steering_row(row)).transpose()
     }
 
-    fn require_current_steering_index(&self) -> Result<(), GuardError> {
+    pub(super) fn require_current_steering_index(&self) -> Result<(), GuardError> {
         read_metrics::observe_query();
         let indexed = self
             .connection
@@ -457,7 +457,7 @@ pub(crate) fn disposition_name(disposition: wire::Disposition) -> &'static str {
     }
 }
 
-fn disposition_named(name: &str) -> Option<wire::Disposition> {
+pub(super) fn disposition_named(name: &str) -> Option<wire::Disposition> {
     [
         wire::Disposition::Live,
         wire::Disposition::Acked,

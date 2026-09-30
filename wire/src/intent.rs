@@ -44,6 +44,12 @@ pub use board::{
     TaskRelationNodeRef, TaskRelationTruncation, TaskRelations, TaskRelationsAnswer, TaskTimeline,
     TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent, TaskTranscriptRecovery, TextAnswer,
 };
+mod direction;
+pub use direction::{
+    DIRECTION_HISTORY_LANES_MAX, DIRECTION_HISTORY_PAGE_LIMIT_MAX,
+    DIRECTION_HISTORY_QUERY_BYTES_MAX, DirectionGroup, DirectionHistoryAnswer, DirectionRecipient,
+    DirectionRetirement, DirectionWindow, SteerHistory,
+};
 mod simple_answers;
 pub use simple_answers::{RecognitionAnswer, TasteAnswer};
 

@@ -14,6 +14,7 @@ mod generation;
 mod indexed_read;
 mod read_metrics;
 mod receipt;
+mod steering_history;
 mod steering_index;
 
 use commit::visible_cursor;
@@ -26,6 +27,7 @@ pub(crate) use read_metrics::{
     IndexedReadMetrics, indexed_read_metrics, reset_indexed_read_metrics,
 };
 pub use receipt::CommandReplay;
+pub use steering_history::{OperatorDirection, OperatorDirections};
 pub(crate) use steering_index::{canonical_identity, disposition_name};
 
 /// A fact added earlier in the same guarded transaction.

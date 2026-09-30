@@ -198,6 +198,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::SteerSend
         | CommandKind::SteerTell
         | CommandKind::SteerInbox
+        | CommandKind::SteerHistory
         | CommandKind::SteerResend
         | CommandKind::SteerRecover
         | CommandKind::SteerDispose

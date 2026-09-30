@@ -418,6 +418,54 @@ mod runtime {
                 .map_err(BusReadError::Head)
         }
 
+        /// Read every operator-authored directive's history projection at one cursor.
+        ///
+        /// `query` must already be ASCII-lowercased; see
+        /// [`journal::JournalRead::operator_directions`].
+        pub fn operator_directions(
+            &self,
+            query: Option<String>,
+        ) -> Result<journal::OperatorDirections, BusReadError> {
+            self.transact_read(move |read| read.operator_directions(query.as_deref()))
+        }
+
+        /// Read the immutable text of each named directive, absent when unknown.
+        pub fn operator_direction_texts(
+            &self,
+            directives: Vec<journal::crossing::CanonicalUuid>,
+        ) -> Result<Vec<Option<String>>, BusReadError> {
+            self.transact_read(move |read| {
+                directives
+                    .iter()
+                    .map(|directive| read.operator_direction_text(*directive))
+                    .collect()
+            })
+        }
+
+        fn transact_read<T: Send + 'static>(
+            &self,
+            read: impl FnOnce(&journal::JournalRead<'_>) -> Result<T, GuardError> + Send + 'static,
+        ) -> Result<T, BusReadError> {
+            let (answer, receiver) = mpsc::sync_channel(1);
+            let transaction = Box::new(move |journal: &mut Journal| {
+                let result = journal.read(read);
+                let respond = Box::new(move || {
+                    let _ = answer.send(result);
+                });
+                TransactionCompletion {
+                    commit: None,
+                    respond,
+                }
+            });
+            self.requests
+                .send(Request::Transaction { transaction })
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?;
+            receiver
+                .recv()
+                .map_err(|_| BusReadError::Bus(BusError::Closed))?
+                .map_err(BusReadError::Head)
+        }
+
         /// Resolve only the steering keys named by one fixed-size message batch.
         ///
         /// # Errors
