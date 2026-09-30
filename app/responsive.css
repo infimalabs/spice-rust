@@ -77,14 +77,12 @@
 }
 
 @media (max-width: 920px) {
-  .work-lanes { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 20px; }
   .work-history-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .work-detail-facts,
   .work-detail-links { grid-template-columns: 1fr; }
   .work-map-task-list { grid-template-columns: 1fr; }
 }
 @media (max-width: 560px) {
-  .work-lanes { grid-template-columns: 1fr; gap: 0; }
   .work-history-list { grid-template-columns: 1fr; }
   /* One scrolling control row keeps the pinned header two rows tall. */
   .work-arrangement {
@@ -94,9 +92,20 @@
     overflow-x: auto;
   }
   .work-arrangement-group { flex-wrap: nowrap; }
-  .work-lane { padding-block: 14px; padding-inline: 0; }
-  .work-lane + .work-lane { border-top: var(--canvas-edge-soft); }
-  .work-lane-empty { padding-block: 11px 2px; }
+  .work-lane {
+    grid-template-columns: minmax(4.5rem, 5.5rem) minmax(0, 1fr);
+    gap: 8px;
+    padding-block: 10px;
+  }
+  .work-lane-heading {
+    flex-direction: column;
+    justify-content: flex-start;
+    padding-right: 8px;
+  }
+  .work-lane-track { min-height: 11rem; }
+  .work-card-list > .work-card {
+    flex-basis: min(16rem, calc(100vw - 7.5rem));
+  }
   .work-card { gap: 8px; padding: 12px; }
   .work-history { margin-top: 14px; }
   .work-history-finder { grid-template-columns: 1fr; }

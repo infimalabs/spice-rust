@@ -399,11 +399,13 @@ than increasing the card footprint.
 
 ### The global Work page
 
-One board shows all open work in in-flight, ready, blocked, and deferred lanes.
-Cards default to the allocator's real offer order; creation order and
-project/phase clusters are alternate arrangements of the same cards. Empty
-lanes remain visible, status is textual as well as colored, and narrow layouts
-collapse from four columns to two and then one. Task detail and relationship
+One board shows all open work in ready, in-flight, blocked, and deferred rows.
+Those lifecycle categories stay fixed while cards fill each row in allocator
+order and scroll horizontally at overflow, so task churn changes a row's
+contents rather than growing the board or moving status labels. Creation order
+and project/phase clusters are alternate arrangements of the same cards. Empty
+rows remain visible, status is textual as well as colored, and narrow layouts
+retain the labeled rows with narrower card tracks. Task detail and relationship
 views preserve the same identity and evidence.
 
 The project-stem pills above Canvas begin with one label-less aggregate pill

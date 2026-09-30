@@ -352,20 +352,27 @@ fn render_lane(
                 <h3 id={heading}>{label}</h3>
                 <span aria-label={format!("{count} tasks")}>{count}</span>
             </header>
-            if count == 0 {
-                <p class="work-lane-empty">{format!("No {} tasks.", label.to_lowercase())}</p>
-            } else {
-                <div class="work-card-list">
-                    {for clusters.iter().flat_map(|cluster| {
-                        let separator = cluster_label(cluster.key).map(|name| html! {
-                            <p key={format!("cluster:{name}")} class="work-lane-cluster">{name}</p>
-                        });
-                        separator
-                            .into_iter()
-                            .chain(cluster.tasks.iter().map(|task| work_card::render(task, cards)))
-                    })}
-                </div>
-            }
+            <div
+                class="work-lane-track"
+                tabindex="0"
+                role="region"
+                aria-label={format!("{label} task row")}
+            >
+                if count == 0 {
+                    <p class="work-lane-empty">{format!("No {} tasks.", label.to_lowercase())}</p>
+                } else {
+                    <div class="work-card-list">
+                        {for clusters.iter().flat_map(|cluster| {
+                            let separator = cluster_label(cluster.key).map(|name| html! {
+                                <p key={format!("cluster:{name}")} class="work-lane-cluster">{name}</p>
+                            });
+                            separator
+                                .into_iter()
+                                .chain(cluster.tasks.iter().map(|task| work_card::render(task, cards)))
+                        })}
+                    </div>
+                }
+            </div>
         </section>
     }
 }
