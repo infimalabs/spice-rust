@@ -355,7 +355,7 @@
   border-radius: var(--canvas-radius-overlay); font-size: .85rem; overflow-wrap: anywhere;
   transition: opacity var(--canvas-motion-settle) var(--canvas-ease-standard), translate var(--canvas-motion-settle) var(--canvas-ease-standard), visibility var(--canvas-motion-settle) allow-discrete;
 }
-.toast--task-feedback { inset-block-end: 64px; }
+.toast--task-feedback { inset-block: 24px auto; }
 .toast[data-shown="false"] { opacity: 0; translate: 0 8px; visibility: hidden; }
 @media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
 .composer-shard-image-open {

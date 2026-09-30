@@ -460,7 +460,7 @@ fn note_keyboard_submit(enabled: bool) -> Callback<KeyboardEvent> {
 }
 
 /// The one observation composer every surface showing `task` renders, bound
-/// to that task and preserving only that task's draft while feedback uses the root toast.
+/// to that task and preserving only that task's draft while feedback uses its task-owned toast.
 pub(super) fn render_note_composer(
     id: &'static str,
     handle: &str,
@@ -537,7 +537,7 @@ pub(super) fn note_submit_callback(
         match compose::note(handle.as_str(), &text) {
             Ok(note) => {
                 let Some(id) = action_identity(&sender) else {
-                    retain_note_failure(&sender, &notes, &task);
+                    retain_note_failure(&notes, &task);
                     return;
                 };
                 let text = note.text.clone();
@@ -555,7 +555,7 @@ pub(super) fn note_submit_callback(
                         composer.submission = NoteSubmission::Pending { text, after };
                     });
                 } else {
-                    retain_note_failure(&sender, &notes, &task);
+                    retain_note_failure(&notes, &task);
                 }
             }
             Err(refusal) => notes.update(&task, |composer| composer.notice = refusal.into()),
@@ -563,13 +563,11 @@ pub(super) fn note_submit_callback(
     })
 }
 
-fn retain_note_failure(sender: &SenderHandle, notes: &NoteComposers, task: &TaskStamp) {
-    let issue = (*sender.issue)
-        .clone()
-        .unwrap_or_else(|| "Observation could not be queued; the draft was retained.".to_owned());
-    sender.issue.set(None);
+fn retain_note_failure(notes: &NoteComposers, task: &TaskStamp) {
     notes.update(task, |composer| {
         composer.notice = Notice::none();
-        composer.submission = NoteSubmission::Failed(issue);
+        composer.submission = NoteSubmission::Failed(
+            "Observation could not be queued; the draft was retained.".to_owned(),
+        );
     });
 }
