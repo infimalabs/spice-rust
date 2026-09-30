@@ -1303,7 +1303,23 @@ a.relative-age {
   container-type: inline-size;
   min-width: 0;
 }
-.team-work-history { grid-column: 1 / -1; }
+.team-work-history {
+  grid-column: 1 / -1;
+}
+@container (max-width: 40rem) {
+  .team-work-history .work-history-finder { grid-template-columns: minmax(0, 1fr); }
+  .team-work-history .work-history-filter-actions,
+  .team-work-history .work-history-page-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .team-work-history .work-history-filter-actions button,
+  .team-work-history .work-history-page-actions button { width: 100%; }
+  .team-work-history .work-history-pagination {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
 .team-task-section { min-width: 0; }
 .team-task-section > header {
   display: flex;
@@ -1313,6 +1329,7 @@ a.relative-age {
   min-height: 38px;
   padding: 8px 2px 5px;
 }
+.team-work-history > header { justify-content: flex-start; }
 .team-task-section h3 {
   margin: 0;
   font-size: .68rem;
