@@ -12,7 +12,7 @@ use wire::body::{
     LaneSeated, SteerAcked, SteerDeclined, SteerEscalated, SteerSent, TasteCleared, TasteConfirmed,
     TasteReminded, TranscriptLocus,
 };
-use wire::intent::{BoardAnswer, CommandAnswer, TaskAdd, TaskAnswer, TextAnswer};
+use wire::intent::{BoardAnswer, CommandAnswer, TaskAdd, TaskAnswer};
 use wire::{
     Actor, CanonicalUuid, Digest, Domain, FactKind, Instant, Outcome, Producer, ReplyPosition,
 };
@@ -543,7 +543,7 @@ fn native_task_add_carries_authored_context_through_client_add() {
     assert_eq!(requests[0].acceptance, statement.acceptance);
     assert_eq!(requests[0].origin, Some(statement.provenance.clone()));
 
-    let listed = text_reply::<TextAnswer>(&fixture.invoke(&[
+    let listed = human_text_reply(&fixture.invoke(&[
         "task",
         "list",
         "--project",
@@ -553,28 +553,16 @@ fn native_task_add_carries_authored_context_through_client_add() {
         "--limit",
         "1",
     ]));
-    assert!(
-        listed
-            .text
-            .starts_with("scope explicit-project project:task.cli\n")
-    );
-    assert!(listed.text.contains(added.task.as_str()), "{}", listed.text);
-    assert!(
-        listed.text.contains("Carry authored CLI context"),
-        "{}",
-        listed.text
-    );
+    assert!(listed.starts_with("scope explicit-project project:task.cli\n"));
+    assert!(listed.contains(added.task.as_str()), "{listed}");
+    assert!(listed.contains("Carry authored CLI context"), "{listed}");
 
-    let status = text_reply::<TextAnswer>(&fixture.invoke(&["task", "status"]));
-    assert!(status.text.contains(concat!(
+    let status = human_text_reply(&fixture.invoke(&["task", "status"]));
+    assert!(status.contains(concat!(
         "filter ( project:agent.operator.task or origin_thread.is:operator or ",
         "( project:serve or project:task or project:taste ) )"
     )));
-    assert!(
-        status
-            .text
-            .contains("public task project depth 2..3 dotted segments")
-    );
+    assert!(status.contains("public task project depth 2..3 dotted segments"));
     resident.stop(&fixture);
 }
 
@@ -595,11 +583,10 @@ fn task_add_preserves_explicit_flow_and_default_routing() {
         "fixture:task-add-flow",
     ]));
     let explicit_show =
-        text_reply::<TextAnswer>(&fixture.invoke(&["task", "show", explicit.task.as_str()]));
+        human_text_reply(&fixture.invoke(&["task", "show", explicit.task.as_str()]));
     assert!(
-        explicit_show.text.contains("\nflow todo,review\n"),
-        "{}",
-        explicit_show.text
+        explicit_show.contains("\nflow todo,review\n"),
+        "{explicit_show}"
     );
 
     let before_invalid = fixture.cursor();
@@ -650,11 +637,10 @@ fn task_add_preserves_explicit_flow_and_default_routing() {
         "fixture:task-add-flow",
     ]));
     let defaulted_show =
-        text_reply::<TextAnswer>(&fixture.invoke(&["task", "show", defaulted.task.as_str()]));
+        human_text_reply(&fixture.invoke(&["task", "show", defaulted.task.as_str()]));
     assert!(
-        defaulted_show.text.contains("\nflow plan,todo,review\n"),
-        "{}",
-        defaulted_show.text
+        defaulted_show.contains("\nflow plan,todo,review\n"),
+        "{defaulted_show}"
     );
     resident.stop(&fixture);
 }
@@ -1101,6 +1087,15 @@ fn text_reply<T: DeserializeOwned>(output: &Output) -> T {
         spoken(output)
     );
     wire::decode(&output.stdout).expect("text reply body is typed")
+}
+
+fn human_text_reply(output: &Output) -> String {
+    assert!(
+        output.status.success(),
+        "command failed: {}",
+        spoken(output)
+    );
+    String::from_utf8(output.stdout.clone()).expect("human reply is UTF-8 text")
 }
 
 fn json_reply<T: DeserializeOwned>(output: &Output) -> wire::Reply<T> {

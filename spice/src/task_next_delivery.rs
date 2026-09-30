@@ -18,12 +18,18 @@ use crate::board_command::{DrainReadout, TaskNext, allocator_empty};
 /// hand is still the expected one and not a fault.
 pub(super) fn deliver(result: &TaskNext, form: super::Form, steered: bool) -> ! {
     match steered_drain(result, steered) {
-        Some(readout) => super::deliver(&Outcome::Reply(readout.clone()), form),
+        Some(readout) => {
+            super::deliver_with_reply_text(&Outcome::Reply(readout.clone()), form, drain_text)
+        }
         None if expected_empty(&result.outcome, steered) => {
             super::terminate_code(super::REPLY_EXIT)
         }
         None => super::deliver(&result.outcome, form),
     }
+}
+
+fn drain_text(readout: &DrainReadout) -> Option<&str> {
+    Some(&readout.text)
 }
 
 fn steered_drain(result: &TaskNext, steered: bool) -> Option<&Reply<DrainReadout>> {
