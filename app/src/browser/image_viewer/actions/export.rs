@@ -1,48 +1,8 @@
 use super::*;
+use crate::browser::clipboard;
 use base64::Engine;
 use futures_channel::oneshot;
 use wasm_bindgen_futures::future_to_promise;
-
-fn method(object: &JsValue, name: &str) -> Result<js_sys::Function, JsValue> {
-    js_sys::Reflect::get(object, &JsValue::from_str(name))?.dyn_into::<js_sys::Function>()
-}
-
-fn clipboard() -> Result<(JsValue, js_sys::Function, js_sys::Function), JsValue> {
-    let window = web_sys::window().ok_or_else(|| JsValue::from_str("No browser window"))?;
-    let navigator = js_sys::Reflect::get(&window, &JsValue::from_str("navigator"))?;
-    let clipboard = js_sys::Reflect::get(&navigator, &JsValue::from_str("clipboard"))?;
-    let write = method(&clipboard, "write")?;
-    let constructor = method(&window, "ClipboardItem")?;
-    Ok((clipboard, write, constructor))
-}
-
-/// Why this page cannot put an image on the clipboard, or `None` when it can.
-///
-/// Browsers expose `navigator.clipboard` and `ClipboardItem` only to secure
-/// contexts, so a Canvas opened over plain http by a LAN address loses copy
-/// even though the same resident on `localhost` keeps it.
-pub(super) fn copy_refusal() -> Option<String> {
-    if clipboard().is_ok() {
-        return None;
-    }
-    const UNSUPPORTED: &str =
-        "This browser cannot put images on the clipboard; Download still works.";
-    let Some(window) = web_sys::window() else {
-        return Some(UNSUPPORTED.to_owned());
-    };
-    let secure = js_sys::Reflect::get(&window, &JsValue::from_str("isSecureContext"))
-        .ok()
-        .and_then(|value| value.as_bool())
-        .unwrap_or(true);
-    Some(if secure {
-        UNSUPPORTED.to_owned()
-    } else {
-        let origin = window.location().origin().unwrap_or_default();
-        format!(
-            "Image copy needs a secure page, and {origin} is plain http. Browsers allow it on https or localhost; Download still works."
-        )
-    })
-}
 
 pub(super) fn readable(source: &str) -> bool {
     if source
@@ -59,19 +19,12 @@ pub(super) fn readable(source: &str) -> bool {
     })
 }
 
+/// Put `source` on the clipboard as PNG, starting the write before the image
+/// converts.
 pub(super) fn copy(source: AttrValue) -> Result<js_sys::Promise, JsValue> {
-    let (clipboard, write, constructor) = clipboard()?;
-    let content = js_sys::Object::new();
-    let png = future_to_promise(async move { Ok(png_image(&source).await?.into()) });
-    js_sys::Reflect::set(&content, &JsValue::from_str("image/png"), &png)?;
-    let args = js_sys::Array::new();
-    args.push(&content);
-    let item = js_sys::Reflect::construct(&constructor, &args)?;
-    let items = js_sys::Array::new();
-    items.push(&item);
-    write
-        .call1(&clipboard, &items)?
-        .dyn_into::<js_sys::Promise>()
+    clipboard::write_png(future_to_promise(async move {
+        Ok(png_image(&source).await?.into())
+    }))
 }
 
 pub(super) fn download(source: AttrValue, name: AttrValue) -> js_sys::Promise {
