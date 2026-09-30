@@ -102,7 +102,7 @@
     padding-right: 8px;
   }
   .work-lane-track { min-height: 11rem; }
-  .work-card-list > .work-card {
+  .work-card-list > .work-card-cell {
     flex-basis: min(16rem, calc(100vw - 7.5rem));
   }
   .work-card { gap: 8px; padding: 12px; }

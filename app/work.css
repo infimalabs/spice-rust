@@ -160,7 +160,7 @@
   width: max-content;
   min-width: 100%;
 }
-.work-card-list > .work-card {
+.work-card-list > .work-card-cell {
   flex: 0 0 clamp(16rem, 24vw, 20rem);
   scroll-snap-align: start;
 }
@@ -191,6 +191,15 @@
   color: var(--muted);
   font-size: .7rem;
   line-height: 1.4;
+}
+
+/* Each card sits in its own cell, which is the list item and the size
+   container its layout queries; the card fills the cell. */
+.work-card-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  container-type: inline-size;
 }
 
 .work-card {
