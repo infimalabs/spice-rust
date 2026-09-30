@@ -108,80 +108,63 @@ pub(super) fn render_team_work_lanes(
     settled: Option<&Settled<'_, '_, '_>>,
 ) -> Html {
     html! {
-        <div class="team-work-flow" aria-label="Team work lanes">
-            <section
-                class="team-task-section team-work-lane"
-                data-team-work-lane="up-next"
-                aria-labelledby={format!("up-next-{team}")}
-            >
-                <header>
-                    <h3 id={format!("up-next-{team}")}>{"Up next"}</h3>
-                    if work.is_some_and(|work| !work.up_next().is_empty()) {
-                        <span>{work.map_or(0, |work| work.up_next().len())}</span>
-                    }
-                </header>
-                if let Some(work) = work {
-                    if work.up_next().is_empty() {
-                        <p class="team-task-empty">{"No work is up next."}</p>
-                    } else {
-                        <div class="team-task-card-list">
-                            {for work.up_next().iter().map(|task| work_card::render(task, cards))}
-                        </div>
-                    }
-                } else {
-                    <p class="team-task-empty" role="status">{"Task snapshot unavailable."}</p>
-                }
-            </section>
-            <section
-                class="team-task-section team-work-lane"
-                data-team-work-lane="in-flight"
-                aria-labelledby={format!("in-flight-{team}")}
-            >
-                <header>
-                    <h3 id={format!("in-flight-{team}")}>{"In flight"}</h3>
-                    if work.is_some_and(|work| !work.in_flight().is_empty()) {
-                        <span>{work.map_or(0, |work| work.in_flight().len())}</span>
-                    }
-                </header>
-                if let Some(work) = work {
-                    if work.in_flight().is_empty() {
-                        <p class="team-task-empty">{"No work is in flight."}</p>
-                    } else {
-                        <div class="team-task-card-list">
-                            {for work.in_flight().iter().map(|task| work_card::render(task, cards))}
-                        </div>
-                    }
-                } else {
-                    <p class="team-task-empty" role="status">{"Task snapshot unavailable."}</p>
-                }
-            </section>
-            <section
-                class="team-task-section team-work-lane"
-                data-team-work-lane="waiting"
-                aria-labelledby={format!("waiting-{team}")}
-            >
-                <header>
-                    <h3 id={format!("waiting-{team}")}>{"Waiting"}</h3>
-                    if work.is_some_and(|work| !work.waiting().is_empty()) {
-                        <span>{work.map_or(0, |work| work.waiting().len())}</span>
-                    }
-                </header>
-                if let Some(work) = work {
-                    if work.waiting().is_empty() {
-                        <p class="team-task-empty">{"No work is waiting."}</p>
-                    } else {
-                        <div class="team-task-card-list">
-                            {for work.waiting().iter().map(|(_, task)| work_card::render(task, cards))}
-                        </div>
-                    }
-                } else {
-                    <p class="team-task-empty" role="status">{"Task snapshot unavailable."}</p>
-                }
-            </section>
+        <div class="team-work-flow">
+            <div class="work-lanes team-work-lanes" aria-label="Team work lanes">
+                {team_lane(team, "up-next", "ready", "Up next", "No work is up next.", work.map(|work| {
+                    work.up_next().iter().map(|task| work_card::render(task, cards)).collect()
+                }))}
+                {team_lane(team, "in-flight", "in-flight", "In flight", "No work is in flight.", work.map(|work| {
+                    work.in_flight().iter().map(|task| work_card::render(task, cards)).collect()
+                }))}
+                {team_lane(team, "waiting", "blocked", "Waiting", "No work is waiting.", work.map(|work| {
+                    work.waiting().iter().map(|(_, task)| work_card::render(task, cards)).collect()
+                }))}
+            </div>
             if let Some(settled) = settled {
                 {render_settled_lane(settled, team, cards)}
             }
         </div>
+    }
+}
+
+/// One open-work state as a row: a label and count in the shared rail beside a
+/// horizontal card track, the same grammar as the global Work lanes.
+fn team_lane(
+    team: wire::CanonicalUuid,
+    key: &'static str,
+    state: &'static str,
+    label: &'static str,
+    empty: &'static str,
+    tasks: Option<Vec<Html>>,
+) -> Html {
+    let heading = format!("{key}-{team}");
+    let count = tasks.as_ref().map_or(0, Vec::len);
+    html! {
+        <section
+            class="work-lane team-work-lane"
+            data-work-lane={state}
+            data-team-work-lane={key}
+            aria-labelledby={heading.clone()}
+        >
+            <header class="work-lane-heading">
+                <h3 id={heading}>{label}</h3>
+                <span aria-label={format!("{count} tasks")}>{count}</span>
+            </header>
+            <div
+                class="work-lane-track"
+                tabindex="0"
+                role="region"
+                aria-label={format!("{label} task row")}
+            >
+                {match tasks {
+                    None => html! {
+                        <p class="work-lane-empty" role="status">{"Task snapshot unavailable."}</p>
+                    },
+                    Some(tasks) if tasks.is_empty() => html! { <p class="work-lane-empty">{empty}</p> },
+                    Some(tasks) => html! { <div class="work-card-list">{for tasks}</div> },
+                }}
+            </div>
+        </section>
     }
 }
 

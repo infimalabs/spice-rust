@@ -1293,17 +1293,14 @@ a.relative-age {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .7rem;
 }
+/* Open states are stable rows in the global Work grammar, so a task changing
+   state moves only its own card, and Settled starts right after the rows. */
 .team-work-flow {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(17rem, 100%), 1fr));
-  align-items: start;
   gap: 8px;
 }
-.team-work-lane {
-  container-type: inline-size;
-  min-width: 0;
-}
-.team-work-history { grid-column: 1 / -1; }
+.team-work-lanes .work-lane-track { min-height: 0; padding-bottom: 6px; }
+.team-work-lanes .work-lane-empty { min-height: 2rem; }
 .team-task-section { min-width: 0; }
 .team-task-section > header {
   display: flex;
