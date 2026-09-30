@@ -398,6 +398,31 @@ impl NormalizedCanvasLocation {
     }
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+const OPENING_AUTH_TOKEN_MIN_BYTES: usize = 16;
+#[cfg(any(target_arch = "wasm32", test))]
+const OPENING_AUTH_TOKEN_MAX_BYTES: usize = 256;
+
+/// The one-time bearer token carried by an authenticated Canvas opening.
+///
+/// This mirrors the resident's published URL-safe token contract. Canonical
+/// routes contain a slash and shorthand destinations are below its minimum.
+#[cfg(any(target_arch = "wasm32", test))]
+#[must_use]
+pub(crate) fn opening_auth_token(hash: &str) -> Option<&str> {
+    let token = hash.strip_prefix('#')?;
+    canvas_auth_token_is_valid(token).then_some(token)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+#[must_use]
+pub(crate) fn canvas_auth_token_is_valid(token: &str) -> bool {
+    (OPENING_AUTH_TOKEN_MIN_BYTES..=OPENING_AUTH_TOKEN_MAX_BYTES).contains(&token.len())
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~'))
+}
+
 /// Resolve a browser query and hash through the one Canvas route grammar.
 #[cfg(any(target_arch = "wasm32", test))]
 #[must_use]
@@ -463,7 +488,7 @@ fn valid_card_target(target: &str) -> bool {
 mod tests {
     use super::{
         CanvasDestination, CanvasNotice, CanvasRoute, ConnectionStage, CreatorContextTarget,
-        canvas_notice, normalize_canvas_location,
+        canvas_notice, normalize_canvas_location, opening_auth_token,
     };
 
     #[test]
@@ -539,6 +564,26 @@ mod tests {
             assert!(location.needs_replace());
             let notice = location.notice().expect("invalid input is named");
             assert!(notice.contains(&format!("{search}{hash}")), "{notice}");
+        }
+    }
+
+    #[test]
+    fn only_resident_token_fragments_become_opening_credentials() {
+        assert_eq!(
+            opening_auth_token("#remote-token-0123456789"),
+            Some("remote-token-0123456789")
+        );
+        for hash in [
+            "",
+            "#dash",
+            "#/chat",
+            "#/work",
+            "#/card/message-agent-01234567",
+            "#short",
+            "#remote/token/0123456789",
+            &format!("#{}", "a".repeat(257)),
+        ] {
+            assert_eq!(opening_auth_token(hash), None, "{hash}");
         }
     }
 

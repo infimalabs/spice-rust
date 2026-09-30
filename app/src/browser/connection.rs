@@ -1,5 +1,28 @@
 use super::*;
 
+const BROWSER_AUTH_TOKEN_STORAGE: &str = "spice:canvas-auth-token:v1";
+
+/// Capture the bearer token carried by a remote Canvas opening before the
+/// fragment becomes ordinary route state.
+pub(super) fn capture_opening_auth_token() -> Result<bool, String> {
+    let window = web_sys::window().ok_or_else(|| "browser window is unavailable".to_owned())?;
+    let hash = window
+        .location()
+        .hash()
+        .map_err(|_| "browser URL fragment is unavailable".to_owned())?;
+    let Some(token) = crate::view::opening_auth_token(&hash) else {
+        return Ok(false);
+    };
+    let storage = window
+        .session_storage()
+        .map_err(|_| "browser session storage is unavailable".to_owned())?
+        .ok_or_else(|| "browser session storage is unavailable".to_owned())?;
+    storage
+        .set_item(BROWSER_AUTH_TOKEN_STORAGE, token)
+        .map_err(|_| "browser auth token could not be retained".to_owned())?;
+    Ok(true)
+}
+
 /// Run connections one after another for as long as the surface is mounted.
 ///
 /// Each attempt is awaited to completion before the next begins, and the socket
@@ -1149,15 +1172,23 @@ pub(super) async fn request_external_speech(
 }
 
 fn browser_auth_token() -> Result<Option<String>, String> {
-    let hash = web_sys::window()
+    let Some(storage) = web_sys::window()
         .ok_or_else(|| "browser window is unavailable".to_owned())?
-        .location()
-        .hash()
-        .map_err(|_| "browser URL fragment is unavailable".to_owned())?;
-    Ok(hash
-        .strip_prefix('#')
-        .filter(|token| !token.is_empty())
-        .map(str::to_owned))
+        .session_storage()
+        .ok()
+        .flatten()
+    else {
+        return Ok(None);
+    };
+    let token = storage
+        .get_item(BROWSER_AUTH_TOKEN_STORAGE)
+        .map_err(|_| "browser auth token could not be read".to_owned())?;
+    if let Some(token) = token.as_deref()
+        && !crate::view::canvas_auth_token_is_valid(token)
+    {
+        return Err("retained browser auth token is invalid".to_owned());
+    }
+    Ok(token)
 }
 
 fn authenticated_path(path: &str, token: Option<&str>) -> String {

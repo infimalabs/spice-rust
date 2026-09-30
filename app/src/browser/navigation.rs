@@ -105,7 +105,7 @@ fn location_route() -> NormalizedCanvasLocation {
     normalize_canvas_location(&search, &hash)
 }
 
-fn replace_location(route: &CanvasRoute) {
+pub(super) fn replace_location(route: &CanvasRoute) {
     let window = web_sys::window().expect("Canvas navigation requires a browser window");
     let pathname = window
         .location()
