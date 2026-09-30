@@ -37,7 +37,68 @@ pub(super) struct Controls<'a> {
     pub creator_messages: &'a [Rc<wire::AgentMessage>],
 }
 
+#[derive(Clone, Copy)]
+struct CellGutter<'a> {
+    reserved: bool,
+    label: Option<&'a str>,
+}
+
+fn render_group_label(label: Option<&str>) -> Html {
+    label.map_or_else(
+        Html::default,
+        |label| html! { <p class="work-card-group-label">{label}</p> },
+    )
+}
+
+fn card_return_id(
+    has_chat_target: bool,
+    born: &wire::TaskStamp,
+    messages: Option<&MessageControls<'_>>,
+) -> Option<String> {
+    has_chat_target.then(|| {
+        messages.map_or_else(
+            || format!("work-task-{born}"),
+            |messages| format!("team-work-task-{}-{born}", messages.team),
+        )
+    })
+}
+
+fn open_task(select: &Callback<wire::TaskStamp>, born: &wire::TaskStamp) -> Callback<MouseEvent> {
+    let select = select.clone();
+    let born = born.clone();
+    Callback::from(move |_| select.emit(born.clone()))
+}
+
 pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
+    render_cell(
+        task,
+        controls,
+        CellGutter {
+            reserved: false,
+            label: None,
+        },
+    )
+}
+
+/// A global-board card with an optional label in the lane's reserved group
+/// gutter. Every global card uses this path so changing the arrangement only
+/// changes label content and keyed card order.
+pub(super) fn render_grouped(
+    task: &WorkTask<'_>,
+    controls: &Controls<'_>,
+    group_label: Option<&str>,
+) -> Html {
+    render_cell(
+        task,
+        controls,
+        CellGutter {
+            reserved: true,
+            label: group_label,
+        },
+    )
+}
+
+fn render_cell(task: &WorkTask<'_>, controls: &Controls<'_>, gutter: CellGutter<'_>) -> Html {
     let row = task.row();
     let statement = &row.statement.body;
     let workflow = &row.workflow.body;
@@ -57,26 +118,23 @@ pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
         controls.creator_messages.iter().map(AsRef::as_ref),
     );
     let has_chat_target = message_target.is_some() || creator_context.is_some();
-    let return_id = has_chat_target.then(|| {
-        controls.messages.as_ref().map_or_else(
-            || format!("work-task-{born}"),
-            |messages| format!("team-work-task-{}-{born}", messages.team),
-        )
-    });
+    let return_id = card_return_id(has_chat_target, &born, controls.messages.as_ref());
     let is_selected = controls.selected == Some(&born);
     let is_pinned = controls
         .map
         .as_ref()
         .is_some_and(|map| map.state.pinned(&born));
-    let open = {
-        let select = controls.select.clone();
-        let born = born.clone();
-        Callback::from(move |_| select.emit(born.clone()))
-    };
+    let cell_class = classes!(
+        "work-card-cell",
+        gutter.reserved.then_some("work-card-cell--grouped"),
+    );
+    let group_label = render_group_label(gutter.label);
+    let open = open_task(controls.select, &born);
     // The cell is the list item and the size container, so a card's layout
     // follows its own width rather than the section that holds the list.
     html! {
-        <div key={born.to_string()} class="work-card-cell">
+        <div key={born.to_string()} class={cell_class}>
+            {group_label}
             <article
                 id={return_id}
                 tabindex={has_chat_target.then_some("-1")}

@@ -312,12 +312,14 @@ fn render_lane(
                 } else {
                     <div class="work-card-list">
                         {for clusters.iter().flat_map(|cluster| {
-                            let separator = cluster_label(cluster.key).map(|name| html! {
-                                <p key={format!("cluster:{name}")} class="work-lane-cluster">{name}</p>
-                            });
-                            separator
-                                .into_iter()
-                                .chain(cluster.tasks.iter().map(|task| work_card::render(task, cards)))
+                            let label = cluster_label(cluster.key);
+                            cluster.tasks.iter().enumerate().map(move |(index, task)| {
+                                work_card::render_grouped(
+                                    task,
+                                    cards,
+                                    if index == 0 { label } else { None },
+                                )
+                            })
                         })}
                     </div>
                 }
@@ -326,12 +328,12 @@ fn render_lane(
     }
 }
 
-/// The separator text for one cluster; the unclustered lane has none.
-fn cluster_label(key: WorkClusterKey<'_>) -> Option<String> {
+/// The gutter text for a cluster; the unclustered lane leaves it empty.
+const fn cluster_label(key: WorkClusterKey<'_>) -> Option<&str> {
     match key {
         WorkClusterKey::Lane => None,
-        WorkClusterKey::Project(project) => Some(project.to_owned()),
-        WorkClusterKey::Phase(phase) => Some(phase.to_owned()),
+        WorkClusterKey::Project(project) => Some(project),
+        WorkClusterKey::Phase(phase) => Some(phase),
     }
 }
 

@@ -416,10 +416,14 @@ One board shows all open work in ready, in-flight, blocked, and deferred rows.
 Those lifecycle categories stay fixed while cards fill each row in allocator
 order and scroll horizontally at overflow, so task churn changes a row's
 contents rather than growing the board or moving status labels. Creation order
-and project/phase clusters are alternate arrangements of the same cards. Empty
-rows remain visible, status is textual as well as colored, and narrow layouts
-retain the labeled rows with narrower card tracks. Task detail and relationship
-views preserve the same identity and evidence.
+and project/phase clusters are alternate arrangements of the same keyed cards.
+Every lane permanently reserves a label gutter above its card track; an active
+cluster names itself at the top-left of its first card, while an unclustered or
+empty lane leaves the same space blank. Arrangement changes therefore reorder
+cards and replace labels without moving any card vertically. Empty rows remain
+visible, status is textual as well as colored, and narrow layouts retain the
+labeled rows with narrower card tracks. Task detail and relationship views
+preserve the same identity and evidence.
 
 Tasks created from a retained transcript expose the same **Creator context**
 link on their Work card, Chat quick view, and full detail drawer. The link
