@@ -139,9 +139,8 @@ body:has(.shell--mosaic),
 .canvas-menu > summary::-webkit-details-marker { display: none; }
 .canvas-menu-well {
   grid-area: 1 / 1; position: relative;
-  width: 31px; min-width: 31px; height: 25px; overflow: hidden;
+  width: 100%; min-width: 0; height: 100%; overflow: hidden;
   border-radius: var(--canvas-radius-pill); background: var(--page);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-edge) 18%, transparent);
 }
 .canvas-menu-pepper {
   --canvas-pepper-halo: drop-shadow(0 0 1px var(--page)) drop-shadow(0 0 1px var(--page));
