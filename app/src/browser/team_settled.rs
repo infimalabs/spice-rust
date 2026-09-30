@@ -6,6 +6,8 @@ use crate::runtime::TeamSettledRequest;
 #[derive(Clone)]
 pub(super) struct Controls {
     pub validation: UseStateHandle<BTreeMap<CanonicalUuid, String>>,
+    pub query: UseStateHandle<BTreeMap<CanonicalUuid, String>>,
+    pub cutoff: UseStateHandle<BTreeMap<CanonicalUuid, String>>,
     pub apply: Callback<CanonicalUuid>,
     pub clear: Callback<CanonicalUuid>,
     pub newer: Callback<CanonicalUuid>,
@@ -33,6 +35,20 @@ fn update_validation(
         issues.remove(&team);
     }
     validation.set(issues);
+}
+
+pub(super) fn update_input(
+    values: &UseStateHandle<BTreeMap<CanonicalUuid, String>>,
+    team: CanonicalUuid,
+    value: String,
+) {
+    let mut next = (**values).clone();
+    if value.is_empty() {
+        next.remove(&team);
+    } else {
+        next.insert(team, value);
+    }
+    values.set(next);
 }
 
 fn queue(
@@ -78,6 +94,8 @@ pub(super) fn use_controls(
     shown: Vec<CanonicalUuid>,
 ) -> Controls {
     let validation = use_state(BTreeMap::new);
+    let query = use_state(BTreeMap::<CanonicalUuid, String>::new);
+    let cutoff = use_state(BTreeMap::<CanonicalUuid, String>::new);
     let revision = surface
         .read()
         .as_ref()
@@ -97,9 +115,11 @@ pub(super) fn use_controls(
         let sender = sender.clone();
         let surface = surface.clone();
         let validation = validation.clone();
+        let query = query.clone();
+        let cutoff = cutoff.clone();
         Callback::from(move |team: CanonicalUuid| {
-            let query = super::work_history::input_value(&query_id(team));
-            let cutoff = super::work_history::input_value(&cutoff_id(team));
+            let query = query.get(&team).cloned().unwrap_or_default();
+            let cutoff = cutoff.get(&team).cloned().unwrap_or_default();
             match crate::runtime::work_history_completion_cutoff(&cutoff) {
                 Ok(completed_before) => {
                     update_validation(&validation, team, None);
@@ -115,9 +135,11 @@ pub(super) fn use_controls(
         let sender = sender.clone();
         let surface = surface.clone();
         let validation = validation.clone();
+        let query = query.clone();
+        let cutoff = cutoff.clone();
         Callback::from(move |team: CanonicalUuid| {
-            super::work_history::clear_input(&query_id(team));
-            super::work_history::clear_input(&cutoff_id(team));
+            update_input(&query, team, String::new());
+            update_input(&cutoff, team, String::new());
             update_validation(&validation, team, None);
             queue(&sender, &surface, move |runtime| {
                 runtime.filter_team_settled(team, String::new(), None)
@@ -149,6 +171,8 @@ pub(super) fn use_controls(
     });
     Controls {
         validation,
+        query,
+        cutoff,
         apply,
         clear,
         newer,

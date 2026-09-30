@@ -14,7 +14,7 @@ pub(super) struct Controls {
     pub retry: Callback<MouseEvent>,
 }
 
-pub(super) fn input_value(id: &str) -> String {
+fn input_value(id: &str) -> String {
     web_sys::window()
         .and_then(|window| window.document())
         .and_then(|document| document.get_element_by_id(id))
@@ -23,7 +23,7 @@ pub(super) fn input_value(id: &str) -> String {
         .unwrap_or_default()
 }
 
-pub(super) fn clear_input(id: &str) {
+fn clear_input(id: &str) {
     if let Some(input) = web_sys::window()
         .and_then(|window| window.document())
         .and_then(|document| document.get_element_by_id(id))

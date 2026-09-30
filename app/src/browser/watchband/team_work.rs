@@ -266,6 +266,32 @@ fn render_settled_finder(settled: &Settled<'_, '_, '_>, team: wire::CanonicalUui
     let query_id = super::super::team_settled::query_id(team);
     let cutoff_id = super::super::team_settled::cutoff_id(team);
     let validation = settled.controls.validation.get(&team);
+    let query_value = settled
+        .controls
+        .query
+        .get(&team)
+        .cloned()
+        .unwrap_or_default();
+    let cutoff_value = settled
+        .controls
+        .cutoff
+        .get(&team)
+        .cloned()
+        .unwrap_or_default();
+    let on_query = {
+        let values = settled.controls.query.clone();
+        Callback::from(move |event: InputEvent| {
+            let input: web_sys::HtmlInputElement = event.target_unchecked_into();
+            super::super::team_settled::update_input(&values, team, input.value());
+        })
+    };
+    let on_cutoff = {
+        let values = settled.controls.cutoff.clone();
+        Callback::from(move |event: InputEvent| {
+            let input: web_sys::HtmlInputElement = event.target_unchecked_into();
+            super::super::team_settled::update_input(&values, team, input.value());
+        })
+    };
     let apply = {
         let apply = settled.controls.apply.clone();
         Callback::from(move |_: MouseEvent| apply.emit(team))
@@ -284,11 +310,18 @@ fn render_settled_finder(settled: &Settled<'_, '_, '_>, team: wire::CanonicalUui
                         type="search"
                         maxlength={wire::intent::TASK_HISTORY_QUERY_BYTES_MAX.to_string()}
                         placeholder="Handle, title, project, or description"
+                        value={query_value}
+                        oninput={on_query}
                     />
                 </label>
                 <label>
                     <span>{"Completed by"}</span>
-                    <input id={cutoff_id} type="date" />
+                    <input
+                        id={cutoff_id}
+                        type="date"
+                        value={cutoff_value}
+                        oninput={on_cutoff}
+                    />
                 </label>
                 <div class="work-history-filter-actions canvas-control-rail team-mode-rail">
                     <button type="button" class="team-mode" onclick={apply}>{"Apply"}</button>
