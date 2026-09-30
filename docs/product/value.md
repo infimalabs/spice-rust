@@ -168,7 +168,7 @@ the journal and board do not.
 
 ```mermaid
 flowchart LR
-  R["eligible candidate"] --> S{"actor's own<br/>unassigned review?"}
+  R["eligible candidate"] --> S{"actor's own unassigned review,<br/>or a row it freed?"}
   S -- no --> E["ordinary class"]
   S -- yes --> L["last-resort class"]
   E --> A["select by priority,<br/>graph weight, urgency, locality"]
@@ -180,7 +180,11 @@ numeric priority adjustment. Any eligible candidate that is not the actor's own
 unassigned review outranks every such self-review before priority, graph weight,
 urgency, and locality are compared. Only when no other eligible work exists does
 the self-review class become selectable, so a truly quiet solo board never
-deadlocks.
+deadlocks. The claim reply names such a win as the last resort and asks for a
+verdict. A row the lane explicitly freed joins the same class: the lane drains
+its other work first, and when the row returns the reply reminds it to record
+what the row waits on (`task depends`, `task require`, or `task defer`) rather
+than free it again.
 
 **Value:** the fleet gets independent review whenever it *can*, and degrades to
 progress rather than stalling when it can't. This is the sharpest example of the

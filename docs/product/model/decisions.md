@@ -12,7 +12,7 @@ tie-break for the one above.
 flowchart TD
   subgraph GLOBAL["global work value, strict order"]
     direction LR
-    E["eligible candidates"] --> Class["class<br/>self-review is last resort"]
+    E["eligible candidates"] --> Class["class<br/>own review and freed rows are last resort"]
     Class --> Priority["effective priority<br/>inherited from work it unblocks"]
     Priority --> Weight["downstream weight<br/>releases more of the graph"]
   end
@@ -35,7 +35,8 @@ unblocks**. Otherwise a critical task waits behind its own low-priority blocker.
 reduces context switching but must never starve the graph.
 
 **Invariant —** Self-review is never *excluded*, only ranked last. A quiet board
-still hands an actor its own review rather than stalling.
+still hands an actor its own review rather than stalling. A row the actor freed
+joins that last-resort class under the same law.
 
 **Invariant —** Peer spread is anti-affinity: prefer a cell peers are not in, so
 a fleet spreads across the board instead of converging on one area.

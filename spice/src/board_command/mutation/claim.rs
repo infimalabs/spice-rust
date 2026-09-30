@@ -279,7 +279,7 @@ fn claim_answer(
         creation_context: Some(task_creation_context_output(&selected.statement().creation)),
         origin_context,
         next,
-        phase: Some(claim_phase(selected.workflow())),
+        phase: Some(claim_phase(selected, command.actor())),
         transplant: transplant.cloned(),
     }
 }
@@ -405,11 +405,30 @@ fn claim_activation_next_action(selected: &Entry) -> Box<str> {
 /// The handle and the next command say nothing about what kind of work this
 /// is, and the phase decides whether the deliverable is board state or
 /// repository files. A lane that has to read the task again to learn that has
-/// already started the wrong work.
-fn claim_phase(workflow: &wire::WorkflowHead) -> wire::intent::ClaimPhase {
+/// already started the wrong work. `selected` is the row as it stood before
+/// this win, so the lane's own review and a row it freed still read as such,
+/// and a freed row carries the reminder of how to say what it waits on.
+fn claim_phase(selected: &Entry, actor: &wire::Actor) -> wire::intent::ClaimPhase {
+    let workflow = selected.workflow();
+    let deliverable = if board::is_self_review(selected, actor) {
+        Some(board::phase::SELF_REVIEW_DELIVERABLE)
+    } else {
+        board::phase::deliverable(&workflow.phase)
+    };
+    let deliverable = match (deliverable, board::is_released_by(selected, actor)) {
+        (deliverable, false) => deliverable.map(Box::from),
+        (Some(deliverable), true) => Some(
+            format!(
+                "{deliverable}; {}",
+                board::phase::released_reminder(selected.handle())
+            )
+            .into_boxed_str(),
+        ),
+        (None, true) => Some(board::phase::released_reminder(selected.handle()).into_boxed_str()),
+    };
     wire::intent::ClaimPhase {
         name: workflow.phase.clone(),
-        deliverable: board::phase::deliverable(&workflow.phase).map(Box::from),
+        deliverable,
     }
 }
 
