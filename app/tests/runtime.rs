@@ -15,6 +15,8 @@ mod detail;
 mod invalidation_and_chronology;
 #[path = "runtime/lane_authority.rs"]
 mod lane_authority;
+#[path = "runtime/member_control.rs"]
+mod member_control;
 #[path = "runtime/message_history.rs"]
 mod message_history;
 #[path = "runtime/renewal.rs"]

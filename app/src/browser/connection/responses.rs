@@ -310,11 +310,11 @@ fn apply_mutating_response(
                 stale: crate::Stale::default(),
             }
         }
-        PendingKind::LaneRenewal {
-            team,
-            lane,
-            requested,
-        } => apply_lane_renewal_response(session, handles, team, lane, requested, bytes)?,
+        kind @ (PendingKind::LaneRenewal { .. }
+        | PendingKind::MemberLane { .. }
+        | PendingKind::LaneRetune { .. }) => {
+            apply_member_response(session, handles, runtime, kind, bytes)?
+        }
         PendingKind::Inbox { covered } => {
             apply_inbox_response(session, handles, runtime, &covered, bytes)?
         }
@@ -562,6 +562,75 @@ fn apply_lane_response(
 /// success clears only the issue this family raised.
 const RENEWAL_ISSUE: &str = "Could not renew this agent";
 
+/// Answers to commands a member's own controls issue, each settling the
+/// member reservation it carries.
+fn apply_member_response(
+    session: &Session,
+    handles: &SurfaceHandles,
+    runtime: &mut CanvasRuntime,
+    kind: PendingKind,
+    bytes: &[u8],
+) -> Result<CommandApplication, String> {
+    Ok(match kind {
+        PendingKind::LaneRenewal {
+            team,
+            lane,
+            requested,
+            member,
+        } => {
+            let issue =
+                apply_lane_renewal_response(session, handles, team, lane, requested, bytes)?;
+            if let Some(member) = member {
+                runtime.settle_member_command(&member, issue);
+            }
+            CommandApplication::ordinary(true)
+        }
+        PendingKind::MemberLane { request } => {
+            let admitted: crate::Admitted<Response<wire::intent::LaneChangeAnswer>> =
+                admit_response(session, bytes)?;
+            let outcome = &admitted.get().outcome;
+            if let wire::Outcome::Reply(reply) = outcome
+                && reply.body.lane != request.lane
+            {
+                return Err(format!(
+                    "lane state response named {}; expected {}",
+                    reply.body.lane, request.lane
+                ));
+            }
+            runtime
+                .settle_member_command(&request, outcome_issue(request.command.failure(), outcome));
+            CommandApplication::ordinary(matches!(outcome, wire::Outcome::Reply(_)))
+        }
+        PendingKind::LaneRetune { request } => {
+            let admitted: crate::Admitted<Response<wire::intent::LaneAnswer>> =
+                admit_response(session, bytes)?;
+            let refresh = topology_mutation_requires_refresh(&admitted.get().outcome);
+            let applied = runtime.apply_lanes(&admitted);
+            if let wire::Outcome::Reply(reply) = &admitted.get().outcome
+                && applied
+            {
+                handles
+                    .team_controls
+                    .dispatch(TeamControlAction::SyncLanes {
+                        answer: reply.body.clone(),
+                        settle: None,
+                    });
+            }
+            runtime.settle_member_command(
+                &request,
+                outcome_issue(request.command.failure(), &admitted.get().outcome),
+            );
+            CommandApplication {
+                refresh,
+                lane_authority: applied,
+                stale: crate::Stale::default(),
+            }
+        }
+        _ => unreachable!("member response partition is closed"),
+    })
+}
+
+/// Apply one renewal answer, returning the refusal it reported, if any.
 fn apply_lane_renewal_response(
     session: &Session,
     handles: &SurfaceHandles,
@@ -569,7 +638,7 @@ fn apply_lane_renewal_response(
     lane: CanonicalUuid,
     requested: bool,
     bytes: &[u8],
-) -> Result<CommandApplication, String> {
+) -> Result<Option<String>, String> {
     let admitted: crate::Admitted<Response<wire::intent::LaneRenewalAnswer>> =
         admit_response(session, bytes)?;
     match &admitted.get().outcome {
@@ -592,6 +661,7 @@ fn apply_lane_renewal_response(
                     quote: None,
                     family: RENEWAL_ISSUE,
                 });
+            Ok(None)
         }
         outcome => {
             // The control itself only knows durable lane state, so the refusal
@@ -602,11 +672,11 @@ fn apply_lane_renewal_response(
             handles.composer_drafts.dispatch(ComposerAction::SetIssue {
                 lane: lane.to_string(),
                 quote: None,
-                issue,
+                issue: issue.clone(),
             });
+            Ok(Some(issue))
         }
     }
-    Ok(CommandApplication::ordinary(true))
 }
 
 fn apply_inbox_response(

@@ -151,6 +151,7 @@ fn member(id: &str, worktree: &str) -> LaneMember {
         life: "docker".to_owned(),
         vendor: "omp".parse().expect("the fixture spells a vendor name"),
         model: Some("openai-codex/gpt-5.2-codex".to_owned()),
+        seat_model: None,
         effort: Some("high".to_owned()),
         occupant: Some(uuid(OCCUPANT)),
         session: Some("session-fixture".to_owned()),

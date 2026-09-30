@@ -206,6 +206,7 @@ pub(super) fn render_agent_details(
     team: CanonicalUuid,
     task_inspector: &crate::browser::message_task_inspector::Context,
     controls: &UseReducerHandle<TeamControls>,
+    member_command: &Callback<(CanonicalUuid, crate::runtime::MemberCommand)>,
 ) -> Html {
     debug_assert_eq!(
         member.lane, standing.lane,
@@ -255,6 +256,8 @@ pub(super) fn render_agent_details(
                     {" · "}
                     {presence_age}
                 </summary>
+                <div class="team-dash-member-seat">
+                {super::member_controls::render(runtime, member, standing, member_command)}
                 <dl>
                     <div>
                         <dt>{"Agent channel"}</dt>
@@ -295,6 +298,7 @@ pub(super) fn render_agent_details(
                         </div>
                     })}
                 </dl>
+                </div>
             </details>
             {render_dash_task(standing, task_inspector)}
             {render_dash_activity(runtime, standing, team, controls)}

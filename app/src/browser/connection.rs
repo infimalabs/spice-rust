@@ -361,6 +361,7 @@ async fn send_topology_as(
             team,
             lane,
             requested,
+            ..
         } => {
             send_untracked_as(
                 principal,
@@ -377,6 +378,10 @@ async fn send_topology_as(
             )
             .await
         }
+        ClientAction::RetuneLane {
+            topology_revision,
+            request,
+        } => send_lane_retune(principal, writer, id, *topology_revision, request).await,
         ClientAction::ArrangeTeams {
             topology_revision,
             teams,
@@ -419,6 +424,31 @@ async fn send_topology_as(
     }
 }
 
+async fn send_lane_retune(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    id: CanonicalUuid,
+    topology_revision: u64,
+    request: &crate::runtime::MemberRequest,
+) -> Result<(), String> {
+    let crate::runtime::MemberCommand::Retune { model } = &request.command else {
+        return Err("a lane retune carried a non-retune member command".to_owned());
+    };
+    send_untracked_as(
+        principal,
+        writer,
+        id,
+        CommandKind::LaneRetune,
+        vec![],
+        LaneRetune {
+            topology_revision,
+            lane: request.lane,
+            model: model.clone(),
+        },
+    )
+    .await
+}
+
 fn topology_pending_kind(action: &ClientAction) -> PendingKind {
     match action {
         ClientAction::Seat { .. } => PendingKind::LaneSeat,
@@ -426,11 +456,16 @@ fn topology_pending_kind(action: &ClientAction) -> PendingKind {
             team,
             lane,
             requested,
+            member,
             ..
         } => PendingKind::LaneRenewal {
             team: *team,
             lane: *lane,
             requested: *requested,
+            member: member.clone(),
+        },
+        ClientAction::RetuneLane { request, .. } => PendingKind::LaneRetune {
+            request: request.clone(),
         },
         ClientAction::ConfigureTeam { team, life, .. } => PendingKind::TeamConfigure {
             team: *team,
@@ -732,8 +767,14 @@ async fn dispatch_action(
         } => send_message_history(principal, writer, *generation, *lane, *before)
             .await
             .map(|_| None),
+        ClientAction::LaneState { request } => {
+            send_member_lane_state(principal, writer, actions, request)
+                .await
+                .map(|_| None)
+        }
         ClientAction::Seat { .. }
         | ClientAction::RenewLane { .. }
+        | ClientAction::RetuneLane { .. }
         | ClientAction::ArrangeTeams { .. }
         | ClientAction::ConfigureTeam { .. } => {
             unreachable!("topology mutation dispatch is partitioned")
@@ -744,6 +785,40 @@ async fn dispatch_action(
                 .map(Some)
         }
     }
+}
+
+/// Wake, drain, or remove one seat on behalf of its Dash member.
+async fn send_member_lane_state(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    request: &crate::runtime::MemberRequest,
+) -> Result<CanonicalUuid, String> {
+    use crate::runtime::MemberCommand;
+    let action = match request.command {
+        MemberCommand::Wake => LaneAction::Wake,
+        MemberCommand::Drain => LaneAction::Drain,
+        MemberCommand::Remove => LaneAction::Remove,
+        MemberCommand::Renew { .. } | MemberCommand::Retune { .. } => {
+            return Err("a lane state change carried a non-lifecycle member command".to_owned());
+        }
+    };
+    send_typed(
+        principal,
+        writer,
+        actions,
+        PendingKind::MemberLane {
+            request: request.clone(),
+        },
+        CommandKind::LaneState,
+        vec![],
+        LaneState {
+            lane: request.lane,
+            action,
+            worktree: None,
+        },
+    )
+    .await
 }
 
 async fn dispatch_authored_action(

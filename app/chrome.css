@@ -657,7 +657,7 @@ body:has(.shell--mosaic),
   overflow: visible;
 }
 .team-dash-member-disclosure[open] { display: block; }
-.team-dash-member-disclosure summary {
+.team-dash-member-disclosure > summary {
   height: var(--team-dash-member-summary-height);
   padding: 7px 9px;
   color: var(--muted);
@@ -665,9 +665,9 @@ body:has(.shell--mosaic),
   font: 700 .62rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
   list-style-position: inside;
 }
-.team-dash-member-disclosure summary:hover,
-.team-dash-member-disclosure summary:focus-visible { color: var(--ink); }
-.team-dash-member-disclosure dl {
+.team-dash-member-disclosure > summary:hover,
+.team-dash-member-disclosure > summary:focus-visible { color: var(--ink); }
+.team-dash-member-seat {
   position: absolute;
   z-index: 2;
   inset: calc(
@@ -679,13 +679,63 @@ body:has(.shell--mosaic),
   gap: 7px;
   min-width: 0;
   min-height: 0;
-  margin: 0;
   padding: 7px 9px 9px;
   overflow: auto;
   border-top: 1px solid var(--control-line-soft);
   background: var(--panel);
 }
+.team-dash-member-disclosure dl {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  margin: 0;
+}
 .team-dash-member-disclosure dl div { min-width: 0; }
+.team-dash-member-controls {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  font-size: .64rem;
+}
+.team-dash-member-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px;
+}
+.team-dash-member-actions > .team-mode,
+.team-dash-confirm > summary { min-height: 22px; padding-inline: 8px; }
+.team-dash-confirm > summary { list-style: none; cursor: pointer; }
+.team-dash-confirm > summary::-webkit-details-marker { display: none; }
+.team-dash-confirm[open] { flex-basis: 100%; }
+.team-dash-confirm-body {
+  display: grid;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 5px 7px;
+  border: 1px solid var(--control-line-soft);
+  border-radius: var(--canvas-radius-control);
+}
+.team-dash-confirm-body p { margin: 0; overflow-wrap: anywhere; }
+.team-dash-model {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px;
+}
+.team-dash-model label {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: .57rem;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.team-dash-model input {
+  min-width: 0;
+  font: .64rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.team-dash-member-progress { margin: 0; color: var(--muted); }
+.team-dash-member-controls .form-refusal { margin: 0; overflow-wrap: anywhere; }
 .team-dash-member-disclosure dt {
   color: var(--muted);
   font-size: .57rem;
