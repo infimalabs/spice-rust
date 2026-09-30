@@ -1288,6 +1288,7 @@ a.relative-age {
 .team-work-flow { display: grid; gap: 8px; }
 .team-work-history { container-type: inline-size; grid-column: 1 / -1; min-width: 0; }
 @container (max-width: 40rem) {
+  .team-work-history .work-history-list { grid-template-columns: minmax(0, 1fr); }
   .team-work-history .work-history-finder { grid-template-columns: minmax(0, 1fr); }
   .team-work-history .work-history-filter-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .team-work-history .work-history-page-actions { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; }

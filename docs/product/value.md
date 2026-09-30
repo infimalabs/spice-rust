@@ -370,9 +370,10 @@ A full-width Settled history shows tasks the team created or whose last winning
 claim a current member held, newest first. Search and Completed-by narrow it,
 and range and Newer/Older replace one bounded page at a time without mixing
 teams. Its controls share one row when the pane can hold them and stack without
-clipping when it cannot; its total stays beside the heading. It reads only
-while that pane is on screen, again when work leaves the open board or the
-connection resumes.
+clipping when it cannot; its total stays beside the heading. At team-history
+widths of 40rem or less, cards form one column regardless of viewport width.
+It reads only while that pane is on screen, again when work leaves the open
+board or the connection resumes.
 
 A Kept jobs table lists every command a member keeps beyond its call, team-wide
 and oldest first: one row per job when wide; in lane-shaped panes, a labeled,
