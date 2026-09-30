@@ -442,6 +442,20 @@ pub(in crate::board_command) struct TaskShowHistory<'a> {
     pub(in crate::board_command) acknowledgments: &'a [wire::intent::TaskAcknowledgment],
 }
 
+fn task_flow_line(flow: &[wire::Phase]) -> String {
+    let phase_bytes = flow.iter().map(|phase| phase.as_str().len()).sum::<usize>();
+    let mut line =
+        String::with_capacity("flow ".len() + phase_bytes + flow.len().saturating_sub(1));
+    line.push_str("flow ");
+    for (index, phase) in flow.iter().enumerate() {
+        if index != 0 {
+            line.push(',');
+        }
+        line.push_str(phase.as_str());
+    }
+    line
+}
+
 #[cfg(test)]
 pub(in crate::board_command) fn task_show(
     board: &BoardAnswer,
@@ -471,15 +485,7 @@ pub(in crate::board_command) fn task_show_with_origin(
         format!("origin {}", statement.provenance),
         format!("project {}", statement.project),
         format!("phase {}", workflow.phase),
-        format!(
-            "flow {}",
-            workflow
-                .flow
-                .iter()
-                .map(wire::Phase::as_str)
-                .collect::<Vec<_>>()
-                .join(",")
-        ),
+        task_flow_line(&workflow.flow),
         format!("review {}", workflow.review),
         format!("status {}", workflow.status),
         format!("version {}", statement.revision),
