@@ -21,8 +21,8 @@ pub(super) struct ActionsProps {
 #[function_component(Actions)]
 pub(super) fn actions(props: &ActionsProps) -> Html {
     let busy = use_state_eq(|| false);
-    // The lightbox is a modal dialog in the top layer, above the root toast,
-    // so it reports through its own instance.
+    // Results show inside the dialog, beside the image they report on, through
+    // the lightbox's own toast instance.
     let (status, shown, notify) = toast::use_toast();
     let copy_refusal = use_memo((), |()| clipboard::image_refusal());
     let exportable = use_memo(props.source.clone(), |source| export::readable(source));
