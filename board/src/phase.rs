@@ -147,6 +147,30 @@ pub fn deliverable(phase: &Phase) -> Option<&'static str> {
     }
 }
 
+/// The review deliverable when the allocator hands an actor its own review.
+///
+/// Self-review is ranked last, never excluded, so a quiet board hands it out
+/// rather than stalling.
+pub const SELF_REVIEW_DELIVERABLE: &str = "a verdict is the deliverable: this is your own \
+     review, handed as the last resort because no peer work is eligible; inspect the \
+     integrated diff, check its evidence, and record a clean or finding review";
+
+/// What a lane is told when it wins back a row it freed.
+///
+/// A freed row ranks last rather than being excluded, so it returns once the
+/// lane has nothing else. Freeing it again would only repeat the loop; the
+/// lasting answer is to state what the row waits on.
+#[must_use]
+pub fn released_reminder(task: &wire::TaskHandle) -> String {
+    format!(
+        "you freed {task} earlier; if it still cannot proceed, record why instead of \
+         freeing it again: \
+         `spice task depends {task} AFTER...` for a prerequisite task, \
+         `spice task require {task} --journal-schema SCHEMA | --trust-grant DIGEST | \
+         --appliance-after VERSION` for the environment, or `spice task defer {task} UNTIL`"
+    )
+}
+
 fn bind_claim(entry: &Entry, active: &Active<'_>) -> Result<(), PhaseRefusal> {
     if active.handle() == entry.handle() {
         Ok(())

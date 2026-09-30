@@ -12,7 +12,7 @@ pub struct Selection<'a> {
     urgency: Urgency,
     effective_priority: i64,
     downstream_weight: usize,
-    self_review: bool,
+    last_resort: bool,
     peer_occupied: bool,
     movement: u8,
 }
@@ -42,7 +42,8 @@ impl<'a> Selection<'a> {
 /// This is the only allocation path in `board`. It derives completed
 /// dependencies from the same supplied head set, applies ordinary task
 /// winnowing and then the one derived environment filter, ranks peer work before
-/// the actor's own review, then effective priority and downstream weight. Queue
+/// the actor's last-resort rows (its own review, and rows it freed), then
+/// effective priority and downstream weight. Queue
 /// ages within `band` of that group's oldest row admit locality: an active peer
 /// in the same project/phase cell repels, then movement from `recent_cell`
 /// costs one each for changing project and phase. Rows outside the band cannot
@@ -109,7 +110,7 @@ fn candidates<'a>(
                 urgency: Urgency::from_heads(entry),
                 effective_priority,
                 downstream_weight: downstream.get(entry.born()).copied().unwrap_or(0),
-                self_review: is_self_review(entry, actor),
+                last_resort: is_self_review(entry, actor) || is_released_by(entry, actor),
                 peer_occupied: peer_occupies(entries, entry, actor),
                 movement: recent_cell.map_or(0, |recent| movement_cost(recent, entry)),
             }
@@ -119,20 +120,20 @@ fn candidates<'a>(
 
 /// Index of the one candidate the allocator hands out first.
 ///
-/// Peer work outranks the actor's own review, then effective priority, then
+/// Ordinary work outranks the actor's last-resort rows, then effective priority, then
 /// downstream weight. Within `band` of that group's greatest urgency, peer
 /// occupancy repels, then locality movement costs, then the handle decides.
 fn choose(candidates: &[Selection<'_>], band: u64) -> Option<usize> {
-    let peer_class = candidates.iter().any(|candidate| !candidate.self_review);
+    let peer_class = candidates.iter().any(|candidate| !candidate.last_resort);
     let effective_priority = candidates
         .iter()
-        .filter(|candidate| candidate.self_review != peer_class)
+        .filter(|candidate| candidate.last_resort != peer_class)
         .map(|candidate| candidate.effective_priority)
         .max()?;
     let downstream_weight = candidates
         .iter()
         .filter(|candidate| {
-            candidate.self_review != peer_class
+            candidate.last_resort != peer_class
                 && candidate.effective_priority == effective_priority
         })
         .map(|candidate| candidate.downstream_weight)
@@ -140,7 +141,7 @@ fn choose(candidates: &[Selection<'_>], band: u64) -> Option<usize> {
     let urgency = candidates
         .iter()
         .filter(|candidate| {
-            candidate.self_review != peer_class
+            candidate.last_resort != peer_class
                 && candidate.effective_priority == effective_priority
                 && candidate.downstream_weight == downstream_weight
         })
@@ -150,7 +151,7 @@ fn choose(candidates: &[Selection<'_>], band: u64) -> Option<usize> {
         .iter()
         .enumerate()
         .filter(|(_, candidate)| {
-            candidate.self_review != peer_class
+            candidate.last_resort != peer_class
                 && candidate.effective_priority == effective_priority
                 && candidate.downstream_weight == downstream_weight
                 && urgency.value().abs_diff(candidate.urgency.value()) <= band
@@ -214,7 +215,10 @@ pub fn recent_claim_cell(
     })
 }
 
-fn is_self_review(entry: &Entry, actor: &Actor) -> bool {
+/// Whether `entry` is `actor`'s own unassigned review: the class the allocator
+/// hands out only when no peer work is eligible.
+#[must_use]
+pub fn is_self_review(entry: &Entry, actor: &Actor) -> bool {
     let workflow = entry.workflow();
     workflow.phase.as_str() == "review"
         && workflow.review == "unassigned"
@@ -337,10 +341,16 @@ fn selectable(
 }
 
 fn eligible(entry: &Entry, actor: &Actor, completed: &BTreeSet<TaskStamp>) -> bool {
-    workable(entry, actor, completed) && unheld(entry) && !explicitly_released_by(entry, actor)
+    workable(entry, actor, completed) && unheld(entry)
 }
 
-fn explicitly_released_by(entry: &Entry, actor: &Actor) -> bool {
+/// Whether `actor` explicitly freed `entry` and nobody has claimed it since.
+///
+/// Such a row ranks last for that actor rather than being excluded, so a lane
+/// that frees a task drains its other work first yet still gets the row back
+/// on a quiet board.
+#[must_use]
+pub fn is_released_by(entry: &Entry, actor: &Actor) -> bool {
     entry.explicit_release()
         && entry.claim().is_some_and(|claim| {
             claim.disposition == ClaimDisposition::Freed && &claim.actor == actor

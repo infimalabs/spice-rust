@@ -36,12 +36,14 @@ fn drive_guidance_preserves_creator_team_on_claim_release() {
     let CommandAnswer::Claim(released) = released else {
         panic!("claim release did not return a claim answer");
     };
-    assert_eq!(released.next, None);
+    // The released row keeps its creator team, so Drive routing still admits it
+    // and the lane is sent back to the allocator, where it now ranks last.
+    assert_eq!(released.next.as_deref(), Some("spice task next"));
     clean(&root, bus);
 }
 
 #[test]
-fn explicit_release_clears_possession_and_skips_the_row_for_that_lane() {
+fn explicit_release_clears_possession_and_ranks_the_row_last_for_that_lane() {
     let (root, bus, epoch, seats) = fixture("drain-explicit-release", 1);
     authorize_lane_creation(&bus, epoch, &seats[0]);
     let lane = Actor::Lane(seats[0].lane);
@@ -98,7 +100,7 @@ fn explicit_release_clears_possession_and_skips_the_row_for_that_lane() {
     );
     claim_task(&bus, epoch, &seats[0], &lane, &next_task);
 
-    let continued = board(&bus, epoch, lane);
+    let continued = board(&bus, epoch, lane.clone());
     assert_eq!(
         at(&continued, &next_task)
             .claim
@@ -113,6 +115,19 @@ fn explicit_release_clears_possession_and_skips_the_row_for_that_lane() {
             .map(|claim| claim.body.disposition),
         Some(ClaimDisposition::Freed),
     );
+    let entries = actor_entries(&continued).expect("continued board projects to entries");
+    let subscription = allocation_subscription(&continued.residency.body, &lane)
+        .expect("lane has an allocation subscription");
+    let quiet = board::select(
+        &entries,
+        &lane,
+        &subscription,
+        continued.allocation_band,
+        continued.recent_cell.as_ref(),
+        &continued.environment(),
+    )
+    .expect("a freed row is ranked last, never excluded");
+    assert_eq!(quiet.entry().handle(), &released_task);
     clean(&root, bus);
 }
 
