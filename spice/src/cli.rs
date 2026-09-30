@@ -46,6 +46,19 @@ pub enum Principal {
     OperatorOrLane,
 }
 
+impl Principal {
+    /// How a refusal names the principal a leaf admits.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Local => "local",
+            Self::Operator => "operator",
+            Self::Lane => "lane",
+            Self::OperatorOrLane => "operator or lane",
+        }
+    }
+}
+
 /// Relationship a leaf has with the authoritative journal.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JournalAccess {
