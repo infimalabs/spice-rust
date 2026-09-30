@@ -93,7 +93,6 @@
   }
   .work-arrangement-group { flex-wrap: nowrap; }
   .work-lane {
-    grid-template-columns: minmax(4.5rem, 5.5rem) minmax(0, 1fr);
     gap: 8px;
     padding-block: 10px;
   }

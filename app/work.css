@@ -74,8 +74,11 @@
   font-size: .78rem;
 }
 
+/* One shared label column sized to the longest lane label, so each lane's
+   state rule lands on the same line without reserving an empty gutter. */
 .work-lanes {
   display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: 0;
 }
 
@@ -85,9 +88,10 @@
 .work-lane {
   --work-state: var(--muted);
   display: grid;
-  grid-template-columns: minmax(6.5rem, 8.5rem) minmax(0, 1fr);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: stretch;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
   padding-block: 12px;
 }
@@ -100,7 +104,7 @@
   gap: 8px;
   min-width: 0;
   margin: 0;
-  padding: 6px 12px 0 1px;
+  padding: 6px 10px 0 1px;
   border-right: 2px solid color-mix(in srgb, var(--work-state) 42%, var(--line-soft));
   color: var(--work-state);
 }
