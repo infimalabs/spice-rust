@@ -98,8 +98,6 @@ pub(super) struct CanvasRender<'a> {
     pub detail_close: &'a NodeRef,
     pub detail_sheet: &'a NodeRef,
     pub notes: &'a NoteComposers,
-    pub action_issue: &'a UseStateHandle<Option<String>>,
-    pub speech_status: &'a UseStateHandle<SpeechStatus>,
     pub submit_note: Callback<(wire::TaskStamp, SubmitEvent)>,
     pub select_task: Callback<wire::TaskStamp>,
     pub select_dash_task: Callback<wire::TaskStamp>,
@@ -145,9 +143,6 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
             if let Some(notice) = &**render.work_scope_notice {
                 <p class="visually-hidden" role="status" aria-live="polite">{notice}</p>
             }
-            if let Some(issue) = &**render.action_issue {
-                <p class="form-refusal" role="alert">{issue}</p>
-            }
             if let Some(notice) = &render.card_target_notice {
                 <p
                     class="visually-hidden"
@@ -155,9 +150,6 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
                     aria-live="polite"
                     data-card-target-status=""
                 >{notice.clone()}</p>
-            }
-            if let SpeechStatus::Failed(issue) = &**render.speech_status {
-                <p class="form-refusal" role="alert">{issue}</p>
             }
             {render_workspace(&render, work)}
             {render_task_detail(&render, work)}

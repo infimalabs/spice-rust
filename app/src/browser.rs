@@ -674,8 +674,6 @@ impl CanvasAppState {
                 detail_close: &self.work_detail.close_ref,
                 detail_sheet: &self.work_detail.sheet_ref,
                 notes: &self.work_detail.notes,
-                action_issue: &self.action_issue,
-                speech_status: &self.speech_status,
                 submit_note: self.work_detail.submit_note.clone(),
                 select_task: self.work_detail.select.clone(),
                 select_dash_task: self.work_detail.select_history.clone(),
@@ -809,6 +807,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
     );
     use_team_speech_abandonment(&state.surface, speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime);
+    use_transient_result_toast(&state.action_issue, &state.speech_status);
     let chat_visible = state.destination == CanvasDestination::Chat;
     card_target::use_target(
         state.card_target.clone(),
@@ -833,6 +832,27 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
         state.work_scope.clone(),
         state.work_scope_notice.clone(),
     );
+}
+
+#[hook]
+fn use_transient_result_toast(
+    action_issue: &UseStateHandle<Option<String>>,
+    speech_status: &UseStateHandle<SpeechStatus>,
+) {
+    let toaster = toast::use_toaster();
+    use_effect_with((**action_issue).clone(), {
+        let toaster = toaster.clone();
+        move |issue| {
+            if let Some(issue) = issue {
+                toaster.settled(issue.clone());
+            }
+        }
+    });
+    use_effect_with((**speech_status).clone(), move |status| {
+        if let SpeechStatus::Failed(issue) = status {
+            toaster.settled(issue.clone());
+        }
+    });
 }
 
 #[function_component(CanvasApp)]

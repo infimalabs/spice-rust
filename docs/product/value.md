@@ -384,6 +384,12 @@ button edge uses a crisp two-pixel ring and a restrained shadow in that same
 color: neutral with neither status, gold for Fast mode, blue for an available
 Canvas update, and red when both apply. Quota colors remain unchanged.
 
+Action-delivery refusals and best-effort speech failures use the shared root
+toast. It appears above every Canvas destination without entering page flow and
+clears after its fixed dwell. Validation that needs an edited field, failures
+with an explicit retry, and durable degraded state stay beside the control or
+data they qualify instead of disappearing as transient feedback.
+
 ### The global Dash page
 
 Resident topology presents each team in canonical order from left to right:
