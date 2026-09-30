@@ -129,7 +129,6 @@
 
 .mosaic-message-card {
   --mosaic-image-size: 8.75rem;
-  --mosaic-image-large-size: 15.75rem;
   display: inline-grid;
   width: 100%;
   gap: 12px;
@@ -1326,7 +1325,7 @@ a.relative-age {
 .team-task-workspace .work-card--compact {
   grid-template:
     "heading facts" auto
-    "title facts" auto
+    "title facts" minmax(0, auto)
     "badges facts" auto
     / minmax(0, 1fr) minmax(13rem, .36fr);
   align-content: start;
@@ -1358,7 +1357,7 @@ a.relative-age {
   .team-task-workspace .work-card--compact {
     grid-template:
       "heading" auto
-      "title" auto
+      "title" minmax(0, auto)
       "badges" auto
       "facts" auto
       / minmax(0, 1fr);

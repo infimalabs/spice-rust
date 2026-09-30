@@ -24,6 +24,8 @@
   --canvas-edge: 1px solid var(--line); --canvas-edge-soft: 1px solid var(--line-soft); --canvas-control-edge: 1px solid var(--control-line-soft);
   --canvas-selection-shadow: inset 0 0 0 1px var(--line-soft);
   --canvas-motion-fast: 120ms; --canvas-motion-settle: 180ms; --canvas-ease-standard: ease-out;
+  /* A single image alone in a lane message card; task cards cap at the same size. */
+  --mosaic-image-large-size: 15.75rem;
   --accent-0: #1b4332;
   --accent-1: #495dac;
   --accent-2: #8b5f00;
