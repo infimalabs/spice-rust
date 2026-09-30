@@ -156,27 +156,41 @@ impl<'a> Resolver<'a> {
     }
 }
 
+/// Canvas presentation of every quote link in `text`, recursively.
+///
+/// Each resolved node shows its source's referenced media as inline
+/// Markdown, exactly as a directive context does, while nested quote
+/// discovery reads the raw authored text.
 fn present_with(store: &impl QuoteStore, text: &str, depth: u8) -> Vec<QuotePresentation> {
     QuoteMessage::parse(text)
         .quotes()
         .iter()
-        .map(|quote| match resolve_with(store, &quote.target, depth) {
-            QuoteResolution::Resolved(resolved) => {
+        .map(|quote| {
+            match resolve_source(store, &quote.target, depth).and_then(|source| {
                 let quotes = present_with(
                     store,
-                    &resolved.text,
+                    &source.text,
                     depth.checked_add(1).unwrap_or(QUOTE_DEPTH_LIMIT),
                 );
-                QuotePresentation::Resolved {
+                let inlined = wire::media::with_media_payloads(&source.text, &source.media)
+                    .map_err(|_| QuoteUnavailable::Unreadable)?;
+                let inlined = match inlined {
+                    std::borrow::Cow::Owned(text) => Some(text),
+                    std::borrow::Cow::Borrowed(_) => None,
+                };
+                Ok(QuotePresentation::Resolved {
                     target: quote.target.clone(),
-                    text: resolved.text,
-                    author: resolved.author,
-                    disposition: resolved.disposition,
+                    text: inlined.unwrap_or(source.text),
+                    author: source.author,
+                    disposition: source.disposition,
                     quotes,
-                }
-            }
-            QuoteResolution::Unavailable { target, reason } => {
-                QuotePresentation::Unavailable { target, reason }
+                })
+            }) {
+                Ok(presentation) => presentation,
+                Err(reason) => QuotePresentation::Unavailable {
+                    target: quote.target.clone(),
+                    reason,
+                },
             }
         })
         .collect()
@@ -200,6 +214,9 @@ struct SourceQuote {
     text: String,
     author: QuoteAuthor,
     disposition: Option<wire::Disposition>,
+    /// Admitted media the source carries, which its text may reference by
+    /// `attachment:` identity.
+    media: Vec<wire::Media>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -273,18 +290,34 @@ impl QuoteStore for ResidentStore<'_> {
                 actor: presentation.created().actor.clone(),
             },
             disposition: Some(head.disposition),
+            media: head.attachments.clone(),
         })
     }
 }
 
 fn resolve_with(store: &impl QuoteStore, target: &str, depth: u8) -> QuoteResolution {
-    if depth >= QUOTE_DEPTH_LIMIT {
-        return unavailable(target, QuoteUnavailable::DepthExceeded);
+    match resolve_source(store, target, depth) {
+        Ok(source) => QuoteResolution::Resolved(ResolvedQuote {
+            text: source.text,
+            author: source.author,
+            disposition: source.disposition,
+        }),
+        Err(reason) => unavailable(target, reason),
     }
-    let parsed = match target.parse::<QuoteTarget>() {
-        Ok(parsed) => parsed,
-        Err(_) => return unavailable(target, QuoteUnavailable::Malformed),
-    };
+}
+
+/// The authenticated source one target names, or why it cannot be quoted.
+fn resolve_source(
+    store: &impl QuoteStore,
+    target: &str,
+    depth: u8,
+) -> Result<SourceQuote, QuoteUnavailable> {
+    if depth >= QUOTE_DEPTH_LIMIT {
+        return Err(QuoteUnavailable::DepthExceeded);
+    }
+    let parsed = target
+        .parse::<QuoteTarget>()
+        .map_err(|_| QuoteUnavailable::Malformed)?;
     let source = match &parsed {
         QuoteTarget::Tape {
             lane,
@@ -294,25 +327,20 @@ fn resolve_with(store: &impl QuoteStore, target: &str, depth: u8) -> QuoteResolu
         } => store.tape(*lane, *source, *locus),
         QuoteTarget::Steering { key, .. } => {
             if key.parse::<steer::Key>().is_err() {
-                return unavailable(target, QuoteUnavailable::Malformed);
+                return Err(QuoteUnavailable::Malformed);
             }
             store.steering(key)
         }
     };
-    let resolved = match source {
-        Ok(resolved) => resolved,
-        Err(SourceError::Unknown) => return unavailable(target, QuoteUnavailable::Unknown),
-        Err(SourceError::Unreadable) => return unavailable(target, QuoteUnavailable::Unreadable),
-    };
+    let resolved = source.map_err(|error| match error {
+        SourceError::Unknown => QuoteUnavailable::Unknown,
+        SourceError::Unreadable => QuoteUnavailable::Unreadable,
+    })?;
     let identity = resolved.identity.as_deref().unwrap_or(&resolved.text);
     if QuoteTarget::text_digest(identity) != *parsed.digest() {
-        return unavailable(target, QuoteUnavailable::DigestMismatch);
+        return Err(QuoteUnavailable::DigestMismatch);
     }
-    QuoteResolution::Resolved(ResolvedQuote {
-        text: resolved.text,
-        author: resolved.author,
-        disposition: resolved.disposition,
-    })
+    Ok(resolved)
 }
 
 fn expand_with(store: &impl QuoteStore, source: &str, depth: u8) -> String {
@@ -416,6 +444,7 @@ fn resolve_tape(
         text,
         author: QuoteAuthor::Agent { lane, occupant },
         disposition: None,
+        media: prose.media.clone(),
     })
 }
 
@@ -737,6 +766,7 @@ mod tests {
                     occupant: uuid(3),
                 },
                 disposition: None,
+                media: Vec::new(),
             },
         );
         let steering = steering_target("dTVLR0qL0", "operator text");
@@ -749,6 +779,7 @@ mod tests {
                     actor: wire::Actor::Operator,
                 },
                 disposition: Some(wire::Disposition::Acked),
+                media: Vec::new(),
             },
         );
 
@@ -793,6 +824,7 @@ mod tests {
                     occupant: uuid(3),
                 },
                 disposition: None,
+                media: Vec::new(),
             },
         );
         store.steering.insert(
@@ -804,6 +836,7 @@ mod tests {
                     actor: wire::Actor::Operator,
                 },
                 disposition: Some(wire::Disposition::Acked),
+                media: Vec::new(),
             },
         );
 
@@ -827,6 +860,53 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn nested_quote_presentation_inlines_each_sources_own_media() {
+        let image = wire::Media::from_base64("image.png", "image/png", "iVBORw0KGgo=")
+            .expect("fixture media");
+        let inner_text = format!("look\n\n{}", image.reference_markdown().expect("reference"));
+        let inner = steering_target("dTVLR0qL0", &inner_text);
+        let outer_text = format!("see {}", inner.markdown());
+        let outer = steering_target("dTVLR0qL1", &outer_text);
+        let mut store = MemoryStore::default();
+        for (key, text, media) in [
+            ("dTVLR0qL0", &inner_text, vec![image.clone()]),
+            ("dTVLR0qL1", &outer_text, Vec::new()),
+        ] {
+            store.steering.insert(
+                key.to_owned(),
+                SourceQuote {
+                    identity: None,
+                    text: text.clone(),
+                    author: QuoteAuthor::Directive {
+                        actor: wire::Actor::Operator,
+                    },
+                    disposition: Some(wire::Disposition::Acked),
+                    media,
+                },
+            );
+        }
+        let message = outer.markdown();
+
+        let presented = present_with(&store, &message, 0);
+        let [QuotePresentation::Resolved { text, quotes, .. }] = presented.as_slice() else {
+            panic!("outer quote resolves");
+        };
+        assert_eq!(text, &outer_text);
+        let [QuotePresentation::Resolved { text, quotes, .. }] = quotes.as_slice() else {
+            panic!("nested quote resolves against its raw digest");
+        };
+        assert_eq!(
+            text,
+            &format!("look\n\n{}", image.markdown().expect("markdown"))
+        );
+        assert!(quotes.is_empty());
+        assert_eq!(
+            expand_with(&store, &message, 0),
+            format!("see {inner_text}")
+        );
     }
 
     #[test]
@@ -870,6 +950,7 @@ mod tests {
                     actor: wire::Actor::Operator,
                 },
                 disposition: Some(wire::Disposition::Live),
+                media: Vec::new(),
             },
         );
         assert_eq!(
@@ -899,6 +980,7 @@ mod tests {
                     } else {
                         wire::Disposition::Live
                     }),
+                    media: Vec::new(),
                 },
             );
             returned_text = target.markdown();
@@ -981,6 +1063,7 @@ mod tests {
                     actor: wire::Actor::Operator,
                 },
                 disposition: Some(wire::Disposition::Live),
+                media: Vec::new(),
             },
         );
         let message = target.markdown();
@@ -1022,6 +1105,7 @@ mod tests {
                     actor: wire::Actor::Operator,
                 },
                 disposition: Some(wire::Disposition::Live),
+                media: Vec::new(),
             },
         );
         let outer_text = format!("before {} after", inner.markdown());
@@ -1035,6 +1119,7 @@ mod tests {
                     actor: wire::Actor::Operator,
                 },
                 disposition: Some(wire::Disposition::Live),
+                media: Vec::new(),
             },
         );
         let missing = steering_target("dTVLR0qL2", "missing");
@@ -1067,6 +1152,7 @@ mod tests {
                         actor: wire::Actor::Operator,
                     },
                     disposition: Some(wire::Disposition::Live),
+                    media: Vec::new(),
                 },
             );
             returned_text = target.markdown();
