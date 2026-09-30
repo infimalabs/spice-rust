@@ -103,6 +103,7 @@ pub(super) struct CanvasRender<'a> {
     pub select_dash_task: Callback<wire::TaskStamp>,
     pub close_task: Callback<()>,
     pub leave_task: Callback<()>,
+    pub leave_task_for_return: Callback<()>,
     pub retry_relations: Callback<MouseEvent>,
 }
 
@@ -378,6 +379,8 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
         work,
         scope: render.work_scope,
         lanes: runtime.and_then(CanvasRuntime::lanes),
+        navigate: render.navigate,
+        team_controls: render.team_controls,
         creator_messages: runtime.map(CanvasRuntime::messages).unwrap_or_default(),
         selected,
         presented: render.detail_presented,
@@ -395,6 +398,7 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
         select_task: render.select_task.clone(),
         close: render.close_task.clone(),
         leave: render.leave_task.clone(),
+        leave_for_return: render.leave_task_for_return.clone(),
         retry_relations: render.retry_relations.clone(),
     })
 }

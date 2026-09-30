@@ -15,6 +15,7 @@ pub(super) struct Controls {
     pub request: Callback<TaskStamp>,
     pub close: Callback<()>,
     pub leave: Callback<()>,
+    pub leave_for_return: Callback<()>,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
 }
 
@@ -56,6 +57,16 @@ pub(super) fn use_controls(
         history_owned.clone(),
         return_focus.clone(),
     );
+    let leave_for_return = {
+        let selected = selected.clone();
+        let leave = leave.clone();
+        Callback::from(move |()| {
+            if let Some(task) = selected.as_ref() {
+                let _ = replace_history_task(task);
+            }
+            leave.emit(());
+        })
+    };
     use_present(
         selected.is_some() && mounted && !*presented,
         presented.clone(),
@@ -99,6 +110,7 @@ pub(super) fn use_controls(
         request,
         close,
         leave,
+        leave_for_return,
         submit_note,
     }
 }
@@ -114,26 +126,35 @@ fn history_task() -> Option<TaskStamp> {
         .ok()
 }
 
-fn push_history_task(task: &TaskStamp) -> bool {
-    let Some(history) = web_sys::window().and_then(|window| window.history().ok()) else {
-        return false;
-    };
+fn task_history_state(history: &web_sys::History, task: &TaskStamp) -> Option<js_sys::Object> {
     let state = js_sys::Object::new();
     if let Ok(current) = history.state()
         && let Some(current) = current.dyn_ref::<js_sys::Object>()
     {
         js_sys::Object::assign(&state, current);
     }
-    if js_sys::Reflect::set(
+    js_sys::Reflect::set(
         &state,
         &TASK_DETAIL_STATE.into(),
         &JsValue::from(task.to_string()),
     )
-    .is_err()
-    {
+    .ok()?;
+    Some(state)
+}
+
+fn push_history_task(task: &TaskStamp) -> bool {
+    let Some(history) = web_sys::window().and_then(|window| window.history().ok()) else {
         return false;
-    }
-    history.push_state(&state, "").is_ok()
+    };
+    task_history_state(&history, task).is_some_and(|state| history.push_state(&state, "").is_ok())
+}
+
+fn replace_history_task(task: &TaskStamp) -> bool {
+    let Some(history) = web_sys::window().and_then(|window| window.history().ok()) else {
+        return false;
+    };
+    task_history_state(&history, task)
+        .is_some_and(|state| history.replace_state(&state, "").is_ok())
 }
 
 fn history_select_callback(

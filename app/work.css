@@ -668,6 +668,24 @@
 .work-detail-facts > div { min-width: 0; }
 .work-detail-facts dt { color: var(--muted); font-weight: 700; }
 .work-detail-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.work-detail-fact-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentcolor 45%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.work-detail-fact-link:hover { text-decoration-color: currentcolor; }
+.work-detail-fact-link:focus-visible {
+  border-radius: 2px;
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
 .work-detail-blockers {
   margin: 14px 0 0;
   padding: 9px 11px;

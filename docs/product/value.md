@@ -433,6 +433,13 @@ loaded window. Canvas requires the retained lane to prove the exact recorded
 transcript generation; tasks without that authority or another unambiguous
 transcript boundary omit the action rather than presenting a dead link.
 
+Deep task detail also treats admitted ownership facts as navigation rather than
+decoration. Its project action opens the matching visibility-qualified Work
+scope without dropping the selected task. Assignment, active-claim, and creator
+team facts open the exact current team member in Chat only when the admitted
+topology proves that destination; independent, stale, or unknown identities
+remain readable facts instead of dead links.
+
 The project-stem pills above Canvas begin with one label-less aggregate pill
 whenever open work exists. Its badge carries the same ready, active, and
 unavailable counts across every stem; selecting it opens Work and clears a

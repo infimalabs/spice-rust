@@ -467,6 +467,16 @@ impl<'a> WorkProjection<'a> {
             .is_none_or(|identity| self.stem(identity).is_some())
     }
 
+    /// Exact visibility-qualified stem scope containing one admitted project.
+    #[must_use]
+    pub fn scope_for_project(&self, project: &str) -> Option<WorkScope> {
+        let project = self
+            .projects
+            .iter()
+            .find(|candidate| candidate.project == project)?;
+        Some(WorkScope::Stem(self.stems[project.stem].identity.clone()))
+    }
+
     #[must_use]
     pub fn scope_counts(&self, scope: &WorkScope) -> WorkCounts {
         scope
@@ -1070,6 +1080,15 @@ pub(crate) mod tests {
         assert!(projection.contains_scope(&hidden_scope));
         assert_eq!(projection.scope_counts(&public_scope).open(), 2);
         assert_eq!(projection.scope_counts(&hidden_scope).open(), 1);
+        assert_eq!(
+            projection.scope_for_project("alpha.runtime"),
+            Some(public_scope.clone()),
+        );
+        assert_eq!(
+            projection.scope_for_project(".alpha.audit"),
+            Some(hidden_scope.clone()),
+        );
+        assert_eq!(projection.scope_for_project("gone.project"), None);
 
         let absent = WorkScope::Stem(WorkStemIdentity {
             visibility: WorkVisibility::Public,
