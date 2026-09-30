@@ -29,9 +29,8 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub notes: &'a NoteComposers,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
     pub select_task: Callback<TaskStamp>,
+    pub request_task: Callback<TaskStamp>,
     pub close: Callback<()>,
-    pub leave: Callback<()>,
-    pub leave_for_return: Callback<()>,
     pub retry_relations: Callback<MouseEvent>,
 }
 
@@ -132,9 +131,9 @@ fn render_detail_body(render: &WorkDetailRender<'_, '_>, selected: &TaskStamp) -
         },
         Some(TaskDetailState::Unavailable { reason, detail }) => {
             let retry = {
-                let select = render.select_task.clone();
+                let request = render.request_task.clone();
                 let task = selected.clone();
-                Callback::from(move |_| select.emit(task.clone()))
+                Callback::from(move |_| request.emit(task.clone()))
             };
             html! {
                 <div class="work-detail-problem" role="alert">
@@ -181,14 +180,6 @@ fn render_available(
     });
     let messages = render.creator_messages.iter().map(AsRef::as_ref);
     let creator_context = crate::view::creator_context_href(&statement.creation, messages);
-    let follow_creator = {
-        let leave = render.leave.clone();
-        Callback::from(move |event: MouseEvent| {
-            if super::super::card_target::follows_in_tab(&event) {
-                leave.emit(());
-            }
-        })
-    };
     html! {
         <div
             class="work-detail-content"
@@ -211,7 +202,6 @@ fn render_available(
                             "Open creator context for {} in Chat",
                             statement.handle,
                         )}
-                        onclick={follow_creator}
                     >{"Creator context"}</a>
                 }
             </div>
@@ -369,11 +359,10 @@ fn linked_identity_fact(
     let href = crate::view::card_href(&super::super::watchband::primary_textarea_id(
         &member.to_string(),
     ));
-    let leave = render.leave_for_return.clone();
+    // Following the link changes the route, which closes the detail.
     let controls = render.team_controls.clone();
     let follow = Callback::from(move |event: MouseEvent| {
         if super::super::card_target::follows_in_tab(&event) {
-            leave.emit(());
             controls.dispatch(TeamControlAction::ShowChat { team });
         }
     });
