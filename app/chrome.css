@@ -118,23 +118,26 @@ body:has(.shell--mosaic),
 .canvas-menu[open] { z-index: 2; }
 .canvas-menu > summary {
   --canvas-menu-edge: var(--accent-slot, var(--line));
+  --canvas-menu-border: color-mix(in srgb, var(--canvas-menu-edge) 68%, var(--line));
   --canvas-menu-surface: var(--control-surface-soft);
   position: relative; z-index: 2; display: inline-grid; place-items: center; width: 35px; height: 30px; padding: 0;
-  border: 1px solid color-mix(in srgb, var(--canvas-menu-edge) 58%, var(--line));
+  border: 1px solid var(--canvas-menu-border);
   border-radius: var(--canvas-radius-pill); background: var(--canvas-menu-surface); color: var(--ink);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-edge) 8%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-border) 48%, transparent),
+    0 1px 3px color-mix(in srgb, var(--canvas-menu-border) 28%, transparent);
   cursor: pointer; list-style: none;
 }
 .canvas-menu > summary:hover,
 .canvas-menu > summary:focus-visible {
   --canvas-menu-surface: var(--control);
-  border-color: color-mix(in srgb, var(--canvas-menu-edge) 78%, var(--line));
+  --canvas-menu-border: color-mix(in srgb, var(--canvas-menu-edge) 78%, var(--line));
   background: var(--canvas-menu-surface);
 }
 .canvas-menu > summary:active,
 .canvas-menu[open] > summary {
   --canvas-menu-surface: var(--control);
-  border-color: var(--canvas-menu-edge);
+  --canvas-menu-border: var(--canvas-menu-edge);
   background: var(--canvas-menu-surface);
 }
 .canvas-menu > summary::-webkit-details-marker { display: none; }
