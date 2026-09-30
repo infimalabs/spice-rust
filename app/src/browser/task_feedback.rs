@@ -148,7 +148,7 @@ fn feedback(state: &CanvasAppState) -> Feedback {
 pub(super) fn use_feedback(state: &CanvasAppState) {
     let feedback = feedback(state);
     let previous = use_mut_ref(Feedback::default);
-    let toaster = toast::use_toaster();
+    let toaster = toast::use_task_toaster();
     use_effect_with(feedback, move |current| {
         let prior = previous.borrow().clone();
         if let Some(pending) = &current.pending {

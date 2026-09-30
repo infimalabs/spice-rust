@@ -1,12 +1,12 @@
-//! The one transient result toast: a frosted status pill that shows the
-//! latest action result, holds a pending one until its outcome replaces it,
-//! and fades a settled one after a fixed dwell.
+//! Transient result toasts: frosted status pills that show the latest owned
+//! result, hold a pending one until its outcome replaces it, and fade a
+//! settled one after a fixed dwell.
 //!
-//! The Canvas mounts one instance at its root and hands its [`Toaster`] to
-//! every component through context. That instance is a manual popover raised
-//! with each result, so it shows above an open modal dialog such as task
-//! detail. The lightbox renders its own instance inside its dialog, beside the
-//! image its actions report on.
+//! The Canvas mounts a shared root instance and hands its [`Toaster`] to
+//! components through context. A workflow that must retain independent
+//! pending state can mount its own raised instance. Manual popovers show above
+//! an open modal dialog; the lightbox instead renders its instance inside its
+//! dialog beside the image its actions report on.
 
 use gloo_timers::callback::Timeout;
 use yew::prelude::*;
@@ -35,6 +35,9 @@ impl Toaster {
     }
 }
 
+#[derive(Clone, PartialEq)]
+struct TaskToaster(Toaster);
+
 /// The latest result, whether it is still showing, and the handle that
 /// replaces it. A settled result arms its own dismissal; replacing it cancels
 /// any earlier result's.
@@ -56,10 +59,40 @@ pub(super) fn use_toast() -> (UseStateHandle<AttrValue>, UseStateHandle<bool>, T
     (text, shown, Toaster(notify))
 }
 
+/// An independently owned toast raised above modal dialogs.
+#[hook]
+pub(super) fn use_raised_toast() -> (
+    UseStateHandle<AttrValue>,
+    UseStateHandle<bool>,
+    Toaster,
+    NodeRef,
+) {
+    let (text, shown, toaster) = use_toast();
+    let node = use_node_ref();
+    let raising = use_memo((toaster, node.clone()), |(toaster, node)| {
+        let (inner, node) = (toaster.0.clone(), node.clone());
+        Toaster(Callback::from(move |result| {
+            if let Some(element) = node.cast::<web_sys::Element>() {
+                raise(&element);
+            }
+            inner.emit(result);
+        }))
+    });
+    (text, shown, (*raising).clone(), node)
+}
+
 /// The root toast's handle.
 #[hook]
 pub(super) fn use_toaster() -> Toaster {
     use_context::<Toaster>().expect("the Canvas root mounts the toast")
+}
+
+/// The task lifecycle toast's independently owned handle.
+#[hook]
+pub(super) fn use_task_toaster() -> Toaster {
+    use_context::<TaskToaster>()
+        .expect("the Canvas root mounts the task toast")
+        .0
 }
 
 /// The toast pill. Hidden text stays in place so the pill fades out rather
@@ -75,34 +108,47 @@ pub(super) fn render_toast(message: AttrValue, shown: bool, raised: Option<NodeR
     }
 }
 
+/// A raised toast with an additional placement class.
+pub(super) fn render_raised_toast(
+    message: AttrValue,
+    shown: bool,
+    node: NodeRef,
+    class: &'static str,
+) -> Html {
+    html! {
+        <p
+            ref={node} class={classes!("toast", class)} role="status" popover="manual"
+            data-shown={shown.to_string()}
+        >{message}</p>
+    }
+}
+
 #[derive(Properties, PartialEq)]
 pub(super) struct ToastProviderProps {
     pub children: Html,
 }
 
-/// Mount the root toast and give its handle to everything below.
+/// Mount the independent shared-result and task-lifecycle toasts.
 ///
-/// A modal dialog (task detail, the lightbox) lives in the top layer, above
-/// any ordinary element. The root toast is a manual popover, so it lives
-/// there too, and each result re-shows it so it stacks above whichever
-/// dialog is open at that moment.
+/// Both are manual popovers in the top layer, above modal task detail. Each
+/// result re-shows only its owning toast, so one lifecycle cannot dismiss the
+/// other's message.
 #[function_component(ToastProvider)]
 pub(super) fn toast_provider(props: &ToastProviderProps) -> Html {
-    let (text, shown, toaster) = use_toast();
-    let node = use_node_ref();
-    let raising = use_memo((toaster, node.clone()), |(toaster, node)| {
-        let (inner, node) = (toaster.0.clone(), node.clone());
-        Toaster(Callback::from(move |result| {
-            if let Some(element) = node.cast::<web_sys::Element>() {
-                raise(&element);
-            }
-            inner.emit(result);
-        }))
-    });
+    let (text, shown, toaster, node) = use_raised_toast();
+    let (task_text, task_shown, task_toaster, task_node) = use_raised_toast();
     html! {
-        <ContextProvider<Toaster> context={(*raising).clone()}>
-            {props.children.clone()}
-            {render_toast((*text).clone(), *shown && !text.is_empty(), Some(node))}
+        <ContextProvider<Toaster> context={toaster}>
+            <ContextProvider<TaskToaster> context={TaskToaster(task_toaster)}>
+                {props.children.clone()}
+                {render_toast((*text).clone(), *shown && !text.is_empty(), Some(node))}
+                {render_raised_toast(
+                    (*task_text).clone(),
+                    *task_shown && !task_text.is_empty(),
+                    task_node,
+                    "toast--task-feedback",
+                )}
+            </ContextProvider<TaskToaster>>
         </ContextProvider<Toaster>>
     }
 }
