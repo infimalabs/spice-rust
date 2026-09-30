@@ -12,6 +12,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub work: &'a WorkProjection<'work>,
     pub scope: &'a WorkScope,
     pub lanes: Option<&'a LaneView>,
+    pub creator_messages: &'a [Rc<wire::AgentMessage>],
     pub selected: Option<&'a TaskStamp>,
     pub presented: bool,
     pub closing: bool,
@@ -174,7 +175,8 @@ fn render_available(
                 )
             })
     });
-    let creator_context = crate::view::creator_context_href(&statement.creation);
+    let messages = render.creator_messages.iter().map(AsRef::as_ref);
+    let creator_context = crate::view::creator_context_href(&statement.creation, messages);
     let follow_creator = {
         let leave = render.leave.clone();
         Callback::from(move |event: MouseEvent| {

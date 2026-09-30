@@ -164,6 +164,15 @@ impl QuoteTarget {
         Digest::compute(crate::Domain::QuoteText, text.as_bytes())
     }
 
+    /// Tape generation this target authenticates, if it names transcript prose.
+    #[must_use]
+    pub const fn tape_source(&self) -> Option<CanonicalUuid> {
+        match self {
+            Self::Tape { source, .. } => Some(*source),
+            Self::Steering { .. } => None,
+        }
+    }
+
     /// Render this target as the ordinary Markdown link stored in message text.
     #[must_use]
     pub fn markdown(&self) -> String {

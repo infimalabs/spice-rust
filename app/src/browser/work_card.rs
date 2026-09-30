@@ -34,6 +34,7 @@ pub(super) struct Controls<'a> {
     pub map: Option<MapControls<'a>>,
     pub messages: Option<MessageControls<'a>>,
     pub creator_context: Option<&'a Callback<MouseEvent>>,
+    pub creator_messages: &'a [Rc<wire::AgentMessage>],
 }
 
 pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
@@ -51,7 +52,10 @@ pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
         .as_ref()
         .and_then(|messages| messages.links.task(&statement.handle))
         .map(super::watchband::agent_message_source_id);
-    let creator_context = crate::view::creator_context_href(&statement.creation);
+    let creator_context = crate::view::creator_context_href(
+        &statement.creation,
+        controls.creator_messages.iter().map(AsRef::as_ref),
+    );
     let has_chat_target = message_target.is_some() || creator_context.is_some();
     let return_id = has_chat_target.then(|| {
         controls.messages.as_ref().map_or_else(
