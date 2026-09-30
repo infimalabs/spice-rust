@@ -612,7 +612,6 @@
 .work-detail-identity code { color: var(--accent); font-size: .78rem; overflow-wrap: anywhere; }
 .work-detail-identity button { white-space: nowrap; }
 
-.work-detail-state,
 .work-detail-scope {
   margin: 14px 22px 0;
   padding: 9px 11px;
@@ -687,7 +686,6 @@
 .work-note-card p { margin: 7px 0 0; white-space: pre-wrap; }
 .work-note-composer { margin-top: 14px; padding-top: 14px; border: var(--canvas-edge-soft); }
 .work-note-composer textarea { min-height: 88px; }
-.work-note-pending,
 .work-note-capability { margin: 8px 0 0; color: var(--muted); font-size: .74rem; }
 .work-detail-back { width: 100%; margin-top: 18px; }
 

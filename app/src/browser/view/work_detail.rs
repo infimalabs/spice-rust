@@ -19,7 +19,6 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub detail: Option<&'a TaskDetailState>,
     pub relations: Option<&'a TaskRelationsState>,
     pub can_read_relations: bool,
-    pub stale: bool,
     pub can_note: bool,
     pub close_ref: &'a NodeRef,
     pub sheet_ref: &'a NodeRef,
@@ -35,7 +34,6 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
         return Html::default();
     };
     let map_open = render.map.mode() == work_map::WorkDetailMode::Map;
-    let refreshing = render.detail.is_some_and(TaskDetailState::refreshing);
     let close_click = render.close.reform(|_: MouseEvent| ());
     let state = if render.closing {
         "closing"
@@ -77,11 +75,6 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                         onclick={close_click}
                     >{"Close"}</button>
                 </header>
-                if render.stale {
-                    <p class="work-detail-state" role="status">
-                        {"Showing admitted detail while reconnecting. Updates and observations will resume when Canvas reconnects."}
-                    </p>
-                }
                 {work_map::render_tabs(render.map, selected)}
                 <div
                     id="work-detail-panel"
@@ -91,9 +84,6 @@ pub(super) fn render(render: WorkDetailRender<'_, '_>) -> Html {
                     aria-hidden={map_open.to_string()}
                     hidden={map_open}
                 >
-                    <p class="work-detail-state" role="status" hidden={!refreshing}>
-                        {"Refreshing task evidence without closing this detail."}
-                    </p>
                     {render_detail_body(&render, selected)}
                 </div>
                 <div

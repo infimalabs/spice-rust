@@ -121,6 +121,10 @@ impl WorkMapState {
         self.mode
     }
 
+    pub(in crate::browser) const fn map_open(&self) -> bool {
+        matches!(self.mode, WorkDetailMode::Map)
+    }
+
     pub(in crate::browser) fn pinned(&self, task: &TaskStamp) -> bool {
         self.pinned.contains(task)
     }
@@ -252,7 +256,7 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
             </div>
         };
     }
-    let (answer, refreshing) = match render.relations {
+    let answer = match render.relations {
         None | Some(TaskRelationsState::Loading) => {
             return html! {
                 <div class="work-map-content">
@@ -277,8 +281,9 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
                 </div>
             };
         }
-        Some(TaskRelationsState::Available(answer)) => (answer.as_ref(), false),
-        Some(TaskRelationsState::Refreshing(answer)) => (answer.as_ref(), true),
+        Some(TaskRelationsState::Available(answer) | TaskRelationsState::Refreshing(answer)) => {
+            answer.as_ref()
+        }
     };
     let Some(presentation) = lens::project(
         answer,
@@ -318,9 +323,6 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
             data-work-map-snapshot={answer.snapshot.to_string()}
         >
             {controls}
-            <p class="work-map-empty" role="status" hidden={!refreshing}>
-                {"Refreshing relationships without replacing this map."}
-            </p>
             <p class="work-map-context">{render.state.lens.context()}</p>
             if related == 0 {
                 <p class="work-map-empty" role="status">

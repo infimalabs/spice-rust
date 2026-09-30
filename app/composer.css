@@ -375,8 +375,6 @@
   resize: vertical;
 }
 .team-surface .message-task-inspector .work-note-composer button { justify-self: start; }
-.team-surface .message-task-inspector .work-note-composer .form-refusal,
-.team-surface .message-task-inspector .work-note-composer .work-note-pending { margin: 0; }
 .team-surface .message-task-inspector-state {
   align-content: center;
   inline-size: 100%;

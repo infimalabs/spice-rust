@@ -52,6 +52,7 @@ mod message_task_inspector;
 mod navigation;
 mod overlay;
 mod task_detail;
+mod task_feedback;
 mod task_relations;
 mod team_settled;
 mod toast;
@@ -799,6 +800,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
             notes: state.work_detail.notes.clone(),
         },
     );
+    task_feedback::use_feedback(state);
     task_relations::use_request(
         &state.sender,
         &state.surface,

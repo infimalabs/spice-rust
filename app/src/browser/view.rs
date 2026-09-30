@@ -380,7 +380,6 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
         relations,
         can_read_relations: runtime
             .is_some_and(|runtime| runtime.offers(CommandKind::TaskRelations)),
-        stale: matches!(&**render.connection, Connection::Offline(_)),
         can_note: runtime.is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
         close_ref: render.detail_close,
         sheet_ref: render.detail_sheet,
