@@ -169,10 +169,6 @@ fn render_available(
         .tasks()
         .iter()
         .find(|task| task.row().statement.body.born == statement.born);
-    let copy_identity = {
-        let identity = statement.handle.to_string();
-        Callback::from(move |_| chrome::copy_text(&identity, drop))
-    };
     let scope_notice = projected.and_then(|task| {
         let project = &render.work.projects()[task.project()];
         let stem = render.work.stems()[project.stem()].identity();
@@ -191,7 +187,11 @@ fn render_available(
         <div class="work-detail-content">
             <div class="work-detail-identity">
                 <code>{statement.handle.to_string()}</code>
-                <button type="button" class="canvas-compact-control" onclick={copy_identity}>{"Copy identity"}</button>
+                <chrome::CopyButton
+                    class="canvas-compact-control"
+                    text={AttrValue::from(statement.handle.to_string())}
+                    subject="task handle"
+                >{"Copy identity"}</chrome::CopyButton>
             </div>
             if let Some(notice) = scope_notice {
                 <p class="work-detail-scope" role="status">{notice}</p>

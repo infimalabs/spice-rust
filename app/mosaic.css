@@ -344,18 +344,19 @@
 /* Controls sit on the frost itself: each button and the status toast is one
    pill of the same treatment, with no card around the group. */
 .image-lightbox-actions { grid-area: actions; justify-self: end; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
-.image-lightbox-actions > button, .image-lightbox-status {
+.image-lightbox-actions > button, .toast {
   border: var(--canvas-edge); border-radius: var(--canvas-radius-pill); background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
 }
 .image-lightbox-actions > button:not([aria-disabled="true"]):hover { border-color: var(--accent); }
-/* Out of flow, so showing or clearing a result never moves the image. */
-.image-lightbox-status {
-  position: fixed; inset: auto 16px 24px; width: fit-content; max-width: 36rem; margin: 0 auto; padding: 7px 14px;
+/* Out of flow, so showing or clearing a result never moves what is beneath it. */
+.toast {
+  position: fixed; inset: auto 16px 24px; z-index: 10; width: fit-content; height: auto; max-width: 36rem; margin: 0 auto; padding: 7px 14px;
+  color: inherit; overflow: visible;
   border-radius: var(--canvas-radius-overlay); font-size: .85rem; overflow-wrap: anywhere;
   transition: opacity var(--canvas-motion-settle) var(--canvas-ease-standard), translate var(--canvas-motion-settle) var(--canvas-ease-standard), visibility var(--canvas-motion-settle) allow-discrete;
 }
-.image-lightbox-status[data-shown="false"] { opacity: 0; translate: 0 8px; visibility: hidden; }
-@media (prefers-reduced-motion: reduce) { .image-lightbox-status { transition: none; } }
+.toast[data-shown="false"] { opacity: 0; translate: 0 8px; visibility: hidden; }
+@media (prefers-reduced-motion: reduce) { .toast { transition: none; } }
 .composer-shard-image-open {
   display: block; width: 100%; height: 100%; min-width: 0; min-height: 0;
   padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: zoom-in;
@@ -1123,8 +1124,6 @@ a.relative-age {
 .team-surface .message-agent-name:focus-visible .message-agent-label {
   text-decoration: underline; text-underline-offset: 2px;
 }
-.team-surface .message-agent-copy { margin-left: 6px; color: var(--muted); white-space: nowrap; }
-.team-surface .message-agent-name[data-copy="failed"] .message-agent-copy { color: var(--danger); }
 .team-surface .message-actions {
   display: flex;
   flex: 0 0 auto;
