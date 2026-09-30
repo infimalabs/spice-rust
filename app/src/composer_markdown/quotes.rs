@@ -247,7 +247,7 @@ fn quote_author_name_html(
     match author {
         QuoteAuthor::Agent { lane, occupant } => {
             let (agent, state) = agents
-                .get(&(*lane, *occupant))
+                .get(&(*lane, Some(*occupant)))
                 .map(|agent| (Some(agent), "current"))
                 .or_else(|| {
                     source
@@ -294,9 +294,9 @@ fn quote_author_name_html(
             actor: wire::Actor::Lane(lane),
         } => {
             // A peer message names its sending lane, not an occupant: the
-            // lane's seated agent speaks for it, as the roster shows it now.
-            let seated = seated_lane_agent(agents, *lane);
-            let (label, state) = seated.map_or_else(
+            // lane's team member speaks for it, seated or vacant.
+            let member = lane_member_agent(agents, *lane);
+            let (label, state) = member.map_or_else(
                 || {
                     (
                         Cow::Owned(format!("lane {}", crate::watchband::short(*lane))),
@@ -311,7 +311,7 @@ fn quote_author_name_html(
                     " data-quote-author=\"directive\" data-quote-actor=\"lane:{lane}\" \
                      data-quote-author-state=\"{state}\""
                 ),
-                seated.map(|agent| agent.accent),
+                member.map(|agent| agent.accent),
             )
         }
     }
@@ -332,7 +332,7 @@ fn quote_age_slot_html(
 ) -> String {
     let mut data = match author {
         QuoteAuthor::Agent { lane, occupant } => {
-            let state = if agents.contains_key(&(*lane, *occupant)) {
+            let state = if agents.contains_key(&(*lane, Some(*occupant))) {
                 "current"
             } else {
                 "historical"
@@ -361,7 +361,7 @@ fn quote_age_slot_html(
         .or_else(|| match author {
             QuoteAuthor::Directive {
                 actor: wire::Actor::Lane(lane),
-            } => seated_lane_agent(agents, *lane).map(|agent| agent.accent),
+            } => lane_member_agent(agents, *lane).map(|agent| agent.accent),
             QuoteAuthor::Agent { .. } | QuoteAuthor::Directive { .. } => None,
         });
     if let Some(accent) = accent {
@@ -379,9 +379,10 @@ fn quote_age_slot_html(
     )
 }
 
-/// The agent seated in one lane now, which speaks for a peer message that
-/// lane told: a lane's directive names the lane, never an occupant.
-fn seated_lane_agent(
+/// The team member for one lane, seated or vacant, which speaks for a peer
+/// message that lane told: a lane's directive names the lane, never an
+/// occupant.
+fn lane_member_agent(
     agents: &super::QuoteAgents,
     lane: wire::CanonicalUuid,
 ) -> Option<&super::QuoteAgent> {

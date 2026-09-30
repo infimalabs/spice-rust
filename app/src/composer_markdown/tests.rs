@@ -839,7 +839,7 @@ fn assert_historical_agent_name_survives_reseating(
 ) {
     let successor = quote_fixture_id("e9");
     let agents = BTreeMap::from([(
-        (lane, successor),
+        (lane, Some(successor)),
         QuoteAgent {
             accent: 4,
             label: "spice-rust-k".to_owned(),
@@ -894,7 +894,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
     }];
 
     let agents = BTreeMap::from([(
-        (lane, source),
+        (lane, Some(source)),
         QuoteAgent {
             accent: 3,
             label: "spice-rust-k".to_owned(),
@@ -904,7 +904,7 @@ fn resolved_quote_links_render_complete_nested_cards_synchronously() {
         &outer_target,
         &inner_target,
         agents
-            .get(&(lane, source))
+            .get(&(lane, Some(source)))
             .expect("fixture agent exists")
             .clone(),
     );
@@ -1247,9 +1247,9 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
         label: label.to_owned(),
     };
     let roster = BTreeMap::from([
-        ((quoted, successor), agent("quoted")),
-        ((directing, id("2b")), agent("directing")),
-        ((unrelated, id("2c")), agent("unrelated")),
+        ((quoted, Some(successor)), agent("quoted")),
+        ((directing, Some(id("2b"))), agent("directing")),
+        ((unrelated, Some(id("2c"))), agent("unrelated")),
     ]);
     let render = |agents: &QuoteAgents| {
         render_received_with_quotes(
@@ -1267,9 +1267,9 @@ fn a_cards_quote_agents_follow_only_the_lanes_its_quotes_name() {
     assert_eq!(render(&projection), render(&roster));
 
     let mut reseated = roster.clone();
-    reseated.remove(&(unrelated, id("2c")));
-    reseated.insert((unrelated, id("3c")), agent("unrelated"));
-    reseated.insert((arriving, id("3d")), agent("arriving"));
+    reseated.remove(&(unrelated, Some(id("2c"))));
+    reseated.insert((unrelated, Some(id("3c"))), agent("unrelated"));
+    reseated.insert((arriving, Some(id("3d"))), agent("arriving"));
     assert_eq!(referenced_quote_agents(&quotes, &[], &reseated), projection);
 }
 
@@ -1360,13 +1360,10 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         disposition: None,
         quotes: Vec::new(),
     }];
-    let agents = BTreeMap::from([(
-        (directing, directing),
-        QuoteAgent {
-            accent: 1,
-            label: "directing".to_owned(),
-        },
-    )]);
+    let agent = |occupant| {
+        let label = "directing".to_owned();
+        ((directing, occupant), QuoteAgent { accent: 1, label })
+    };
     let sources = BTreeMap::from([
         (
             directives[0].quote_target.to_string(),
@@ -1382,7 +1379,7 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     let render = |agents: &QuoteAgents| {
         render_received_with_quotes(&markdown, &[], &directives, &quotes, agents, &sources).html
     };
-    let html = render(&agents);
+    let html = render(&BTreeMap::from([agent(Some(directing))]));
 
     let blocks = html.split("<blockquote>").skip(1).collect::<Vec<_>>();
     assert_eq!(blocks.len(), 3, "{html}");
@@ -1411,11 +1408,14 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         "{lane}"
     );
     assert_eq!(html.matches("message-quote-name").count(), 3, "{html}");
-    assert!(lane.contains(&format!(
+    let named = format!(
         "class=\"message-quote-name\" data-quote-author=\"directive\" \
          data-quote-actor=\"lane:{directing}\" data-quote-author-state=\"current\" \
          data-accent=\"1\">directing</span>"
-    )));
+    );
+    assert!(lane.contains(&named));
+    let vacant = render(&BTreeMap::from([agent(None)]));
+    assert!(vacant.contains(&named), "{vacant}");
     let unseated = render(&QuoteAgents::new());
     assert!(unseated.contains(&format!(
         "class=\"message-quote-name\" data-quote-author=\"directive\" \
