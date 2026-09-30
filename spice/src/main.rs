@@ -689,7 +689,7 @@ fn version_outcome() -> Outcome<wire::Version> {
         Err(error) => {
             return Outcome::Fault(Fault {
                 class: FaultClass::Environment,
-                reason: "version::repository-unresolved".to_owned(),
+                reason: spice::repository::ResolveError::REASON.to_owned(),
                 detail: error.to_string(),
             });
         }

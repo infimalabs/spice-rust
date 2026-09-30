@@ -32,7 +32,9 @@ pub(crate) fn run(
     };
     let repository = match Repository::discover(&current) {
         Ok(repository) => repository,
-        Err(error) => return environment_fault("lane::repository-unresolved", &error.to_string()),
+        Err(error) => {
+            return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
+        }
     };
     let state_paths = match repository.admit_state() {
         Ok(state_paths) => state_paths,

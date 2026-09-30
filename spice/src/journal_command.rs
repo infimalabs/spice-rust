@@ -385,7 +385,7 @@ fn state() -> Result<StatePaths, Failure> {
         Failure::environment("journal::working-directory-unavailable", error.to_string())
     })?;
     let repository = Repository::discover(&working).map_err(|error| {
-        Failure::environment("journal::repository-unavailable", error.to_string())
+        Failure::environment(spice::repository::ResolveError::REASON, error.to_string())
     })?;
     repository.admit_state().map_err(state_failure)
 }

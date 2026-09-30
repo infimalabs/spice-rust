@@ -549,7 +549,7 @@ impl Dispatch {
             )
         })?;
         let repository = Repository::discover(&current).map_err(|error| {
-            ConfiguredFailure::fault("gate::pre-commit-repository-unresolved", error.to_string())
+            ConfiguredFailure::fault(spice::repository::ResolveError::REASON, error.to_string())
         })?;
         Self::capture_at_with_claim(repository, claim)
     }

@@ -25,8 +25,9 @@ pub(crate) fn run_task_next(contract: &Contract) -> TaskNext {
 fn discover_repository() -> Result<Repository, Outcome<CommandAnswer>> {
     let current = std::env::current_dir()
         .map_err(|error| environment_fault("board::cwd-unavailable", &error.to_string()))?;
-    Repository::discover(current)
-        .map_err(|error| environment_fault("board::repository-unavailable", &error.to_string()))
+    Repository::discover(current).map_err(|error| {
+        environment_fault(spice::repository::ResolveError::REASON, &error.to_string())
+    })
 }
 
 fn dispatch_client(

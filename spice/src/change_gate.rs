@@ -574,8 +574,10 @@ fn run_with_selection(
     publish_selection(progress, &selection)?;
     publish_phase_terminal(progress, "selection", selection_started, "success")?;
 
-    let repository = Repository::discover(Path::new(".")).map_err(|error| {
-        ChangeGateError::environment("change-gate-repository-unresolved", error)
+    let repository = Repository::discover(Path::new(".")).map_err(|error| ChangeGateError {
+        reason: crate::repository::ResolveError::REASON.to_owned(),
+        detail: error.to_string(),
+        fault: true,
     })?;
     let base_tree =
         if gate::cargo_workspace_base_inventory_required(anchor.root(), anchor.changes())

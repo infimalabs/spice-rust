@@ -119,7 +119,7 @@ fn capture_at_inner_with_options<'trace>(
         claim,
     } = options;
     let repository = Repository::discover(directory)
-        .map_err(|error| RunError::fault("gate::repository-unresolved", error))?;
+        .map_err(|error| RunError::fault(crate::repository::ResolveError::REASON, error))?;
     repository.admit_state().map_err(|error| match error {
         StateError::Filesystem { .. } => RunError::fault("gate::state-unavailable", error),
         _ => RunError::refusal("gate::state-refused", error),

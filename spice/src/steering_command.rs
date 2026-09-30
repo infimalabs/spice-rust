@@ -23,7 +23,9 @@ pub(crate) fn run(
     };
     let repository = match Repository::discover(&current) {
         Ok(repository) => repository,
-        Err(error) => return environment_fault("steer::git-unavailable", &error.to_string()),
+        Err(error) => {
+            return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
+        }
     };
     let canvas = match repository.admit_resident_client() {
         Ok(canvas) => canvas,

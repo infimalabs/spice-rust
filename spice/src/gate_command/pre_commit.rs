@@ -362,7 +362,7 @@ fn run_profiled(
     };
     let repository = match Repository::discover(&current) {
         Ok(repository) => repository,
-        Err(error) => return fault("gate::pre-commit-repository-unresolved", error),
+        Err(error) => return fault(spice::repository::ResolveError::REASON, error),
     };
     let capture_started = Instant::now();
     let generation = if env::var_os(spice::install::INSTALLED_PRE_COMMIT_ENVIRONMENT).is_some() {
@@ -482,7 +482,7 @@ impl DispatchGuard {
         let current = env::current_dir()
             .map_err(|error| fault("gate::pre-commit-working-directory-unavailable", error))?;
         let repository = Repository::discover(&current)
-            .map_err(|error| fault("gate::pre-commit-repository-unresolved", error))?;
+            .map_err(|error| fault(spice::repository::ResolveError::REASON, error))?;
         Self::acquire_in(&repository)
     }
 
@@ -697,7 +697,7 @@ fn verify_appliance_generation_fence(
         fault: true,
     })?;
     let repository = Repository::discover(&current).map_err(|error| WorkerFailure {
-        reason: "gate::pre-commit-repository-unresolved".to_owned(),
+        reason: spice::repository::ResolveError::REASON.to_owned(),
         detail: error.to_string(),
         fault: true,
     })?;

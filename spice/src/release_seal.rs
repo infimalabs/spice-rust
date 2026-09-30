@@ -80,8 +80,9 @@ fn prepare() -> Result<Prepared, Outcome<SealedManifest>> {
             &error.to_string(),
         )
     })?;
-    let repository = Repository::discover(&current)
-        .map_err(|error| environment("release::seal-repository-unresolved", &error.to_string()))?;
+    let repository = Repository::discover(&current).map_err(|error| {
+        environment(spice::repository::ResolveError::REASON, &error.to_string())
+    })?;
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;

@@ -280,8 +280,9 @@ fn finish_seed_prepared_root(
     source: &canvas::AppSource,
 ) -> DemoResult<Environment> {
     seed_lane_app(root, source)?;
-    let repository = spice::repository::Repository::discover(root)
-        .map_err(|error| environment_fault("demo::repository-unavailable", error.to_string()))?;
+    let repository = spice::repository::Repository::discover(root).map_err(|error| {
+        environment_fault(spice::repository::ResolveError::REASON, error.to_string())
+    })?;
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;
@@ -420,8 +421,9 @@ fn reopen_environment(root: &Path, executable: &Path) -> DemoResult<Environment>
         )
         .into());
     }
-    let repository = spice::repository::Repository::discover(&root)
-        .map_err(|error| environment_fault("demo::repository-unavailable", error.to_string()))?;
+    let repository = spice::repository::Repository::discover(&root).map_err(|error| {
+        environment_fault(spice::repository::ResolveError::REASON, error.to_string())
+    })?;
     let state = repository
         .admit_state()
         .map_err(|error| crate::state_failure(&error).outcome())?;

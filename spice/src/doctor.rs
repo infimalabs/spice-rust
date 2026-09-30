@@ -34,7 +34,7 @@ pub(crate) fn inspect(
         Err(error) => {
             return Outcome::Fault(Fault {
                 class: FaultClass::Environment,
-                reason: "doctor::repository-unresolved".to_owned(),
+                reason: spice::repository::ResolveError::REASON.to_owned(),
                 detail: error.to_string(),
             });
         }

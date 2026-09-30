@@ -210,7 +210,7 @@ fn prepare(matches: &ArgMatches) -> Result<Prepared, Box<Outcome<ReleasePlan>>> 
     })?;
     let repository = spice::repository::Repository::discover(&current).map_err(|error| {
         Box::new(environment::<ReleasePlan>(
-            "release::repository-unresolved",
+            spice::repository::ResolveError::REASON,
             &error.to_string(),
         ))
     })?;
@@ -982,7 +982,7 @@ pub(crate) fn notes(matches: &clap::ArgMatches) -> Outcome<ReleaseNotes> {
     let repository = match spice::repository::Repository::discover(&current) {
         Ok(repository) => repository,
         Err(error) => {
-            return environment("release::repository-unresolved", &error.to_string());
+            return environment(spice::repository::ResolveError::REASON, &error.to_string());
         }
     };
     match crate::release_history::draft(

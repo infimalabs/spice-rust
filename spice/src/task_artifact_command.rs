@@ -144,7 +144,7 @@ fn snapshot(configuration: Option<&spice::config::RepositoryCapture>) -> Result<
     let repository = Repository::discover(&working).map_err(|error| {
         Failure::fault(
             FaultClass::Environment,
-            "artifact::repository-unavailable",
+            spice::repository::ResolveError::REASON,
             error.to_string(),
         )
     })?;
@@ -430,7 +430,7 @@ impl Failure {
         if let Some(repository) = error.repository() {
             return Self::fault(
                 FaultClass::Environment,
-                "artifact::repository-unavailable",
+                spice::repository::ResolveError::REASON,
                 repository.to_string(),
             );
         }

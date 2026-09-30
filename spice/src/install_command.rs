@@ -31,7 +31,7 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Answer {
     let repository = match Repository::discover(&working) {
         Ok(repository) => repository,
         Err(error) => {
-            return request.fault("install::repository-unresolved", error.to_string());
+            return request.fault(spice::repository::ResolveError::REASON, error.to_string());
         }
     };
     if let Some(package) = matches.get_one::<String>("package") {

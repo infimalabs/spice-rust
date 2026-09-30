@@ -29,7 +29,7 @@ pub(crate) fn run(matches: &clap::ArgMatches) -> Outcome<InstalledSymbols> {
     };
     let repository = match Repository::discover(&working) {
         Ok(repository) => repository,
-        Err(error) => return fault("install::repository-unresolved", error.to_string()),
+        Err(error) => return fault(spice::repository::ResolveError::REASON, error.to_string()),
     };
     let verification = match verify_symbols(&repository) {
         Ok(verification) => verification,
