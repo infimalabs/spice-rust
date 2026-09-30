@@ -92,7 +92,6 @@ dependencies = [
  "base64",
  "futures-channel",
  "futures-util",
- "gloo-history 0.2.2",
  "gloo-net 0.6.0",
  "gloo-timers 0.3.0",
  "js-sys",

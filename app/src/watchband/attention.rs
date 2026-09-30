@@ -316,7 +316,7 @@ mod tests {
             request: uuid(request),
             lane: uuid(lane),
             operation: "git push".to_owned(),
-            rule: "push".parse().expect("fixture rule"),
+            rule: "publish".parse().expect("fixture rule"),
             cause: wire::body::ConsentQueueCause::Policy {},
             budget: None,
         }

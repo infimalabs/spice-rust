@@ -133,7 +133,7 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 10] = [
     // only against disposable local bare remotes under their owned roots.
     ("spice/src/task_git/tests.rs", "clone", 1),
     ("spice/src/task_git/tests.rs", "fetch", 2),
-    ("spice/src/task_git/tests.rs", "push", 5),
+    ("spice/src/task_git/tests.rs", "push", 6),
     // This fixture fetches only from its owned local bare remote after moving
     // the upstream branch, exercising divergent task-completion admission.
     (

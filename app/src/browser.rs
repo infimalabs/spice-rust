@@ -29,6 +29,7 @@ use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
 use crate::runtime::{CanvasSurface, topology_mutation_requires_refresh};
 use crate::speech_queue::{NarrationMessage, SpeechQueue, SpeechRequest};
+use crate::view::{CanvasRoute, RouteEvidence};
 use crate::work::{WorkArrangement, WorkProjection, WorkScope};
 use crate::{
     Axis, CanvasDestination, CanvasRuntime, Principal, Session, SteerPane, StreamDirective,
@@ -281,28 +282,26 @@ fn use_composer_drag(surface: &SurfaceData) -> watchband::PrimaryComposerDragSta
 
 #[function_component(CanvasRouter)]
 fn canvas_router() -> Html {
-    let (route, route_notice, navigate) = navigation::use_destination();
-    let destination = route.canvas_destination();
-    let card_target = route.card_target().map(str::to_owned);
+    let (route, notice, navigate) = navigation::use_route();
     html! {
         <toast::ToastProvider>
-            <RouteNotice message={route_notice} />
-            <CanvasApp {destination} {card_target} {navigate} />
+            <RouteNotice {notice} />
+            <CanvasApp {route} {navigate} />
         </toast::ToastProvider>
     }
 }
 
 #[derive(Properties, PartialEq)]
 struct RouteNoticeProperties {
-    message: Option<String>,
+    notice: Option<navigation::RouteNotice>,
 }
 
 #[function_component(RouteNotice)]
 fn route_notice(properties: &RouteNoticeProperties) -> Html {
     let toaster = toast::use_toaster();
-    use_effect_with(properties.message.clone(), move |message| {
-        if let Some(message) = message {
-            toaster.settled(message.clone());
+    use_effect_with(properties.notice.clone(), move |notice| {
+        if let Some(notice) = notice {
+            toaster.settled(notice.text.clone());
         }
     });
     Html::default()
@@ -310,9 +309,8 @@ fn route_notice(properties: &RouteNoticeProperties) -> Html {
 
 #[derive(Properties, PartialEq)]
 struct CanvasAppProperties {
-    destination: CanvasDestination,
-    card_target: Option<String>,
-    navigate: Callback<CanvasDestination>,
+    route: CanvasRoute,
+    navigate: Callback<navigation::Navigation>,
 }
 
 struct CanvasAppState {
@@ -320,11 +318,12 @@ struct CanvasAppState {
     surface: UseStateHandle<SurfaceData>,
     canvas_menu_open: UseStateHandle<bool>,
     destination: CanvasDestination,
+    route: CanvasRoute,
+    route_navigate: Callback<navigation::Navigation>,
     card_target: Option<String>,
     card_target_status: UseStateHandle<Option<card_target::Status>>,
     navigate: Callback<navigation::Intent>,
-    work_scope: UseStateHandle<WorkScope>,
-    work_scope_notice: UseStateHandle<Option<String>>,
+    work_scope: WorkScope,
     work_arrangement: UseStateHandle<WorkArrangement>,
     identity: UseStateHandle<Option<CanvasIdentity>>,
     canvas_update: UseStateHandle<Option<CanvasUpdate>>,
@@ -364,14 +363,10 @@ impl CanvasAppState {
         );
         let card_target_notice = (*self.card_target_status)
             .as_ref()
-            .filter(|status| self.card_target.as_deref() == Some(status.target.as_str()))
-            .map(|status| {
-                if status.available {
-                    "Linked card focused.".to_owned()
-                } else {
-                    "Linked card is unavailable in retained message history.".to_owned()
-                }
-            });
+            .filter(|status| {
+                status.available && self.card_target.as_deref() == Some(status.target.as_str())
+            })
+            .map(|_| "Linked card focused.".to_owned());
         let canvas = render_canvas(
             CanvasRender {
                 connection: &self.connection,
@@ -381,7 +376,6 @@ impl CanvasAppState {
                 navigate: &self.navigate,
                 canvas_menu_open: &self.canvas_menu_open,
                 work_scope: &self.work_scope,
-                work_scope_notice: &self.work_scope_notice,
                 work_arrangement: &self.work_arrangement,
                 identity: &self.identity,
                 canvas_update: &self.canvas_update,
@@ -403,11 +397,9 @@ impl CanvasAppState {
                 detail_sheet: &self.work_detail.sheet_ref,
                 notes: &self.work_detail.notes,
                 submit_note: self.work_detail.submit_note.clone(),
-                select_task: self.work_detail.select.clone(),
-                select_dash_task: self.work_detail.select_history.clone(),
+                select_task: self.navigate.reform(navigation::Intent::Task),
+                request_task: self.work_detail.request.clone(),
                 close_task: self.work_detail.close.clone(),
-                leave_task: self.work_detail.leave.clone(),
-                leave_task_for_return: self.work_detail.leave_for_return.clone(),
                 retry_relations,
             },
             work.as_ref(),
@@ -418,12 +410,12 @@ impl CanvasAppState {
 
 #[hook]
 fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, SpeechRuntime) {
+    let route = properties.route.clone();
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
     let canvas_menu_open = use_state(|| false);
     let card_target_status = use_state(|| None::<card_target::Status>);
-    let work_scope = use_state(WorkScope::default);
-    let work_scope_notice = use_state(|| None::<String>);
+    let local_task = use_local_task(&route);
     let work_arrangement = use_state(WorkArrangement::default);
     let identity = use_state(|| None::<CanvasIdentity>);
     let canvas_update = use_state(|| None::<CanvasUpdate>);
@@ -440,18 +432,21 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
         refusals: toast::use_toaster(),
     };
     let composer_drag = use_composer_drag(&surface);
+    let navigate = navigation::intent_callback(
+        route.clone(),
+        properties.navigate.clone(),
+        local_task.clone(),
+        surface.clone(),
+    );
     let work_detail = task_detail::use_controls(
         sender.clone(),
         surface.clone(),
         work_detail_mounted(&surface),
-    );
-    let navigate = navigation::intent_callback(
-        properties.destination,
-        properties.navigate.clone(),
-        work_scope.clone(),
-        work_scope_notice.clone(),
-        work_detail.select.clone(),
-        surface.clone(),
+        task_detail::Request {
+            task: route.task().cloned().or_else(|| (*local_task).clone()),
+            leaving: route.card_target().is_some(),
+        },
+        navigate.reform(|()| navigation::Intent::CloseTask),
     );
     let task_inspector = message_task_inspector::use_controls(&surface, &work_detail, &navigate);
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
@@ -461,7 +456,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
         watchband::work_shown_teams(
             &surface,
             &team_controls,
-            properties.destination == CanvasDestination::Chat,
+            route.canvas_destination() == CanvasDestination::Chat,
         ),
     );
     let work_map = use_state(view::WorkMapState::default);
@@ -484,12 +479,13 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
             connection,
             surface,
             canvas_menu_open,
-            destination: properties.destination,
-            card_target: properties.card_target.clone(),
+            destination: route.canvas_destination(),
+            card_target: route.card_target().map(str::to_owned),
+            work_scope: route.work_scope().cloned().unwrap_or_default(),
+            route,
+            route_navigate: properties.navigate.clone(),
             card_target_status,
             navigate,
-            work_scope,
-            work_scope_notice,
             work_arrangement,
             identity,
             canvas_update,
@@ -557,10 +553,11 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
     );
     let surface_view = state.surface.read();
     let work = project_work(surface_view.as_ref());
-    use_work_scope_reconciliation(
+    use_route_settlement(
         work.as_ref(),
-        state.work_scope.clone(),
-        state.work_scope_notice.clone(),
+        &state.route,
+        &state.surface,
+        state.route_navigate.clone(),
     );
 }
 
@@ -596,28 +593,50 @@ fn teamed_lane_count(surface: &SurfaceData) -> usize {
         })
 }
 
+/// A task opened over Dash or Chat: browser-local, so any route change ends it.
 #[hook]
-fn use_work_scope_reconciliation(
-    work: Option<&WorkProjection<'_>>,
-    scope: UseStateHandle<WorkScope>,
-    notice: UseStateHandle<Option<String>>,
-) {
-    let available = work.map(|projection| projection.contains_scope(&scope));
-    use_effect_with(
-        ((*scope).clone(), available),
-        move |(requested, available)| {
-            if matches!(requested, WorkScope::Stem(_)) && *available == Some(false) {
-                let missing = requested
-                    .stem()
-                    .expect("a selected scope has a stem")
-                    .to_string();
-                scope.set(WorkScope::AllOpen);
-                notice.set(Some(format!(
-                    "{missing} is no longer available; showing All open work."
-                )));
+fn use_local_task(route: &CanvasRoute) -> UseStateHandle<Option<TaskStamp>> {
+    let local_task = use_state(|| None::<TaskStamp>);
+    {
+        let local_task = local_task.clone();
+        use_effect_with(route.clone(), move |_| {
+            if local_task.is_some() {
+                local_task.set(None);
             }
-        },
-    );
+        });
+    }
+    local_task
+}
+
+/// Validate the route's data-backed segments once authoritative state
+/// settles them, replacing a refused route with its containing view.
+#[hook]
+fn use_route_settlement(
+    work: Option<&WorkProjection<'_>>,
+    route: &CanvasRoute,
+    surface: &SurfaceData,
+    navigate: Callback<navigation::Navigation>,
+) {
+    let card = card_target::use_retention(route.card_target(), surface);
+    let evidence = RouteEvidence {
+        scope: route
+            .work_scope()
+            .zip(work)
+            .map(|(scope, work)| work.contains_scope(scope)),
+        task: route.task().and_then(|task| {
+            surface
+                .read()
+                .as_ref()?
+                .task_detail(task)
+                .and_then(TaskDetailState::known)
+        }),
+        card,
+    };
+    use_effect_with((route.clone(), evidence), move |(route, evidence)| {
+        if let Some((next, notice)) = route.unavailable(*evidence) {
+            navigate.emit(navigation::Navigation::Refuse(next, notice));
+        }
+    });
 }
 
 #[hook]

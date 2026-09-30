@@ -80,6 +80,11 @@ pub enum WorkScope {
 
 impl WorkStemIdentity {
     #[must_use]
+    pub const fn new(visibility: WorkVisibility, stem: String) -> Self {
+        Self { visibility, stem }
+    }
+
+    #[must_use]
     pub const fn visibility(&self) -> WorkVisibility {
         self.visibility
     }

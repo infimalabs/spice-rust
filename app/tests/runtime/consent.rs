@@ -7,7 +7,7 @@ use super::*;
 const SECOND_REQUEST: &str = "018f82d4-6f59-7d06-92e3-bce9131163d1";
 
 fn rule() -> Name {
-    "push".parse().expect("fixture rule name")
+    "publish".parse().expect("fixture rule name")
 }
 
 fn pending(request: &str, budget: Option<u32>) -> ConsentPendingAnswer {
