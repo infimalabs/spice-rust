@@ -904,7 +904,7 @@ fn poll_and_emit(watch: &mut Watch, form: Form) -> Result<(), Fault> {
 }
 
 fn deliver_stream_once(outcome: &StreamOutcome, form: Form) -> ! {
-    match render::render_stream(outcome, form) {
+    match render::render_stream_reply(outcome, form) {
         Ok(rendering) => {
             rendering.speak();
             terminate_stream();
