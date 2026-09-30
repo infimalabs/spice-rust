@@ -458,6 +458,10 @@ team finished most recently: tasks it created or whose last winning claim a
 current member held, newest first. Search and Completed-by narrow that same
 team-scoped history; its range and Newer/Older controls replace one bounded
 page at a time, matching the global Work archive without mixing other teams.
+The team pane's own width governs that history's controls: Search, Completed
+by, and Apply/Clear share one row when the pane can hold them, then stack
+without clipping when the pane narrows. Its total stays beside the Settled
+heading rather than drifting to the remote edge of the full-width lane.
 The history read runs only while that team's Work
 pane is on screen, and runs again only once an open-board refresh shows work
 leaving the open board or the connection resumes. Settled cards are the same
