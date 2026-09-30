@@ -195,6 +195,7 @@ pub(crate) struct LedgerSubmission {
     pub(crate) lane: CanonicalUuid,
     pub(crate) authored_millis: i64,
     pub(crate) message: String,
+    pub(crate) attachments: Vec<DirectiveAttachment>,
     pub(crate) key: Option<String>,
     pub(crate) delivered: bool,
 }
@@ -744,6 +745,7 @@ impl SubmissionQueue {
                 lane: submission.lane,
                 authored_millis: submission.payload.authored_millis,
                 message: submission.message().to_owned(),
+                attachments: submission.attachments().to_vec(),
                 key: submission.stage.acceptance().map(|(_, key)| key.to_owned()),
                 delivered: matches!(submission.stage, Stage::Accepted { .. }),
             })

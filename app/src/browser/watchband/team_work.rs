@@ -198,13 +198,8 @@ pub(super) fn render_directive_ledger(
                 fanout: submission.fanout,
                 lane: submission.lane,
                 authored_millis: submission.authored_millis,
-                preview: submission
-                    .message
-                    .lines()
-                    .find(|line| !line.trim().is_empty())
-                    .unwrap_or("Preview unavailable")
-                    .trim()
-                    .to_owned(),
+                body: submission.message,
+                attachments: submission.attachments,
                 key: submission.key,
                 delivered: submission.delivered,
             },
@@ -237,6 +232,7 @@ pub(super) fn render_directive_ledger(
                     {for rows.iter().map(|row| {
                         render_directive_row(
                             row,
+                            team.lane,
                             standings,
                             board,
                             select,
@@ -395,13 +391,36 @@ fn render_settled_lane(
     }
 }
 
-fn render_directive_row(
+fn render_direction_attachments(row: &watchband::directive_ledger::DirectiveLedgerRow) -> Html {
+    if row.attachments.is_empty() {
+        return Html::default();
+    }
+    html! {
+        <div class="message-attachments" aria-label="Direction attachments">
+            {for row.attachments.iter().map(|attachment| {
+                let action = format!("View {} full size", attachment.name);
+                html! {
+                    <button
+                        key={attachment.name.clone()}
+                        type="button"
+                        class="message-image message-image--openable"
+                        title={action.clone()}
+                        aria-label={action}
+                        data-image-preview=""
+                        data-image-name={attachment.name.clone()}
+                    >
+                        <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
+                    </button>
+                }
+            })}
+        </div>
+    }
+}
+
+fn render_direction_tasks(
     row: &watchband::directive_ledger::DirectiveLedgerRow,
-    standings: &[Standing],
     board: Option<&crate::runtime::BoardView>,
     select: &Callback<wire::TaskStamp>,
-    message_links: &watchband::WorkMessageLinks<'_>,
-    follow_message: &Callback<MouseEvent>,
 ) -> Html {
     let task_handles = board.map_or_else(BTreeSet::new, |board| {
         row.keys
@@ -417,75 +436,136 @@ fn render_directive_row(
                 .then_some((&task.statement.body.handle, &task.statement.body.born))
         })
     });
-    let message_target = message_links
-        .directive(&row.keys)
-        .map(agent_message_source_id);
-    let return_id = message_target
-        .as_ref()
-        .map(|_| format!("team-work-directive-{}", row.identity));
+    html! {
+        <div class="team-direction-tasks">
+            {for tasks.map(|(handle, stamp)| {
+                let open = {
+                    let select = select.clone();
+                    let stamp = stamp.clone();
+                    Callback::from(move |_| select.emit(stamp.clone()))
+                };
+                html! {
+                    <button
+                        key={handle.to_string()}
+                        type="button"
+                        class="team-direction-task-chip"
+                        data-task-handle={handle.to_string()}
+                        aria-label={format!("Open {handle} details")}
+                        onclick={open}
+                    >
+                        <span class="team-direction-task-chip-label">{handle.to_string()}</span>
+                    </button>
+                }
+            })}
+        </div>
+    }
+}
+
+fn render_direction_recipients(
+    row: &watchband::directive_ledger::DirectiveLedgerRow,
+    standings: &[Standing],
+    message_links: &watchband::WorkMessageLinks<'_>,
+    follow_message: &Callback<MouseEvent>,
+) -> Html {
+    html! {
+        <ul class="team-direction-recipients" aria-label="Recipients">
+            {for standings.iter().filter_map(|standing| {
+                let state = row.recipients.get(&standing.lane)?;
+                let message_target = row
+                    .recipient_keys
+                    .get(&standing.lane)
+                    .and_then(|key| message_links.directive_key(key))
+                    .map(agent_message_source_id);
+                let badge = html! {
+                    <>
+                        <span class="team-task-member">
+                            <span class="agent-presence" aria-hidden="true"></span>
+                            <strong class="team-task-member-name">{standing.label.clone()}</strong>
+                        </span>
+                        <span class="team-direction-state">{state.label()}</span>
+                    </>
+                };
+                Some(html! {
+                    <li
+                        key={standing.lane.to_string()}
+                        data-agent-lane={standing.lane.to_string()}
+                        data-accent={standing.accent.to_string()}
+                        data-direction-state={state.key()}
+                    >
+                        if let Some(target) = message_target {
+                            <a
+                                class="team-direction-recipient-link"
+                                href={crate::view::card_href(&target)}
+                                aria-label={format!(
+                                    "Open {} {} message in Chat",
+                                    standing.label,
+                                    state.label().to_lowercase(),
+                                )}
+                                onclick={follow_message.clone()}
+                            >{badge}</a>
+                        } else {
+                            <span class="team-direction-recipient-label">{badge}</span>
+                        }
+                    </li>
+                })
+            })}
+        </ul>
+    }
+}
+
+fn render_directive_row(
+    row: &watchband::directive_ledger::DirectiveLedgerRow,
+    team: wire::CanonicalUuid,
+    standings: &[Standing],
+    board: Option<&crate::runtime::BoardView>,
+    select: &Callback<wire::TaskStamp>,
+    message_links: &watchband::WorkMessageLinks<'_>,
+    follow_message: &Callback<MouseEvent>,
+) -> Html {
+    let rendered = crate::composer_markdown::render_received_with_classifications(&row.body, &[]);
+    let diagrams = std::rc::Rc::new(
+        rendered
+            .diagrams
+            .into_iter()
+            .map(AttrValue::from)
+            .collect::<Vec<_>>(),
+    );
+    let author = row
+        .author
+        .and_then(|lane| standings.iter().find(|standing| standing.lane == lane));
+    let author_label = author.map_or_else(|| "You".to_owned(), |standing| standing.label.clone());
+    let author_accent = author.map(|standing| standing.accent.to_string());
+    let direction_target = crate::view::DirectionTarget::new(team, row.identity);
     html! {
         <li
             key={row.identity.to_string()}
-            id={return_id}
+            id={direction_target.element_id()}
             class="team-direction-ledger-row"
-            tabindex={message_target.as_ref().map(|_| "-1")}
-            data-card-return-origin={message_target.as_ref().map(|_| "work")}
+            tabindex="-1"
+            data-card-return-origin="work"
             data-directive={row.identity.to_string()}
+            data-accent={author_accent.clone()}
         >
-            <div class="team-direction-ledger-heading">
-                <span class="team-direction-preview">{row.preview.clone()}</span>
-                <span class="team-direction-heading-actions">
-                    if let Some(target) = &message_target {
-                        <a
-                            class="work-message-link"
-                            href={crate::view::card_href(target)}
-                            aria-label="Open acknowledging or declining message in Chat"
-                            onclick={follow_message.clone()}
-                        >{"Chat"}</a>
-                    }
-                    <Age authored={row.authored_millis} class="team-direction-age" />
+            <super::super::mermaid::MarkdownBody
+                html={AttrValue::from(rendered.html)}
+                sources={diagrams}
+                final_answer={false}
+                quote_tasks={std::rc::Rc::default()}
+            />
+            {render_direction_attachments(row)}
+            {render_direction_tasks(row, board, select)}
+            <footer class="team-direction-footer">
+                <span class="team-direction-attribution" data-accent={author_accent}>
+                    <span class="agent-presence" aria-hidden="true"></span>
+                    <strong>{author_label}</strong>
+                    <span>{"Direction"}</span>
                 </span>
-            </div>
-            <ul class="team-direction-recipients" aria-label="Recipients">
-                {for standings.iter().filter_map(|standing| {
-                    let state = row.recipients.get(&standing.lane)?;
-                    Some(html! {
-                        <li
-                            key={standing.lane.to_string()}
-                            data-agent-lane={standing.lane.to_string()}
-                            data-accent={standing.accent.to_string()}
-                            data-direction-state={state.key()}
-                        >
-                            <span class="team-task-member">
-                                <span class="agent-presence" aria-hidden="true"></span>
-                                <strong class="team-task-member-name">{standing.label.clone()}</strong>
-                            </span>
-                            <span class="team-direction-state">{state.label()}</span>
-                        </li>
-                    })
-                })}
-            </ul>
-            <div class="team-direction-tasks">
-                {for tasks.map(|(handle, stamp)| {
-                    let open = {
-                        let select = select.clone();
-                        let stamp = stamp.clone();
-                        Callback::from(move |_| select.emit(stamp.clone()))
-                    };
-                    html! {
-                        <button
-                            key={handle.to_string()}
-                            type="button"
-                            class="team-direction-task-chip"
-                            data-task-handle={handle.to_string()}
-                            aria-label={format!("Open {handle} details")}
-                            onclick={open}
-                        >
-                            <span class="team-direction-task-chip-label">{handle.to_string()}</span>
-                        </button>
-                    }
-                })}
-            </div>
+                if !row.body_complete {
+                    <span class="team-direction-excerpt">{"retained excerpt"}</span>
+                }
+                {render_direction_recipients(row, standings, message_links, follow_message)}
+                <Age authored={row.authored_millis} class="team-direction-age" />
+            </footer>
         </li>
     }
 }

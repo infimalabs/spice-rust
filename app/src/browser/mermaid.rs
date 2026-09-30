@@ -455,7 +455,7 @@ struct MathSlot {
 
 struct QuoteAgeSlot {
     authored: i64,
-    source: Option<String>,
+    href: Option<String>,
     target: web_sys::Element,
     key: yew::virtual_dom::Key,
 }
@@ -577,9 +577,10 @@ fn collect_quote_age_slots(
         else {
             continue;
         };
-        let source = target
+        let href = target
             .get_attribute("data-quote-source")
-            .filter(|source| !source.is_empty());
+            .filter(|source| !source.is_empty())
+            .map(|source| crate::view::quote_source_href(&source));
         let key = previous
             .iter()
             .find(|slot| slot.target == target)
@@ -590,7 +591,7 @@ fn collect_quote_age_slots(
             });
         slots.push(QuoteAgeSlot {
             authored,
-            source,
+            href,
             target,
             key,
         });
@@ -723,12 +724,8 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                 />
             }, slot.target.clone()))}
             {for quote_age_slots.iter().map(|slot| {
-                let href = slot
-                    .source
-                    .as_deref()
-                    .map(crate::view::card_href)
-                    .map(AttrValue::from);
-                let label = AttrValue::from("Link to quoted message");
+                let href = slot.href.clone().map(AttrValue::from);
+                let label = AttrValue::from("Link to quoted source");
                 yew::create_portal(html! {
                     <super::clock::Age
                         key={slot.key.clone()}

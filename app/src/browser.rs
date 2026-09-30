@@ -285,9 +285,10 @@ fn canvas_router() -> Html {
     if let Some(route) = route {
         let destination = route.canvas_destination();
         let card_target = route.card_target().map(str::to_owned);
+        let direction_target = route.direction_target().cloned();
         html! {
             <toast::ToastProvider>
-                <CanvasApp {destination} {card_target} {navigate} />
+                <CanvasApp {destination} {card_target} {direction_target} {navigate} />
             </toast::ToastProvider>
         }
     } else {
@@ -306,6 +307,7 @@ fn canvas_router() -> Html {
 struct CanvasAppProperties {
     destination: CanvasDestination,
     card_target: Option<String>,
+    direction_target: Option<crate::view::DirectionTarget>,
     navigate: Callback<CanvasDestination>,
 }
 
@@ -315,6 +317,7 @@ struct CanvasAppState {
     canvas_menu_open: UseStateHandle<bool>,
     destination: CanvasDestination,
     card_target: Option<String>,
+    direction_target: Option<crate::view::DirectionTarget>,
     card_target_status: UseStateHandle<Option<card_target::Status>>,
     navigate: Callback<navigation::Intent>,
     work_scope: UseStateHandle<WorkScope>,
@@ -479,6 +482,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
             canvas_menu_open,
             destination: properties.destination,
             card_target: properties.card_target.clone(),
+            direction_target: properties.direction_target.clone(),
             card_target_status,
             navigate,
             work_scope,
@@ -536,6 +540,11 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
         &state.surface,
         &state.sender,
         state.card_target_status.clone(),
+        state.team_controls.clone(),
+        chat_visible,
+    );
+    card_target::use_direction_target(
+        state.direction_target.clone(),
         state.team_controls.clone(),
         chat_visible,
     );

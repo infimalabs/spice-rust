@@ -116,11 +116,18 @@ fn return_offset(origin: &web_sys::Element) -> Option<(web_sys::Element, f64)> {
 
 /// Record where a plain quote link leaves its containing Chat card.
 pub(super) fn remember_quote_return(event: &web_sys::MouseEvent) {
+    let team = event
+        .target()
+        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
+        .and_then(|target| target.closest(".team-surface").ok().flatten())
+        .and_then(|surface| surface.get_attribute("data-team"))
+        .and_then(|team| team.parse().ok())
+        .map(|team| (team, TeamMode::Chat));
     let _ = remember_return(
         event,
         "a.message-quote-age[href]",
         ".mosaic-message-card",
-        None,
+        team,
     );
 }
 
@@ -372,7 +379,7 @@ impl Seek {
                     return;
                 };
                 observer.disconnect();
-                if element.matches(".mosaic-message-card").unwrap_or(false) {
+                if route_selection(&element) {
                     let _ = element.set_attribute("data-card-route-selected", "true");
                     *mark.borrow_mut() = Some(element.clone());
                 }
@@ -563,6 +570,8 @@ pub(super) fn use_target(
                             document: document.as_ref(),
                             status: &status,
                             team_controls,
+                            team: None,
+                            mode: TeamMode::Chat,
                         };
                         selected = route.reach(&held, &opened);
                     } else if resolution.creator {
@@ -610,6 +619,66 @@ pub(super) fn use_target(
     );
 }
 
+/// Select one team-local Work direction named by a durable route.
+#[hook]
+pub(super) fn use_direction_target(
+    target: Option<crate::view::DirectionTarget>,
+    team_controls: UseReducerHandle<TeamControls>,
+    visible: bool,
+) {
+    let status = use_state(|| None::<Status>);
+    let opened = use_mut_ref(|| None::<String>);
+    let held = use_mut_ref(|| None::<Hold>);
+    use_effect_with(
+        (target, visible, team_controls),
+        move |(target, visible, team_controls)| {
+            let mut selected = None;
+            if let Some(target) = target.as_ref().filter(|_| *visible) {
+                let requested = target.element_id();
+                let team = target.team();
+                if held
+                    .borrow()
+                    .as_ref()
+                    .is_some_and(|hold| hold.target != requested)
+                {
+                    held.borrow_mut().take();
+                }
+                let first_open = opened.borrow().as_deref() != Some(requested.as_str());
+                if first_open && team_controls.mode(team) != TeamMode::Work {
+                    team_controls.dispatch(TeamControlAction::SetMode {
+                        team: Some(team),
+                        mode: TeamMode::Work,
+                    });
+                } else if team_controls.mode(team) == TeamMode::Work {
+                    let document = web_sys::window().and_then(|window| window.document());
+                    let route = Route {
+                        target: &requested,
+                        status_target: &requested,
+                        returned: false,
+                        document: document.as_ref(),
+                        status: &status,
+                        team_controls,
+                        team: Some(team),
+                        mode: TeamMode::Work,
+                    };
+                    selected = route.reach(&held, &opened);
+                }
+            } else {
+                held.borrow_mut().take();
+                opened.borrow_mut().take();
+                if status.is_some() {
+                    status.set(None);
+                }
+            }
+            move || {
+                if let Some(element) = selected {
+                    let _ = element.remove_attribute("data-card-route-selected");
+                }
+            }
+        },
+    );
+}
+
 /// One visible route target once Chat state is ready.
 struct Route<'a> {
     /// Concrete rendered card ID.
@@ -620,12 +689,14 @@ struct Route<'a> {
     document: Option<&'a web_sys::Document>,
     status: &'a UseStateHandle<Option<Status>>,
     team_controls: &'a UseReducerHandle<TeamControls>,
+    team: Option<wire::CanonicalUuid>,
+    mode: TeamMode,
 }
 
 impl Route<'_> {
-    /// Open the routed card's team on Chat once per route, since any later
-    /// mode change is the reader's, then reach, seek or settle the card.
-    /// Returns the card marked as the route's selection.
+    /// Open the routed element's team in its required mode once per route,
+    /// since any later mode change is the reader's, then reach, seek or settle
+    /// the element. Returns the element marked as the route's selection.
     fn reach(
         &self,
         held: &Rc<RefCell<Option<Hold>>>,
@@ -637,19 +708,21 @@ impl Route<'_> {
             .and_then(|document| routed_element(document, target));
         if element.is_some() && opened.borrow().as_deref() != Some(status_target) {
             *opened.borrow_mut() = Some(status_target.to_owned());
-            if let Some(team) = element
-                .as_ref()
-                .and_then(routed_team)
-                .filter(|team| self.team_controls.mode(*team) != TeamMode::Chat)
+            if let Some(team) = self
+                .team
+                .or_else(|| element.as_ref().and_then(routed_team))
+                .filter(|team| self.team_controls.mode(*team) != self.mode)
             {
-                self.team_controls
-                    .dispatch(TeamControlAction::ShowChat { team });
+                self.team_controls.dispatch(TeamControlAction::SetMode {
+                    team: Some(team),
+                    mode: self.mode,
+                });
                 return None;
             }
         }
         let selected = element
             .as_ref()
-            .filter(|element| element.matches(".mosaic-message-card").unwrap_or(false))
+            .filter(|element| route_selection(element))
             .cloned();
         if let Some(selected) = &selected {
             let _ = selected.set_attribute("data-card-route-selected", "true");
@@ -697,4 +770,10 @@ impl Route<'_> {
         }
         selected
     }
+}
+
+fn route_selection(element: &web_sys::Element) -> bool {
+    element
+        .matches(".mosaic-message-card, .team-direction-ledger-row")
+        .unwrap_or(false)
 }

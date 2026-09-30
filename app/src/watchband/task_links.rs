@@ -64,12 +64,10 @@ impl<'a> WorkMessageLinks<'a> {
         self.tasks.get(task).copied()
     }
 
-    /// Newest retained acknowledgement or decline for any key in one row.
+    /// Retained acknowledgement or decline for one recipient key.
     #[must_use]
-    pub fn directive(&self, keys: &BTreeSet<String>) -> Option<&'a wire::AgentMessage> {
-        keys.iter()
-            .filter_map(|key| self.directives.get(key).copied())
-            .max_by_key(|message| message.chronology_key())
+    pub fn directive_key(&self, key: &str) -> Option<&'a wire::AgentMessage> {
+        self.directives.get(key).copied()
     }
 }
 

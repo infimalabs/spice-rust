@@ -1197,15 +1197,11 @@ mod tests {
         );
         assert_eq!(
             links
-                .directive(&std::collections::BTreeSet::from(["dTworkLink".to_owned()]))
+                .directive_key("dTworkLink")
                 .map(|message| message.locus.offset),
             Some(50),
         );
-        assert!(
-            links
-                .directive(&std::collections::BTreeSet::from(["dTmissing".to_owned()]))
-                .is_none()
-        );
+        assert!(links.directive_key("dTmissing").is_none());
     }
 
     #[test]
