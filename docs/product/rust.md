@@ -472,6 +472,13 @@ authorizes an agent to use the corresponding commands. Native harness authority
 remains in force otherwise. Merely finding the binary establishes no task,
 lane, session, or claim.
 
+Without `--json`, a reply whose command contract provides human text prints that
+text directly. Structured reply bodies print their body JSON by default rather
+than gaining an unrelated prose rendering. `--json` always prints the complete
+typed outcome, including its reply position; selecting it changes only the
+document shape, never the exit code or output stream. Refusals and faults remain
+human-readable on standard error unless `--json` is selected.
+
 Repository development commands that may touch Cargo use ambient `spice` and
 its `dev cargo` or `dev xtask` surface. In supervised shells, tracked wrapper
 policy resolves that word to the exact regular, non-symbolic Git-common

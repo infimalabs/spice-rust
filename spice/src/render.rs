@@ -74,12 +74,12 @@ impl Rendering {
 
 /// Renders one outcome in the requested form.
 ///
-/// Text replies are the stable machine document of the body alone; JSON
-/// replies retain the complete typed outcome. Refusals keep their typed arm's
-/// output order and faults keep their one-sentence form. Both forms therefore
-/// carry the same value without inventing prose fields for a successful body.
-/// Transcript streams use [`render_stream`] because each successful wake is
-/// the stream document itself rather than a reply envelope.
+/// Text replies serialize structured bodies as their stable JSON document.
+/// Callers whose reply type has an explicit human-text variant use
+/// [`render_with_reply_text`] to select that prose without changing `--json`.
+/// Refusals keep their typed arm's output order and faults keep their
+/// one-sentence form. Transcript streams use [`render_stream`] because each
+/// successful wake is the stream document itself rather than a reply envelope.
 ///
 /// # Errors
 ///
@@ -88,14 +88,31 @@ impl Rendering {
 /// the rim carries it in: the detail of a fault. Rendering that fault as text
 /// performs no fallible body encoding.
 pub fn render<B: Serialize>(outcome: &Outcome<B>, form: Form) -> Result<Rendering, String> {
+    render_with_reply_text(outcome, form, no_reply_text::<B>)
+}
+
+/// Renders one outcome while projecting an explicitly human-text reply body.
+///
+/// The projector is consulted only for text replies. JSON always retains the
+/// complete typed outcome, and a body without projected prose keeps its stable
+/// structured JSON document in text mode.
+pub fn render_with_reply_text<B: Serialize>(
+    outcome: &Outcome<B>,
+    form: Form,
+    reply_text: fn(&B) -> Option<&str>,
+) -> Result<Rendering, String> {
     let document = match form {
-        Form::Text => text(outcome)?,
+        Form::Text => text(outcome, reply_text)?,
         Form::Json => line(wire::encode(outcome).map_err(|error| error.to_string())?),
     };
     Ok(Rendering {
         stream: stream(outcome),
         document,
     })
+}
+
+fn no_reply_text<B>(_body: &B) -> Option<&str> {
+    None
 }
 
 /// Render the commit gate's evidence-first refusal while keeping admission silent.
@@ -154,12 +171,19 @@ fn terminated(mut document: Vec<u8>) -> Vec<u8> {
 
 /// The one document an outcome renders to in text form.
 ///
-/// Refusal ordering is selected by its semantic arm. A reply has no envelope
-/// sentence: what a successful command prints is the body's stable wire
-/// document.
-fn text<B: Serialize>(outcome: &Outcome<B>) -> Result<Vec<u8>, String> {
+/// Refusal ordering is selected by its semantic arm. A human-text reply has no
+/// JSON wrapper; other successful bodies keep their stable structured document.
+fn text<B: Serialize>(
+    outcome: &Outcome<B>,
+    reply_text: fn(&B) -> Option<&str>,
+) -> Result<Vec<u8>, String> {
     let document = match outcome {
-        Outcome::Reply(reply) => wire::encode(&reply.body).map_err(|error| error.to_string())?,
+        Outcome::Reply(reply) => {
+            if let Some(text) = reply_text(&reply.body) {
+                return Ok(terminated(text.as_bytes().to_vec()));
+            }
+            wire::encode(&reply.body).map_err(|error| error.to_string())?
+        }
         Outcome::Refusal(refusal) => refusal_text(refusal).into_bytes(),
         Outcome::Fault(fault) => format!("spice: {}; {}", fault.reason, fault.detail).into_bytes(),
     };
@@ -202,17 +226,27 @@ fn diagnostic_text(diagnostic: &wire::RefusalDiagnostic) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde::Serialize;
     use wire::{
         Fault, FaultClass, Outcome, Refusal, RefusalDiagnostic, Reply, ReplyPosition, SpiceCommand,
     };
 
-    use super::{Form, Stream, render, render_commit_gate};
+    use super::{Form, Stream, render, render_commit_gate, render_with_reply_text};
 
     fn reply() -> Outcome<()> {
         Outcome::Reply(Reply {
             position: ReplyPosition::Direct {},
             body: (),
         })
+    }
+
+    #[derive(Serialize)]
+    struct HumanTextBody {
+        text: String,
+    }
+
+    fn human_text(body: &HumanTextBody) -> Option<&str> {
+        Some(&body.text)
     }
 
     fn repairable() -> Outcome<()> {
@@ -317,6 +351,36 @@ mod tests {
 
             assert_eq!(decoded, outcome);
         }
+    }
+
+    #[test]
+    fn an_explicit_human_text_body_drops_only_its_default_json_wrapper() {
+        let outcome = Outcome::Reply(Reply {
+            position: ReplyPosition::Direct {},
+            body: HumanTextBody {
+                text: "first line\nsecond line\n".to_owned(),
+            },
+        });
+
+        let text = render_with_reply_text(&outcome, Form::Text, human_text)
+            .expect("human text reply renders");
+        assert_eq!(text.stream, Stream::Out);
+        assert_eq!(text.document, b"first line\nsecond line\n");
+        assert_eq!(
+            render(&outcome, Form::Text)
+                .expect("structured text reply renders")
+                .document,
+            b"{\"text\":\"first line\\nsecond line\\n\"}\n",
+        );
+        assert_eq!(
+            render_with_reply_text(&outcome, Form::Json, human_text)
+                .expect("human reply JSON renders")
+                .document,
+            render(&outcome, Form::Json)
+                .expect("ordinary reply JSON renders")
+                .document,
+            "--json is independent of the human text projection",
+        );
     }
 
     #[test]

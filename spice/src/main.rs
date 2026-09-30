@@ -463,7 +463,9 @@ impl NativeInvocation<'_> {
             | ["task", "require"]
             | ["task", "delete"]
             | ["doc"]
-            | ["doc", "ledger"] => deliver(&board_command::run(leaf, contract), form),
+            | ["doc", "ledger"] => {
+                deliver_command_answer(&board_command::run(leaf, contract), form)
+            }
             ["task", "next"] => task_next_delivery::deliver(
                 &board_command::run_task_next(contract),
                 form,
@@ -964,7 +966,36 @@ fn terminate_child(status: ExitStatus) -> ! {
 /// exit code. That fault is rendered as text, which is total, so this reaches
 /// an exit in one step and never asks the encoder a second time.
 fn deliver<B: serde::Serialize>(outcome: &Outcome<B>, form: Form) -> ! {
-    match render::render(outcome, form) {
+    deliver_rendering(outcome, render::render(outcome, form))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_with_reply_text<B: serde::Serialize>(
+    outcome: &Outcome<B>,
+    form: Form,
+    reply_text: fn(&B) -> Option<&str>,
+) -> ! {
+    deliver_rendering(
+        outcome,
+        render::render_with_reply_text(outcome, form, reply_text),
+    )
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn deliver_command_answer(outcome: &Outcome<wire::intent::CommandAnswer>, form: Form) -> ! {
+    deliver_with_reply_text(outcome, form, command_answer_text)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn command_answer_text(body: &wire::intent::CommandAnswer) -> Option<&str> {
+    match body {
+        wire::intent::CommandAnswer::Text(answer) => Some(&answer.text),
+        _ => None,
+    }
+}
+
+fn deliver_rendering<B>(outcome: &Outcome<B>, rendering: Result<render::Rendering, String>) -> ! {
+    match rendering {
         Ok(rendering) => {
             rendering.speak();
             terminate(outcome);
