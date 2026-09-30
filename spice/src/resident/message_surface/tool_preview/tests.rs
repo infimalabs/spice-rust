@@ -376,6 +376,77 @@ fn shell_families_remain_visible_without_discarding_their_commands() {
 }
 
 #[test]
+fn harness_tools_preview_the_target_they_act_on() {
+    for (name, arguments, expected) in [
+        (
+            "lsp",
+            r#"{"action":"references","file":"app/src/view.rs","line":120,"symbol":"label","i":"Finding label callers"}"#,
+            "lsp: references label (app/src/view.rs:120)",
+        ),
+        (
+            "lsp",
+            r#"{"action":"symbols","file":"app/src/browser.rs","i":"Listing symbols"}"#,
+            "lsp: symbols app/src/browser.rs",
+        ),
+        (
+            "lsp",
+            r#"{"action":"symbols","file":"*","query":"Toaster"}"#,
+            "lsp: symbols Toaster (*)",
+        ),
+        (
+            "lsp",
+            r#"{"action":"rename","file":"src/a.rs","line":4,"symbol":"Foo","new_name":"Bar"}"#,
+            "lsp: rename Foo -> Bar (src/a.rs:4)",
+        ),
+        (
+            "lsp",
+            r#"{"action":"rename_file","file":"src/a.rs","new_name":"src/b.rs"}"#,
+            "lsp: rename_file src/a.rs -> src/b.rs",
+        ),
+        (
+            "lsp",
+            r#"{"action":"diagnostics","file":"app/src/**/*.rs"}"#,
+            "lsp: diagnostics app/src/**/*.rs",
+        ),
+        (
+            "lsp",
+            r#"{"action":"status","i":"Checking"}"#,
+            "lsp: status",
+        ),
+        (
+            "grep",
+            r#"{"pattern":"fn render","path":"app/src","i":"Finding renderers"}"#,
+            "grep: fn render in app/src",
+        ),
+        ("Grep", r#"{"pattern":"TODO"}"#, "Grep: TODO"),
+        (
+            "job",
+            r#"{"op":"wait","id":"dTtmkKfYY","i":"Waiting for gate"}"#,
+            "job: wait dTtmkKfYY",
+        ),
+        ("job", r#"{"op":"list","i":"Listing jobs"}"#, "job: list"),
+    ] {
+        assert_eq!(
+            ordinary_call_preview(name, arguments),
+            expected,
+            "{arguments}"
+        );
+    }
+    // A payload missing the tool's own target keeps the generic scan.
+    assert_eq!(
+        ordinary_call_preview("lsp", r#"{"file":"src/a.rs"}"#),
+        "lsp: src/a.rs"
+    );
+    let long = format!(
+        r#"{{"action":"hover","symbol":"value","file":"{}.rs","line":9}}"#,
+        "deep/".repeat(40)
+    );
+    let bounded = ordinary_call_preview("lsp", &long);
+    assert_eq!(bounded.chars().count(), MAX_CHARS);
+    assert!(bounded.starts_with("lsp: hover value (deep/"), "{bounded}");
+}
+
+#[test]
 fn an_empty_call_remains_visible_through_its_correlated_result() {
     let mut previews = CallPreviews::default();
     assert_eq!(
