@@ -387,6 +387,16 @@ impl TeamControls {
         }
     }
 
+    /// Each team's in-flight policy send and its last refusal, which the
+    /// next send clears.
+    pub(super) fn requests(
+        &self,
+    ) -> impl Iterator<Item = (CanonicalUuid, Option<TeamLife>, Option<&str>)> {
+        self.teams
+            .iter()
+            .map(|(team, control)| (*team, control.pending_life, control.issue.as_deref()))
+    }
+
     fn request_life(
         &mut self,
         team: CanonicalUuid,
@@ -650,9 +660,6 @@ pub(super) fn render_team_controls(
                 disabled={!ready}
                 title={format!("Send with {}: {}", selected.label(), selected.help())}
             >{selected.label()}</button>
-            if let Some(issue) = &control.issue {
-                <p class="team-control-issue" role="status">{issue.clone()}</p>
-            }
         </aside>
     }
 }

@@ -331,7 +331,8 @@ fn render_lifecycle(
     }
 }
 
-/// The member's controls, their in-flight command, and its last refusal.
+/// The member's controls, held while a command is in flight. The command's
+/// progress and outcome report through the root toast.
 pub(super) fn render(
     runtime: &CanvasRuntime,
     member: &crate::runtime::LaneMember,
@@ -342,10 +343,10 @@ pub(super) fn render(
     if !(offered.lifecycle || offered.renew || offered.retune) {
         return Html::default();
     }
-    let state = runtime.member_control(member.lane);
-    let pending = state.and_then(MemberControlState::pending);
-    let issue = state.and_then(MemberControlState::issue);
-    let busy = pending.is_some();
+    let busy = runtime
+        .member_control(member.lane)
+        .and_then(MemberControlState::pending)
+        .is_some();
     html! {
         <section
             class="team-dash-member-controls"
@@ -362,12 +363,6 @@ pub(super) fn render(
             </div>
             if offered.retune {
                 {render_retune(runtime, member, busy, command)}
-            }
-            if let Some(pending) = pending {
-                <p class="team-dash-member-progress" role="status">{pending.progress()}</p>
-            }
-            if let Some(issue) = issue {
-                <p class="form-refusal" role="alert">{issue.to_owned()}</p>
             }
         </section>
     }

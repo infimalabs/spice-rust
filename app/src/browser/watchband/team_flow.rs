@@ -106,40 +106,68 @@ pub(super) fn team_flow(properties: &TeamFlowProps) -> Html {
     let issue = timeline.and_then(crate::TaskTimelineState::issue);
     let loading = timeline.is_none_or(crate::TaskTimelineState::loading);
     let empty = events.is_empty();
+    // An empty Flow states its loading or failure as its content. A populated
+    // one reports an older page's progress, or any read's failure until the
+    // next read, over its rows rather than inside them.
+    let status = if empty {
+        None
+    } else if let Some(issue) = issue {
+        Some((issue, true))
+    } else {
+        timeline
+            .is_some_and(crate::TaskTimelineState::loading_older)
+            .then_some(("Loading older activity…", false))
+    };
     html! {
-        <div
-            ref={host}
-            class="team-dash-flow-body"
-            data-empty={empty.to_string()}
-            onscroll={request_older}
-        >
-            <ol class="team-dash-flow-list" aria-live="polite">
-                {for events.into_iter().map(|event| render_event(
-                    event,
-                    &properties.standings,
-                    &properties.select,
-                    &properties.show_chat,
-                ))}
-            </ol>
-            if empty {
-                <p class="team-dash-flow-empty" role={issue.is_some().then_some("status")}>
-                    {issue.unwrap_or(if loading { "Loading team flow…" } else { "No team activity yet." })}
-                </p>
-            } else if let Some(issue) = issue {
-                <p class="team-dash-flow-issue" role="status">{issue}</p>
-            } else if timeline.is_some_and(crate::TaskTimelineState::loading_older) {
-                <p class="team-dash-flow-issue" role="status">{"Loading older activity…"}</p>
-            }
-        </div>
+        <>
+            <div
+                ref={host}
+                class="team-dash-flow-body"
+                data-empty={empty.to_string()}
+                onscroll={request_older}
+            >
+                <ol class="team-dash-flow-list" aria-live="polite">
+                    {for events.into_iter().map(|event| render_event(
+                        event,
+                        &properties.standings,
+                        &properties.select,
+                        &properties.show_chat,
+                    ))}
+                </ol>
+                if empty {
+                    <p class="team-dash-flow-empty" role={issue.is_some().then_some("status")}>
+                        {issue.unwrap_or(if loading { "Loading team flow…" } else { "No team activity yet." })}
+                    </p>
+                }
+            </div>
+            {render_status(status)}
+        </>
+    }
+}
+
+/// The populated Flow's read status, laid over the bottom of the panel so its
+/// scroll content never changes size. The live region stays mounted, empty
+/// when there is nothing to report, so every report is announced.
+fn render_status(status: Option<(&str, bool)>) -> Html {
+    html! {
+        <p
+            class="team-dash-flow-status"
+            role="status"
+            data-shown={status.is_some().to_string()}
+            data-issue={status.is_some_and(|(_, issue)| issue).to_string()}
+        >{status.map(|(text, _)| text.to_owned())}</p>
     }
 }
 
 fn empty_flow(host: NodeRef, message: &'static str) -> Html {
     html! {
-        <div ref={host} class="team-dash-flow-body" data-empty="true">
-            <ol class="team-dash-flow-list"></ol>
-            <p class="team-dash-flow-empty" role="status">{message}</p>
-        </div>
+        <>
+            <div ref={host} class="team-dash-flow-body" data-empty="true">
+                <ol class="team-dash-flow-list"></ol>
+                <p class="team-dash-flow-empty" role="status">{message}</p>
+            </div>
+            {render_status(None)}
+        </>
     }
 }
 

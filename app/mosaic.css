@@ -859,11 +859,6 @@ html[data-command-modifier-held="true"]
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
-.team-control-issue {
-  width: calc(var(--team-control-track-width) + 16px); margin: 0;
-  color: var(--danger); overflow-wrap: anywhere;
-  font: .55rem/1.25 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
 /* The reference narrows the same stack rather than letting it crowd the agent
    cards once the viewport can no longer afford the full-width pills. */
 @media (max-width: 720px) {

@@ -1,9 +1,11 @@
-//! Lane commands the operator issues from one Dash member, and what each
-//! member shows while one is in flight or after the resident refused it.
+//! Lane commands the operator issues from one Dash member: the one in flight,
+//! and how the last one settled.
 //!
 //! A member runs at most one such command at a time. Its answer settles the
 //! exact request it carries, so a late answer to a command abandoned by a
-//! reconnect cannot clear or refuse a newer one.
+//! reconnect cannot clear or refuse a newer one. Every reservation ends in a
+//! settlement, an abandoned one included, so whatever reports the command in
+//! flight always learns how it ended.
 
 use std::collections::BTreeMap;
 
@@ -41,6 +43,19 @@ impl MemberCommand {
         }
     }
 
+    /// What the member reads once the resident accepted the command.
+    #[must_use]
+    pub const fn done(&self) -> &'static str {
+        match self {
+            Self::Wake => "Woke",
+            Self::Drain => "Drained",
+            Self::Remove => "Removed",
+            Self::Renew { requested: true } => "Requested renewal",
+            Self::Renew { requested: false } => "Cancelled renewal",
+            Self::Retune { .. } => "Changed model",
+        }
+    }
+
     /// The action a refusal names.
     #[must_use]
     pub const fn failure(&self) -> &'static str {
@@ -63,27 +78,32 @@ pub struct MemberRequest {
     pub command: MemberCommand,
 }
 
+/// How one member command ended: accepted, or refused with its reason.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemberSettlement {
+    pub request: MemberRequest,
+    /// The refusal, absent when the resident accepted the command.
+    pub issue: Option<String>,
+}
+
 /// What one member shows about the commands issued from it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MemberControlState {
     pending: Option<MemberRequest>,
-    issue: Option<String>,
+    settled: Option<MemberSettlement>,
 }
 
 impl MemberControlState {
     /// The command in flight, until its answer lands.
     #[must_use]
-    pub const fn pending(&self) -> Option<&MemberCommand> {
-        match &self.pending {
-            Some(request) => Some(&request.command),
-            None => None,
-        }
+    pub const fn pending(&self) -> Option<&MemberRequest> {
+        self.pending.as_ref()
     }
 
-    /// The last refusal, until another command from this member is issued.
+    /// How the last command ended, until another is issued from this member.
     #[must_use]
-    pub fn issue(&self) -> Option<&str> {
-        self.issue.as_deref()
+    pub const fn settled(&self) -> Option<&MemberSettlement> {
+        self.settled.as_ref()
     }
 }
 
@@ -93,14 +113,26 @@ pub(super) struct MemberControls {
     serial: u64,
 }
 
+/// The settlement of a command a reconnect dropped before its answer arrived.
+const UNANSWERED: &str =
+    "No answer arrived before the connection dropped; the seat shows whether it landed";
+
 impl CanvasRuntime {
-    /// In-flight and refusal state for one member, if it ever issued a command.
+    /// In-flight and settlement state for one member, if it ever issued a command.
     #[must_use]
     pub fn member_control(&self, lane: CanonicalUuid) -> Option<&MemberControlState> {
         self.member_controls.members.get(&lane)
     }
 
-    /// Reserve one command for a member, clearing its previous refusal.
+    /// Every member that ever issued a command, by lane.
+    pub fn member_controls(&self) -> impl Iterator<Item = (CanonicalUuid, &MemberControlState)> {
+        self.member_controls
+            .members
+            .iter()
+            .map(|(lane, state)| (*lane, state))
+    }
+
+    /// Reserve one command for a member, clearing its previous settlement.
     ///
     /// A member with a command already in flight reserves nothing.
     pub fn begin_member_command(
@@ -120,18 +152,21 @@ impl CanvasRuntime {
             command,
         };
         state.pending = Some(request.clone());
-        state.issue = None;
+        state.settled = None;
         Some(request)
     }
 
-    /// Settle the exact request an answer names: success clears it, and a
-    /// refusal keeps its reason on the member.
+    /// Settle the exact request an answer names, recording whether the
+    /// resident accepted it or why it refused.
     pub fn settle_member_command(&mut self, request: &MemberRequest, issue: Option<String>) {
         if let Some(state) = self.member_controls.members.get_mut(&request.lane)
             && state.pending.as_ref() == Some(request)
         {
             state.pending = None;
-            state.issue = issue;
+            state.settled = Some(MemberSettlement {
+                request: request.clone(),
+                issue,
+            });
         }
     }
 
@@ -139,7 +174,12 @@ impl CanvasRuntime {
     /// that follows shows whichever of them landed.
     pub(super) fn abandon_member_commands(&mut self) {
         for state in self.member_controls.members.values_mut() {
-            state.pending = None;
+            if let Some(request) = state.pending.take() {
+                state.settled = Some(MemberSettlement {
+                    request,
+                    issue: Some(UNANSWERED.to_owned()),
+                });
+            }
         }
     }
 }
