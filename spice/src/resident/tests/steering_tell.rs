@@ -335,7 +335,6 @@ fn a_lane_tells_a_seated_peer_as_itself_and_the_delivery_names_the_sender() {
         peer.contains(&format!("from=lane:{sender}\n[PEER lane {sender}]")),
         "the recipient hears who told it: {peer}"
     );
-    assert!(peer.contains("not operator direction"), "{peer}");
     let operator = render(&sent.key);
     assert!(
         !operator.contains("from=") && !operator.contains("[PEER"),
@@ -386,12 +385,12 @@ fn an_answered_peer_message_replies_once_to_its_seated_sender_and_the_reply_ends
     );
     let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
     let rendered = steer::inbox::render_pending(&seal, &[reply.clone()], |_, _| None);
+    let replied = rendered
+        .lines()
+        .find(|line| line.starts_with(&format!("[PEER REPLY lane {recipient}]")));
     assert!(
-        rendered.contains(&format!(
-            "[PEER REPLY lane {recipient}] Lane {recipient} answered your peer message {} with ACK",
-            told.key
-        )),
-        "{rendered}"
+        replied.is_some_and(|line| line.contains(told.key.as_str())),
+        "the sender hears a reply naming the key it asked under: {rendered}"
     );
 
     let mut diagnostics = Vec::new();

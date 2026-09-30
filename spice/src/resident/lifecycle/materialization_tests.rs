@@ -257,21 +257,26 @@ fn drain_ready_reentry_restarts_the_first_members_timer_deadline() {
 }
 
 #[test]
-fn synthesized_guidance_stays_pending_without_resurrecting_a_vacant_lane() {
+fn synthesized_guidance_and_peer_messages_stay_pending_without_resurrecting_a_vacant_lane() {
     let (bus, projects, mut projection) = policy_fixture(wire::intent::TeamLife::Steer, false);
     committed(
         bus.commit(reminder_write())
             .expect("taste reminder commits"),
     );
+    committed(
+        bus.commit(peer_message_write())
+            .expect("peer message commits"),
+    );
     let snapshot = bus.task_snapshot().expect("reminder snapshot reads");
     projection
         .advance(&snapshot, &projects)
         .expect("reminder projection advances");
-    assert_eq!(projection.ledger().pending(lane()).len(), 1);
+    assert_eq!(projection.ledger().pending(lane()).len(), 2);
     assert_eq!(
         projected_resolution(&snapshot, &projection),
         Resolution::Idle,
-        "resident-authored guidance remains answerable without becoming wake authority"
+        "resident guidance and another lane's message stay answerable without becoming wake \
+         authority"
     );
 
     committed(
@@ -370,6 +375,38 @@ fn operator_direction_write() -> JournalWrite {
         .expect("operator direction fact builds");
     write.steering_head(sent, move |position| {
         Ledger::sent_head(&direction, origin, at, position).expect("operator direction head builds")
+    });
+    write
+}
+
+fn peer_message_write() -> JournalWrite {
+    let at = instant(10);
+    let sender = uuid(40);
+    let origin = format!("resident:{}", epoch())
+        .parse::<Origin>()
+        .expect("fixture resident origin");
+    let told = body::SteerSent {
+        from: Some(sender),
+        directive: uuid(41),
+        fanout: None,
+        key: "1kKRRsDT".to_owned(),
+        lane: lane(),
+        text: "The parser moved.".to_owned(),
+        control: None,
+        attachments: Vec::new(),
+        expires: instant(59),
+    };
+    let mut write = JournalWrite::new(
+        Actor::Lane(sender),
+        origin.clone(),
+        at,
+        Producer::CommandDoor,
+    );
+    let sent = write
+        .fact(told.clone(), FactCause::Root)
+        .expect("peer message fact builds");
+    write.steering_head(sent, move |position| {
+        Ledger::sent_head(&told, origin, at, position).expect("peer message head builds")
     });
     write
 }
