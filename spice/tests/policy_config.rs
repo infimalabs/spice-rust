@@ -175,7 +175,7 @@ fn an_empty_tree_is_the_complete_compiled_policy() {
     assert_eq!(
         root.vendor().omp().auto_compact_window_tokens(),
         vendor::DEFAULT_OMP_LONG_CONTEXT_AUTO_COMPACT_WINDOW_TOKENS,
-        "the default model is a million-token Claude"
+        "the default model is an OpenAI model billed at long-context rates past 272,000 tokens"
     );
     assert_eq!(root.vendor().omp().auto_compact_threshold_tokens(), 231_200);
     assert_eq!(root.proof().image().as_str(), proof::DEFAULT_IMAGE);

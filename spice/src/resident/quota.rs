@@ -1078,27 +1078,33 @@ mod tests {
 
     #[tokio::test]
     async fn timeout_and_each_output_ceiling_are_nonfatal_failures() {
-        for (name, body, expected) in [
+        // Only the timeout case races its deadline. The overflow cases end as
+        // soon as a ceiling is crossed, so their deadline merely bounds a hang
+        // and must outlast a loaded host's process spawn.
+        for (name, body, deadline, expected) in [
             (
                 "timeout",
                 "trap '' TERM\n/bin/sleep 30",
+                Duration::from_millis(60),
                 FailureKind::Timeout,
             ),
             (
                 "stdout-overflow",
                 "while :; do printf '0123456789'; done",
+                Duration::from_secs(10),
                 FailureKind::StdoutOverflow,
             ),
             (
                 "stderr-overflow",
                 "while :; do printf '0123456789' >&2; done",
+                Duration::from_secs(10),
                 FailureKind::StderrOverflow,
             ),
         ] {
             let fixture = Fixture::new();
             let script = fixture.script(name, body);
             let mut bounded = settings(script, &fixture.root);
-            bounded.runtime = Duration::from_millis(60);
+            bounded.runtime = deadline;
             bounded.stdout_limit = 64;
             bounded.stderr_limit = 64;
             let mut runtime = Runtime::start_with(bounded);
