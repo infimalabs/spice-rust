@@ -11,6 +11,7 @@ pub(super) struct Controls {
     pub return_focus_to: Callback<web_sys::Element>,
     pub notes: NoteComposers,
     pub select: Callback<TaskStamp>,
+    pub select_history: Callback<TaskStamp>,
     pub request: Callback<TaskStamp>,
     pub close: Callback<()>,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
@@ -25,6 +26,7 @@ pub(super) fn use_controls(
     mounted: bool,
 ) -> Controls {
     let selected = use_state(|| None::<TaskStamp>);
+    let history_owned = use_state_eq(|| false);
     let return_focus = use_mut_ref(|| None::<web_sys::Element>);
     let presented = use_state_eq(|| false);
     let closing = use_state_eq(|| false);
@@ -42,9 +44,10 @@ pub(super) fn use_controls(
         closing.clone(),
         return_focus.clone(),
     );
+    let select_history = history_select_callback(select.clone(), history_owned.clone());
     let complete_close =
         complete_close_callback(selected.clone(), presented.clone(), closing.clone());
-    let close = close_callback(selected.clone(), closing.clone());
+    let close = close_callback(selected.clone(), closing.clone(), history_owned.clone());
     use_present(
         selected.is_some() && mounted && !*presented,
         presented.clone(),
@@ -62,6 +65,13 @@ pub(super) fn use_controls(
         sheet_ref.clone(),
         return_focus.clone(),
     );
+    use_history(
+        request.clone(),
+        selected.clone(),
+        presented.clone(),
+        closing.clone(),
+        history_owned,
+    );
     overlay::use_escape_owner(selected.is_some() && !*closing && mounted, close.clone());
     let return_focus_to = {
         let return_focus = return_focus.clone();
@@ -77,10 +87,54 @@ pub(super) fn use_controls(
         sheet_ref,
         notes,
         select,
+        select_history,
         request,
         close,
         submit_note,
     }
+}
+
+const TASK_DETAIL_STATE: &str = "canvasTaskDetail";
+
+fn history_task() -> Option<TaskStamp> {
+    let history = web_sys::window()?.history().ok()?;
+    js_sys::Reflect::get(&history.state().ok()?, &TASK_DETAIL_STATE.into())
+        .ok()?
+        .as_string()?
+        .parse()
+        .ok()
+}
+
+fn push_history_task(task: &TaskStamp) -> bool {
+    let Some(history) = web_sys::window().and_then(|window| window.history().ok()) else {
+        return false;
+    };
+    let state = js_sys::Object::new();
+    if let Ok(current) = history.state()
+        && let Some(current) = current.dyn_ref::<js_sys::Object>()
+    {
+        js_sys::Object::assign(&state, current);
+    }
+    if js_sys::Reflect::set(
+        &state,
+        &TASK_DETAIL_STATE.into(),
+        &JsValue::from(task.to_string()),
+    )
+    .is_err()
+    {
+        return false;
+    }
+    history.push_state(&state, "").is_ok()
+}
+
+fn history_select_callback(
+    select: Callback<TaskStamp>,
+    history_owned: UseStateHandle<bool>,
+) -> Callback<TaskStamp> {
+    Callback::from(move |task: TaskStamp| {
+        history_owned.set(push_history_task(&task));
+        select.emit(task);
+    })
 }
 
 /// Select one task for the shared detail sheet and make sure its detail is read.
@@ -153,11 +207,21 @@ fn request_callback(
 fn close_callback(
     selected: UseStateHandle<Option<TaskStamp>>,
     closing: UseStateHandle<bool>,
+    history_owned: UseStateHandle<bool>,
 ) -> Callback<()> {
     Callback::from(move |()| {
-        if selected.is_some() {
-            closing.set(true);
+        if selected.is_none() {
+            return;
         }
+        if *history_owned
+            && history_task().as_ref() == selected.as_ref()
+            && web_sys::window()
+                .and_then(|window| window.history().ok())
+                .is_some_and(|history| history.back().is_ok())
+        {
+            return;
+        }
+        closing.set(true);
     })
 }
 
@@ -171,6 +235,56 @@ fn complete_close_callback(
         closing.set(false);
         selected.set(None);
     })
+}
+/// Reconcile the same-URL task-detail history step on Back and Forward.
+#[hook]
+fn use_history(
+    request: Callback<TaskStamp>,
+    selected: UseStateHandle<Option<TaskStamp>>,
+    presented: UseStateHandle<bool>,
+    closing: UseStateHandle<bool>,
+    history_owned: UseStateHandle<bool>,
+) {
+    let known = use_mut_ref(|| None::<TaskStamp>);
+    *known.borrow_mut() = (*selected).clone();
+    let owned = use_mut_ref(|| false);
+    *owned.borrow_mut() = *history_owned;
+    use_effect_with((), move |()| {
+        let callback = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+            let current = known.borrow().clone();
+            let owns_entry = *owned.borrow();
+            match (history_task(), current.as_ref(), owns_entry) {
+                (Some(task), shown, false) => {
+                    history_owned.set(true);
+                    closing.set(false);
+                    if shown != Some(&task) {
+                        presented.set(false);
+                        selected.set(Some(task.clone()));
+                        request.emit(task);
+                    }
+                }
+                (None, Some(_), true) => {
+                    history_owned.set(false);
+                    closing.set(true);
+                }
+                _ => {}
+            }
+        });
+        let window = web_sys::window().and_then(|window| {
+            window
+                .add_event_listener_with_callback("popstate", callback.as_ref().unchecked_ref())
+                .ok()
+                .map(|()| window)
+        });
+        move || {
+            if let Some(window) = window {
+                let _ = window.remove_event_listener_with_callback(
+                    "popstate",
+                    callback.as_ref().unchecked_ref(),
+                );
+            }
+        }
+    });
 }
 
 /// Present the sheet one frame after a mounted layer renders it unpresented,

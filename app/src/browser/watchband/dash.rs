@@ -1,11 +1,11 @@
 use super::*;
 
 const DASH_ACTIVITY_BUDGET: usize = 72;
+fn dash_return_id(slot: &str, lane: CanonicalUuid) -> String {
+    format!("team-dash-{slot}-{lane}")
+}
 
-fn render_dash_task(
-    standing: &Standing,
-    inspector: &crate::browser::message_task_inspector::Context,
-) -> Html {
+fn render_dash_task(standing: &Standing, select: &Callback<wire::TaskStamp>) -> Html {
     let Some(handle) = standing.handle.as_deref() else {
         return html! {
             <div class="team-dash-member-slot" data-dash-slot="task" data-empty="true">
@@ -23,15 +23,7 @@ fn render_dash_task(
             </div>
         };
     };
-    let open = {
-        let inspector = inspector.clone();
-        Callback::from(move |event: MouseEvent| {
-            let return_target = event
-                .current_target()
-                .and_then(|target| target.dyn_into::<web_sys::Element>().ok());
-            inspector.open_detail(task.clone(), return_target);
-        })
-    };
+    let open = select.reform(move |_| task.clone());
     let title = standing
         .task_title
         .clone()
@@ -42,6 +34,7 @@ fn render_dash_task(
             type="button"
             class={classes!("team-dash-member-slot", "team-dash-member-action")}
             data-dash-slot="task"
+            id={dash_return_id("task", standing.lane)}
             data-task-handle={handle.to_owned()}
             aria-label={format!("Open task {handle}: {title}")}
             onclick={open}
@@ -141,6 +134,9 @@ fn render_dash_activity(
         <a
             class={classes!("team-dash-member-slot", "team-dash-member-action")}
             data-dash-slot="activity"
+            id={dash_return_id("activity", standing.lane)}
+            data-dash-return=""
+            data-dash-return-origin=""
             data-activity-class={class}
             href={crate::view::card_href(&target)}
             aria-label={format!("Open latest {} activity in Chat", standing.label)}
@@ -185,6 +181,9 @@ fn render_dash_direction(
         <a
             class={classes!("team-dash-member-slot", "team-dash-member-action")}
             data-dash-slot="direction"
+            id={dash_return_id("direction", standing.lane)}
+            data-dash-return=""
+            data-dash-return-origin=""
             data-pending={standing.pending.to_string()}
             href={crate::view::card_href(&target)}
             aria-label={format!("Open {}'s composer in Chat", standing.label)}
@@ -204,7 +203,7 @@ pub(super) fn render_agent_details(
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     team: CanonicalUuid,
-    task_inspector: &crate::browser::message_task_inspector::Context,
+    select: &Callback<wire::TaskStamp>,
     controls: &UseReducerHandle<TeamControls>,
 ) -> Html {
     debug_assert_eq!(
@@ -296,7 +295,7 @@ pub(super) fn render_agent_details(
                     })}
                 </dl>
             </details>
-            {render_dash_task(standing, task_inspector)}
+            {render_dash_task(standing, select)}
             {render_dash_activity(runtime, standing, team, controls)}
             {render_dash_direction(standing, team, controls)}
         </article>

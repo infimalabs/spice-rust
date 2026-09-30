@@ -446,15 +446,19 @@ per-member seat-details disclosure that scrolls inside its own box.
 
 Below presence, every member keeps fixed Task, Latest activity, and Waiting
 direction rows. Live values replace text inside those slots rather than changing
-card geometry. A task opens the shared detail layer and returns focus to its Dash
-row; activity and direction links enter the exact Chat message or composer, and
-browser Back returns to that team's Dash.
+card geometry. Opening a task adds a same-URL history step; closing it or using
+browser Back returns focus to its Dash row without turning transient detail into
+a copied route. Activity and direction links enter the exact Chat message or
+composer. Back restores that team's Dash, its Flow scroll position, and the row
+that launched the jump.
 
 A separate Flow frame below the roster merges task transitions, lane lifecycle
 boundaries, and delivered directions into one newest-first chronology. Task
-entries open the shared task detail; lifecycle and direction entries link to
-their source cards in Chat. Older task events page in at the bottom without
-moving the row under the reader, while newly arriving events appear at the top
+entries open the same history-backed task detail; lifecycle and direction
+entries link to their source cards in Chat and return to the originating Flow
+row.
+Older task events page in at the bottom without moving the row under the reader,
+while newly arriving events appear at the top
 and preserve an existing scroll position. The resident-backed feed rehydrates
 after reload, so Dash remains useful as both live status and workflow history.
 

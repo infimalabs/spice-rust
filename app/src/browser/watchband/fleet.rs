@@ -63,7 +63,7 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) team_settled: &'a super::super::team_settled::Controls,
     pub(super) selected_task: &'a UseStateHandle<Option<wire::TaskStamp>>,
     pub(super) select_task: &'a Callback<wire::TaskStamp>,
-    pub(super) task_inspector: &'a crate::browser::message_task_inspector::Context,
+    pub(super) select_dash_task: &'a Callback<wire::TaskStamp>,
     pub(super) runtime: &'a CanvasRuntime,
     pub(super) epoch: CanonicalUuid,
     pub(super) topology_revision: u64,
@@ -129,8 +129,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                             &empty_team,
                             &[],
                             DashRender {
-                                task_inspector: render.task_inspector,
-                                select: render.select_task,
+                                select: render.select_dash_task,
                                 request: &render.timeline_request,
                                 controls: render.team_controls,
                             },
@@ -239,8 +238,7 @@ pub(super) fn render_populated_fleet(
                                             team,
                                             &team_standings,
                                             DashRender {
-                                                task_inspector: render.task_inspector,
-                                                select: render.select_task,
+                                                select: render.select_dash_task,
                                                 request: &render.timeline_request,
                                                 controls: render.team_controls,
                                             },

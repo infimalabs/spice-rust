@@ -51,13 +51,6 @@ pub(super) struct Controls {
     detail: DetailContext,
 }
 
-impl Controls {
-    /// Shared task-detail command surface for non-message Canvas affordances.
-    pub(super) fn context(&self) -> Context {
-        self.context.clone()
-    }
-}
-
 #[hook]
 pub(super) fn use_controls(
     surface: &UseStateHandle<SurfaceData>,
