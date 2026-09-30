@@ -211,7 +211,7 @@ pub(super) fn render_directive_ledger(
     html! {
         <section class="team-task-section" aria-labelledby={heading.clone()}>
             <header>
-                <h3 id={heading}>{"Directions"}</h3>
+                <h3 id={heading.clone()}>{"Directions"}</h3>
                 if !rows.is_empty() {
                     <span>{rows.len()}</span>
                 }
@@ -228,16 +228,15 @@ pub(super) fn render_directive_ledger(
                     }}
                 </p>
             } else {
-                <ol class="team-direction-ledger">
+                <ol class="team-direction-ledger" role="feed" aria-labelledby={heading.clone()}>
                     {for rows.iter().map(|row| {
-                        render_directive_row(
-                            row,
-                            team.lane,
-                            standings,
-                            board,
-                            select,
-                            message_links,
-                            follow_message,
+                        super::super::direction_card::render(
+                            &direction_card(row, team.lane, standings, message_links),
+                            &super::super::direction_card::Controls {
+                                board,
+                                select,
+                                follow: follow_message,
+                            },
                         )
                     })}
                 </ol>
@@ -391,182 +390,50 @@ fn render_settled_lane(
     }
 }
 
-fn render_direction_attachments(row: &watchband::directive_ledger::DirectiveLedgerRow) -> Html {
-    if row.attachments.is_empty() {
-        return Html::default();
-    }
-    html! {
-        <div class="message-attachments" aria-label="Direction attachments">
-            {for row.attachments.iter().map(|attachment| {
-                let action = format!("View {} full size", attachment.name);
-                html! {
-                    <button
-                        key={attachment.name.clone()}
-                        type="button"
-                        class="message-image message-image--openable"
-                        title={action.clone()}
-                        aria-label={action}
-                        data-image-preview=""
-                        data-image-name={attachment.name.clone()}
-                    >
-                        <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
-                    </button>
-                }
-            })}
-        </div>
-    }
-}
-
-fn render_direction_tasks(
-    row: &watchband::directive_ledger::DirectiveLedgerRow,
-    board: Option<&crate::runtime::BoardView>,
-    select: &Callback<wire::TaskStamp>,
-) -> Html {
-    let task_handles = board.map_or_else(BTreeSet::new, |board| {
-        row.keys
-            .iter()
-            .filter_map(|key| board.quote_tasks.get(key))
-            .flatten()
-            .collect::<BTreeSet<_>>()
-    });
-    let tasks = board.into_iter().flat_map(|board| {
-        board.tasks.iter().filter_map(|task| {
-            task_handles
-                .contains(&task.statement.body.handle)
-                .then_some((&task.statement.body.handle, &task.statement.body.born))
-        })
-    });
-    html! {
-        <div class="team-direction-tasks">
-            {for tasks.map(|(handle, stamp)| {
-                let open = {
-                    let select = select.clone();
-                    let stamp = stamp.clone();
-                    Callback::from(move |_| select.emit(stamp.clone()))
-                };
-                html! {
-                    <button
-                        key={handle.to_string()}
-                        type="button"
-                        class="team-direction-task-chip"
-                        data-task-handle={handle.to_string()}
-                        aria-label={format!("Open {handle} details")}
-                        onclick={open}
-                    >
-                        <span class="team-direction-task-chip-label">{handle.to_string()}</span>
-                    </button>
-                }
-            })}
-        </div>
-    }
-}
-
-fn render_direction_recipients(
-    row: &watchband::directive_ledger::DirectiveLedgerRow,
-    standings: &[Standing],
-    message_links: &watchband::WorkMessageLinks<'_>,
-    follow_message: &Callback<MouseEvent>,
-) -> Html {
-    html! {
-        <ul class="team-direction-recipients" aria-label="Recipients">
-            {for standings.iter().filter_map(|standing| {
-                let state = row.recipients.get(&standing.lane)?;
-                let message_target = row
-                    .recipient_keys
-                    .get(&standing.lane)
-                    .and_then(|key| message_links.directive_key(key))
-                    .map(agent_message_source_id);
-                let badge = html! {
-                    <>
-                        <span class="team-task-member">
-                            <span class="agent-presence" aria-hidden="true"></span>
-                            <strong class="team-task-member-name">{standing.label.clone()}</strong>
-                        </span>
-                        <span class="team-direction-state">{state.label()}</span>
-                    </>
-                };
-                Some(html! {
-                    <li
-                        key={standing.lane.to_string()}
-                        data-agent-lane={standing.lane.to_string()}
-                        data-accent={standing.accent.to_string()}
-                        data-direction-state={state.key()}
-                    >
-                        if let Some(target) = message_target {
-                            <a
-                                class="team-direction-recipient-link"
-                                href={crate::view::card_href(&target)}
-                                aria-label={format!(
-                                    "Open {} {} message in Chat",
-                                    standing.label,
-                                    state.label().to_lowercase(),
-                                )}
-                                onclick={follow_message.clone()}
-                            >{badge}</a>
-                        } else {
-                            <span class="team-direction-recipient-label">{badge}</span>
-                        }
-                    </li>
-                })
-            })}
-        </ul>
-    }
-}
-
-fn render_directive_row(
-    row: &watchband::directive_ledger::DirectiveLedgerRow,
+/// One team ledger row as the shared direction card.
+fn direction_card<'a>(
+    row: &'a watchband::directive_ledger::DirectiveLedgerRow,
     team: wire::CanonicalUuid,
     standings: &[Standing],
-    board: Option<&crate::runtime::BoardView>,
-    select: &Callback<wire::TaskStamp>,
     message_links: &watchband::WorkMessageLinks<'_>,
-    follow_message: &Callback<MouseEvent>,
-) -> Html {
-    let rendered = crate::composer_markdown::render_received_with_classifications(&row.body, &[]);
-    let diagrams = std::rc::Rc::new(
-        rendered
-            .diagrams
-            .into_iter()
-            .map(AttrValue::from)
-            .collect::<Vec<_>>(),
-    );
+) -> super::super::direction_card::Card<'a> {
+    use super::super::direction_card::{Author, Card, Recipient, Recipients};
     let author = row
         .author
         .and_then(|lane| standings.iter().find(|standing| standing.lane == lane));
-    let author_label = author.map_or_else(|| "You".to_owned(), |standing| standing.label.clone());
-    let author_accent = author.map(|standing| standing.accent.to_string());
-    let direction_target = crate::view::DirectionTarget::new(team, row.identity);
-    html! {
-        <li
-            key={row.identity.to_string()}
-            id={direction_target.element_id()}
-            class="team-direction-ledger-row"
-            tabindex="-1"
-            data-card-return-origin="work"
-            data-directive={row.identity.to_string()}
-            data-accent={author_accent.clone()}
-        >
-            <super::super::mermaid::MarkdownBody
-                html={AttrValue::from(rendered.html)}
-                sources={diagrams}
-                final_answer={false}
-                quote_tasks={std::rc::Rc::default()}
-            />
-            {render_direction_attachments(row)}
-            {render_direction_tasks(row, board, select)}
-            <footer class="team-direction-footer">
-                <span class="team-direction-attribution" data-accent={author_accent}>
-                    <span class="agent-presence" aria-hidden="true"></span>
-                    <strong>{author_label}</strong>
-                    <span>{"Direction"}</span>
-                </span>
-                if !row.body_complete {
-                    <span class="team-direction-excerpt">{"retained excerpt"}</span>
-                }
-                {render_direction_recipients(row, standings, message_links, follow_message)}
-                <Age authored={row.authored_millis} class="team-direction-age" />
-            </footer>
-        </li>
+    let recipients = standings
+        .iter()
+        .filter_map(|standing| {
+            let state = row.recipients.get(&standing.lane)?;
+            Some(Recipient {
+                key: standing.lane.to_string(),
+                lane: standing.lane,
+                label: standing.label.clone(),
+                accent: Some(standing.accent.to_string()),
+                state_key: state.key(),
+                state_label: state.label(),
+                target: row
+                    .recipient_keys
+                    .get(&standing.lane)
+                    .and_then(|key| message_links.directive_key(key))
+                    .map(agent_message_source_id),
+                retirement: None,
+            })
+        })
+        .collect();
+    Card {
+        identity: row.identity,
+        id: crate::view::DirectionTarget::new(team, row.identity).element_id(),
+        body: &row.body,
+        complete: row.body_complete,
+        attachments: &row.attachments,
+        author: Author {
+            label: author.map_or_else(|| "You".to_owned(), |standing| standing.label.clone()),
+            accent: author.map(|standing| standing.accent.to_string()),
+        },
+        keys: row.keys.iter().map(String::as_str).collect(),
+        recipients: Recipients::Team(recipients),
+        authored_millis: row.authored_millis,
     }
 }
 

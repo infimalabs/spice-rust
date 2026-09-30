@@ -4,6 +4,7 @@ use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use super::*;
+use crate::browser::direction_card::{self, Author, Card, Recipient, Recipients};
 use crate::browser::direction_history::Controls;
 use crate::runtime::{DirectionHistoryState, LaneRow, LaneView};
 use wire::Disposition;
@@ -37,6 +38,14 @@ pub(super) fn render(
         .collect::<BTreeSet<_>>();
     let message_links =
         crate::watchband::work_message_links(&member_lanes, messages.iter().map(AsRef::as_ref));
+    let follow = Callback::from(|event: MouseEvent| {
+        super::super::card_target::remember_global_work_return(&event);
+    });
+    let card_controls = direction_card::Controls {
+        board,
+        select: select_task,
+        follow: &follow,
+    };
     html! {
         <section class="work-directions" aria-labelledby="work-directions-heading">
             <header class="work-directions-heading">
@@ -76,7 +85,7 @@ pub(super) fn render(
                     aria-label="Direction history"
                 >
                     {for state.groups().iter().map(|group| {
-                        render_group(group, topology, board, &message_links, select_task)
+                        direction_card::render(&card(group, topology, &message_links), &card_controls)
                     })}
                 </ol>
             }
@@ -187,145 +196,62 @@ fn team_label(team: &LaneRow) -> String {
     }
 }
 
-fn render_group(
-    group: &DirectionGroup,
-    topology: Option<&LaneView>,
-    board: Option<&crate::runtime::BoardView>,
-    message_links: &crate::watchband::WorkMessageLinks<'_>,
-    select_task: &Callback<wire::TaskStamp>,
-) -> Html {
-    let markdown = group.preview.as_deref().unwrap_or("Preview unavailable");
-    let rendered = crate::composer_markdown::render_received_with_classifications(markdown, &[]);
-    let diagrams = Rc::new(rendered.diagrams.into_iter().map(AttrValue::from).collect());
-    html! {
-        <li
-            key={group.fanout.to_string()}
-            class="team-direction-ledger-row"
-            data-direction-fanout={group.fanout.to_string()}
-            role="article"
-            aria-label={format!("Direction to {} recipients", group.recipients.len())}
-        >
-            <super::super::mermaid::MarkdownBody
-                html={AttrValue::from(rendered.html)}
-                sources={diagrams}
-                final_answer={false}
-                quote_tasks={Rc::default()}
-            />
-            {render_tasks(group, board, select_task)}
-            <footer class="team-direction-footer">
-                <span class="team-direction-attribution">
-                    <span class="operator-avatar" aria-hidden="true">{"O"}</span>
-                    <strong>{"You"}</strong>
-                    <span>{"Direction"}</span>
-                </span>
-                {render_recipients(group, topology, message_links)}
-                <super::super::clock::Age
-                    authored={group.authored.get().as_millisecond()}
-                    class="team-direction-age"
-                />
-            </footer>
-        </li>
-    }
-}
-
-fn render_tasks(
-    group: &DirectionGroup,
-    board: Option<&crate::runtime::BoardView>,
-    select: &Callback<wire::TaskStamp>,
-) -> Html {
-    let keys = group
-        .recipients
-        .iter()
-        .map(|recipient| recipient.key.as_str())
-        .collect::<BTreeSet<_>>();
-    let handles = board.map_or_else(BTreeSet::new, |board| {
-        keys.iter()
-            .filter_map(|key| board.quote_tasks.get(*key))
-            .flatten()
-            .collect::<BTreeSet<_>>()
-    });
-    html! {
-        <div class="team-direction-tasks">
-            {for board.into_iter().flat_map(|board| board.tasks.iter()).filter_map(|task| {
-                let handle = &task.statement.body.handle;
-                if !handles.contains(handle) {
-                    return None;
-                }
-                let stamp = task.statement.body.born.clone();
-                let open = {
-                    let select = select.clone();
-                    Callback::from(move |_| select.emit(stamp.clone()))
-                };
-                Some(html! {
-                    <button
-                        key={handle.to_string()}
-                        type="button"
-                        class="team-direction-task-chip"
-                        aria-label={format!("Open {handle} details")}
-                        onclick={open}
-                    >{handle.to_string()}</button>
-                })
-            })}
-        </div>
-    }
-}
-
-fn render_recipients(
-    group: &DirectionGroup,
+/// One history fanout as the shared direction card. The resident returns only
+/// the first non-quoted line, so the card is always an explicit excerpt.
+fn card<'a>(
+    group: &'a DirectionGroup,
     topology: Option<&LaneView>,
     message_links: &crate::watchband::WorkMessageLinks<'_>,
-) -> Html {
-    let known = topology.into_iter().flat_map(|topology| {
-        topology.lanes.iter().filter_map(|team| {
+) -> Card<'a> {
+    let mut groups = topology
+        .into_iter()
+        .flat_map(|topology| topology.lanes.iter())
+        .filter_map(|team| {
             let recipients = group
                 .recipients
                 .iter()
                 .filter(|recipient| team.member(recipient.lane).is_some())
+                .map(|recipient| badge(recipient, Some(team), message_links))
                 .collect::<Vec<_>>();
-            if recipients.is_empty() {
-                return None;
-            }
-            Some(html! {
-                <div class="team-direction-recipient-group">
-                    <span class="team-direction-recipient-team">{team_label(team)}</span>
-                    <ul class="team-direction-recipients">
-                        {for recipients.into_iter().map(|recipient| {
-                            render_recipient(recipient, Some(team), message_links)
-                        })}
-                    </ul>
-                </div>
-            })
+            (!recipients.is_empty()).then(|| (team_label(team), recipients))
         })
-    });
+        .collect::<Vec<_>>();
     let unknown = group
         .recipients
         .iter()
         .filter(|recipient| {
             topology.is_none_or(|topology| topology.member(recipient.lane).is_none())
         })
+        .map(|recipient| badge(recipient, None, message_links))
         .collect::<Vec<_>>();
-    html! {
-        <div class="team-direction-recipient-groups" aria-label="Recipients grouped by team">
-            {for known}
-            if !unknown.is_empty() {
-                <div class="team-direction-recipient-group">
-                    <span class="team-direction-recipient-team">{"Unavailable team"}</span>
-                    <ul class="team-direction-recipients">
-                        {for unknown.into_iter().map(|recipient| {
-                            render_recipient(recipient, None, message_links)
-                        })}
-                    </ul>
-                </div>
-            }
-        </div>
+    if !unknown.is_empty() {
+        groups.push(("Unavailable team".to_owned(), unknown));
+    }
+    Card {
+        identity: group.fanout,
+        id: format!("work-direction-{}", group.fanout),
+        body: group.preview.as_deref().unwrap_or("Preview unavailable"),
+        complete: false,
+        attachments: &[],
+        author: Author {
+            label: "You".to_owned(),
+            accent: None,
+        },
+        keys: group
+            .recipients
+            .iter()
+            .map(|recipient| recipient.key.as_str())
+            .collect::<BTreeSet<_>>(),
+        recipients: Recipients::Teams(groups),
+        authored_millis: group.authored.get().as_millisecond(),
     }
 }
 
-fn render_recipient(
+fn badge(
     recipient: &DirectionRecipient,
     team: Option<&LaneRow>,
     message_links: &crate::watchband::WorkMessageLinks<'_>,
-) -> Html {
+) -> Recipient {
     let label = team
         .and_then(|team| team.member(recipient.lane))
         .map(|member| {
@@ -339,37 +265,15 @@ fn render_recipient(
             })
         })
         .unwrap_or_else(|| format!("Unknown agent {}", crate::watchband::short(recipient.lane)));
-    let state = state_label(recipient.disposition);
-    let message_target = recipient_message_target(recipient, team, message_links);
-    let link_label = format!("Open {label} {state} message in Chat");
-    let badge = html! {
-        <>
-            <span class="team-task-member">
-                <span class="agent-presence" aria-hidden="true"></span>
-                <strong class="team-task-member-name">{label}</strong>
-            </span>
-            <span class="team-direction-state">{state}</span>
-        </>
-    };
-    html! {
-        <li
-            key={recipient.directive.to_string()}
-            data-agent-lane={recipient.lane.to_string()}
-            data-direction-state={state_key(recipient.disposition)}
-            data-direction-retirement-position={recipient.retirement.map(|retirement| {
-                retirement.position.get().to_string()
-            })}
-        >
-            if let Some((target, _retirement)) = message_target {
-                <a
-                    class="team-direction-recipient-link"
-                    href={crate::view::card_href(&target)}
-                    aria-label={link_label}
-                >{badge}</a>
-            } else {
-                <span class="team-direction-recipient-label">{badge}</span>
-            }
-        </li>
+    Recipient {
+        key: recipient.directive.to_string(),
+        lane: recipient.lane,
+        label,
+        accent: None,
+        state_key: state_key(recipient.disposition),
+        state_label: state_label(recipient.disposition),
+        target: recipient_message_target(recipient, team, message_links),
+        retirement: recipient.retirement.map(|retirement| retirement.position),
     }
 }
 
@@ -377,7 +281,7 @@ fn recipient_message_target(
     recipient: &DirectionRecipient,
     team: Option<&LaneRow>,
     message_links: &crate::watchband::WorkMessageLinks<'_>,
-) -> Option<(String, wire::Seq)> {
+) -> Option<String> {
     team?;
     if !matches!(
         recipient.disposition,
@@ -385,14 +289,11 @@ fn recipient_message_target(
     ) {
         return None;
     }
-    let retirement = recipient.retirement?;
+    recipient.retirement?;
     let message = message_links
         .directive_key(&recipient.key)
         .filter(|message| message.lane == recipient.lane)?;
-    Some((
-        super::super::watchband::agent_message_source_id(message),
-        retirement.position,
-    ))
+    Some(super::super::watchband::agent_message_source_id(message))
 }
 
 const fn state_key(state: Disposition) -> &'static str {

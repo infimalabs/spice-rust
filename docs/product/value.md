@@ -334,15 +334,14 @@ filter. Newer and Older replace one bounded page through durable journal
 cursors, while loading, no-match, refusal, and retry states retain the same
 controls and card grid.
 
-Direction cards use the same sanitized rich Markdown treatment as Chat and the
-team Work ledger. Each card groups its independently evolving recipient badges
-by current team, keeps unknown recipients visible without inventing a link,
-opens caused work in the shared task detail layer, and links an acknowledged
-or declined badge only when the retiring history evidence and a retained
-authenticated reply resolve to that exact team-local Chat card. The mosaic
-holds three columns wide, two at intermediate width, and one on a narrow
-screen without changing newest-first order.
-
+Each is the team Work ledger's direction card: the resident's first unquoted
+line in sanitized rich Markdown, marked as a retained excerpt. Recipient badges
+group by current team, keep unknown recipients visible without inventing a link,
+open caused work in the shared task detail layer, and link an acknowledged or
+declined badge only when retiring history evidence and a retained authenticated
+reply resolve to that exact team-local Chat card; Back returns to that card.
+The mosaic holds three columns wide, two at intermediate width, and one on a
+narrow screen without changing newest-first order.
 
 ### The team Work pane
 

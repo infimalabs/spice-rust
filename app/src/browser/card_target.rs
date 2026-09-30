@@ -20,6 +20,10 @@ pub(super) struct Status {
 /// History-state key naming where a reader left through a card link.
 const RETURN_STATE: &str = "canvasReturn";
 
+/// Work links whose Chat destination records the Work card they leave: task
+/// message links and direction recipient badges.
+const WORK_RETURN_LINKS: &str = "a.work-message-link[href], a.team-direction-recipient-link[href]";
+
 /// Preserve the exact Dash row and Flow position a Chat target leaves.
 pub(super) fn remember_team_return(event: &web_sys::MouseEvent, team: CanonicalUuid) -> bool {
     remember_return(
@@ -142,14 +146,9 @@ pub(super) fn remember_creator_return(event: &web_sys::MouseEvent) -> bool {
     )
 }
 
-/// Preserve a global Work card before following its creator-context link.
+/// Preserve a global Work card before following one of its Chat links.
 pub(super) fn remember_global_work_return(event: &web_sys::MouseEvent) {
-    let _ = remember_return(
-        event,
-        "a.work-message-link[href]",
-        "[data-card-return-origin]",
-        None,
-    );
+    let _ = remember_return(event, WORK_RETURN_LINKS, "[data-card-return-origin]", None);
 }
 
 /// Record where a plain Work link leaves, returning whether this tab should
@@ -158,7 +157,7 @@ pub(super) fn remember_global_work_return(event: &web_sys::MouseEvent) {
 pub(super) fn remember_work_return(event: &web_sys::MouseEvent, team: wire::CanonicalUuid) -> bool {
     remember_return(
         event,
-        "a.work-message-link[href]",
+        WORK_RETURN_LINKS,
         "[data-card-return-origin]",
         Some((team, TeamMode::Work)),
     )

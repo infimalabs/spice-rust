@@ -43,6 +43,7 @@ mod clipboard;
 mod clock;
 mod connection;
 mod diagnostics;
+mod direction_card;
 mod direction_history;
 mod image_viewer;
 mod mermaid;
@@ -460,7 +461,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     let direction_history = direction_history::use_controls(
         sender.clone(),
         surface.clone(),
-        properties.destination == CanvasDestination::Work,
+        route.canvas_destination() == CanvasDestination::Work,
     );
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
     let team_settled = team_settled::use_controls(
