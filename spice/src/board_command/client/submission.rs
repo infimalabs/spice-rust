@@ -43,7 +43,7 @@ pub(super) fn client_add(
             acceptance,
             requirements,
             origin,
-            flow: None,
+            flow: matches.get_one::<String>("flow").cloned(),
             depends: Vec::new(),
             claim: matches.get_flag("claim"),
         },

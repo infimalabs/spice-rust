@@ -579,6 +579,87 @@ fn native_task_add_carries_authored_context_through_client_add() {
 }
 
 #[test]
+fn task_add_preserves_explicit_flow_and_default_routing() {
+    let fixture = Fixture::new();
+    let resident = Resident::start(&fixture);
+
+    let explicit = text_reply::<TaskAnswer>(&fixture.invoke(&[
+        "task",
+        "add",
+        "Keep the named CLI route",
+        "--project",
+        "task.cli",
+        "--flow",
+        "todo,review",
+        "--origin",
+        "fixture:task-add-flow",
+    ]));
+    let explicit_show =
+        text_reply::<TextAnswer>(&fixture.invoke(&["task", "show", explicit.task.as_str()]));
+    assert!(
+        explicit_show.text.contains("\nflow todo,review\n"),
+        "{}",
+        explicit_show.text
+    );
+
+    let before_invalid = fixture.cursor();
+    let invalid = fixture.invoke(&[
+        "--json",
+        "task",
+        "add",
+        "Reject an invalid CLI route",
+        "--project",
+        "task.cli",
+        "--flow",
+        "todo,Review",
+        "--origin",
+        "fixture:task-add-flow",
+    ]);
+    assert_eq!(
+        invalid.status.code(),
+        Some(REFUSAL_EXIT),
+        "{}",
+        spoken(&invalid)
+    );
+    let Outcome::Refusal(refusal) = wire::decode::<Outcome<serde_json::Value>>(&invalid.stderr)
+        .unwrap_or_else(|error| {
+            panic!(
+                "invalid flow refusal is untyped: {error}; {}",
+                spoken(&invalid)
+            )
+        })
+    else {
+        panic!("an invalid CLI flow did not refuse")
+    };
+    assert_eq!(refusal.reason(), "task::flow-invalid");
+    assert_eq!(
+        refusal
+            .diagnostic()
+            .and_then(wire::RefusalDiagnostic::observed),
+        Some("Review")
+    );
+    assert_eq!(fixture.cursor(), before_invalid);
+
+    let defaulted = text_reply::<TaskAnswer>(&fixture.invoke(&[
+        "task",
+        "add",
+        "Keep plan-first CLI routing",
+        "--project",
+        "task.cli",
+        "--origin",
+        "fixture:task-add-flow",
+    ]));
+    let defaulted_show =
+        text_reply::<TextAnswer>(&fixture.invoke(&["task", "show", defaulted.task.as_str()]));
+    assert!(
+        defaulted_show.text.contains("\nflow plan,todo,review\n"),
+        "{}",
+        defaulted_show.text
+    );
+    resident.stop(&fixture);
+}
+
+#[test]
 fn recurring_operator_corrections_file_one_hidden_review_and_reuse_it() {
     mining_fixture::assert_recurring_operator_corrections();
 }

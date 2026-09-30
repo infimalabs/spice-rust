@@ -154,10 +154,12 @@ flowchart TD
 
 **Policy** — a manual claim opens with a 3600s lease and a 7200s renewal maximum
 that the resident then rolls while the occupant holds the lane,
-and records the lane's exact accounted source boundary. With no named flow,
-a task lacking acceptance receives `plan` to `todo` to `review`; every other
-task receives `todo` to `review`, independent of visibility. A hidden `.oops`
-row is parked in `plan` but retains the complete `plan` to `todo` to `review`
+and records the lane's exact accounted source boundary. `task add --flow`
+passes one explicit comma-separated route to the resident, which applies the
+ordinary phase grammar. With no named flow, a task lacking acceptance receives
+`plan` to `todo` to `review`; every other task receives `todo` to `review`,
+independent of visibility. A hidden `.oops` row is parked in `plan` but retains
+the complete `plan` to `todo` to `review`
 flow and must be promoted explicitly. Self-authored review is a last-resort
 eligibility class, not an urgency coefficient.
 

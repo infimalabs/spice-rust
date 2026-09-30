@@ -507,7 +507,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     row!(
         ["task", "add"],
         "task add TITLE [--project PROJECT] [--description DESCRIPTION] \
-         [--acceptance ACCEPTANCE...] [--requires-journal-schema SCHEMA] \
+         [--acceptance ACCEPTANCE...] [--flow PHASES] [--requires-journal-schema SCHEMA] \
          [--requires-trust-grant DIGEST] [--origin ORIGIN] [--claim]",
         OperatorOrLane,
         Command,
