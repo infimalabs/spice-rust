@@ -262,6 +262,46 @@ pub(super) fn render_directive_ledger(
     }
 }
 
+fn render_settled_finder(settled: &Settled<'_, '_, '_>, team: wire::CanonicalUuid) -> Html {
+    let query_id = super::super::team_settled::query_id(team);
+    let cutoff_id = super::super::team_settled::cutoff_id(team);
+    let validation = settled.controls.validation.get(&team);
+    let apply = {
+        let apply = settled.controls.apply.clone();
+        Callback::from(move |_: MouseEvent| apply.emit(team))
+    };
+    let clear = {
+        let clear = settled.controls.clear.clone();
+        Callback::from(move |_: MouseEvent| clear.emit(team))
+    };
+    html! {
+        <>
+            <div class="work-history-finder" role="search" aria-label="Find settled tasks">
+                <label>
+                    <span>{"Search"}</span>
+                    <input
+                        id={query_id}
+                        type="search"
+                        maxlength={wire::intent::TASK_HISTORY_QUERY_BYTES_MAX.to_string()}
+                        placeholder="Handle, title, project, or description"
+                    />
+                </label>
+                <label>
+                    <span>{"Completed by"}</span>
+                    <input id={cutoff_id} type="date" />
+                </label>
+                <div class="work-history-filter-actions canvas-control-rail team-mode-rail">
+                    <button type="button" class="team-mode" onclick={apply}>{"Apply"}</button>
+                    <button type="button" class="team-mode" onclick={clear}>{"Clear"}</button>
+                </div>
+            </div>
+            if let Some(issue) = validation {
+                <p class="form-refusal work-history-filter-issue" role="alert">{issue}</p>
+            }
+        </>
+    }
+}
+
 /// The work the team settled most recently, newest first, one page at a time.
 ///
 /// Loaded cards stay mounted while a stale page is read again, so a refresh
@@ -278,6 +318,10 @@ fn render_settled_lane(
     let tasks = settled
         .work
         .map_or(&[][..], crate::work::WorkProjection::tasks);
+    let newer = {
+        let newer = settled.controls.newer.clone();
+        Callback::from(move |_: MouseEvent| newer.emit(team))
+    };
     let older = {
         let older = settled.controls.older.clone();
         Callback::from(move |_: MouseEvent| older.emit(team))
@@ -288,7 +332,7 @@ fn render_settled_lane(
     };
     html! {
         <section
-            class="team-task-section team-work-lane"
+            class="team-task-section team-work-lane team-work-history"
             data-team-work-lane="settled"
             aria-labelledby={format!("settled-{team}")}
             aria-busy={loading.to_string()}
@@ -299,13 +343,23 @@ fn render_settled_lane(
                     <span>{total}</span>
                 }
             </header>
+            {render_settled_finder(settled, team)}
+            if loading {
+                <p class="work-board-state" role="status">{"Loading settled page…"}</p>
+            }
             if !tasks.is_empty() {
-                <div class="team-task-card-list">
+                <div class="team-task-card-list work-history-list">
                     {for tasks.iter().map(|task| work_card::render(task, cards))}
                 </div>
             } else if total == Some(0) {
-                <p class="team-task-empty">{"No work has settled."}</p>
-            } else if issue.is_none() {
+                <p class="team-task-empty">{
+                    if state.is_some_and(TeamSettledState::filtered) {
+                        "No settled work matches these filters."
+                    } else {
+                        "No work has settled."
+                    }
+                }</p>
+            } else if state.is_none() {
                 <p class="team-task-empty" role="status">{"Loading settled work…"}</p>
             }
             if let Some(issue) = issue {
@@ -315,12 +369,47 @@ fn render_settled_lane(
                         <button type="button" class="team-mode" onclick={retry}>{"Retry"}</button>
                     </span>
                 </div>
-            } else if state.is_some_and(TeamSettledState::has_older) {
-                <span class="canvas-control-rail team-mode-rail team-work-older">
-                    <button type="button" class="team-mode" disabled={loading} onclick={older}>
-                        {if loading { "Loading older…" } else { "Show older" }}
-                    </button>
-                </span>
+            }
+            if let Some(state) = state.filter(|state| state.total().is_some()) {
+                <div class="work-history-pagination">
+                    <div class="work-history-range" role="status">
+                        <strong>{format!(
+                            "{}–{} of {}",
+                            state.first_result(),
+                            state.last_result(),
+                            state.total().unwrap_or(0),
+                        )}</strong>
+                        <span>{match (state.has_newer(), state.has_older()) {
+                            (false, false) => "Newest and oldest page",
+                            (false, true) => "Newest page",
+                            (true, false) => "Oldest page",
+                            (true, true) => "Between newest and oldest",
+                        }}</span>
+                    </div>
+                    <div
+                        class="work-history-page-actions canvas-control-rail team-mode-rail"
+                        role="group"
+                        aria-label="Settled history pages"
+                        aria-busy={loading.to_string()}
+                    >
+                        <button
+                            type="button"
+                            class="team-mode"
+                            disabled={loading || !state.has_newer()}
+                            onclick={newer}
+                        >
+                            {"Newer"}
+                        </button>
+                        <button
+                            type="button"
+                            class="team-mode"
+                            disabled={loading || !state.has_older()}
+                            onclick={older}
+                        >
+                            {"Older"}
+                        </button>
+                    </div>
+                </div>
             }
         </section>
     }

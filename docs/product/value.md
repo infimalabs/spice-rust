@@ -429,13 +429,15 @@ restores the originating Work row and scroll position, Forward returns to the
 message, and modified clicks open the card route without changing this tab's
 team mode.
 
-A fourth lane, Settled, shows the work the team finished most recently: tasks
-it created or whose last winning claim a current member held, newest first,
-with a control that appends older pages. The team-scoped history read runs
-only while that team's Work pane is on screen, and runs again only once an
-open-board refresh shows work leaving the open board or the connection
-resumes. Settled cards are the same shared cards and open the same detail
-layer.
+A full-width Settled history below the three open-work lanes shows the work the
+team finished most recently: tasks it created or whose last winning claim a
+current member held, newest first. Search and Completed-by narrow that same
+team-scoped history; its range and Newer/Older controls replace one bounded
+page at a time, matching the global Work archive without mixing other teams.
+The history read runs only while that team's Work
+pane is on screen, and runs again only once an open-board refresh shows work
+leaving the open board or the connection resumes. Settled cards are the same
+shared cards and open the same detail layer.
 Below the lanes, a Kept jobs table lists every command a member keeps beyond
 the call that started it, across the whole team and oldest first. Each row
 names the member in its accent, ticks the job's age from the moment its key
