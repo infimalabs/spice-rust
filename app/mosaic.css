@@ -1160,11 +1160,11 @@ a.relative-age {
   text-overflow: ellipsis;
 }
 /* One badge, one metric. The label cell is exactly the width ACK occupies in
-   the pill's monospace face, so ACK, NAK and the pending form share a box to
-   the pixel and the operator's quoted words never shift when a state settles.
-   A longer word is condensed into that cell rather than widening it. Pending
-   spends no word of its own: it is a transient the reader cannot act on, so it
-   wears the ACK label in the muted tone until the journal retires the key. */
+   the pill's monospace face, and NAK is the same three characters, so every
+   state shares a box to the pixel and the operator's quoted words never shift
+   when a state settles. Pending spends no word of its own: it is a transient
+   the reader cannot act on, so it wears the ACK label in the muted tone until
+   the journal retires the key. */
 .team-surface .message-ack-pill {
   --message-inline-pill-accent: var(--accent);
   justify-content: flex-start;
@@ -1178,10 +1178,6 @@ a.relative-age {
 }
 .team-surface .message-ack-pill[data-acknowledgement="declined"] {
   --message-inline-pill-accent: var(--accent-3);
-}
-.team-surface .message-ack-pill[data-acknowledgement="declined"] .message-ack-label {
-  transform: scaleX(.75);
-  transform-origin: left center;
 }
 .team-surface .message-task-chip-label {
   display: block;
