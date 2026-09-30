@@ -1293,39 +1293,20 @@ a.relative-age {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .7rem;
 }
-/* Open states are stable rows in the global Work grammar, so a task changing
-   state moves only its own card, and Settled starts right after the rows. */
-.team-work-flow {
-  display: grid;
-  gap: 8px;
-}
-.team-work-lane {
-  container-type: inline-size;
-  min-width: 0;
-}
-.team-work-history {
-  grid-column: 1 / -1;
-}
+/* Stable global-Work rows let only a changed card move; Settled follows them. */
+.team-work-flow { display: grid; gap: 8px; }
+.team-work-history { container-type: inline-size; grid-column: 1 / -1; min-width: 0; }
 @container (max-width: 40rem) {
   .team-work-history .work-history-finder { grid-template-columns: minmax(0, 1fr); }
-  .team-work-history .work-history-filter-actions,
-  .team-work-history .work-history-page-actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .team-work-history .work-history-filter-actions button,
-  .team-work-history .work-history-page-actions button { width: 100%; }
-  .team-work-history .work-history-pagination {
-    align-items: stretch;
-    flex-direction: column;
-  }
+  .team-work-history :is(.work-history-filter-actions, .work-history-page-actions) { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .team-work-history :is(.work-history-filter-actions, .work-history-page-actions) button { width: 100%; }
+  .team-work-history .work-history-pagination { align-items: stretch; flex-direction: column; }
 }
 .team-work-lanes .work-lane-track { min-height: 0; padding-bottom: 6px; }
 .team-work-lanes .work-lane-empty { min-height: 2rem; }
 .team-task-section { min-width: 0; }
 .team-task-section > header {
-  display: flex;
-  align-items: center;
+  display: flex; align-items: center;
   justify-content: space-between;
   gap: 8px;
   min-height: 38px;
