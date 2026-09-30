@@ -1,10 +1,10 @@
-//! Present a prose card's terminal colon as a period.
+//! Give terminal prose on an assistant card sentence punctuation.
 //!
 //! Canvas stacks cards newest-first, so whatever a trailing colon introduces
-//! lands above it and the colon points at nothing. Only the final text of a
-//! card that ends in prose changes: a card ending in code, a quote, a table,
-//! a link, an image, math, or markup keeps its content verbatim, and every
-//! colon before the end stays as written.
+//! lands above it and the colon points at nothing. A terminal colon therefore
+//! becomes a period, and terminal prose without punctuation gains one. Only
+//! the final text of a card that ends in prose changes: a card ending in code,
+//! a quote, a table, a link, an image, math, or markup stays verbatim.
 
 use pulldown_cmark::{CowStr, Event, TagEnd};
 
@@ -22,7 +22,11 @@ pub(super) fn period(events: &mut [Event<'_>]) {
             ) => {}
             Event::Text(text) => {
                 let body = text.trim_end();
-                if let Some(stem) = body.strip_suffix(':') {
+                let Some(last) = body.chars().next_back() else {
+                    return;
+                };
+                if last == ':' || !has_terminal_punctuation(last) {
+                    let stem = body.strip_suffix(':').unwrap_or(body);
                     let presented = format!("{stem}.{}", &text[body.len()..]);
                     *text = CowStr::from(presented);
                 }
@@ -33,6 +37,22 @@ pub(super) fn period(events: &mut [Event<'_>]) {
     }
 }
 
+/// ASCII punctuation and every non-ASCII punctuation character emitted by
+/// pulldown-cmark's smart-punctuation transform.
+fn has_terminal_punctuation(character: char) -> bool {
+    character.is_ascii_punctuation()
+        || matches!(
+            character,
+            '\u{2018}'
+                | '\u{2019}'
+                | '\u{201c}'
+                | '\u{201d}'
+                | '\u{2013}'
+                | '\u{2014}'
+                | '\u{2026}'
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -40,11 +60,16 @@ mod tests {
     use super::super::{render_prose_card, render_received};
 
     #[test]
-    fn a_prose_card_presents_only_its_terminal_prose_colon_as_a_period() {
+    fn a_prose_card_presents_its_terminal_prose_with_sentence_punctuation() {
         let card = |markdown: &str| {
             render_prose_card(markdown, &[], &[], &[], &BTreeMap::new(), &BTreeMap::new()).html
         };
         let cases = [
+            (
+                "Reading the show call path",
+                "<p>Reading the show call path.</p>\n",
+            ),
+            ("Reading the path  \n", "<p>Reading the path.</p>\n"),
             (
                 "Reading the show call path:",
                 "<p>Reading the show call path.</p>\n",
@@ -58,6 +83,10 @@ mod tests {
             (
                 "Steps:\n\n- read\n- check:",
                 "<p>Steps:</p>\n<ul>\n<li>read</li>\n<li>check.</li>\n</ul>\n",
+            ),
+            (
+                "Steps\n\n- read\n- check",
+                "<p>Steps</p>\n<ul>\n<li>read</li>\n<li>check.</li>\n</ul>\n",
             ),
             (
                 "Run `spice task next:`",
@@ -75,6 +104,8 @@ mod tests {
                 "Colons: inside, then a stop.",
                 "<p>Colons: inside, then a stop.</p>\n",
             ),
+            ("Still waiting?", "<p>Still waiting?</p>\n"),
+            ("A pause…", "<p>A pause…</p>\n"),
         ];
         for (markdown, expected) in cases {
             assert_eq!(card(markdown), expected, "{markdown:?}");

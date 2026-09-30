@@ -224,8 +224,8 @@ pub(crate) fn render_received_with_quotes(
 }
 
 /// Render one assistant prose card: received text as
-/// [`render_received_with_quotes`] renders it, except that a card ending in
-/// prose presents its terminal colon as a period.
+/// [`render_received_with_quotes`] renders it, except that terminal prose gains
+/// a period when unpunctuated and presents a terminal colon as a period.
 pub(crate) fn render_prose_card(
     markdown: &str,
     classifications: &[MessageClassification],

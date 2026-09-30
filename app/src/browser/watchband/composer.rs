@@ -632,8 +632,8 @@ fn agent_message_presentation<'a>(
         &message.directive_contexts,
     )
     .expect("message media passed admission before browser rendering");
-    // A prose card presents its terminal colon as a period; tool, reasoning,
-    // and boundary cards render verbatim.
+    // A prose card gives its terminal prose sentence punctuation; tool,
+    // reasoning, and boundary cards render verbatim.
     let render = if message.activity == wire::AgentActivityKind::Prose {
         crate::composer_markdown::render_prose_card
     } else {
