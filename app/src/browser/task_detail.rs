@@ -618,26 +618,22 @@ pub(super) fn render_note_composer(
                 readonly={busy}
                 onkeydown={note_keyboard_submit(!busy)}
             >{composer.draft.clone()}</textarea>
-            <button type="submit" class="canvas-compact-control" disabled={busy}>
-                {if busy && !closing { "Saving…" } else { "Add observation" }}
-            </button>
-            if let Some(closure) = closure {
-                <button
-                    type="submit"
-                    class="canvas-compact-control"
-                    value={CLOSE_SUBMITTER}
-                    disabled={busy}
-                    title={closure.holder.as_ref().map(|holder| format!("Closing takes this task from {holder}"))}
-                >
-                    {if closing {
-                        "Closing…"
-                    } else if closure.holder.is_some() {
-                        "Close task from its holder"
-                    } else {
-                        "Close task"
-                    }}
+            <div class="team-composer-controls work-note-actions">
+                <button type="submit" class="team-send" disabled={busy}>
+                    {if busy && !closing { "Saving…" } else { "Add" }}
                 </button>
-            }
+                if let Some(closure) = closure {
+                    <button
+                        type="submit"
+                        class="team-send"
+                        value={CLOSE_SUBMITTER}
+                        disabled={busy}
+                        title={closure.holder.as_ref().map(|holder| format!("Closing takes this task from {holder}"))}
+                    >
+                        {if closing { "Closing…" } else { "Close" }}
+                    </button>
+                }
+            </div>
         </form>
     }
 }
