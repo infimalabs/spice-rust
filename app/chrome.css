@@ -116,42 +116,65 @@ body:has(.shell--mosaic),
 .canvas-menu { position: static; grid-row: 1; grid-column: -2; }
 .canvas-menu[open] { z-index: 2; }
 .canvas-menu > summary {
-  --canvas-menu-accent: var(--accent);
-  --canvas-menu-surface: color-mix(in srgb, var(--control-surface-soft) 88%, var(--accent) 12%);
+  --canvas-menu-edge: var(--accent-slot, var(--accent));
+  --canvas-menu-surface: var(--control-surface-soft);
   position: relative; z-index: 2; display: inline-grid; place-items: center; width: 35px; height: 30px; padding: 0;
-  border: 1px solid color-mix(in srgb, var(--canvas-menu-accent) 42%, var(--canvas-menu-surface));
-  border-radius: var(--canvas-radius-pill); background: var(--canvas-menu-surface); color: color-mix(in srgb, var(--canvas-menu-accent) 76%, var(--ink));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-accent) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--canvas-menu-edge) 58%, var(--line));
+  border-radius: var(--canvas-radius-pill); background: var(--canvas-menu-surface); color: var(--ink);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-edge) 8%, transparent);
   cursor: pointer; list-style: none;
 }
 .canvas-menu > summary:hover,
-.canvas-menu > summary:focus-visible { --canvas-menu-surface: color-mix(in srgb, var(--control-surface-soft) 78%, var(--canvas-menu-accent) 22%); border-color: color-mix(in srgb, var(--canvas-menu-accent) 58%, var(--canvas-menu-surface)); background: var(--canvas-menu-surface); color: var(--ink); }
+.canvas-menu > summary:focus-visible {
+  --canvas-menu-surface: var(--control);
+  border-color: color-mix(in srgb, var(--canvas-menu-edge) 78%, var(--line));
+  background: var(--canvas-menu-surface);
+}
 .canvas-menu > summary:active,
 .canvas-menu[open] > summary {
-  --canvas-menu-surface: color-mix(in srgb, var(--control) 76%, var(--canvas-menu-accent) 24%);
-  border-color: color-mix(in srgb, var(--canvas-menu-accent) 70%, var(--canvas-menu-surface)); background: var(--canvas-menu-surface); color: var(--ink);
+  --canvas-menu-surface: var(--control);
+  border-color: var(--canvas-menu-edge);
+  background: var(--canvas-menu-surface);
 }
 .canvas-menu > summary::-webkit-details-marker { display: none; }
 .canvas-menu-well {
   grid-area: 1 / 1; position: relative;
   width: 31px; min-width: 31px; height: 25px; overflow: hidden;
   border-radius: var(--canvas-radius-pill); background: var(--page);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-accent) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--canvas-menu-edge) 18%, transparent);
 }
 .canvas-menu-pepper {
   --canvas-pepper-halo: drop-shadow(0 0 1px var(--page)) drop-shadow(0 0 1px var(--page));
   grid-area: 1 / 1; position: relative; z-index: 1; font-size: 15px; line-height: 1; filter: var(--canvas-pepper-halo);
 }
 .canvas-menu-quota { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.canvas-menu-quota-fluid { fill: color-mix(in srgb, var(--canvas-menu-accent) 22%, var(--page)); }
-.canvas-menu > summary[data-quota-stale] .canvas-menu-quota-fluid { fill: color-mix(in srgb, var(--muted) 18%, var(--page)); }
-.canvas-menu > summary.canvas-menu-trigger--fast { --canvas-menu-accent: var(--warning); --canvas-menu-surface: color-mix(in srgb, var(--control) 82%, var(--warning) 18%); }
-.canvas-menu > summary.canvas-menu-trigger--update { --canvas-menu-accent: var(--focus); --canvas-menu-surface: color-mix(in srgb, var(--control) 82%, var(--focus) 18%); }
-.canvas-menu > summary:is([data-connection="starting"], [data-connection="connecting"]) {
-  --canvas-menu-accent: var(--focus);
+.canvas-menu-quota-layer { filter: saturate(var(--quota-saturation, 1)) brightness(var(--quota-account-intensity, 1)); }
+.canvas-menu-quota-layer[data-quota-intensity="0"] { --quota-account-intensity: .88; }
+.canvas-menu-quota-layer[data-quota-intensity="1"] { --quota-account-intensity: .92; }
+.canvas-menu-quota-layer[data-quota-intensity="2"] { --quota-account-intensity: .96; }
+.canvas-menu-quota-layer[data-quota-intensity="3"] { --quota-account-intensity: 1; }
+.canvas-menu-quota-layer[data-quota-intensity="4"] { --quota-account-intensity: 1.04; }
+.canvas-menu-quota-layer[data-quota-intensity="5"] { --quota-account-intensity: 1.08; }
+.canvas-menu-quota-layer[data-quota-intensity="6"] { --quota-account-intensity: 1.12; }
+.canvas-menu-quota-layer[data-quota-intensity="7"] { --quota-account-intensity: 1.16; }
+.canvas-menu-quota-layer[data-quota-level="0"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 34%, var(--page)); }
+.canvas-menu-quota-layer[data-quota-level="1"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 40%, var(--page)); }
+.canvas-menu-quota-layer[data-quota-level="2"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 46%, var(--page)); }
+.canvas-menu-quota-layer[data-quota-level="3"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 52%, var(--page)); }
+.canvas-menu-quota-layer[data-quota-level="4"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 58%, var(--page)); }
+.canvas-menu-quota-layer[data-quota-level="5"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 64%, var(--page)); }
+.canvas-menu-quota-layer[data-quota-level="6"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 70%, var(--page)); }
+.canvas-menu-quota-layer[data-quota-level="7"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 76%, var(--page)); }
+.canvas-menu-quota-layer[data-quota-level="8"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 82%, var(--page)); }
+.canvas-menu-quota-layer[data-quota-level="9"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 88%, var(--page)); }
+.canvas-menu-quota-layer[data-quota-level="10"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 94%, var(--page)); }
+.canvas-menu-quota-account { fill: var(--quota-fill); }
+.canvas-menu > summary[data-quota-stale] .canvas-menu-quota-layer { --quota-saturation: .35; }
+.canvas-menu > summary:not([data-accent]):is([data-connection="starting"], [data-connection="connecting"]) {
+  --canvas-menu-edge: var(--focus);
 }
-.canvas-menu > summary[data-connection="reconnecting"] {
-  --canvas-menu-accent: var(--warning);
+.canvas-menu > summary:not([data-accent])[data-connection="reconnecting"] {
+  --canvas-menu-edge: var(--warning);
 }
 .canvas-menu > summary:not([data-connection="online"]) .canvas-menu-pepper { filter: grayscale(1) var(--canvas-pepper-halo); }
 .canvas-menu > summary:is([data-connection="starting"], [data-connection="connecting"], [data-connection="reconnecting"]) .canvas-menu-pepper {
