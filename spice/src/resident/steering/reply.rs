@@ -54,7 +54,6 @@ pub(super) fn append_peer_reply(
         .map_err(|error| error.to_string())
         .and_then(|expires| Instant::new(expires).map_err(|error| error.to_string()))
         .map_err(|error| typed_environment_fault("steer::expiry-invalid", &error))?;
-    let spoken = format!("{} {}", answer.marker(), told.key);
     let replied = wire::body::SteerReplied {
         directive,
         key: key.to_string(),
@@ -62,7 +61,7 @@ pub(super) fn append_peer_reply(
         from: told.lane,
         answered: told.key.clone(),
         answer,
-        text: clause.map_or_else(|| spoken.clone(), |clause| format!("{spoken}: {clause}")),
+        text: clause.unwrap_or_default().to_owned(),
         expires,
     };
     let witness = Witness::Residency {
