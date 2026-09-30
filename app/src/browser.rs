@@ -39,6 +39,7 @@ use crate::{
     TaskDetailState, TeamDestination, stale_reads,
 };
 
+mod archive_status;
 mod canvas_menu;
 mod card_target;
 mod clipboard;

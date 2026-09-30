@@ -440,7 +440,9 @@
 }
 
 .work-history-filter-actions { align-self: end; }
-.work-history-page-actions[aria-busy="true"] > .team-mode { cursor: progress; }
+.work-history-pagination[aria-busy="true"] .work-history-page-actions > .team-mode { cursor: progress; }
+/* Retry keeps its rail slot so a failure or its recovery never reflows the row. */
+.work-history-retry[data-shown="false"] { visibility: hidden; }
 
 .work-history-filter-issue { margin: 10px 0 0; }
 
@@ -465,21 +467,32 @@
   letter-spacing: .03em;
 }
 
+/* The archive's status row sits under the finder and stays mounted, so a read
+   starting, finishing, or failing swaps only its single-line text. */
 .work-history-pagination {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
   padding: 10px 0;
-  border-top: var(--canvas-edge-soft);
+  border-bottom: var(--canvas-edge-soft);
 }
 
 .work-history-range {
   display: grid;
   gap: 2px;
+  min-width: 0;
   color: var(--muted);
   font-size: .7rem;
 }
+
+.work-history-range > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.work-history-issue { color: var(--danger); }
 
 .work-history-range strong {
   color: var(--ink);

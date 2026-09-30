@@ -107,8 +107,8 @@
   .work-card { gap: 8px; padding: 12px; }
   .work-history { margin-top: 14px; }
   .work-history-finder { grid-template-columns: 1fr; }
-  .work-history-filter-actions,
-  .work-history-page-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .work-history-filter-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .work-history-page-actions { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; }
   .work-history-filter-actions button,
   .work-history-page-actions button { width: 100%; }
   .work-history-pagination { align-items: stretch; flex-direction: column; }
