@@ -258,6 +258,29 @@ fn parse_quantity(value: Option<&String>) -> Option<f64> {
     value?.parse::<f64>().ok().filter(|value| value.is_finite())
 }
 
+/// A provider's percent quantity as a whole number, truncated toward zero.
+///
+/// Providers derive percentages in binary floating point, so `7` may arrive as
+/// `7.000000000000001` and `29` as `28.999999999999996`. The value is settled
+/// at a millionth of a percent before truncation so such noise neither
+/// surfaces nor drops a whole point. Text that is not a finite number stays
+/// verbatim.
+#[must_use]
+pub fn whole_percent(value: &str) -> String {
+    value
+        .parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite())
+        .map_or_else(
+            || value.to_owned(),
+            |value| {
+                let settled = (value * 1e6).round() / 1e6;
+                let whole = if settled.is_finite() { settled } else { value }.trunc();
+                format!("{}", whole + 0.0)
+            },
+        )
+}
+
 fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
     const FREE: f64 = 0.2;
     const BASELINE: f64 = 1.0;
@@ -574,6 +597,22 @@ mod tests {
                 )
                 .collect(),
             reset_credits: None,
+        }
+    }
+
+    #[test]
+    fn percentages_truncate_to_whole_points_without_float_noise() {
+        for (reported, shown) in [
+            ("7.000000000000001", "7"),
+            ("28.999999999999996", "29"),
+            ("4.9", "4"),
+            ("99.99", "99"),
+            ("0", "0"),
+            ("-0.4", "0"),
+            ("100", "100"),
+            ("n/a", "n/a"),
+        ] {
+            assert_eq!(whole_percent(reported), shown, "{reported}");
         }
     }
 }
