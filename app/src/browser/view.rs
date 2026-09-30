@@ -90,7 +90,6 @@ pub(super) struct CanvasRender<'a> {
     pub sender: &'a SenderHandle,
     pub agents: &'a AgentControls,
     pub selected_task: &'a UseStateHandle<Option<wire::TaskStamp>>,
-    pub task_inspector: &'a message_task_inspector::Context,
     pub detail_presented: bool,
     pub detail_closing: bool,
     pub work_map: &'a UseStateHandle<WorkMapState>,
@@ -103,6 +102,7 @@ pub(super) struct CanvasRender<'a> {
     pub speech_status: &'a UseStateHandle<SpeechStatus>,
     pub submit_note: Callback<(wire::TaskStamp, SubmitEvent)>,
     pub select_task: Callback<wire::TaskStamp>,
+    pub select_dash_task: Callback<wire::TaskStamp>,
     pub close_task: Callback<()>,
     pub retry_relations: Callback<MouseEvent>,
 }

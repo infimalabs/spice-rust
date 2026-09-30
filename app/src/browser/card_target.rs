@@ -19,61 +19,15 @@ pub(super) struct Status {
 
 /// History-state key naming where a reader left through a card link.
 const RETURN_STATE: &str = "canvasReturn";
-/// History-state key naming the team Dash an actionable row left.
-const TEAM_RETURN_STATE: &str = "canvasTeamReturn";
 
-/// Preserve the Dash team whose row is about to navigate to a Chat target.
-///
-/// The team mode itself is browser-local, so the history entry carries the
-/// missing return coordinate. Modified clicks keep ordinary browser semantics
-/// and must not mutate the entry they leave.
+/// Preserve the exact Dash row and Flow position a Chat target leaves.
 pub(super) fn remember_team_return(event: &web_sys::MouseEvent, team: CanonicalUuid) {
-    if event.default_prevented()
-        || event.button() != 0
-        || event.meta_key()
-        || event.ctrl_key()
-        || event.shift_key()
-        || event.alt_key()
-    {
-        return;
-    }
-    let Some(link) = event
-        .current_target()
-        .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-    else {
-        return;
-    };
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-    if link.get_attribute("href") == window.location().hash().ok() {
-        return;
-    }
-    let Ok(history) = window.history() else {
-        return;
-    };
-    let state = js_sys::Object::new();
-    if let Ok(current) = history.state()
-        && let Some(current) = current.dyn_ref::<js_sys::Object>()
-    {
-        js_sys::Object::assign(&state, current);
-    }
-    let _ = js_sys::Reflect::set(
-        &state,
-        &TEAM_RETURN_STATE.into(),
-        &JsValue::from(team.to_string()),
+    let _ = remember_return(
+        event,
+        "a[data-dash-return][href]",
+        "[data-dash-return-origin]",
+        Some((team, TeamMode::Dash)),
     );
-    let _ = history.replace_state(&state, "");
-}
-
-/// Team Dash encoded by the current history entry, when this is a return.
-pub(super) fn team_return() -> Option<CanonicalUuid> {
-    let history = web_sys::window()?.history().ok()?;
-    js_sys::Reflect::get(&history.state().ok()?, &TEAM_RETURN_STATE.into())
-        .ok()?
-        .as_string()?
-        .parse()
-        .ok()
 }
 
 /// The element holding a followed card link and its offset inside its scrolling
@@ -83,6 +37,8 @@ struct ReturnAnchor {
     card: String,
     offset: f64,
     team: Option<wire::CanonicalUuid>,
+    mode: Option<TeamMode>,
+    flow_scroll: Option<i32>,
     /// Distinguishes one recorded departure from a later one on the same entry.
     nonce: f64,
 }
@@ -91,12 +47,25 @@ impl ReturnAnchor {
     fn read(history: &web_sys::History) -> Option<Self> {
         let anchor = js_sys::Reflect::get(&history.state().ok()?, &RETURN_STATE.into()).ok()?;
         let field = |name: &str| js_sys::Reflect::get(&anchor, &name.into()).ok();
+        let team = field("team")
+            .and_then(|team| team.as_string())
+            .and_then(|team| team.parse().ok());
+        let mode = field("mode")
+            .and_then(|mode| mode.as_string())
+            .and_then(|mode| match mode.as_str() {
+                "dash" => Some(TeamMode::Dash),
+                "work" => Some(TeamMode::Work),
+                "chat" => Some(TeamMode::Chat),
+                _ => None,
+            });
         Some(Self {
             card: field("card")?.as_string()?,
             offset: field("offset")?.as_f64()?,
-            team: field("team")
-                .and_then(|team| team.as_string())
-                .and_then(|team| team.parse().ok()),
+            team,
+            mode,
+            flow_scroll: field("flowScroll")
+                .and_then(|scroll| scroll.as_f64())
+                .map(|scroll| scroll as i32),
             nonce: field("nonce")?.as_f64()?,
         })
     }
@@ -106,6 +75,16 @@ impl ReturnAnchor {
         let Some(card) = document.get_element_by_id(&self.card) else {
             return false;
         };
+        if let Some(scroll) = self.flow_scroll
+            && let Some(flow) = card
+                .closest(".team-surface")
+                .ok()
+                .flatten()
+                .and_then(|team| team.query_selector(".team-dash-flow-body").ok().flatten())
+                .and_then(|flow| flow.dyn_into::<web_sys::HtmlElement>().ok())
+        {
+            flow.set_scroll_top(scroll);
+        }
         let Some((plane, offset)) = return_offset(&card) else {
             return false;
         };
@@ -153,7 +132,7 @@ pub(super) fn remember_work_return(event: &web_sys::MouseEvent, team: wire::Cano
         event,
         "a.work-message-link[href]",
         "[data-card-return-origin]",
-        Some(team),
+        Some((team, TeamMode::Work)),
     )
 }
 
@@ -161,7 +140,7 @@ fn remember_return(
     event: &web_sys::MouseEvent,
     link_selector: &str,
     origin_selector: &str,
-    team: Option<wire::CanonicalUuid>,
+    team_mode: Option<(wire::CanonicalUuid, TeamMode)>,
 ) -> bool {
     if event.default_prevented()
         || event.button() != 0
@@ -207,8 +186,25 @@ fn remember_return(
     ] {
         let _ = js_sys::Reflect::set(&anchor, &name.into(), &value);
     }
-    if let Some(team) = team {
+    if let Some((team, mode)) = team_mode {
+        let mode = match mode {
+            TeamMode::Dash => "dash",
+            TeamMode::Work => "work",
+            TeamMode::Chat => "chat",
+        };
         let _ = js_sys::Reflect::set(&anchor, &"team".into(), &JsValue::from(team.to_string()));
+        let _ = js_sys::Reflect::set(&anchor, &"mode".into(), &JsValue::from(mode));
+        if mode == "dash"
+            && let Some(scroll) = origin
+                .closest(".team-surface")
+                .ok()
+                .flatten()
+                .and_then(|team| team.query_selector(".team-dash-flow-body").ok().flatten())
+                .and_then(|flow| flow.dyn_into::<web_sys::HtmlElement>().ok())
+                .map(|flow| flow.scroll_top())
+        {
+            let _ = js_sys::Reflect::set(&anchor, &"flowScroll".into(), &JsValue::from(scroll));
+        }
     }
     let _ = js_sys::Reflect::set(&state, &RETURN_STATE.into(), &anchor);
     if history.replace_state(&state, "").is_err() {
@@ -381,21 +377,19 @@ impl Drop for Seek {
     }
 }
 
-fn restore_work_entry(
+fn restore_team_entry(
     anchor: Option<&ReturnAnchor>,
     team_controls: &UseReducerHandle<TeamControls>,
     restored: &Rc<RefCell<Option<f64>>>,
     document: Option<&web_sys::Document>,
 ) -> bool {
-    let restore_team = anchor.and_then(|anchor| {
-        anchor
-            .team
-            .filter(|team| team_controls.mode(*team) != TeamMode::Work)
-    });
-    if let Some(team) = restore_team {
+    let restore_team = anchor
+        .and_then(|anchor| anchor.team.zip(anchor.mode))
+        .filter(|(team, mode)| team_controls.mode(*team) != *mode);
+    if let Some((team, mode)) = restore_team {
         team_controls.dispatch(TeamControlAction::SetMode {
             team: Some(team),
-            mode: TeamMode::Work,
+            mode,
         });
         return false;
     }
@@ -456,7 +450,7 @@ pub(super) fn use_target(
                 .and_then(|history| ReturnAnchor::read(&history))
                 .filter(|_| target.is_none() && *visible && *ready);
             let returned =
-                restore_work_entry(anchor.as_ref(), team_controls, &restored, document.as_ref());
+                restore_team_entry(anchor.as_ref(), team_controls, &restored, document.as_ref());
             if returned
                 || held.borrow().as_ref().is_some_and(|hold| {
                     Some(hold.target.as_str()) != target.as_deref() || !*visible

@@ -209,15 +209,22 @@ fn render_event(
         }
         FlowEvent::Lifecycle(boundary) => {
             let target = format!("lane-lifecycle-{}", boundary.seq());
+            let origin = format!("team-dash-flow-{target}");
             html! {
                 <li
-                    key={target.clone()}
+                    key={origin.clone()}
                     class="team-dash-flow-row"
                     data-flow-kind="lifecycle"
                     data-agent-lane={lane.to_string()}
                     data-accent={accent.to_string()}
                 >
-                    <a href={crate::view::card_href(&target)} onclick={show_chat.clone()}>
+                    <a
+                        id={origin}
+                        data-dash-return=""
+                        data-dash-return-origin=""
+                        href={crate::view::card_href(&target)}
+                        onclick={show_chat.clone()}
+                    >
                         <span class="team-dash-flow-member">{member}</span>
                         <span class="team-dash-flow-copy">
                             <strong>{"lifecycle"}</strong>
@@ -241,15 +248,22 @@ fn render_event(
                 .map(|line| watchband::truncate(&line, DIRECTION_LABEL_BUDGET))
                 .unwrap_or_else(|| "Direction delivered".to_owned());
             let source = agent_message_source_id(message);
+            let origin = format!("team-dash-flow-{source}-direction-{index}");
             html! {
                 <li
-                    key={format!("{source}-direction-{index}")}
+                    key={origin.clone()}
                     class="team-dash-flow-row"
                     data-flow-kind="direction"
                     data-agent-lane={lane.to_string()}
                     data-accent={accent.to_string()}
                 >
-                    <a href={crate::view::card_href(&source)} onclick={show_chat.clone()}>
+                    <a
+                        id={origin}
+                        data-dash-return=""
+                        data-dash-return-origin=""
+                        href={crate::view::card_href(&source)}
+                        onclick={show_chat.clone()}
+                    >
                         <span class="team-dash-flow-member">{member}</span>
                         <span class="team-dash-flow-copy">
                             <strong>{"direction"}</strong>
