@@ -425,8 +425,9 @@ Tasks created from a retained transcript expose the same **Creator context**
 link on their Work card, Chat quick view, and full detail drawer. The link
 returns to the newest retained message card at or before the task's recorded
 creation boundary and pages older lane history when that card is outside the
-loaded window. Tasks without an unambiguous transcript boundary omit the
-action rather than presenting a dead link.
+loaded window. Canvas requires the retained lane to prove the exact recorded
+transcript generation; tasks without that authority or another unambiguous
+transcript boundary omit the action rather than presenting a dead link.
 
 The project-stem pills above Canvas begin with one label-less aggregate pill
 whenever open work exists. Its badge carries the same ready, active, and

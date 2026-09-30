@@ -46,6 +46,7 @@ pub(super) struct WorkBoardControls<'a> {
     pub map: &'a UseStateHandle<WorkMapState>,
     pub select: Callback<wire::TaskStamp>,
     pub creator_context: Callback<MouseEvent>,
+    pub creator_messages: &'a [Rc<wire::AgentMessage>],
     pub toggle_map_root: Callback<wire::TaskStamp>,
     pub arrangement: &'a UseStateHandle<WorkArrangement>,
     pub lanes: Option<&'a LaneView>,
@@ -64,6 +65,7 @@ pub(super) fn render(
         map,
         select,
         creator_context,
+        creator_messages,
         toggle_map_root,
         arrangement: arrangement_state,
         lanes,
@@ -81,6 +83,7 @@ pub(super) fn render(
         }),
         messages: None,
         creator_context: Some(&creator_context),
+        creator_messages,
     };
     let arrangement = **arrangement_state;
     let board_lanes =

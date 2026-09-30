@@ -215,9 +215,9 @@ const CREATOR_CONTEXT_TARGET_PREFIX: &str = "creator-context-";
 
 /// A task-creation boundary encoded as one canonical Chat route target.
 ///
-/// The source remains in the route identity even though visible message loci
-/// are lane-local. That keeps links from distinct transcript generations from
-/// collapsing to one browser-history entry.
+/// Source identity is part of both the route and resolution. A lane can host
+/// successive transcripts whose byte loci overlap; lane and locus alone are
+/// never creator authority.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CreatorContextTarget {
@@ -266,11 +266,33 @@ impl CreatorContextTarget {
         )
     }
 
-    /// Whether one visible message lies before this task's admission boundary.
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
+    #[must_use]
+    fn owns_source(&self, message: &wire::AgentMessage) -> bool {
+        self.owns_source_parts(
+            message.lane,
+            message
+                .quote_target
+                .as_ref()
+                .and_then(wire::QuoteTarget::tape_source),
+        )
+    }
+
+    #[must_use]
+    fn owns_source_parts(
+        &self,
+        lane: wire::CanonicalUuid,
+        source: Option<wire::CanonicalUuid>,
+    ) -> bool {
+        lane == self.lane && source == Some(self.source)
+    }
+
+    /// Whether one visible message from the exact source lies before this
+    /// task's admission boundary.
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     #[must_use]
     pub(crate) fn contains(&self, message: &wire::AgentMessage) -> bool {
-        self.contains_locus(message.lane, message.locus)
+        self.owns_source(message) && self.contains_locus(message.lane, message.locus)
     }
 
     #[must_use]
@@ -280,8 +302,15 @@ impl CreatorContextTarget {
 }
 
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-pub(crate) fn creator_context_href(context: &wire::body::TaskCreationContext) -> Option<String> {
-    CreatorContextTarget::from_creation(context).map(|target| card_href(&target.target()))
+pub(crate) fn creator_context_href<'a>(
+    context: &wire::body::TaskCreationContext,
+    messages: impl IntoIterator<Item = &'a wire::AgentMessage>,
+) -> Option<String> {
+    let target = CreatorContextTarget::from_creation(context)?;
+    messages
+        .into_iter()
+        .any(|message| target.owns_source(message))
+        .then(|| card_href(&target.target()))
 }
 
 /// One admitted Canvas URL state.
@@ -430,6 +459,18 @@ mod tests {
             length: 1,
             event: 0,
         };
+        assert!(target.owns_source_parts(lane, Some(source)));
+        assert!(!target.owns_source_parts(lane, None));
+        assert!(
+            !target.owns_source_parts(
+                lane,
+                Some(
+                    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+                        .parse()
+                        .expect("other fixture source"),
+                ),
+            )
+        );
         assert!(target.contains_locus(lane, locus(17, 4095)));
         assert!(target.contains_locus(lane, locus(16, u64::MAX)));
         assert!(!target.contains_locus(lane, locus(17, 4096)));

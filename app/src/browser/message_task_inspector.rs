@@ -41,6 +41,7 @@ struct Commands {
 #[derive(Clone, PartialEq)]
 struct DetailContext {
     detail: Option<TaskDetailState>,
+    creator_context: Option<String>,
     can_note: bool,
     note: NoteComposer,
     submit_note: Callback<(TaskStamp, SubmitEvent)>,
@@ -74,6 +75,17 @@ pub(super) fn use_controls(
                 .and_then(|runtime| runtime.task_detail(&inspection.task))
         })
         .cloned();
+    let creator_context = detail.as_ref().and_then(|detail| {
+        let answer = match detail {
+            TaskDetailState::Available(answer) | TaskDetailState::Refreshing(answer) => answer,
+            TaskDetailState::Loading | TaskDetailState::Unavailable { .. } => return None,
+        };
+        let runtime = runtime.as_ref()?;
+        crate::view::creator_context_href(
+            &answer.task.statement.body.creation,
+            runtime.messages().iter().map(AsRef::as_ref),
+        )
+    });
     let note = (*inspection)
         .as_ref()
         .map(|inspection| task.notes.shown(&inspection.task))
@@ -91,6 +103,7 @@ pub(super) fn use_controls(
         },
         detail: DetailContext {
             detail,
+            creator_context,
             can_note: runtime
                 .as_ref()
                 .is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
@@ -353,7 +366,7 @@ fn render_available(
     let status = workflow.status.clone();
     let phase = workflow.phase.to_string();
     let review = workflow.review.clone();
-    let creator_context = crate::view::creator_context_href(&statement.creation);
+    let creator_context = detail.creator_context.clone();
     let follow_creator = {
         let context = context.clone();
         Callback::from(move |event: MouseEvent| {

@@ -70,6 +70,7 @@ pub(super) fn render_tasks(
             follow: &follow_message,
         }),
         creator_context: Some(&follow_message),
+        creator_messages: runtime.messages(),
     };
     html! {
         <main class="team-task-workspace" aria-label="Team tasks">
