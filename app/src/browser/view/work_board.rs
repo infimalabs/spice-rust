@@ -133,7 +133,7 @@ fn render_history_archive(
         >
             <summary>
                 <span>{"History"}</span>
-                <span class="work-history-count">{history_count(state)}</span>
+                <span class="work-history-count">{crate::browser::archive_status::count(history_range(state))}</span>
             </summary>
             // Once a page has loaded the body stays mounted, bounded to that
             // one page, so closing can transition out instead of cutting.
@@ -163,17 +163,17 @@ fn render_history_archive(
                 if let Some(issue) = controls.validation.as_ref() {
                     <p class="form-refusal work-history-filter-issue" role="alert">{issue}</p>
                 }
-                if state.is_some_and(WorkHistoryState::loading) {
-                    <p class="work-board-state" role="status">{"Loading history page…"}</p>
-                }
-                if let Some(issue) = state.and_then(WorkHistoryState::issue) {
-                    <div class="work-history-actions">
-                        <p class="form-refusal" role="alert">{issue}</p>
-                        <span class="canvas-control-rail team-mode-rail">
-                            <button type="button" class="team-mode" onclick={controls.retry.clone()}>{"Retry"}</button>
-                        </span>
-                    </div>
-                }
+                {crate::browser::archive_status::render(&crate::browser::archive_status::ArchiveStatus {
+                    range: history_range(state),
+                    has_newer: state.is_some_and(WorkHistoryState::has_newer),
+                    has_older: state.is_some_and(WorkHistoryState::has_older),
+                    loading: state.is_none_or(WorkHistoryState::loading),
+                    issue: state.and_then(WorkHistoryState::issue),
+                    pages_label: "History pages",
+                    newer: controls.newer.clone(),
+                    older: controls.older.clone(),
+                    retry: controls.retry.clone(),
+                })}
                 if history.is_empty() && state.and_then(WorkHistoryState::total) == Some(0) {
                     <div class="empty">
                         {if state.is_some_and(WorkHistoryState::filtered) {
@@ -185,73 +185,16 @@ fn render_history_archive(
                 } else if !history.is_empty() {
                     {render_history(history, cards)}
                 }
-                {render_history_pagination(state, controls)}
             }
         </details>
     }
 }
 
-fn render_history_pagination(
-    state: Option<&WorkHistoryState>,
-    controls: &WorkHistoryControls,
-) -> Html {
-    let Some(state) = state.filter(|state| state.total().is_some()) else {
-        return Html::default();
-    };
-    html! {
-        <div class="work-history-pagination">
-            <div class="work-history-range" role="status">
-                <strong>{history_count(Some(state))}</strong>
-                <span>{history_page_position(state)}</span>
-            </div>
-            <div
-                class="work-history-page-actions canvas-control-rail team-mode-rail"
-                role="group"
-                aria-label="History pages"
-                aria-busy={state.loading().to_string()}
-            >
-                <button
-                    type="button"
-                    class="team-mode"
-                    disabled={state.loading() || !state.has_newer()}
-                    onclick={controls.newer.clone()}
-                >
-                    {"Newer"}
-                </button>
-                <button
-                    type="button"
-                    class="team-mode"
-                    disabled={state.loading() || !state.has_older()}
-                    onclick={controls.older.clone()}
-                >
-                    {"Older"}
-                </button>
-            </div>
-        </div>
-    }
+fn history_range(state: Option<&WorkHistoryState>) -> Option<(u64, u64, u64)> {
+    let state = state?;
+    Some((state.first_result(), state.last_result(), state.total()?))
 }
 
-fn history_count(state: Option<&WorkHistoryState>) -> String {
-    state.and_then(WorkHistoryState::total).map_or_else(
-        || "Not loaded".to_owned(),
-        |total| {
-            format!(
-                "{}–{} of {total}",
-                state.map_or(0, WorkHistoryState::first_result),
-                state.map_or(0, WorkHistoryState::last_result),
-            )
-        },
-    )
-}
-
-fn history_page_position(state: &WorkHistoryState) -> &'static str {
-    match (state.has_newer(), state.has_older()) {
-        (false, false) => "Newest and oldest page",
-        (false, true) => "Newest page",
-        (true, false) => "Oldest page",
-        (true, true) => "Between newest and oldest",
-    }
-}
 fn render_history(history: Vec<&WorkTask<'_>>, cards: &work_card::Controls<'_>) -> Html {
     let mut groups: Vec<(String, Vec<&WorkTask<'_>>)> = Vec::new();
     for task in history {

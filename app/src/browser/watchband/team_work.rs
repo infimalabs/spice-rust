@@ -363,9 +363,19 @@ fn render_settled_lane(
                 }
             </header>
             {render_settled_finder(settled, team)}
-            if loading {
-                <p class="work-board-state" role="status">{"Loading settled page…"}</p>
-            }
+            {crate::browser::archive_status::render(&crate::browser::archive_status::ArchiveStatus {
+                range: state.and_then(|state| {
+                    Some((state.first_result(), state.last_result(), state.total()?))
+                }),
+                has_newer: state.is_some_and(TeamSettledState::has_newer),
+                has_older: state.is_some_and(TeamSettledState::has_older),
+                loading: state.is_none() || loading,
+                issue,
+                pages_label: "Settled history pages",
+                newer,
+                older,
+                retry,
+            })}
             if !tasks.is_empty() {
                 <div class="team-task-card-list work-history-list">
                     {for tasks.iter().map(|task| work_card::render(task, cards))}
@@ -378,57 +388,6 @@ fn render_settled_lane(
                         "No work has settled."
                     }
                 }</p>
-            } else if state.is_none() {
-                <p class="team-task-empty" role="status">{"Loading settled work…"}</p>
-            }
-            if let Some(issue) = issue {
-                <div class="work-history-actions">
-                    <p class="form-refusal" role="alert">{issue}</p>
-                    <span class="canvas-control-rail team-mode-rail">
-                        <button type="button" class="team-mode" onclick={retry}>{"Retry"}</button>
-                    </span>
-                </div>
-            }
-            if let Some(state) = state.filter(|state| state.total().is_some()) {
-                <div class="work-history-pagination">
-                    <div class="work-history-range" role="status">
-                        <strong>{format!(
-                            "{}–{} of {}",
-                            state.first_result(),
-                            state.last_result(),
-                            state.total().unwrap_or(0),
-                        )}</strong>
-                        <span>{match (state.has_newer(), state.has_older()) {
-                            (false, false) => "Newest and oldest page",
-                            (false, true) => "Newest page",
-                            (true, false) => "Oldest page",
-                            (true, true) => "Between newest and oldest",
-                        }}</span>
-                    </div>
-                    <div
-                        class="work-history-page-actions canvas-control-rail team-mode-rail"
-                        role="group"
-                        aria-label="Settled history pages"
-                        aria-busy={loading.to_string()}
-                    >
-                        <button
-                            type="button"
-                            class="team-mode"
-                            disabled={loading || !state.has_newer()}
-                            onclick={newer}
-                        >
-                            {"Newer"}
-                        </button>
-                        <button
-                            type="button"
-                            class="team-mode"
-                            disabled={loading || !state.has_older()}
-                            onclick={older}
-                        >
-                            {"Older"}
-                        </button>
-                    </div>
-                </div>
             }
         </section>
     }
