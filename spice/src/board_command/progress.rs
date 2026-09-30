@@ -1120,8 +1120,12 @@ fn doc_task_spec(
     };
     let existing = task_entry(&plan.snapshot.entries, &task);
     if existing.is_none() {
-        let _dependency_witnesses =
-            derive_dependency_flow(&mut flow, &dependencies, &plan.snapshot)?;
+        let _dependency_witnesses = derive_dependency_flow(
+            &mut flow,
+            !node.flow.is_empty(),
+            &dependencies,
+            &plan.snapshot,
+        )?;
     }
     let taste_review = task_taste_review(
         repository,

@@ -503,12 +503,16 @@ fn task_flow_for_dependencies(
                 "name dependencies carrying canonical birth stamps",
             )
         })?;
-    let witnesses = derive_dependency_flow(&mut flow, &dependencies, snapshot)?;
+    let witnesses = derive_dependency_flow(&mut flow, add.flow.is_some(), &dependencies, snapshot)?;
     Ok((flow, witnesses))
 }
 
+/// Witness each dependency's workflow and, for a defaulted `flow`, omit the
+/// review phase when every dependency is awaiting review. A named flow is
+/// honored as written.
 pub(super) fn derive_dependency_flow(
     flow: &mut Vec<wire::Phase>,
+    explicit: bool,
     dependencies: &[TaskStamp],
     snapshot: &ValidatedSnapshot,
 ) -> Result<Vec<Witness>, Outcome<CommandAnswer>> {
@@ -530,7 +534,9 @@ pub(super) fn derive_dependency_flow(
             && heads.workflow.body.completion.is_none();
         witnesses.push(workflow_witness(heads));
     }
-    omit_review_phase(flow, all_review)?;
+    if !explicit {
+        omit_review_phase(flow, all_review)?;
+    }
     Ok(witnesses)
 }
 
