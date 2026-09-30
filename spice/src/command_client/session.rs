@@ -125,10 +125,20 @@ pub(super) fn open_session_with(
     let opening = receive(&mut socket)?;
     let accepted = decode_opening(&opening, &discovery.value)?;
     if !principal_matches(contract.principal, &accepted.actor) {
-        return Err(protocol_fault(
-            "command::principal-mismatch",
-            "resident capability resolved to a principal outside the selected CLI contract",
-        ));
+        return Err(Outcome::Refusal(Refusal::bare(
+            wire::RefusalDiagnostic::new(
+                "command::principal-mismatch",
+                Some("principal".to_owned()),
+                Some(contract.principal.label().to_owned()),
+                Some(accepted.actor.to_string()),
+            )
+            .with_detail(format!(
+                "{} requires the {} principal; this caller's resident capability resolves to {}",
+                contract.syntax,
+                contract.principal.label(),
+                accepted.actor
+            )),
+        )));
     }
     discovery.verify_current()?;
     Ok(AuthenticatedSession {
