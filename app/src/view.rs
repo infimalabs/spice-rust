@@ -99,7 +99,7 @@ impl CanvasDestination {
         match self {
             Self::Dash => "/dash",
             Self::Work => "/work",
-            Self::Chat => "/",
+            Self::Chat => "/chat",
         }
     }
 
@@ -371,6 +371,79 @@ impl CanvasRoute {
     }
 }
 
+/// One browser location resolved to a usable Canvas route.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct NormalizedCanvasLocation {
+    route: CanvasRoute,
+    replace: bool,
+    notice: Option<String>,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl NormalizedCanvasLocation {
+    #[must_use]
+    pub(crate) const fn route(&self) -> &CanvasRoute {
+        &self.route
+    }
+
+    #[must_use]
+    pub(crate) const fn needs_replace(&self) -> bool {
+        self.replace
+    }
+
+    #[must_use]
+    pub(crate) fn notice(&self) -> Option<&str> {
+        self.notice.as_deref()
+    }
+}
+
+/// Resolve a browser query and hash through the one Canvas route grammar.
+#[cfg(any(target_arch = "wasm32", test))]
+#[must_use]
+pub(crate) fn normalize_canvas_location(search: &str, hash: &str) -> NormalizedCanvasLocation {
+    let fragment = hash.strip_prefix('#').unwrap_or(hash);
+    if search.is_empty() {
+        if let Some(route) = CanvasRoute::from_path(fragment) {
+            let replace = hash.strip_prefix('#') != Some(route.path().as_ref());
+            return NormalizedCanvasLocation {
+                route,
+                replace,
+                notice: None,
+            };
+        }
+        if let Some(destination) = normalized_destination(fragment) {
+            return NormalizedCanvasLocation {
+                route: CanvasRoute::destination(destination),
+                replace: true,
+                notice: None,
+            };
+        }
+    }
+
+    NormalizedCanvasLocation {
+        route: CanvasRoute::destination(CanvasDestination::Chat),
+        replace: true,
+        notice: Some(format!(
+            "Unrecognized Canvas route `{search}{hash}`; opened Chat."
+        )),
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn normalized_destination(fragment: &str) -> Option<CanvasDestination> {
+    let name = fragment.trim_matches('/');
+    if name.contains('/') {
+        return None;
+    }
+    match name {
+        "" | "chat" => Some(CanvasDestination::Chat),
+        "dash" => Some(CanvasDestination::Dash),
+        "work" => Some(CanvasDestination::Work),
+        _ => None,
+    }
+}
+
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) fn card_href(target: &str) -> String {
     let route = CanvasRoute::card(target.to_owned())
@@ -390,7 +463,7 @@ fn valid_card_target(target: &str) -> bool {
 mod tests {
     use super::{
         CanvasDestination, CanvasNotice, CanvasRoute, ConnectionStage, CreatorContextTarget,
-        canvas_notice,
+        canvas_notice, normalize_canvas_location,
     };
 
     #[test]
@@ -418,6 +491,54 @@ mod tests {
                 CanvasRoute::from_path(path).is_none(),
                 "{path:?} unexpectedly named a card"
             );
+        }
+    }
+
+    #[test]
+    fn canvas_locations_canonicalize_destination_spellings_without_changing_cards() {
+        for (hash, destination, replace) in [
+            ("#/chat", CanvasDestination::Chat, false),
+            ("#/dash", CanvasDestination::Dash, false),
+            ("#/work", CanvasDestination::Work, false),
+            ("", CanvasDestination::Chat, true),
+            ("#", CanvasDestination::Chat, true),
+            ("#/", CanvasDestination::Chat, true),
+            ("#dash", CanvasDestination::Dash, true),
+            ("#/work/", CanvasDestination::Work, true),
+            ("#//dash/", CanvasDestination::Dash, true),
+        ] {
+            let location = normalize_canvas_location("", hash);
+            assert_eq!(location.route().canvas_destination(), destination, "{hash}");
+            assert_eq!(location.needs_replace(), replace, "{hash}");
+            assert_eq!(location.notice(), None, "{hash}");
+        }
+
+        let hash = "#/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1";
+        let location = normalize_canvas_location("", hash);
+        assert_eq!(
+            location.route().card_target(),
+            Some("message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1")
+        );
+        assert!(!location.needs_replace());
+        assert_eq!(location.notice(), None);
+    }
+
+    #[test]
+    fn unknown_canvas_locations_open_chat_and_name_the_refused_input() {
+        for (search, hash) in [
+            ("?page=work", ""),
+            ("", "#/unknown"),
+            ("", "#/work?scope=all"),
+            ("", "#/card/message/agent"),
+        ] {
+            let location = normalize_canvas_location(search, hash);
+            assert_eq!(
+                location.route().canvas_destination(),
+                CanvasDestination::Chat
+            );
+            assert!(location.needs_replace());
+            let notice = location.notice().expect("invalid input is named");
+            assert!(notice.contains(&format!("{search}{hash}")), "{notice}");
         }
     }
 

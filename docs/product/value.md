@@ -358,9 +358,14 @@ the discovery happens after the one step that cannot be undone.
 
 ### The Canvas view rail
 
-Dash, Work, and Chat are the sole global and team panel names. The selected
-global destination is the `page` URL query, so browser history, reload, and
-copied URLs restore it; an absent legacy query opens Chat. Existing team,
+Dash, Work, and Chat are the sole global and team panel names. Their canonical
+global routes are `#/dash`, `#/work`, and `#/chat`; browser history, reload,
+and copied URLs restore the selected destination. A missing fragment, bare
+`#`, or `#/` opens Chat and is replaced in place with `#/chat`. Missing leading
+slashes and trailing or repeated slashes around a known destination are also
+replaced with its canonical route without adding a history entry. An unknown
+fragment or stray URL query opens Chat with working navigation, replaces the
+address with `#/chat`, and names the refused route in a toast. Existing team,
 speech, and narration state keeps its current format. Following a quote link
 to its quoted message is a history step: Back returns the card that held the
 link to where the reader left it. A card link opened in a fresh page brings its
