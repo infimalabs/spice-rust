@@ -195,6 +195,18 @@ union rather than a question.
 **Invariant —** Omission and null are not two ways to say nothing. One spelling
 is chosen and enforced mechanically, not by convention.
 
+### One JSON outcome envelope
+
+Every finite `spice --json` invocation emits one newline-terminated `Outcome`
+document. A successful daemonless command is
+`{"kind":"reply","body":...}`; a read adds its snapshot `cursor`, and a mutation
+adds its committed `seq` range. The absence of both coordinates is the one
+spelling of a daemonless reply—there is no empty `direct` marker. Refusals and
+faults use the same envelope with their respective `kind`. A long-running
+stream emits one stream document per wake because it has no finite command
+reply; finite `retro` returns its `StreamOutcome` inside the ordinary reply
+envelope.
+
 ---
 
 ## Extension surfaces
