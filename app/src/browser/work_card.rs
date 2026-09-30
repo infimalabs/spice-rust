@@ -33,6 +33,7 @@ pub(super) struct Controls<'a> {
     pub density: Density,
     pub map: Option<MapControls<'a>>,
     pub messages: Option<MessageControls<'a>>,
+    pub creator_context: Option<&'a Callback<MouseEvent>>,
 }
 
 pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
@@ -50,11 +51,13 @@ pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
         .as_ref()
         .and_then(|messages| messages.links.task(&statement.handle))
         .map(super::watchband::agent_message_source_id);
-    let return_id = message_target.as_ref().and_then(|_| {
-        controls
-            .messages
-            .as_ref()
-            .map(|messages| format!("team-work-task-{}-{born}", messages.team))
+    let creator_context = crate::view::creator_context_href(&statement.creation);
+    let has_chat_target = message_target.is_some() || creator_context.is_some();
+    let return_id = has_chat_target.then(|| {
+        controls.messages.as_ref().map_or_else(
+            || format!("work-task-{born}"),
+            |messages| format!("team-work-task-{}-{born}", messages.team),
+        )
     });
     let is_selected = controls.selected == Some(&born);
     let is_pinned = controls
@@ -72,8 +75,8 @@ pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
         <div key={born.to_string()} class="work-card-cell">
             <article
                 id={return_id}
-                tabindex={message_target.as_ref().map(|_| "-1")}
-                data-card-return-origin={message_target.as_ref().map(|_| "work")}
+                tabindex={has_chat_target.then_some("-1")}
+                data-card-return-origin={has_chat_target.then_some("work")}
                 class={classes!(
                     "work-card",
                     (controls.density == Density::Compact).then_some("work-card--compact"),
@@ -109,6 +112,18 @@ pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
                     <span class="work-card-heading-actions">
                         if let Some(priority) = priority {
                             <span class="work-card-priority" title="Declared priority">{format!("P:{priority}")}</span>
+                        }
+                        if let Some(href) = creator_context {
+                            <a
+                                class="work-message-link creator-context-link"
+                                data-creator-context="true"
+                                {href}
+                                aria-label={format!(
+                                    "Open creator context for {} in Chat",
+                                    statement.handle,
+                                )}
+                                onclick={controls.creator_context.cloned()}
+                            >{"Context"}</a>
                         }
                         if let (Some(target), Some(messages)) = (&message_target, &controls.messages) {
                             <a

@@ -400,6 +400,7 @@ impl CanvasAppState {
                 select_task: self.work_detail.select.clone(),
                 select_dash_task: self.work_detail.select_history.clone(),
                 close_task: self.work_detail.close.clone(),
+                leave_task: self.work_detail.leave.clone(),
                 retry_relations,
             },
             work.as_ref(),
@@ -533,6 +534,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
     card_target::use_target(
         state.card_target.clone(),
         &state.surface,
+        &state.sender,
         state.card_target_status.clone(),
         state.team_controls.clone(),
         chat_visible,

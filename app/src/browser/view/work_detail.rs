@@ -26,6 +26,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
     pub select_task: Callback<TaskStamp>,
     pub close: Callback<()>,
+    pub leave: Callback<()>,
     pub retry_relations: Callback<MouseEvent>,
 }
 
@@ -173,6 +174,15 @@ fn render_available(
                 )
             })
     });
+    let creator_context = crate::view::creator_context_href(&statement.creation);
+    let follow_creator = {
+        let leave = render.leave.clone();
+        Callback::from(move |event: MouseEvent| {
+            if super::super::card_target::follows_in_tab(&event) {
+                leave.emit(());
+            }
+        })
+    };
     html! {
         <div class="work-detail-content">
             <div class="work-detail-identity">
@@ -182,6 +192,18 @@ fn render_available(
                     text={AttrValue::from(statement.handle.to_string())}
                     subject="task handle"
                 >{"Copy identity"}</chrome::CopyButton>
+                if let Some(href) = creator_context {
+                    <a
+                        class="work-detail-context-link creator-context-link"
+                        data-creator-context="true"
+                        {href}
+                        aria-label={format!(
+                            "Open creator context for {} in Chat",
+                            statement.handle,
+                        )}
+                        onclick={follow_creator}
+                    >{"Creator context"}</a>
+                }
             </div>
             if let Some(notice) = scope_notice {
                 <p class="work-detail-scope" role="status">{notice}</p>
