@@ -88,8 +88,8 @@ pub(super) fn render_tasks(
                     <strong>{policy}</strong>
                 </div>
             </header>
-            {render_team_work_lanes(work.as_ref(), team.lane, &cards, settled.as_ref())}
             {render_team_jobs(standings, team.lane)}
+            {render_team_work_lanes(work.as_ref(), team.lane, &cards, settled.as_ref())}
             {render_directive_ledger(
                 runtime,
                 team,
@@ -437,16 +437,22 @@ fn direction_card<'a>(
     }
 }
 
+/// Jobs shown before the table scrolls. `.team-job-scroll` in work.css caps
+/// the table at this many rows plus half the next (`--team-job-visible`); keep
+/// the two equal. Canvas's `style-src 'self'` refuses an inline value.
+const KEPT_JOBS_VISIBLE: usize = 5;
+
 /// Every command the team's members keep, oldest first, one keyed row each.
+/// Up to [`KEPT_JOBS_VISIBLE`] rows show in full; beyond that the table
+/// scrolls inside a keyboard-reachable region under pinned headers.
 pub(super) fn render_team_jobs(standings: &[Standing], team: wire::CanonicalUuid) -> Html {
     let jobs = watchband::team_jobs(standings);
+    let heading = format!("kept-jobs-{team}");
+    let scrolls = jobs.len() > KEPT_JOBS_VISIBLE;
     html! {
-        <section
-            class="team-task-section team-jobs"
-            aria-labelledby={format!("kept-jobs-{team}")}
-        >
+        <section class="team-task-section team-jobs" aria-labelledby={heading.clone()}>
             <header>
-                <h3 id={format!("kept-jobs-{team}")}>{"Kept jobs"}</h3>
+                <h3 id={heading.clone()}>{"Kept jobs"}</h3>
                 if !jobs.is_empty() {
                     <span>{jobs.len()}</span>
                 }
@@ -454,19 +460,26 @@ pub(super) fn render_team_jobs(standings: &[Standing], team: wire::CanonicalUuid
             if jobs.is_empty() {
                 <p class="team-task-empty">{"No kept jobs."}</p>
             } else {
-                <table class="team-job-table">
-                    <thead>
-                        <tr>
-                            <th scope="col">{"Member"}</th>
-                            <th scope="col">{"Started"}</th>
-                            <th scope="col">{"Command"}</th>
-                            <th scope="col">{"Standing"}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {for jobs.iter().map(render_team_job)}
-                    </tbody>
-                </table>
+                <div
+                    class="team-job-scroll"
+                    tabindex={scrolls.then_some("0")}
+                    role={scrolls.then_some("region")}
+                    aria-labelledby={scrolls.then_some(heading)}
+                >
+                    <table class="team-job-table">
+                        <thead>
+                            <tr>
+                                <th scope="col">{"Member"}</th>
+                                <th scope="col">{"Started"}</th>
+                                <th scope="col">{"Command"}</th>
+                                <th scope="col">{"Standing"}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {for jobs.iter().map(render_team_job)}
+                        </tbody>
+                    </table>
+                </div>
             }
         </section>
     }
