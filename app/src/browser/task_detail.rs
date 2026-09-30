@@ -470,6 +470,36 @@ fn note_keyboard_submit(enabled: bool) -> Callback<KeyboardEvent> {
     })
 }
 
+/// The link to the transcript offset recorded when this task was admitted,
+/// labelled with that moment's live relative age.
+///
+/// The boundary is captured in the same admission that mints the task stamp,
+/// so the stamp's moment is the linked offset's time whether or not that
+/// transcript page is loaded.
+pub(super) fn creator_context_link(
+    class: &'static str,
+    href: String,
+    statement: &wire::intent::BoardStatement,
+    onclick: Option<Callback<MouseEvent>>,
+) -> Html {
+    let created = statement.born.micros().div_euclid(1_000);
+    html! {
+        <a
+            class={classes!(class, "creator-context-link")}
+            data-creator-context="true"
+            {href}
+            title="Creator context at task creation"
+            aria-label={format!(
+                "Open creator context for {} in Chat, from when it was created",
+                statement.handle,
+            )}
+            {onclick}
+        >
+            <super::clock::Age authored={created} class={classes!("creator-context-age")} />
+        </a>
+    }
+}
+
 /// Whether the operator may close a task from its composer, and whose live
 /// claim that closure takes.
 #[derive(Clone, PartialEq, Eq)]

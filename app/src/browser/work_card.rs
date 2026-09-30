@@ -176,16 +176,12 @@ fn render_cell(task: &WorkTask<'_>, controls: &Controls<'_>, gutter: CellGutter<
                             <span class="work-card-priority" title="Declared priority">{format!("P:{priority}")}</span>
                         }
                         if let Some(href) = creator_context {
-                            <a
-                                class="work-message-link creator-context-link"
-                                data-creator-context="true"
-                                {href}
-                                aria-label={format!(
-                                    "Open creator context for {} in Chat",
-                                    statement.handle,
-                                )}
-                                onclick={controls.creator_context.cloned()}
-                            >{"Context"}</a>
+                            {super::task_detail::creator_context_link(
+                                "work-message-link",
+                                href,
+                                statement,
+                                controls.creator_context.cloned(),
+                            )}
                         }
                         if let (Some(target), Some(messages)) = (&message_target, &controls.messages) {
                             <a

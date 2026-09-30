@@ -75,6 +75,12 @@ impl TaskStamp {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// The Unix microsecond this task was created, as the stamp encodes it.
+    #[must_use]
+    pub fn micros(&self) -> i64 {
+        moment_micros(&self.0).expect("a parsed task stamp names a representable moment")
+    }
 }
 
 /// Decode the Unix microsecond a moment-coded key names: nine base-52 digits

@@ -194,15 +194,12 @@ fn render_available(
                     subject="task handle"
                 >{"Copy identity"}</chrome::CopyButton>
                 if let Some(href) = creator_context {
-                    <a
-                        class="work-detail-context-link creator-context-link"
-                        data-creator-context="true"
-                        {href}
-                        aria-label={format!(
-                            "Open creator context for {} in Chat",
-                            statement.handle,
-                        )}
-                    >{"Creator context"}</a>
+                    {task_detail::creator_context_link(
+                        "work-detail-context-link",
+                        href,
+                        statement,
+                        None,
+                    )}
                 }
             </div>
             if let Some(notice) = scope_notice {

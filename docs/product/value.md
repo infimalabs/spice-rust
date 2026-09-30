@@ -301,10 +301,12 @@ clusters rearrange the same keyed cards; each lane reserves a label gutter, so
 rearranging never moves a card vertically. Empty rows remain, status is textual
 as well as colored, and narrow layouts keep labeled rows.
 
-Tasks created from a retained transcript expose one **Creator context** link on
-their card, Chat quick view, and detail. It opens the newest retained message
-at or before the recorded creation boundary, paging older history as needed,
-and appears only when the lane proves the recorded transcript generation.
+Tasks created from a retained transcript expose one creator-context link on
+their card, Chat quick view, and detail. Its visible label is the live relative
+age of the task's creation; its accessible name says it opens the creator
+context in Chat. It opens the newest retained message at or before the recorded
+creation boundary, paging older history as needed, and appears only when the
+lane proves the recorded transcript generation.
 
 Descriptions, acceptance criteria, and observations render as authored Markdown
 through one sanitized task-text renderer shared by the Chat quick view
