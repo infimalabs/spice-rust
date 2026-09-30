@@ -225,6 +225,8 @@ vocabulary! {
     SteerAcked = "steer::acked" by AckScanner;
     /// A live directive was declined at a transcript locus.
     SteerDeclined = "steer::declined" by AckScanner;
+    /// A lane's answer to a live peer message opened a reply to its sender.
+    SteerReplied = "steer::replied" by AckScanner;
     /// An ACK named no live directive; nothing retired.
     SteerMissed = "steer::missed" by AckScanner;
     /// A directive reached expiry without a valid disposition.
@@ -380,6 +382,7 @@ impl FactKind {
         Self::SteerAcked,
         Self::SteerDeclined,
         Self::SteerMissed,
+        Self::SteerReplied,
         Self::SteerLapsed,
         Self::SteerDeadLettered,
         Self::SteerCanceled,

@@ -10,6 +10,8 @@ mod tests;
 pub(super) struct TranscriptRecognition {
     pub(super) locus: TranscriptLocus,
     pub(super) outcome: ScanOutcome,
+    /// The response prose the retiring header gave, when it said any.
+    pub(super) answer: Option<String>,
 }
 
 /// Repair when the lane wrote no authored header as durable assistant text.
@@ -320,6 +322,7 @@ struct RecordRecognition {
     line: u32,
     column: u32,
     outcome: ScanOutcome,
+    answer: Option<String>,
 }
 
 impl RecordRecognition {
@@ -335,6 +338,7 @@ impl RecordRecognition {
                 column: self.column,
             },
             outcome: self.outcome,
+            answer: self.answer,
         }
     }
 }
@@ -358,13 +362,17 @@ fn scan_record(
         let Some(recognition) = steer::decisive(text, token, standing) else {
             continue;
         };
+        let retired = matches!(recognition.outcome, ScanOutcome::Retired { .. });
         let recognition = RecordRecognition {
             event: checked_locus_part(event_index)?,
             line: checked_locus_part(recognition.locus.line)?,
             column: checked_locus_part(recognition.locus.column)?,
             outcome: recognition.outcome,
+            answer: retired
+                .then(|| steer::answer(text, token, standing).map(str::to_owned))
+                .flatten(),
         };
-        if matches!(recognition.outcome, ScanOutcome::Retired { .. }) {
+        if retired {
             return Ok(Some(recognition));
         }
         latest_miss.get_or_insert(recognition);

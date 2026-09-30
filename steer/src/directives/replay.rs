@@ -9,7 +9,8 @@ use std::collections::BTreeMap;
 
 use wire::body::{
     ClaimLeaseWarned, SteerAcked, SteerCanceled, SteerDeclined, SteerEscalated, SteerLapsed,
-    SteerMissed, SteerRecovered, SteerSent, TasteDecision, TasteJudged, TasteReminded,
+    SteerMissed, SteerRecovered, SteerReplied, SteerSent, TasteDecision, TasteJudged,
+    TasteReminded,
 };
 use wire::steering::SteerDeadLettered;
 use wire::{CanonicalUuid, Instant};
@@ -137,122 +138,115 @@ impl Ledger {
         &mut self,
         envelope: &wire::Envelope<wire::AnyFact>,
     ) -> Result<Option<AppliedSteering>, ReplayError> {
+        let folded = match self.open_envelope(envelope) {
+            Some(opened) => opened,
+            None => match self.transition_envelope(envelope) {
+                Some(transitioned) => transitioned,
+                None if envelope.fact.kind().affects_steering() => {
+                    return Err(unhandled_authority_fact(envelope));
+                }
+                None => return Ok(None),
+            },
+        };
+        let (result, applied) = folded;
+        result.map_err(|error| ReplayError {
+            seq: envelope.seq,
+            kind: envelope.fact.kind(),
+            detail: error.to_string(),
+        })?;
+        Ok(Some(applied))
+    }
+
+    /// Fold one fact that opens a directive, when it is one.
+    fn open_envelope(
+        &mut self,
+        envelope: &wire::Envelope<wire::AnyFact>,
+    ) -> Option<(Result<(), Refusal>, AppliedSteering)> {
         let fact = &envelope.fact;
-        let (result, affected, created, missed) = if let Some(body) = fact.read::<SteerSent>() {
-            (
-                self.absorb_recorded(Steering::Sent(&body), Some(envelope.at)),
-                Some(body.directive),
-                true,
-                None,
-            )
+        let at = Some(envelope.at);
+        let sent = fact
+            .read::<SteerSent>()
+            .or_else(|| fact.read::<SteerReplied>().map(|body| body.as_sent()));
+        let (result, affected) = if let Some(body) = sent {
+            let opened = Some(body.directive);
+            (self.absorb_recorded(Steering::Sent(&body), at), opened)
         } else if let Some(body) = fact.read::<TasteReminded>() {
-            (
-                self.absorb_recorded(Steering::Reminded(&body), Some(envelope.at)),
-                Some(body.directive),
-                true,
-                None,
-            )
+            let opened = Some(body.directive);
+            (self.absorb_recorded(Steering::Reminded(&body), at), opened)
         } else if let Some(body) = fact.read::<ClaimLeaseWarned>() {
+            let opened = Some(body.directive);
             (
-                self.absorb_recorded(Steering::ClaimWarned(&body), Some(envelope.at)),
-                Some(body.directive),
-                true,
-                None,
+                self.absorb_recorded(Steering::ClaimWarned(&body), at),
+                opened,
             )
-        } else if let Some(body) = fact.read::<TasteJudged>() {
-            let affected = match &body.decision {
+        } else {
+            let body = fact.read::<TasteJudged>()?;
+            let opened = match &body.decision {
                 TasteDecision::Confirmed { directive, .. } => Some(*directive),
                 TasteDecision::Cleared => None,
             };
-            (
-                self.absorb_recorded(Steering::Judged(&body), Some(envelope.at)),
-                affected,
-                affected.is_some(),
-                None,
-            )
-        } else if let Some(body) = fact.read::<SteerEscalated>() {
-            (
-                self.absorb_recorded(Steering::Escalated(&body), Some(envelope.at)),
-                Some(body.directive),
-                false,
-                None,
-            )
-        } else if let Some(body) = fact.read::<SteerRecovered>() {
-            (
-                self.absorb_recorded(Steering::Recovered(&body), Some(envelope.at)),
-                Some(body.directive),
-                false,
-                None,
-            )
-        } else if let Some(body) = fact.read::<SteerAcked>() {
-            (
-                self.absorb_recorded(Steering::Acked(&body), Some(envelope.at)),
-                Some(body.directive),
-                false,
-                None,
-            )
-        } else if let Some(body) = fact.read::<SteerDeclined>() {
-            (
-                self.absorb_recorded(Steering::Declined(&body), Some(envelope.at)),
-                Some(body.directive),
-                false,
-                None,
-            )
-        } else if let Some(body) = fact.read::<SteerMissed>() {
-            (
-                self.absorb_recorded(Steering::Missed(&body), Some(envelope.at)),
-                None,
-                false,
-                Some(body),
-            )
-        } else if let Some(body) = fact.read::<SteerLapsed>() {
-            let affected = body
-                .key
-                .parse::<Key>()
-                .ok()
-                .and_then(|key| self.directives.get(&key))
-                .map(|directive| directive.directive);
-            (
-                self.absorb_recorded(Steering::Lapsed(&body), Some(envelope.at)),
-                affected,
-                false,
-                None,
-            )
-        } else if let Some(body) = fact.read::<SteerDeadLettered>() {
-            (
-                self.absorb_recorded(Steering::DeadLettered(&body), Some(envelope.at)),
-                Some(body.directive),
-                false,
-                None,
-            )
-        } else if let Some(body) = fact.read::<SteerCanceled>() {
-            let affected = body
-                .key
-                .parse::<Key>()
-                .ok()
-                .and_then(|key| self.directives.get(&key))
-                .map(|directive| directive.directive);
-            (
-                self.absorb_recorded(Steering::Canceled(&body), Some(envelope.at)),
-                affected,
-                false,
-                None,
-            )
-        } else if fact.kind().affects_steering() {
-            return Err(unhandled_authority_fact(envelope));
-        } else {
-            return Ok(None);
+            (self.absorb_recorded(Steering::Judged(&body), at), opened)
         };
-        result.map_err(|error| ReplayError {
-            seq: envelope.seq,
-            kind: fact.kind(),
-            detail: error.to_string(),
-        })?;
-        Ok(Some(AppliedSteering {
+        let applied = AppliedSteering {
             affected,
-            created,
+            created: affected.is_some(),
+            missed: None,
+        };
+        Some((result, applied))
+    }
+
+    /// Fold one fact that moves an existing directive, when it is one.
+    fn transition_envelope(
+        &mut self,
+        envelope: &wire::Envelope<wire::AnyFact>,
+    ) -> Option<(Result<(), Refusal>, AppliedSteering)> {
+        let fact = &envelope.fact;
+        let at = Some(envelope.at);
+        let mut missed = None;
+        let (result, affected) = if let Some(body) = fact.read::<SteerEscalated>() {
+            let moved = Some(body.directive);
+            (self.absorb_recorded(Steering::Escalated(&body), at), moved)
+        } else if let Some(body) = fact.read::<SteerRecovered>() {
+            let moved = Some(body.directive);
+            (self.absorb_recorded(Steering::Recovered(&body), at), moved)
+        } else if let Some(body) = fact.read::<SteerAcked>() {
+            let moved = Some(body.directive);
+            (self.absorb_recorded(Steering::Acked(&body), at), moved)
+        } else if let Some(body) = fact.read::<SteerDeclined>() {
+            let moved = Some(body.directive);
+            (self.absorb_recorded(Steering::Declined(&body), at), moved)
+        } else if let Some(body) = fact.read::<SteerMissed>() {
+            let result = self.absorb_recorded(Steering::Missed(&body), at);
+            missed = Some(body);
+            (result, None)
+        } else if let Some(body) = fact.read::<SteerLapsed>() {
+            let moved = self.keyed_directive(&body.key);
+            (self.absorb_recorded(Steering::Lapsed(&body), at), moved)
+        } else if let Some(body) = fact.read::<SteerDeadLettered>() {
+            let moved = Some(body.directive);
+            (
+                self.absorb_recorded(Steering::DeadLettered(&body), at),
+                moved,
+            )
+        } else {
+            let body = fact.read::<SteerCanceled>()?;
+            let moved = self.keyed_directive(&body.key);
+            (self.absorb_recorded(Steering::Canceled(&body), at), moved)
+        };
+        let applied = AppliedSteering {
+            affected,
+            created: false,
             missed,
-        }))
+        };
+        Some((result, applied))
+    }
+
+    /// The stable identity of the directive a key-addressed fact names.
+    fn keyed_directive(&self, key: &str) -> Option<CanonicalUuid> {
+        let key = key.parse::<Key>().ok()?;
+        self.directives
+            .get(&key)
+            .map(|directive| directive.directive)
     }
 
     /// Rebuild the singular bounded steering authority from immutable facts.
@@ -304,6 +298,16 @@ impl Ledger {
             .directive(body.directive)
             .expect("sent fact created its directive")
             .to_head(origin, created))
+    }
+
+    /// Build one new peer-reply directive head without unrelated history.
+    pub fn replied_head(
+        body: &SteerReplied,
+        origin: wire::Origin,
+        published: Instant,
+        created: wire::Seq,
+    ) -> Result<wire::SteeringHead, Refusal> {
+        Self::sent_head(&body.as_sent(), origin, published, created)
     }
 
     /// Build one new taste-reminder directive head without unrelated history.
@@ -383,6 +387,9 @@ fn transaction_key(envelope: &wire::Envelope<wire::AnyFact>) -> Option<Key> {
     match fact.kind() {
         wire::FactKind::SteerSent => fact
             .read::<SteerSent>()
+            .and_then(|body| body.key.parse().ok()),
+        wire::FactKind::SteerReplied => fact
+            .read::<SteerReplied>()
             .and_then(|body| body.key.parse().ok()),
         wire::FactKind::TasteReminded => fact
             .read::<TasteReminded>()

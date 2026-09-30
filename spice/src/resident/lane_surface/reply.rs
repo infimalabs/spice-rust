@@ -350,6 +350,18 @@ fn recall_live_steering_provenance(
                 None,
             ))
         }
+        wire::FactKind::SteerReplied => {
+            let body: wire::body::SteerReplied = recall_body(fact)?;
+            Some(steering_provenance(
+                Some(body.directive),
+                body.key,
+                wire::Disposition::Live,
+                Some(wire::body::SteeringStage::Published),
+                Vec::new(),
+                None,
+                None,
+            ))
+        }
         wire::FactKind::SteerEscalated => {
             let body: wire::body::SteerEscalated = recall_body(fact)?;
             Some(steering_provenance(

@@ -177,6 +177,31 @@ pub fn decisive(prose: &str, token: &str, standing: &impl Standing) -> Option<Re
         .map(|(_, recognition)| recognition)
 }
 
+/// The response prose the placed header that retires `token` gives it: the
+/// rest of that header's line after its key list and separator, trimmed.
+///
+/// Between placed headers retiring the same token the later one speaks, as
+/// [`decisive`] rules. `None` when no placed header retires the token or the
+/// header says nothing after its keys.
+#[must_use]
+pub fn answer<'prose>(
+    prose: &'prose str,
+    token: &str,
+    standing: &impl Standing,
+) -> Option<&'prose str> {
+    let header = scan_acknowledgements(prose, standing)
+        .into_iter()
+        .rev()
+        .find(|acknowledgement| {
+            acknowledgement.recognitions.iter().any(|recognition| {
+                matches!(&recognition.outcome, Outcome::Retired { key, .. } if key.as_str() == token)
+            })
+        })?;
+    let rest = &prose[header.end..];
+    let clause = rest.lines().next().unwrap_or_default().trim();
+    (!clause.is_empty()).then_some(clause)
+}
+
 /// Reads acknowledgment packets with their source header boundaries.
 ///
 /// A packet may appear anywhere in authored prose. Markers in quoted, code, or

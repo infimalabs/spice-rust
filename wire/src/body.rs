@@ -113,6 +113,49 @@ pub struct SteerSent {
     pub expires: Instant,
 }
 
+/// A lane's answer to a live peer message opened a reply to the lane that told it.
+///
+/// Minted in the same write that retires the answered peer message, so the
+/// reply exists exactly when the answer does. The reply is ordinary steering
+/// for the lane that told the peer message; answering it earns no reply.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SteerReplied {
+    /// Durable reply identity, derived from the answered directive.
+    pub directive: CanonicalUuid,
+    /// Reply key.
+    pub key: String,
+    /// Lane the reply addresses: the lane that told the answered peer message.
+    pub lane: CanonicalUuid,
+    /// Lane that answered the peer message, speaking as the reply's sender.
+    pub from: CanonicalUuid,
+    /// Key of the answered peer message.
+    pub answered: String,
+    /// How the answering lane answered.
+    pub answer: crate::PeerAnswer,
+    /// The answer as spoken: marker, answered key, and the header's clause.
+    pub text: String,
+    /// Instant the reply expires without a disposition.
+    pub expires: Instant,
+}
+
+impl SteerReplied {
+    /// The directive this reply opens, as the publication steering folds.
+    #[must_use]
+    pub fn as_sent(&self) -> SteerSent {
+        SteerSent {
+            directive: self.directive,
+            fanout: None,
+            key: self.key.clone(),
+            lane: self.lane,
+            text: self.text.clone(),
+            from: Some(self.from),
+            control: Some(crate::peer_reply_control(&self.answered, self.answer)),
+            attachments: Vec::new(),
+            expires: self.expires,
+        }
+    }
+}
+
 /// Compatibility spelling for the one shared media value.
 pub type DirectiveAttachment = crate::Media;
 
