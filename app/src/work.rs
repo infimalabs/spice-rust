@@ -113,7 +113,7 @@ impl WorkScope {
     }
 }
 
-/// The vertical order of cards inside each shared board lane.
+/// The inline order of cards inside each shared board lane.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WorkOrder {
     /// The resident allocator's offer order: the task offered next leads.
@@ -127,7 +127,7 @@ pub enum WorkOrder {
 /// The attribute that clusters cards inside each shared board lane.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WorkClustering {
-    /// One unbroken column per lane.
+    /// One unbroken row per lane.
     #[default]
     None,
     /// One cluster per full dotted project.
@@ -139,8 +139,8 @@ pub enum WorkClustering {
 /// How cards sit inside the one shared set of board lanes.
 ///
 /// Every arrangement renders the same cards in the same lanes; only their
-/// vertical order and separation differ, so switching never loses,
-/// duplicates, or reorders durable data.
+/// inline order and separation differ, so switching never loses, duplicates,
+/// or reorders durable data.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WorkArrangement {
     pub order: WorkOrder,
