@@ -23,6 +23,12 @@ pub(crate) enum ClientAction {
     TeamSettled {
         request: crate::runtime::TeamSettledRequest,
     },
+    /// Allow or deny one queued consent request. The witnesses are derived
+    /// from the queue current when the ruling is sent, not when it was chosen.
+    ConsentRuling {
+        request: wire::CanonicalUuid,
+        answer: wire::Answer,
+    },
     /// Fetch the next retained page behind one member's oldest visible card.
     MessageHistory {
         generation: u64,

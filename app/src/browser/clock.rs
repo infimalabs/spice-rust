@@ -419,6 +419,6 @@ pub(super) fn local_date(instant: &wire::Instant) -> String {
 }
 
 /// The browser's current instant in epoch milliseconds.
-fn now_millis() -> i64 {
+pub(super) fn now_millis() -> i64 {
     js_sys::Date::now() as i64
 }

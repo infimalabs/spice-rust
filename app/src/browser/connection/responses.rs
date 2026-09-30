@@ -251,8 +251,15 @@ fn apply_command_response(
     bytes: &[u8],
 ) -> Result<CommandApplication, String> {
     Ok(match kind {
-        kind @ (PendingKind::Board | PendingKind::Settings | PendingKind::Vendors) => {
-            apply_scalar_response(session, runtime, kind, bytes)?
+        kind @ (PendingKind::Board
+        | PendingKind::Settings
+        | PendingKind::Vendors
+        | PendingKind::Consent) => apply_scalar_response(session, runtime, kind, bytes)?,
+        PendingKind::ConsentRuling { request } => {
+            let admitted: crate::Admitted<Response<wire::intent::ConsentAnswer>> =
+                admit_response(session, bytes)?;
+            runtime.apply_consent_ruling(request, &admitted);
+            CommandApplication::ordinary(false)
         }
         PendingKind::TaskDetail { task } => {
             let admitted: crate::Admitted<Response<wire::intent::TaskDetailAnswer>> =
@@ -470,6 +477,7 @@ fn apply_scalar_response(
             }
         }
         PendingKind::Vendors => runtime.apply_vendor_catalog(&admit_response(session, bytes)?),
+        PendingKind::Consent => runtime.apply_consent_queue(&admit_response(session, bytes)?),
         _ => unreachable!("scalar response partition is closed"),
     }
     Ok(CommandApplication::ordinary(false))

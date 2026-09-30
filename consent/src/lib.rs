@@ -25,7 +25,7 @@ pub use config::Config;
 pub use pend::{Held, Pending, Reversibility, Ruling};
 pub use policy::{Answer, Authority, Decision, OPERATOR, POSTURE, Policy, PolicyError, Rule};
 #[cfg(not(target_arch = "wasm32"))]
-pub use queue::{PendingRequest, Queue, QueueError, decision_witnesses};
+pub use queue::{PendingRequest, Queue, QueueError};
 
 use wire::body::{ConsentAsked, ConsentDenied, ConsentGranted, ConsentQueueCause, ConsentQueued};
 

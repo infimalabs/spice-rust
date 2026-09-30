@@ -91,7 +91,7 @@ pub(crate) fn decide(
             .with_detail("re-read the consent queue and decide a request that is still pending"),
         ));
     };
-    let expected = match consent::decision_witnesses(pending, answer) {
+    let expected = match pending.decision_witnesses(answer) {
         Ok(expected) => expected,
         Err(refusal) => return Outcome::Refusal(refusal),
     };

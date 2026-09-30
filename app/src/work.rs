@@ -830,7 +830,7 @@ fn compare_tasks(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use wire::intent::{BoardStatement, Positioned};
     use wire::{Actor, CanonicalUuid, ClaimCell, ClaimHead, Environment, EnvironmentRequirement};
@@ -839,11 +839,11 @@ mod tests {
         wire::Seq::new(value).expect("fixture sequence is positive")
     }
 
-    pub(super) fn stamp(value: i64) -> TaskStamp {
+    pub(crate) fn stamp(value: i64) -> TaskStamp {
         TaskStamp::for_micros(value).expect("fixture stamp is representable")
     }
 
-    pub(super) fn task(value: i64, project: &str) -> BoardTask {
+    pub(crate) fn task(value: i64, project: &str) -> BoardTask {
         let born = stamp(value);
         BoardTask {
             visibility: if project.starts_with('.') {
@@ -902,7 +902,7 @@ mod tests {
         }
     }
 
-    pub(super) fn claim(task: &BoardTask, disposition: ClaimDisposition) -> Positioned<ClaimHead> {
+    pub(crate) fn claim(task: &BoardTask, disposition: ClaimDisposition) -> Positioned<ClaimHead> {
         Positioned {
             position: seq(3),
             body: ClaimHead {
@@ -929,7 +929,7 @@ mod tests {
         }
     }
 
-    pub(super) fn board(tasks: Vec<BoardTask>) -> BoardView {
+    pub(crate) fn board(tasks: Vec<BoardTask>) -> BoardView {
         BoardView {
             schema: 1,
             cursor: seq(100),

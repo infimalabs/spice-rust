@@ -10,7 +10,7 @@ use wire::intent::{
     ConsentBudgetAnswer, ConsentPendingAnswer, ConsentPolicyAnswer, ConsentPolicyDecision,
     ConsentQueueAnswer, ConsentRuleAnswer,
 };
-use wire::{CanonicalUuid, FactKind, Name, Origin, Refusal, Seq, Witness};
+use wire::{CanonicalUuid, FactKind, Name, Origin, Refusal, Seq};
 
 use crate::{Answer, OPERATOR, Outcome, Policy};
 
@@ -564,46 +564,6 @@ impl Queue {
             },
         )
     }
-}
-
-/// Build the exact witnesses for one terminal operator answer.
-///
-/// # Errors
-///
-/// Refuses non-terminal answers and malformed durable rule names.
-pub fn decision_witnesses(
-    pending: &ConsentPendingAnswer,
-    answer: wire::Answer,
-) -> Result<Vec<Witness>, Refusal> {
-    if !matches!(answer, wire::Answer::Granted | wire::Answer::Denied) {
-        return Err(Refusal::bare(
-            wire::RefusalDiagnostic::new(
-                "consent::ruling-invalid",
-                Some(pending.request.to_string()),
-                Some("granted or denied".to_owned()),
-                Some(format!("{answer:?}").to_lowercase()),
-            )
-            .with_detail("choose allow or deny for the queued request"),
-        ));
-    }
-    let mut witnesses = vec![
-        Witness::Consent {
-            request: pending.request,
-            answer: wire::Answer::Queued,
-        },
-        Witness::Rule {
-            name: pending.rule.clone(),
-        },
-    ];
-    if answer == wire::Answer::Granted
-        && let Some(budget) = &pending.budget
-    {
-        witnesses.push(Witness::Budget {
-            rule: budget.rule.clone(),
-            remaining: budget.remaining,
-        });
-    }
-    Ok(witnesses)
 }
 
 fn policy_decision(answer: Answer) -> ConsentPolicyDecision {

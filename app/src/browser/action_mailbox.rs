@@ -116,6 +116,7 @@ impl ActionQueue {
             (stale.board(), CurrentRead::Board),
             (stale.lanes(), CurrentRead::Lanes),
             (stale.inbox(), CurrentRead::Inbox),
+            (stale.consent(), CurrentRead::Consent),
         ] {
             if invalidated {
                 mailbox.stale_current_reads.insert(read);
@@ -205,6 +206,7 @@ pub(crate) enum CurrentRead {
     Inbox,
     Settings,
     Vendors,
+    Consent,
 }
 
 impl PendingKind {
@@ -215,11 +217,13 @@ impl PendingKind {
             Self::Inbox { .. } => Some(CurrentRead::Inbox),
             Self::Settings => Some(CurrentRead::Settings),
             Self::Vendors => Some(CurrentRead::Vendors),
+            Self::Consent => Some(CurrentRead::Consent),
             Self::TaskDetail { .. }
             | Self::TaskRelations { .. }
             | Self::TaskTimeline { .. }
             | Self::WorkHistory { .. }
             | Self::TeamSettled { .. }
+            | Self::ConsentRuling { .. }
             | Self::LaneSeat
             | Self::LaneRenewal { .. }
             | Self::MemberLane { .. }
@@ -452,6 +456,7 @@ impl ClientAction {
             | Self::TaskTimeline { .. }
             | Self::WorkHistory { .. }
             | Self::TeamSettled { .. }
+            | Self::ConsentRuling { .. }
             | Self::MessageHistory { .. }
             | Self::RenewLane { .. }
             | Self::LaneState { .. }

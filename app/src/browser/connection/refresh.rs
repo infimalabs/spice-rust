@@ -38,6 +38,7 @@ pub(super) async fn send_refresh(
     send_board(principal, writer, actions).await?;
     send_lanes(principal, writer, actions, submissions).await?;
     send_inbox(principal, writer, actions, submissions).await?;
+    send_consent(principal, writer, actions).await?;
     send_settings(principal, writer, actions).await?;
     send_vendors(principal, writer, actions).await
 }
@@ -61,6 +62,9 @@ pub(super) async fn send_stale(
     }
     if actions.take_ready_current_read(CurrentRead::Inbox) {
         send_inbox(principal, writer, actions, submissions).await?;
+    }
+    if actions.take_ready_current_read(CurrentRead::Consent) {
+        send_consent(principal, writer, actions).await?;
     }
     for task in stale.task_details() {
         let _ = send_task_detail(principal, writer, actions, task).await?;
@@ -280,6 +284,45 @@ async fn send_inbox(
             lane: None,
             retired: true,
         },
+    )
+    .await
+}
+
+/// The operator's consent queue; a lane principal is not offered it.
+async fn send_consent(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+) -> Result<(), String> {
+    send_if_offered(
+        principal,
+        writer,
+        actions,
+        PendingKind::Consent,
+        CommandKind::ConsentRead,
+        wire::intent::ConsentRead {},
+    )
+    .await
+}
+
+/// One operator ruling, carrying the witnesses its queue snapshot implied.
+pub(super) async fn send_consent_ruling(
+    principal: &Principal,
+    writer: &mut SocketWriter,
+    actions: &ActionQueue,
+    ruling: &wire::intent::ConsentDecide,
+    expected: &[wire::Witness],
+) -> Result<CanonicalUuid, String> {
+    send_typed(
+        principal,
+        writer,
+        actions,
+        PendingKind::ConsentRuling {
+            request: ruling.request,
+        },
+        CommandKind::ConsentDecide,
+        expected.to_vec(),
+        ruling.clone(),
     )
     .await
 }

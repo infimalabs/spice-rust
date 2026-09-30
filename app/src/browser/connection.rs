@@ -289,6 +289,28 @@ async fn dispatch_client_action(
         send_topology_as(principal, writer, id, lease.action()).await?;
         lease.submit_topology();
         Ok(())
+    } else if let ClientAction::ConsentRuling { request, answer } = *lease.action() {
+        let reserved = data
+            .write()
+            .as_mut()
+            .and_then(|runtime| runtime.begin_consent_ruling(request, answer));
+        let Some((ruling, expected)) = reserved else {
+            drop(lease.commit());
+            return Ok(());
+        };
+        match refresh::send_consent_ruling(principal, writer, actions, &ruling, &expected).await {
+            Ok(id) => {
+                lease.commit_pending(id);
+                Ok(())
+            }
+            Err(error) => {
+                if let Some(runtime) = data.write().as_mut() {
+                    runtime.refuse_consent_ruling(request, error.clone());
+                }
+                drop(lease.commit());
+                Err(error)
+            }
+        }
     } else if matches!(lease.action(), ClientAction::DrainSubmissions) {
         drop(lease.commit());
         drain_submissions(principal, writer, actions, submissions).await
@@ -778,6 +800,9 @@ async fn dispatch_action(
         | ClientAction::ArrangeTeams { .. }
         | ClientAction::ConfigureTeam { .. } => {
             unreachable!("topology mutation dispatch is partitioned")
+        }
+        ClientAction::ConsentRuling { .. } => {
+            unreachable!("consent rulings reserve runtime state before dispatch")
         }
         action @ (ClientAction::Note { .. } | ClientAction::Steer { .. }) => {
             dispatch_authored_action(principal, writer, actions, action)
