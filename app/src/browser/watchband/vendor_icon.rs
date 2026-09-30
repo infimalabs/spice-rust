@@ -96,21 +96,17 @@ fn render_omp_mark(surface: &str, lane: CanonicalUuid) -> Html {
     }
 }
 
-/// A compact flame over the provider glyph's foot corner.
+/// The platform flame glyph over the provider glyph's foot corner.
 fn render_fast_badge() -> Html {
     html! {
-        <g class="composer-vendor-badge composer-vendor-badge--fast">
-            <svg x="7" y="6" width="9" height="10" viewBox="0 0 18 20" overflow="visible">
-                <path
-                    class="composer-vendor-halo"
-                    d="M10.5 0C11 4 16 6 16 12a7 7 0 1 1-14 0c0-3 2-6 5-9-.5 4 1 5 2 6 2-2 2.5-5 1.5-9Z"
-                ></path>
-                <path
-                    class="composer-vendor-flame"
-                    d="M10.5 0C11 4 16 6 16 12a7 7 0 1 1-14 0c0-3 2-6 5-9-.5 4 1 5 2 6 2-2 2.5-5 1.5-9Z"
-                ></path>
-            </svg>
-        </g>
+        <text
+            class="composer-vendor-badge--fast"
+            x="7"
+            y="15"
+            aria-hidden="true"
+        >
+            {"🔥"}
+        </text>
     }
 }
 
