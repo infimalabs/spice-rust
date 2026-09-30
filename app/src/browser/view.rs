@@ -228,7 +228,7 @@ pub(super) const fn axis_label(axis: Axis) -> &'static str {
 }
 fn analytics_heading(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &WorkScope) -> String {
     match axis {
-        Axis::Topology => "All agents".to_owned(),
+        Axis::Topology => "Resident dashboard".to_owned(),
         Axis::Flow => scope
             .stem()
             .and_then(|identity| work.and_then(|projection| projection.stem(identity)))
@@ -399,8 +399,8 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
     })
 }
 
-/// The global Agents body and, once agent standings are held, the page summary
-/// over the same standings the topology section renders.
+/// The resident dashboard body and, once agent standings are held, the page
+/// summary over the same standings the topology section renders.
 fn render_topology(render: &CanvasRender<'_>) -> (Option<String>, Html) {
     let surface = render.surface.read();
     let Some(runtime) = surface.as_ref() else {

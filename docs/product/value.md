@@ -380,7 +380,7 @@ green, blue, gold, red, teal, and plum accent order used for agents. The outer
 button edge is neutral with neither status, gold for Fast mode, blue for an
 available Canvas update, and red when both apply. Quota colors remain unchanged.
 
-### The global Agents page
+### The global Dashboard page
 
 Resident topology presents each team in canonical order from left to right:
 member zero, the team's main agent, starts at the far-left control-flow origin,
