@@ -406,11 +406,15 @@ fn render_topology(render: &CanvasRender<'_>) -> (Option<String>, Html) {
     let Some(runtime) = surface.as_ref() else {
         return (None, empty("No admitted topology is available."));
     };
-    let operator = render_operator(runtime.settings());
+    let identity_section = render_operator_and_resident(
+        runtime.settings(),
+        (**render.identity).as_ref(),
+        render.connection,
+    );
     let Some(lanes) = runtime.lanes() else {
         let body = html! {
             <>
-                {operator}
+                {identity_section}
                 {empty("No agent snapshot is available.")}
             </>
         };
@@ -458,7 +462,7 @@ fn render_topology(render: &CanvasRender<'_>) -> (Option<String>, Html) {
     let quota = quota::render_dash(Some(runtime));
     let body = html! {
         <>
-            {operator}
+            {identity_section}
             <section class="section dash-overview-topology-section" aria-labelledby="resident-topology-heading">
                 <div class="section-heading">
                     <h2 id="resident-topology-heading">{"Resident topology"}</h2>
@@ -494,53 +498,72 @@ fn render_topology(render: &CanvasRender<'_>) -> (Option<String>, Html) {
     (Some(summary), body)
 }
 
-fn render_operator(settings: Option<&wire::intent::GlobalSettingsAnswer>) -> Html {
-    let Some(settings) = settings else {
-        return empty("Operator identity is loading.");
-    };
-    let operator = &settings.operator;
-    let name_source = if settings.operator_name.is_some() {
-        "Explicit setting"
-    } else {
-        "Git user.name"
-    };
-    let email_source = if settings.operator_email.is_some() {
-        "Explicit setting"
-    } else {
-        "Git user.email"
+fn render_operator_and_resident(
+    settings: Option<&wire::intent::GlobalSettingsAnswer>,
+    identity: Option<&CanvasIdentity>,
+    connection: &Connection,
+) -> Html {
+    let appliance = identity.map_or_else(
+        || "Loading".to_owned(),
+        |identity| identity.version.product.to_string(),
+    );
+    let (resident_status, resident_epoch, resident_epoch_title) = match connection {
+        Connection::Starting => ("Starting", "Pending".to_owned(), None),
+        Connection::Connecting => ("Connecting", "Pending".to_owned(), None),
+        Connection::Online { epoch } => (
+            "Online",
+            epoch.split('-').next().unwrap_or(epoch).to_owned(),
+            Some(epoch.clone()),
+        ),
+        Connection::Offline(_) => ("Reconnecting", "Unavailable".to_owned(), None),
     };
     html! {
         <section class="section dash-overview-operator-section" data-operator-member="">
             <div class="section-heading">
-                <div>
-                    <h2>{"You"}</h2>
-                    <p class="dash-overview-section-copy">
-                        {"The operator is the human member of this resident team."}
-                    </p>
-                </div>
-                <span class="section-count">{"Operator"}</span>
+                <h2>{"Operator & resident"}</h2>
+                <span class="section-count">{"Resident · "}{resident_status}</span>
             </div>
-            <article class="dash-overview-operator">
-                {render_operator_avatar(operator)}
-                <div class="dash-overview-operator-identity">
-                    <h3>{operator.name.as_deref().unwrap_or("Operator")}</h3>
-                    <p>{operator.email.as_deref().unwrap_or("No email configured")}</p>
+            <div class="dash-overview-identity-cards">
+                <article
+                    class="dash-overview-operator"
+                    data-operator-state={if settings.is_some() { "ready" } else { "loading" }}
+                >
+                    if let Some(settings) = settings {
+                        {render_operator_avatar(&settings.operator)}
+                        <div class="dash-overview-operator-identity">
+                            <h3>{settings.operator.name.as_deref().unwrap_or("Operator")}</h3>
+                            <p>{settings.operator.email.as_deref().unwrap_or("No email configured")}</p>
+                        </div>
+                    } else {
+                        <span
+                            class="operator-avatar"
+                            data-avatar-source="loading"
+                            aria-hidden="true"
+                        >{"…"}</span>
+                        <div class="dash-overview-operator-identity">
+                            <h3>{"Operator"}</h3>
+                            <p>{"Identity loading"}</p>
+                        </div>
+                    }
+                </article>
+                <article class="dash-overview-resident" aria-label="Resident details">
+                    <h3>{"Resident"}</h3>
                     <dl class="dash-overview-agent-facts">
                         <div>
-                            <dt>{"Badge"}</dt>
-                            <dd>{operator.initials.as_deref().unwrap_or("Not available")}</dd>
+                            <dt>{"Status"}</dt>
+                            <dd>{resident_status}</dd>
                         </div>
                         <div>
-                            <dt>{"Name source"}</dt>
-                            <dd>{name_source}</dd>
+                            <dt>{"Appliance"}</dt>
+                            <dd>{appliance}</dd>
                         </div>
                         <div>
-                            <dt>{"Email source"}</dt>
-                            <dd>{email_source}</dd>
+                            <dt>{"Epoch"}</dt>
+                            <dd title={resident_epoch_title}>{resident_epoch}</dd>
                         </div>
                     </dl>
-                </div>
-            </article>
+                </article>
+            </div>
         </section>
     }
 }
