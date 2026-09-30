@@ -281,25 +281,31 @@ fn use_composer_drag(surface: &SurfaceData) -> watchband::PrimaryComposerDragSta
 
 #[function_component(CanvasRouter)]
 fn canvas_router() -> Html {
-    let (route, navigate) = navigation::use_destination();
-    if let Some(route) = route {
-        let destination = route.canvas_destination();
-        let card_target = route.card_target().map(str::to_owned);
-        html! {
-            <toast::ToastProvider>
-                <CanvasApp {destination} {card_target} {navigate} />
-            </toast::ToastProvider>
-        }
-    } else {
-        html! {
-            <main class="shell">
-                <section class="empty" role="alert" data-route-unavailable="true">
-                    <h1>{"Canvas route unavailable"}</h1>
-                    <p>{"Use #/ (Chat), #/work (Work), #/dash (Dash), or a card permalink."}</p>
-                </section>
-            </main>
-        }
+    let (route, route_notice, navigate) = navigation::use_destination();
+    let destination = route.canvas_destination();
+    let card_target = route.card_target().map(str::to_owned);
+    html! {
+        <toast::ToastProvider>
+            <RouteNotice message={route_notice} />
+            <CanvasApp {destination} {card_target} {navigate} />
+        </toast::ToastProvider>
     }
+}
+
+#[derive(Properties, PartialEq)]
+struct RouteNoticeProperties {
+    message: Option<String>,
+}
+
+#[function_component(RouteNotice)]
+fn route_notice(properties: &RouteNoticeProperties) -> Html {
+    let toaster = toast::use_toaster();
+    use_effect_with(properties.message.clone(), move |message| {
+        if let Some(message) = message {
+            toaster.settled(message.clone());
+        }
+    });
+    Html::default()
 }
 
 #[derive(Properties, PartialEq)]

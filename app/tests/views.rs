@@ -44,7 +44,7 @@ fn every_global_destination_has_one_exact_hash_route() {
     let routes = [
         (CanvasDestination::Dash, "/dash"),
         (CanvasDestination::Work, "/work"),
-        (CanvasDestination::Chat, "/"),
+        (CanvasDestination::Chat, "/chat"),
     ];
     assert_eq!(descend_canvas_destinations(), CanvasDestination::ALL);
 
@@ -58,14 +58,7 @@ fn every_global_destination_has_one_exact_hash_route() {
 
 #[test]
 fn unrecognized_route_paths_are_refused() {
-    for path in [
-        "",
-        "/chat",
-        "/unknown",
-        "/work/",
-        "/dash/",
-        "/work?scope=all",
-    ] {
+    for path in ["", "/", "/unknown", "/work/", "/dash/", "/work?scope=all"] {
         assert_eq!(
             CanvasDestination::from_path(path),
             None,

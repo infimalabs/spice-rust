@@ -9,7 +9,7 @@ use wire::TaskStamp;
 use yew::prelude::*;
 
 use super::SurfaceData;
-use crate::view::CanvasRoute;
+use crate::view::{CanvasRoute, NormalizedCanvasLocation, normalize_canvas_location};
 use crate::work::{WorkProjection, WorkScope};
 use crate::{CanvasDestination, CanvasRuntime};
 
@@ -58,35 +58,67 @@ pub(super) fn intent_callback(
 }
 
 #[hook]
-pub(super) fn use_destination() -> (Option<CanvasRoute>, Callback<CanvasDestination>) {
+pub(super) fn use_destination() -> (CanvasRoute, Option<String>, Callback<CanvasDestination>) {
     let history = use_state(HashHistory::new);
-    let route = use_state(location_route);
+    let location = use_state(location_route);
 
     {
         let history = (*history).clone();
-        let route = route.clone();
+        let location = location.clone();
         use_effect_with((), move |()| {
             let listener = history.listen(move || {
-                route.set(location_route());
+                location.set(location_route());
             });
             move || drop(listener)
+        });
+    }
+    {
+        use_effect_with((*location).clone(), move |location| {
+            if location.needs_replace() {
+                replace_location(location.route());
+            }
         });
     }
 
     let history = (*history).clone();
     let navigate = Callback::from(move |destination: CanvasDestination| {
-        if location_route() != Some(CanvasRoute::destination(destination)) {
+        if location_route().route() != &CanvasRoute::destination(destination) {
             history.push(destination.path());
         }
     });
-    ((*route).clone(), navigate)
+    (
+        location.route().clone(),
+        location.notice().map(str::to_owned),
+        navigate,
+    )
 }
 
-fn location_route() -> Option<CanvasRoute> {
-    let location = web_sys::window()?.location();
-    if !location.search().ok()?.is_empty() {
-        return None;
-    }
-    let hash = location.hash().ok()?;
-    CanvasRoute::from_path(hash.strip_prefix('#')?)
+fn location_route() -> NormalizedCanvasLocation {
+    let window = web_sys::window().expect("Canvas navigation requires a browser window");
+    let location = window.location();
+    let search = location
+        .search()
+        .expect("Canvas navigation requires the current query");
+    let hash = location
+        .hash()
+        .expect("Canvas navigation requires the current fragment");
+    normalize_canvas_location(&search, &hash)
+}
+
+fn replace_location(route: &CanvasRoute) {
+    let window = web_sys::window().expect("Canvas navigation requires a browser window");
+    let pathname = window
+        .location()
+        .pathname()
+        .expect("Canvas navigation requires the current path");
+    let history = window
+        .history()
+        .expect("Canvas navigation requires browser history");
+    let state = history
+        .state()
+        .expect("Canvas navigation requires the current history state");
+    let url = format!("{pathname}#{}", route.path());
+    history
+        .replace_state_with_url(&state, "", Some(&url))
+        .expect("Canvas navigation requires replaceState");
 }
