@@ -427,7 +427,7 @@ fn ticker(
         activity.detail()
     };
     let (prefix, detail) = watchband::ticker_chunks(visible_prefix, source, TICKER_BUDGET);
-    let separator = if class == "tool" || detail.is_empty() {
+    let separator = if activity.class() == "prose" || class == "tool" || detail.is_empty() {
         ""
     } else {
         ":"

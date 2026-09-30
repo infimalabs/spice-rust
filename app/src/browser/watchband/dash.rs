@@ -126,7 +126,7 @@ fn render_dash_activity(
         };
     };
     let (prefix, detail) = watchband::ticker_chunks(&visible_prefix, &source, DASH_ACTIVITY_BUDGET);
-    let separator = if class == "tool" || detail.is_empty() {
+    let separator = if class == "prose" || class == "tool" || detail.is_empty() {
         ""
     } else {
         ":"
