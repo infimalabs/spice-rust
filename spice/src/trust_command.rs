@@ -326,7 +326,7 @@ fn current_repository<B>() -> Result<Repository, Outcome<B>> {
     Repository::discover(&current).map_err(|error| {
         fault(
             FaultClass::Environment,
-            "trust::repository-unresolved",
+            spice::repository::ResolveError::REASON,
             error.to_string(),
         )
     })
@@ -336,7 +336,7 @@ pub(crate) fn load_failure<B>(error: &LoadError) -> Outcome<B> {
     if let Some(repository) = error.repository() {
         return fault(
             FaultClass::Environment,
-            "trust::repository-unresolved",
+            spice::repository::ResolveError::REASON,
             repository.to_string(),
         );
     }

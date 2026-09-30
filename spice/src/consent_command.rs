@@ -147,7 +147,7 @@ fn canvas_path<B>() -> Result<PathBuf, Outcome<B>> {
     let repository = Repository::discover(current).map_err(|error| {
         Outcome::Fault(Fault {
             class: FaultClass::Environment,
-            reason: "consent::git-unavailable".to_owned(),
+            reason: spice::repository::ResolveError::REASON.to_owned(),
             detail: error.to_string(),
         })
     })?;

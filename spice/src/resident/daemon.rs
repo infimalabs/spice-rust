@@ -165,7 +165,7 @@ impl PreparedLaunch {
         let current = std::env::current_dir()
             .map_err(|error| daemon_fault("resident::cwd-unavailable", error))?;
         let repository = Repository::discover(&current)
-            .map_err(|error| daemon_fault("resident::git-unavailable", error))?;
+            .map_err(|error| daemon_fault(spice::repository::ResolveError::REASON, error))?;
         let state = repository
             .admit_resident_state()
             .map_err(|error| crate::state_failure(&error).outcome())?;

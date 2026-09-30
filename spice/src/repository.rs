@@ -851,6 +851,11 @@ pub enum ResolveError {
 }
 
 impl ResolveError {
+    /// The one reason every command reports when it cannot resolve the
+    /// repository containing its working directory; the detail is this
+    /// error's own wording.
+    pub const REASON: &'static str = "repository::unresolved";
+
     fn filesystem(path: &Path, source: io::Error) -> Self {
         Self::Filesystem {
             path: path.to_path_buf(),

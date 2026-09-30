@@ -127,7 +127,7 @@ fn current_repository() -> Result<Repository, Failure> {
     Repository::discover(&current).map_err(|error| {
         Failure::fault(
             FaultClass::Environment,
-            "rtk::repository-unresolved",
+            spice::repository::ResolveError::REASON,
             error.to_string(),
         )
     })

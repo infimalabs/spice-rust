@@ -23,7 +23,9 @@ pub(crate) fn run() -> Outcome<LanePurgeReport> {
     };
     let repository = match Repository::discover(&current) {
         Ok(repository) => repository,
-        Err(error) => return environment_fault("lane::repository-unresolved", &error.to_string()),
+        Err(error) => {
+            return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
+        }
     };
     let state = match repository.admit_state() {
         Ok(state) => state,

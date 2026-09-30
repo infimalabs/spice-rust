@@ -135,8 +135,9 @@ pub(super) fn require_current_surface(
 impl RuntimePaths {
     #[cfg(test)]
     pub(super) fn discover(start: &Path) -> CommandResult<Self> {
-        let repository = Repository::discover(start)
-            .map_err(|error| environment_fault("resident::git-unavailable", &error.to_string()))?;
+        let repository = Repository::discover(start).map_err(|error| {
+            environment_fault(spice::repository::ResolveError::REASON, &error.to_string())
+        })?;
         Self::from_repository(&repository)
     }
 
@@ -522,7 +523,9 @@ fn up_from_with(
     let (daemon, configuration) = invocation;
     let repository = match Repository::discover(current) {
         Ok(repository) => repository,
-        Err(error) => return environment_fault("resident::git-unavailable", &error.to_string()),
+        Err(error) => {
+            return environment_fault(spice::repository::ResolveError::REASON, &error.to_string());
+        }
     };
     let app = match app.resolve(&repository) {
         Ok(app) => app,
@@ -730,7 +733,7 @@ fn down_from_with(
         Ok(repository) => repository,
         Err(error) => {
             return typed_outcome(environment_fault(
-                "resident::git-unavailable",
+                spice::repository::ResolveError::REASON,
                 &error.to_string(),
             ));
         }

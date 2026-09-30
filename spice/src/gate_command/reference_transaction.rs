@@ -598,7 +598,7 @@ fn evidence_store(
     let repository = spice::repository::Repository::discover(repository).map_err(|error| {
         ReferenceTransactionError::Evidence {
             state: state.as_str(),
-            reason: "gate-evidence::repository-unresolved".to_owned(),
+            reason: spice::repository::ResolveError::REASON.to_owned(),
             detail: error.to_string(),
         }
     })?;

@@ -113,7 +113,7 @@ pub(crate) fn run(matches: &ArgMatches) -> Outcome<ConfigReport> {
         Ok(repository) => repository,
         Err(error) => {
             return map_outcome(environment_fault(
-                "config::repository-unresolved",
+                spice::repository::ResolveError::REASON,
                 &error.to_string(),
             ));
         }

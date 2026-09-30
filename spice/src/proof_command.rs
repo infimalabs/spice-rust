@@ -83,7 +83,7 @@ impl Invocation {
         let repository = Repository::discover(&current).map_err(|error| {
             Failure::fault(
                 FaultClass::Environment,
-                "proof::repository-unresolved",
+                spice::repository::ResolveError::REASON,
                 error.to_string(),
             )
         })?;
@@ -163,7 +163,7 @@ impl Failure {
         if let Some(repository) = error.repository() {
             return Self::fault(
                 FaultClass::Environment,
-                "proof::repository-unresolved",
+                spice::repository::ResolveError::REASON,
                 repository.to_string(),
             );
         }

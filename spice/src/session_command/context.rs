@@ -30,7 +30,7 @@ pub(super) fn build(matches: &ArgMatches, environment: &Environment) -> Result<R
     })?;
     let repository = Repository::discover(&current).map_err(|error| {
         refusal(
-            "session::context-repository-unavailable",
+            spice::repository::ResolveError::REASON,
             Some(error.to_string()),
             "run the retained command from the task repository",
         )

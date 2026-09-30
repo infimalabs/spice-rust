@@ -125,7 +125,7 @@ fn prepare_restore(bundle: &Path) -> Result<PreparedRestore, Failure> {
     let repository = Repository::discover(&working).map_err(|error| {
         fault(
             FaultClass::Environment,
-            "restore::repository-unavailable",
+            spice::repository::ResolveError::REASON,
             error.to_string(),
         )
     })?;

@@ -145,7 +145,7 @@ pub(crate) fn store(matches: &clap::ArgMatches) -> Outcome<StoreAnswer> {
         Err(error) => {
             return Outcome::Fault(Fault {
                 class: FaultClass::Environment,
-                reason: "cargo-isolation::repository-unresolved".to_owned(),
+                reason: spice::repository::ResolveError::REASON.to_owned(),
                 detail: error.to_string(),
             });
         }
@@ -180,7 +180,7 @@ fn run_inner(arguments: Vec<OsString>) -> Result<ExitStatus, (Outcome<()>, i32)>
     let repository = Repository::discover(&working).map_err(|error| {
         rejected(
             FaultClass::Environment,
-            "cargo-isolation::repository-unresolved",
+            spice::repository::ResolveError::REASON,
             error.to_string(),
             1,
         )

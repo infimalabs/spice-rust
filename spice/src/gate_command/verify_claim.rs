@@ -27,7 +27,7 @@ pub(super) fn admit_current_worktree(
         detail: error.to_string(),
     })?;
     let repository = Repository::discover(&current).map_err(|error| Failure::Fault {
-        reason: "gate::repository-unresolved",
+        reason: spice::repository::ResolveError::REASON,
         detail: error.to_string(),
     })?;
     let lane = ambient_lane()?;

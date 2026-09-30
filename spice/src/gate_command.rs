@@ -304,7 +304,7 @@ impl SelectedContract {
             detail: error.to_string(),
         })?;
         let repository = Repository::discover(&current).map_err(|error| Failure::Fault {
-            reason: "gate::repository-unresolved",
+            reason: spice::repository::ResolveError::REASON,
             detail: error.to_string(),
         })?;
         let tree = selector

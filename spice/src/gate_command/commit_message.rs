@@ -46,7 +46,7 @@ pub(super) fn run(
         Ok(repository) => repository,
         Err(error) => {
             return failure(Failure::environment(
-                "gate::repository-unresolved",
+                spice::repository::ResolveError::REASON,
                 error.to_string(),
             ));
         }

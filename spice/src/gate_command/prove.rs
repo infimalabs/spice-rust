@@ -411,7 +411,7 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
     let current = std::env::current_dir()
         .map_err(|error| ProveFailure::fault("gate::prove-working-directory-unavailable", error))?;
     let repository = Repository::discover(&current)
-        .map_err(|error| ProveFailure::fault("gate::prove-repository-unresolved", error))?;
+        .map_err(|error| ProveFailure::fault(spice::repository::ResolveError::REASON, error))?;
     let candidate_tree =
         spice::gate::capture_candidate_tree(&repository).map_err(ProveFailure::run)?;
     let anchor = spice::change_gate::prepare_staged_anchor().map_err(ProveFailure::selection)?;
