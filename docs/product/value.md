@@ -350,6 +350,14 @@ narrow screen without changing newest-first order.
 
 ### The team Work pane
 
+The pane opens with Kept jobs: every command a member keeps beyond its call,
+team-wide and oldest first; one row per job when wide, and in lane-shaped panes
+an accented card with member, standing, two reserved command lines, and age,
+keeping headers for assistive technology. Five jobs show in full; more scroll
+inside the table under pinned headers with the sixth peeking, so the pane never
+grows past that. The full command shows on hover, standing changes update in
+place, and an empty table holds one fixed-height line.
+
 Each team projects open work into three stable lanes: Up next in offer order,
 In flight with the claiming member's name and accent, and Waiting for blocked,
 deferred, and review work. Empty lanes remain, and keyed cards move without
@@ -374,12 +382,6 @@ clipping when it cannot; its total stays beside the heading. At team-history
 widths of 40rem or less, cards form one column regardless of viewport width.
 It reads only while that pane is on screen, again when work leaves the open
 board or the connection resumes.
-
-A Kept jobs table lists every command a member keeps beyond its call, team-wide
-and oldest first: one row per job when wide; in lane-shaped panes, a labeled,
-accented row with member, standing, up to two command lines, and age, keeping
-the headers for assistive technology. The full command shows on hover, standing
-changes update in place, and an empty table holds one fixed-height line.
 
 ### The team console
 
