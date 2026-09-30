@@ -42,6 +42,8 @@ struct Commands {
 struct DetailContext {
     detail: Option<TaskDetailState>,
     creator_context: Option<String>,
+    /// Tasks the inspected description names that the admitted board holds.
+    board_tasks: std::collections::BTreeSet<TaskStamp>,
     can_note: bool,
     note: NoteComposer,
     submit_note: Callback<(TaskStamp, SubmitEvent)>,
@@ -86,6 +88,24 @@ pub(super) fn use_controls(
             runtime.messages().iter().map(AsRef::as_ref),
         )
     });
+    let board_tasks = detail
+        .as_ref()
+        .and_then(TaskDetailState::answer)
+        .and_then(|answer| answer.task.statement.body.description.as_deref())
+        .zip(runtime.as_ref().and_then(|runtime| runtime.board()))
+        .map(|(description, board)| {
+            crate::watchband::task_mentions(description)
+                .into_iter()
+                .filter_map(|(_, task)| task.born().ok())
+                .filter(|task| {
+                    board
+                        .tasks
+                        .iter()
+                        .any(|row| row.statement.body.born == *task)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let note = (*inspection)
         .as_ref()
         .map(|inspection| task.notes.shown(&inspection.task))
@@ -104,6 +124,7 @@ pub(super) fn use_controls(
         detail: DetailContext {
             detail,
             creator_context,
+            board_tasks,
             can_note: runtime
                 .as_ref()
                 .is_some_and(|runtime| runtime.offers(CommandKind::TaskNote)),
@@ -391,11 +412,7 @@ fn render_available(
             </div>
             <section class="work-detail-section">
                 <h3>{"Contract"}</h3>
-                if let Some(description) = statement.description.as_ref() {
-                    <p class="work-detail-description">{description}</p>
-                } else {
-                    <p class="muted">{"No description was recorded."}</p>
-                }
+                {task_detail::render_contract(statement, |task| detail.board_tasks.contains(task), false)}
             </section>
             {task_detail::render_media(&answer.media)}
             <section class="work-detail-section">
