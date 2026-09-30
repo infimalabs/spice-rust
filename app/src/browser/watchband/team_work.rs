@@ -138,7 +138,8 @@ fn team_lane(
     tasks: Option<Vec<Html>>,
 ) -> Html {
     let heading = format!("{key}-{team}");
-    let count = tasks.as_ref().map_or(0, Vec::len);
+    // Without a snapshot the count is unknown, so the rail shows none.
+    let count = tasks.as_ref().map(Vec::len);
     html! {
         <section
             class="work-lane team-work-lane"
@@ -148,7 +149,9 @@ fn team_lane(
         >
             <header class="work-lane-heading">
                 <h3 id={heading}>{label}</h3>
-                <span aria-label={format!("{count} tasks")}>{count}</span>
+                if let Some(count) = count {
+                    <span aria-label={format!("{count} tasks")}>{count}</span>
+                }
             </header>
             <div
                 class="work-lane-track"
