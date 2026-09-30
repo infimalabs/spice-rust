@@ -23,6 +23,7 @@ use super::{
 
 mod exit;
 mod preview;
+mod reply;
 #[cfg(test)]
 mod tests;
 mod transcript;

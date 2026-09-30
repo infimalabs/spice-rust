@@ -300,6 +300,9 @@ pub(crate) fn steering_fact_identity(
         wire::FactKind::SteerSent => fact
             .read::<wire::body::SteerSent>()
             .map(|body| (Some(body.directive), body.key)),
+        wire::FactKind::SteerReplied => fact
+            .read::<wire::body::SteerReplied>()
+            .map(|body| (Some(body.directive), body.key)),
         wire::FactKind::TasteReminded => fact
             .read::<wire::body::TasteReminded>()
             .map(|body| (Some(body.directive), body.key)),
@@ -773,7 +776,18 @@ pub(crate) fn steering_head_agrees(
         return Err("steering head origin disagrees with its fact envelope".to_owned());
     }
     match fact.kind() {
-        wire::FactKind::SteerSent => sent_head_agrees(fact, at, seq, head),
+        wire::FactKind::SteerSent => {
+            let body = fact
+                .read::<wire::body::SteerSent>()
+                .expect("registered kind");
+            sent_head_agrees(&body, at, seq, head)
+        }
+        wire::FactKind::SteerReplied => {
+            let body = fact
+                .read::<wire::body::SteerReplied>()
+                .expect("registered kind");
+            sent_head_agrees(&body.as_sent(), at, seq, head)
+        }
         wire::FactKind::TasteReminded => reminder_head_agrees(fact, at, seq, head),
         wire::FactKind::ClaimLeaseWarned => claim_warning_head_agrees(fact, at, seq, head),
         wire::FactKind::TasteJudged => judgment_head_agrees(fact, at, seq, head),
@@ -822,14 +836,11 @@ pub(crate) fn steering_head_agrees(
 }
 
 fn sent_head_agrees(
-    fact: &wire::AnyFact,
+    body: &wire::body::SteerSent,
     at: wire::Instant,
     seq: wire::Seq,
     head: &wire::SteeringHead,
 ) -> Result<(), String> {
-    let body = fact
-        .read::<wire::body::SteerSent>()
-        .expect("registered kind");
     steering_identity_agrees(
         body.directive,
         &body.key,

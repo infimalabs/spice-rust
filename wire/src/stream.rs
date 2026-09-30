@@ -60,6 +60,91 @@ mod review_feedback_control_tests {
     }
 }
 
+/// Canonical control prefix carried by the resident's delivery of one lane's
+/// answer to a peer message back to the lane that told it.
+pub const PEER_REPLY_CONTROL_PREFIX: &str = "peer-reply:";
+
+/// How the told lane answered one peer message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum PeerAnswer {
+    /// The told lane acknowledged the peer message.
+    Ack,
+    /// The told lane declined the peer message.
+    Nak,
+}
+
+impl PeerAnswer {
+    /// The answer a terminal lane disposition gives, if it is one.
+    #[must_use]
+    pub const fn from_disposition(disposition: crate::Disposition) -> Option<Self> {
+        match disposition {
+            crate::Disposition::Acked => Some(Self::Ack),
+            crate::Disposition::Declined => Some(Self::Nak),
+            crate::Disposition::Live
+            | crate::Disposition::Lapsed
+            | crate::Disposition::DeadLettered
+            | crate::Disposition::Canceled => None,
+        }
+    }
+
+    /// The protocol marker the told lane spoke.
+    #[must_use]
+    pub const fn marker(self) -> &'static str {
+        match self {
+            Self::Ack => "ACK",
+            Self::Nak => "NAK",
+        }
+    }
+}
+
+/// Name the answered peer message key and the answer the told lane gave.
+#[must_use]
+pub fn peer_reply_control(key: &str, answer: PeerAnswer) -> String {
+    format!("{PEER_REPLY_CONTROL_PREFIX}{key}:{}", answer.marker())
+}
+
+/// Decode the answered key and answer from one peer-reply control.
+#[must_use]
+pub fn parse_peer_reply_control(control: &str) -> Option<(&str, PeerAnswer)> {
+    let body = control.strip_prefix(PEER_REPLY_CONTROL_PREFIX)?;
+    let (key, answered) = body.split_once(':')?;
+    if key.is_empty() || !key.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let answer = match answered {
+        "ACK" => PeerAnswer::Ack,
+        "NAK" => PeerAnswer::Nak,
+        _ => return None,
+    };
+    Some((key, answer))
+}
+
+#[cfg(test)]
+mod peer_reply_control_tests {
+    use super::*;
+
+    #[test]
+    fn peer_reply_control_round_trips_only_an_answered_key_and_lane_answer() {
+        for answer in [PeerAnswer::Ack, PeerAnswer::Nak] {
+            let control = peer_reply_control("dTqdc7whW", answer);
+            assert_eq!(
+                parse_peer_reply_control(&control),
+                Some(("dTqdc7whW", answer))
+            );
+        }
+        for malformed in [
+            "peer-reply:dTqdc7whW:LIVE",
+            "peer-reply::ACK",
+            "peer-reply:dTq-dc7:ACK",
+            "peer-reply:dTqdc7whW:ACK:extra",
+            "review-feedback:dTqdc7whW:ACK",
+        ] {
+            assert_eq!(parse_peer_reply_control(malformed), None, "{malformed}");
+        }
+    }
+}
+
 /// Canonical semantic prefix carried by every taste steering directive.
 pub const TASTE_MARKER: &str = "[TASTE]";
 /// Canonical semantic prefix the resident places on every ordinary directive

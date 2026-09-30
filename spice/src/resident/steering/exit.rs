@@ -158,6 +158,7 @@ fn dispose_pending(
         }
     };
     let mut retired = false;
+    let mut replied = BTreeSet::new();
     for head in pending {
         if evidence.exhausted() {
             let _ = writeln!(
@@ -168,8 +169,9 @@ fn dispose_pending(
         }
         let key = head.body().key.as_str();
         match dispose_head(bus, epoch, lane, head, &evidence) {
-            Ok(disposition) => {
+            Ok((disposition, reply)) => {
                 retired = true;
+                replied.extend(reply);
                 let _ = writeln!(
                     diagnostic,
                     "lane {lane} steering {key} {} {moment} from its transcript",
@@ -189,16 +191,20 @@ fn dispose_pending(
         return;
     }
     notify_inbox(paths, lane);
+    for sender in replied {
+        notify_inbox(paths, sender);
+    }
 }
 
-/// Journal the disposition the transcript carries for one live directive.
+/// Journal the disposition the transcript carries for one live directive,
+/// with the reply its answer owes a seated peer sender, whom it names.
 fn dispose_head(
     bus: &Bus,
     epoch: CanonicalUuid,
     lane: CanonicalUuid,
     head: &journal::JournalHead<wire::SteeringHead>,
     evidence: &TranscriptEvidence,
-) -> Result<Disposition, Outcome<CommandAnswer>> {
+) -> Result<(Disposition, Option<CanonicalUuid>), Outcome<CommandAnswer>> {
     let token = head.body().key.as_str();
     let parsed = token
         .parse::<steer::Key>()
@@ -234,8 +240,18 @@ fn dispose_head(
         at,
     )?;
     proposal.steering_head(pending, move |_| next);
+    let reply = reply::append_peer_reply(
+        bus,
+        &mut proposal,
+        epoch,
+        head,
+        pending,
+        disposition,
+        recognition.answer.as_deref(),
+        at,
+    )?;
     commit(bus, proposal).map_err(typed_outcome)?;
-    Ok(disposition)
+    Ok((disposition, reply))
 }
 
 fn failure_line<B>(outcome: &Outcome<B>) -> String {

@@ -121,6 +121,83 @@ impl Peers {
         (outcome, effects)
     }
 
+    /// Direct one lane as the operator.
+    fn send(&self, id: u8, to: u8, fanout: u8, message: &str) -> wire::intent::DirectiveAnswer {
+        let send = wire::intent::SteerSend {
+            fanout: test_uuid(fanout),
+            lane: test_uuid(to),
+            message: message.to_owned(),
+            attachments: Vec::new(),
+        };
+        let command = self
+            .admit(
+                CommandKind::SteerSend,
+                id,
+                Actor::Operator,
+                self.seat(to),
+                &send,
+            )
+            .expect("operator send admits");
+        let outcome = steering::send(
+            &self.bus,
+            self.epoch,
+            &steer::Config::default(),
+            &command,
+            &send,
+            &mut CommandEffects::default(),
+        );
+        let Outcome::Reply(Reply {
+            body: CommandAnswer::Directive(sent),
+            ..
+        }) = outcome
+        else {
+            panic!("operator direction is durable: {outcome:?}");
+        };
+        sent
+    }
+
+    /// Land one assistant message on a lane's tape and hear its headers,
+    /// returning what the hearing wrote down.
+    fn answer(&self, lane: u8, keys: &[&str], prose: &str) -> String {
+        let lane = test_uuid(lane);
+        let tape = tape::Tape::open(self.paths.tape.join(lane.to_string()).join("omp"))
+            .expect("the lane tape opens");
+        let message = serde_json::json!({
+            "type": "message_end",
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": prose}],
+                "stopReason": "stop",
+            },
+        });
+        tape.tee(format!("{message}\n").as_bytes())
+            .expect("the answer is durable");
+        let keys = keys
+            .iter()
+            .map(|key| key.parse().expect("fixture key"))
+            .collect();
+        let vendor: wire::Name = "omp".parse().expect("fixture vendor");
+        let mut diagnostics = Vec::new();
+        steering::dispose_heard(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            lane,
+            &vendor,
+            &keys,
+            &mut diagnostics,
+        );
+        String::from_utf8(diagnostics).expect("diagnostics are UTF-8")
+    }
+
+    fn pending(&self, lane: u8) -> Vec<wire::intent::PendingDirective> {
+        let inbox = self.inbox(90, Actor::Lane(test_uuid(lane)), false);
+        let [row] = inbox.lanes.as_slice() else {
+            panic!("a lane principal reads only its own lane: {inbox:?}")
+        };
+        row.pending.clone()
+    }
+
     fn cancel(&self, id: u8, directive: CanonicalUuid) -> Outcome<CommandAnswer> {
         let cancel = wire::intent::DirectiveRef { directive };
         let witness = Witness::Directive {
@@ -197,36 +274,7 @@ fn a_lane_tells_a_seated_peer_as_itself_and_the_delivery_names_the_sender() {
     };
     assert_eq!(effects.inbox_delivery, Some(recipient));
 
-    let send = wire::intent::SteerSend {
-        fanout: test_uuid(41),
-        lane: recipient,
-        message: "keep the parser where it is".to_owned(),
-        attachments: Vec::new(),
-    };
-    let command = peers
-        .admit(
-            CommandKind::SteerSend,
-            42,
-            Actor::Operator,
-            peers.seat(RECIPIENT),
-            &send,
-        )
-        .expect("operator send admits");
-    let mut effects = CommandEffects::default();
-    let Outcome::Reply(Reply {
-        body: CommandAnswer::Directive(sent),
-        ..
-    }) = steering::send(
-        &peers.bus,
-        peers.epoch,
-        &steer::Config::default(),
-        &command,
-        &send,
-        &mut effects,
-    )
-    else {
-        panic!("operator direction is durable");
-    };
+    let sent = peers.send(42, RECIPIENT, 41, "keep the parser where it is");
 
     let snapshot = peers.bus.fact_snapshot().expect("authority reads");
     let creators = snapshot
@@ -298,6 +346,88 @@ fn a_lane_tells_a_seated_peer_as_itself_and_the_delivery_names_the_sender() {
 }
 
 #[test]
+fn an_answered_peer_message_replies_once_to_its_seated_sender_and_the_reply_ends_there() {
+    let peers = Peers::new("steer-tell-reply");
+    let recipient = test_uuid(RECIPIENT);
+    let (outcome, _) = peers.tell(70, RECIPIENT, "the parser moved");
+    let Outcome::Reply(Reply {
+        body: CommandAnswer::Directive(told),
+        ..
+    }) = outcome
+    else {
+        panic!("a peer message is durable: {outcome:?}");
+    };
+    let sent = peers.send(71, RECIPIENT, 72, "keep the parser where it is");
+
+    let heard = peers.answer(
+        RECIPIENT,
+        &[&told.key, &sent.key],
+        &format!(
+            "ACK {} {}: Moved the import; tests pass.",
+            told.key, sent.key
+        ),
+    );
+    assert!(
+        peers.pending(RECIPIENT).is_empty(),
+        "both keys retire: {heard}"
+    );
+    let [reply] = peers
+        .pending(SENDER)
+        .try_into()
+        .unwrap_or_else(|pending| panic!("only the peer message earns one reply: {pending:?}"));
+    assert_eq!(reply.from, Some(recipient));
+    assert_eq!(
+        reply.control.as_deref(),
+        Some(wire::peer_reply_control(&told.key, wire::PeerAnswer::Ack).as_str())
+    );
+    assert_eq!(
+        reply.text,
+        format!("ACK {}: Moved the import; tests pass.", told.key)
+    );
+    let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
+    let rendered = steer::inbox::render_pending(&seal, &[reply.clone()], |_, _| None);
+    assert!(
+        rendered.contains(&format!(
+            "[PEER REPLY lane {recipient}] Lane {recipient} answered your peer message {} with ACK",
+            told.key
+        )),
+        "{rendered}"
+    );
+
+    let mut diagnostics = Vec::new();
+    steering::dispose_at_startup(&peers.bus, &peers.paths, peers.epoch, &mut diagnostics)
+        .expect("the restart sweep runs");
+    assert_eq!(peers.pending(SENDER).len(), 1, "a restart repeats no reply");
+
+    peers.answer(
+        SENDER,
+        &[&reply.key],
+        &format!("ACK {}: Thanks.", reply.key),
+    );
+    assert!(peers.pending(SENDER).is_empty(), "the reply retires");
+    assert!(
+        peers.pending(RECIPIENT).is_empty(),
+        "acknowledging a reply sends nothing back"
+    );
+    let snapshot = peers.bus.fact_snapshot().expect("authority reads");
+    let replies = snapshot
+        .facts()
+        .iter()
+        .filter_map(|envelope| {
+            let reply = envelope.fact.read::<wire::body::SteerReplied>()?;
+            Some((envelope.actor.clone(), reply.answered))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        replies,
+        [(Actor::Lane(recipient), told.key.clone())],
+        "one reply, journaled as the answering lane, for the peer message alone"
+    );
+
+    peers.finish();
+}
+
+#[test]
 fn a_lane_inbox_keeps_its_retired_direction_with_fanout_beside_live_direction() {
     let peers = Peers::new("steer-inbox-retired");
     let recipient = test_uuid(RECIPIENT);
@@ -309,35 +439,12 @@ fn a_lane_inbox_keeps_its_retired_direction_with_fanout_beside_live_direction() 
     else {
         panic!("a peer message is durable: {outcome:?}");
     };
-    let send = wire::intent::SteerSend {
-        fanout: test_uuid(61),
-        lane: recipient,
-        message: "> quoted context\nkeep the parser where it is".to_owned(),
-        attachments: Vec::new(),
-    };
-    let command = peers
-        .admit(
-            CommandKind::SteerSend,
-            62,
-            Actor::Operator,
-            peers.seat(RECIPIENT),
-            &send,
-        )
-        .expect("operator send admits");
-    let Outcome::Reply(Reply {
-        body: CommandAnswer::Directive(sent),
-        ..
-    }) = steering::send(
-        &peers.bus,
-        peers.epoch,
-        &steer::Config::default(),
-        &command,
-        &send,
-        &mut CommandEffects::default(),
-    )
-    else {
-        panic!("operator direction is durable");
-    };
+    let sent = peers.send(
+        62,
+        RECIPIENT,
+        61,
+        "> quoted context\nkeep the parser where it is",
+    );
     let canceled = peers.cancel(63, sent.directive);
     assert!(matches!(canceled, Outcome::Reply(_)), "{canceled:?}");
 

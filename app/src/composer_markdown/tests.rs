@@ -1379,8 +1379,10 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
         (nested.to_string(), directive_quote_source(3_000)),
     ]);
 
-    let html =
-        render_received_with_quotes(&markdown, &[], &directives, &quotes, &agents, &sources).html;
+    let render = |agents: &QuoteAgents| {
+        render_received_with_quotes(&markdown, &[], &directives, &quotes, agents, &sources).html
+    };
+    let html = render(&agents);
 
     let blocks = html.split("<blockquote>").skip(1).collect::<Vec<_>>();
     assert_eq!(blocks.len(), 3, "{html}");
@@ -1410,6 +1412,12 @@ fn acknowledged_directive_contexts_sign_their_author_once() {
     );
     assert_eq!(html.matches("message-quote-name").count(), 3, "{html}");
     assert!(lane.contains(&format!(
+        "class=\"message-quote-name\" data-quote-author=\"directive\" \
+         data-quote-actor=\"lane:{directing}\" data-quote-author-state=\"current\" \
+         data-accent=\"1\">directing</span>"
+    )));
+    let unseated = render(&QuoteAgents::new());
+    assert!(unseated.contains(&format!(
         "class=\"message-quote-name\" data-quote-author=\"directive\" \
          data-quote-actor=\"lane:{directing}\" data-quote-author-state=\"lane\">lane {}</span>",
         crate::watchband::short(directing),

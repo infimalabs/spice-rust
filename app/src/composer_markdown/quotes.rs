@@ -292,14 +292,28 @@ fn quote_author_name_html(
         ),
         QuoteAuthor::Directive {
             actor: wire::Actor::Lane(lane),
-        } => quote_name_html(
-            &format!("lane {}", crate::watchband::short(*lane)),
-            &format!(
-                " data-quote-author=\"directive\" data-quote-actor=\"lane:{lane}\" \
-                 data-quote-author-state=\"lane\""
-            ),
-            None,
-        ),
+        } => {
+            // A peer message names its sending lane, not an occupant: the
+            // lane's seated agent speaks for it, as the roster shows it now.
+            let seated = seated_lane_agent(agents, *lane);
+            let (label, state) = seated.map_or_else(
+                || {
+                    (
+                        Cow::Owned(format!("lane {}", crate::watchband::short(*lane))),
+                        "lane",
+                    )
+                },
+                |agent| (Cow::Borrowed(agent.label.as_str()), "current"),
+            );
+            quote_name_html(
+                &label,
+                &format!(
+                    " data-quote-author=\"directive\" data-quote-actor=\"lane:{lane}\" \
+                     data-quote-author-state=\"{state}\""
+                ),
+                seated.map(|agent| agent.accent),
+            )
+        }
     }
 }
 
@@ -340,9 +354,18 @@ fn quote_age_slot_html(
             )
         }
     };
-    if let Some(agent) = &source.agent {
-        write!(data, " data-accent=\"{}\"", agent.accent)
-            .expect("writing HTML to a String cannot fail");
+    let accent = source
+        .agent
+        .as_ref()
+        .map(|agent| agent.accent)
+        .or_else(|| match author {
+            QuoteAuthor::Directive {
+                actor: wire::Actor::Lane(lane),
+            } => seated_lane_agent(agents, *lane).map(|agent| agent.accent),
+            QuoteAuthor::Agent { .. } | QuoteAuthor::Directive { .. } => None,
+        });
+    if let Some(accent) = accent {
+        write!(data, " data-accent=\"{accent}\"").expect("writing HTML to a String cannot fail");
     }
     let source_data = source.card_id.as_ref().map_or_else(String::new, |card_id| {
         format!(
@@ -354,6 +377,17 @@ fn quote_age_slot_html(
         "<span class=\"message-quote-age-slot\" data-quote-age-authored=\"{}\"{source_data}{data}></span>",
         source.display_millis,
     )
+}
+
+/// The agent seated in one lane now, which speaks for a peer message that
+/// lane told: a lane's directive names the lane, never an occupant.
+fn seated_lane_agent(
+    agents: &super::QuoteAgents,
+    lane: wire::CanonicalUuid,
+) -> Option<&super::QuoteAgent> {
+    agents
+        .iter()
+        .find_map(|((agent_lane, _), agent)| (*agent_lane == lane).then_some(agent))
 }
 
 fn disposition_html(disposition: Disposition) -> String {

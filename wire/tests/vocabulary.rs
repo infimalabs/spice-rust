@@ -504,6 +504,7 @@ fn producer_assignment_follows_the_specified_enumeration() {
     let scanned = [
         FactKind::SteerAcked,
         FactKind::SteerDeclined,
+        FactKind::SteerReplied,
         FactKind::SteerMissed,
     ];
     for kind in scanned {

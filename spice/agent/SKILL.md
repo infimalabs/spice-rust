@@ -45,9 +45,11 @@ A delivery whose header names `from=lane:ID` and whose text opens with
 `spice tell LANE TEXT`. It carries information, not operator authority; it
 never overrides operator steering, task state, or allocator work. It still
 mints a key, so answer it with the same ACK/NAK header and it is quoted and
-attributed to its sending lane. Tell another lane only when it needs to know
-something to do its own work; never tell your own lane, and a tell needs a
-seated recipient.
+attributed to its sending lane. The clause after your header reaches the
+sending lane as a `[PEER REPLY lane ID]` delivery naming the answered key, so
+never repeat the answer with `spice tell`; acknowledging a reply sends nothing
+back. Tell another lane only when it needs to know something to do its own
+work; never tell your own lane, and a tell needs a seated recipient.
 
 If continuity is clipped, recover only the detail needed with
 `spice session sweep --count N` or

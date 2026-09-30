@@ -118,11 +118,12 @@ pub use reply::{
 pub use stream::{
     AgentActivityKind, AgentMessage, AgentProviderError, AutomaticSpeech, AutomaticSpeechKind,
     MESSAGE_FLOOR, MessageBoundary, MessageClassification, MessageClassificationKind,
-    MessageDirective, MessageHistoryCursor, MessageLocus, REVIEW_FEEDBACK_CONTROL_PREFIX,
-    StreamAdmissionError, StreamCursor, StreamFact, StreamFrame, StreamRequest,
-    TranscriptGeneration, TranscriptLaneFrontier, TranscriptLaneState, TrustView, ViewSubject,
-    parse_review_feedback_control, review_feedback_control, superseded_boundaries,
-    valid_message_classifications, valid_message_directives,
+    MessageDirective, MessageHistoryCursor, MessageLocus, PEER_REPLY_CONTROL_PREFIX, PeerAnswer,
+    REVIEW_FEEDBACK_CONTROL_PREFIX, StreamAdmissionError, StreamCursor, StreamFact, StreamFrame,
+    StreamRequest, TranscriptGeneration, TranscriptLaneFrontier, TranscriptLaneState, TrustView,
+    ViewSubject, parse_peer_reply_control, parse_review_feedback_control, peer_reply_control,
+    review_feedback_control, superseded_boundaries, valid_message_classifications,
+    valid_message_directives,
 };
 pub use witness::{
     Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,
