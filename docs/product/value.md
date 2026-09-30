@@ -376,9 +376,9 @@ provider sits at the bottom, and within it the largest account sits below
 smaller accounts. Missing, blank, and unrecognized plan tiers count as 20×
 capacity unless an explicit Free (0.2×), named $20 (1×), or 5× tier (including
 OpenAI Pro Lite, the $100 Pro plan) says otherwise. Provider hues follow the
-green, blue, gold, red, teal, and plum accent order used for agents. Fast mode
-and an available Canvas update advance only the button edge through that accent
-order, leaving quota colors to describe quota alone.
+green, blue, gold, red, teal, and plum accent order used for agents. The outer
+button edge is neutral with neither status, gold for Fast mode, blue for an
+available Canvas update, and red when both apply. Quota colors remain unchanged.
 
 ### The global Dash page
 

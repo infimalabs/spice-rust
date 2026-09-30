@@ -184,9 +184,9 @@ fn render_canvas_menu(
     let quota = quota_level(runtime);
     let edge_accent = match (fast_mode, update.is_some()) {
         (false, false) => None,
-        (true, false) => Some(0),
+        (true, false) => Some(2),
         (false, true) => Some(1),
-        (true, true) => Some(2),
+        (true, true) => Some(3),
     };
     let trigger_label: AttrValue = match &quota {
         Some(quota) => format!("{trigger_label} - {connection_label} - {}", quota.label),
