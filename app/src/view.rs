@@ -209,6 +209,8 @@ pub(crate) const fn canvas_notice(
 
 #[cfg(any(target_arch = "wasm32", test))]
 const CARD_TARGET_PATH_PREFIX: &str = "/card/";
+#[cfg(any(target_arch = "wasm32", test))]
+const DIRECTION_TARGET_PATH_PREFIX: &str = "/direction/";
 
 #[cfg(any(target_arch = "wasm32", test))]
 const CREATOR_CONTEXT_TARGET_PREFIX: &str = "creator-context-";
@@ -313,16 +315,57 @@ pub(crate) fn creator_context_href<'a>(
         .then(|| card_href(&target.target()))
 }
 
+/// One team-local direction named by a durable Canvas route.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DirectionTarget {
+    team: wire::CanonicalUuid,
+    direction: wire::CanonicalUuid,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl DirectionTarget {
+    #[must_use]
+    pub(crate) const fn new(team: wire::CanonicalUuid, direction: wire::CanonicalUuid) -> Self {
+        Self { team, direction }
+    }
+
+    #[must_use]
+    pub(crate) const fn team(&self) -> wire::CanonicalUuid {
+        self.team
+    }
+
+    #[must_use]
+    pub(crate) fn element_id(&self) -> String {
+        format!("team-work-direction-{}-{}", self.team, self.direction)
+    }
+
+    fn parse(path: &str) -> Option<Self> {
+        let (team, direction) = path
+            .strip_prefix(DIRECTION_TARGET_PATH_PREFIX)?
+            .split_once('/')?;
+        Some(Self::new(team.parse().ok()?, direction.parse().ok()?))
+    }
+
+    fn path(&self) -> String {
+        format!(
+            "{DIRECTION_TARGET_PATH_PREFIX}{}/{}",
+            self.team, self.direction
+        )
+    }
+}
+
 /// One admitted Canvas URL state.
 ///
-/// Global destinations remain the complete navigation vocabulary. A card
-/// target refines Chat rather than becoming a fourth destination, so opening a
-/// permalink cannot select an impossible global view.
+/// Global destinations remain the complete navigation vocabulary. Card and
+/// direction targets refine Chat rather than becoming more global
+/// destinations, so opening a permalink cannot select an impossible view.
 #[cfg(any(target_arch = "wasm32", test))]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CanvasRoute {
     destination: CanvasDestination,
     card_target: Option<String>,
+    direction_target: Option<DirectionTarget>,
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -332,6 +375,7 @@ impl CanvasRoute {
         Self {
             destination,
             card_target: None,
+            direction_target: None,
         }
     }
 
@@ -339,7 +383,17 @@ impl CanvasRoute {
         valid_card_target(&target).then_some(Self {
             destination: CanvasDestination::Chat,
             card_target: Some(target),
+            direction_target: None,
         })
+    }
+
+    #[must_use]
+    pub(crate) const fn direction(target: DirectionTarget) -> Self {
+        Self {
+            destination: CanvasDestination::Chat,
+            card_target: None,
+            direction_target: Some(target),
+        }
     }
 
     #[must_use]
@@ -350,6 +404,7 @@ impl CanvasRoute {
                 let target = path.strip_prefix(CARD_TARGET_PATH_PREFIX)?;
                 Self::card(target.to_owned())
             })
+            .or_else(|| DirectionTarget::parse(path).map(Self::direction))
     }
 
     #[must_use]
@@ -363,11 +418,19 @@ impl CanvasRoute {
     }
 
     #[must_use]
+    pub(crate) const fn direction_target(&self) -> Option<&DirectionTarget> {
+        self.direction_target.as_ref()
+    }
+
+    #[must_use]
     pub(crate) fn path(&self) -> Cow<'_, str> {
-        self.card_target.as_ref().map_or_else(
-            || Cow::Borrowed(self.destination.path()),
-            |target| Cow::Owned(format!("{CARD_TARGET_PATH_PREFIX}{target}")),
-        )
+        if let Some(target) = &self.card_target {
+            Cow::Owned(format!("{CARD_TARGET_PATH_PREFIX}{target}"))
+        } else if let Some(target) = &self.direction_target {
+            Cow::Owned(target.path())
+        } else {
+            Cow::Borrowed(self.destination.path())
+        }
     }
 }
 
@@ -444,11 +507,27 @@ fn normalized_destination(fragment: &str) -> Option<CanvasDestination> {
     }
 }
 
-#[cfg(any(target_arch = "wasm32", rust_analyzer))]
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
 pub(crate) fn card_href(target: &str) -> String {
     let route = CanvasRoute::card(target.to_owned())
         .expect("a rendered Canvas card has a canonical route target");
     format!("#{}", route.path())
+}
+
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+pub(crate) fn quote_source_href(source: &str) -> String {
+    source.strip_prefix("direction/").map_or_else(
+        || card_href(source),
+        |direction| format!("#/direction/{direction}"),
+    )
+}
+
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
+pub(crate) fn direction_quote_source(
+    team: wire::CanonicalUuid,
+    direction: wire::CanonicalUuid,
+) -> String {
+    format!("direction/{team}/{direction}")
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -463,7 +542,7 @@ fn valid_card_target(target: &str) -> bool {
 mod tests {
     use super::{
         CanvasDestination, CanvasNotice, CanvasRoute, ConnectionStage, CreatorContextTarget,
-        canvas_notice, normalize_canvas_location,
+        DirectionTarget, canvas_notice, normalize_canvas_location, quote_source_href,
     };
 
     #[test]
@@ -492,6 +571,52 @@ mod tests {
                 "{path:?} unexpectedly named a card"
             );
         }
+    }
+
+    #[test]
+    fn direction_routes_refine_chat_and_name_the_exact_team_card() {
+        let team = "01234567-89ab-cdef-0123-456789abcdef"
+            .parse()
+            .expect("fixture team");
+        let direction = "fedcba98-7654-3210-fedc-ba9876543210"
+            .parse()
+            .expect("fixture direction");
+        let path = concat!(
+            "/direction/01234567-89ab-cdef-0123-456789abcdef/",
+            "fedcba98-7654-3210-fedc-ba9876543210",
+        );
+
+        let route = CanvasRoute::from_path(path).expect("canonical direction route parses");
+
+        assert_eq!(route.canvas_destination(), CanvasDestination::Chat);
+        assert_eq!(
+            route.direction_target(),
+            Some(&DirectionTarget::new(team, direction))
+        );
+        assert_eq!(route.direction_target().unwrap().team(), team);
+        assert_eq!(route.path(), path);
+        assert_eq!(
+            route.direction_target().unwrap().element_id(),
+            concat!(
+                "team-work-direction-01234567-89ab-cdef-0123-456789abcdef-",
+                "fedcba98-7654-3210-fedc-ba9876543210",
+            )
+        );
+        assert_eq!(
+            quote_source_href(concat!(
+                "direction/01234567-89ab-cdef-0123-456789abcdef/",
+                "fedcba98-7654-3210-fedc-ba9876543210",
+            )),
+            format!("#{path}"),
+        );
+        assert!(CanvasRoute::from_path("/direction/not-a-team/not-a-direction").is_none());
+        let location = normalize_canvas_location("", &format!("#{path}"));
+        assert_eq!(
+            location.route().direction_target(),
+            Some(&DirectionTarget::new(team, direction))
+        );
+        assert!(!location.needs_replace());
+        assert_eq!(location.notice(), None);
     }
 
     #[test]
