@@ -130,6 +130,75 @@ pub(crate) fn capacity_summary(generation: &QuotaGeneration) -> String {
         |remaining| format!("{:.0}% remaining", remaining * 100.0),
     )
 }
+/// Plan-weighted weekly quota grouped into provider and account layers.
+///
+/// Providers and their accounts are ordered by allocated capacity, heaviest
+/// first; equal capacities retain report order. Reports without a shared weekly
+/// limit do not contribute to the global weekly quota.
+pub(crate) struct WeeklyQuotaStack<'a> {
+    pub bands: Vec<WeeklyQuotaBand<'a>>,
+    pub capacity: f64,
+    pub remaining: f64,
+}
+
+pub(crate) struct WeeklyQuotaBand<'a> {
+    pub provider: &'a str,
+    pub capacity: f64,
+    pub available: f64,
+    pub accounts: Vec<WeeklyQuotaAccount>,
+}
+
+pub(crate) struct WeeklyQuotaAccount {
+    pub capacity: f64,
+    pub available: f64,
+}
+
+/// Build the account layers behind the global weekly-quota presentation.
+pub(crate) fn weekly_quota_stack(snapshot: &wire::QuotaSnapshot) -> Option<WeeklyQuotaStack<'_>> {
+    let mut bands: Vec<WeeklyQuotaBand<'_>> = Vec::new();
+    let mut capacity = 0.0;
+    let mut weighted_remaining = 0.0;
+    for report in &snapshot.reports {
+        let Some(remaining) = binding_remaining_fraction(report) else {
+            continue;
+        };
+        let account_capacity = plan_capacity_units(report);
+        let account_available = remaining * account_capacity;
+        capacity += account_capacity;
+        weighted_remaining += account_available;
+        let band = bands
+            .iter_mut()
+            .find(|band| band.provider.eq_ignore_ascii_case(&report.provider));
+        if let Some(band) = band {
+            band.capacity += account_capacity;
+            band.available += account_available;
+            band.accounts.push(WeeklyQuotaAccount {
+                capacity: account_capacity,
+                available: account_available,
+            });
+        } else {
+            bands.push(WeeklyQuotaBand {
+                provider: &report.provider,
+                capacity: account_capacity,
+                available: account_available,
+                accounts: vec![WeeklyQuotaAccount {
+                    capacity: account_capacity,
+                    available: account_available,
+                }],
+            });
+        }
+    }
+    for band in &mut bands {
+        band.accounts
+            .sort_by(|left, right| right.capacity.total_cmp(&left.capacity));
+    }
+    bands.sort_by(|left, right| right.capacity.total_cmp(&left.capacity));
+    (capacity > 0.0).then(|| WeeklyQuotaStack {
+        bands,
+        capacity,
+        remaining: (weighted_remaining / capacity).clamp(0.0, 1.0),
+    })
+}
 
 /// Weekly remaining capacity across every account as one fraction in
 /// `0..=1`, each account weighted by its plan capacity; `None` when no
@@ -336,6 +405,31 @@ mod tests {
         assert_eq!(present(&generation).condition, Condition::StaleLastGood);
     }
 
+    #[test]
+    fn weekly_stack_preserves_provider_bands_and_plan_weighted_accounts() {
+        let snapshot = snapshot();
+        let stack = weekly_quota_stack(&snapshot).expect("weekly quota");
+
+        assert_eq!(stack.bands.len(), 2);
+        assert_eq!(stack.bands[0].provider, "openai-codex");
+        assert_eq!(stack.bands[0].accounts.len(), 3);
+        assert_eq!(
+            stack.bands[0]
+                .accounts
+                .iter()
+                .map(|account| account.capacity)
+                .collect::<Vec<_>>(),
+            vec![20.0, 5.0, 0.2],
+        );
+        assert_eq!(stack.bands[1].provider, "anthropic");
+        assert_eq!(stack.bands[1].accounts.len(), 1);
+        assert!((stack.bands[0].capacity / stack.capacity - 25.2 / 45.2).abs() < f64::EPSILON);
+        assert!((stack.bands[0].available / stack.capacity - 2.7 / 45.2).abs() < f64::EPSILON);
+        assert!((stack.bands[1].capacity / stack.capacity - 20.0 / 45.2).abs() < f64::EPSILON);
+        assert!((stack.bands[1].available / stack.capacity - 20.0 / 45.2).abs() < f64::EPSILON);
+        assert!((stack.remaining - 22.7 / 45.2).abs() < f64::EPSILON);
+    }
+
     fn snapshot() -> wire::QuotaSnapshot {
         const FIVE_HOURS_MS: u64 = 5 * 60 * 60 * 1_000;
         const WEEK_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
@@ -343,8 +437,8 @@ mod tests {
         wire::QuotaSnapshot {
             generated_at_ms: 10,
             reports: vec![
-                report("openai-codex", Some("free"), &[("weekly", None, "1")]),
                 report("anthropic", None, &[("provider-week", Some(WEEK_MS), "1")]),
+                report("openai-codex", Some("free"), &[("weekly", None, "1")]),
                 report(
                     "openai-codex",
                     Some("pro"),

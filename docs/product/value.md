@@ -360,6 +360,20 @@ link to where the reader left it. A card link opened in a fresh page brings its
 card into view and focus once Chat hydrates, holding it there as older history
 loads around it until the reader scrolls.
 
+### The Spice menu quota well
+
+The Spice button divides global weekly capacity into provider bands. Each
+account's opaque layer height is its available contribution to global capacity,
+so total stack height shows global remaining capacity and each provider band
+sums to that provider's global contribution. A layer's color intensity reports
+the fraction remaining within that account. Provider and account order is stable
+by total allocated capacity rather than remaining capacity: the largest
+provider sits at the bottom, and within it the largest account sits below
+smaller accounts. Provider hues follow the green, blue, gold, red, teal, and
+plum accent order used for agents. Fast mode and an available Canvas update
+advance only the button edge through that accent order, leaving quota colors to
+describe quota alone.
+
 ### The global Dash page
 
 Resident topology presents each team in canonical order from left to right:

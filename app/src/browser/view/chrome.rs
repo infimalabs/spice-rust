@@ -182,6 +182,12 @@ fn render_canvas_menu(
         (None, false) => "Open Spice Canvas menu",
     };
     let quota = quota_level(runtime);
+    let edge_accent = match (fast_mode, update.is_some()) {
+        (false, false) => None,
+        (true, false) => Some(0),
+        (false, true) => Some(1),
+        (true, true) => Some(2),
+    };
     let trigger_label: AttrValue = match &quota {
         Some(quota) => format!("{trigger_label} - {connection_label} - {}", quota.label),
         None => format!("{trigger_label} - {connection_label}"),
@@ -194,10 +200,7 @@ fn render_canvas_menu(
     html! {
         <details class="canvas-menu" open={**render.menu_open}>
             <summary
-                class={classes!(
-                    fast_mode.then_some("canvas-menu-trigger--fast"),
-                    update.is_some().then_some("canvas-menu-trigger--update"),
-                )}
+                data-accent={edge_accent.map(|accent| accent.to_string())}
                 data-connection={render.connection.indicator_state()}
                 data-quota-stale={quota.as_ref().is_some_and(|quota| quota.stale).then_some("true")}
                 aria-label={trigger_label.clone()}
@@ -231,22 +234,55 @@ fn render_canvas_menu(
     }
 }
 
-/// Consolidated weekly quota drawn as the Spice button's fluid level.
-struct QuotaLevel {
+/// Plan-weighted weekly quota drawn as provider and account liquid layers.
+struct QuotaLevel<'a> {
     stale: bool,
-    percentage: f64,
+    stack: crate::quota::WeeklyQuotaStack<'a>,
     label: String,
 }
 
-impl QuotaLevel {
+impl QuotaLevel<'_> {
     /// SVG geometry attributes, unlike inline style, survive Canvas's
     /// `style-src 'self'` policy.
     fn render(&self) -> Html {
-        let surface = format!("{:.1}", 100.0 - self.percentage);
-        let depth = format!("{:.1}", self.percentage);
+        const ACCOUNT_INTENSITIES: usize = 8;
+        const QUOTA_LEVELS: f64 = 10.0;
+
+        let account_count = self
+            .stack
+            .bands
+            .iter()
+            .map(|band| band.accounts.len())
+            .sum();
+        let mut layers = Vec::with_capacity(account_count);
+        let mut surface = 100.0;
+        for (provider_index, band) in self.stack.bands.iter().enumerate() {
+            for (account_index, account) in band.accounts.iter().enumerate() {
+                let depth = account.available / self.stack.capacity * 100.0;
+                let quota_level =
+                    (account.available / account.capacity * QUOTA_LEVELS).round() as u8;
+                surface = (surface - depth).max(0.0);
+                layers.push(html! {
+                    <g
+                        class="canvas-menu-quota-layer"
+                        data-accent={(provider_index % watchband::ACCENTS).to_string()}
+                        data-quota-intensity={(account_index % ACCOUNT_INTENSITIES).to_string()}
+                        data-quota-level={quota_level.to_string()}
+                    >
+                        <rect
+                            class="canvas-menu-quota-account"
+                            x="0"
+                            y={format!("{surface:.3}")}
+                            width="100"
+                            height={format!("{depth:.3}")}
+                        />
+                    </g>
+                });
+            }
+        }
         html! {
             <svg class="canvas-menu-quota" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
-                <rect class="canvas-menu-quota-fluid" x="0" y={surface} width="100" height={depth}></rect>
+                {layers}
             </svg>
         }
     }
@@ -254,14 +290,14 @@ impl QuotaLevel {
 
 /// Only a failed refresh marks the level stale; an in-flight refresh keeps
 /// the retained level steady instead of flashing on every sample.
-fn quota_level(runtime: Option<&CanvasRuntime>) -> Option<QuotaLevel> {
+fn quota_level(runtime: Option<&CanvasRuntime>) -> Option<QuotaLevel<'_>> {
     let generation = runtime.and_then(CanvasRuntime::quota)?;
-    let remaining = crate::quota::weekly_remaining(generation.last_good.as_deref()?)?;
+    let stack = crate::quota::weekly_quota_stack(generation.last_good.as_deref()?)?;
     let stale = matches!(
         generation.latest_attempt,
         Some(wire::QuotaAttempt::Failed { .. })
     );
-    let percentage = remaining * 100.0;
+    let percentage = stack.remaining * 100.0;
     let label = if stale {
         format!(
             "weekly quota {percentage:.0}% remaining ({})",
@@ -272,7 +308,7 @@ fn quota_level(runtime: Option<&CanvasRuntime>) -> Option<QuotaLevel> {
     };
     Some(QuotaLevel {
         stale,
-        percentage,
+        stack,
         label,
     })
 }
