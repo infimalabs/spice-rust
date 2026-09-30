@@ -168,7 +168,7 @@ body:has(.shell--mosaic),
 .canvas-menu-quota-layer[data-quota-level="8"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 82%, var(--page)); }
 .canvas-menu-quota-layer[data-quota-level="9"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 88%, var(--page)); }
 .canvas-menu-quota-layer[data-quota-level="10"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 94%, var(--page)); }
-.canvas-menu-quota-account { fill: var(--quota-fill); }
+.canvas-menu-quota-account { fill: var(--quota-fill); stroke: none; }
 .canvas-menu > summary[data-quota-stale] .canvas-menu-quota-layer { --quota-saturation: .35; }
 .canvas-menu > summary:not([data-accent]):is([data-connection="starting"], [data-connection="connecting"]) {
   --canvas-menu-edge: var(--focus);

@@ -16,7 +16,7 @@ pub(super) fn render_dash(runtime: Option<&CanvasRuntime>) -> Html {
             <div class="section-heading">
                 <h2 id="provider-quota-heading">{"Provider quota"}</h2>
                 if snapshot.is_some() {
-                    <p class="quota-capacity" title="Weekly plan-weighted estimate across accounts · Free 0.2× · $20 plans 1× · Pro/Max 5× or explicit 20× · Anthropic without a reported plan 20×">
+                    <p class="quota-capacity" title="Weekly plan-weighted estimate across accounts · Free 0.2× · named $20 plans 1× · explicit 5× · Pro/Max 20× by default">
                         <strong>{crate::quota::capacity_summary(generation)}</strong>
                         {" weekly"}
                     </p>
