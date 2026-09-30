@@ -939,18 +939,44 @@
 }
 .team-direction-tasks:empty { display: none; }
 .team-direction-task-chip {
+  --team-direction-task-accent: var(--accent);
   position: relative;
   z-index: 1;
-  padding: 2px 6px;
-  border: 1px solid var(--line-soft);
+  display: inline-flex;
+  align-items: center;
+  max-width: min(24ch, 100%);
+  min-width: 0;
+  min-height: 17px;
+  padding: 0 4px;
+  overflow: hidden;
+  border: 0;
   border-radius: var(--canvas-radius-pill);
-  background: var(--canvas-menu-surface);
-  color: var(--accent);
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--team-direction-task-accent) 80%, var(--ink)) 80%,
+    transparent
+  );
+  box-shadow: none;
+  color: var(--panel);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: .6rem;
+  font-weight: 700;
   cursor: pointer;
 }
-.team-direction-task-chip:hover,
+.team-direction-task-chip:hover {
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--team-direction-task-accent) 88%, var(--ink)) 88%,
+    transparent
+  );
+}
 .team-direction-task-chip:focus-visible {
-  border-color: var(--accent);
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.team-direction-task-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
