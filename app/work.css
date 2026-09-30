@@ -155,6 +155,16 @@
   --work-group-label-gutter: 1.35rem;
   padding-top: calc(5px + var(--work-group-label-gutter));
 }
+/* Global lane headings pack against the lane rule: every label sits the same
+   gap before its badge and every badge the same gap before the rule, so a
+   short label never drifts away from its count toward the board edge. The
+   widest label sets the max-content column, so none needs to wrap. */
+.work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-heading {
+  justify-content: flex-end;
+  gap: 7px;
+  padding-right: 9px;
+}
+.work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-heading h3 { white-space: nowrap; }
 .work-lane-track:focus-visible {
   border-radius: var(--canvas-radius-compact);
   outline: 2px solid var(--focus);
