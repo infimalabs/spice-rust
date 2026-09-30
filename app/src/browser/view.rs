@@ -140,6 +140,7 @@ pub(super) fn render_canvas(render: CanvasRender<'_>, work: Option<&WorkProjecti
                 sender: render.sender,
                 submissions: &render.submissions.status,
             })}
+            {watchband::render_feedback(surface.as_ref(), render.team_controls)}
             if let Some(notice) = &**render.work_scope_notice {
                 <p class="visually-hidden" role="status" aria-live="polite">{notice}</p>
             }

@@ -763,8 +763,6 @@ body:has(.shell--mosaic),
   min-width: 0;
   font: .64rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.team-dash-member-progress { margin: 0; color: var(--muted); }
-.team-dash-member-controls .form-refusal { margin: 0; overflow-wrap: anywhere; }
 .team-dash-member-disclosure dt {
   color: var(--muted);
   font-size: .57rem;
@@ -838,6 +836,7 @@ body:has(.shell--mosaic),
   font-weight: 500;
 }
 .team-dash-flow {
+  position: relative;
   display: grid;
   grid-template-rows: 32px minmax(0, 1fr);
   min-width: 0;
@@ -909,10 +908,6 @@ body:has(.shell--mosaic),
   text-overflow: ellipsis;
 }
 .team-dash-attention-copy strong { font-weight: 700; }
-.team-dash-attention-issue {
-  color: var(--danger);
-  font: .62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
-}
 .team-dash-attention-rule {
   height: 18px;
   padding: 0 7px;
@@ -990,14 +985,30 @@ body:has(.shell--mosaic),
   font: .62rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
   white-space: nowrap;
 }
-.team-dash-flow-empty,
-.team-dash-flow-issue {
+.team-dash-flow-empty {
   margin: 0;
   padding: 14px 10px;
   color: var(--muted);
   font-size: .72rem;
 }
-.team-dash-flow-issue {
-  border-top: 1px solid var(--control-line-soft);
-  color: var(--danger);
+/* Out of flow over the rows' foot, so a page read never resizes the scroll
+   content; it passes pointer input through to the rows beneath. */
+.team-dash-flow-status {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  width: max-content;
+  max-width: calc(100% - 20px);
+  margin: 0;
+  padding: 5px 12px;
+  border: 1px solid var(--control-line-soft);
+  border-radius: var(--canvas-radius-overlay);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: .7rem;
+  overflow-wrap: anywhere;
+  translate: -50% 0;
+  pointer-events: none;
 }
+.team-dash-flow-status[data-shown="false"] { opacity: 0; }
+.team-dash-flow-status[data-issue="true"] { border-color: var(--danger); color: var(--danger); }

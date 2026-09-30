@@ -148,10 +148,7 @@ fn render_consent(
     ruling: Option<&ConsentRuling>,
 ) -> Html {
     let sending = matches!(ruling, Some(ConsentRuling::Sending(_)));
-    let refused = match ruling {
-        Some(ConsentRuling::Refused(reason)) => Some(reason.clone()),
-        _ => None,
-    };
+    // The ruling's progress and outcome report through the root toast.
     let rule = |answer: wire::Answer, label: &'static str| {
         let sender = sender.cloned();
         let request = pending.request;
@@ -186,9 +183,6 @@ fn render_consent(
                 {" · "}
                 {pending.operation.clone()}
             </span>
-            if let Some(reason) = refused {
-                <span class="team-dash-attention-issue" role="status">{reason}</span>
-            }
             if sender.is_some() {
                 {rule(wire::Answer::Granted, "Allow")}
                 {rule(wire::Answer::Denied, "Deny")}

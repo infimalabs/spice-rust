@@ -17,6 +17,7 @@ mod command_preview;
 mod composer;
 mod controls;
 mod dash;
+mod feedback;
 mod fleet;
 mod member_controls;
 mod mosaic_view;
@@ -53,6 +54,13 @@ pub(super) struct BroadcastTarget {
     lane: CanonicalUuid,
     occupant: CanonicalUuid,
     epoch: CanonicalUuid,
+}
+
+/// The observer that toasts Dash request progress and outcomes. It mounts
+/// once at the Canvas root so a request settles in the toast whichever
+/// surface is showing.
+pub(super) fn render_feedback(runtime: Option<&CanvasRuntime>, controls: &TeamControls) -> Html {
+    html! { <feedback::DashFeedback notices={feedback::Notices::of(runtime, controls)} /> }
 }
 
 /// Render every live team as one packed surface.

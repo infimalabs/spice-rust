@@ -36,7 +36,7 @@ mod team_settled;
 mod work_history;
 pub use consent::ConsentRuling;
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};
-pub use member_control::{MemberCommand, MemberControlState, MemberRequest};
+pub use member_control::{MemberCommand, MemberControlState, MemberRequest, MemberSettlement};
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
 pub(crate) use publication::CanvasSurface;
 use scoped::ScopedValue;
