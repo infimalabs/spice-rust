@@ -254,12 +254,14 @@ its entry; closing a loaded one replaces the address with its scope. Back and
 Forward only restore. A route naming something the resident proves absent is
 replaced with its container and a toast naming it: a missing stem opens All
 open work, an unknown task closes, and a card outside retained Chat history
-opens Chat; a transient failure keeps the route and its Retry. Pane modes, team
-menus, Work arrangement, and a task opened over Dash or Chat are browser-local;
-team, speech, and narration state keeps its format. Following a quote link is a
-history step, and Back returns the linking card where the reader left it. A
-fresh card link brings its card into view and focus once Chat hydrates, holding
-it as older history loads until the reader scrolls.
+opens Chat; a transient failure keeps the route and its Retry. The team
+activity surface is a retained Chat card at `team-stream-{team}` while that
+team remains current and teamed; an unknown or independent lane is unavailable.
+Pane modes, team menus, Work arrangement, and a task opened over Dash or Chat
+are browser-local; team, speech, and narration state keeps its format. Following
+a quote link is a history step, and Back returns the linking card where the
+reader left it. A fresh card link brings its card into view and focus once
+Chat hydrates, holding it as older history loads until the reader scrolls.
 
 ### The Spice menu quota well
 

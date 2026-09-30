@@ -529,6 +529,9 @@ fn retained(target: &str, runtime: &CanvasRuntime) -> Option<bool> {
             .filter(|team| team.teamed())
             .any(|team| team.members.iter().any(|member| member.lane == lane))
     };
+    if let Some(team) = crate::view::team_stream_card_team(target) {
+        return Some(lanes.chat_target_for_team(team).is_some());
+    }
     if let Some(lane) = target.strip_prefix(super::watchband::PRIMARY_TEXTAREA_PREFIX) {
         return Some(lane.parse().is_ok_and(chat_member));
     }

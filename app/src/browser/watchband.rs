@@ -498,7 +498,7 @@ fn render_activity(
     let history_sender = HistorySender::new(history.sender.clone());
     html! {
         <div
-            id={format!("team-stream-{}", team.lane)}
+            id={crate::view::team_stream_card_target(team.lane)}
             tabindex="-1"
             class="team-activity-grid"
             aria-live="polite"
@@ -647,7 +647,7 @@ fn primary_composer_header(
     runtime.latest_lane_prose(lane).map_or_else(
         || ComposerHeader {
             stream: ComposerStreamLink {
-                target: format!("team-stream-{}", team.lane),
+                target: crate::view::team_stream_card_target(team.lane),
                 label: "Jump to team activity".to_owned(),
                 display_millis: None,
             },

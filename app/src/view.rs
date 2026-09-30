@@ -650,6 +650,19 @@ const PUBLIC_SEGMENT: &str = "public";
 #[cfg(any(target_arch = "wasm32", test))]
 const HIDDEN_SEGMENT: &str = "hidden";
 
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+const TEAM_STREAM_CARD_PREFIX: &str = "team-stream-";
+
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+pub(crate) fn team_stream_card_target(team: wire::CanonicalUuid) -> String {
+    format!("{TEAM_STREAM_CARD_PREFIX}{team}")
+}
+
+#[cfg(any(target_arch = "wasm32", rust_analyzer, test))]
+pub(crate) fn team_stream_card_team(target: &str) -> Option<wire::CanonicalUuid> {
+    target.strip_prefix(TEAM_STREAM_CARD_PREFIX)?.parse().ok()
+}
+
 /// Bytes a route segment carries literally; every other byte is `%XX`.
 #[cfg(any(target_arch = "wasm32", test))]
 const fn unreserved(byte: u8) -> bool {
@@ -840,7 +853,7 @@ mod tests {
     use super::{
         CanvasDestination, CanvasNotice, CanvasRoute, ConnectionStage, CreatorContextTarget,
         DirectionTarget, RouteEvidence, RouteStep, canvas_notice, normalize_canvas_location,
-        opening_auth_token, quote_source_href,
+        opening_auth_token, quote_source_href, team_stream_card_target, team_stream_card_team,
     };
     use crate::work::{WorkScope, WorkStemIdentity, WorkVisibility};
 
@@ -935,6 +948,24 @@ mod tests {
             format!("#{}", route.path()),
         );
         assert_eq!(quote_source_href(CARD), format!("#/chat/card/{CARD}"));
+    }
+
+    #[test]
+    fn team_stream_card_targets_name_one_canonical_team() {
+        let team = "01234567-89ab-cdef-0123-456789abcdef"
+            .parse()
+            .expect("fixture team");
+        let target = "team-stream-01234567-89ab-cdef-0123-456789abcdef";
+        assert_eq!(team_stream_card_target(team), target);
+        assert_eq!(team_stream_card_team(target), Some(team));
+        for malformed in [
+            "team-stream-",
+            "team-stream-not-a-team",
+            "team-stream-01234567-89ab-cdef-0123-456789abcdef-extra",
+            "other-01234567-89ab-cdef-0123-456789abcdef",
+        ] {
+            assert_eq!(team_stream_card_team(malformed), None, "{malformed}");
+        }
     }
 
     #[test]
