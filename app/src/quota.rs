@@ -313,22 +313,16 @@ fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
             "pro 5x",
             "chatgpt_pro_5x",
             "default_claude_max_5x",
+            "prolite",
+            "pro_lite",
+            "pro-lite",
+            "pro lite",
         ],
     ) {
         return LOWER_PRO;
     }
     if report.provider.eq_ignore_ascii_case("openai-codex")
-        && plan_matches(
-            plan,
-            &[
-                "pro",
-                "chatgpt_pro",
-                "prolite",
-                "pro_lite",
-                "pro-lite",
-                "pro lite",
-            ],
-        )
+        && plan_matches(plan, &["pro", "chatgpt_pro"])
     {
         return HIGH_PRO;
     }
@@ -469,6 +463,10 @@ mod tests {
         );
         assert_eq!(
             plan_capacity_units(&report("openai-codex", Some("pro_5x"), weekly)),
+            5.0
+        );
+        assert_eq!(
+            plan_capacity_units(&report("openai-codex", Some("prolite"), weekly)),
             5.0
         );
 
