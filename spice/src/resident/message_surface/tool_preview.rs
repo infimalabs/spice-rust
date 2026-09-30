@@ -136,7 +136,8 @@ pub(super) fn call_preview(name: &str, arguments: &str) -> String {
 
 fn ordinary_call_preview(name: &str, arguments: &str) -> String {
     let name = normalized_name(name);
-    let arguments = argument_preview(arguments);
+    let arguments =
+        targeted_preview(&name, arguments).unwrap_or_else(|| argument_preview(arguments));
     let fallback = match name.to_ascii_lowercase().as_str() {
         "bash" | "zsh" => "shell",
         "shell" | "local shell" => "command",
@@ -180,6 +181,71 @@ fn complete_preview(preview: &str, fallback: &str) -> String {
 
 fn informative_tokens(preview: &str) -> usize {
     preview.split_whitespace().count()
+}
+
+/// The target a known harness tool acted on, where no single argument names it.
+///
+/// An `lsp` call names its operation in `action`, which the generic scan
+/// would show alone; the symbol, query, and file it acted on are what a reader
+/// recognizes. A `grep` pairs its pattern with the path it searched, which the
+/// generic scan reduces to the path, and a `job` names its operation and job
+/// rather than the intent prose the scan would reach first.
+fn targeted_preview(name: &str, raw: &str) -> Option<String> {
+    let tool = name.to_ascii_lowercase();
+    if !matches!(tool.as_str(), "lsp" | "grep" | "job") {
+        return None;
+    }
+    let Ok(Value::Object(fields)) = serde_json::from_str::<Value>(raw) else {
+        return None;
+    };
+    let paired = |first: &str, joiner: &str, second: &str| {
+        let first = text_field(&fields, first)?;
+        Some(text_field(&fields, second).map_or_else(
+            || first.to_owned(),
+            |second| format!("{first}{joiner}{second}"),
+        ))
+    };
+    match tool.as_str() {
+        "lsp" => lsp_preview(&fields),
+        "grep" => paired("pattern", " in ", "path"),
+        _ => paired("op", " ", "id"),
+    }
+}
+
+/// `references label (app/src/view.rs:120)`, `symbols app/src/browser.rs`,
+/// `rename Foo -> Bar (src/a.rs:4)`, or `rename_file a.rs -> b.rs`.
+fn lsp_preview(fields: &Map<String, Value>) -> Option<String> {
+    let action = text_field(fields, "action")?;
+    let renamed = text_field(fields, "new_name");
+    let symbol = text_field(fields, "symbol");
+    let subject = match (symbol, renamed) {
+        (Some(symbol), Some(renamed)) => Some(format!("{symbol} -> {renamed}")),
+        (Some(symbol), None) => Some(symbol.to_owned()),
+        (None, _) => text_field(fields, "query").map(str::to_owned),
+    };
+    let location = text_field(fields, "file").map(|file| {
+        let located = fields
+            .get("line")
+            .and_then(Value::as_u64)
+            .map_or_else(|| file.to_owned(), |line| format!("{file}:{line}"));
+        match (symbol, renamed) {
+            (None, Some(renamed)) => format!("{located} -> {renamed}"),
+            _ => located,
+        }
+    });
+    Some(match (subject, location) {
+        (Some(subject), Some(location)) => format!("{action} {subject} ({location})"),
+        (Some(target), None) | (None, Some(target)) => format!("{action} {target}"),
+        (None, None) => action.to_owned(),
+    })
+}
+
+fn text_field<'a>(fields: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
+    fields
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
 }
 
 /// The most readable single argument the vendor payload carries.
