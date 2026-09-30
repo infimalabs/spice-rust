@@ -622,6 +622,9 @@ body:has(.shell--mosaic),
   min-height: 100%;
   overflow: hidden;
 }
+/* Lanes paint in Chat's order: canonical member zero at the right edge, and RTL
+   overflow keeps that edge visible. Member contents remain LTR. The global
+   Dash keeps its own LTR presentation. */
 .team-dash-roster {
   display: grid;
   grid-auto-columns: minmax(10rem, 1fr);
@@ -632,7 +635,9 @@ body:has(.shell--mosaic),
   overflow-x: auto;
   border-bottom: var(--canvas-edge);
   background: color-mix(in srgb, var(--panel) 80%, transparent);
+  direction: rtl;
 }
+.team-dash-roster > * { direction: ltr; }
 .team-dash-member {
   position: relative;
   display: grid;
