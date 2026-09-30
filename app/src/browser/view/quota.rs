@@ -165,7 +165,7 @@ fn usage_text(amount: &wire::QuotaAmount) -> String {
     let percent = amount.unit.eq_ignore_ascii_case("percent");
     let quantity = |value: &str| {
         if percent {
-            format!("{value}%")
+            format!("{}%", crate::quota::whole_percent(value))
         } else {
             format!("{value} {}", amount.unit)
         }
