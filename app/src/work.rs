@@ -1310,6 +1310,7 @@ mod tests {
             life: "steer".to_owned(),
             vendor: "omp".parse().expect("fixture vendor"),
             model: None,
+            seat_model: None,
             effort: None,
             occupant: None,
             session: None,

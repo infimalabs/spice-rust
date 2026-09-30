@@ -164,6 +164,7 @@ mod tests {
                 life: policy.as_str().to_owned(),
                 vendor: "omp".parse().expect("fixture vendor"),
                 model: None,
+                seat_model: None,
                 effort: None,
                 occupant: None,
                 session: None,

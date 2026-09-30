@@ -222,6 +222,8 @@ impl PendingKind {
             | Self::TeamSettled { .. }
             | Self::LaneSeat
             | Self::LaneRenewal { .. }
+            | Self::MemberLane { .. }
+            | Self::LaneRetune { .. }
             | Self::WakeSubmission { .. }
             | Self::TeamConfigure { .. }
             | Self::TeamArrange
@@ -422,6 +424,12 @@ impl ClientAction {
                     )
                 },
             ),
+            Self::RetuneLane { request, .. } => match &request.command {
+                crate::runtime::MemberCommand::Retune { model } => {
+                    model.as_ref().map_or(0, String::len)
+                }
+                _ => 0,
+            },
             Self::Note { task, note, .. } => task.as_str().len().saturating_add(note.len()),
             Self::Steer {
                 message,
@@ -446,6 +454,7 @@ impl ClientAction {
             | Self::TeamSettled { .. }
             | Self::MessageHistory { .. }
             | Self::RenewLane { .. }
+            | Self::LaneState { .. }
             | Self::ConfigureTeam { .. } => 0,
         }
     }
@@ -467,17 +476,24 @@ impl ClientAction {
             self,
             Self::Seat { .. }
                 | Self::RenewLane { .. }
+                | Self::RetuneLane { .. }
                 | Self::ConfigureTeam { .. }
                 | Self::ArrangeTeams { .. }
         )
     }
 
+    /// Coalescing identity of a composer renewal.
+    ///
+    /// A Dash member renewal has none: its member reservation already admits
+    /// one at a time, and coalescing it away would leave that reservation
+    /// waiting for an answer that never comes.
     fn renewal_key(&self) -> Option<RenewalKey> {
         match self {
             Self::RenewLane {
                 team,
                 lane,
                 requested,
+                member: None,
                 ..
             } => Some(RenewalKey {
                 team: *team,
@@ -494,6 +510,9 @@ impl ClientAction {
                 topology_revision, ..
             }
             | Self::RenewLane {
+                topology_revision, ..
+            }
+            | Self::RetuneLane {
                 topology_revision, ..
             }
             | Self::ConfigureTeam {
@@ -1046,6 +1065,7 @@ mod tests {
             team: id(30),
             lane: id(31),
             requested: true,
+            member: None,
         };
         queue.admit(renewal(), Some(id(3))).unwrap();
         queue.admit(renewal(), Some(id(4))).unwrap();

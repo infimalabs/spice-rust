@@ -17,6 +17,7 @@ mod composer;
 mod controls;
 mod dash;
 mod fleet;
+mod member_controls;
 mod mosaic_view;
 mod state;
 mod team_flow;
@@ -530,6 +531,7 @@ struct DashRender<'a> {
     select: &'a Callback<wire::TaskStamp>,
     request: &'a Callback<TeamFlowPageRequest>,
     controls: &'a UseReducerHandle<TeamControls>,
+    sender: &'a SenderHandle,
 }
 
 fn render_details(
@@ -554,6 +556,7 @@ fn render_details(
             }
         })
     };
+    let member_command = member_controls::command_callback(render.sender, surface, team.lane);
     html! {
         <main class="team-dash-frame" aria-label="Team Dash">
             <section class="team-dash-roster" aria-label="Team roster">
@@ -565,6 +568,7 @@ fn render_details(
                         team.lane,
                         render.select,
                         render.controls,
+                        &member_command,
                     )
                 })}
             </section>
@@ -658,6 +662,7 @@ fn renewal_callback(
                 team,
                 lane,
                 requested,
+                member: None,
             },
         ) {
             event.stop_propagation();

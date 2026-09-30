@@ -108,6 +108,15 @@ pub(crate) enum PendingKind {
         team: wire::CanonicalUuid,
         lane: wire::CanonicalUuid,
         requested: bool,
+        member: Option<runtime::MemberRequest>,
+    },
+    /// A Dash member's wake, drain, or remove.
+    MemberLane {
+        request: runtime::MemberRequest,
+    },
+    /// A Dash member's launch-model change.
+    LaneRetune {
+        request: runtime::MemberRequest,
     },
     WakeSubmission {
         lane: wire::CanonicalUuid,

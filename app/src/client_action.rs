@@ -44,6 +44,17 @@ pub(crate) enum ClientAction {
         team: CanonicalUuid,
         lane: CanonicalUuid,
         requested: bool,
+        /// The Dash member reservation this renewal settles, when one issued it.
+        member: Option<crate::runtime::MemberRequest>,
+    },
+    /// Wake, drain, or remove one seat from its Dash member.
+    LaneState {
+        request: crate::runtime::MemberRequest,
+    },
+    /// Restate the model one seat's next occupant launches with.
+    RetuneLane {
+        topology_revision: u64,
+        request: crate::runtime::MemberRequest,
     },
     ConfigureTeam {
         topology_revision: u64,

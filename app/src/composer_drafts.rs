@@ -369,6 +369,7 @@ mod tests {
             life: "steer".to_owned(),
             vendor: "omp".parse().expect("the fixture spells a vendor name"),
             model: Some("sonnet".to_owned()),
+            seat_model: None,
             effort: Some("high".to_owned()),
             occupant: occupant.map(uuid),
             session: Some("session-fixture".to_owned()),

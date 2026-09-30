@@ -458,6 +458,16 @@ live state changes do not resize or reorder the roster. Agent channel, occupant,
 worktree, residency policy, and session identifiers remain available through a
 per-member seat-details disclosure that scrolls inside its own box.
 
+The same disclosure carries the member's lane controls. Wake is offered only
+on a vacant seat the resident can seat, Drain only on an occupied one, and
+Remove only on a vacant seat that holds no claim. Renewal and the next-launch
+model sit beside them, and the model editor reports the seat's pinned model
+rather than the running one. Drain, Remove, and a renewal request confirm
+before anything is sent. The member shows its command in flight until the
+lane answer lands, and a refusal stays on that member with its reason. A
+control whose command the principal's authority does not admit is absent,
+not disabled.
+
 Below presence, every member keeps fixed Task, Latest activity, and Waiting
 direction rows. Live values replace text inside those slots rather than changing
 card geometry. Opening a task adds a same-URL history step; closing it or using
