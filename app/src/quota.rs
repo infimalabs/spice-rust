@@ -264,16 +264,14 @@ fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
     const LOWER_PRO: f64 = 5.0;
     const HIGH_PRO: f64 = 20.0;
 
-    let Some(plan) = report.account.plan_type.as_deref().map(str::trim) else {
-        // omp reports no Anthropic plan: its usage provider never reads the
-        // tier Anthropic's OAuth profile carries. The operator's Anthropic
-        // account is the $200 Max 20x plan, so an unreported one counts as
-        // that instead of a $20 plan.
-        return if report.provider.eq_ignore_ascii_case("anthropic") {
-            HIGH_PRO
-        } else {
-            BASELINE
-        };
+    let Some(plan) = report
+        .account
+        .plan_type
+        .as_deref()
+        .map(str::trim)
+        .filter(|plan| !plan.is_empty())
+    else {
+        return HIGH_PRO;
     };
     if plan_matches(
         plan,
@@ -332,9 +330,25 @@ fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
             ],
         )
     {
-        return LOWER_PRO;
+        return HIGH_PRO;
     }
-    BASELINE
+    if plan_matches(
+        plan,
+        &[
+            "1x",
+            "plus",
+            "chatgpt_plus",
+            "claude_pro",
+            "pro_1x",
+            "pro-1x",
+            "pro 1x",
+        ],
+    ) || (!report.provider.eq_ignore_ascii_case("openai-codex")
+        && plan.eq_ignore_ascii_case("pro"))
+    {
+        return BASELINE;
+    }
+    HIGH_PRO
 }
 
 fn plan_matches(plan: &str, candidates: &[&str]) -> bool {
@@ -419,15 +433,71 @@ mod tests {
                 .iter()
                 .map(|account| account.capacity)
                 .collect::<Vec<_>>(),
-            vec![20.0, 5.0, 0.2],
+            vec![20.0, 20.0, 0.2],
         );
         assert_eq!(stack.bands[1].provider, "anthropic");
         assert_eq!(stack.bands[1].accounts.len(), 1);
-        assert!((stack.bands[0].capacity / stack.capacity - 25.2 / 45.2).abs() < f64::EPSILON);
-        assert!((stack.bands[0].available / stack.capacity - 2.7 / 45.2).abs() < f64::EPSILON);
-        assert!((stack.bands[1].capacity / stack.capacity - 20.0 / 45.2).abs() < f64::EPSILON);
-        assert!((stack.bands[1].available / stack.capacity - 20.0 / 45.2).abs() < f64::EPSILON);
-        assert!((stack.remaining - 22.7 / 45.2).abs() < f64::EPSILON);
+        assert!((stack.bands[0].capacity / stack.capacity - 40.2 / 60.2).abs() < f64::EPSILON);
+        assert!((stack.bands[0].available / stack.capacity - 10.2 / 60.2).abs() < f64::EPSILON);
+        assert!((stack.bands[1].capacity / stack.capacity - 20.0 / 60.2).abs() < f64::EPSILON);
+        assert!((stack.bands[1].available / stack.capacity - 20.0 / 60.2).abs() < f64::EPSILON);
+        assert!((stack.remaining - 30.2 / 60.2).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn high_capacity_is_the_default_without_lower_tier_evidence() {
+        let weekly = &[("7d", None, "1")];
+        assert_eq!(
+            plan_capacity_units(&report("openai-codex", None, weekly)),
+            20.0
+        );
+        assert_eq!(
+            plan_capacity_units(&report("other", Some(""), weekly)),
+            20.0
+        );
+        assert_eq!(
+            plan_capacity_units(&report("other", Some("unrecognized"), weekly)),
+            20.0
+        );
+        assert_eq!(
+            plan_capacity_units(&report("openai-codex", Some("free"), weekly)),
+            0.2
+        );
+        assert_eq!(
+            plan_capacity_units(&report("openai-codex", Some("plus"), weekly)),
+            1.0
+        );
+        assert_eq!(
+            plan_capacity_units(&report("openai-codex", Some("pro_5x"), weekly)),
+            5.0
+        );
+
+        let snapshot = wire::QuotaSnapshot {
+            generated_at_ms: 10,
+            reports: vec![
+                report("openai-codex", Some("pro"), &[("7d", None, "0.5")]),
+                report("openai-codex", Some("chatgpt_pro"), &[("7d", None, "0.5")]),
+                report("anthropic", None, &[("7d", None, "0.95")]),
+            ],
+            accounts_without_usage: Vec::new(),
+            disabled_credentials: Vec::new(),
+            capacity: Vec::new(),
+        };
+        let stack = weekly_quota_stack(&snapshot).expect("weekly quota");
+        let openai = stack
+            .bands
+            .iter()
+            .find(|band| band.provider == "openai-codex")
+            .expect("OpenAI band");
+        let anthropic = stack
+            .bands
+            .iter()
+            .find(|band| band.provider == "anthropic")
+            .expect("Anthropic band");
+
+        assert!((openai.available - 20.0).abs() < f64::EPSILON);
+        assert!((anthropic.available - 19.0).abs() < f64::EPSILON);
+        assert!((stack.remaining - 39.0 / 60.0).abs() < f64::EPSILON);
     }
 
     fn snapshot() -> wire::QuotaSnapshot {
