@@ -83,14 +83,10 @@ impl TeamDestination {
         }
     }
 
-    /// Presentation label for one team-scoped destination.
+    /// Presentation label shared with the corresponding global destination.
     #[must_use]
     pub const fn label(self) -> &'static str {
-        match self {
-            Self::Dash => "Dash",
-            Self::Work => "Work",
-            Self::Chat => "Chat",
-        }
+        self.canvas().label()
     }
 }
 
@@ -119,8 +115,8 @@ impl CanvasDestination {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::Dash => "Dashboard",
-            Self::Work => "All work",
+            Self::Dash => "Dash",
+            Self::Work => "Work",
             Self::Chat => "Chat",
         }
     }
@@ -148,8 +144,8 @@ impl CanvasDestination {
     #[must_use]
     pub const fn description(self) -> &'static str {
         match self {
-            Self::Dash => "Resident dashboard for identity, topology, quota, and controls",
-            Self::Work => "All work across tasks, claims, deferrals, and reviews",
+            Self::Dash => "Dash for consolidated state, controls, and details",
+            Self::Work => "Work across tasks, claims, deferrals, and reviews",
             Self::Chat => "Chat across persistent team agents",
         }
     }

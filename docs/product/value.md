@@ -384,7 +384,7 @@ button edge uses a crisp two-pixel ring and a restrained shadow in that same
 color: neutral with neither status, gold for Fast mode, blue for an available
 Canvas update, and red when both apply. Quota colors remain unchanged.
 
-### The global Dashboard page
+### The global Dash page
 
 Resident topology presents each team in canonical order from left to right:
 member zero, the team's main agent, starts at the far-left control-flow origin,
@@ -392,7 +392,7 @@ and later members proceed rightward before wrapping in the same order. Chat
 intentionally presents that order from its right-side controls instead; neither
 projection changes member identity, accent, keyboard order, or attribution.
 
-The first Dashboard section pairs a compact operator identity row with the
+The first Dash section pairs a compact operator identity row with the
 resident it controls. The avatar already carries the operator badge, so the card
 does not repeat badge, name-source, or email-source metadata. Beside it, three
 fixed resident fields show connection state, appliance version, and a compact
@@ -417,7 +417,7 @@ views preserve the same identity and evidence.
 
 The project-stem pills above Canvas begin with one label-less aggregate pill
 whenever open work exists. Its badge carries the same ready, active, and
-unavailable counts across every stem; selecting it opens All work and clears a
+unavailable counts across every stem; selecting it opens Work and clears a
 stem scope, so the global board remains reachable directly from every Canvas
 destination.
 
