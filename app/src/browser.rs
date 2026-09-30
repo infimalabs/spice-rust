@@ -52,6 +52,7 @@ mod overlay;
 mod task_detail;
 mod task_relations;
 mod team_settled;
+mod toast;
 mod view;
 mod watchband;
 mod work_card;
@@ -559,7 +560,11 @@ fn canvas_router() -> Html {
     if let Some(route) = route {
         let destination = route.canvas_destination();
         let card_target = route.card_target().map(str::to_owned);
-        html! { <CanvasApp {destination} {card_target} {navigate} /> }
+        html! {
+            <toast::ToastProvider>
+                <CanvasApp {destination} {card_target} {navigate} />
+            </toast::ToastProvider>
+        }
     } else {
         html! {
             <main class="shell">

@@ -476,7 +476,6 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
     let speak = correspondent.speak.clone();
     let quote = correspondent.quote.clone();
     let spoken = text.to_owned();
-    let copied = text.to_owned();
     let speech_label = if correspondent.speaking {
         "Stop playback"
     } else {
@@ -525,12 +524,56 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
                     onclick={Callback::from(move |_| quote.emit(()))}
                 ><span class="card-action-icon" aria-hidden="true">{"❝"}</span></button>
             }
-            <button
-                class="card-action card-action--copy" type="button" title="Copy this message"
-                aria-label="Copy this message"
-                onclick={Callback::from(move |_| copy_text(&copied, drop))}
-            ><span class="card-action-icon" aria-hidden="true">{"⧉"}</span></button>
+            <CopyButton
+                class={classes!("card-action", "card-action--copy")}
+                text={AttrValue::from(text.to_owned())}
+                subject="message" title="Copy this message" label="Copy this message"
+            ><span class="card-action-icon" aria-hidden="true">{"⧉"}</span></CopyButton>
         </span>
+    }
+}
+
+#[derive(Properties, PartialEq)]
+pub(in crate::browser) struct CopyButtonProps {
+    /// Text put on the clipboard.
+    pub(in crate::browser) text: AttrValue,
+    /// What the toast names as copied: "Copied {subject}".
+    pub(in crate::browser) subject: AttrValue,
+    #[prop_or_default]
+    pub(in crate::browser) class: Classes,
+    #[prop_or_default]
+    pub(in crate::browser) title: Option<AttrValue>,
+    /// Accessible name, when the visible content does not already name it.
+    #[prop_or_default]
+    pub(in crate::browser) label: Option<AttrValue>,
+    #[prop_or_default]
+    pub(in crate::browser) children: Html,
+}
+
+/// A button that copies text and reports the outcome through the root toast.
+#[function_component(CopyButton)]
+pub(in crate::browser) fn copy_button(props: &CopyButtonProps) -> Html {
+    let toaster = crate::browser::toast::use_toaster();
+    let onclick = {
+        let text = props.text.clone();
+        let subject = props.subject.clone();
+        Callback::from(move |_| {
+            let toaster = toaster.clone();
+            let subject = subject.clone();
+            copy_text(&text, move |result| {
+                toaster.settled(match result {
+                    Ok(()) => format!("Copied {subject}"),
+                    Err(error) => format!("Copy failed: {error}"),
+                });
+            });
+        })
+    };
+    html! {
+        <button
+            class={props.class.clone()} type="button"
+            title={props.title.clone()} aria-label={props.label.clone()}
+            {onclick}
+        >{props.children.clone()}</button>
     }
 }
 
@@ -541,10 +584,7 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
 /// expose it only to secure contexts, so a Canvas opened over plain http by a
 /// LAN address has none, and only there does the copy go through a selection
 /// instead. A refusal from either path is reported, not retried another way.
-pub(in crate::browser) fn copy_text(
-    text: &str,
-    settled: impl FnOnce(Result<(), String>) + 'static,
-) {
+fn copy_text(text: &str, settled: impl FnOnce(Result<(), String>) + 'static) {
     let Some(promise) = clipboard_write(text) else {
         settled(select_and_copy(text));
         return;

@@ -798,62 +798,6 @@ fn render_agent_message_media(
     }
 }
 
-#[derive(Properties, PartialEq)]
-struct AgentIdButtonProps {
-    author: AttrValue,
-    label: AttrValue,
-    attribution: AttrValue,
-}
-
-/// How long a copy outcome stays beside the agent label.
-const COPY_NOTICE_MILLIS: u32 = 1_600;
-
-/// The agent label, which copies the agent id and says whether that worked.
-#[function_component(AgentIdButton)]
-fn agent_id_button(props: &AgentIdButtonProps) -> Html {
-    let outcome = use_state_eq(|| None::<Result<(), String>>);
-    let dismissal = use_mut_ref(|| None::<gloo_timers::callback::Timeout>);
-    let onclick = {
-        let author = props.author.clone();
-        let outcome = outcome.clone();
-        Callback::from(move |_| {
-            let outcome = outcome.clone();
-            let dismissal = dismissal.clone();
-            view::chrome::copy_text(&author, move |result| {
-                outcome.set(Some(result));
-                let outcome = outcome.clone();
-                *dismissal.borrow_mut() = Some(gloo_timers::callback::Timeout::new(
-                    COPY_NOTICE_MILLIS,
-                    move || outcome.set(None),
-                ));
-            });
-        })
-    };
-    let (notice, title) = match &*outcome {
-        None => (None, format!("Copy agent id\n{}", props.author)),
-        Some(Ok(())) => (Some("copied"), format!("Copied agent id\n{}", props.author)),
-        Some(Err(error)) => (
-            Some("copy failed"),
-            format!("Copy failed: {error}\n{}", props.author),
-        ),
-    };
-    html! {
-        <button
-            class="message-agent-name"
-            type="button"
-            {title}
-            aria-label={format!("Copy agent id for {}", props.attribution)}
-            data-copy={outcome.as_ref().map(|result| if result.is_ok() { "copied" } else { "failed" })}
-            {onclick}
-        >
-            <span class="message-agent-label">{props.label.clone()}</span>
-            if let Some(notice) = notice {
-                <span class="message-agent-copy" aria-live="polite">{notice}</span>
-            }
-        </button>
-    }
-}
-
 fn render_agent_message_footer(
     message: &wire::AgentMessage,
     shown_text: &str,
@@ -873,11 +817,15 @@ fn render_agent_message_footer(
     let link_label = format!("Link to message from {attribution}");
     let producer_identity = html! {
         <span class="message-footer-identity">
-            <AgentIdButton
-                author={AttrValue::from(message.author.to_string())}
-                label={AttrValue::from(producer_label)}
-                attribution={AttrValue::from(attribution.clone())}
-            />
+            <view::chrome::CopyButton
+                class="message-agent-name"
+                text={AttrValue::from(message.author.to_string())}
+                subject="agent id"
+                title={AttrValue::from(format!("Copy agent id\n{}", message.author))}
+                label={AttrValue::from(format!("Copy agent id for {attribution}"))}
+            >
+                <span class="message-agent-label">{producer_label}</span>
+            </view::chrome::CopyButton>
         </span>
     };
     html! {
