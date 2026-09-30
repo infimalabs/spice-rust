@@ -409,8 +409,8 @@ fn an_answered_peer_message_replies_once_to_its_seated_sender_and_the_reply_ends
         Some(wire::peer_reply_control(&told.key, wire::PeerAnswer::Ack).as_str())
     );
     assert_eq!(
-        reply.text,
-        format!("ACK {}: Moved the import; tests pass.", told.key)
+        reply.text, "Moved the import; tests pass.",
+        "the reply relays the answer clause without repeating its header"
     );
     let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
     let rendered = steer::inbox::render_pending(&seal, &[reply.clone()], |_, _| None);
@@ -469,11 +469,7 @@ fn a_reply_to_a_sender_that_ended_its_turn_waits_for_its_next_seat() {
     };
     peers.vacate(SENDER);
 
-    let heard = peers.answer(
-        RECIPIENT,
-        &[&told.key],
-        &format!("ACK {}: Settled.", told.key),
-    );
+    let heard = peers.answer(RECIPIENT, &[&told.key], &format!("ACK {}", told.key));
     assert!(
         peers.pending(RECIPIENT).is_empty(),
         "the peer message retires: {heard}"
@@ -483,7 +479,15 @@ fn a_reply_to_a_sender_that_ended_its_turn_waits_for_its_next_seat() {
         .try_into()
         .unwrap_or_else(|pending| panic!("the vacant sender holds one reply: {pending:?}"));
     assert_eq!(reply.from, Some(recipient));
-    assert_eq!(reply.text, format!("ACK {}: Settled.", told.key));
+    assert_eq!(reply.text, "", "a bare header relays no clause");
+    let seal: steer::Key = "1kQnrzNZ".parse().expect("fixture seal");
+    let rendered = steer::inbox::render_pending(&seal, &[reply], |_, _| None);
+    assert!(
+        rendered
+            .lines()
+            .any(|line| line.starts_with("[PEER REPLY") && line.contains(told.key.as_str())),
+        "the delivery still names the answered key: {rendered}"
+    );
 
     let mut diagnostics = Vec::new();
     steering::dispose_at_startup(&peers.bus, &peers.paths, peers.epoch, &mut diagnostics)
