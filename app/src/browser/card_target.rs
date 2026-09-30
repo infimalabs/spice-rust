@@ -377,27 +377,36 @@ impl Drop for Seek {
     }
 }
 
+/// Restore a returned-to entry's team mode once per arrival, then its anchor.
+/// Mode changes the reader makes on that entry afterward stand.
 fn restore_team_entry(
     anchor: Option<&ReturnAnchor>,
     team_controls: &UseReducerHandle<TeamControls>,
     restored: &Rc<RefCell<Option<f64>>>,
+    moved: &Rc<RefCell<Option<f64>>>,
     document: Option<&web_sys::Document>,
 ) -> bool {
-    let restore_team = anchor
-        .and_then(|anchor| anchor.team.zip(anchor.mode))
-        .filter(|(team, mode)| team_controls.mode(*team) != *mode);
-    if let Some((team, mode)) = restore_team {
-        team_controls.dispatch(TeamControlAction::SetMode {
-            team: Some(team),
-            mode,
-        });
-        return false;
+    let arrived = anchor.filter(|anchor| *moved.borrow() != Some(anchor.nonce));
+    if let Some(anchor) = arrived {
+        *moved.borrow_mut() = Some(anchor.nonce);
+        if let Some((team, mode)) = anchor
+            .team
+            .zip(anchor.mode)
+            .filter(|(team, mode)| team_controls.mode(*team) != *mode)
+        {
+            team_controls.dispatch(TeamControlAction::SetMode {
+                team: Some(team),
+                mode,
+            });
+            return false;
+        }
     }
     match (anchor, document) {
         (Some(anchor), Some(document)) => returned_to(restored, anchor, document),
         _ => {
             // Leaving the entry lets a later Back restore it again.
             restored.borrow_mut().take();
+            moved.borrow_mut().take();
             false
         }
     }
@@ -427,6 +436,8 @@ pub(super) fn use_target(
     visible: bool,
 ) {
     let restored = use_mut_ref(|| None::<f64>);
+    let moved = use_mut_ref(|| None::<f64>);
+    let opened = use_mut_ref(|| None::<String>);
     let held = use_mut_ref(|| None::<Hold>);
     let (ready, revision) = {
         let surface = surface.read();
@@ -449,8 +460,13 @@ pub(super) fn use_target(
                 .and_then(|window| window.history().ok())
                 .and_then(|history| ReturnAnchor::read(&history))
                 .filter(|_| target.is_none() && *visible && *ready);
-            let returned =
-                restore_team_entry(anchor.as_ref(), team_controls, &restored, document.as_ref());
+            let returned = restore_team_entry(
+                anchor.as_ref(),
+                team_controls,
+                &restored,
+                &moved,
+                document.as_ref(),
+            );
             if returned
                 || held.borrow().as_ref().is_some_and(|hold| {
                     Some(hold.target.as_str()) != target.as_deref() || !*visible
@@ -460,65 +476,21 @@ pub(super) fn use_target(
             }
             if let Some(target) = target.as_deref().filter(|_| *visible) {
                 if *ready {
-                    let settled = returned
-                        || status
-                            .as_ref()
-                            .is_some_and(|settled| settled.target == target && settled.available);
-                    let element = document
-                        .as_ref()
-                        .and_then(|document| routed_element(document, target));
-                    let open_team = element
-                        .as_ref()
-                        .and_then(routed_team)
-                        .filter(|team| team_controls.mode(*team) != TeamMode::Chat);
-                    if let Some(team) = open_team {
-                        team_controls.dispatch(TeamControlAction::ShowChat { team });
-                    } else {
-                        if let Some(element) = element.as_ref().filter(|element| {
-                            element.matches(".mosaic-message-card").unwrap_or(false)
-                        }) {
-                            let _ = element.set_attribute("data-card-route-selected", "true");
-                            selected = Some(element.clone());
-                        }
-                        if !settled {
-                            if let Some(element) = element {
-                                let pin = Rc::new(RefCell::new(reach(&element, target, &status)));
-                                *held.borrow_mut() = Some(Hold {
-                                    target: target.to_owned(),
-                                    _seek: None,
-                                    _pin: pin,
-                                });
-                            } else {
-                                status.set(Some(Status {
-                                    target: target.to_owned(),
-                                    available: false,
-                                }));
-                                if held.borrow().is_none()
-                                    && let Some(document) = &document
-                                {
-                                    let pin = Rc::new(RefCell::new(None));
-                                    let seek = Seek::start(document, target, &status, &pin);
-                                    *held.borrow_mut() = Some(Hold {
-                                        target: target.to_owned(),
-                                        _seek: seek,
-                                        _pin: pin,
-                                    });
-                                }
-                            }
-                        } else if returned
-                            && status.as_ref().is_none_or(|known| known.target != target)
-                        {
-                            // The route's own card counts as reached, so a later
-                            // stream advance does not yank the reader to it.
-                            status.set(Some(Status {
-                                target: target.to_owned(),
-                                available: element.is_some(),
-                            }));
-                        }
-                    }
+                    let route = Route {
+                        target,
+                        returned,
+                        document: document.as_ref(),
+                        status: &status,
+                        team_controls,
+                    };
+                    selected = route.reach(&held, &opened);
                 }
-            } else if status.is_some() {
-                status.set(None);
+            } else {
+                // A later visit to the same card opens its team's Chat again.
+                opened.borrow_mut().take();
+                if status.is_some() {
+                    status.set(None);
+                }
             }
             move || {
                 if let Some(element) = selected {
@@ -527,4 +499,86 @@ pub(super) fn use_target(
             }
         },
     );
+}
+
+/// One visible route target once Chat state is ready.
+struct Route<'a> {
+    target: &'a str,
+    returned: bool,
+    document: Option<&'a web_sys::Document>,
+    status: &'a UseStateHandle<Option<Status>>,
+    team_controls: &'a UseReducerHandle<TeamControls>,
+}
+
+impl Route<'_> {
+    /// Open the routed card's team on Chat once per route, since any later
+    /// mode change is the reader's, then reach, seek or settle the card.
+    /// Returns the card marked as the route's selection.
+    fn reach(
+        &self,
+        held: &Rc<RefCell<Option<Hold>>>,
+        opened: &Rc<RefCell<Option<String>>>,
+    ) -> Option<web_sys::Element> {
+        let (target, status) = (self.target, self.status);
+        let element = self
+            .document
+            .and_then(|document| routed_element(document, target));
+        if element.is_some() && opened.borrow().as_deref() != Some(target) {
+            *opened.borrow_mut() = Some(target.to_owned());
+            if let Some(team) = element
+                .as_ref()
+                .and_then(routed_team)
+                .filter(|team| self.team_controls.mode(*team) != TeamMode::Chat)
+            {
+                self.team_controls
+                    .dispatch(TeamControlAction::ShowChat { team });
+                return None;
+            }
+        }
+        let selected = element
+            .as_ref()
+            .filter(|element| element.matches(".mosaic-message-card").unwrap_or(false))
+            .cloned();
+        if let Some(selected) = &selected {
+            let _ = selected.set_attribute("data-card-route-selected", "true");
+        }
+        let settled = self.returned
+            || status
+                .as_ref()
+                .is_some_and(|settled| settled.target == target && settled.available);
+        if !settled {
+            if let Some(element) = element {
+                let pin = Rc::new(RefCell::new(reach(&element, target, status)));
+                *held.borrow_mut() = Some(Hold {
+                    target: target.to_owned(),
+                    _seek: None,
+                    _pin: pin,
+                });
+            } else {
+                status.set(Some(Status {
+                    target: target.to_owned(),
+                    available: false,
+                }));
+                if held.borrow().is_none()
+                    && let Some(document) = self.document
+                {
+                    let pin = Rc::new(RefCell::new(None));
+                    let seek = Seek::start(document, target, status, &pin);
+                    *held.borrow_mut() = Some(Hold {
+                        target: target.to_owned(),
+                        _seek: seek,
+                        _pin: pin,
+                    });
+                }
+            }
+        } else if self.returned && status.as_ref().is_none_or(|known| known.target != target) {
+            // The route's own card counts as reached, so a later stream
+            // advance does not yank the reader to it.
+            status.set(Some(Status {
+                target: target.to_owned(),
+                available: element.is_some(),
+            }));
+        }
+        selected
+    }
 }
