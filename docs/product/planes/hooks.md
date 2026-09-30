@@ -251,8 +251,10 @@ flowchart TD
   W -- "tool input or reasoning only" --> A["not acknowledgment evidence;<br/>the key stays live"]
   W -- "assistant text ending the turn" --> X["retired on landing or at exit<br/>from the final transcript"]
   W -- "quoted or narrated in assistant text" --> Q["quoted mentions produce steer::ack-missed;<br/>the key stays live"]
+  W -- "a placed header naming a key<br/>the occupant does not hold" --> U["one private notice names the token<br/>and lists the pending keys"]
   A --> N["speak the header as visible text,<br/>or let the turn end on it"]
   Q --> N
+  U --> N
 ```
 
 **Invariant —** Assistant text on the lane tape is the sole acknowledgment
@@ -273,6 +275,15 @@ buries a live key is refused as `steer::ack-missed` naming that miss and the
 repair, leading a new line with the header; the live witness the lane cited has
 not moved, so the refusal never sends it to reread a snapshot that shows the
 same key.
+
+**Invariant —** A placed header naming a token the occupant does not hold
+retires nothing and is corrected once. The token is neither pending, nor told
+in the current context, nor the lane seal: a mistyped key, or one retired
+before this context heard it. The supervisor privately names that exact token,
+says it acknowledged nothing, and lists the pending keys. A key this context
+was told stays silent after it retires, so a closing reply may repeat its
+header. The notice is a delivery correction, not journal authority, and
+repeats for a token only after a compaction.
 
 ### Command rewriting
 
