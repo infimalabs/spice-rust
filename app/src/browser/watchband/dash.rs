@@ -68,8 +68,9 @@ fn dash_chat_click(
 ) -> Callback<MouseEvent> {
     let controls = controls.clone();
     Callback::from(move |event: MouseEvent| {
-        super::card_target::remember_team_return(&event, team);
-        controls.dispatch(TeamControlAction::ShowChat { team });
+        if super::card_target::remember_team_return(&event, team) {
+            controls.dispatch(TeamControlAction::ShowChat { team });
+        }
     })
 }
 

@@ -549,8 +549,9 @@ fn render_details(
         let controls = render.controls.clone();
         let team = team.lane;
         Callback::from(move |event: MouseEvent| {
-            super::card_target::remember_team_return(&event, team);
-            controls.dispatch(TeamControlAction::ShowChat { team });
+            if super::card_target::remember_team_return(&event, team) {
+                controls.dispatch(TeamControlAction::ShowChat { team });
+            }
         })
     };
     html! {
