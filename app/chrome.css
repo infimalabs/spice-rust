@@ -116,7 +116,7 @@ body:has(.shell--mosaic),
 .canvas-menu { position: static; grid-row: 1; grid-column: -2; }
 .canvas-menu[open] { z-index: 2; }
 .canvas-menu > summary {
-  --canvas-menu-edge: var(--accent-slot, var(--accent));
+  --canvas-menu-edge: var(--accent-slot, var(--line));
   --canvas-menu-surface: var(--control-surface-soft);
   position: relative; z-index: 2; display: inline-grid; place-items: center; width: 35px; height: 30px; padding: 0;
   border: 1px solid color-mix(in srgb, var(--canvas-menu-edge) 58%, var(--line));
