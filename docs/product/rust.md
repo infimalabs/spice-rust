@@ -345,9 +345,12 @@ Turn-start events remain lifecycle evidence, not Mosaic cards. The card reducer
 omits them for live delivery and retained history, so they consume no card slots
 and render no turn announcement. Final messages retain their FINAL badge and
 visual treatment; the next message makes the new turn apparent. Compaction
-events still render their context divider. History cursors advance from the
-oldest same-lane source record in each page, independently of card eligibility,
-so a page containing only hidden turn events still leads to older prose.
+events still render their context divider. Each divider keeps the relative-age
+link in its fixed-width slot and separates it from the agent/cause context with
+an explicit layout gap rather than authored whitespace or font metrics. History
+cursors advance from the oldest same-lane source record in each page,
+independently of card eligibility, so a page containing only hidden turn events
+still leads to older prose.
 
 Fresh vendor sessions render a distinct "started fresh session" lifecycle floor
 through the same full-width divider and epoch layout as compaction. Initial
