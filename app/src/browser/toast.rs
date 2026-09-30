@@ -3,9 +3,10 @@
 //! and fades a settled one after a fixed dwell.
 //!
 //! The Canvas mounts one instance at its root and hands its [`Toaster`] to
-//! every component through context. A modal dialog renders in the top layer,
-//! above anything root-mounted, so a dialog that reports results keeps its own
-//! instance inside itself.
+//! every component through context. That instance is a manual popover raised
+//! with each result, so it shows above an open modal dialog such as task
+//! detail. The lightbox renders its own instance inside its dialog, beside the
+//! image its actions report on.
 
 use gloo_timers::callback::Timeout;
 use yew::prelude::*;
