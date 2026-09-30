@@ -54,6 +54,12 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     /// Hidden-reasoning attempts already corrected in this context and pending
     /// inbox generation. The text itself is never retained.
     reasoning_reminder: Mutex<ReasoningReminder>,
+    /// The seal wrapping this lane's steering, which prose may name without
+    /// naming a directive.
+    seal: steer::Key,
+    /// Tokens a visible acknowledgment header named without holding them, and
+    /// already corrected in this context.
+    misdirected: Mutex<BTreeSet<String>>,
     /// Latest claimed-task generation privately delivered to this occupant.
     task_generation: Mutex<Option<(String, u64, u64)>>,
     /// The confirm dialog each open consent request will answer.
@@ -160,6 +166,7 @@ impl<W: Write + Send + 'static> Driver<W> {
                     .into_bytes(),
                 )
             },
+            steer::Key::for_identity(lane),
             terminal,
         )
     }
@@ -167,6 +174,7 @@ impl<W: Write + Send + 'static> Driver<W> {
     fn with_inbox_reader(
         stdin: W,
         read_inbox: impl Fn() -> Option<Vec<u8>> + Send + Sync + 'static,
+        seal: steer::Key,
         terminal: Option<Terminal>,
     ) -> Arc<Self> {
         Arc::new(Self {
@@ -177,6 +185,8 @@ impl<W: Write + Send + 'static> Driver<W> {
             told: Mutex::new(BTreeSet::new()),
             replied: Mutex::new(BTreeSet::new()),
             reasoning_reminder: Mutex::new(ReasoningReminder::default()),
+            seal,
+            misdirected: Mutex::new(BTreeSet::new()),
             task_generation: Mutex::new(None),
             asks: Mutex::new(HashMap::new()),
             terminal,
@@ -413,6 +423,89 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
     }
 
+    /// Correct visible acknowledgment headers that name a key the occupant
+    /// does not hold.
+    ///
+    /// A header naming a mistyped key, or one retired before this context was
+    /// told anything, retires nothing, and an occupant that never hears so
+    /// believes it answered. A key still pending, one this context was told,
+    /// and the lane's own seal stay silent: the first retires, and the others
+    /// were really given to this occupant. Like the reasoning correction this
+    /// writes only a private notice and never reaches journal authority.
+    fn nudge_misdirected_acknowledgements(&self, decoded: &Decoded) {
+        let prose = decoded
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                Event::Prose(prose)
+                    if prose.role == ProseRole::Assistant
+                        && steer::has_acknowledgement(&prose.text) =>
+                {
+                    Some(prose.text.as_str())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        if prose.is_empty() {
+            return;
+        }
+        let inbox = (self.read_inbox)().unwrap_or_default();
+        let pending = std::str::from_utf8(&inbox)
+            .map(|rendered| steer::inbox::keys(rendered).collect::<Vec<_>>())
+            .unwrap_or_default();
+        let standing = PendingKeys(pending.iter().filter_map(|key| key.parse().ok()).collect());
+        let told = self
+            .told
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        let mut misdirected = self
+            .misdirected
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut named = BTreeSet::new();
+        for text in prose {
+            for recognition in steer::scan(text, &standing) {
+                if !recognition.outcome.placed() {
+                    continue;
+                }
+                let steer::Outcome::Missed { token, .. } = recognition.outcome else {
+                    continue;
+                };
+                if token != self.seal.as_str()
+                    && !told.contains(&token)
+                    && !misdirected.contains(&token)
+                {
+                    named.insert(token);
+                }
+            }
+        }
+        if named.is_empty() {
+            return;
+        }
+        let quoted = |keys: &mut dyn Iterator<Item = &str>| {
+            keys.map(|key| format!("`{key}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let pending = if pending.is_empty() {
+            "No steering is pending.".to_owned()
+        } else {
+            format!(
+                "Pending: {}; copy the key exactly as delivered.",
+                quoted(&mut pending.iter().copied())
+            )
+        };
+        let message = format!(
+            "<system-notice>\nYour acknowledgment named {}, which is not a pending steering key; \
+             it acknowledged nothing. {pending}\n</system-notice>",
+            quoted(&mut named.iter().map(String::as_str)),
+        );
+        if self.steer(&message).is_ok() {
+            misdirected.extend(named);
+        }
+    }
+
     /// Let one decoded record shape delivery, and state the consent request a
     /// confirm dialog raises.
     ///
@@ -481,8 +574,13 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .unwrap_or_else(PoisonError::into_inner)
                 .nudged
                 .clear();
+            self.misdirected
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clear();
         }
         self.nudge_hidden_acknowledgements(decoded);
+        self.nudge_misdirected_acknowledgements(decoded);
         let settled = decoded.context().is_some_and(|context| {
             context.session_settled
                 || context

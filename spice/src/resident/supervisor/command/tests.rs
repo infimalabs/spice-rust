@@ -81,6 +81,9 @@ impl Drop for Scratch {
         let _ = fs::remove_dir_all(&self.0);
     }
 }
+/// The seal the fixture driver's lane wraps its steering in.
+const SEAL: &str = "Sk9DLj12R";
+
 fn make_driver(sink: Sink, scratch: &Scratch, terminal: Option<Terminal>) -> Arc<Driver<Sink>> {
     let source = Arc::clone(&scratch.1);
     Driver::with_inbox_reader(
@@ -91,6 +94,7 @@ fn make_driver(sink: Sink, scratch: &Scratch, terminal: Option<Terminal>) -> Arc
                 .unwrap_or_else(PoisonError::into_inner)
                 .clone()
         },
+        SEAL.parse().expect("the fixture seal is key-shaped"),
         terminal,
     )
 }
@@ -425,6 +429,51 @@ fn hidden_ack_attempts_receive_one_private_visible_prose_nudge() {
         sink.answered(6).len(),
         6,
         "a lost context receives one fresh correction"
+    );
+}
+
+/// A visible header naming a key the occupant does not hold hears so once, by
+/// the exact token it wrote; keys it holds and mentions it did not author stay
+/// silent.
+#[test]
+fn a_visible_header_naming_no_held_key_receives_one_private_correction() {
+    let scratch = Scratch::new("misdirected-ack");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, None);
+    scratch.publish(format!(
+        "<{SEAL}>\n\
+         directive=d1 key=dTrSSg90C stage=new expires=never\nfirst\n\
+         directive=d2 key=dTtrHz4R3 stage=new expires=never\nsecond\n\
+         </{SEAL}>\n"
+    ));
+    driver.deliver_inbox();
+    // The first directive retires; the occupant was told it in this context.
+    scratch.publish(format!(
+        "<{SEAL}>\ndirective=d2 key=dTtrHz4R3 stage=new expires=never\nsecond\n</{SEAL}>\n"
+    ));
+
+    let reply = decoded(
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK dTrSSg90C is done. ACK dTrHz4R3: looking.\n\nACK dTtrHz4R3: fine. ACK Sk9DLj12R: seal. `ACK dTrHz4Rx: quoted`"}]}}"#,
+    );
+    driver.observe(&reply);
+    let frames = sink.answered(2);
+    assert_eq!(frames.len(), 2, "{frames:?}");
+    let notice = frames[1]["message"].as_str().expect("correction text");
+    assert!(notice.starts_with("<system-notice>\n"), "{notice}");
+    assert!(notice.contains("named `dTrHz4R3`,"), "{notice}");
+    assert!(notice.contains("Pending: `dTtrHz4R3`;"), "{notice}");
+    for held in ["dTrSSg90C", "Sk9DLj12R", "dTrHz4Rx"] {
+        assert!(!notice.contains(held), "{held} stays silent: {notice}");
+    }
+
+    driver.observe(&reply);
+    driver.observe(&decoded(
+        br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"ACK dTrHz4R4: reasoning is not prose."}]}}"#,
+    ));
+    assert_eq!(
+        sink.frames().len(),
+        2,
+        "a corrected token and reasoning stay silent"
     );
 }
 
