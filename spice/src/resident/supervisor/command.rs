@@ -216,9 +216,9 @@ impl<W: Write + Send + 'static> Driver<W> {
         };
         let message = format!(
             "<system-notice>\n{urgency}: {} tool calls since your last visible prose \
-             (reminder {}). Give the operator one short status line now, including \
-             any job you are awaiting. Keep healthy work running; do not cancel it \
-             to answer this reminder. No acknowledgment key is required.\n</system-notice>",
+             (reminder {}). Give the operator one short status line now. Keep healthy \
+             work running; do not cancel it to answer this reminder. No acknowledgment \
+             key is required.\n</system-notice>",
             prod.moments, prod.count,
         );
         let _sent = self.steer(&message);
