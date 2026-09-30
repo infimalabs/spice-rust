@@ -371,6 +371,7 @@ mod tests {
             model: Some("sonnet".to_owned()),
             seat_model: None,
             effort: Some("high".to_owned()),
+            fast_mode: false,
             occupant: occupant.map(uuid),
             session: Some("session-fixture".to_owned()),
             disposition: "seated".to_owned(),

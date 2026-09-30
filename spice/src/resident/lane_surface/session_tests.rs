@@ -131,6 +131,7 @@ fn declaration_reporter_forwards_the_kernel_exit_to_its_resident_sink() {
         vendor: "omp".parse().expect("fixture vendor"),
         model: "sonnet".to_owned(),
         effort: "high".to_owned(),
+        fast_mode: false,
         git: "skipped:test".to_owned(),
         rtk: wire::body::RtkHealth::new(
             wire::body::RtkHealthState::Active,

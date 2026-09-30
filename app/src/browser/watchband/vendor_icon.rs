@@ -1,5 +1,5 @@
-//! The composer's emblem: the glyph of the provider its model runs on, badged
-//! with omp's pi, or the pi alone.
+//! The composer's provider glyph, optionally badged for a fast-mode launch,
+//! or omp's pi when the model has no recognized provider.
 
 use wire::CanonicalUuid;
 use yew::prelude::*;
@@ -8,10 +8,10 @@ use crate::watchband::{self, Emblem, Provider, Standing};
 
 /// The emblem for `standing` as drawn on `surface`.
 ///
-/// Gradient and halo ids are named by surface as well as lane: the mosaic
-/// stays mounted while hidden, so a lane drawn on two surfaces would
-/// otherwise mint one id twice, and `url(#id)` would resolve to the hidden
-/// copy, which does not paint.
+/// Gradient ids are named by surface as well as lane: the mosaic stays mounted
+/// while hidden, so a lane drawn on two surfaces would otherwise mint one id
+/// twice, and `url(#id)` would resolve to the hidden copy, which does not
+/// paint.
 pub(in crate::browser) fn render_composer_vendor_icon(
     standing: &Standing,
     surface: &'static str,
@@ -37,19 +37,30 @@ pub(in crate::browser) fn render_dash_vendor_icon(standing: &Standing) -> Html {
 fn render_vendor_icon(
     standing: &Standing,
     surface: &'static str,
-    label: String,
-    title: Option<String>,
+    mut label: String,
+    mut title: Option<String>,
 ) -> Html {
+    let fast_mode = standing.thread.is_some() && standing.fast_mode;
     let (mark, provider) = match watchband::emblem(standing.model.as_deref()) {
-        Emblem::Provider(provider) => (
-            render_vendor_glyph(
-                provider_glyph_path(provider),
-                render_omp_badge(surface, standing.lane),
-            ),
-            Some(provider),
-        ),
+        Emblem::Provider(provider) => {
+            let badge = if fast_mode {
+                render_fast_badge()
+            } else {
+                Html::default()
+            };
+            (
+                render_vendor_glyph(provider_glyph_path(provider), badge),
+                Some(provider),
+            )
+        }
         Emblem::Pi => (render_omp_mark(surface, standing.lane), None),
     };
+    if fast_mode && provider.is_some() {
+        label.push_str("; Fast mode");
+        if let Some(title) = &mut title {
+            title.push_str("; Fast mode");
+        }
+    }
     let provider_class =
         provider.map(|provider| format!("composer-vendor-icon--{}", provider.key()));
     html! {
@@ -85,32 +96,19 @@ fn render_omp_mark(surface: &str, lane: CanonicalUuid) -> Html {
     }
 }
 
-/// oh-my-pi's mark over a provider glyph's foot corner, on a soft halo.
-///
-/// The pi used to stand on a filled disc, which punched a circular hole
-/// through the glyph behind it wherever the two overlapped. The halo that
-/// backs it now is the pi's own silhouette, stroked wide in the composer's
-/// surface colour, held translucent, and blurred, so it fades into the glyph
-/// at its edge and shows no cut. The pi spans 10 units of the glyph's
-/// 16-unit canvas, anchored at the foot corner, and its diagonal gradient
-/// reads over the single-hue glyph instead of drowning in it. The inner
-/// canvas stays open so the blur is not clipped at the pi's bounds.
-fn render_omp_badge(surface: &str, lane: CanonicalUuid) -> Html {
-    let halo = format!("{surface}-vendor-halo-{lane}");
-    let softened = format!("url(#{halo})");
+/// A compact flame over the provider glyph's foot corner.
+fn render_fast_badge() -> Html {
     html! {
-        <g class="composer-vendor-badge">
-            <svg x="6" y="6" width="10" height="10" viewBox="0 0 64 64" overflow="visible">
-                <defs>
-                    <filter id={halo} x="-30%" y="-30%" width="160%" height="160%">
-                        // A literal tag is normalised to lowercase, and SVG
-                        // knows no `fegaussianblur`; the dynamic form keeps
-                        // its case.
-                        <@{"feGaussianBlur"} stdDeviation="5"></@>
-                    </filter>
-                </defs>
-                <path class="composer-vendor-halo" d={OMP_PI} filter={softened}></path>
-                {render_omp_pi(surface, lane)}
+        <g class="composer-vendor-badge composer-vendor-badge--fast">
+            <svg x="7" y="6" width="9" height="10" viewBox="0 0 18 20" overflow="visible">
+                <path
+                    class="composer-vendor-halo"
+                    d="M10.5 0C11 4 16 6 16 12a7 7 0 1 1-14 0c0-3 2-6 5-9-.5 4 1 5 2 6 2-2 2.5-5 1.5-9Z"
+                ></path>
+                <path
+                    class="composer-vendor-flame"
+                    d="M10.5 0C11 4 16 6 16 12a7 7 0 1 1-14 0c0-3 2-6 5-9-.5 4 1 5 2 6 2-2 2.5-5 1.5-9Z"
+                ></path>
             </svg>
         </g>
     }
@@ -122,9 +120,8 @@ const OMP_PI: &str = "M10 14h44v9H43v33h-9V23h-9v22h-9V23H10z";
 /// oh-my-pi's pi as omp.sh draws it, under one diagonal gradient on its
 /// 64-unit canvas.
 ///
-/// Every emblem carries its own gradient, named by its surface and lane, so
-/// the fill resolves inside the icon that paints it whether the pi is the
-/// emblem or the badge.
+/// Every standalone pi carries its own gradient, named by its surface and lane,
+/// so the fill resolves inside the icon that paints it.
 fn render_omp_pi(surface: &str, lane: CanonicalUuid) -> Html {
     let gradient = format!("{surface}-vendor-gradient-{lane}");
     let fill = format!("url(#{gradient})");

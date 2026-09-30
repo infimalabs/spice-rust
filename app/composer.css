@@ -126,9 +126,15 @@
 .composer-vendor-halo {
   fill: var(--control);
   stroke: var(--control);
-  stroke-width: 12;
+  stroke-width: 4;
   stroke-linejoin: round;
-  opacity: .8;
+  opacity: .92;
+}
+.composer-vendor-flame {
+  fill: color-mix(in srgb, #f97316 88%, #facc15);
+  stroke: color-mix(in srgb, #dc2626 72%, var(--ink));
+  stroke-width: .8;
+  stroke-linejoin: round;
 }
 .composer-vendor-icon--anthropic {
   color: color-mix(in srgb, #d97706 88%, var(--ink));

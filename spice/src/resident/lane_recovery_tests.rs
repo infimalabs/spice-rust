@@ -740,6 +740,7 @@ fn proof(expected: Option<&str>) -> Proof {
             vendor: "omp".parse().expect("fixture vendor"),
             model: "sonnet".into(),
             effort: "high".into(),
+            fast_mode: false,
             git: "current".into(),
             rtk: wire::body::RtkHealth::new(
                 wire::body::RtkHealthState::Active,

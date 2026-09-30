@@ -515,6 +515,8 @@ struct LaneSessionWire {
         deserialize_with = "crate::optional::present"
     )]
     effort: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    fast_mode: bool,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -542,7 +544,13 @@ impl TryFrom<LaneSessionWire> for LaneSession {
             occupant: wire.occupant,
             worktree: wire.worktree,
             vendor: wire.vendor,
-            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort, wire.git, wire.rtk)?,
+            launch: LaneLaunchIdentity::from_parts(
+                wire.model,
+                wire.effort,
+                wire.fast_mode,
+                wire.git,
+                wire.rtk,
+            )?,
             epoch: wire.epoch,
             stream: wire.stream,
             identity: wire.identity,
@@ -553,7 +561,7 @@ impl TryFrom<LaneSessionWire> for LaneSession {
 
 impl From<LaneSession> for LaneSessionWire {
     fn from(session: LaneSession) -> Self {
-        let (model, effort, git, rtk) = LaneLaunchIdentity::into_parts(session.launch);
+        let (model, effort, fast_mode, git, rtk) = LaneLaunchIdentity::into_parts(session.launch);
         Self {
             lane: session.lane,
             occupant: session.occupant,
@@ -561,6 +569,7 @@ impl From<LaneSession> for LaneSessionWire {
             vendor: session.vendor,
             model,
             effort,
+            fast_mode,
             git,
             rtk,
             epoch: session.epoch,
@@ -808,4 +817,8 @@ pub struct CursorHead {
         deserialize_with = "crate::optional::present"
     )]
     pub wake: Option<Seq>,
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }

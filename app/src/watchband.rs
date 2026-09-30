@@ -98,6 +98,8 @@ pub struct Standing {
     pub model: Option<String>,
     /// Reasoning effort supplied to the occupant's vendor launch.
     pub effort: Option<String>,
+    /// Whether the current occupant was launched in fast mode.
+    pub fast_mode: bool,
     /// Current supervised occupant, which is the Canvas agent thread.
     pub thread: Option<CanonicalUuid>,
     /// Exact resumable vendor session identity.
@@ -551,6 +553,7 @@ pub fn standings(lanes: &[LaneRow], inbox: &[LaneInbox], tasks: &[BoardTask]) ->
                 vendor: member.vendor.to_string(),
                 model: member.model.clone(),
                 effort: member.effort.clone(),
+                fast_mode: member.fast_mode,
                 thread: member.occupant,
                 session: member.session.clone(),
                 life: member.life.clone(),
@@ -1092,6 +1095,7 @@ mod tests {
             model: None,
             seat_model: None,
             effort: None,
+            fast_mode: false,
             occupant: None,
             session: None,
             disposition: "seated".to_owned(),

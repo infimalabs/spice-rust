@@ -116,6 +116,7 @@ const RESIDENCY: &str = r#"{
       "vendor": "omp",
       "model": "sonnet",
       "effort": "high",
+      "fast_mode": true,
       "git": "current",
       "rtk": {
         "state": "active",
@@ -277,6 +278,7 @@ fn a_pre_extension_residency_head_has_one_visible_unrecorded_launch_state() {
     assert!(
         session.get("model").is_none()
             && session.get("effort").is_none()
+            && session.get("fast_mode").is_none()
             && session.get("git").is_none()
             && session.get("rtk").is_none()
     );

@@ -89,6 +89,11 @@ fn answer_at(
                     .and_then(|session| session.launch.as_ref())
                     .map(|launch| launch.effort.clone())
                     .or_else(|| row.effort.clone()),
+                fast_mode: row
+                    .session
+                    .as_ref()
+                    .and_then(|session| session.launch.as_ref())
+                    .is_some_and(|launch| launch.fast_mode),
                 git: row
                     .session
                     .as_ref()
@@ -603,6 +608,7 @@ mod tests {
                 vendor: "omp".parse().expect("fixture vendor"),
                 launch: Some(
                     wire::body::LaneLaunchIdentity::new("sonnet", "high")
+                        .with_fast_mode(true)
                         .with_git("current")
                         .with_rtk(wire::body::RtkHealth::new(
                             wire::body::RtkHealthState::Active,
@@ -722,6 +728,7 @@ mod tests {
         assert_eq!(answer.topology_revision, 7);
         assert_eq!(answer.lanes[0].model.as_deref(), Some("sonnet"));
         assert_eq!(answer.lanes[0].effort.as_deref(), Some("high"));
+        assert!(answer.lanes[0].fast_mode);
         assert_eq!(answer.lanes[0].git.as_deref(), Some("current"));
         let rtk = answer.lanes[0]
             .rtk

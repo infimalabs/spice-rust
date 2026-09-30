@@ -1003,6 +1003,9 @@ pub struct LaneAnswerRow {
         deserialize_with = "crate::optional::present"
     )]
     pub effort: Option<String>,
+    /// Whether the declared occupant was launched in the vendor's fast mode.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fast_mode: bool,
     /// Observable GIT-04 outcome for the declared occupant launch.
     #[serde(
         default,
@@ -1296,3 +1299,7 @@ pub struct RecallAnswer {
 
 mod binding;
 pub use binding::{AnswerShape, Binding, BodyShape, CommandAnswer, Intent};
+
+const fn is_false(value: &bool) -> bool {
+    !*value
+}

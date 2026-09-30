@@ -250,7 +250,7 @@ impl RtkHealth {
     }
 }
 
-/// Exact model, effort, and observable launch outcomes for one vendor launch.
+/// Exact model, effort, mode, and observable outcomes for one vendor launch.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LaneLaunchIdentity {
@@ -258,6 +258,9 @@ pub struct LaneLaunchIdentity {
     pub model: String,
     /// Reasoning effort supplied to the vendor launch.
     pub effort: String,
+    /// Whether this occupant was launched in the vendor's fast mode.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub fast_mode: bool,
     /// GIT-04 outcome observed before this launch read repository configuration.
     #[serde(
         default,
@@ -280,9 +283,16 @@ impl LaneLaunchIdentity {
         Self {
             model: model.into(),
             effort: effort.into(),
+            fast_mode: false,
             git: None,
             rtk: None,
         }
+    }
+    /// Record the fast-mode setting supplied to this exact launch.
+    #[must_use]
+    pub fn with_fast_mode(mut self, fast_mode: bool) -> Self {
+        self.fast_mode = fast_mode;
+        self
     }
 
     /// Attach the observable GIT-04 launch outcome to a current launch.
@@ -302,22 +312,22 @@ impl LaneLaunchIdentity {
     pub(crate) fn from_parts(
         model: Option<String>,
         effort: Option<String>,
+        fast_mode: bool,
         git: Option<String>,
         rtk: Option<RtkHealth>,
     ) -> Result<Option<Self>, &'static str> {
-        match (model, effort, git, rtk) {
-            (Some(model), Some(effort), git, rtk) => Ok(Some(Self {
+        match (model, effort, fast_mode, git, rtk) {
+            (Some(model), Some(effort), fast_mode, git, rtk) => Ok(Some(Self {
                 model,
                 effort,
+                fast_mode,
                 git,
                 rtk,
             })),
-            (None, None, None, None) => Ok(None),
-            (Some(_), None, _, _) => Err("lane launch identity is missing effort"),
-            (None, Some(_), _, _) => Err("lane launch identity is missing model"),
-            (None, None, Some(_), _) | (None, None, None, Some(_)) => {
-                Err("lane launch identity is missing model and effort")
-            }
+            (None, None, false, None, None) => Ok(None),
+            (Some(_), None, _, _, _) => Err("lane launch identity is missing effort"),
+            (None, Some(_), _, _, _) => Err("lane launch identity is missing model"),
+            (None, None, _, _, _) => Err("lane launch identity is missing model and effort"),
         }
     }
 
@@ -326,13 +336,15 @@ impl LaneLaunchIdentity {
     ) -> (
         Option<String>,
         Option<String>,
+        bool,
         Option<String>,
         Option<RtkHealth>,
     ) {
-        identity.map_or((None, None, None, None), |identity| {
+        identity.map_or((None, None, false, None, None), |identity| {
             (
                 Some(identity.model),
                 Some(identity.effort),
+                identity.fast_mode,
                 identity.git,
                 identity.rtk,
             )
@@ -394,6 +406,8 @@ struct LaneSessionDeclaredWire {
         deserialize_with = "crate::optional::present"
     )]
     effort: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    fast_mode: bool,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -429,7 +443,13 @@ impl TryFrom<LaneSessionDeclaredWire> for LaneSessionDeclared {
             occupant: wire.occupant,
             worktree: wire.worktree,
             vendor: wire.vendor,
-            launch: LaneLaunchIdentity::from_parts(wire.model, wire.effort, wire.git, wire.rtk)?,
+            launch: LaneLaunchIdentity::from_parts(
+                wire.model,
+                wire.effort,
+                wire.fast_mode,
+                wire.git,
+                wire.rtk,
+            )?,
             epoch: wire.epoch,
             stream: wire.stream,
             source: wire.source,
@@ -443,7 +463,8 @@ impl TryFrom<LaneSessionDeclaredWire> for LaneSessionDeclared {
 
 impl From<LaneSessionDeclared> for LaneSessionDeclaredWire {
     fn from(declaration: LaneSessionDeclared) -> Self {
-        let (model, effort, git, rtk) = LaneLaunchIdentity::into_parts(declaration.launch);
+        let (model, effort, fast_mode, git, rtk) =
+            LaneLaunchIdentity::into_parts(declaration.launch);
         Self {
             lane: declaration.lane,
             occupant: declaration.occupant,
@@ -451,6 +472,7 @@ impl From<LaneSessionDeclared> for LaneSessionDeclaredWire {
             vendor: declaration.vendor,
             model,
             effort,
+            fast_mode,
             git,
             rtk,
             epoch: declaration.epoch,
@@ -842,4 +864,8 @@ pub struct TasteReminded {
     pub text: String,
     /// Instant the reminder expires without a disposition.
     pub expires: Instant,
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
