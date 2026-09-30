@@ -325,6 +325,12 @@ the left and one column of equal pills on the right, **Add** and, for an
 operator, **Close**, which submits the draft as the closure's validation. Closing
 a task a lane still holds names that holder in the button's description.
 
+In the task observation composer, Enter inserts a newline and Command or
+Control + Enter adds an observation. Holding Shift with that chord instead
+closes the task using the draft as its reason, through the same permissions
+and validation as Close. If Close is unavailable, the chord does not add an
+observation and the draft remains.
+
 Task detail treats admitted ownership facts as navigation. Its project action
 opens the matching Work scope and keeps the task open. Assignment, claim, and
 creator facts open the exact team member in Chat only when topology proves that
