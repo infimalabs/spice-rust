@@ -1192,15 +1192,6 @@ impl EventDirectives<'_> {
             _ => ContextState::Unmarked,
         }
     }
-
-    fn historical_context(&self, token: &str, miss: steer::ack::scan::Miss) -> Option<steer::Key> {
-        if miss != steer::ack::scan::Miss::Historical {
-            return None;
-        }
-        let key = token.parse::<steer::Key>().ok()?;
-        let directive = self.directives.0.get(&key)?;
-        (directive.lane == self.event.lane && directive.authored).then_some(key)
-    }
 }
 
 impl steer::Standing for EventDirectives<'_> {

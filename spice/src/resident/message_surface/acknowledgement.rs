@@ -1,11 +1,15 @@
 //! Acknowledgement headers rewritten into quoted directive context.
 //!
 //! An assistant header such as `ACK KEY: applied` presents as the directive it
-//! answers, quoted above the response prose. The quote carries the plain ACK
+//! names, quoted above the response prose, whenever the journal allocated that
+//! key: a bare key is useless to the operator. The quote carries the plain ACK
 //! marker once the journal retired the key for this lane, including responses
-//! from later transcript sources; while the key is still pending the quote says
-//! so. Presentation never grants a repeated response retirement or
-//! automatic-speech authority.
+//! from later transcript sources, and says so while the key is still pending.
+//! A key this response did not answer -- another lane's, source-bound review
+//! feedback from another source, or an answer the journal recorded otherwise
+//! -- quotes its directive without a marker. Only a token no directive owns
+//! stays literal. Presentation never grants a repeated response retirement,
+//! a badge, or automatic-speech authority.
 
 use std::borrow::Cow;
 use std::ops::Range;
@@ -42,9 +46,9 @@ pub(super) fn present_steering_acknowledgements_with_directives(
     for acknowledgement in scan_presentations(text, &standing) {
         let separator = acknowledgement.separator;
         let packet = classify_packet(&standing, acknowledgement.recognitions);
-        // Other historical dispositions add context only alongside a recognized
-        // response; an acknowledged key can present again anywhere on its lane.
-        if packet.recognized.is_empty() {
+        // Every allocated key a header names presents its directive; a header
+        // whose tokens name no directive stays the agent's literal prose.
+        if packet.recognized.is_empty() && packet.contexts.is_empty() {
             continue;
         }
         let start = presentation_framing_start(text, cursor, acknowledgement.start);
@@ -87,7 +91,10 @@ pub(super) fn present_steering_acknowledgements_with_directives(
             cursor = skip_horizontal_space(text, cursor);
             capitalize_body = true;
         } else {
-            rendered.push_str(acknowledgement_marker(packet.recognized[0].1)?);
+            let marker = packet
+                .marker
+                .ok_or_else(|| "presented acknowledgment header lost its marker".to_owned())?;
+            rendered.push_str(acknowledgement_marker(marker)?);
             for token in packet.missed {
                 rendered.push(' ');
                 rendered.push_str(&token);
@@ -130,15 +137,15 @@ pub(super) fn scan_presentations(
     steer::ack::scan::scan_acknowledgements(text, &DisplayStanding(standing))
 }
 
+/// Display standing: every allocated key and the lane seal read as live, so the
+/// scanner reports each with the header's disposition and presentation decides
+/// what it earned.
 struct DisplayStanding<'a>(&'a EventDirectives<'a>);
 
 impl steer::Standing for DisplayStanding<'_> {
     fn disposition(&self, key: &steer::Key) -> Option<wire::Disposition> {
-        if self.0.answered_for_lane(key).is_some() || self.0.is_lane_seal(key) {
-            Some(wire::Disposition::Live)
-        } else {
-            steer::Standing::disposition(self.0, key)
-        }
+        (self.0.directives.0.contains_key(key) || self.0.is_lane_seal(key))
+            .then_some(wire::Disposition::Live)
     }
 }
 
@@ -151,12 +158,14 @@ pub(super) enum ContextState {
     Pending,
     /// Declined here: the lane answered and refused.
     Declined,
-    /// Historical context for a key retired elsewhere.
+    /// Referenced context this response did not answer.
     Unmarked,
 }
 
-/// One acknowledgement header sorted into what it retired, quotes, and missed.
+/// One acknowledgement header sorted into what it answered, quotes, and missed.
 struct ClassifiedPacket {
+    /// Disposition the header's marker spells.
+    marker: Option<wire::Disposition>,
     recognized: Vec<(steer::Key, wire::Disposition)>,
     contexts: Vec<(steer::Key, ContextState)>,
     bare_acknowledgement: bool,
@@ -168,45 +177,44 @@ fn classify_packet(
     recognitions: Vec<steer::ack::scan::Recognition>,
 ) -> ClassifiedPacket {
     let mut packet = ClassifiedPacket {
+        marker: None,
         recognized: Vec::new(),
         contexts: Vec::new(),
         bare_acknowledgement: false,
         missed: Vec::new(),
     };
     for recognition in recognitions {
-        match recognition.outcome {
-            steer::ack::scan::Outcome::Retired { key, disposition }
-                if standing.presents(&key, disposition, recognition.locus) =>
+        let (key, disposition) = match recognition.outcome {
+            steer::ack::scan::Outcome::Retired { key, disposition } => (key, disposition),
+            steer::ack::scan::Outcome::Missed { token, .. } => {
+                packet.missed.push(token);
+                continue;
+            }
+        };
+        packet.marker.get_or_insert(disposition);
+        let presents = standing.presents(&key, disposition, recognition.locus);
+        if presents {
+            packet.bare_acknowledgement |=
+                disposition == wire::Disposition::Acked && standing.is_lane_seal(&key);
+            if !packet
+                .recognized
+                .iter()
+                .any(|known| known == &(key.clone(), disposition))
             {
-                let lane_seal =
-                    disposition == wire::Disposition::Acked && standing.is_lane_seal(&key);
-                if !packet
-                    .recognized
-                    .iter()
-                    .any(|known| known == &(key.clone(), disposition))
-                {
-                    packet.recognized.push((key.clone(), disposition));
-                }
-                if standing.authored(&key)
-                    && !packet.contexts.iter().any(|(known, _)| known == &key)
-                {
-                    let state = standing.context_state(&key, disposition);
-                    packet.contexts.push((key, state));
-                }
-                packet.bare_acknowledgement |= lane_seal;
+                packet.recognized.push((key.clone(), disposition));
             }
-            steer::ack::scan::Outcome::Retired { key, .. } => {
-                packet.missed.push(key.to_string());
-            }
-            steer::ack::scan::Outcome::Missed { token, miss } => {
-                if let Some(key) = standing.historical_context(&token, miss) {
-                    if !packet.contexts.iter().any(|(known, _)| known == &key) {
-                        packet.contexts.push((key, ContextState::Unmarked));
-                    }
+        }
+        if standing.authored(&key) {
+            if !packet.contexts.iter().any(|(known, _)| known == &key) {
+                let state = if presents {
+                    standing.context_state(&key, disposition)
                 } else {
-                    packet.missed.push(token);
-                }
+                    ContextState::Unmarked
+                };
+                packet.contexts.push((key, state));
             }
+        } else if !presents {
+            packet.missed.push(key.to_string());
         }
     }
     packet

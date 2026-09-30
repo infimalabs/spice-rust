@@ -837,21 +837,85 @@ fn a_narrated_messages_acknowledging_intent_presents_as_an_acknowledgement_card(
 }
 
 #[test]
-fn live_key_for_another_lane_preserves_the_original_message() {
-    let text = "ACK 1kQwPZtK: This lane does not own the directive.";
-    let mut directives = directives(&[("1kQwPZtK", "Do not quote this direction here.")]);
-    directives
-        .0
-        .get_mut(&"1kQwPZtK".parse().expect("fixture key"))
-        .expect("fixture directive")
-        .lane = "00000000-0000-4000-8000-000000000002"
+fn every_allocated_key_a_header_names_presents_its_directive_without_earning_credit() {
+    let other_lane = "00000000-0000-4000-8000-000000000009"
         .parse()
         .expect("other lane");
-
-    assert_eq!(
-        presented_text(text, &directives, event()).expect("cross-lane key remains visible"),
-        text,
-    );
+    let other_source = "00000000-0000-4000-8000-000000000003"
+        .parse()
+        .expect("other source");
+    let retired_at = wire::body::TranscriptLocus {
+        source: Some(other_source),
+        member: 1,
+        offset: 0,
+        length: 1,
+        event: 0,
+        line: 1,
+        column: 5,
+    };
+    let mut directives = directives(&[
+        ("1kQwPZtK", "Another lane's live direction."),
+        ("1kQwPZtL", "Another lane's settled direction."),
+        ("1kQwPZtM", "[REVIEW] CANVAS-1kKRRsDR\n\nKeep working."),
+        ("1kQwPZtN", "Refused earlier on this lane."),
+    ]);
+    for (key, lane, disposition, review) in [
+        ("1kQwPZtK", other_lane, wire::Disposition::Live, false),
+        ("1kQwPZtL", other_lane, wire::Disposition::Acked, false),
+        ("1kQwPZtM", lane(), wire::Disposition::Acked, true),
+        ("1kQwPZtN", lane(), wire::Disposition::Declined, false),
+    ] {
+        let directive = directives
+            .0
+            .get_mut(&key.parse().expect("fixture key"))
+            .expect("fixture directive");
+        directive.lane = lane;
+        directive.disposition = disposition;
+        directive.review = review;
+        directive.retirement = (disposition != wire::Disposition::Live).then_some(retired_at);
+    }
+    for (text, presented) in [
+        (
+            "ACK 1kQwPZtK: noted.",
+            "> Another lane's live direction.\n\nNoted.",
+        ),
+        (
+            "ACK 1kQwPZtL is done.",
+            "> Another lane's settled direction.\n\nIs done.",
+        ),
+        (
+            "ACK 1kQwPZtM: again.",
+            "> [REVIEW] CANVAS-1kKRRsDR\n>\n> Keep working.\n\nAgain.",
+        ),
+        (
+            "ACK 1kQwPZtN: after all.",
+            "> Refused earlier on this lane.\n\nAfter all.",
+        ),
+        (
+            "ACK 1kQwPZtK 1kQwPZtZ: mixed.",
+            "> Another lane's live direction.\n\nACK 1kQwPZtZ: mixed.",
+        ),
+    ] {
+        assert_eq!(
+            presented_text(text, &directives, event()).expect("referenced key presents"),
+            presented,
+            "wrong presentation for {text:?}",
+        );
+        assert!(
+            message_badges(text, Some(&directives), event()).is_empty(),
+            "a reference this response did not answer earns no badge: {text:?}",
+        );
+        let locus = wire::MessageLocus {
+            member: 1,
+            offset: 0,
+            length: 1,
+            event: 0,
+        };
+        assert!(
+            pending::PendingPresentation::of(text, Some(&directives), event(), locus).is_none(),
+            "a reference never waits on another answer: {text:?}",
+        );
+    }
 }
 
 #[test]
