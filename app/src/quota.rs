@@ -296,6 +296,8 @@ fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
     else {
         return HIGH_PRO;
     };
+    // Claude Max is sold at 5x and 20x. A plan named only `max` carries no
+    // tier, so it counts as the larger one, like any unrecognized plan.
     if plan_matches(
         plan,
         &[
@@ -323,7 +325,6 @@ fn plan_capacity_units(report: &wire::QuotaReport) -> f64 {
         plan,
         &[
             "5x",
-            "max",
             "max5",
             "max5x",
             "max_5x",
@@ -490,6 +491,14 @@ mod tests {
         );
         assert_eq!(
             plan_capacity_units(&report("openai-codex", Some("prolite"), weekly)),
+            5.0
+        );
+        assert_eq!(
+            plan_capacity_units(&report("anthropic", Some("max"), weekly)),
+            20.0
+        );
+        assert_eq!(
+            plan_capacity_units(&report("anthropic", Some("default_claude_max_5x"), weekly)),
             5.0
         );
 
