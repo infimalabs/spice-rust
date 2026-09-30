@@ -1,5 +1,5 @@
 use super::*;
-use crate::browser::toast;
+use crate::browser::{clipboard, toast};
 use wasm_bindgen_futures::{JsFuture, spawn_local};
 
 mod export;
@@ -24,7 +24,7 @@ pub(super) fn actions(props: &ActionsProps) -> Html {
     // The lightbox is a modal dialog in the top layer, above the root toast,
     // so it reports through its own instance.
     let (status, shown, notify) = toast::use_toast();
-    let copy_refusal = use_memo((), |()| export::copy_refusal());
+    let copy_refusal = use_memo((), |()| clipboard::image_refusal());
     let exportable = use_memo(props.source.clone(), |source| export::readable(source));
     let perform = use_callback(
         (
@@ -73,11 +73,7 @@ pub(super) fn actions(props: &ActionsProps) -> Html {
                         Action::Download => "Download started",
                     }),
                     Err(error) => {
-                        let message = js_sys::Reflect::get(&error, &JsValue::from_str("message"))
-                            .ok()
-                            .and_then(|value| value.as_string())
-                            .or_else(|| error.as_string())
-                            .unwrap_or_else(|| "Browser refused the image action".to_owned());
+                        let message = clipboard::error_text(&error);
                         notify.settled(format!(
                             "{} failed: {message}",
                             match action {

@@ -41,6 +41,7 @@ use crate::{
 
 mod canvas_menu;
 mod card_target;
+mod clipboard;
 mod clock;
 mod connection;
 mod diagnostics;

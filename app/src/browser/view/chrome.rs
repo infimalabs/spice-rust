@@ -560,7 +560,7 @@ pub(in crate::browser) fn copy_button(props: &CopyButtonProps) -> Html {
         Callback::from(move |_| {
             let toaster = toaster.clone();
             let subject = subject.clone();
-            copy_text(&text, move |result| {
+            crate::browser::clipboard::copy_text(&text, move |result| {
                 toaster.settled(match result {
                     Ok(()) => format!("Copied {subject}"),
                     Err(error) => format!("Copy failed: {error}"),
@@ -574,87 +574,5 @@ pub(in crate::browser) fn copy_button(props: &CopyButtonProps) -> Html {
             title={props.title.clone()} aria-label={props.label.clone()}
             {onclick}
         >{props.children.clone()}</button>
-    }
-}
-
-/// Put `text` on the platform clipboard and report how that settled.
-///
-/// The async Clipboard API is reached reflectively: `web-sys` gates it behind
-/// an unstable-API flag that would have to be set for the whole build. Browsers
-/// expose it only to secure contexts, so a Canvas opened over plain http by a
-/// LAN address has none, and only there does the copy go through a selection
-/// instead. A refusal from either path is reported, not retried another way.
-fn copy_text(text: &str, settled: impl FnOnce(Result<(), String>) + 'static) {
-    let Some(promise) = clipboard_write(text) else {
-        settled(select_and_copy(text));
-        return;
-    };
-    wasm_bindgen_futures::spawn_local(async move {
-        settled(
-            wasm_bindgen_futures::JsFuture::from(promise)
-                .await
-                .map(drop)
-                .map_err(|error| {
-                    js_sys::Reflect::get(&error, &JsValue::from_str("message"))
-                        .ok()
-                        .and_then(|message| message.as_string())
-                        .unwrap_or_else(|| "the browser refused the clipboard".to_owned())
-                }),
-        );
-    });
-}
-
-fn clipboard_write(text: &str) -> Option<js_sys::Promise> {
-    let window = web_sys::window()?;
-    let navigator = js_sys::Reflect::get(&window, &JsValue::from_str("navigator")).ok()?;
-    let clipboard = js_sys::Reflect::get(&navigator, &JsValue::from_str("clipboard")).ok()?;
-    let write = js_sys::Reflect::get(&clipboard, &JsValue::from_str("writeText"))
-        .ok()?
-        .dyn_into::<js_sys::Function>()
-        .ok()?;
-    write
-        .call1(&clipboard, &JsValue::from_str(text))
-        .ok()?
-        .dyn_into::<js_sys::Promise>()
-        .ok()
-}
-
-/// Copy `text` through a transient selection, keeping the caller's focus.
-fn select_and_copy(text: &str) -> Result<(), String> {
-    let document = web_sys::window()
-        .and_then(|window| window.document())
-        .ok_or("no document to copy from")?;
-    let body = document.body().ok_or("no document body to copy from")?;
-    let area = document
-        .create_element("textarea")
-        .ok()
-        .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
-        .ok_or("the browser refused a copy buffer")?;
-    area.set_value(text);
-    area.set_read_only(true);
-    area.style()
-        .set_property("position", "fixed")
-        .and_then(|()| area.style().set_property("opacity", "0"))
-        .map_err(|_| "the browser refused a copy buffer")?;
-    let focused = document
-        .active_element()
-        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok());
-    body.append_child(&area)
-        .map_err(|_| "the browser refused a copy buffer")?;
-    area.select();
-    let copied = js_sys::Reflect::get(&document, &JsValue::from_str("execCommand"))
-        .ok()
-        .and_then(|exec| exec.dyn_into::<js_sys::Function>().ok())
-        .and_then(|exec| exec.call1(&document, &JsValue::from_str("copy")).ok())
-        .and_then(|result| result.as_bool())
-        .unwrap_or(false);
-    area.remove();
-    if let Some(focused) = focused {
-        let _ = focused.focus();
-    }
-    if copied {
-        Ok(())
-    } else {
-        Err("the browser refused to copy".to_owned())
     }
 }
