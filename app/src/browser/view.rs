@@ -227,16 +227,16 @@ pub(super) const fn axis_label(axis: Axis) -> &'static str {
     CanvasDestination::for_axis(axis).label()
 }
 fn analytics_heading(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &WorkScope) -> String {
-    if axis != Axis::Flow {
-        return axis_label(axis).to_owned();
+    match axis {
+        Axis::Topology => "All agents".to_owned(),
+        Axis::Flow => scope
+            .stem()
+            .and_then(|identity| work.and_then(|projection| projection.stem(identity)))
+            .map_or_else(
+                || "All open work".to_owned(),
+                |stem| format!("{} work", stem.identity()),
+            ),
     }
-    scope
-        .stem()
-        .and_then(|identity| work.and_then(|projection| projection.stem(identity)))
-        .map_or_else(
-            || "All open work".to_owned(),
-            |stem| format!("{} work", stem.identity()),
-        )
 }
 
 fn flow_summary(work: &WorkProjection<'_>, scope: &WorkScope) -> String {
@@ -399,8 +399,8 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
     })
 }
 
-/// The Dash body and, once agent standings are held, the page summary over
-/// the same standings the topology section renders.
+/// The global Agents body and, once agent standings are held, the page summary
+/// over the same standings the topology section renders.
 fn render_topology(render: &CanvasRender<'_>) -> (Option<String>, Html) {
     let surface = render.surface.read();
     let Some(runtime) = surface.as_ref() else {
