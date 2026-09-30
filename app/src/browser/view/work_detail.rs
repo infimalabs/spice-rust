@@ -210,21 +210,13 @@ fn render_available(
             if let Some(notice) = scope_notice {
                 <p class="work-detail-scope" role="status">{notice}</p>
             }
-            <section class="work-detail-section">
+            <section
+                class="work-detail-section"
+                onclick={task_detail::contract_chip_click(&render.select_task)}
+                onkeydown={task_detail::contract_chip_keydown(&render.select_task)}
+            >
                 <h3>{"Contract"}</h3>
-                if let Some(description) = &statement.description {
-                    <p class="work-detail-description">{description}</p>
-                } else {
-                    <p class="muted">{"No description was recorded."}</p>
-                }
-                if statement.acceptance.is_empty() {
-                    <p class="muted">{"No acceptance criteria were recorded."}</p>
-                } else {
-                    <h4>{"Acceptance"}</h4>
-                    <ul>{for statement.acceptance.iter().map(|criterion| html! {
-                        <li>{criterion}</li>
-                    })}</ul>
-                }
+                {task_detail::render_contract(statement, |task| board_has(render.work, task), true)}
             </section>
             {task_detail::render_media(&answer.media)}
             <section class="work-detail-section">
@@ -425,6 +417,13 @@ fn render_relationships(
         return html! { <p class="muted">{"No dependencies or dependents."}</p> };
     }
     html! { <div class="work-detail-links">{for dependencies.chain(dependents)}</div> }
+}
+
+/// Whether the admitted board holds `born`, so a contract chip can open it.
+fn board_has(work: &WorkProjection<'_>, born: &TaskStamp) -> bool {
+    work.tasks()
+        .iter()
+        .any(|task| task.row().statement.body.born == *born)
 }
 
 fn render_task_link(

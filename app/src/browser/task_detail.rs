@@ -424,6 +424,83 @@ pub(super) fn use_focus(
     });
 }
 
+/// A task's authored contract through the one sanitized, task-aware renderer.
+///
+/// Quick detail shows the description alone; deep detail adds every
+/// acceptance criterion. Chips name only tasks `resolves` admits, and the
+/// surrounding surface decides what activating one opens.
+pub(super) fn render_contract(
+    statement: &wire::intent::BoardStatement,
+    resolves: impl Fn(&TaskStamp) -> bool + Copy,
+    acceptance: bool,
+) -> Html {
+    let rich = |markdown: &str, class: &'static str| {
+        let html = crate::composer_markdown::contract::render_task_contract(markdown, resolves);
+        html! {
+            <div class={classes!("task-contract", class)}>
+                {Html::from_html_unchecked(html.into())}
+            </div>
+        }
+    };
+    html! {
+        <>
+            if let Some(description) = statement.description.as_deref() {
+                {rich(description, "work-detail-description")}
+            } else {
+                <p class="muted">{"No description was recorded."}</p>
+            }
+            if acceptance {
+                if statement.acceptance.is_empty() {
+                    <p class="muted">{"No acceptance criteria were recorded."}</p>
+                } else {
+                    <h4>{"Acceptance"}</h4>
+                    <ul>{for statement.acceptance.iter().map(|criterion| html! {
+                        <li>{rich(criterion, "work-detail-criterion")}</li>
+                    })}</ul>
+                }
+            }
+        </>
+    }
+}
+
+/// Open the task a contract chip names in this detail surface.
+pub(super) fn contract_chip_click(select: &Callback<TaskStamp>) -> Callback<MouseEvent> {
+    let select = select.clone();
+    Callback::from(move |event: MouseEvent| {
+        if let Some(task) = contract_chip_task(event.target()) {
+            event.prevent_default();
+            select.emit(task);
+        }
+    })
+}
+
+/// The keyboard twin of [`contract_chip_click`] for a chip's button role.
+pub(super) fn contract_chip_keydown(select: &Callback<TaskStamp>) -> Callback<KeyboardEvent> {
+    let select = select.clone();
+    Callback::from(move |event: KeyboardEvent| {
+        if event.key() != "Enter" && event.key() != " " {
+            return;
+        }
+        if let Some(task) = contract_chip_task(event.target()) {
+            event.prevent_default();
+            select.emit(task);
+        }
+    })
+}
+
+fn contract_chip_task(target: Option<web_sys::EventTarget>) -> Option<TaskStamp> {
+    target?
+        .dyn_into::<web_sys::Element>()
+        .ok()?
+        .closest(".task-contract .message-task-chip")
+        .ok()??
+        .get_attribute("data-task-handle")?
+        .parse::<wire::TaskHandle>()
+        .ok()?
+        .born()
+        .ok()
+}
+
 /// Render task-attached images with the same preview and lightbox contract as
 /// message media. An empty task contributes no attachment section.
 pub(super) fn render_media(media: &[wire::Media]) -> Html {

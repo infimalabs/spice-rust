@@ -15,6 +15,7 @@ use wire::{Media, MessageClassification, MessageClassificationKind, MessageDirec
 
 use crate::watchband;
 
+pub(crate) mod contract;
 mod diagrams;
 mod math;
 mod quotes;
