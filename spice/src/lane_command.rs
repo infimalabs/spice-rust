@@ -205,6 +205,7 @@ fn read_lanes<B>(canvas: &Path) -> Result<Reply<Box<LaneAnswer>>, Outcome<B>> {
         Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
     }
 }
+
 fn list(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
     match command_client::execute_typed(
         repository,
