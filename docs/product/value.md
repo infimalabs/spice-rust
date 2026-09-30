@@ -418,7 +418,8 @@ through delivery to acknowledgment, decline, lapse, cancellation, or terminal
 delivery failure; recent retirements therefore replace state in place instead
 of making the row jump.
 Any work whose origin names one of the row's steering keys appears on that row
-and opens the same shared task detail layer.
+as the same compact, accent-backed task reference used in Chat, and opens the
+same shared task detail layer.
 Retained history connects Work back to Chat without inventing destinations. A
 task card links to the newest retained team message that mentions its handle,
 and a directive row links to a retained acknowledgement or decline carrying

@@ -412,7 +412,7 @@ fn render_directive_row(
                             aria-label={format!("Open {handle} details")}
                             onclick={open}
                         >
-                            {handle.to_string()}
+                            <span class="team-direction-task-chip-label">{handle.to_string()}</span>
                         </button>
                     }
                 })}
