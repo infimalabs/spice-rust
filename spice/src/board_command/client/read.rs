@@ -471,6 +471,15 @@ pub(in crate::board_command) fn task_show_with_origin(
         format!("origin {}", statement.provenance),
         format!("project {}", statement.project),
         format!("phase {}", workflow.phase),
+        format!(
+            "flow {}",
+            workflow
+                .flow
+                .iter()
+                .map(wire::Phase::as_str)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
         format!("review {}", workflow.review),
         format!("status {}", workflow.status),
         format!("version {}", statement.revision),
