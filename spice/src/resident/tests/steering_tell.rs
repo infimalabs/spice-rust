@@ -516,6 +516,12 @@ fn a_tell_is_refused_from_the_operator_to_the_sender_and_to_an_unseated_lane() {
             matches!(&outcome, Outcome::Refusal(refusal) if refusal.reason() == reason),
             "{reason}: {outcome:?}"
         );
+        if reason == "steer::lane-unseated" {
+            let Outcome::Refusal(wire::Refusal::Repairable { command, .. }) = &outcome else {
+                panic!("an unseated tell must point to lane discovery: {outcome:?}");
+            };
+            assert_eq!(command.arguments(), ["lane", "list"]);
+        }
         assert!(
             effects.inbox_delivery.is_none(),
             "{reason} delivers nothing"

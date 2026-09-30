@@ -751,6 +751,7 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
         (&["board"][..], CommandKind::BoardRead),
         (&["board", "graph"][..], CommandKind::BoardGraph),
         (&["board", "handout"][..], CommandKind::BoardHandout),
+        (&["lane", "list"][..], CommandKind::BoardRead),
         (&["task", "list"][..], CommandKind::BoardRead),
         (&["task", "next"][..], CommandKind::ClaimWin),
         (&["task", "recover"][..], CommandKind::ClaimWin),
@@ -796,7 +797,12 @@ fn every_landed_task_mutation_leaf_uses_one_current_command_kind() {
     }
     let mapped_family_leaves = crate::cli::contracts()
         .iter()
-        .filter(|contract| matches!(contract.path[0], "board" | "task" | "doc" | "taste"))
+        .filter(|contract| {
+            matches!(
+                contract.path[0],
+                "lane" | "board" | "task" | "doc" | "taste"
+            )
+        })
         .filter(|contract| kind_for(contract.path).is_some())
         .count();
     assert_eq!(mapped_family_leaves, expected.len());

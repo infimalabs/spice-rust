@@ -46,6 +46,7 @@ pub(crate) fn execute_typed<B: Serialize>(
 pub(super) fn kind_for(path: &[&str]) -> Option<CommandKind> {
     Some(match path {
         ["board"] => CommandKind::BoardRead,
+        ["lane", "list"] => CommandKind::BoardRead,
         ["board", "graph"] => CommandKind::BoardGraph,
         ["board", "handout"] => CommandKind::BoardHandout,
         ["task", "list"] => CommandKind::BoardRead,

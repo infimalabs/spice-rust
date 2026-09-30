@@ -428,6 +428,7 @@ impl NativeInvocation<'_> {
                 form,
             ),
             ["lane"]
+            | ["lane", "list"]
             | ["lane", "add"]
             | ["lane", "drain"]
             | ["lane", "wake"]

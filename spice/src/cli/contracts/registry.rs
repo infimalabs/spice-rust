@@ -707,6 +707,16 @@ pub(super) const CONTRACTS: &[Contract] = &[
         "dialect::ledger"
     ),
     operator!(["lane"], "lane", Read, [], Reply, "lane::read"),
+    row!(
+        ["lane", "list"],
+        "lane list",
+        OperatorOrLane,
+        Read,
+        [],
+        [Resident],
+        Reply,
+        "lane::list"
+    ),
     operator!(
         ["lane", "add"],
         "lane add [WORKTREE] [--team ID] [--name DISPLAY] \

@@ -812,6 +812,19 @@ fn steering_refusal(
         .with_detail(detail),
     ))
 }
+fn lane_list_refusal(observed: Option<String>) -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal::repairable(
+        wire::SpiceCommand::new("lane", ["list"])
+            .expect("lane list is a structural Spice discovery command"),
+        wire::RefusalDiagnostic::new(
+            "steer::lane-unseated",
+            Some("steering-inbox".to_owned()),
+            Some("a seated lane".to_owned()),
+            observed,
+        )
+        .with_detail("tell a lane that is seated now"),
+    ))
+}
 
 fn protocol_fault(reason: &str, detail: &str) -> Outcome<CommandAnswer> {
     Outcome::Fault(protocol_fault_value(reason, detail))
