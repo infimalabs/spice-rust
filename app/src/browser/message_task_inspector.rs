@@ -288,7 +288,7 @@ fn message_task_inspector(properties: &InspectorProperties) -> Html {
                 aria-label="Task detail contents"
                 tabindex="-1"
             >
-                {render_detail(&detail, &properties.inspection, retry)}
+                {render_detail(&detail, &properties.context, &properties.inspection, retry)}
             </div>
         </section>
     }
@@ -311,11 +311,12 @@ pub(super) fn render(
 }
 
 fn render_detail(
-    context: &DetailContext,
+    detail: &DetailContext,
+    context: &Context,
     inspection: &Inspection,
     retry: Callback<MouseEvent>,
 ) -> Html {
-    match context.detail.as_ref() {
+    match detail.detail.as_ref() {
         None | Some(TaskDetailState::Loading) => html! {
             <div class="work-detail-loading message-task-inspector-state" role="status">
                 <span class="work-detail-spinner" aria-hidden="true"></span>
@@ -333,13 +334,14 @@ fn render_detail(
             </div>
         },
         Some(TaskDetailState::Available(answer) | TaskDetailState::Refreshing(answer)) => {
-            render_available(context, inspection, answer)
+            render_available(detail, context, inspection, answer)
         }
     }
 }
 
 fn render_available(
-    context: &DetailContext,
+    detail: &DetailContext,
+    context: &Context,
     inspection: &Inspection,
     answer: &wire::intent::TaskDetailAnswer,
 ) -> Html {
@@ -351,10 +353,28 @@ fn render_available(
     let status = workflow.status.clone();
     let phase = workflow.phase.to_string();
     let review = workflow.review.clone();
+    let creator_context = crate::view::creator_context_href(&statement.creation);
+    let follow_creator = {
+        let context = context.clone();
+        Callback::from(move |event: MouseEvent| {
+            if super::card_target::remember_creator_return(&event) {
+                context.inspection.set(None);
+            }
+        })
+    };
     html! {
         <div class="work-detail-content message-task-inspector-content">
             <div class="work-detail-identity">
-                <code class="message-task-inspector-token" title={handle.clone()}>{handle}</code>
+                <code class="message-task-inspector-token" title={handle.clone()}>{handle.clone()}</code>
+                if let Some(href) = creator_context {
+                    <a
+                        class="work-detail-context-link creator-context-link"
+                        data-creator-context="true"
+                        {href}
+                        aria-label={format!("Open creator context for {handle} in Chat")}
+                        onclick={follow_creator}
+                    >{"Creator context"}</a>
+                }
             </div>
             <section class="work-detail-section">
                 <h3>{"Contract"}</h3>
@@ -398,9 +418,9 @@ fn render_available(
                     "message-task-inspector-note",
                     inspection.handle.as_str(),
                     &inspection.task,
-                    context.can_note,
-                    &context.note,
-                    &context.submit_note,
+                    detail.can_note,
+                    &detail.note,
+                    &detail.submit_note,
                 )}
             </section>
         </div>

@@ -102,6 +102,7 @@ pub(super) struct CanvasRender<'a> {
     pub select_task: Callback<wire::TaskStamp>,
     pub select_dash_task: Callback<wire::TaskStamp>,
     pub close_task: Callback<()>,
+    pub leave_task: Callback<()>,
     pub retry_relations: Callback<MouseEvent>,
 }
 
@@ -333,6 +334,9 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
     let stale = matches!(&**render.connection, Connection::Offline(_));
     let selected = (**render.selected_task).as_ref();
     let toggle_map_root = work_map::toggle_root_callback(render.work_map.clone());
+    let creator_context = Callback::from(|event: MouseEvent| {
+        super::card_target::remember_global_work_return(&event);
+    });
     html! {
         <div class="work-layout" data-work-scope={scope_key}>
             <section tabindex="-1" class="section work-board-section">
@@ -344,6 +348,7 @@ pub(super) fn render_flow(render: &CanvasRender<'_>, work: Option<&WorkProjectio
                     work_board::WorkBoardControls {
                         map: render.work_map,
                         select: render.select_task.clone(),
+                        creator_context,
                         toggle_map_root,
                         arrangement: render.work_arrangement,
                         lanes: runtime.and_then(CanvasRuntime::lanes),
@@ -387,6 +392,7 @@ fn render_task_detail(render: &CanvasRender<'_>, work: Option<&WorkProjection<'_
         submit_note: render.submit_note.clone(),
         select_task: render.select_task.clone(),
         close: render.close_task.clone(),
+        leave: render.leave_task.clone(),
         retry_relations: render.retry_relations.clone(),
     })
 }

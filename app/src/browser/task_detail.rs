@@ -14,6 +14,7 @@ pub(super) struct Controls {
     pub select_history: Callback<TaskStamp>,
     pub request: Callback<TaskStamp>,
     pub close: Callback<()>,
+    pub leave: Callback<()>,
     pub submit_note: Callback<(TaskStamp, SubmitEvent)>,
 }
 
@@ -48,6 +49,13 @@ pub(super) fn use_controls(
     let complete_close =
         complete_close_callback(selected.clone(), presented.clone(), closing.clone());
     let close = close_callback(selected.clone(), closing.clone(), history_owned.clone());
+    let leave = leave_callback(
+        selected.clone(),
+        presented.clone(),
+        closing.clone(),
+        history_owned.clone(),
+        return_focus.clone(),
+    );
     use_present(
         selected.is_some() && mounted && !*presented,
         presented.clone(),
@@ -90,6 +98,7 @@ pub(super) fn use_controls(
         select_history,
         request,
         close,
+        leave,
         submit_note,
     }
 }
@@ -222,6 +231,24 @@ fn close_callback(
             return;
         }
         closing.set(true);
+    })
+}
+
+/// Leave the detail layer for a native route navigation without consuming the
+/// history entry that Back uses to restore this task.
+fn leave_callback(
+    selected: UseStateHandle<Option<TaskStamp>>,
+    presented: UseStateHandle<bool>,
+    closing: UseStateHandle<bool>,
+    history_owned: UseStateHandle<bool>,
+    return_focus: Rc<RefCell<Option<web_sys::Element>>>,
+) -> Callback<()> {
+    Callback::from(move |()| {
+        history_owned.set(false);
+        return_focus.borrow_mut().take();
+        presented.set(false);
+        closing.set(false);
+        selected.set(None);
     })
 }
 

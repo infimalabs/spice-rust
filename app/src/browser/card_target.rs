@@ -108,7 +108,7 @@ fn plane_offset(card: &web_sys::Element) -> Option<(web_sys::Element, f64)> {
 /// A return origin's scrolling surface and top edge relative to it.
 fn return_offset(origin: &web_sys::Element) -> Option<(web_sys::Element, f64)> {
     let surface = origin
-        .closest(".lane-mosaic-plane, .team-mode-pane")
+        .closest(".lane-mosaic-plane, .team-mode-pane, .work-lane-track")
         .ok()??;
     let offset = origin.get_bounding_client_rect().top() - surface.get_bounding_client_rect().top();
     Some((surface, offset))
@@ -124,6 +124,27 @@ pub(super) fn remember_quote_return(event: &web_sys::MouseEvent) {
     );
 }
 
+/// Preserve the Chat card holding a task quick view before following its
+/// creator-context link.
+pub(super) fn remember_creator_return(event: &web_sys::MouseEvent) -> bool {
+    remember_return(
+        event,
+        "a.creator-context-link[href]",
+        ".mosaic-message-card",
+        None,
+    )
+}
+
+/// Preserve a global Work card before following its creator-context link.
+pub(super) fn remember_global_work_return(event: &web_sys::MouseEvent) {
+    let _ = remember_return(
+        event,
+        "a.work-message-link[href]",
+        "[data-card-return-origin]",
+        None,
+    );
+}
+
 /// Record where a plain Work link leaves, returning whether this tab should
 /// switch the team to Chat. Modified clicks retain native new-tab behavior and
 /// must not change this tab's team mode.
@@ -135,6 +156,15 @@ pub(super) fn remember_work_return(event: &web_sys::MouseEvent, team: wire::Cano
         Some((team, TeamMode::Work)),
     )
 }
+/// Whether a native anchor click will navigate this tab.
+pub(super) fn follows_in_tab(event: &web_sys::MouseEvent) -> bool {
+    !event.default_prevented()
+        && event.button() == 0
+        && !event.meta_key()
+        && !event.ctrl_key()
+        && !event.shift_key()
+        && !event.alt_key()
+}
 
 fn remember_return(
     event: &web_sys::MouseEvent,
@@ -142,13 +172,7 @@ fn remember_return(
     origin_selector: &str,
     team_mode: Option<(wire::CanonicalUuid, TeamMode)>,
 ) -> bool {
-    if event.default_prevented()
-        || event.button() != 0
-        || event.meta_key()
-        || event.ctrl_key()
-        || event.shift_key()
-        || event.alt_key()
-    {
+    if !follows_in_tab(event) {
         return false;
     }
     let Some(link) = event
@@ -328,14 +352,16 @@ impl Seek {
     fn start(
         document: &web_sys::Document,
         target: &str,
+        status_target: &str,
         status: &UseStateHandle<Option<Status>>,
         pin: &Rc<RefCell<Option<Pin>>>,
     ) -> Option<Self> {
         let body = document.body()?;
         let marked = Rc::new(RefCell::new(None));
-        let (document, target, status, pin, mark) = (
+        let (document, target, status_target, status, pin, mark) = (
             document.clone(),
             target.to_owned(),
+            status_target.to_owned(),
             status.clone(),
             Rc::clone(pin),
             Rc::clone(&marked),
@@ -350,7 +376,7 @@ impl Seek {
                     let _ = element.set_attribute("data-card-route-selected", "true");
                     *mark.borrow_mut() = Some(element.clone());
                 }
-                *pin.borrow_mut() = reach(&element, &target, &status);
+                *pin.borrow_mut() = reach(&element, &status_target, &status);
             },
         );
         let observer = web_sys::MutationObserver::new(found.as_ref().unchecked_ref()).ok()?;
@@ -420,17 +446,78 @@ struct Hold {
     _pin: Rc<RefCell<Option<Pin>>>,
 }
 
+/// The latest visible card before one task-creation boundary.
+fn creator_message_target(
+    creator: &crate::view::CreatorContextTarget,
+    runtime: &CanvasRuntime,
+) -> Option<String> {
+    runtime
+        .messages()
+        .iter()
+        .filter(|message| creator.contains(message))
+        .max_by_key(|message| {
+            (
+                message.locus.member,
+                message.locus.offset,
+                message.locus.event,
+            )
+        })
+        .map(|message| super::watchband::agent_message_source_id(message))
+}
+
+#[derive(PartialEq)]
+struct TargetResolution {
+    ready: bool,
+    routed: Option<String>,
+    history: Option<wire::MessageHistoryCursor>,
+    creator: bool,
+    /// Both generations make another completed page re-run the route effect.
+    _revision: u64,
+    _completion: u64,
+}
+
+fn target_resolution(target: Option<&str>, surface: &SurfaceData) -> TargetResolution {
+    let surface = surface.read();
+    let runtime = surface.as_ref();
+    let creator = target.and_then(crate::view::CreatorContextTarget::parse);
+    let routed = target.and_then(|target| {
+        creator.as_ref().map_or_else(
+            || Some(target.to_owned()),
+            |creator| runtime.and_then(|runtime| creator_message_target(creator, runtime)),
+        )
+    });
+    let history = creator
+        .as_ref()
+        .filter(|_| routed.is_none())
+        .and_then(|creator| {
+            runtime.and_then(|runtime| runtime.message_history_target(creator.lane))
+        });
+    TargetResolution {
+        ready: runtime.and_then(CanvasRuntime::lanes).is_some(),
+        routed,
+        history,
+        creator: creator.is_some(),
+        _revision: runtime.map_or(0, CanvasRuntime::message_history_revision),
+        _completion: creator.as_ref().map_or(0, |creator| {
+            runtime.map_or(0, |runtime| {
+                runtime.message_history_completion(creator.lane)
+            })
+        }),
+    }
+}
+
 /// Focus a card named by the current route once retained Chat state is ready,
 /// unless history returned to an entry a quote link left: then the card that
 /// held the link returns to where the reader saw it.
 ///
-/// A target not yet rendered is sought as staged hydration renders it, and a
-/// reached card stays pinned while that hydration grows its plane, until the
-/// reader scrolls it.
+/// Creator-context targets resolve to the latest card before their captured
+/// transcript boundary. If that card predates the loaded window, request the
+/// owning lane's history until a page crosses the boundary.
 #[hook]
 pub(super) fn use_target(
     target: Option<String>,
     surface: &SurfaceData,
+    sender: &super::SenderHandle,
     status: UseStateHandle<Option<Status>>,
     team_controls: UseReducerHandle<TeamControls>,
     visible: bool,
@@ -439,19 +526,11 @@ pub(super) fn use_target(
     let moved = use_mut_ref(|| None::<f64>);
     let opened = use_mut_ref(|| None::<String>);
     let held = use_mut_ref(|| None::<Hold>);
-    let (ready, revision) = {
-        let surface = surface.read();
-        let runtime = surface.as_ref();
-        (
-            runtime.and_then(CanvasRuntime::lanes).is_some(),
-            runtime
-                .and_then(CanvasRuntime::resume)
-                .map(|cursor| cursor.seq.to_string()),
-        )
-    };
+    let resolution = target_resolution(target.as_deref(), surface);
+    let sender = sender.clone();
     use_effect_with(
-        (target, visible, ready, revision, team_controls),
-        move |(target, visible, ready, _, team_controls)| {
+        (target, resolution, visible, team_controls),
+        move |(target, resolution, visible, team_controls)| {
             let mut selected = None;
             let window = web_sys::window();
             let document = window.as_ref().and_then(web_sys::Window::document);
@@ -459,7 +538,7 @@ pub(super) fn use_target(
                 .as_ref()
                 .and_then(|window| window.history().ok())
                 .and_then(|history| ReturnAnchor::read(&history))
-                .filter(|_| target.is_none() && *visible && *ready);
+                .filter(|_| target.is_none() && resolution.ready);
             let returned = restore_team_entry(
                 anchor.as_ref(),
                 team_controls,
@@ -474,16 +553,46 @@ pub(super) fn use_target(
             {
                 held.borrow_mut().take();
             }
-            if let Some(target) = target.as_deref().filter(|_| *visible) {
-                if *ready {
-                    let route = Route {
-                        target,
-                        returned,
-                        document: document.as_ref(),
-                        status: &status,
-                        team_controls,
-                    };
-                    selected = route.reach(&held, &opened);
+            if let Some(requested) = target.as_deref().filter(|_| *visible) {
+                if resolution.ready {
+                    if let Some(target) = resolution.routed.as_deref() {
+                        let route = Route {
+                            target,
+                            status_target: requested,
+                            returned,
+                            document: document.as_ref(),
+                            status: &status,
+                            team_controls,
+                        };
+                        selected = route.reach(&held, &opened);
+                    } else if resolution.creator {
+                        held.borrow_mut().take();
+                        opened.borrow_mut().take();
+                        if let Some(cursor) = &resolution.history {
+                            if status
+                                .as_ref()
+                                .is_some_and(|known| known.target == requested)
+                            {
+                                status.set(None);
+                            }
+                            let _ = super::admit_action(
+                                &sender,
+                                super::ClientAction::MessageHistory {
+                                    generation: cursor.generation,
+                                    lane: cursor.lane,
+                                    before: cursor.before,
+                                },
+                            );
+                        } else if status
+                            .as_ref()
+                            .is_none_or(|known| known.target != requested || known.available)
+                        {
+                            status.set(Some(Status {
+                                target: requested.to_owned(),
+                                available: false,
+                            }));
+                        }
+                    }
                 }
             } else {
                 // A later visit to the same card opens its team's Chat again.
@@ -503,7 +612,10 @@ pub(super) fn use_target(
 
 /// One visible route target once Chat state is ready.
 struct Route<'a> {
+    /// Concrete rendered card ID.
     target: &'a str,
+    /// Stable URL target, including a creator-context boundary.
+    status_target: &'a str,
     returned: bool,
     document: Option<&'a web_sys::Document>,
     status: &'a UseStateHandle<Option<Status>>,
@@ -519,12 +631,12 @@ impl Route<'_> {
         held: &Rc<RefCell<Option<Hold>>>,
         opened: &Rc<RefCell<Option<String>>>,
     ) -> Option<web_sys::Element> {
-        let (target, status) = (self.target, self.status);
+        let (target, status_target, status) = (self.target, self.status_target, self.status);
         let element = self
             .document
             .and_then(|document| routed_element(document, target));
-        if element.is_some() && opened.borrow().as_deref() != Some(target) {
-            *opened.borrow_mut() = Some(target.to_owned());
+        if element.is_some() && opened.borrow().as_deref() != Some(status_target) {
+            *opened.borrow_mut() = Some(status_target.to_owned());
             if let Some(team) = element
                 .as_ref()
                 .and_then(routed_team)
@@ -545,37 +657,41 @@ impl Route<'_> {
         let settled = self.returned
             || status
                 .as_ref()
-                .is_some_and(|settled| settled.target == target && settled.available);
+                .is_some_and(|settled| settled.target == status_target && settled.available);
         if !settled {
             if let Some(element) = element {
-                let pin = Rc::new(RefCell::new(reach(&element, target, status)));
+                let pin = Rc::new(RefCell::new(reach(&element, status_target, status)));
                 *held.borrow_mut() = Some(Hold {
-                    target: target.to_owned(),
+                    target: status_target.to_owned(),
                     _seek: None,
                     _pin: pin,
                 });
             } else {
                 status.set(Some(Status {
-                    target: target.to_owned(),
+                    target: status_target.to_owned(),
                     available: false,
                 }));
                 if held.borrow().is_none()
                     && let Some(document) = self.document
                 {
                     let pin = Rc::new(RefCell::new(None));
-                    let seek = Seek::start(document, target, status, &pin);
+                    let seek = Seek::start(document, target, status_target, status, &pin);
                     *held.borrow_mut() = Some(Hold {
-                        target: target.to_owned(),
+                        target: status_target.to_owned(),
                         _seek: seek,
                         _pin: pin,
                     });
                 }
             }
-        } else if self.returned && status.as_ref().is_none_or(|known| known.target != target) {
+        } else if self.returned
+            && status
+                .as_ref()
+                .is_none_or(|known| known.target != status_target)
+        {
             // The route's own card counts as reached, so a later stream
             // advance does not yank the reader to it.
             status.set(Some(Status {
-                target: target.to_owned(),
+                target: status_target.to_owned(),
                 available: element.is_some(),
             }));
         }

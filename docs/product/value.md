@@ -421,6 +421,13 @@ rows remain visible, status is textual as well as colored, and narrow layouts
 retain the labeled rows with narrower card tracks. Task detail and relationship
 views preserve the same identity and evidence.
 
+Tasks created from a retained transcript expose the same **Creator context**
+link on their Work card, Chat quick view, and full detail drawer. The link
+returns to the newest retained message card at or before the task's recorded
+creation boundary and pages older lane history when that card is outside the
+loaded window. Tasks without an unambiguous transcript boundary omit the
+action rather than presenting a dead link.
+
 The project-stem pills above Canvas begin with one label-less aggregate pill
 whenever open work exists. Its badge carries the same ready, active, and
 unavailable counts across every stem; selecting it opens Work and clears a

@@ -69,6 +69,7 @@ pub(super) fn render_tasks(
             team: team.lane,
             follow: &follow_message,
         }),
+        creator_context: Some(&follow_message),
     };
     html! {
         <main class="team-task-workspace" aria-label="Team tasks">

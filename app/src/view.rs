@@ -210,6 +210,80 @@ pub(crate) const fn canvas_notice(
 #[cfg(any(target_arch = "wasm32", test))]
 const CARD_TARGET_PATH_PREFIX: &str = "/card/";
 
+#[cfg(any(target_arch = "wasm32", test))]
+const CREATOR_CONTEXT_TARGET_PREFIX: &str = "creator-context-";
+
+/// A task-creation boundary encoded as one canonical Chat route target.
+///
+/// The source remains in the route identity even though visible message loci
+/// are lane-local. That keeps links from distinct transcript generations from
+/// collapsing to one browser-history entry.
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct CreatorContextTarget {
+    pub(crate) lane: wire::CanonicalUuid,
+    source: wire::CanonicalUuid,
+    pub(crate) before: wire::body::TranscriptPosition,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+impl CreatorContextTarget {
+    #[must_use]
+    pub(crate) fn from_creation(context: &wire::body::TaskCreationContext) -> Option<Self> {
+        let wire::body::TaskCreationContext::Transcript { boundary, .. } = context else {
+            return None;
+        };
+        (boundary.stream == wire::body::TASK_CREATION_CONTEXT_STREAM).then_some(Self {
+            lane: boundary.lane,
+            source: boundary.source,
+            before: boundary.next,
+        })
+    }
+
+    #[must_use]
+    pub(crate) fn parse(target: &str) -> Option<Self> {
+        let encoded = target.strip_prefix(CREATOR_CONTEXT_TARGET_PREFIX)?;
+        let lane = encoded.get(..36)?;
+        let encoded = encoded.get(36..)?.strip_prefix('-')?;
+        let source = encoded.get(..36)?;
+        let position = encoded.get(36..)?;
+        let (member, offset) = position
+            .strip_prefix('-')?
+            .split_once('-')
+            .and_then(|(member, offset)| Some((member.parse().ok()?, offset.parse().ok()?)))?;
+        Some(Self {
+            lane: lane.parse().ok()?,
+            source: source.parse().ok()?,
+            before: wire::body::TranscriptPosition { member, offset },
+        })
+    }
+
+    #[must_use]
+    pub(crate) fn target(&self) -> String {
+        format!(
+            "{CREATOR_CONTEXT_TARGET_PREFIX}{}-{}-{}-{}",
+            self.lane, self.source, self.before.member, self.before.offset,
+        )
+    }
+
+    /// Whether one visible message lies before this task's admission boundary.
+    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
+    #[must_use]
+    pub(crate) fn contains(&self, message: &wire::AgentMessage) -> bool {
+        self.contains_locus(message.lane, message.locus)
+    }
+
+    #[must_use]
+    fn contains_locus(&self, lane: wire::CanonicalUuid, locus: wire::MessageLocus) -> bool {
+        lane == self.lane && (locus.member, locus.offset) < (self.before.member, self.before.offset)
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", rust_analyzer))]
+pub(crate) fn creator_context_href(context: &wire::body::TaskCreationContext) -> Option<String> {
+    CreatorContextTarget::from_creation(context).map(|target| card_href(&target.target()))
+}
+
 /// One admitted Canvas URL state.
 ///
 /// Global destinations remain the complete navigation vocabulary. A card
@@ -285,7 +359,10 @@ fn valid_card_target(target: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{CanvasDestination, CanvasNotice, CanvasRoute, ConnectionStage, canvas_notice};
+    use super::{
+        CanvasDestination, CanvasNotice, CanvasRoute, ConnectionStage, CreatorContextTarget,
+        canvas_notice,
+    };
 
     #[test]
     fn card_routes_refine_chat_and_round_trip_the_exact_target() {
@@ -313,6 +390,56 @@ mod tests {
                 "{path:?} unexpectedly named a card"
             );
         }
+    }
+
+    #[test]
+    fn creator_context_targets_round_trip_the_exact_source_boundary() {
+        let lane = "01234567-89ab-cdef-0123-456789abcdef"
+            .parse()
+            .expect("fixture lane");
+        let source = "fedcba98-7654-3210-fedc-ba9876543210"
+            .parse()
+            .expect("fixture source");
+        let context = wire::body::TaskCreationContext::Transcript {
+            session: "session".to_owned(),
+            boundary: wire::TranscriptSourceHead {
+                lane,
+                vendor: "omp".parse().expect("fixture vendor"),
+                stream: wire::body::TASK_CREATION_CONTEXT_STREAM.to_owned(),
+                source,
+                next: wire::body::TranscriptPosition {
+                    member: 17,
+                    offset: 4096,
+                },
+            },
+            creator_team: None,
+        };
+        let expected = concat!(
+            "creator-context-01234567-89ab-cdef-0123-456789abcdef-",
+            "fedcba98-7654-3210-fedc-ba9876543210-17-4096",
+        );
+        let target =
+            CreatorContextTarget::from_creation(&context).expect("transcript context links");
+
+        assert_eq!(target.target(), expected);
+        assert_eq!(CreatorContextTarget::parse(expected), Some(target.clone()));
+        assert!(CanvasRoute::card(expected.to_owned()).is_some());
+        let locus = |member, offset| wire::MessageLocus {
+            member,
+            offset,
+            length: 1,
+            event: 0,
+        };
+        assert!(target.contains_locus(lane, locus(17, 4095)));
+        assert!(target.contains_locus(lane, locus(16, u64::MAX)));
+        assert!(!target.contains_locus(lane, locus(17, 4096)));
+        assert!(!target.contains_locus(lane, locus(18, 0)));
+        assert!(
+            CreatorContextTarget::from_creation(&wire::body::TaskCreationContext::unavailable(
+                wire::body::TaskCreationUnavailable::OperatorActor,
+            ),)
+            .is_none()
+        );
     }
 
     #[test]

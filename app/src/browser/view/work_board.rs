@@ -45,6 +45,7 @@ const CLUSTERINGS: [(WorkClustering, &str); 3] = [
 pub(super) struct WorkBoardControls<'a> {
     pub map: &'a UseStateHandle<WorkMapState>,
     pub select: Callback<wire::TaskStamp>,
+    pub creator_context: Callback<MouseEvent>,
     pub toggle_map_root: Callback<wire::TaskStamp>,
     pub arrangement: &'a UseStateHandle<WorkArrangement>,
     pub lanes: Option<&'a LaneView>,
@@ -62,6 +63,7 @@ pub(super) fn render(
     let WorkBoardControls {
         map,
         select,
+        creator_context,
         toggle_map_root,
         arrangement: arrangement_state,
         lanes,
@@ -78,6 +80,7 @@ pub(super) fn render(
             toggle_root: &toggle_map_root,
         }),
         messages: None,
+        creator_context: Some(&creator_context),
     };
     let arrangement = **arrangement_state;
     let board_lanes =
