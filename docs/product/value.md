@@ -388,6 +388,11 @@ and later members proceed rightward before wrapping in the same order. Chat
 intentionally presents that order from its right-side controls instead; neither
 projection changes member identity, accent, keyboard order, or attribution.
 
+Provider quota account cards keep each reset credit on its existing compact
+line. A credit with an expiration shows a live relative countdown there; hover
+retains the exact provider timestamp, and long credit prose truncates rather
+than increasing the card footprint.
+
 ### The global Work page
 
 One board shows all open work in in-flight, ready, blocked, and deferred lanes.
