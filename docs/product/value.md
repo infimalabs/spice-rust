@@ -389,6 +389,13 @@ and later members proceed rightward before wrapping in the same order. Chat
 intentionally presents that order from its right-side controls instead; neither
 projection changes member identity, accent, keyboard order, or attribution.
 
+The first Dashboard section pairs a compact operator identity row with the
+resident it controls. The avatar already carries the operator badge, so the card
+does not repeat badge, name-source, or email-source metadata. Beside it, three
+fixed resident fields show connection state, appliance version, and a compact
+epoch identity; their loading and reconnect values retain the same geometry as
+settled data.
+
 Provider quota account cards keep each reset credit on its existing compact
 line. A credit with an expiration shows a live relative countdown there; hover
 retains the exact provider timestamp, and long credit prose truncates rather
