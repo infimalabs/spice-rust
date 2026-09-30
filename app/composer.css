@@ -411,7 +411,6 @@
   max-height: 10rem;
   resize: vertical;
 }
-.team-surface .message-task-inspector .work-note-composer button { justify-self: start; }
 .team-surface .message-task-inspector-state {
   align-content: center;
   inline-size: 100%;

@@ -798,8 +798,19 @@
 }
 .work-closure-card header strong { color: var(--ink); }
 .work-closure-claim { margin: 7px 0 0; color: var(--muted); font-size: .74rem; }
-.work-note-composer { margin-top: 14px; padding-top: 14px; border: var(--canvas-edge-soft); }
+/* The observation composer mirrors the Chat composer: the draft on the left and
+   one column of equal one-word pills on the right, wide enough for the busy
+   labels so a submission never resizes the draft. */
+.work-note-composer {
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: 14px;
+  padding-top: 14px;
+  border: var(--canvas-edge-soft);
+}
+.work-note-composer > label { grid-column: 1 / -1; }
 .work-note-composer textarea { min-height: 88px; }
+.work-note-actions { align-self: start; }
+.work-note-actions .team-send { min-width: calc(8ch + 2rem + 2px); color: var(--page); }
 .work-note-capability { margin: 8px 0 0; color: var(--muted); font-size: .74rem; }
 .work-detail-back { width: 100%; margin-top: 18px; }
 

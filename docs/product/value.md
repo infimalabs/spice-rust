@@ -320,6 +320,11 @@ schemes lose their destination. A handle the board holds becomes the Chat task
 chip and moves the quick view or drawer to that task; any other handle, and
 anything inside code or link text, stays literal.
 
+The observation composer in both places mirrors the Chat composer: the draft on
+the left and one column of equal pills on the right, **Add** and, for an
+operator, **Close**, which submits the draft as the closure's validation. Closing
+a task a lane still holds names that holder in the button's description.
+
 Task detail treats admitted ownership facts as navigation. Its project action
 opens the matching Work scope and keeps the task open. Assignment, claim, and
 creator facts open the exact team member in Chat only when topology proves that
