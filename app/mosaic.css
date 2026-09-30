@@ -1327,12 +1327,16 @@ a.relative-age {
   display: grid;
   gap: 8px;
 }
+/* The split layout keys on each card's own cell (.work-card-cell), never the
+   section holding the list; rows pack to the top so a taller sibling in the
+   same history row leaves space below the content instead of between it. */
 .team-task-workspace .work-card--compact {
   grid-template:
     "heading facts" auto
     "title facts" auto
     "badges facts" auto
     / minmax(0, 1fr) minmax(13rem, .36fr);
+  align-content: start;
   gap: 4px 12px;
   padding: 9px 10px;
 }

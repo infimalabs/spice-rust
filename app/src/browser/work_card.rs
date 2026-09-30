@@ -66,70 +66,73 @@ pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
         let born = born.clone();
         Callback::from(move |_| select.emit(born.clone()))
     };
+    // The cell is the list item and the size container, so a card's layout
+    // follows its own width rather than the section that holds the list.
     html! {
-        <article
-            key={born.to_string()}
-            id={return_id}
-            tabindex={message_target.as_ref().map(|_| "-1")}
-            data-card-return-origin={message_target.as_ref().map(|_| "work")}
-            class={classes!(
-                "work-card",
-                (controls.density == Density::Compact).then_some("work-card--compact"),
-                is_selected.then_some("work-card--selected"),
-                is_pinned.then_some("work-card--mapped"),
-            )}
-            data-work-availability={availability.key()}
-            data-work-disposition={
-                (availability == WorkAvailability::Terminal).then(|| workflow.status.clone())
-            }
-            data-work-project={statement.project.clone()}
-            data-selected={is_selected.to_string()}
-            data-work-claimed={task.working_claimant().is_some().to_string()}
-            data-work-claim-accent={claim_accent.map(|accent| accent.to_string())}
-            data-accent={claim_accent.map(|accent| accent.to_string())}
-            aria-label={format!(
-                "{}: {}, {}, {label}",
-                statement.handle,
-                row.presentation_title(),
-                statement.project,
-            )}
-        >
-            <button
-                type="button"
-                class="work-card-open"
-                data-task-stamp={born.to_string()}
-                aria-label={format!("Open {} details", statement.handle)}
-                aria-current={is_selected.then_some("true")}
-                onclick={open}
-            ></button>
-            <header class="work-card-heading">
-                <span class="work-card-handle">{statement.handle.to_string()}</span>
-                <span class="work-card-heading-actions">
-                    if let Some(priority) = priority {
-                        <span class="work-card-priority" title="Declared priority">{format!("P:{priority}")}</span>
-                    }
-                    if let (Some(target), Some(messages)) = (&message_target, &controls.messages) {
-                        <a
-                            class="work-message-link"
-                            href={crate::view::card_href(target)}
-                            aria-label={format!(
-                                "Open newest message mentioning {} in Chat",
-                                statement.handle,
-                            )}
-                            onclick={messages.follow.clone()}
-                        >{"Chat"}</a>
-                    }
-                </span>
-            </header>
-            <h4>{row.presentation_title()}</h4>
-            <div class="work-card-badges">
-                <span class={phase_class(&workflow.status)}>{workflow.phase.to_string()}</span>
-                <span class="tag" title="Phase in flow">{progress}</span>
-                <span class="tag work-card-project" title="Project">{statement.project.clone()}</span>
-            </div>
-            {render_facts(task, controls)}
-            {render_map_toggle(&statement.handle, &born, controls)}
-        </article>
+        <div key={born.to_string()} class="work-card-cell">
+            <article
+                id={return_id}
+                tabindex={message_target.as_ref().map(|_| "-1")}
+                data-card-return-origin={message_target.as_ref().map(|_| "work")}
+                class={classes!(
+                    "work-card",
+                    (controls.density == Density::Compact).then_some("work-card--compact"),
+                    is_selected.then_some("work-card--selected"),
+                    is_pinned.then_some("work-card--mapped"),
+                )}
+                data-work-availability={availability.key()}
+                data-work-disposition={
+                    (availability == WorkAvailability::Terminal).then(|| workflow.status.clone())
+                }
+                data-work-project={statement.project.clone()}
+                data-selected={is_selected.to_string()}
+                data-work-claimed={task.working_claimant().is_some().to_string()}
+                data-work-claim-accent={claim_accent.map(|accent| accent.to_string())}
+                data-accent={claim_accent.map(|accent| accent.to_string())}
+                aria-label={format!(
+                    "{}: {}, {}, {label}",
+                    statement.handle,
+                    row.presentation_title(),
+                    statement.project,
+                )}
+            >
+                <button
+                    type="button"
+                    class="work-card-open"
+                    data-task-stamp={born.to_string()}
+                    aria-label={format!("Open {} details", statement.handle)}
+                    aria-current={is_selected.then_some("true")}
+                    onclick={open}
+                ></button>
+                <header class="work-card-heading">
+                    <span class="work-card-handle">{statement.handle.to_string()}</span>
+                    <span class="work-card-heading-actions">
+                        if let Some(priority) = priority {
+                            <span class="work-card-priority" title="Declared priority">{format!("P:{priority}")}</span>
+                        }
+                        if let (Some(target), Some(messages)) = (&message_target, &controls.messages) {
+                            <a
+                                class="work-message-link"
+                                href={crate::view::card_href(target)}
+                                aria-label={format!(
+                                    "Open newest message mentioning {} in Chat",
+                                    statement.handle,
+                                )}
+                                onclick={messages.follow.clone()}
+                            >{"Chat"}</a>
+                        }
+                    </span>
+                </header>
+                <h4>{row.presentation_title()}</h4>
+                <div class="work-card-badges">
+                    <span class={phase_class(&workflow.status)}>{workflow.phase.to_string()}</span>
+                    <span class="tag" title="Phase in flow">{progress}</span>
+                    <span class="tag work-card-project" title="Project">{statement.project.clone()}</span>
+                </div>
+                {render_facts(task, controls)}
+                {render_map_toggle(&statement.handle, &born, controls)}
+            </article>
+        </div>
     }
 }
 
