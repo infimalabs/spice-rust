@@ -149,9 +149,9 @@ pub(super) async fn send_team_settled(
         CommandKind::BoardRead,
         vec![],
         BoardRead::History {
+            query: request.query.clone(),
+            completed_before: request.completed_before,
             before: request.before.clone(),
-            query: None,
-            completed_before: None,
             team: Some(request.team),
             limit: 20,
         },

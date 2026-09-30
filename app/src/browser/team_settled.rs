@@ -5,8 +5,34 @@ use crate::runtime::TeamSettledRequest;
 
 #[derive(Clone)]
 pub(super) struct Controls {
+    pub validation: UseStateHandle<BTreeMap<CanonicalUuid, String>>,
+    pub apply: Callback<CanonicalUuid>,
+    pub clear: Callback<CanonicalUuid>,
+    pub newer: Callback<CanonicalUuid>,
     pub older: Callback<CanonicalUuid>,
     pub retry: Callback<CanonicalUuid>,
+}
+
+pub(super) fn query_id(team: CanonicalUuid) -> String {
+    format!("team-work-history-query-{team}")
+}
+
+pub(super) fn cutoff_id(team: CanonicalUuid) -> String {
+    format!("team-work-history-cutoff-{team}")
+}
+
+fn update_validation(
+    validation: &UseStateHandle<BTreeMap<CanonicalUuid, String>>,
+    team: CanonicalUuid,
+    issue: Option<String>,
+) {
+    let mut issues = (**validation).clone();
+    if let Some(issue) = issue {
+        issues.insert(team, issue);
+    } else {
+        issues.remove(&team);
+    }
+    validation.set(issues);
 }
 
 fn queue(
@@ -51,6 +77,7 @@ pub(super) fn use_controls(
     surface: UseStateHandle<SurfaceData>,
     shown: Vec<CanonicalUuid>,
 ) -> Controls {
+    let validation = use_state(BTreeMap::new);
     let revision = surface
         .read()
         .as_ref()
@@ -66,6 +93,46 @@ pub(super) fn use_controls(
             }
         });
     }
+    let apply = {
+        let sender = sender.clone();
+        let surface = surface.clone();
+        let validation = validation.clone();
+        Callback::from(move |team: CanonicalUuid| {
+            let query = super::work_history::input_value(&query_id(team));
+            let cutoff = super::work_history::input_value(&cutoff_id(team));
+            match crate::runtime::work_history_completion_cutoff(&cutoff) {
+                Ok(completed_before) => {
+                    update_validation(&validation, team, None);
+                    queue(&sender, &surface, move |runtime| {
+                        runtime.filter_team_settled(team, query, completed_before)
+                    });
+                }
+                Err(issue) => update_validation(&validation, team, Some(issue)),
+            }
+        })
+    };
+    let clear = {
+        let sender = sender.clone();
+        let surface = surface.clone();
+        let validation = validation.clone();
+        Callback::from(move |team: CanonicalUuid| {
+            super::work_history::clear_input(&query_id(team));
+            super::work_history::clear_input(&cutoff_id(team));
+            update_validation(&validation, team, None);
+            queue(&sender, &surface, move |runtime| {
+                runtime.filter_team_settled(team, String::new(), None)
+            });
+        })
+    };
+    let newer = {
+        let sender = sender.clone();
+        let surface = surface.clone();
+        Callback::from(move |team: CanonicalUuid| {
+            queue(&sender, &surface, |runtime| {
+                runtime.begin_newer_team_settled(team)
+            });
+        })
+    };
     let older = {
         let sender = sender.clone();
         let surface = surface.clone();
@@ -80,5 +147,12 @@ pub(super) fn use_controls(
             runtime.retry_team_settled(team)
         });
     });
-    Controls { older, retry }
+    Controls {
+        validation,
+        apply,
+        clear,
+        newer,
+        older,
+        retry,
+    }
 }
