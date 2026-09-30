@@ -34,7 +34,11 @@ pub(crate) struct QuoteAgent {
     pub(crate) label: String,
 }
 
-pub(crate) type QuoteAgents = BTreeMap<(wire::CanonicalUuid, wire::CanonicalUuid), QuoteAgent>;
+/// Every team member's quote presentation, keyed by its lane and the occupant
+/// seated there now. A vacant member keys with no occupant, so a message its
+/// lane sent still names the member while nobody sits in the seat.
+pub(crate) type QuoteAgents =
+    BTreeMap<(wire::CanonicalUuid, Option<wire::CanonicalUuid>), QuoteAgent>;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct QuoteSource {
