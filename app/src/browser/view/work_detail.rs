@@ -12,6 +12,8 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub work: &'a WorkProjection<'work>,
     pub scope: &'a WorkScope,
     pub lanes: Option<&'a LaneView>,
+    pub navigate: &'a Callback<navigation::Intent>,
+    pub team_controls: &'a UseReducerHandle<TeamControls>,
     pub creator_messages: &'a [Rc<wire::AgentMessage>],
     pub selected: Option<&'a TaskStamp>,
     pub presented: bool,
@@ -28,6 +30,7 @@ pub(super) struct WorkDetailRender<'a, 'work> {
     pub select_task: Callback<TaskStamp>,
     pub close: Callback<()>,
     pub leave: Callback<()>,
+    pub leave_for_return: Callback<()>,
     pub retry_relations: Callback<MouseEvent>,
 }
 
@@ -230,18 +233,18 @@ fn render_available(
             <section class="work-detail-section">
                 <h3>{"State"}</h3>
                 <dl class="work-detail-facts">
-                    {fact("Project", statement.project.clone())}
+                    {project_fact(render, &statement.project)}
                     {fact("Status", workflow.status.clone())}
                     {fact("Current phase", workflow.phase.to_string())}
                     {fact("Flow", workflow.flow.iter().map(ToString::to_string).collect::<Vec<_>>().join(" → "))}
                     {fact("Review", workflow.review.clone())}
-                    {assignment_fact(workflow.assignment.as_ref(), render.lanes)}
+                    {assignment_fact(workflow.assignment.as_ref(), render)}
                     {priority_fact(&statement.tags)}
                     {fact("Tags", if statement.tags.is_empty() { "None".to_owned() } else { statement.tags.join(", ") })}
                     {deadline_fact("Deferral", workflow.deferral.as_ref(), "None")}
                     {instant_fact("Completion", workflow.completion.as_ref(), "Open")}
                 </dl>
-                {render_possession(row, render.lanes)}
+                {render_possession(row, render)}
                 {render_blockers(projected)}
             </section>
             <section class="work-detail-section">
@@ -253,7 +256,7 @@ fn render_available(
                 <dl class="work-detail-facts">
                     {fact("Origin", statement.provenance.to_string())}
                     {fact("Origin thread", row.origin_thread.clone())}
-                    {fact("Creator team", row.creator_team.map_or_else(|| "None".to_owned(), |team| team.to_string()))}
+                    {creator_team_fact(row.creator_team, render)}
                     {fact("Queue fact", statement.queue_origin.to_string())}
                     {fact("Statement revision", statement.revision.to_string())}
                     {fact("Workflow fact", row.workflow.position.to_string())}
@@ -314,6 +317,89 @@ fn fact(label: &'static str, value: String) -> Html {
     html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
 }
 
+fn project_fact(render: &WorkDetailRender<'_, '_>, project: &str) -> Html {
+    let Some(scope) = render.work.scope_for_project(project) else {
+        return fact("Project", project.to_owned());
+    };
+    let navigate = render.navigate.clone();
+    let destination = scope.clone();
+    let project = project.to_owned();
+    html! {
+        <div>
+            <dt>{"Project"}</dt>
+            <dd title={project.clone()}>
+                <button
+                    type="button"
+                    class="work-detail-fact-link"
+                    data-task-project-link={project.clone()}
+                    aria-label={format!("Show {project} in Work")}
+                    onclick={Callback::from(move |_| {
+                        navigate.emit(navigation::Intent::Work(destination.clone()));
+                    })}
+                >{project}</button>
+            </dd>
+        </div>
+    }
+}
+
+fn creator_team_fact(team: Option<wire::CanonicalUuid>, render: &WorkDetailRender<'_, '_>) -> Html {
+    let Some(team) = team else {
+        return fact("Creator team", "None".to_owned());
+    };
+    let destination = render
+        .lanes
+        .and_then(|lanes| lanes.chat_target_for_team(team));
+    linked_identity_fact(
+        "Creator team",
+        team.to_string(),
+        team.to_string(),
+        String::new(),
+        destination,
+        render,
+    )
+}
+
+fn linked_identity_fact(
+    label: &'static str,
+    display: String,
+    identity: String,
+    suffix: String,
+    destination: Option<(wire::CanonicalUuid, wire::CanonicalUuid)>,
+    render: &WorkDetailRender<'_, '_>,
+) -> Html {
+    let Some((team, member)) = destination else {
+        return html! {
+            <div><dt>{label}</dt><dd title={identity}>{display}{suffix}</dd></div>
+        };
+    };
+    let href = crate::view::card_href(&super::super::watchband::primary_textarea_id(
+        &member.to_string(),
+    ));
+    let leave = render.leave_for_return.clone();
+    let controls = render.team_controls.clone();
+    let follow = Callback::from(move |event: MouseEvent| {
+        if super::super::card_target::follows_in_tab(&event) {
+            leave.emit(());
+            controls.dispatch(TeamControlAction::ShowChat { team });
+        }
+    });
+    html! {
+        <div>
+            <dt>{label}</dt>
+            <dd title={identity}>
+                <a
+                    class="work-detail-fact-link"
+                    data-task-chat-link={member.to_string()}
+                    {href}
+                    aria-label={format!("Open {display} in Chat")}
+                    onclick={follow}
+                >{display}</a>
+                {suffix}
+            </dd>
+        </div>
+    }
+}
+
 fn instant_fact(label: &'static str, instant: Option<&wire::Instant>, empty: &'static str) -> Html {
     let value = instant.map_or_else(
         || html! { empty },
@@ -334,10 +420,10 @@ fn deadline_fact(
     html! { <div><dt>{label}</dt><dd>{value}</dd></div> }
 }
 
-fn assignment_fact(assignment: Option<&wire::Actor>, lanes: Option<&LaneView>) -> Html {
+fn assignment_fact(assignment: Option<&wire::Actor>, render: &WorkDetailRender<'_, '_>) -> Html {
     assignment.map_or_else(
         || fact("Assignment", "Unassigned".to_owned()),
-        |actor| actor_fact("Assignment", actor, String::new(), lanes),
+        |actor| actor_fact("Assignment", actor, String::new(), render),
     )
 }
 
@@ -346,14 +432,22 @@ fn actor_fact(
     label: &'static str,
     actor: &wire::Actor,
     suffix: String,
-    lanes: Option<&LaneView>,
+    render: &WorkDetailRender<'_, '_>,
 ) -> Html {
-    html! {
-        <div>
-            <dt>{label}</dt>
-            <dd title={actor.to_string()}>{work_card::actor_name(actor, lanes)}{suffix}</dd>
-        </div>
-    }
+    let destination = match actor {
+        wire::Actor::Lane(lane) => render
+            .lanes
+            .and_then(|lanes| lanes.chat_target_for_lane(*lane)),
+        wire::Actor::Operator | wire::Actor::Spice => None,
+    };
+    linked_identity_fact(
+        label,
+        work_card::actor_name(actor, render.lanes),
+        actor.to_string(),
+        suffix,
+        destination,
+        render,
+    )
 }
 
 fn priority_fact(tags: &[String]) -> Html {
@@ -364,7 +458,7 @@ fn priority_fact(tags: &[String]) -> Html {
         })
 }
 
-fn render_possession(row: &wire::intent::BoardTask, lanes: Option<&LaneView>) -> Html {
+fn render_possession(row: &wire::intent::BoardTask, render: &WorkDetailRender<'_, '_>) -> Html {
     let claim = row.claim.as_ref();
     let lease = row.lease.as_ref();
     html! {
@@ -376,7 +470,7 @@ fn render_possession(row: &wire::intent::BoardTask, lanes: Option<&LaneView>) ->
                         "Claim",
                         &claim.body.actor,
                         format!(" · {:?}", claim.body.disposition),
-                        lanes,
+                        render,
                     )
                 })}
                 {fact("Claim fact", claim.map_or_else(|| "None".to_owned(), |claim| claim.position.to_string()))}

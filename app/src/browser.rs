@@ -407,6 +407,7 @@ impl CanvasAppState {
                 select_dash_task: self.work_detail.select_history.clone(),
                 close_task: self.work_detail.close.clone(),
                 leave_task: self.work_detail.leave.clone(),
+                leave_task_for_return: self.work_detail.leave_for_return.clone(),
                 retry_relations,
             },
             work.as_ref(),

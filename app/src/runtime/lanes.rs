@@ -41,6 +41,34 @@ impl LaneView {
     pub fn member(&self, lane: CanonicalUuid) -> Option<&LaneMember> {
         self.lanes.iter().find_map(|row| row.member(lane))
     }
+
+    /// Chat team and member composer for one currently admitted lane.
+    ///
+    /// Independent seats have no team surface, so they intentionally resolve
+    /// to no destination.
+    #[must_use]
+    pub fn chat_target_for_lane(
+        &self,
+        lane: CanonicalUuid,
+    ) -> Option<(CanonicalUuid, CanonicalUuid)> {
+        self.lanes
+            .iter()
+            .find(|team| team.teamed() && team.member(lane).is_some())
+            .map(|team| (team.lane, lane))
+    }
+
+    /// Chat team and primary composer for one currently admitted team.
+    #[must_use]
+    pub fn chat_target_for_team(
+        &self,
+        team: CanonicalUuid,
+    ) -> Option<(CanonicalUuid, CanonicalUuid)> {
+        let team = self
+            .lanes
+            .iter()
+            .find(|candidate| candidate.lane == team && candidate.teamed())?;
+        Some((team.lane, team.members.first()?.lane))
+    }
 }
 
 /// One Canvas lane: a team and every independently steerable member in it.
@@ -248,5 +276,72 @@ impl From<&LaneAnswer> for LaneView {
             refresh_after_millis: answer.refresh_after_millis,
             renewals,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chat_targets_require_current_teamed_topology() {
+        let team = uuid(1);
+        let first = uuid(2);
+        let second = uuid(3);
+        let independent = uuid(4);
+        let view = LaneView {
+            epoch: uuid(5),
+            state: wire::ResidentState::Seated,
+            topology_revision: 1,
+            lanes: vec![
+                LaneRow {
+                    lane: team,
+                    subscription: wire::intent::TeamLife::Steer,
+                    members: vec![member(first), member(second)],
+                },
+                LaneRow {
+                    lane: independent,
+                    subscription: wire::intent::TeamLife::Steer,
+                    members: vec![member(independent)],
+                },
+            ],
+            refresh_after_millis: None,
+            renewals: BTreeMap::new(),
+        };
+
+        assert_eq!(view.chat_target_for_lane(second), Some((team, second)));
+        assert_eq!(view.chat_target_for_team(team), Some((team, first)));
+        assert_eq!(view.chat_target_for_lane(independent), None);
+        assert_eq!(view.chat_target_for_team(independent), None);
+        assert_eq!(view.chat_target_for_lane(uuid(6)), None);
+        assert_eq!(view.chat_target_for_team(uuid(6)), None);
+    }
+
+    fn member(lane: CanonicalUuid) -> LaneMember {
+        LaneMember {
+            lane,
+            name: None,
+            worktree: format!("/tmp/{lane}"),
+            speech: wire::SpeechPlayback::Disabled {},
+            life: "live".to_owned(),
+            vendor: "omp".parse().expect("fixture vendor"),
+            model: None,
+            seat_model: None,
+            effort: None,
+            fast_mode: false,
+            occupant: None,
+            session: None,
+            disposition: "ready".to_owned(),
+            liveness: LaneLiveness::Running,
+            bound: true,
+            wakeable: true,
+            jobs: Vec::new(),
+        }
+    }
+
+    fn uuid(value: u8) -> CanonicalUuid {
+        format!("00000000-0000-4000-8000-{value:012}")
+            .parse()
+            .expect("fixture UUID")
     }
 }
