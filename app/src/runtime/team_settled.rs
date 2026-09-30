@@ -66,7 +66,7 @@ impl TeamSettledState {
         self.pages.as_ref()
     }
 
-    /// Settled tasks the team has in all, loaded or not.
+    /// Settled tasks matching the team's active finder, loaded or not.
     #[must_use]
     pub const fn total(&self) -> Option<u64> {
         self.total
