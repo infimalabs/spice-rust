@@ -263,8 +263,11 @@ fn apply_composer_drop(source: CanonicalUuid, drop: ComposerDrop) -> bool {
     else {
         return false;
     };
-    let offset =
-        target.get_bounding_client_rect().left() - source.get_bounding_client_rect().left();
+    let (Some(source_rect), Some(target_rect)) = (layout_rect(&source), layout_rect(&target))
+    else {
+        return false;
+    };
+    let offset = target_rect.left - source_rect.left;
     let _ = source
         .style()
         .set_property("transform", &format!("translateX({offset}px)"));
@@ -280,11 +283,64 @@ fn preview_composer_drop(
     drop: Option<ComposerDrop>,
     state: &PrimaryComposerDragState,
 ) {
+    // Reapplying the drop already shown would restart its transition from
+    // wherever the animation stands, so an unchanged drop leaves it alone.
+    if drop.is_some() && drop == state.1.get() {
+        return;
+    }
     if drop.is_some_and(|drop| apply_composer_drop(source, drop)) {
         state.1.set(drop);
     } else {
         state.clear_preview();
     }
+}
+
+/// Client-space box of an element's layout slot, without the translation a
+/// swap preview (or its running transition) has moved it by.
+///
+/// Hit-testing the moved box would read the preview back as input: the target
+/// slides out from under the pointer, the drop flips, the preview clears, and
+/// the target slides back, forever.
+struct LayoutRect {
+    left: f64,
+    right: f64,
+    top: f64,
+    bottom: f64,
+}
+
+fn layout_rect(element: &web_sys::Element) -> Option<LayoutRect> {
+    let rect = element.get_bounding_client_rect();
+    let transform = web_sys::window()?
+        .get_computed_style(element)
+        .ok()??
+        .get_property_value("transform")
+        .ok()?;
+    let (dx, dy) = computed_translation(&transform)?;
+    Some(LayoutRect {
+        left: rect.left() - dx,
+        right: rect.right() - dx,
+        top: rect.top() - dy,
+        bottom: rect.bottom() - dy,
+    })
+}
+
+/// Translation carried by a computed `transform` value: `none`,
+/// `matrix(a, b, c, d, e, f)`, or `matrix3d(...)` with its offsets at 13 and 14.
+fn computed_translation(transform: &str) -> Option<(f64, f64)> {
+    if transform == "none" {
+        return Some((0.0, 0.0));
+    }
+    let (values, x, y) = if let Some(values) = transform.strip_prefix("matrix3d(") {
+        (values, 12, 13)
+    } else {
+        (transform.strip_prefix("matrix(")?, 4, 5)
+    };
+    let values = values
+        .strip_suffix(')')?
+        .split(',')
+        .map(|value| value.trim().parse::<f64>().ok())
+        .collect::<Option<Vec<_>>>()?;
+    Some((*values.get(x)?, *values.get(y)?))
 }
 
 fn team_surface(document: &web_sys::Document, team: CanonicalUuid) -> Option<web_sys::Element> {
@@ -306,8 +362,9 @@ fn identity_at_point(selector: &str, attribute: &str, x: f64, y: f64) -> Option<
                 .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
         })
         .find(|element| {
-            let rect = element.get_bounding_client_rect();
-            x >= rect.left() && x <= rect.right() && y >= rect.top() && y <= rect.bottom()
+            layout_rect(element).is_some_and(|rect| {
+                x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom
+            })
         })?
         .get_attribute(attribute)?
         .parse()
