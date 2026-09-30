@@ -1118,7 +1118,13 @@ a.relative-age {
 }
 .team-surface .message-agent-label { min-width: 0; overflow: visible; overflow-wrap: anywhere; text-overflow: clip; white-space: normal; }
 .team-surface .message-agent-name:hover,
-.team-surface .message-agent-name:focus-visible { color: var(--ink); }
+.team-surface .message-agent-name:focus-visible { color: var(--ink); cursor: pointer; }
+.team-surface .message-agent-name:hover .message-agent-label,
+.team-surface .message-agent-name:focus-visible .message-agent-label {
+  text-decoration: underline; text-underline-offset: 2px;
+}
+.team-surface .message-agent-copy { margin-left: 6px; color: var(--muted); white-space: nowrap; }
+.team-surface .message-agent-name[data-copy="failed"] .message-agent-copy { color: var(--danger); }
 .team-surface .message-actions {
   display: flex;
   flex: 0 0 auto;

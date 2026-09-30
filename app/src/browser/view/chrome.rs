@@ -528,30 +528,93 @@ pub(in crate::browser) fn render_card_actions(text: &str, correspondent: &Corres
             <button
                 class="card-action card-action--copy" type="button" title="Copy this message"
                 aria-label="Copy this message"
-                onclick={Callback::from(move |_| copy_text(&copied))}
+                onclick={Callback::from(move |_| copy_text(&copied, drop))}
             ><span class="card-action-icon" aria-hidden="true">{"⧉"}</span></button>
         </span>
     }
 }
 
-/// Hand `text` to the platform clipboard, ignoring a refusal.
+/// Put `text` on the platform clipboard and report how that settled.
 ///
-/// Reached reflectively rather than through a typed binding: `web-sys` gates
-/// the clipboard behind an unstable-API flag that would have to be set for the
-/// whole build, and the call is three property reads either way.
-pub(in crate::browser) fn copy_text(text: &str) {
-    let Some(window) = web_sys::window() else {
+/// The async Clipboard API is reached reflectively: `web-sys` gates it behind
+/// an unstable-API flag that would have to be set for the whole build. Browsers
+/// expose it only to secure contexts, so a Canvas opened over plain http by a
+/// LAN address has none, and only there does the copy go through a selection
+/// instead. A refusal from either path is reported, not retried another way.
+pub(in crate::browser) fn copy_text(
+    text: &str,
+    settled: impl FnOnce(Result<(), String>) + 'static,
+) {
+    let Some(promise) = clipboard_write(text) else {
+        settled(select_and_copy(text));
         return;
     };
-    let clipboard = js_sys::Reflect::get(&window, &JsValue::from_str("navigator"))
-        .and_then(|navigator| js_sys::Reflect::get(&navigator, &JsValue::from_str("clipboard")));
-    let Ok(clipboard) = clipboard else {
-        return;
-    };
+    wasm_bindgen_futures::spawn_local(async move {
+        settled(
+            wasm_bindgen_futures::JsFuture::from(promise)
+                .await
+                .map(drop)
+                .map_err(|error| {
+                    js_sys::Reflect::get(&error, &JsValue::from_str("message"))
+                        .ok()
+                        .and_then(|message| message.as_string())
+                        .unwrap_or_else(|| "the browser refused the clipboard".to_owned())
+                }),
+        );
+    });
+}
+
+fn clipboard_write(text: &str) -> Option<js_sys::Promise> {
+    let window = web_sys::window()?;
+    let navigator = js_sys::Reflect::get(&window, &JsValue::from_str("navigator")).ok()?;
+    let clipboard = js_sys::Reflect::get(&navigator, &JsValue::from_str("clipboard")).ok()?;
     let write = js_sys::Reflect::get(&clipboard, &JsValue::from_str("writeText"))
+        .ok()?
+        .dyn_into::<js_sys::Function>()
+        .ok()?;
+    write
+        .call1(&clipboard, &JsValue::from_str(text))
+        .ok()?
+        .dyn_into::<js_sys::Promise>()
         .ok()
-        .and_then(|write| write.dyn_into::<js_sys::Function>().ok());
-    if let Some(write) = write {
-        let _ = write.call1(&clipboard, &JsValue::from_str(text));
+}
+
+/// Copy `text` through a transient selection, keeping the caller's focus.
+fn select_and_copy(text: &str) -> Result<(), String> {
+    let document = web_sys::window()
+        .and_then(|window| window.document())
+        .ok_or("no document to copy from")?;
+    let body = document.body().ok_or("no document body to copy from")?;
+    let area = document
+        .create_element("textarea")
+        .ok()
+        .and_then(|element| element.dyn_into::<web_sys::HtmlTextAreaElement>().ok())
+        .ok_or("the browser refused a copy buffer")?;
+    area.set_value(text);
+    area.set_read_only(true);
+    area.style()
+        .set_property("position", "fixed")
+        .and_then(|()| area.style().set_property("opacity", "0"))
+        .map_err(|_| "the browser refused a copy buffer")?;
+    let focused = document
+        .active_element()
+        .and_then(|element| element.dyn_into::<web_sys::HtmlElement>().ok());
+    body.append_child(&area)
+        .map_err(|_| "the browser refused a copy buffer")?;
+    area.select();
+    let copied = js_sys::Reflect::get(&document, &JsValue::from_str("execCommand"))
+        .ok()
+        .and_then(|exec| exec.dyn_into::<js_sys::Function>().ok())
+        .and_then(|exec| exec.call1(&document, &JsValue::from_str("copy")).ok())
+        .and_then(|result| result.as_bool())
+        .unwrap_or(false);
+    area.remove();
+    if let Some(focused) = focused {
+        let _ = focused.focus();
+    }
+    if copied {
+        Ok(())
+    } else {
+        Err("the browser refused to copy".to_owned())
     }
 }
