@@ -165,6 +165,8 @@ enum Pending {
     Move {
         expected: String,
         target: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        dirty: Option<snapshot::Rollback>,
     },
     Conflict {
         agent: String,
@@ -175,6 +177,9 @@ enum Pending {
         expected: String,
         target: String,
         tree: String,
+    },
+    Snapshot {
+        commit: String,
     },
 }
 
@@ -226,6 +231,7 @@ pub struct ParkedRelease {
     parked: wire::body::TaskParkedCommits,
     root: PathBuf,
     before: String,
+    snapshot: Option<snapshot::Captured>,
 }
 
 impl ParkedRelease {
@@ -246,30 +252,34 @@ impl ParkedRelease {
                 "restore lane after refused task release",
             )?;
         }
+        if let Some(snapshot) = &self.snapshot {
+            snapshot.restore(&self.root)?;
+        }
         Ok(())
     }
 }
 
-/// Park a holder's unpublished commits by object ID and return its lane to published history.
+/// Park unpublished commits and dirty work without attaching preservation refs.
 ///
-/// The parked commits are exactly the lane commits the published upstream does
-/// not contain, however far that upstream moved since the claim, and the lane
-/// returns to the newest commit it shares with upstream. Without an upstream
-/// the claim-time head is the only published reference. A lane with no such
-/// commits stays where it is and returns `None`.
+/// The lane returns to the newest commit it shares with published history.
+/// Dirty work is saved as a separate dangling commit and replayed uncommitted.
+/// Open merges and paused replays must be resolved before releasing possession.
 pub fn prepare_free(
     repository: &Repository,
     opening: Option<&GitBoundary>,
 ) -> Result<Option<ParkedRelease>, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
-    require_clean(root, "task release")?;
+    snapshot::require_releasable(root)?;
     let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
-    let Some(published) = published_reference(root, opening)? else {
-        return Ok(None);
+    let snapshot = snapshot::capture(root, &before)?;
+    let published = match published_reference(root, opening)? {
+        Some(published) => published,
+        None if snapshot.is_some() => before.clone(),
+        None => return Ok(None),
     };
     let commits = rev_list(root, &published, &before)?;
-    if commits.is_empty() {
+    if commits.is_empty() && snapshot.is_none() {
         return Ok(None);
     }
     let baseline = required_read(
@@ -277,16 +287,38 @@ pub fn prepare_free(
         &["merge-base", &published, &before],
         "find the newest published lane commit",
     )?;
-    materialize_and_update(root, &baseline, &before, "return lane to published history")?;
+    if let Some(snapshot) = &snapshot {
+        materialize_release(root, &baseline, &before, snapshot)?;
+    } else {
+        materialize_and_update(root, &baseline, &before, "return lane to published history")?;
+    }
     Ok(Some(ParkedRelease {
         parked: wire::body::TaskParkedCommits {
             baseline,
             head: before.clone(),
             commits,
+            snapshot: snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.commit().to_owned()),
         },
         root: root.to_path_buf(),
         before,
+        snapshot,
     }))
+}
+
+/// Validate plan history before parking in-flight edits for the next phase.
+pub fn prepare_plan_free(
+    repository: &Repository,
+    opening: Option<&GitBoundary>,
+) -> Result<Option<ParkedRelease>, Error> {
+    let root = repository.worktree_root();
+    recover_pending(root)?;
+    snapshot::require_releasable(root)?;
+    require_plan_opening("plan", false, opening)?;
+    let head = required_read(root, &["rev-parse", "HEAD"], "read plan lane HEAD")?;
+    prepare_completion_target(root, "plan", opening, &head, None)?;
+    prepare_free(repository, opening)
 }
 
 fn published_reference(
@@ -376,6 +408,11 @@ pub fn prepare_task_claim(
 ) -> Result<ClaimPreparation, Error> {
     let root = repository.worktree_root();
     let before = required_read(root, &["rev-parse", "HEAD"], "read pre-claim lane HEAD")?;
+    if let Some(parked) = parked {
+        for commit in parked.commits.iter().chain(parked.snapshot.iter()) {
+            transplant::require_object(root, commit)?;
+        }
+    }
     let mut boundary = prepare_claim(repository)?;
     let Some(parked) = parked else {
         return Ok(ClaimPreparation {
@@ -383,7 +420,12 @@ pub fn prepare_task_claim(
             restore: None,
         });
     };
-    let replayed = match transplant::replay(root, &parked.commits, &boundary.head) {
+    let replayed = match transplant::replay(
+        root,
+        &parked.commits,
+        parked.snapshot.as_deref(),
+        &boundary.head,
+    ) {
         Ok(replayed) => replayed,
         Err(error) => {
             transplant::abandon(root, &before, "restore lane after failed parked claim")?;
@@ -1183,6 +1225,7 @@ mod transaction;
 use transaction::*;
 mod command;
 use command::*;
+mod snapshot;
 mod transplant;
 
 #[cfg(test)]

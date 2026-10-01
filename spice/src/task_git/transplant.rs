@@ -25,7 +25,12 @@ pub(super) struct Replayed {
 }
 
 /// Replay `commits` onto `onto`, stopping in the worktree at the first conflict.
-pub(super) fn replay(root: &Path, commits: &[String], onto: &str) -> Result<Replayed, Error> {
+pub(super) fn replay(
+    root: &Path,
+    commits: &[String],
+    snapshot: Option<&str>,
+    onto: &str,
+) -> Result<Replayed, Error> {
     let mut head = onto.to_owned();
     let mut report = ClaimTransplant {
         onto: onto.to_owned(),
@@ -33,12 +38,10 @@ pub(super) fn replay(root: &Path, commits: &[String], onto: &str) -> Result<Repl
         present: Vec::new(),
         missing: Vec::new(),
         conflict: None,
+        snapshot: snapshot.map(str::to_owned),
     };
     for (index, commit) in commits.iter().enumerate() {
-        if !holds_commit(root, commit)? {
-            report.missing.push(commit.clone());
-            continue;
-        }
+        require_object(root, commit)?;
         if is_ancestor(root, commit, &head)? {
             report.present.push(commit.clone());
             continue;
@@ -51,11 +54,8 @@ pub(super) fn replay(root: &Path, commits: &[String], onto: &str) -> Result<Repl
             advance(root, &head, onto)?;
             let mut remaining = Vec::new();
             for later in &commits[index + 1..] {
-                if holds_commit(root, later)? {
-                    remaining.push(later.clone());
-                } else {
-                    report.missing.push(later.clone());
-                }
+                require_object(root, later)?;
+                remaining.push(later.clone());
             }
             pause(root, commit, &remaining)?;
             report.conflict = Some(TransplantConflict {
@@ -64,6 +64,16 @@ pub(super) fn replay(root: &Path, commits: &[String], onto: &str) -> Result<Repl
                 remaining,
                 remedy: CONFLICT_REMEDY.into(),
             });
+            if let Some(snapshot) = snapshot {
+                snapshot::defer(root, snapshot)?;
+                let conflict = report.conflict.as_mut().expect("replay just paused");
+                conflict.remedy = format!(
+                    "{}; after the commit replay finishes, retry task completion to restore \
+                     pending snapshot {snapshot} as uncommitted work",
+                    conflict.remedy,
+                )
+                .into();
+            }
             return Ok(Replayed { head, report });
         }
         let tree = required_read(
@@ -83,6 +93,9 @@ pub(super) fn replay(root: &Path, commits: &[String], onto: &str) -> Result<Repl
         head = created;
     }
     advance(root, &head, onto)?;
+    if let Some(snapshot) = snapshot {
+        report.conflict = snapshot::apply(root, snapshot)?;
+    }
     Ok(Replayed { head, report })
 }
 
@@ -102,15 +115,41 @@ pub(super) fn abandon(root: &Path, before: &str, action: &str) -> Result<(), Err
             ));
         }
     }
+    let marker = transaction_path(root)?;
+    if marker.exists() {
+        let pending: Pending = serde_json::from_slice(
+            &fs::read(&marker)
+                .map_err(|error| filesystem_fault("read replay marker", &marker, error))?,
+        )
+        .map_err(|error| Error::fault("git::transaction-invalid", error.to_string()))?;
+        if matches!(pending, Pending::Snapshot { .. }) {
+            remove_marker(&marker)?;
+        }
+    }
     let current = required_read(root, &["rev-parse", "HEAD"], "read replayed lane HEAD")?;
     if current != before {
         materialize_and_update(root, before, &current, action)?;
     }
+    let cleared = run(root, &["read-tree", "--reset", "-u", before])?;
+    if !cleared.success() {
+        return Err(Error::fault(
+            "git::transplant-rollback-failed",
+            cleared.detail(action),
+        ));
+    }
     Ok(())
 }
 
-fn holds_commit(root: &Path, commit: &str) -> Result<bool, Error> {
-    Ok(run(root, &["cat-file", "-e", &format!("{commit}^{{commit}}")])?.success())
+pub(super) fn require_object(root: &Path, commit: &str) -> Result<(), Error> {
+    if run(root, &["cat-file", "-e", &format!("{commit}^{{commit}}")])?.success() {
+        Ok(())
+    } else {
+        Err(Error::refusal(
+            "git::parked-object-missing",
+            format!("Git no longer holds parked object {commit}"),
+            "recover the exact parked object before claiming this task; no work was replayed",
+        ))
+    }
 }
 
 fn advance(root: &Path, head: &str, onto: &str) -> Result<(), Error> {

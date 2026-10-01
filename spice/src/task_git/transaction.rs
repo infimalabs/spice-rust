@@ -6,7 +6,7 @@ pub(super) fn materialize_and_update(
     expected: &str,
     action: &str,
 ) -> Result<(), Error> {
-    materialize_and_update_with_hooks(root, target, expected, action, true)
+    materialize_and_update_with_hooks(root, target, expected, action, true, None)
 }
 
 /// Materialize a task-owned synthesized commit and advance the branch by CAS.
@@ -21,7 +21,23 @@ pub(super) fn materialize_and_update_owned(
     expected: &str,
     action: &str,
 ) -> Result<(), Error> {
-    materialize_and_update_with_hooks(root, target, expected, action, false)
+    materialize_and_update_with_hooks(root, target, expected, action, false, None)
+}
+
+pub(super) fn materialize_release(
+    root: &Path,
+    target: &str,
+    expected: &str,
+    snapshot: &snapshot::Captured,
+) -> Result<(), Error> {
+    materialize_and_update_with_hooks(
+        root,
+        target,
+        expected,
+        "return dirty lane to published history",
+        true,
+        Some(snapshot),
+    )
 }
 
 fn materialize_and_update_with_hooks(
@@ -30,6 +46,7 @@ fn materialize_and_update_with_hooks(
     expected: &str,
     action: &str,
     hooks: bool,
+    dirty: Option<&snapshot::Captured>,
 ) -> Result<(), Error> {
     let marker = transaction_path(root)?;
     write_pending(
@@ -37,8 +54,21 @@ fn materialize_and_update_with_hooks(
         &Pending::Move {
             expected: expected.to_owned(),
             target: target.to_owned(),
+            dirty: dirty.map(|snapshot| snapshot.rollback().clone()),
         },
     )?;
+    if let Some(snapshot) = dirty {
+        // Make saved untracked paths visible to read-tree's removal logic.
+        let indexed = run(root, &["read-tree", snapshot.commit()])
+            .map_err(|error| restore_move_failure(root, error))?;
+        if !indexed.success() {
+            let error = Error::fault(
+                "git::snapshot-index-failed",
+                indexed.detail("install release snapshot index"),
+            );
+            return Err(restore_move_failure(root, error));
+        }
+    }
     let materialized = run(root, &["read-tree", "--reset", "-u", target])
         .map_err(|error| restore_move_failure(root, error))?;
     if !materialized.success() {
@@ -440,7 +470,13 @@ pub(super) fn recover_pending(root: &Path) -> Result<(), Error> {
         )
     })?;
     match pending {
-        Pending::Move { expected, target } => recover_move(root, &expected, &target)?,
+        Pending::Move {
+            expected,
+            target,
+            dirty,
+        } => {
+            recover_move(root, &expected, &target, dirty.as_ref())?;
+        }
         Pending::Conflict {
             agent,
             upstream,
@@ -451,6 +487,7 @@ pub(super) fn recover_pending(root: &Path) -> Result<(), Error> {
             target,
             tree,
         } => recover_resolution(root, &expected, &target, &tree)?,
+        Pending::Snapshot { commit } => return snapshot::resume(root, &commit, &marker),
     }
     remove_marker(&marker)
 }
@@ -485,8 +522,18 @@ fn recover_resolution(root: &Path, expected: &str, target: &str, tree: &str) -> 
     }
 }
 
-fn recover_move(root: &Path, expected: &str, target: &str) -> Result<(), Error> {
+fn recover_move(
+    root: &Path,
+    expected: &str,
+    target: &str,
+    dirty: Option<&snapshot::Rollback>,
+) -> Result<(), Error> {
     let current = required_read(root, &["rev-parse", "HEAD"], "recover task Git transaction")?;
+    if current == expected
+        && let Some(dirty) = dirty
+    {
+        return snapshot::restore(root, dirty);
+    }
     let restore = if current == target { target } else { &current };
     let restored = run(root, &["read-tree", "--reset", "-u", restore])?;
     if !restored.success() {
@@ -643,7 +690,7 @@ pub(super) fn write_pending(path: &Path, pending: &Pending) -> Result<(), Error>
         .map_err(|error| filesystem_fault("publish task Git transaction", path, error))
 }
 
-fn remove_marker(path: &Path) -> Result<(), Error> {
+pub(super) fn remove_marker(path: &Path) -> Result<(), Error> {
     match fs::remove_file(path) {
         Ok(()) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -651,7 +698,7 @@ fn remove_marker(path: &Path) -> Result<(), Error> {
     }
 }
 
-fn filesystem_fault(action: &str, path: &Path, error: std::io::Error) -> Error {
+pub(super) fn filesystem_fault(action: &str, path: &Path, error: std::io::Error) -> Error {
     Error::fault(
         "git::transaction-filesystem",
         format!("could not {action} at {}: {error}", path.display()),

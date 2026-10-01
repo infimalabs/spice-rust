@@ -587,6 +587,13 @@ pub struct ClaimTransplant {
         deserialize_with = "crate::optional::present"
     )]
     pub conflict: Option<TransplantConflict>,
+    /// Worktree snapshot restored uncommitted, or waiting behind a paused replay.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub snapshot: Option<String>,
 }
 
 /// One parked commit and the commit its replay created.
