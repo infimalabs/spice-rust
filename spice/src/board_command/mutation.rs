@@ -11,10 +11,10 @@ pub(super) use settlement::{task_close, task_delete};
 
 #[cfg(test)]
 pub(super) use claim::Possession;
-pub(super) use claim::claim_win;
 #[cfg(test)]
 pub(super) use claim::{ClaimPlan, claim_git_boundary, claim_grant, claim_plan, commit_claim};
 use claim::{PreparedClaim, prepare_capture_claim};
+pub(super) use claim::{claim_win, task_parked_commits};
 pub(super) use edit::task_edit;
 pub(super) use taste_proposal::taste_proposal_add;
 

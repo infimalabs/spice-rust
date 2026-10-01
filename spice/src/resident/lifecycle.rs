@@ -751,7 +751,7 @@ impl Runtime {
                 match launched {
                     Ok(lane_surface::AutomaticWake::Started) => Ok(Attempted::Started),
                     Ok(lane_surface::AutomaticWake::Unstarted(launch)) | Err(launch) => {
-                        match crate::board_command::release_automatic(bus, &claim) {
+                        match crate::board_command::release_automatic(bus, repository, &claim) {
                             Ok(()) => Err(launch),
                             Err(release) => Err(unit_outcome(release)),
                         }

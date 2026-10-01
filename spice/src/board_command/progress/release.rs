@@ -105,19 +105,6 @@ fn append_release(
     Ok(())
 }
 
-pub(super) fn rollback_release(
-    parked: Option<spice::task_git::ParkedRelease>,
-    outcome: Outcome<CommandAnswer>,
-) -> Outcome<CommandAnswer> {
-    match parked {
-        Some(parked) => match parked.rollback() {
-            Ok(()) => outcome,
-            Err(error) => task_git_outcome(error),
-        },
-        None => outcome,
-    }
-}
-
 fn finish_release(
     bus: &Bus,
     command: &wire::AdmittedCommand,

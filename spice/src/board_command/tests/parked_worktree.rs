@@ -10,6 +10,16 @@ fn head_commit(lane: &Path) -> String {
     open(lane).head_id().expect("lane HEAD").to_string()
 }
 
+fn head_parent(lane: &Path) -> String {
+    open(lane)
+        .head_commit()
+        .expect("lane HEAD commit")
+        .parent_ids()
+        .next()
+        .expect("lane HEAD parent")
+        .to_string()
+}
+
 /// Names at the root of the lane's HEAD tree.
 fn head_names(lane: &Path) -> Vec<String> {
     let repository = open(lane);
@@ -69,21 +79,109 @@ fn issue_git<B: Serialize>(
     body: &B,
 ) -> Outcome<CommandAnswer> {
     let command = fixture_command(epoch, actor, kind, expected, body);
-    let projects = ProjectPolicy::new(
+    dispatch_with_repository(
+        bus,
+        &command,
+        Some(repository),
+        &projects(),
+        &board::NextConfig::default(),
+    )
+    .expect("fixture command belongs to board")
+}
+
+fn projects() -> ProjectPolicy {
+    ProjectPolicy::new(
         ["board".to_owned(), "rim".to_owned()],
         ["sandbox".to_owned()],
         dialect::PROJECT_MIN_DEPTH as u64,
         dialect::PROJECT_MAX_DEPTH as u64,
     )
-    .expect("fixture project policy");
-    dispatch_with_repository(
+    .expect("fixture project policy")
+}
+
+/// Record the seat's occupant as exited, leaving the lane vacant for the resident.
+fn vacate(bus: &Bus, epoch: CanonicalUuid, seat: &Seat) {
+    let before = board(bus, epoch, Actor::Operator);
+    let mut residency = before.residency.body;
+    residency.lanes[0].occupant = None;
+    residency.lanes[0].disposition = "vacant".to_owned();
+    residency.topology_revision += 1;
+    let mut write = JournalWrite::new(
+        Actor::Spice,
+        format!("resident:{epoch}")
+            .parse()
+            .expect("resident origin"),
+        current_instant().expect("clock"),
+        Producer::ResidentRecognition,
+    );
+    let exited = write
+        .fact(
+            body::LaneExited {
+                lane: seat.lane,
+                occupant: seat.occupant,
+                code: 0,
+            },
+            FactCause::Existing(before.residency.position),
+        )
+        .expect("lane exit fact");
+    write.residency_head(exited, move |_| residency);
+    assert!(matches!(
+        bus.commit(write).expect("vacate lane"),
+        CommitOutcome::Committed(_)
+    ));
+}
+
+fn claim_vacant(
+    bus: &Bus,
+    repository: &Repository,
+    epoch: CanonicalUuid,
+    seat: &Seat,
+    occupant: CanonicalUuid,
+) -> crate::board_command::AutomaticClaim {
+    let snapshot = bus.task_snapshot().expect("task snapshot");
+    match claim_automatic(
         bus,
-        &command,
-        Some(repository),
-        &projects,
+        &snapshot,
+        repository,
+        epoch,
+        seat.lane,
+        occupant,
+        &projects(),
         &board::NextConfig::default(),
-    )
-    .expect("fixture command belongs to board")
+    ) {
+        Ok(claim) => claim,
+        Err(outcome) => panic!("automatic claim: {outcome:?}"),
+    }
+}
+
+/// Local commits the task's current claim boundary records.
+fn claimed_commits(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> (String, u32) {
+    let claimed = board(bus, epoch, Actor::Operator);
+    let boundary = &at(&claimed, task)
+        .git_context
+        .as_ref()
+        .expect("claim git context")
+        .boundary;
+    (boundary.head.clone(), boundary.local_commits)
+}
+
+/// Publish the lane's branch to a local bare origin it then tracks.
+fn track_upstream(root: &Path, lane: &Path) {
+    let origin = root.join("origin.git");
+    let origin = origin.to_str().expect("origin path is UTF-8");
+    for arguments in [
+        &["init", "--bare", "--quiet", origin][..],
+        &["remote", "add", "origin", origin],
+        &["push", "--quiet", "-u", "origin", "HEAD"],
+    ] {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(lane)
+            .args(arguments)
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {arguments:?}");
+    }
 }
 
 /// Bind the seat's lane to a fresh one-commit repository and return it with its HEAD.
@@ -305,4 +403,54 @@ fn free_self_defer_and_plan_completion_keep_dirty_work_on_the_task() {
         assert_eq!(head_names(&lane), ["tracked.txt"]);
         clean(&root, bus);
     }
+}
+
+/// A resident-minted claim inherits released commits like an allocator claim,
+/// and a launch that never starts parks them again rather than stranding them
+/// on the lane, so each claim carries the work exactly once.
+#[test]
+fn automatic_claims_replay_released_commits_once_across_a_failed_launch() {
+    let (root, bus, epoch, seats) = fixture("automatic-replay", 1);
+    let seat = &seats[0];
+    let (lane, repository, opening) = bind_lane(&root, &bus, epoch, seat);
+    track_upstream(&root, &lane);
+    let task = add_project_with_acceptance(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "automatic",
+        "Keep this task's committed work",
+        "board.test",
+        Some("todo"),
+        &["work retained"],
+    );
+    claim_next(&bus, &repository, epoch, seat, &task);
+    fs::write(lane.join("work.txt"), "committed work\n").expect("work file");
+    test_repository::stage_all(&lane);
+    test_repository::commit(&lane, "task work");
+    release("free", &bus, &repository, epoch, seat, &task);
+    assert_eq!(head_commit(&lane), opening);
+    vacate(&bus, epoch, seat);
+
+    let launch = claim_vacant(&bus, &repository, epoch, seat, uuid(9_001));
+    let replayed = head_commit(&lane);
+    assert_eq!(head_parent(&lane), opening);
+    assert_eq!(head_names(&lane), ["tracked.txt", "work.txt"]);
+    assert_eq!(claimed_commits(&bus, epoch, &task), (replayed.clone(), 1));
+
+    release_automatic(&bus, &repository, &launch).expect("unstarted launch releases");
+    assert_eq!(head_commit(&lane), opening);
+    assert_clean(&lane);
+    let released = board(&bus, epoch, Actor::Operator);
+    let parked = at(&released, &task)
+        .parked_commits
+        .as_ref()
+        .expect("failed launch parks the replayed work");
+    assert_eq!(parked.commits, [replayed]);
+
+    claim_vacant(&bus, &repository, epoch, seat, uuid(9_002));
+    assert_eq!(head_parent(&lane), opening);
+    assert_eq!(head_names(&lane), ["tracked.txt", "work.txt"]);
+    assert_eq!(claimed_commits(&bus, epoch, &task), (head_commit(&lane), 1));
+    clean(&root, bus);
 }
