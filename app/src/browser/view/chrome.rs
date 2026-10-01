@@ -278,7 +278,8 @@ fn render_canvas_menu(
     }
 }
 
-/// Plan-weighted weekly quota drawn as provider and account liquid layers.
+/// Plan-weighted weekly quota drawn as account liquid layers, one agent accent
+/// per account in the stack's capacity order.
 struct QuotaLevel<'a> {
     stale: bool,
     stack: crate::quota::WeeklyQuotaStack<'a>,
@@ -289,41 +290,28 @@ impl QuotaLevel<'_> {
     /// SVG geometry attributes, unlike inline style, survive Canvas's
     /// `style-src 'self'` policy.
     fn render(&self) -> Html {
-        const ACCOUNT_INTENSITIES: usize = 8;
-        const QUOTA_LEVELS: f64 = 10.0;
-
-        let account_count = self
+        let mut surface = 100.0;
+        let layers = self
             .stack
             .bands
             .iter()
-            .map(|band| band.accounts.len())
-            .sum();
-        let mut layers = Vec::with_capacity(account_count);
-        let mut surface = 100.0;
-        for (provider_index, band) in self.stack.bands.iter().enumerate() {
-            for (account_index, account) in band.accounts.iter().enumerate() {
+            .flat_map(|band| &band.accounts)
+            .enumerate()
+            .map(|(index, account)| {
                 let depth = account.available / self.stack.capacity * 100.0;
-                let quota_level =
-                    (account.available / account.capacity * QUOTA_LEVELS).round() as u8;
                 surface = (surface - depth).max(0.0);
-                layers.push(html! {
-                    <g
-                        class="canvas-menu-quota-layer"
-                        data-accent={(provider_index % watchband::ACCENTS).to_string()}
-                        data-quota-intensity={(account_index % ACCOUNT_INTENSITIES).to_string()}
-                        data-quota-level={quota_level.to_string()}
-                    >
-                        <rect
-                            class="canvas-menu-quota-account"
-                            x="0"
-                            y={format!("{surface:.3}")}
-                            width="100"
-                            height={format!("{depth:.3}")}
-                        />
-                    </g>
-                });
-            }
-        }
+                html! {
+                    <rect
+                        class="canvas-menu-quota-account"
+                        data-accent={(index % watchband::ACCENTS).to_string()}
+                        x="0"
+                        y={format!("{surface:.3}")}
+                        width="100"
+                        height={format!("{depth:.3}")}
+                    />
+                }
+            })
+            .collect::<Html>();
         html! {
             <svg class="canvas-menu-quota" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
                 {layers}

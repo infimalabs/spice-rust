@@ -269,14 +269,14 @@ Chat hydrates, holding it as older history loads until the reader scrolls.
 
 The Spice button divides global weekly capacity into provider bands. Each
 account's layer height is its available contribution, so the stack shows global
-remaining capacity; color intensity is the fraction remaining within that
-account. Order is by total allocated capacity: the largest provider at the
-bottom, and within it the largest account lowest. Missing, blank, and
+remaining capacity. Order is by total allocated capacity: the largest provider
+at the bottom, and within it the largest account lowest. Missing, blank, and
 unrecognized tiers count as 20× unless an explicit Free (0.2×), named $20 (1×),
 or 5× tier (including OpenAI Pro Lite, the $100 Pro plan) says otherwise.
-Provider hues follow the agent accent order. The button's two-pixel ring and
-shadow are neutral, gold for Fast mode, blue for an available Canvas update, and
-red for both; quota colors never change.
+Each account takes the next agent accent in that order, unshaded, so usage
+moves only layer surfaces, never colors; a failed refresh desaturates them. The
+button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
+available Canvas update, and red for both; quota colors never change.
 
 Action-delivery refusals and best-effort speech failures use the shared root
 toast, above every destination and outside page flow, clearing after a fixed
