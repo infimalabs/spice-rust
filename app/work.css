@@ -164,11 +164,11 @@
    their card, so neither moves the track origin or any card vertically. */
 .work-lanes:not(.team-work-lanes) > .work-lane { padding-top: 0; }
 .work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-track { --work-group-label-gutter: 2.25rem; padding-top: var(--work-group-label-gutter); }
-/* A lane is one height whether empty or full: its row reserves the card cap,
-   which is also every card's max-block-size, so the first task arriving, the
-   last one settling, or a snapshot replacing its placeholder never moves the
-   lanes below. Global and team lanes share the rule. */
-.work-lanes > .work-lane > .work-lane-track > :is(.work-card-list, .work-lane-empty, .work-lane-vacancy) {
+/* A global lane is one height whether empty or full: its row reserves the card
+   cap, which is also every card's max-block-size, so the first task arriving,
+   the last one settling, or a snapshot replacing its placeholder never moves
+   the lanes below. A team's lone In flight row hugs its cards, as Settled does. */
+.work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-track > :is(.work-card-list, .work-lane-empty, .work-lane-vacancy) {
   min-block-size: var(--mosaic-image-large-size);
 }
 .work-lane-vacancy { position: relative; display: grid; }
