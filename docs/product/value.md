@@ -427,9 +427,11 @@ only that member to its lane identity, keeping its seat.
 
 ### The team Dash
 
-Dash keeps one fixed-geometry box per member in canonical order, with accent,
-name, provider glyph, and one presence row — working, working on its claim,
-idle, starting, or vacant — plus that state's age. A provider glyph carries a
+Dash keeps one fixed-geometry box per member in canonical order, in a roster
+that always lays out its horizontal scrollbar, so a member arriving past the
+width never moves the Flow below. Each box shows accent, name, provider glyph,
+and one presence row — working, working on its claim, idle, starting, or
+vacant — plus that state's age. A provider glyph carries a
 small flame only while the occupant is a recorded Fast mode launch; an
 unrecognized provider shows the omp π identity. A per-member seat-details
 disclosure, scrolling inside its box, holds channel, occupant, worktree,

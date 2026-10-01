@@ -604,7 +604,9 @@ body:has(.shell--mosaic),
 }
 /* Lanes paint in Chat's order: canonical member zero at the right edge, and RTL
    overflow keeps that edge visible. Member contents remain LTR. The global
-   Dash keeps its own LTR presentation. */
+   Dash keeps its own LTR presentation. The scrollbar is always laid out, like
+   a Work lane track's, so a member arriving past the width never grows the
+   roster and moves the Flow on platforms with classic scrollbars. */
 .team-dash-roster {
   display: grid;
   grid-auto-columns: minmax(10rem, 1fr);
@@ -612,7 +614,7 @@ body:has(.shell--mosaic),
   gap: 8px;
   min-width: 0;
   padding: 8px;
-  overflow-x: auto;
+  overflow-x: scroll;
   border-bottom: var(--canvas-edge);
   background: color-mix(in srgb, var(--panel) 80%, transparent);
   direction: rtl;
