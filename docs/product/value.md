@@ -368,13 +368,16 @@ state chips, and an authored-before date filter the resident read before
 paging; Apply returns to the newest matching page and Clear removes every
 filter. Newer and Older replace one bounded page through durable journal
 cursors, while loading, no-match, refusal, and retry states retain the same
-controls and card grid. A direction route clears the filters and reads the page
-that starts at its card, with a Newer directions edge above it, then marks and
-focuses that card. A team route selects that team's chip. An unknown or
-malformed direction or team leaves the route for `#/work/directions` and names
-it. Each team's Directions header links to its team route, Dash direction
-attention opens its oldest waiting direction, and a quote with no team-local
-direction links to its global route by key.
+controls and card grid. Every card holds at least one fixed entry footprint,
+its linked-task row reserved before a task links, and the empty line holds that
+same footprint, so the section keeps its height as the first direction arrives
+or a direction gains or loses its first task. A direction route clears the
+filters and reads the page that starts at its card, with a Newer directions
+edge above it, then marks and focuses that card. A team route selects that
+team's chip. An unknown or malformed direction or team leaves the route for
+`#/work/directions` and names it. Each team's Directions header links to its
+team route, Dash direction attention opens its oldest waiting direction, and a
+quote with no team-local direction links to its global route by key.
 
 Each is the team Work ledger's direction card: the resident's first unquoted
 line in sanitized rich Markdown, marked as a retained excerpt and signed by the
