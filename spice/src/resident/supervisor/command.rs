@@ -682,15 +682,34 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
     }
 
-    /// Deliver a kept command's ending as steering, in omp's own notice, and
-    /// record that the lane heard it; a stopped job has nothing to deliver.
+    /// Deliver a kept command's ending as steering, in omp's own notice,
+    /// unless the lane already heard it: a job answer that reported the
+    /// ending claimed the telling first. The claim precedes the notice, so a
+    /// racing answer and notice never both stay silent. It is taken under the
+    /// input's lock, so a closed seat claims nothing and the next seat's
+    /// catch-up owes the ending, and a notice that fails to write gives the
+    /// claim back. A stopped job has nothing to deliver; whoever stopped it
+    /// was answered.
     fn deliver(&self, job: &Job, report: Option<&Report>) {
-        let heard = report.is_none_or(|report| {
-            self.steer(&vendor::omp::job_delivery(job.id(), &report.output))
-                .is_ok()
-        });
-        if heard {
-            let _recorded = job.mark_delivered();
+        let mut stdin = self.stdin.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(stream) = stdin.as_mut() else {
+            return;
+        };
+        // A record that cannot be created is not a telling anyone owns, so
+        // the notice goes out rather than risk silence.
+        if !job.claim_heard().unwrap_or(true) {
+            return;
+        }
+        let Some(report) = report else {
+            return;
+        };
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+        let notice = vendor::omp::steer_request(
+            sequence,
+            &vendor::omp::job_delivery(job.id(), &report.output),
+        );
+        if written(stream, &notice).is_err() {
+            let _released = job.release_heard();
         }
     }
 
@@ -779,9 +798,13 @@ impl<W: Write + Send + 'static> Driver<W> {
                 "the child's command stream is closed",
             ));
         };
-        stream.write_all(bytes)?;
-        stream.flush()
+        written(stream, bytes)
     }
+}
+
+fn written(stream: &mut impl Write, bytes: &[u8]) -> io::Result<()> {
+    stream.write_all(bytes)?;
+    stream.flush()
 }
 
 /// Where this lane's driver listens for republished-inbox kicks.

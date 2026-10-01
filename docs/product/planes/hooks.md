@@ -237,6 +237,15 @@ wake; a successor receives the completion during startup catch-up.
 open. An agent uses `job wait` when the result blocks current work; ending the
 turn neither cancels the job nor loses its completion.
 
+**Invariant —** A job's ending is told once. An answer that reports how a
+job ended (the foreground result, or `job wait`, `job logs` or `job stop`
+after it ended) records it as heard, so no completion notice follows and no
+successor's catch-up repeats it. The record is claimed atomically before a
+notice is written, so when an answer and a notice race exactly one claims it
+and the agent always hears the ending at least once. A seat whose input has
+closed claims nothing, and a notice that fails to write gives its claim back,
+so the next seat's catch-up still owes the ending.
+
 #### Acknowledgment evidence
 
 The transcript tape is the one place an acknowledgment is read from. A header

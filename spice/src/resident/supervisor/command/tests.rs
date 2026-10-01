@@ -711,6 +711,86 @@ fn an_ending_nobody_heard_reaches_the_lanes_next_occupant_once() {
     assert!(scratch.terminal().undelivered().is_empty());
 }
 
+/// A command held on the scratch's fifo, kept past a short foreground, and
+/// the terminal that kept it. No follow thread runs: the test tells it.
+fn kept_job(scratch: &Scratch, fifo: &str) -> (Terminal, Job) {
+    let path = scratch.0.join(fifo);
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&path)
+            .status()
+            .expect("mkfifo")
+            .success()
+    );
+    let terminal = scratch
+        .terminal()
+        .foreground(std::time::Duration::from_millis(50));
+    let call = vendor::omp::ShellCall {
+        command: format!("read held < {fifo}"),
+        timeout: None,
+        notices: Vec::new(),
+    };
+    let Run::Backgrounded(_, job) = terminal.run(&call, &Control::new()) else {
+        panic!("a held command outruns the foreground");
+    };
+    release(&path);
+    (terminal, job)
+}
+
+#[test]
+fn an_ending_the_job_tool_reported_is_not_delivered_again() {
+    let scratch = Scratch::new("read-ending");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, Some(scratch.terminal()));
+    let (terminal, job) = kept_job(&scratch, "hold");
+    let wait = vendor::omp::JobCall {
+        op: vendor::omp::JobOp::Wait,
+        id: Some(job.id().to_owned()),
+        timeout: ANSWER_BOUND,
+    };
+    let answer = terminal.job(&wait, &Control::new());
+    assert!(answer.output.contains("(no output)"), "{}", answer.output);
+
+    driver.deliver(&job, terminal.follow(&job, &Control::new()).as_ref());
+    assert!(sink.frames().is_empty(), "the answer already told the lane");
+    assert!(
+        terminal.undelivered().is_empty(),
+        "the next seat's catch-up owes it nothing"
+    );
+    settled(&scratch);
+}
+
+#[test]
+fn an_unread_ending_is_delivered_once_and_a_lost_telling_is_owed_again() {
+    let scratch = Scratch::new("unread-ending");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, Some(scratch.terminal()));
+    let (terminal, job) = kept_job(&scratch, "hold");
+    let report = terminal.follow(&job, &Control::new());
+    driver.deliver(&job, report.as_ref());
+    driver.deliver(&job, report.as_ref());
+    assert_eq!(
+        sink.frames().len(),
+        1,
+        "of two tellers racing to one ending exactly one speaks"
+    );
+    assert!(terminal.undelivered().is_empty());
+
+    let (terminal, lost) = kept_job(&scratch, "hold-lost");
+    driver.close();
+    driver.deliver(&lost, terminal.follow(&lost, &Control::new()).as_ref());
+    assert_eq!(
+        terminal
+            .undelivered()
+            .iter()
+            .map(Job::id)
+            .collect::<Vec<_>>(),
+        [lost.id()],
+        "a notice that never reached the lane is owed to the next seat"
+    );
+    settled(&scratch);
+}
+
 #[test]
 fn steering_one_agent_backgrounds_only_that_agents_running_shell() {
     let recipient = Scratch::new("recipient-steered");
