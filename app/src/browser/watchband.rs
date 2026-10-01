@@ -42,6 +42,7 @@ use controls::{TeamLife, render_team_controls};
 use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
 pub(in crate::browser) use fleet::{TeamMode, use_team_menu_escape};
 pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
+pub(crate) use mosaic_view::use_markdown_image_resolution_events;
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
 use team_drag::team_dragging;

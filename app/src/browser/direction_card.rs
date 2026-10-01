@@ -94,7 +94,14 @@ pub(super) struct Controls<'a> {
 }
 
 pub(super) fn render(card: &Card<'_>, controls: &Controls<'_>) -> Html {
-    let rendered = crate::composer_markdown::render_received_with_classifications(card.body, &[]);
+    let crate::composer_markdown::ExpandedMedia {
+        markdown,
+        classifications,
+        directives: _,
+    } = crate::composer_markdown::expand_media_payloads(card.body, card.attachments, &[], &[])
+        .expect("direction media passed admission before browser rendering");
+    let rendered =
+        crate::composer_markdown::render_received_with_classifications(&markdown, &classifications);
     let diagrams = Rc::new(
         rendered
             .diagrams
@@ -120,7 +127,11 @@ pub(super) fn render(card: &Card<'_>, controls: &Controls<'_>) -> Html {
                 final_answer={false}
                 quote_tasks={Rc::default()}
             />
-            {render_attachments(card.attachments)}
+            {render_attachments(card.attachments.iter().filter(|attachment| {
+                !attachment
+                    .is_embedded_in(&markdown)
+                    .expect("direction media passed admission before browser rendering")
+            }))}
             {render_tasks(&card.keys, controls)}
             <footer class="team-direction-footer">
                 <span class="team-direction-attribution" data-accent={card.author.accent()}>
@@ -137,13 +148,16 @@ pub(super) fn render(card: &Card<'_>, controls: &Controls<'_>) -> Html {
     }
 }
 
-fn render_attachments(attachments: &[wire::body::DirectiveAttachment]) -> Html {
-    if attachments.is_empty() {
+fn render_attachments<'a>(
+    attachments: impl IntoIterator<Item = &'a wire::body::DirectiveAttachment>,
+) -> Html {
+    let mut attachments = attachments.into_iter().peekable();
+    if attachments.peek().is_none() {
         return Html::default();
     }
     html! {
         <div class="message-attachments" aria-label="Direction attachments">
-            {for attachments.iter().map(|attachment| {
+            {for attachments.map(|attachment| {
                 let action = format!("View {} full size", attachment.name);
                 html! {
                     <button

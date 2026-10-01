@@ -151,15 +151,21 @@ pub(crate) fn directive_ledger(
             }
             for directive in &lane.retired {
                 let identity = directive.fanout.unwrap_or(directive.directive);
+                let body_complete = !directive.text.is_empty();
+                let body = if body_complete {
+                    directive.text.clone()
+                } else {
+                    directive
+                        .preview
+                        .clone()
+                        .unwrap_or_else(|| "Preview unavailable".to_owned())
+                };
                 let row = rows.entry(identity).or_insert_with(|| DirectiveLedgerRow {
                     identity,
                     authored_millis: directive.authored.get().as_millisecond(),
-                    body: directive
-                        .preview
-                        .clone()
-                        .unwrap_or_else(|| "Preview unavailable".to_owned()),
-                    body_complete: false,
-                    attachments: Vec::new(),
+                    body,
+                    body_complete,
+                    attachments: directive.attachments.clone(),
                     author: directive.from,
                     recipients: BTreeMap::new(),
                     recipient_keys: BTreeMap::new(),
@@ -169,12 +175,12 @@ pub(crate) fn directive_ledger(
                     .authored_millis
                     .min(directive.authored.get().as_millisecond());
                 row.author = row.author.or(directive.from);
-                if row.body.is_empty() {
-                    row.body = directive
-                        .preview
-                        .clone()
-                        .unwrap_or_else(|| "Preview unavailable".to_owned());
-                    row.body_complete = false;
+                if !row.body_complete && !directive.text.is_empty() {
+                    row.body.clone_from(&directive.text);
+                    row.body_complete = true;
+                }
+                if row.attachments.is_empty() && !directive.attachments.is_empty() {
+                    row.attachments.clone_from(&directive.attachments);
                 }
                 row.recipients.insert(
                     lane.lane,
@@ -289,7 +295,9 @@ mod tests {
                         key: "1kDone".to_owned(),
                         fanout: Some(fanout),
                         from: None,
+                        text: "one instruction".to_owned(),
                         preview: Some("one instruction".to_owned()),
+                        attachments: Vec::new(),
                         authored,
                         disposition: wire::Disposition::Acked,
                         position: wire::Seq(std::num::NonZeroU64::new(1).unwrap()),
@@ -324,6 +332,54 @@ mod tests {
         assert_eq!(
             direction_identity(&BTreeSet::from([id(1), id(2)]), &inbox, "1kDone"),
             Some(fanout)
+        );
+    }
+
+    #[test]
+    fn a_retired_direction_keeps_its_complete_body_and_attachments() {
+        let authored = "2030-01-01T00:00:00.000Z".parse::<wire::Instant>().unwrap();
+        let retired = "2030-01-01T00:01:00.000Z".parse::<wire::Instant>().unwrap();
+        let attachment = wire::body::DirectiveAttachment {
+            name: "diagram.png".to_owned(),
+            content_type: "image/png".to_owned(),
+            data_url: "data:image/png;base64,aW1hZ2U=".to_owned(),
+        };
+        let inbox = wire::intent::InboxAnswer {
+            epoch: id(8),
+            lanes: vec![wire::intent::LaneInbox {
+                lane: id(1),
+                occupant: None,
+                compaction: None,
+                pending: Vec::new(),
+                retired: vec![wire::intent::RetiredDirective {
+                    directive: id(3),
+                    key: "1kDone".to_owned(),
+                    fanout: Some(id(9)),
+                    text: "See [the runbook](https://example.com/runbook).\n\n> quoted context"
+                        .to_owned(),
+                    from: None,
+                    preview: Some("See the runbook.".to_owned()),
+                    attachments: vec![attachment.clone()],
+                    authored,
+                    disposition: wire::Disposition::Acked,
+                    position: wire::Seq(std::num::NonZeroU64::new(1).unwrap()),
+                    retired,
+                }],
+            }],
+        };
+
+        let rows = directive_ledger(&[id(1)], &[], Some(&inbox));
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(
+            rows[0].body,
+            "See [the runbook](https://example.com/runbook).\n\n> quoted context"
+        );
+        assert!(rows[0].body_complete);
+        assert_eq!(rows[0].attachments, [attachment]);
+        assert_eq!(
+            rows[0].recipients,
+            BTreeMap::from([(id(1), DirectiveLedgerState::Acknowledged)])
         );
     }
 

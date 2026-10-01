@@ -642,8 +642,8 @@ pub const RETIRED_DIRECTIVE_WINDOW: usize = 8;
 
 /// One recently retired directive returned by an inbox read.
 ///
-/// Carries the identity and presentation a reader needs to keep a directive
-/// in place after it leaves the pending set, but not its text or attachments.
+/// Carries the complete admitted presentation so a consumer can keep the
+/// direction stable while its recipient state moves out of the pending set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetiredDirective {
@@ -658,6 +658,9 @@ pub struct RetiredDirective {
         deserialize_with = "crate::optional::present"
     )]
     pub fanout: Option<CanonicalUuid>,
+    /// Complete direction text.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub text: String,
     /// Seated lane that told this directive as a peer message.
     #[serde(
         default,
@@ -672,6 +675,9 @@ pub struct RetiredDirective {
         deserialize_with = "crate::optional::present"
     )]
     pub preview: Option<String>,
+    /// Exact attachments retained with the directive.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<DirectiveAttachment>,
     /// Commit instant of the original publication.
     pub authored: Instant,
     /// Terminal disposition; never [`Disposition::Live`].

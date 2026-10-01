@@ -128,6 +128,7 @@ impl JournalRead<'_> {
              ) SELECT steering.directive, steering.steer_key, steering.lane, \
                 steering.disposition, steering.head_seq, retiring.instant, \
                 json_extract(CAST(steering.body AS TEXT), '$.text'), \
+                json_extract(CAST(steering.body AS TEXT), '$.attachments'), \
                 json_extract(CAST(steering.body AS TEXT), '$.from'), \
                 json_extract(CAST(steering.body AS TEXT), '$.fanout'), \
                 json_extract(CAST(steering.body AS TEXT), '$.published') \
@@ -344,6 +345,15 @@ impl JournalRead<'_> {
                 format!("{retired} is beyond cursor {:?}", self.cursor),
             ));
         }
+        let attachments = row
+            .attachments
+            .as_deref()
+            .map(|attachments| {
+                serde_json::from_str(attachments)
+                    .map_err(|error| invalid("attachments", error.to_string()))
+            })
+            .transpose()?
+            .unwrap_or_default();
         Ok(RetiredSteering {
             directive: uuid("identity", &row.directive)?,
             fanout: row
@@ -363,6 +373,7 @@ impl JournalRead<'_> {
             retired,
             key: row.key,
             text: row.text,
+            attachments,
         })
     }
 }
@@ -426,6 +437,7 @@ struct RetiredColumns {
     head_seq: i64,
     retired_at: String,
     text: String,
+    attachments: Option<String>,
     from: Option<String>,
     fanout: Option<String>,
     published: String,
@@ -440,9 +452,10 @@ fn read_retired_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<RetiredColumns>
         head_seq: row.get(4)?,
         retired_at: row.get(5)?,
         text: row.get(6)?,
-        from: row.get(7)?,
-        fanout: row.get(8)?,
-        published: row.get(9)?,
+        attachments: row.get(7)?,
+        from: row.get(8)?,
+        fanout: row.get(9)?,
+        published: row.get(10)?,
     })
 }
 

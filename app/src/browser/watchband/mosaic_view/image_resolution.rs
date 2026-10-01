@@ -11,7 +11,7 @@ fn resolve_image(image: web_sys::HtmlImageElement) {
     set_image_resolution_state(&image, outcome);
 }
 
-fn scan_complete_images(host: &web_sys::Element) {
+pub(crate) fn scan_complete_images(host: &web_sys::Element) {
     let Ok(images) = host.query_selector_all("img") else {
         return;
     };
@@ -58,38 +58,52 @@ pub(super) fn use_image_resolution_events(host: NodeRef, cards: Vec<ActivityCard
         .map(|activity| (activity.key(), activity.measurement_fingerprint()))
         .collect::<Vec<_>>();
     use_effect_with((host, image_scan), move |(host, _)| {
-        let registration = host.cast::<web_sys::Element>().and_then(|host| {
-            let resolved =
-                Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
-                    let Some(image) = event
-                        .target()
-                        .and_then(|target| target.dyn_into::<web_sys::HtmlImageElement>().ok())
-                    else {
-                        return;
-                    };
-                    resolve_image(image);
-                });
-            let callback = resolved.as_ref().unchecked_ref();
-            host.add_event_listener_with_callback_and_bool("load", callback, true)
-                .ok()?;
-            if host
-                .add_event_listener_with_callback_and_bool("error", callback, true)
-                .is_err()
-            {
-                let _ = host.remove_event_listener_with_callback_and_bool("load", callback, true);
-                return None;
-            }
-            scan_complete_images(&host);
-            Some((host, resolved))
-        });
-        move || {
-            if let Some((host, resolved)) = registration {
-                let callback = resolved.as_ref().unchecked_ref();
-                let _ = host.remove_event_listener_with_callback_and_bool("load", callback, true);
-                let _ = host.remove_event_listener_with_callback_and_bool("error", callback, true);
-            }
-        }
+        let registration = register_image_resolution_events(host);
+        move || remove_image_resolution_events(registration)
     });
+}
+
+#[hook]
+pub(crate) fn use_markdown_image_resolution_events(host: NodeRef, html: AttrValue) {
+    use_effect_with((host, html), move |(host, _)| {
+        let registration = register_image_resolution_events(host);
+        move || remove_image_resolution_events(registration)
+    });
+}
+
+type ImageResolutionRegistration = (web_sys::Element, Closure<dyn FnMut(web_sys::Event)>);
+
+fn register_image_resolution_events(host: &NodeRef) -> Option<ImageResolutionRegistration> {
+    let host = host.cast::<web_sys::Element>()?;
+    let resolved = Closure::<dyn FnMut(web_sys::Event)>::new(move |event: web_sys::Event| {
+        let Some(image) = event
+            .target()
+            .and_then(|target| target.dyn_into::<web_sys::HtmlImageElement>().ok())
+        else {
+            return;
+        };
+        resolve_image(image);
+    });
+    let callback = resolved.as_ref().unchecked_ref();
+    host.add_event_listener_with_callback_and_bool("load", callback, true)
+        .ok()?;
+    if host
+        .add_event_listener_with_callback_and_bool("error", callback, true)
+        .is_err()
+    {
+        let _ = host.remove_event_listener_with_callback_and_bool("load", callback, true);
+        return None;
+    }
+    scan_complete_images(&host);
+    Some((host, resolved))
+}
+
+fn remove_image_resolution_events(registration: Option<ImageResolutionRegistration>) {
+    if let Some((host, resolved)) = registration {
+        let callback = resolved.as_ref().unchecked_ref();
+        let _ = host.remove_event_listener_with_callback_and_bool("load", callback, true);
+        let _ = host.remove_event_listener_with_callback_and_bool("error", callback, true);
+    }
 }
 
 #[hook]

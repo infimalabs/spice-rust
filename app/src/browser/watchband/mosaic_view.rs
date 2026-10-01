@@ -11,6 +11,7 @@ pub(super) use history::HistorySender;
 use history::use_history_paging;
 
 mod image_resolution;
+pub(crate) use image_resolution::use_markdown_image_resolution_events;
 use image_resolution::{use_element_width, use_image_resolution_events};
 
 #[derive(Clone)]
