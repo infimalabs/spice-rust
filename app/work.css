@@ -133,9 +133,10 @@
   font-weight: 700;
   text-align: center;
 }
-/* A lane count reserves three tabular digits and keeps its slot while the
+/* A team lane count reserves three tabular digits and keeps its slot while the
    count is unknown, so the label rail, and the card track beside it, holds one
-   width as the count appears, vanishes, or grows. */
+   width as the count appears, vanishes, or grows. A global lane's heading
+   rides in the card gutter, so its badge hugs the number like any other. */
 .work-lane-heading > span {
   min-inline-size: calc(3ch + 12px);
   font-variant-numeric: tabular-nums;
@@ -201,6 +202,7 @@
   pointer-events: none;
 }
 .work-card-gutter > .work-lane-heading { flex: none; align-self: center; align-items: center; gap: 7px; padding: 0; border: 0; white-space: nowrap; }
+.work-card-gutter > .work-lane-heading > span { min-inline-size: 20px; }
 .work-card-group-label {
   min-width: 0;
   margin: 0 0 5px auto;
