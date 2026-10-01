@@ -203,6 +203,13 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         .ok_or(ContractError::Missing {
             path: "vendor.omp.config_overlay",
         })?;
+    let steering_extension =
+        launch
+            .steering_extension
+            .as_ref()
+            .ok_or(ContractError::Missing {
+                path: "vendor.omp.steering_extension",
+            })?;
     let mut arguments = vec![
         // RPC mode already disables titles: generating one would spend a model
         // call on a session no operator scrolls.
@@ -212,6 +219,10 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         // per-run overlay the lane writes.
         OsString::from("--config"),
         config_overlay.clone().into_os_string(),
+        // omp wraps every steered message in its own priority notice; the
+        // lane's extension hands the provider the message as the lane wrote it.
+        OsString::from("--extension"),
+        steering_extension.clone().into_os_string(),
         // The lane is the approval authority; a prompt no operator can see
         // would otherwise hold the turn forever.
         OsString::from("--approval-mode"),
@@ -305,6 +316,20 @@ pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool, fast_mode: 
     overlay.push_str("providers:\n  openaiLiveSteering: false\n");
     overlay
 }
+
+/// The extension a lane writes beside its overlay and loads with
+/// `--extension`, so the provider reads each steered message as the lane
+/// wrote it.
+///
+/// omp renders every steered user message inside a generated notice calling
+/// it a priority interjection that supersedes prior instructions. Spice's
+/// steering already names its own authority and key, so the notice only
+/// restates it more loudly. The extension's `context` hook clears the
+/// steering flag on the copies omp converts for the provider; omp has no
+/// setting for this. Delivery is untouched: the message still waits in the
+/// steering queue for the next tool or turn boundary, and the stored
+/// transcript keeps the flag, the text, and any images.
+pub const STEERING_EXTENSION: &str = ::std::include_str!("omp/steering.mjs");
 
 /// The session file a lane writes before launch so the identity is known.
 ///

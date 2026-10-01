@@ -25,6 +25,8 @@ const MODEL: &str = "claude-opus-5";
 const SKILL: &str = "Answer steering with ACK before any tool.";
 /// Where the lane wrote this occupant's compaction threshold.
 const CONFIG_OVERLAY: &str = "/supervisors/lane/occupant/omp.yml";
+/// Where the lane wrote this occupant's steering extension.
+const STEERING_EXTENSION: &str = "/supervisors/lane/occupant/omp-steering.mjs";
 
 fn fixture(resume: Resume) -> Launch {
     Launch {
@@ -36,6 +38,7 @@ fn fixture(resume: Resume) -> Launch {
         fast_mode: Some(false),
         auto_compact_window_tokens: Some(220_000),
         config_overlay: Some(CONFIG_OVERLAY.into()),
+        steering_extension: Some(STEERING_EXTENSION.into()),
         lsp: Some(false),
         steering_key: Some(SteeringKey {
             token: STEERING_TOKEN.to_owned(),
@@ -77,6 +80,8 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
         "rpc",
         "--config",
         CONFIG_OVERLAY,
+        "--extension",
+        STEERING_EXTENSION,
         "--approval-mode",
         "yolo",
         "--model",

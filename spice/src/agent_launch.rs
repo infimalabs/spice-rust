@@ -37,6 +37,8 @@ pub struct Inputs {
     pub resume: vendor::Resume,
     /// The configuration overlay the lane wrote for a vendor that reads one.
     pub config_overlay: Option<PathBuf>,
+    /// The steering extension the lane wrote for a vendor that loads one.
+    pub steering_extension: Option<PathBuf>,
     /// Authoritative global fast-mode value for vendors that support it.
     pub fast_mode: bool,
     /// Model this lane selected over the vendor's configured model.
@@ -154,6 +156,7 @@ fn compose_with_registry(
             fast_mode: configured.fast_mode.map(|_| inputs.fast_mode),
             auto_compact_window_tokens: configured.auto_compact_window_tokens,
             config_overlay: inputs.config_overlay,
+            steering_extension: inputs.steering_extension,
             lsp: configured.lsp,
             steering_key,
             resume: inputs.resume,
@@ -254,6 +257,7 @@ mod tests {
                 lane: LANE.parse().expect("fixture lane"),
                 resume: vendor::Resume::Fresh,
                 config_overlay: Some(PathBuf::from("/lane/omp.yml")),
+                steering_extension: Some(PathBuf::from("/lane/omp-steering.mjs")),
                 fast_mode: false,
                 model: None,
                 effort: None,
@@ -282,6 +286,7 @@ mod tests {
             lane: LANE.parse().expect("fixture lane"),
             resume: vendor::Resume::Fresh,
             config_overlay: None,
+            steering_extension: None,
             fast_mode: false,
             model: model.map(str::to_owned),
             effort,

@@ -134,6 +134,12 @@ pub struct Launch {
     /// omp takes its compaction threshold this way, from a file the lane
     /// writes before launch.
     pub config_overlay: Option<PathBuf>,
+    /// The steering extension the dialect loads for this run, written by the
+    /// lane beside its configuration overlay.
+    ///
+    /// omp reads [`crate::omp::STEERING_EXTENSION`] from this path, so the
+    /// provider sees each steered message as the lane wrote it.
+    pub steering_extension: Option<PathBuf>,
     /// Whether the agent runs its own language-server tooling.
     ///
     /// omp's roster names the tool and its overlay states the disposition, so
