@@ -267,14 +267,17 @@ Chat hydrates, holding it as older history loads until the reader scrolls.
 
 ### The Spice menu quota well
 
-The Spice button divides global weekly capacity into provider bands. Each
+The Spice button divides global weekly capacity into account layers. Each
 account's layer height is its available contribution, so the stack shows global
-remaining capacity. Order is by total allocated capacity: the largest provider
-at the bottom, and within it the largest account lowest. Missing, blank, and
+remaining capacity. Colors follow total allocated capacity: the largest
+provider first, and within it the largest account first. Missing, blank, and
 unrecognized tiers count as 20× unless an explicit Free (0.2×), named $20 (1×),
 or 5× tier (including OpenAI Pro Lite, the $100 Pro plan) says otherwise.
-Each account takes the next agent accent in that order, unshaded, so usage
-moves only layer surfaces, never colors; a failed refresh desaturates them. The
+Each account takes the next agent accent in that order, unshaded. Layers stack
+by remaining capacity: the account with the most left at the bottom and the one
+nearest to running out at the top, with equal amounts kept in capacity order.
+Usage therefore moves layer surfaces and positions, never colors; a failed
+refresh desaturates them. The
 button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
 available Canvas update, and red for both; quota colors never change.
 
