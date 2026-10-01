@@ -694,8 +694,9 @@ fn pin_omp(
 /// limit, and it takes that limit only from a settings file, so every launch
 /// writes one stating the threshold the tracked policy derives for the model
 /// this seat runs. The same file states whether this seat runs omp's
-/// language-server integration and whether Anthropic requests use the priority
-/// tier, both of which omp otherwise decides from persistent settings.
+/// language-server integration, whether Anthropic requests use the priority
+/// tier, and that OpenAI live steering is off, all of which omp otherwise
+/// decides from persistent settings.
 fn pin_config_overlay(
     paths: &RuntimePaths,
     threshold: u64,

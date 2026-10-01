@@ -83,7 +83,9 @@ const FOLLOW_UP_MODE: &str = "all";
 /// a batch of pure waits runs to the end before the operator's message is
 /// read. On `immediate` a not-yet-started wait is skipped and the message
 /// lands at the next boundary, which is the latency the lane's steering
-/// contract assumes.
+/// contract assumes. That boundary is a tool or turn boundary on every model
+/// because [`config_overlay`] turns off omp's OpenAI live steering, which
+/// would otherwise push the message into a GPT-6 response still streaming.
 const INTERRUPT_MODE: &str = "immediate";
 
 /// Environment name carrying the session identity the lane pinned at launch.
@@ -249,7 +251,8 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 
 /// The configuration overlay a lane writes before launch, stating the
 /// compaction threshold, Anthropic service tier, language-server disposition,
-/// and todo reminder disposition this seat runs.
+/// todo reminder disposition, and OpenAI live-steering disposition this seat
+/// runs.
 ///
 /// omp reads `compaction.thresholdTokens` ahead of every percentage or
 /// reserve it would otherwise derive, clamped beneath the model's window.
@@ -276,6 +279,15 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 /// assistant to finish them or mark them complete, and wakes the turn to do
 /// it. The occupant's plan is the task it holds, and only the allocator
 /// closes that.
+///
+/// OpenAI live steering is off. omp otherwise delivers a message that
+/// arrives while a GPT-6 response streams over the Codex WebSocket into that
+/// in-flight response. Every lane interjection takes that path: operator
+/// steering, progress reminders, job and compaction notices. On gpt-6.1-sol
+/// a response steered that way usually ended with reasoning alone, no text
+/// and no tool call, so the reminder meant to make the lane talk silenced it
+/// instead. Off, the message waits for the next tool or turn boundary, as on
+/// every other model.
 #[must_use]
 pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool, fast_mode: bool) -> String {
     let mut overlay = format!("compaction:\n  thresholdTokens: {auto_compact_threshold_tokens}\n");
@@ -290,6 +302,7 @@ pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool, fast_mode: 
         "tier:\n  anthropic: none\n"
     });
     overlay.push_str("todo:\n  reminders: false\n");
+    overlay.push_str("providers:\n  openaiLiveSteering: false\n");
     overlay
 }
 
