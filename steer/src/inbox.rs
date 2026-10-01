@@ -257,20 +257,6 @@ pub fn post_compaction(rendered: &str) -> String {
     replayed
 }
 
-/// The private reminder a lane hears after compaction when nothing is pending.
-///
-/// Compaction can drop the acknowledgment contract with the rest of the
-/// context, so every compaction restates it. It names no key and carries no
-/// authority, so it needs neither a seal nor an acknowledgment.
-pub const POST_COMPACTION_NOTICE: &str = concat!(
-    "<system-notice>\n[POST-COMPACTION] No steering is pending, so there is nothing \
-     to acknowledge now. When sealed steering names keys, lead visible assistant prose, \
-     and the first tool intent when the message calls a tool, with \
-     `ACK <key> [<key> ...]: <one clause>` or `NAK <key>: <one clause>` for every key. ",
-    keep_working!(),
-    " This notice carries no acknowledgment key.\n</system-notice>",
-);
-
 fn render_directive_body(directive: &Directive) -> String {
     render_body(
         directive.directive(),
