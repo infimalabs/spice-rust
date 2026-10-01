@@ -132,6 +132,12 @@ fn omp_carries_every_launch_knob_and_opens_the_conversation_over_a_piped_stdin()
                 "type": "negotiate_protocol",
                 "protocolVersion": listen::OMP_PROTOCOL_VERSION,
             }),
+            serde_json::json!({
+                "id": "spice-event-filter",
+                "type": "set_event_filter",
+                "events": null,
+                "messageUpdates": "delta",
+            }),
             serde_json::json!({"id": "spice-steering-mode", "type": "set_steering_mode", "mode": "all"}),
             serde_json::json!({"id": "spice-follow-up-mode", "type": "set_follow_up_mode", "mode": "all"}),
             serde_json::json!({
