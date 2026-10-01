@@ -127,9 +127,18 @@ pub(super) fn task_done(
         Ok(origin) => origin,
         Err(outcome) => return outcome,
     };
+    let parked = if entry.workflow().phase.as_str() == "plan" {
+        let claimed = entry.claim().expect("completion requires a claim").claimed;
+        match release::prepare_release(&snapshot, command, claimed, repository, true) {
+            Ok(parked) => parked,
+            Err(outcome) => return outcome,
+        }
+    } else {
+        None
+    };
     let published = match publish_task_boundary(repository, &snapshot, command, entry) {
         Ok(published) => published,
-        Err(outcome) => return outcome,
+        Err(outcome) => return release::rollback_release(parked, outcome),
     };
     let next = projected_done_next_action(&snapshot, entry, &transition, projects);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
@@ -142,18 +151,30 @@ pub(super) fn task_done(
         published,
         source,
         next,
+        parked.as_ref().map(|release| release.parked()),
     ) {
         Ok(answer) => answer,
-        Err(outcome) => return outcome,
+        Err(outcome) => return release::rollback_release(parked, outcome),
     };
     if let Err(error) = write.command_result(
         request(command, done.clone()),
         command.epoch(),
         answer.clone(),
     ) {
-        return store_fault("task::done-receipt", &error.to_string());
+        return release::rollback_release(
+            parked,
+            store_fault("task::done-receipt", &error.to_string()),
+        );
     }
-    committed(bus, write, CommandAnswer::Task(answer))
+    match parked {
+        Some(parked) => committed_with_task_git(
+            bus,
+            write,
+            CommandAnswer::Task(answer),
+            PreparedTaskGit::Release(parked),
+        ),
+        None => committed(bus, write, CommandAnswer::Task(answer)),
+    }
 }
 
 fn done_entry<'a>(
@@ -378,6 +399,7 @@ fn append_done(
     published: Option<body::GitBoundary>,
     source: body::SourceBoundary,
     next: Option<Box<str>>,
+    parked: Option<&body::TaskParkedCommits>,
 ) -> Result<wire::intent::TaskAnswer, Outcome<CommandAnswer>> {
     let status = transition.next().status.clone();
     let guidance = plan_advance_guidance(transition);
@@ -419,7 +441,21 @@ fn append_done(
         .expect("Active proof requires a claim head")
         .clone();
     claim.disposition = ClaimDisposition::Freed;
-    write.claim_head(entry.born().clone(), completed, move |fact| ClaimHead {
+    let released = if let Some(parked) = parked {
+        write
+            .fact(
+                body::ClaimFreed {
+                    task: entry.born().clone(),
+                    actor: claim.actor.clone(),
+                    parked: Some(parked.clone()),
+                },
+                FactCause::Pending(completed),
+            )
+            .map_err(|error| store_fault("task::plan-release-build", &error.to_string()))?
+    } else {
+        completed
+    };
+    write.claim_head(entry.born().clone(), released, move |fact| ClaimHead {
         fact,
         ..claim
     });

@@ -829,6 +829,9 @@ fn parked_commit_lines(task: &BoardTask) -> Vec<String> {
         "parked_commits:".to_owned(),
     ];
     lines.extend(parked.commits.iter().map(|commit| format!("  - {commit}")));
+    if let Some(snapshot) = &parked.snapshot {
+        lines.push(format!("parked_snapshot {snapshot}"));
+    }
     lines
 }
 

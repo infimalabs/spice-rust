@@ -41,27 +41,41 @@ Voluntary release is one guarded Git-and-journal transition:
 
 ```mermaid
 flowchart LR
-  A["active self-held claim"] --> C{"lane clean?"}
-  C -- no --> X["refusal;<br/>claim and lane unchanged"]
-  C -- yes --> P["journal exact SHAs of lane commits<br/>the published upstream lacks"]
+  A["active self-held claim"] --> M{"open merge or paused replay?"}
+  M -- yes --> X["refusal;<br/>claim and lane unchanged"]
+  M -- no --> C{"lane dirty?"}
+  C -- yes --> S["commit-tree saves dirty work<br/>as a dangling snapshot"]
+  C -- no --> P["retain exact SHAs of lane commits<br/>the published upstream lacks"]
+  S --> P
   P --> R["reset lane to newest<br/>published lane commit"]
-  R --> F["claim&#58;&#58;freed records<br/>recovery coordinates"]
-  F --> N["next claim cherry-picks them<br/>onto its fast-forwarded HEAD"]
+  R --> F["claim&#58;&#58;freed records<br/>commits and optional snapshot"]
+  F --> N["next claim replays real commits,<br/>then restores snapshot uncommitted"]
 ```
 
 Release needs no claim-time baseline. However far a relaunch fast-forwarded the
 lane, the parked commits are exactly the lane commits the published upstream
-does not contain; a lane with none keeps its HEAD. Without an upstream, the
-claim-time head stands in for published history.
+does not contain. Without an upstream, the claim-time head stands in for
+published history. A dirty lane additionally saves its tracked, staged, and
+non-ignored untracked worktree content through a temporary index and
+`commit-tree -p HEAD`; its original index remains available for guarded rollback.
 
-The saved commits are intentionally unreachable: Spice creates no stash or
-preservation ref. The next claim replays them oldest first onto whatever HEAD it
-fast-forwarded to, and its answer's `transplant` names each commit applied with
-its new identity, each whose changes were already present, and each Git no
-longer holds. A conflict does not refuse the claim: Git's own cherry-pick stays
-paused in the worktree with the rest of the replay queued behind it, and the
-answer names the commit, its conflicted paths, and the commits still queued, so
-the claimant resolves it.
+Saved commits and snapshots are intentionally unreachable: Spice creates no
+stash or preservation ref. Before moving a claimant's lane, every parked object
+must exist; a pruned object refuses `git::parked-object-missing` without changing
+the board or lane. The next claim replays real commits oldest first onto its
+fast-forwarded HEAD. Its answer's `transplant` names the commits applied or
+already present, and the separate worktree snapshot. That snapshot is applied
+with no commit, so restored work must still pass the ordinary pre-commit gate.
+
+A real-commit conflict leaves Git's cherry-pick paused for the claimant, with
+later commits queued behind it. A snapshot waits behind that sequence in the
+durable task Git marker; after resolving the committed replay, retry task
+completion to restore the snapshot uncommitted. Snapshot conflicts are resolved
+and staged as ordinary unfinished work, not continued into a snapshot commit.
+Open merges and paused replays cannot be parked as another snapshot.
+
+Plan completion uses the same guarded parking before advancing to `todo`:
+in-flight edits survive without authorizing implementation commits in `plan`.
 
 Deferral by the holder uses that same release transaction before recording the
 deferral. Deferral by another actor changes scheduling only; it does not take
@@ -124,14 +138,14 @@ flowchart TD
    rolling horizon, so a lapse follows the occupant leaving rather than one long
    foreground command outliving a fixed lease. A lease iced on the canonical
    indefinite horizon is the one live lease that never rolls.
-- `task free` and self-deferral never strand committed work on a lane. A clean
-  release parks the commits the published upstream lacks under the task,
-  resets the lane to the newest published commit it shares, and records that
-  baseline, head, and commit list with `claim::freed`. The next claim replays
-  them onto its own baseline before possession is recorded.
-- Dirty lanes and failed guarded journal writes are atomic refusals: the claim
-  and lane return to their pre-command state, including abandoning a paused
-  replay.
+- `task free`, self-deferral, and plan-phase release never strand unfinished
+  work on a lane. Release parks unpublished commit identities and an optional
+  dangling worktree snapshot under the task, returns the lane to its newest
+  shared published commit, and records the coordinates with `claim::freed`.
+  The next claim restores real commits first and dirty content uncommitted.
+- Failed guarded journal writes are atomic refusals: the claim and lane return
+  to their pre-command state, including the original staged/worktree split on
+  release and abandoning a paused or dirty replay on claim.
 - A peer-authored deferral does not release another actor's claim.
 - Every phase transition is accepted into the durable task journal and appears
    through the board projection, including a transition that changes no tree.

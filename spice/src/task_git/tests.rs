@@ -26,6 +26,8 @@ impl RepositoryFixture {
         ));
         fs::create_dir(&root).expect("create task Git fixture");
         git(&root, &["init", "-b", "main"]);
+        git(&root, &["config", "user.name", "Spice Test"]);
+        git(&root, &["config", "user.email", "spice@example.invalid"]);
         fs::write(root.join("tracked.txt"), "opening\n").expect("write tracked fixture");
         git(&root, &["add", "tracked.txt"]);
         git(
@@ -779,4 +781,325 @@ fn a_conflicting_replay_stays_paused_for_the_claimant_until_the_claim_rolls_back
         .is_none()
     );
     require_clean(root, "fixture check").expect("rollback leaves a clean tree");
+}
+
+#[test]
+fn dirty_release_restores_uncommitted_work_after_replaying_commits() {
+    let fixture = published_fixture("dirty-release");
+    let root = &fixture.root;
+    let opening = prepare_claim(&fixture.repository).expect("claim opening");
+    let committed = commit_file(root, "committed.txt", "committed\n", "task commit");
+    fs::write(root.join("tracked.txt"), "unstaged edit\n").expect("edit tracked file");
+    fs::write(root.join("staged.txt"), "staged edit\n").expect("write staged file");
+    git(root, &["add", "staged.txt"]);
+    let binary = [0, 255, 10, 128];
+    fs::write(root.join("untracked.bin"), binary).expect("write untracked bytes");
+    let release = prepare_free(&fixture.repository, Some(&opening))
+        .expect("dirty release succeeds")
+        .expect("dirty work parks");
+    let snapshot = release
+        .parked()
+        .snapshot
+        .as_ref()
+        .expect("snapshot recorded");
+    assert_eq!(release.parked().commits, [committed]);
+    assert_eq!(lane_head(root), opening.head);
+    require_clean(root, "released lane").expect("release removes all saved dirt");
+    assert_eq!(
+        required_read(
+            root,
+            &["for-each-ref", "--contains", snapshot],
+            "inspect snapshot refs"
+        )
+        .expect("refs"),
+        ""
+    );
+
+    let peer = root.join(".git/fixture-peer");
+    let remote = root.join(".git/fixture-origin.git");
+    git(
+        root,
+        &[
+            "clone",
+            remote.to_str().expect("remote path"),
+            peer.to_str().expect("peer path"),
+        ],
+    );
+    git(&peer, &["config", "user.name", "Peer Test"]);
+    git(&peer, &["config", "user.email", "peer@example.invalid"]);
+    let upstream = commit_file(&peer, "peer.txt", "peer\n", "peer advance");
+    git(&peer, &["push", "origin", "main"]);
+    let claim = prepare_task_claim(&fixture.repository, Some(release.parked()))
+        .expect("restore task on moved upstream");
+    assert_eq!(
+        claim.transplant().expect("transplant").snapshot.as_ref(),
+        Some(snapshot)
+    );
+    assert_eq!(claim.transplant().expect("transplant").onto, upstream);
+    assert_eq!(claim.boundary.local_commits, 1);
+    assert_ne!(&lane_head(root), snapshot);
+    assert_eq!(
+        fs::read_to_string(root.join("tracked.txt")).expect("tracked file"),
+        "unstaged edit\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("staged.txt")).expect("staged file"),
+        "staged edit\n"
+    );
+    assert_eq!(
+        fs::read(root.join("untracked.bin")).expect("binary file"),
+        binary
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("committed.txt")).expect("committed file"),
+        "committed\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("peer.txt")).expect("peer file"),
+        "peer\n"
+    );
+    assert_eq!(
+        required_read(
+            root,
+            &["ls-tree", "--name-only", "HEAD"],
+            "inspect committed paths"
+        )
+        .expect("paths"),
+        "committed.txt\npeer.txt\ntracked.txt"
+    );
+    claim
+        .rollback()
+        .expect("refused claim discards restoration");
+    assert_eq!(lane_head(root), opening.head);
+    require_clean(root, "claim rollback").expect("snapshot additions removed");
+}
+
+#[test]
+fn dirty_release_rollback_preserves_original_index_and_worktree() {
+    let fixture = RepositoryFixture::new("dirty-rollback");
+    let root = &fixture.root;
+    fs::write(root.join("tracked.txt"), "staged generation\n").expect("staged edit");
+    git(root, &["add", "tracked.txt"]);
+    fs::write(root.join("tracked.txt"), "working generation\n").expect("later edit");
+    fs::write(root.join("new.txt"), "untracked\n").expect("untracked file");
+    let index = required_read(
+        root,
+        &["ls-files", "--stage"],
+        "read original staged entries",
+    )
+    .expect("index entries");
+    let before =
+        required_read(root, &["status", "--porcelain"], "read original status").expect("status");
+    let release = prepare_free(&fixture.repository, Some(&fixture.opening))
+        .expect("prepare dirty release")
+        .expect("snapshot-only release");
+    assert!(release.parked().commits.is_empty());
+    require_clean(root, "prepared release").expect("clean before board write");
+    release
+        .rollback()
+        .expect("rejected journal write restores dirt");
+    assert_eq!(lane_head(root), fixture.opening.head);
+    assert_eq!(
+        required_read(
+            root,
+            &["ls-files", "--stage"],
+            "read restored staged entries"
+        )
+        .expect("index entries"),
+        index
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("tracked.txt")).expect("working file"),
+        "working generation\n"
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("new.txt")).expect("new file"),
+        "untracked\n"
+    );
+    assert_eq!(
+        required_read(root, &["status", "--porcelain"], "read rollback status").expect("status"),
+        before
+    );
+}
+
+#[test]
+fn a_pruned_snapshot_refuses_before_advancing_the_claimant() {
+    let fixture = published_fixture("missing-snapshot");
+    let root = &fixture.root;
+    let opening = prepare_claim(&fixture.repository).expect("claim opening");
+    fs::write(root.join("draft.txt"), "draft\n").expect("draft file");
+    let release = prepare_free(&fixture.repository, Some(&opening))
+        .expect("release")
+        .expect("parked work");
+    let snapshot = release.parked().snapshot.as_ref().expect("snapshot");
+    let object = git_state_path(
+        root,
+        &format!("objects/{}/{}", &snapshot[..2], &snapshot[2..]),
+    )
+    .expect("loose snapshot object");
+    fs::remove_file(object).expect("prune snapshot");
+    publish_peer_integrations(root);
+    let index = fs::read(git_state_path(root, "index").expect("index path")).expect("index bytes");
+    let error = prepare_task_claim(&fixture.repository, Some(release.parked()))
+        .expect_err("missing snapshot must not lose work");
+    assert_eq!(error.reason(), "git::parked-object-missing");
+    assert_eq!(lane_head(root), opening.head);
+    assert_eq!(
+        fs::read(git_state_path(root, "index").expect("index path")).expect("index bytes"),
+        index
+    );
+    require_clean(root, "missing-object refusal").expect("lane unchanged");
+}
+
+#[test]
+fn plan_release_parks_dirt_without_admitting_implementation_history() {
+    let fixture = RepositoryFixture::new("plan-dirty-release");
+    let root = &fixture.root;
+    fs::write(root.join("draft.txt"), "in-flight draft\n").expect("plan draft");
+    let release = prepare_plan_free(&fixture.repository, Some(&fixture.opening))
+        .expect("plan release")
+        .expect("draft parks");
+    assert_eq!(lane_head(root), fixture.opening.head);
+    let claim =
+        prepare_task_claim(&fixture.repository, Some(release.parked())).expect("todo restoration");
+    assert_eq!(claim.boundary.local_commits, 0);
+    assert_eq!(lane_head(root), fixture.opening.head);
+    assert_eq!(
+        fs::read_to_string(root.join("draft.txt")).expect("restored draft"),
+        "in-flight draft\n"
+    );
+    claim.rollback().expect("restore clean plan opening");
+    commit_file(
+        root,
+        "implementation.txt",
+        "committed\n",
+        "bypassed plan commit",
+    );
+    let error = prepare_plan_free(&fixture.repository, Some(&fixture.opening))
+        .expect_err("plan history must still refuse");
+    assert_eq!(error.reason(), "git::plan-implementation");
+}
+
+#[test]
+fn dirty_snapshot_waits_behind_conflicted_commits_and_restores_without_a_commit() {
+    let fixture = published_fixture("deferred-snapshot");
+    let root = &fixture.root;
+    let opening = prepare_claim(&fixture.repository).expect("claim opening");
+    commit_file(
+        root,
+        "tracked.txt",
+        "task edit\n",
+        "conflicting task commit",
+    );
+    fs::write(root.join("draft.txt"), "uncommitted draft\n").expect("draft");
+    let release = prepare_free(&fixture.repository, Some(&opening))
+        .expect("release")
+        .expect("parked task");
+    publish_peer_integrations(root);
+    let claim =
+        prepare_task_claim(&fixture.repository, Some(release.parked())).expect("paused claim");
+    assert_eq!(
+        claim.transplant().expect("transplant").snapshot,
+        release.parked().snapshot
+    );
+    assert!(
+        !root.join("draft.txt").exists(),
+        "snapshot waits for real commits"
+    );
+    let refusal = prepare_free(&fixture.repository, Some(&opening))
+        .expect_err("paused replay cannot release");
+    assert_eq!(refusal.reason(), "git::parked-replay-paused");
+    fs::write(root.join("tracked.txt"), "resolved commit\n").expect("resolve committed conflict");
+    git(root, &["add", "tracked.txt"]);
+    git(root, &["cherry-pick", "--continue"]);
+    let head = lane_head(root);
+    recover_pending(root).expect("restore deferred snapshot");
+    assert_eq!(lane_head(root), head);
+    assert_eq!(
+        fs::read_to_string(root.join("draft.txt")).expect("draft restored"),
+        "uncommitted draft\n"
+    );
+    assert_eq!(
+        required_read(root, &["show", "HEAD:draft.txt"], "inspect committed draft")
+            .unwrap_err()
+            .reason(),
+        "git::command-failed"
+    );
+    assert!(!transaction_path(root).expect("marker path").exists());
+}
+
+#[test]
+fn a_snapshot_conflict_remains_uncommitted_and_claim_rollback_clears_it() {
+    let fixture = published_fixture("snapshot-conflict");
+    let root = &fixture.root;
+    let opening = prepare_claim(&fixture.repository).expect("claim opening");
+    fs::write(root.join("tracked.txt"), "draft edit\n").expect("dirty tracked file");
+    let release = prepare_free(&fixture.repository, Some(&opening))
+        .expect("release")
+        .expect("snapshot");
+    publish_peer_integrations(root);
+    let claim = prepare_task_claim(&fixture.repository, Some(release.parked()))
+        .expect("conflicted snapshot claim");
+    let report = claim.transplant().expect("snapshot report");
+    let conflict = report.conflict.as_ref().expect("snapshot conflict");
+    assert_eq!(Some(&conflict.commit), release.parked().snapshot.as_ref());
+    assert_eq!(conflict.paths, ["tracked.txt"]);
+    assert_eq!(lane_head(root), report.onto);
+    assert_eq!(claim.boundary.local_commits, 0);
+    assert_eq!(
+        prepare_free(&fixture.repository, Some(&opening))
+            .expect_err("unresolved snapshot cannot park")
+            .reason(),
+        "git::worktree-dirty"
+    );
+    claim.rollback().expect("undo refused snapshot claim");
+    assert_eq!(lane_head(root), opening.head);
+    assert_eq!(
+        fs::read_to_string(root.join("tracked.txt")).expect("original file"),
+        "opening\n"
+    );
+    require_clean(root, "snapshot rollback").expect("unmerged stages cleared");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_ref_hook_refusal_restores_dirty_work_and_the_staged_generation() {
+    let fixture = RepositoryFixture::new("snapshot-hook-refusal");
+    let root = &fixture.root;
+    let head = commit_file(root, "committed.txt", "task commit\n", "task commit");
+    fs::write(root.join("tracked.txt"), "staged generation\n").expect("staged edit");
+    git(root, &["add", "tracked.txt"]);
+    fs::write(root.join("tracked.txt"), "working generation\n").expect("working edit");
+    fs::write(root.join("new.bin"), [255, 0, 128]).expect("untracked bytes");
+    let index =
+        required_read(root, &["ls-files", "--stage"], "original staged entries").expect("entries");
+    let hooks = git_state_path(root, "hooks").expect("hooks path");
+    git(
+        root,
+        &[
+            "config",
+            "core.hooksPath",
+            hooks.to_str().expect("hook path"),
+        ],
+    );
+    let hook = hooks.join("reference-transaction");
+    fs::write(&hook, "#!/bin/sh\n[ \"$1\" != prepared ]\n").expect("refusal hook");
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755)).expect("executable hook");
+    let error = prepare_free(&fixture.repository, Some(&fixture.opening))
+        .expect_err("reference hook refuses release");
+    assert_eq!(error.reason(), "git::ref-update-refused");
+    assert_eq!(lane_head(root), head);
+    assert_eq!(
+        required_read(root, &["ls-files", "--stage"], "restored staged entries").expect("entries"),
+        index
+    );
+    assert_eq!(
+        fs::read_to_string(root.join("tracked.txt")).expect("working edit"),
+        "working generation\n"
+    );
+    assert_eq!(
+        fs::read(root.join("new.bin")).expect("untracked bytes"),
+        [255, 0, 128]
+    );
+    assert!(!transaction_path(root).expect("transaction path").exists());
 }

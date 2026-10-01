@@ -203,13 +203,12 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
         .ok_or(ContractError::Missing {
             path: "vendor.omp.config_overlay",
         })?;
-    let steering_extension =
-        launch
-            .steering_extension
-            .as_ref()
-            .ok_or(ContractError::Missing {
-                path: "vendor.omp.steering_extension",
-            })?;
+    let steering_extension = launch
+        .steering_extension
+        .as_ref()
+        .ok_or(ContractError::Missing {
+            path: "vendor.omp.steering_extension",
+        })?;
     let mut arguments = vec![
         // RPC mode already disables titles: generating one would spend a model
         // call on a session no operator scrolls.

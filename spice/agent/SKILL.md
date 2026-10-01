@@ -84,6 +84,14 @@ If continuity is clipped, recover only the detail needed with
 - Keep work incremental and validated. Commit only while holding the matching
   claim. Git synchronization belongs to allocation and completion: never pull
   or push during implementation or alter harness-added attribution trailers.
+- Release unfinished work with `spice task free HANDLE` or self-deferral,
+  not stash or a gate bypass. Spice parks unpublished commits and dirty
+  tracked/staged/non-ignored untracked content as dangling objects under the
+  task, with no preservation ref. The next claim replays real commits first
+  and restores the worktree snapshot uncommitted; those edits still need the
+  ordinary pre-commit gate. Plan completion preserves in-flight edits the same
+  way, but does not authorize implementation in plan. Resolve open merges or
+  paused replays before release; a pruned parked object refuses the next claim.
 - After staging the exact change, run `spice gate prove`; it reads only the
   current fingerprint and trusted receipts. Run a named miss with
   `spice gate prove ACTION`, or every miss with `spice gate prove --missing`;

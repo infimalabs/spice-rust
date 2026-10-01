@@ -595,7 +595,7 @@ pub struct ClaimRebound {
     pub source: SourceBoundary,
 }
 
-/// Repository commits detached from a lane when its task claim was released.
+/// Commits and an optional dirty worktree snapshot detached on task release.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskParkedCommits {
@@ -605,6 +605,13 @@ pub struct TaskParkedCommits {
     pub head: String,
     /// Original commit identities in oldest-first ancestry order.
     pub commits: Vec<String>,
+    /// Unreferenced worktree snapshot, restored without creating a lane commit.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub snapshot: Option<String>,
 }
 
 /// Possession was released and the task became eligible again.
