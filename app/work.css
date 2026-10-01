@@ -158,12 +158,11 @@
   scroll-snap-type: inline proximity;
 }
 
-/* Global lanes reserve one gutter above their track for the lane heading and
-   cluster labels, so neither moves the track origin or any card vertically. */
-.work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-track {
-  --work-group-label-gutter: 1.5rem;
-  padding-top: calc(5px + var(--work-group-label-gutter));
-}
+/* Global lanes reserve one gutter between their top rule and their track for
+   the lane heading, centered in it, and cluster labels, which sit just above
+   their card, so neither moves the track origin or any card vertically. */
+.work-lanes:not(.team-work-lanes) > .work-lane { padding-top: 0; }
+.work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-track { --work-group-label-gutter: 2.25rem; padding-top: var(--work-group-label-gutter); }
 /* A lane is one height whether empty or full: its row reserves the card cap,
    which is also every card's max-block-size, so the first task arriving, the
    last one settling, or a snapshot replacing its placeholder never moves the
@@ -199,13 +198,12 @@
   align-items: flex-end;
   gap: 10px;
   height: var(--work-group-label-gutter);
-  padding-bottom: 5px;
   pointer-events: none;
 }
-.work-card-gutter > .work-lane-heading { flex: none; align-items: center; gap: 7px; padding: 0; border: 0; white-space: nowrap; }
+.work-card-gutter > .work-lane-heading { flex: none; align-self: center; align-items: center; gap: 7px; padding: 0; border: 0; white-space: nowrap; }
 .work-card-group-label {
   min-width: 0;
-  margin: 0 0 0 auto;
+  margin: 0 0 5px auto;
   color: var(--muted);
   font: 700 .64rem/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow: hidden;
