@@ -224,31 +224,33 @@ pub(super) fn render_directive_ledger(
                     aria-label="Open this team's direction history in Work"
                 >{"History"}</a>
             </header>
-            if rows.is_empty() {
-                <p
-                    class="team-task-empty"
-                    role={runtime.inbox().is_none().then_some("status")}
-                >
-                    {if runtime.inbox().is_some() {
-                        "No directions yet."
-                    } else {
-                        "Direction snapshot unavailable."
-                    }}
-                </p>
-            } else {
-                <ol class="team-direction-ledger" role="feed" aria-labelledby={heading.clone()}>
-                    {for rows.iter().map(|row| {
-                        super::super::direction_card::render(
-                            &direction_card(row, team.lane, standings, message_links),
-                            &super::super::direction_card::Controls {
-                                board,
-                                select,
-                                follow: follow_message,
-                            },
-                        )
-                    })}
-                </ol>
-            }
+            <div class="team-entry-region">
+                if rows.is_empty() {
+                    <p
+                        class="team-task-empty"
+                        role={runtime.inbox().is_none().then_some("status")}
+                    >
+                        {if runtime.inbox().is_some() {
+                            "No directions yet."
+                        } else {
+                            "Direction snapshot unavailable."
+                        }}
+                    </p>
+                } else {
+                    <ol class="team-direction-ledger" role="feed" aria-labelledby={heading.clone()}>
+                        {for rows.iter().map(|row| {
+                            super::super::direction_card::render(
+                                &direction_card(row, team.lane, standings, message_links),
+                                &super::super::direction_card::Controls {
+                                    board,
+                                    select,
+                                    follow: follow_message,
+                                },
+                            )
+                        })}
+                    </ol>
+                }
+            </div>
         </section>
     }
 }
@@ -381,19 +383,21 @@ fn render_settled_lane(
                 older,
                 retry,
             })}
-            if !tasks.is_empty() {
-                <div class="team-task-card-list work-history-list">
-                    {for tasks.iter().map(|task| work_card::render(task, cards))}
-                </div>
-            } else if total == Some(0) {
-                <p class="team-task-empty">{
-                    if state.is_some_and(TeamSettledState::filtered) {
-                        "No settled work matches these filters."
-                    } else {
-                        "No work has settled."
-                    }
-                }</p>
-            }
+            <div class="team-entry-region">
+                if !tasks.is_empty() {
+                    <div class="team-task-card-list work-history-list">
+                        {for tasks.iter().map(|task| work_card::render(task, cards))}
+                    </div>
+                } else if total == Some(0) {
+                    <p class="team-task-empty">{
+                        if state.is_some_and(TeamSettledState::filtered) {
+                            "No settled work matches these filters."
+                        } else {
+                            "No work has settled."
+                        }
+                    }</p>
+                }
+            </div>
         </section>
     }
 }

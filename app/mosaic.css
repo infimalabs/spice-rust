@@ -1419,4 +1419,20 @@ a.relative-age {
   color: var(--muted);
   font-size: .67rem;
 }
+/* Directions and Settled hold one entry's footprint whether empty, loading,
+   or holding one entry. The region and its empty line reserve the card cap,
+   which is also each entry's max-block-size, so the first entry arriving or
+   the last leaving moves nothing below. A direction's body scrolls inside the
+   cap, as a work card's title row absorbs it. */
+.team-entry-region,
+.team-entry-region > .team-task-empty {
+  min-block-size: var(--mosaic-image-large-size);
+}
+.team-entry-region .team-direction-ledger-row {
+  max-block-size: var(--mosaic-image-large-size);
+}
+.team-entry-region .team-direction-ledger-row > .message-body {
+  min-block-size: 0;
+  overflow-y: auto;
+}
 
