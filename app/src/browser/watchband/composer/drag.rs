@@ -11,7 +11,7 @@ enum ComposerDrop {
 
 #[derive(Clone, Default)]
 pub(in crate::browser) struct PrimaryComposerDragState(
-    std::rc::Rc<std::cell::RefCell<watchband::ComposerDragSession>>,
+    std::rc::Rc<std::cell::RefCell<watchband::PointerDragSession>>,
     std::rc::Rc<std::cell::Cell<Option<ComposerDrop>>>,
 );
 

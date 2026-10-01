@@ -32,6 +32,22 @@ const lightCanvas = await launchCanvasBrowser(chromium, {
 });
 ```
 
+## Arrange whole teams
+
+Pick up a team from its status-pip stack. After the same six-pixel lift
+threshold used by composer movement, the source surface stays reserved and a
+bounded ghost follows the pointer. The middle three fifths of another team
+exchanges exactly those two team positions. Either outer fifth joins into the
+team under the pointer: the receiver keeps its identity, primary composer, and
+member order, then receives the source members in their existing order.
+
+Interactive joins stop at six members. A seventh-member edge target is shown
+as unavailable and sends no command. Press Enter or Space on the pip stack, or
+tap it, for the equivalent **Swap positions** and **Join into** menu. Every
+accepted interaction sends the complete topology at the revision currently
+drawn by Canvas; cancellation, a changed revision, or a removed source clears
+the lift without sending.
+
 ## Profile Canvas latency in Firefox
 
 Canvas exposes opt-in User Timing diagnostics without changing route parsing.

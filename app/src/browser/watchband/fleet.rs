@@ -2,35 +2,6 @@
 
 use super::*;
 
-/// The media type a dragged team carries, and the only one a team accepts.
-///
-/// Message cards are draggable too, and they carry their prose as `text/plain`
-/// so it can be quoted into a composer. A team surface that accepted plain
-/// text would rearrange the fleet because the operator dragged a message onto
-/// it, so the gesture is told apart by what it carries rather than by where it
-/// lands.
-const TEAM_DRAG_MEDIA: &str = "application/x-spice-team";
-
-/// The box a drop is measured against: one team's whole surface.
-const TEAM_SURFACE: &str = ".team-surface";
-
-/// The team a drop carries, if it carries one at all.
-fn dragged_team(transfer: &web_sys::DataTransfer) -> Option<CanonicalUuid> {
-    transfer.get_data(TEAM_DRAG_MEDIA).ok()?.parse().ok()
-}
-
-/// Whether a drag in flight carries a team.
-///
-/// Only the media types are readable while a drag is moving; the identity
-/// itself stays sealed until the drop. That is enough to decide whether this
-/// surface is a drop target, which is all `dragover` has to answer.
-pub(super) fn carries_team(transfer: &web_sys::DataTransfer) -> bool {
-    transfer
-        .types()
-        .iter()
-        .any(|media| media.as_string().as_deref() == Some(TEAM_DRAG_MEDIA))
-}
-
 /// The three one-click views of one live team.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::browser) enum TeamMode {
@@ -79,6 +50,7 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) team_controls: &'a UseReducerHandle<TeamControls>,
     pub(super) controls: &'a view::AgentControls,
     pub(super) composer_drag: &'a PrimaryComposerDragState,
+    pub(super) team_drag: &'a TeamDragState,
 }
 
 pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) -> Html {
@@ -181,14 +153,6 @@ pub(super) fn render_populated_fleet(
                         class="team-surface"
                         data-team={team.lane.to_string()}
                         data-team-weight={watchband::team_visual_weight(team.members.len()).to_string()}
-                        ondragover={team_dragover(render.can_arrange_teams)}
-                        ondrop={team_drop(
-                            render.can_arrange_teams,
-                            &render.topology,
-                            render.topology_revision,
-                            team.lane,
-                            render.sender,
-                        )}
                     >
                         {render_team_toolbar(
                             mode,
@@ -316,101 +280,6 @@ pub(in crate::browser) fn use_team_menu_escape(
     crate::browser::overlay::use_escape_owner(visible && controls.any_menu_open(), dismiss);
 }
 
-/// Pick up a team from its pip stack, but only where it can be arranged.
-///
-/// Keeping the gesture on the compact status pips leaves composer prose and
-/// activity cards free for their own selection and drag behavior.
-fn team_drag_start(team: CanonicalUuid, can_arrange: bool) -> Callback<DragEvent> {
-    let carried = team.to_string();
-    Callback::from(move |event: DragEvent| {
-        if !can_arrange {
-            return;
-        }
-        let Some(transfer) = event.data_transfer() else {
-            return;
-        };
-        let _ = transfer.set_data(TEAM_DRAG_MEDIA, &carried);
-        transfer.set_effect_allowed("move");
-    })
-}
-
-/// Accept a team in flight, and nothing else.
-fn team_dragover(can_arrange: bool) -> Callback<DragEvent> {
-    Callback::from(move |event: DragEvent| {
-        if !can_arrange {
-            return;
-        }
-        let Some(transfer) = event.data_transfer() else {
-            return;
-        };
-        if !carries_team(&transfer) {
-            return;
-        }
-        transfer.set_drop_effect("move");
-        // Only a prevented dragover makes a surface droppable; leaving it
-        // alone is how every other drag keeps passing through untouched.
-        event.prevent_default();
-    })
-}
-
-/// Commit the arrangement a drop on this team states.
-///
-/// The topology is the one this render drew, captured rather than re-read: the
-/// operator arranged the teams they were looking at, and an arrangement built
-/// from a table that changed underneath them would move a team they never
-/// dragged.
-fn team_drop(
-    can_arrange: bool,
-    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
-    topology_revision: u64,
-    target: CanonicalUuid,
-    sender: &SenderHandle,
-) -> Callback<DragEvent> {
-    let topology = topology.to_vec();
-    let sender = sender.clone();
-    Callback::from(move |event: DragEvent| {
-        if !can_arrange {
-            return;
-        }
-        let Some(dragged) = event.data_transfer().as_ref().and_then(dragged_team) else {
-            return;
-        };
-        // The listener is delegated, so the element the drop landed on is the
-        // only handle on this team's box; `current_target` is the delegation
-        // root and would measure the whole workspace as one team.
-        let Some(surface) = event
-            .target()
-            .and_then(|node| node.dyn_into::<web_sys::Element>().ok())
-            .and_then(|node| node.closest(TEAM_SURFACE).ok().flatten())
-        else {
-            return;
-        };
-        if surface.get_attribute("data-team") != Some(target.to_string()) {
-            return;
-        }
-        let rect = surface.get_bounding_client_rect();
-        let drop = watchband::TeamDrop::at(f64::from(event.client_x()) - rect.left(), rect.width());
-        let Some(arranged) = watchband::arrangement(&topology, dragged, target, drop) else {
-            return;
-        };
-        event.prevent_default();
-        event.stop_propagation();
-        if !admit_action(
-            &sender,
-            ClientAction::ArrangeTeams {
-                topology_revision,
-                teams: arranged
-                    .into_iter()
-                    .map(|(team, lanes)| TeamArrangement { team, lanes })
-                    .collect(),
-            },
-        ) && let Some(transfer) = event.data_transfer()
-        {
-            transfer.set_drop_effect("none");
-        }
-    })
-}
-
 fn render_empty_toolbar(
     mode: TeamMode,
     team_controls: &UseReducerHandle<TeamControls>,
@@ -499,6 +368,15 @@ fn render_team_toolbar(
             ></span>
         })
     };
+    let dragging = team_dragging(
+        id,
+        can_arrange,
+        render.topology_revision,
+        &render.topology,
+        render.sender,
+        render.team_drag,
+    );
+    let lost_capture = dragging.cancel.clone();
     html! {
         <>
         <header class="team-toolbar">
@@ -511,10 +389,13 @@ fn render_team_toolbar(
                 aria-describedby={can_arrange.then(|| arrangement_help_id.clone())}
                 tabindex={can_arrange.then_some("0")}
                 title={can_arrange.then_some("Drag, or press Enter or Space to arrange this team")}
-                draggable={can_arrange.to_string()}
                 data-lane-drag-handle={can_arrange.then_some("")}
                 data-team-drag-id={can_arrange.then(|| team.lane.to_string())}
-                ondragstart={team_drag_start(team.lane, can_arrange)}
+                onpointerdown={dragging.start}
+                onpointermove={dragging.movement}
+                onpointerup={dragging.finish}
+                onpointercancel={dragging.cancel}
+                onlostpointercapture={lost_capture}
                 onclick={toggle_arrangement}
                 onkeydown={keyboard_arrangement}
             >

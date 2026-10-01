@@ -26,7 +26,7 @@ use crate::runtime::LaneRow;
 #[cfg(any(target_arch = "wasm32", test))]
 mod attention;
 #[cfg(any(target_arch = "wasm32", test))]
-mod composer_drag;
+mod pointer_drag;
 mod presence;
 mod provider;
 mod renewal;
@@ -39,7 +39,7 @@ pub use attention::{
     TaskAttention, attention_at, team_attention,
 };
 #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-pub(crate) use composer_drag::ComposerDragSession;
+pub(crate) use pointer_drag::PointerDragSession;
 pub use presence::{MemberPresence, MemberPresenceState, member_presence};
 pub use provider::{Emblem, Provider, emblem, model_display, model_label, model_provider};
 pub use renewal::{AgentRenewalControl, agent_renewal_control};
@@ -233,27 +233,26 @@ pub fn team_jobs(members: &[Standing]) -> Vec<TeamJob<'_>> {
 }
 
 /// The fraction of a team's width, at either edge, that joins rather than
-/// reorders.
+/// swaps.
 ///
 /// The predecessor's lane drag reads the same gutter: the outer fifth of the
 /// team under the pointer fuses the two teams, and the middle three fifths
-/// moves the dragged team into that position. Keeping the fraction identical
-/// keeps the muscle memory identical, which is the whole reason a number this
-/// arbitrary is stated once rather than chosen twice.
+/// swaps their positions. Keeping the fraction identical preserves that muscle
+/// memory.
 pub const TEAM_JOIN_GUTTER: f64 = 0.2;
+
+/// Largest team the interactive arrangement surface will form.
+///
+/// Six positions have distinct accents. Existing authoritative topology may
+/// exceed this presentation bound, but Canvas never offers a drag or menu join
+/// that would create another over-cap team.
+pub const TEAM_MEMBER_LIMIT: usize = ACCENTS;
 
 /// What a drop on a team states, decided by where in that team it landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TeamDrop {
-    /// Insert the dragged team immediately before the target team.
-    ///
-    /// Stated as "before the target" rather than "into the target's position"
-    /// because those coincide only when the dragged team came from later in
-    /// the row. Dragging one forward lands it one place ahead of where the
-    /// target stood, since removing it first shifts the target back.
-    Reorder,
-    /// Insert the dragged team immediately after the target team.
-    ReorderAfter,
+    /// Exchange the complete positions of the dragged and target teams.
+    Swap,
     /// Give the dragged team's agents to the target team.
     Join,
 }
@@ -263,17 +262,17 @@ impl TeamDrop {
     ///
     /// `offset` is the pointer's distance from the target's left edge and
     /// `width` the target's width, both in the same units; a target with no
-    /// width has no gutter to divide, so it can only reorder.
+    /// width has no gutter to divide, so it can only swap.
     #[must_use]
     pub fn at(offset: f64, width: f64) -> Self {
         if width <= 0.0 {
-            return Self::Reorder;
+            return Self::Swap;
         }
         let fraction = offset / width;
         if fraction <= TEAM_JOIN_GUTTER || fraction >= 1.0 - TEAM_JOIN_GUTTER {
             Self::Join
         } else {
-            Self::Reorder
+            Self::Swap
         }
     }
 }
@@ -386,18 +385,15 @@ pub fn teams(
 /// delta: the operator dragged one team, but what the canvas knows and the
 /// resident must agree on is where all of them now stand.
 ///
-/// A join appends the dragged team's agents *after* the target's, never
-/// before. The target's first agent is its primary composer, so prepending
-/// would silently hand the composer to whichever team was dragged in.
+/// A swap exchanges exactly two complete team rows. A join appends the dragged
+/// team's agents *after* the target's, never before, then retires the emptied
+/// source identity. The target's first agent is its primary composer, so
+/// prepending would silently hand the composer to whichever team was dragged
+/// in. Canvas never creates an over-cap team, though it can faithfully restate
+/// authoritative topology that was already larger.
 ///
-/// A drop that states nothing returns `None` rather than a no-op command, and
-/// the arrangement it would have stated is what decides that. Dropping a team
-/// on itself and dropping one that is no longer on the surface are the cases
-/// that can be recognised up front; a team dropped on the neighbour it already
-/// sits in front of is not, because that gesture is a real drag of a live team
-/// onto a different live team and only the result gives it away. Every one of
-/// them would otherwise commit a complete restatement of the table the canvas
-/// is already showing, writing a durable fact that records no change.
+/// A stale, same-team, no-op, or over-cap drop returns `None`; no complete
+/// restatement is sent for an interaction that cannot change the topology.
 #[must_use]
 pub fn arrangement(
     teams: &[(CanonicalUuid, Vec<CanonicalUuid>)],
@@ -408,20 +404,22 @@ pub fn arrangement(
     if dragged == target {
         return None;
     }
+    let dragged_at = teams.iter().position(|(team, _)| *team == dragged)?;
+    let target_at = teams.iter().position(|(team, _)| *team == target)?;
     let mut arranged = teams.to_vec();
-    let dragged_at = arranged.iter().position(|(team, _)| *team == dragged)?;
-    if !arranged.iter().any(|(team, _)| *team == target) {
-        return None;
-    }
-    let (_, moved) = arranged.remove(dragged_at);
-    let target_at = arranged
-        .iter()
-        .position(|(team, _)| *team == target)
-        .expect("the target survives removing a different team");
     match drop {
-        TeamDrop::Reorder => arranged.insert(target_at, (dragged, moved)),
-        TeamDrop::ReorderAfter => arranged.insert(target_at + 1, (dragged, moved)),
-        TeamDrop::Join => arranged[target_at].1.extend(moved),
+        TeamDrop::Swap => arranged.swap(dragged_at, target_at),
+        TeamDrop::Join => {
+            if arranged[dragged_at].1.len() + arranged[target_at].1.len() > TEAM_MEMBER_LIMIT {
+                return None;
+            }
+            let (_, moved) = arranged.remove(dragged_at);
+            let target_at = arranged
+                .iter()
+                .position(|(team, _)| *team == target)
+                .expect("the target survives removing a different team");
+            arranged[target_at].1.extend(moved);
+        }
     }
     (arranged != teams).then_some(arranged)
 }
