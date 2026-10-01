@@ -881,6 +881,63 @@ fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_as_stee
 }
 
 #[test]
+fn spice_reminders_leave_the_running_command_in_the_foreground() {
+    let scratch = Scratch::new("reminded");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, Some(scratch.terminal()));
+    let fifo = scratch.0.join("hold");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .expect("mkfifo")
+            .success()
+    );
+    driver.observe(&decoded(
+        br#"{"type":"host_tool_call","id":"h1","toolCallId":"call_1","toolName":"shell","arguments":{"command":"read held < hold"}}"#,
+    ));
+    let occupant = super::super::super::new_uuid();
+    driver.deliver_narration(&wire::body::NarrationProdded {
+        lane: super::super::super::new_uuid(),
+        occupant,
+        moments: 9,
+        count: 1,
+    });
+    driver.deliver_task_generation(&TaskGenerationNotice {
+        occupant,
+        task: "CLAIM-1kKRRsDP".to_owned(),
+        claim: 33,
+        generation: 4,
+        change: "task edited".to_owned(),
+        editor: "operator".to_owned(),
+        position: 44,
+    });
+    let steered = sink.answered(2);
+    assert!(
+        steered.iter().all(|frame| frame["type"] == "prompt"),
+        "both reminders are steered and the call is not answered: {steered:?}"
+    );
+
+    // An interruption from either reminder would precede this release, so
+    // the answer would report the command backgrounded rather than ended.
+    release(&fifo);
+    let frames = sink.answered(3);
+    let answer = frames
+        .iter()
+        .find(|frame| frame["id"] == "h1")
+        .expect("the call is answered");
+    assert_eq!(answer["result"]["details"]["exitCode"], 0, "{answer:?}");
+    assert!(
+        !answer["result"]["content"][0]["text"]
+            .as_str()
+            .expect("text")
+            .contains("Backgrounded"),
+        "{answer:?}"
+    );
+    settled(&scratch);
+}
+
+#[test]
 fn a_confirm_is_stated_as_one_request_and_answered_once_consent_rules() {
     let scratch = Scratch::new("confirm");
     let sink = Sink::default();
