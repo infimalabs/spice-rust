@@ -103,6 +103,15 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
         can_arrange: false,
     };
     let dismiss = team_menu_dismissal(render.team_controls);
+    // Work and Dash stand in the populated surface's mode-pane frame, so the
+    // first team swaps contents without resizing the pane or squeezing chrome.
+    let mode_pane = |content: Html| {
+        html! {
+            <div class="team-mode-pane" data-mode={mode.key()} data-active="true" aria-hidden="false">
+                {content}
+            </div>
+        }
+    };
     html! {
         <div ref={fleet.clone()} class="team-fleet" data-pane="agent-console" data-view="mosaic"
             tabindex="0" aria-label="Agent teams" onclick={dismiss}>
@@ -113,6 +122,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                     render.epoch,
                     control.import_open,
                 )}
+                {view::chrome::render_empty_team_ticker()}
                 if control.import_open {
                     {team_menu::render_import(&empty_team, &actions)}
                 }
@@ -121,8 +131,8 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                         TeamMode::Chat => {
                             empty("No teams are assigned. Open Import agent to create an agent.")
                         }
-                        TeamMode::Work => render_tasks(render, &empty_team, &[], None),
-                        TeamMode::Dash => render_details(
+                        TeamMode::Work => mode_pane(render_tasks(render, &empty_team, &[], None)),
+                        TeamMode::Dash => mode_pane(render_details(
                             &render.surface,
                             render.runtime,
                             &empty_team,
@@ -134,8 +144,7 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                                 work: render.work,
                                 sender: render.sender,
                             },
-                        ),
-
+                        )),
                     }}
                 </div>
             </section>

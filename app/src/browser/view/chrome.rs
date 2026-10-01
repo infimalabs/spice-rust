@@ -382,9 +382,7 @@ pub(in crate::browser) fn render_team_ticker(
     standings: &[watchband::Standing],
 ) -> Html {
     let Some(activity) = runtime.newest_team_activity(team) else {
-        return html! {
-            <div class="ticker" aria-live="polite" data-empty="true"></div>
-        };
+        return render_empty_team_ticker();
     };
     let standing = standings
         .iter()
@@ -394,6 +392,14 @@ pub(in crate::browser) fn render_team_ticker(
         .member(activity.lane())
         .expect("a team activity belongs to one rendered member");
     ticker(activity, standing, member.status(standing.pending))
+}
+
+/// The ticker row before any activity, or with no team at all, keeps the
+/// team surface's pane where the first activity or team leaves it.
+pub(in crate::browser) fn render_empty_team_ticker() -> Html {
+    html! {
+        <div class="ticker" aria-live="polite" data-empty="true"></div>
+    }
 }
 
 fn ticker(
