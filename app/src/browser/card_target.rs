@@ -237,6 +237,14 @@ fn remember_return(
     true
 }
 
+/// The departure recorded on the current history entry. Back from a route with
+/// no card target, such as a direction, to an entry with none either changes
+/// only this, so the route effect keys on it to restore the entry it left.
+fn entry_departure() -> Option<f64> {
+    let history = web_sys::window()?.history().ok()?;
+    ReturnAnchor::read(&history).map(|anchor| anchor.nonce)
+}
+
 /// Restore a returned-to entry's anchor once per arrival at that entry.
 fn returned_to(
     restored: &Rc<RefCell<Option<f64>>>,
@@ -603,10 +611,11 @@ pub(super) fn use_target(
     let opened = use_mut_ref(|| None::<String>);
     let held = use_mut_ref(|| None::<Hold>);
     let resolution = target_resolution(target.as_deref(), surface);
+    let departure = entry_departure();
     let sender = sender.clone();
     use_effect_with(
-        (target, resolution, visible, team_controls),
-        move |(target, resolution, visible, team_controls)| {
+        (target, resolution, visible, team_controls, departure),
+        move |(target, resolution, visible, team_controls, _)| {
             let mut selected = None;
             let window = web_sys::window();
             let document = window.as_ref().and_then(web_sys::Window::document);
