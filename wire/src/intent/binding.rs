@@ -11,12 +11,12 @@ use super::{
     DocLedger, GlobalSettingsAnswer, GlobalSettingsRead, GlobalSettingsSet, InboxAnswer,
     LaneAnswer, LaneArrange, LaneChangeAnswer, LaneRead, LaneRecall, LaneRenewal,
     LaneRenewalAnswer, LaneRetune, LaneSeat, LaneState, RecallAnswer, RecognitionAnswer, Recognize,
-    ReleasePublish, StateAnswer, SteerDispose, SteerHistory, SteerInbox, SteerSend, SteerTell,
-    TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskDefer, TaskDelete, TaskDepends, TaskDetail,
-    TaskDetailAnswer, TaskDone, TaskEdit, TaskNote, TaskOopsAdd, TaskPhase, TaskRef, TaskRelations,
-    TaskRelationsAnswer, TaskReview, TaskTimeline, TaskTimelineAnswer, TaskWake, TasteAnswer,
-    TasteProposalAdd, TasteRecord, TeamArrange, TeamConfigure, TextAnswer, TrustAnswer, TrustRef,
-    UpChange, VendorCatalog, VendorCatalogAnswer,
+    ReleasePublish, ReportAnswer, ReportRead, StateAnswer, SteerDispose, SteerHistory, SteerInbox,
+    SteerSend, SteerTell, TaskAdd, TaskAnswer, TaskAssign, TaskClose, TaskDefer, TaskDelete,
+    TaskDepends, TaskDetail, TaskDetailAnswer, TaskDone, TaskEdit, TaskNote, TaskOopsAdd,
+    TaskPhase, TaskRef, TaskRelations, TaskRelationsAnswer, TaskReview, TaskTimeline,
+    TaskTimelineAnswer, TaskWake, TasteAnswer, TasteProposalAdd, TasteRecord, TeamArrange,
+    TeamConfigure, TextAnswer, TrustAnswer, TrustRef, UpChange, VendorCatalog, VendorCatalogAnswer,
 };
 
 /// Which intent DTO a command kind's body decodes into.
@@ -24,6 +24,8 @@ use super::{
 pub enum BodyShape {
     /// [`BoardRead`]
     BoardRead,
+    /// [`ReportRead`]
+    ReportRead,
     /// [`TaskDetail`]
     TaskDetail,
     /// [`TaskRelations`]
@@ -133,6 +135,8 @@ pub enum BodyShape {
 pub enum AnswerShape {
     /// [`BoardAnswer`]
     Board,
+    /// [`ReportAnswer`]
+    Report,
     /// [`TaskDetailAnswer`]
     TaskDetail,
     /// [`TaskRelationsAnswer`]
@@ -187,6 +191,8 @@ pub enum AnswerShape {
 pub enum CommandAnswer {
     /// [`AnswerShape::Board`]
     Board(Box<BoardAnswer>),
+    /// [`AnswerShape::Report`]
+    Report(Box<ReportAnswer>),
     /// [`AnswerShape::TaskDetail`]
     TaskDetail(Box<TaskDetailAnswer>),
     /// [`AnswerShape::TaskRelations`]
@@ -241,6 +247,7 @@ impl CommandAnswer {
     pub const fn shape(&self) -> AnswerShape {
         match self {
             Self::Board(_) => AnswerShape::Board,
+            Self::Report(_) => AnswerShape::Report,
             Self::TaskDetail(_) => AnswerShape::TaskDetail,
             Self::TaskRelations(_) => AnswerShape::TaskRelations,
             Self::TaskTimeline(_) => AnswerShape::TaskTimeline,
@@ -279,6 +286,7 @@ impl AnswerShape {
     pub fn decode(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
         match self {
             Self::Board
+            | Self::Report
             | Self::TaskDetail
             | Self::TaskRelations
             | Self::TaskTimeline
@@ -308,6 +316,7 @@ impl AnswerShape {
     fn decode_primary(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
         Ok(match self {
             Self::Board => CommandAnswer::Board(Box::new(crate::decode(bytes)?)),
+            Self::Report => CommandAnswer::Report(Box::new(crate::decode(bytes)?)),
             Self::TaskDetail => CommandAnswer::TaskDetail(Box::new(crate::decode(bytes)?)),
             Self::TaskRelations => CommandAnswer::TaskRelations(Box::new(crate::decode(bytes)?)),
             Self::TaskTimeline => CommandAnswer::TaskTimeline(Box::new(crate::decode(bytes)?)),
@@ -372,6 +381,7 @@ impl CommandKind {
     pub const fn binding(self) -> Binding {
         match self {
             Self::BoardRead
+            | Self::ReportRead
             | Self::TaskDetail
             | Self::TaskRelations
             | Self::TaskTimeline
@@ -440,6 +450,7 @@ impl CommandKind {
 
         match self {
             Self::BoardRead => Binding::of(B::BoardRead, A::Board),
+            Self::ReportRead => Binding::of(B::ReportRead, A::Report),
             Self::TaskDetail => Binding::of(B::TaskDetail, A::TaskDetail),
             Self::TaskRelations => Binding::of(B::TaskRelations, A::TaskRelations),
             Self::TaskTimeline => Binding::of(B::TaskTimeline, A::TaskTimeline),
@@ -527,6 +538,8 @@ impl CommandKind {
 pub enum Intent {
     /// [`BodyShape::BoardRead`]
     BoardRead(BoardRead),
+    /// [`BodyShape::ReportRead`]
+    ReportRead(ReportRead),
     /// [`BodyShape::TaskDetail`]
     TaskDetail(TaskDetail),
     /// [`BodyShape::TaskRelations`]
@@ -637,6 +650,7 @@ impl Intent {
     pub const fn shape(&self) -> BodyShape {
         match self {
             Self::BoardRead(_)
+            | Self::ReportRead(_)
             | Self::TaskDetail(_)
             | Self::TaskRelations(_)
             | Self::TaskTimeline(_)
@@ -694,6 +708,7 @@ impl Intent {
     const fn board_shape(&self) -> BodyShape {
         match self {
             Self::BoardRead(_) => BodyShape::BoardRead,
+            Self::ReportRead(_) => BodyShape::ReportRead,
             Self::TaskDetail(_) => BodyShape::TaskDetail,
             Self::TaskRelations(_) => BodyShape::TaskRelations,
             Self::TaskTimeline(_) => BodyShape::TaskTimeline,
@@ -776,6 +791,7 @@ impl BodyShape {
         matches!(
             self,
             Self::BoardRead
+                | Self::ReportRead
                 | Self::TaskDetail
                 | Self::TaskRelations
                 | Self::TaskTimeline
@@ -808,6 +824,7 @@ impl BodyShape {
         if matches!(
             self,
             Self::BoardRead
+                | Self::ReportRead
                 | Self::TaskDetail
                 | Self::TaskRelations
                 | Self::TaskTimeline
@@ -831,12 +848,19 @@ impl BodyShape {
     fn decode_board_query_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
         Ok(match self {
             Self::BoardRead => Intent::BoardRead(crate::decode(bytes)?),
+            Self::ReportRead => Intent::ReportRead(crate::decode(bytes)?),
             Self::TaskDetail => Intent::TaskDetail(crate::decode(bytes)?),
             Self::TaskRelations => Intent::TaskRelations(crate::decode(bytes)?),
             Self::TaskTimeline => Intent::TaskTimeline(crate::decode(bytes)?),
             Self::BoardGraph => Intent::BoardGraph(crate::decode(bytes)?),
             Self::BoardHandout => Intent::BoardHandout(crate::decode(bytes)?),
             Self::DocLedger => Intent::DocLedger(crate::decode(bytes)?),
+            _ => return self.decode_task_statement_body(bytes),
+        })
+    }
+
+    fn decode_task_statement_body(self, bytes: &[u8]) -> Result<Intent, serde_json::Error> {
+        Ok(match self {
             Self::TaskAdd => Intent::TaskAdd(crate::decode(bytes)?),
             Self::TaskOopsAdd => Intent::TaskOopsAdd(crate::decode(bytes)?),
             Self::TasteProposalAdd => Intent::TasteProposalAdd(crate::decode(bytes)?),

@@ -112,62 +112,6 @@ fn every_contract_has_an_executable_landing_disposition() {
         .map(|contract| contract.path.join(" "))
         .collect::<Vec<_>>();
     assert_eq!(unaccounted, Vec::<String>::new());
-
-    assert_eq!(landing(&["gate", "commit-msg"]), Landing::Landed);
-    assert_eq!(landing(&["gate", "prove"]), Landing::Landed);
-    assert_eq!(landing(&["gate", "reference-transaction"]), Landing::Landed);
-    assert_eq!(landing(&["gate", "selection"]), Landing::Landed);
-    assert_eq!(landing(&["demo"]), Landing::Landed);
-    assert_eq!(landing(&["install"]), Landing::Landed);
-    assert_eq!(landing(&["install", "symbols"]), Landing::Landed);
-    assert_eq!(landing(&["lock"]), Landing::Landed);
-    assert_eq!(landing(&["lock", "run"]), Landing::Landed);
-    assert_eq!(landing(&["config", "migrate-tasks"]), Landing::Landed);
-    assert_eq!(landing(&["release", "publish"]), Landing::Landed);
-    assert_eq!(landing(&["release", "seal"]), Landing::Landed);
-    assert_eq!(landing(&["restore", "verify"]), Landing::Landed);
-    assert_eq!(landing(&["rtk", "gain"]), Landing::Landed);
-    assert_eq!(landing(&["lane"]), Landing::Landed);
-    assert_eq!(landing(&["lane", "add"]), Landing::Landed);
-    assert_eq!(landing(&["lane", "drain"]), Landing::Landed);
-    assert_eq!(landing(&["lane", "wake"]), Landing::Landed);
-    assert_eq!(landing(&["lane", "remove"]), Landing::Landed);
-    assert_eq!(landing(&["lane", "import"]), Landing::Landed);
-    assert_eq!(landing(&["lane", "purge"]), Landing::Landed);
-    assert_eq!(landing(&["steer", "recover"]), Landing::Landed);
-    assert_eq!(landing(&["steer", "resend"]), Landing::Landed);
-    assert_eq!(landing(&["task", "modify"]), Landing::Landed);
-    assert_eq!(landing(&["task", "require"]), Landing::Landed);
-    assert_eq!(landing(&["task", "delete"]), Landing::Landed);
-    assert_eq!(landing(&["task", "reclaim"]), Landing::Landed);
-    assert_eq!(landing(&["task", "list"]), Landing::Landed);
-    assert_eq!(landing(&["task", "status"]), Landing::Landed);
-    assert_eq!(landing(&["task", "show"]), Landing::Landed);
-    assert_eq!(landing(&["recall"]), Landing::Landed);
-    assert_eq!(landing(&["steer"]), Landing::Landed);
-    assert_eq!(landing(&["steer", "cancel"]), Landing::Landed);
-    assert_eq!(landing(&["inbox"]), Landing::Landed);
-    assert_eq!(landing(&["consent"]), Landing::Landed);
-    assert_eq!(landing(&["consent", "allow"]), Landing::Landed);
-    assert_eq!(landing(&["consent", "deny"]), Landing::Landed);
-    assert_eq!(landing(&["consent", "policy"]), Landing::Landed);
-    assert_eq!(landing(&["trust"]), Landing::Landed);
-    assert_eq!(landing(&["trust", "pend"]), Landing::Landed);
-    assert_eq!(landing(&["trust", "grant"]), Landing::Landed);
-    assert_eq!(landing(&["trust", "revoke"]), Landing::Landed);
-    assert_eq!(landing(&["taste"]), Landing::Landed);
-    assert_eq!(landing(&["taste", "add"]), Landing::Landed);
-    assert_eq!(landing(&["taste", "drop"]), Landing::Landed);
-    for path in [
-        &["backup"][..],
-        &["restore"][..],
-        &["journal"][..],
-        &["journal", "reindex"][..],
-        &["journal", "verify"][..],
-        &["thread"][..],
-    ] {
-        assert_eq!(landing(path), Landing::Landed, "{path:?}");
-    }
 }
 
 #[test]

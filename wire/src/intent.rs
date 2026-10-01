@@ -6,9 +6,9 @@
 //! in the registry; this module owns the other two, so every command kind
 //! names exactly one intent and one answer.
 //!
-//! Bodies carry caller intent only. None of them carries an actor, lane,
-//! epoch, journal position, result, or fact envelope, because the commit door
-//! assigns all of those; a body that named one would let a caller forge it.
+//! Mutation bodies carry caller intent only; the commit door assigns actor,
+//! lane, epoch, journal position and resulting fact envelopes. Read bodies may
+//! name bounds and previously observed pins without establishing that authority.
 //!
 //! Several kinds share one shape on purpose. Freeing and lapsing a claim both
 //! name a task and nothing else, so they share
@@ -43,6 +43,10 @@ pub use board::{
     TaskLifecycleKind, TaskRelationEdge, TaskRelationFrontier, TaskRelationKind, TaskRelationNode,
     TaskRelationNodeRef, TaskRelationTruncation, TaskRelations, TaskRelationsAnswer, TaskTimeline,
     TaskTimelineAnswer, TaskTimelineEntry, TaskTimelineEvent, TaskTranscriptRecovery, TextAnswer,
+};
+mod report;
+pub use report::{
+    REPORT_FACT_KINDS, REPORT_READ_VERSION, ReportAnswer, ReportFlowRecord, ReportPin, ReportRead,
 };
 mod direction;
 pub use direction::{

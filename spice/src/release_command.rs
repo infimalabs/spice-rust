@@ -846,7 +846,12 @@ pub(crate) const OBSERVED_KINDS: [wire::FactKind; 2] = [
 pub(crate) fn observed_facts(
     read: &journal::JournalRead<'_>,
 ) -> Result<Vec<wire::Envelope<wire::AnyFact>>, journal::GuardError> {
-    let page = read.selected_fact_page(&OBSERVED_KINDS, None, journal::FactReadBudget::RETAINED)?;
+    let page = read.selected_fact_page(
+        &OBSERVED_KINDS,
+        None,
+        None,
+        journal::FactReadBudget::RETAINED,
+    )?;
     if let Some(continuation) = page.continuation {
         return Err(journal::GuardError::refused(format!(
             "release observation requires continuation after {continuation}"

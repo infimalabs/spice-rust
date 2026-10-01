@@ -113,6 +113,7 @@ impl TranscriptSessionState {
                 let page = read.selected_fact_page(
                     &[FactKind::LaneSessionDeclared],
                     self.cursor,
+                    None,
                     FactReadBudget::RETAINED,
                 )?;
                 for fact in &page.rows {

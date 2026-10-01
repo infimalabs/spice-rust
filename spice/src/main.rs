@@ -368,6 +368,7 @@ impl NativeInvocation<'_> {
                 }
             },
             ["dev", "cargo-store"] => deliver(&cargo_command::store(leaf), form),
+            ["dev", "report-page"] => deliver(&board_command::run(leaf, contract), form),
             ["rtk", "gain"] => deliver(&rtk_command::gain(leaf, configuration), form),
             ["consent"] => deliver(&consent_command::read(contract), form),
             ["consent", "allow"] => deliver(

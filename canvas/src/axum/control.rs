@@ -24,6 +24,7 @@ pub(super) const fn class(kind: CommandKind) -> Class {
         | CommandKind::TeamConfigure
         | CommandKind::TeamArrange => Class::Demand,
         CommandKind::BoardRead
+        | CommandKind::ReportRead
         | CommandKind::TaskDetail
         | CommandKind::TaskRelations
         | CommandKind::TaskTimeline

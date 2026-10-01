@@ -197,6 +197,40 @@ paint must be established from Firefox's own markers. A DOM `beforeinput` or
 has no animation-frame marker: an animation-frame callback would show callback
 eligibility, not presentation.
 
+## Bounded historical report read
+
+`spice dev report-page REQUEST` reads one page of retained journal facts for
+private report evidence through the same authenticated resident door as every
+other command. It is development-scoped: it is not a board export, and its
+answers are private originals, never publication payloads. `REQUEST` is a JSON
+file of at most 16 KiB:
+
+```json
+{"version": 1, "upper": 797204, "kinds": ["task::added", "task::phased"]}
+```
+
+- `upper` is the inclusive study barrier. A bound beyond the resident's cursor
+  refuses with `report::boundary-unavailable`.
+- `kinds` must come from the report vocabulary (`wire::intent::REPORT_FACT_KINDS`);
+  anything else refuses with `report::kind-outside-scope`.
+- Rows are limited to tasks in public projects. Claim and lease facts are
+  admitted by the task they concern, so a hidden task's leases stay hidden.
+- The first answer carries a `pin`: journal schema, the resident executable's
+  digest, and the residency epoch. While an answer carries `continuation`,
+  request the next page with `after` set to it and the same `pin`. A
+  continuation without a pin refuses with `report::pin-required`. A changed
+  decoder, schema, or residency refuses with `report::generation-changed`, so
+  the acquisition restarts instead of splicing two generations together.
+- `command_at` optionally attaches the retained review command record at one
+  position, for a case study of a single correction flow; it refuses unless
+  the record lies wholly within the barrier and a public task.
+
+Client and resident must both carry this command. A client that has it,
+talking to a resident that predates it, faults with
+`command::answer-undecodable`. Bringing the resident up to date is an
+operator install (`spice dev xtask -- install` from a worktree containing the
+change); a lane cannot run it.
+
 ## Disk budget and safe cleanup
 
 Preview the bounded collector before applying it:

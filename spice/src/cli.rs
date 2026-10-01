@@ -168,6 +168,7 @@ pub const fn answer_bound(kind: CommandKind) -> Duration {
         | CommandKind::ReleasePublish
         | CommandKind::UpChange => CONTENDED_ANSWER,
         CommandKind::BoardRead
+        | CommandKind::ReportRead
         | CommandKind::TaskDetail
         | CommandKind::TaskRelations
         | CommandKind::TaskTimeline
@@ -322,6 +323,7 @@ fn repository_landed(path: &[&str]) -> bool {
             | ["dev", "cargo"]
             | ["dev", "xtask"]
             | ["dev", "cargo-store"]
+            | ["dev", "report-page"]
             | ["lock"]
             | ["lock", "run"]
             | ["proof"]

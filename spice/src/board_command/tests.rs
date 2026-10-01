@@ -26,6 +26,7 @@ use allocation_guard::*;
 mod origin;
 mod parked_worktree;
 mod read_scope;
+mod report;
 mod task_list;
 mod task_listing;
 mod taste_review;

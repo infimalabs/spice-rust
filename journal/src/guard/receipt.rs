@@ -92,4 +92,85 @@ impl JournalRead<'_> {
             },
         ))))
     }
+
+    /// Read case-only authored review flows without publishing request prose.
+    ///
+    /// The caller must admit the returned target through the board's project
+    /// scope. This is retained command-record evidence, not a journal fact.
+    pub fn report_review_flows(
+        &self,
+        position: wire::Seq,
+    ) -> Result<Option<wire::intent::ReportFlowRecord>, GuardError> {
+        let position = i64::try_from(position.get()).map_err(|_| {
+            GuardError::Invalid("report command position exceeds SQLite".to_owned())
+        })?;
+        let row = self
+            .connection
+            .query_row(
+                "SELECT command_id, first_seq, last_seq, request \
+                 FROM command_receipts WHERE first_seq <= ?1 AND last_seq >= ?1 \
+                 AND command_kind = 'task::review' LIMIT 1",
+                [position],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, Vec<u8>>(3)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(GuardError::Store)?;
+        let Some((id, first, last, bytes)) = row else {
+            return Ok(None);
+        };
+        let request: wire::Command<serde_json::Value> = wire::decode(&bytes)
+            .map_err(|error| GuardError::Invalid(format!("report command record: {error}")))?;
+        if request.id.to_string() != id || request.kind != wire::CommandKind::TaskReview {
+            return Err(GuardError::Invalid(
+                "report command record identity disagrees".to_owned(),
+            ));
+        }
+        let task = request
+            .body
+            .get("task")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| GuardError::Invalid("report review record has no target".to_owned()))?
+            .parse()
+            .map_err(|error| GuardError::Invalid(format!("report review target: {error}")))?;
+        let mut requested_flows = Vec::new();
+        if let Some(corrections) = request
+            .body
+            .get("then")
+            .and_then(serde_json::Value::as_array)
+        {
+            for correction in corrections {
+                let flow = correction
+                    .get("add")
+                    .and_then(|add| add.get("flow"))
+                    .map(|flow| {
+                        flow.as_str().map(str::to_owned).ok_or_else(|| {
+                            GuardError::Invalid("report authored flow is not text".to_owned())
+                        })
+                    })
+                    .transpose()?;
+                requested_flows.push(flow);
+            }
+        }
+        let position = |value| {
+            u64::try_from(value)
+                .ok()
+                .and_then(wire::Seq::new)
+                .ok_or_else(|| GuardError::Invalid("report record position is invalid".to_owned()))
+        };
+        Ok(Some(wire::intent::ReportFlowRecord {
+            command: request.id,
+            request_digest: wire::Digest::compute(wire::Domain::ReportCommandRecord, &bytes),
+            first: position(first)?,
+            last: position(last)?,
+            task,
+            requested_flows,
+        }))
+    }
 }

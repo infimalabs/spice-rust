@@ -387,6 +387,7 @@ fn advance_facts(
             .selected_fact_page(
                 &resident_authority_kinds(),
                 build.facts.horizon(),
+                None,
                 journal::FactReadBudget::RETAINED,
             )
             .map_err(BusReadError::Head)?;

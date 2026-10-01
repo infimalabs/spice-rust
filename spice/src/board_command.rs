@@ -126,6 +126,8 @@ mod progress;
 use progress::*;
 mod read_guard;
 use read_guard::*;
+mod report;
+use report::read_report;
 mod steering_origin;
 use steering_origin::*;
 mod taste_review;

@@ -1,6 +1,16 @@
 use super::*;
 /// Every current leaf. Parser registration and help are generated from these rows.
 pub(super) const CONTRACTS: &[Contract] = &[
+    row!(
+        ["dev", "report-page"],
+        "dev report-page REQUEST",
+        OperatorOrLane,
+        Read,
+        [],
+        [Resident],
+        Reply,
+        "report::read"
+    ),
     local_direct!(
         ["demo"],
         "demo [--root DIR] [--reuse DIR] [--seed-only] [--preserve] [--open]",
