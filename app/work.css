@@ -479,6 +479,13 @@
 
 .work-history-filter-issue { margin: 10px 0 0; }
 
+/* Loading, empty, and one date of entries hold one footprint: a date heading
+   held at its floor plus one list row at the card cap, so the first entry or
+   a page read finishing never moves the Directions below. */
+.work-history-entries {
+  --work-history-date-head: 1.75rem;
+  min-block-size: calc(var(--work-history-date-head) + 10px + var(--mosaic-image-large-size) + 14px);
+}
 .work-history-groups {
   display: grid;
   gap: 2px;
@@ -492,6 +499,7 @@
 .work-history-date:last-child { border-bottom: 0; }
 
 .work-history-date h3 {
+  block-size: var(--work-history-date-head);
   margin: 0;
   padding: 10px 0 0;
   color: var(--muted);
