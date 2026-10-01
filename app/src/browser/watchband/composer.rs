@@ -543,7 +543,7 @@ fn render_agent_message_card(
                             message,
                             &shown_text,
                             correspondent,
-                            crate::runtime::agent_message_display_millis(message),
+                            message.activity == wire::AgentActivityKind::Prose,
                             &footer_label,
                             &attribution,
                         )}
@@ -667,9 +667,10 @@ fn agent_message_presentation<'a>(
         &message.directive_contexts,
     )
     .expect("message media passed admission before browser rendering");
-    // A prose card gives its terminal prose sentence punctuation; tool,
-    // reasoning, and boundary cards render verbatim.
-    let render = if message.activity == wire::AgentActivityKind::Prose {
+    // A prose card gives its terminal prose sentence punctuation and signs its
+    // final line; tool, reasoning, and boundary cards render verbatim.
+    let is_prose = message.activity == wire::AgentActivityKind::Prose;
+    let render = if is_prose {
         crate::composer_markdown::render_prose_card
     } else {
         crate::composer_markdown::render_received_with_quotes
@@ -706,6 +707,8 @@ fn agent_message_presentation<'a>(
     let image_only = rendered_markdown.image_only
         || (!unlinked_media.is_empty() && shown_text.trim().is_empty());
     let lone_tool_image = is_tool && image_only && unlinked_media.len() == 1;
+    let signoff =
+        is_prose.then(|| render_agent_message_signoff(message, &footer_label, &attribution));
     AgentMessagePresentation {
         source_id: agent_message_source_id(message),
         attribution,
@@ -718,6 +721,7 @@ fn agent_message_presentation<'a>(
                 sources={Rc::new(rendered_markdown.diagrams.into_iter().map(AttrValue::from).collect::<Vec<_>>())}
                 final_answer={message.final_answer}
                 {quote_tasks}
+                {signoff}
             />
         },
         unlinked_media,
@@ -835,50 +839,80 @@ fn render_agent_message_media(
     }
 }
 
-fn render_agent_message_footer(
+/// A prose card signs its final line the way a quote does: the producer's
+/// copyable label, then the live age linking to the message source.
+fn render_agent_message_signoff(
     message: &wire::AgentMessage,
-    shown_text: &str,
-    correspondent: &view::chrome::Correspondent,
-    display_millis: i64,
     producer_label: &str,
     attribution: &str,
 ) -> Html {
+    html! {
+        <>
+            {render_producer_identity(message, producer_label, attribution)}
+            {render_message_age(message, attribution)}
+        </>
+    }
+}
+
+fn render_producer_identity(
+    message: &wire::AgentMessage,
+    producer_label: &str,
+    attribution: &str,
+) -> Html {
+    html! {
+        <view::chrome::CopyButton
+            class="message-agent-name"
+            text={AttrValue::from(message.author.to_string())}
+            subject="agent id"
+            title={AttrValue::from(format!("Copy agent id\n{}", message.author))}
+            label={AttrValue::from(format!("Copy agent id for {attribution}"))}
+        >
+            <span class="message-agent-label">{producer_label.to_owned()}</span>
+        </view::chrome::CopyButton>
+    }
+}
+
+fn render_message_age(message: &wire::AgentMessage, attribution: &str) -> Html {
     let locus = format!(
         "tape {}:{}+{}#{}",
         message.locus.member, message.locus.offset, message.locus.length, message.locus.event,
     );
+    html! {
+        <Age
+            authored={crate::runtime::agent_message_display_millis(message)}
+            class="relative-age"
+            title={locus}
+            href={crate::view::card_href(&agent_message_source_id(message))}
+            label={format!("Link to message from {attribution}")}
+        />
+    }
+}
+
+/// The card footer. A prose card's producer and age live in its signoff, so
+/// its footer keeps only badges and actions; other cards keep both here.
+fn render_agent_message_footer(
+    message: &wire::AgentMessage,
+    shown_text: &str,
+    correspondent: &view::chrome::Correspondent,
+    signed: bool,
+    producer_label: &str,
+    attribution: &str,
+) -> Html {
     let has_actions = !shown_text.trim().is_empty();
-    let producer_label = producer_label.to_owned();
-    let attribution = attribution.to_owned();
-    let href = crate::view::card_href(&agent_message_source_id(message));
-    let link_label = format!("Link to message from {attribution}");
-    let producer_identity = html! {
-        <span class="message-footer-identity">
-            <view::chrome::CopyButton
-                class="message-agent-name"
-                text={AttrValue::from(message.author.to_string())}
-                subject="agent id"
-                title={AttrValue::from(format!("Copy agent id\n{}", message.author))}
-                label={AttrValue::from(format!("Copy agent id for {attribution}"))}
-            >
-                <span class="message-agent-label">{producer_label}</span>
-            </view::chrome::CopyButton>
-        </span>
-    };
     html! {
         <footer class="message-footer">
             <div class="message-footer-left">
-                <Age
-                    authored={display_millis}
-                    class="relative-age"
-                    title={locus}
-                    {href}
-                    label={link_label}
-                />
+                if !signed {
+                    {render_message_age(message, attribution)}
+                }
                 {message_badges::render(message)}
             </div>
             <div class="message-footer-right">
-                {producer_identity}
+                if !signed {
+                    <span class="message-footer-identity">
+                        {render_producer_identity(message, producer_label, attribution)}
+                    </span>
+                }
                 if has_actions {
                     {view::chrome::render_card_actions(shown_text, correspondent)}
                 }
