@@ -1157,6 +1157,11 @@
 }
 .team-direction-attribution { color: var(--muted); }
 .team-direction-attribution strong { color: var(--ink); }
+/* The operator byline is the badge its published identity carries, the same
+   initials quote bylines use. */
+.team-direction-operator { color: var(--ink); }
+.team-direction-operator::before { content: "Operator"; }
+:root[data-operator-identity] .team-direction-operator::before { content: var(--operator-initials); }
 .team-direction-attribution .agent-presence,
 .team-task-member .agent-presence {
   flex: 0 0 auto;
@@ -1190,18 +1195,6 @@
   gap: 5px 9px;
   min-width: 0;
 }
-.team-direction-recipient-group {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-}
-.team-direction-recipient-team {
-  flex: 0 0 auto;
-  color: var(--muted);
-  font-size: .58rem;
-}
-
 .team-direction-recipients {
   display: flex;
   flex-wrap: wrap;

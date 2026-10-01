@@ -288,11 +288,12 @@ main agent, at the far-left origin, later members rightward. Chat presents that
 order from its right-side controls; neither changes identity, accent, keyboard
 order, or attribution.
 
-The first section pairs a compact operator identity row — the avatar already
-carries the badge — with three fixed resident fields: connection, appliance
-version, and epoch, whose loading values keep settled geometry. Quota account
-cards keep each reset credit on its compact line, with a live countdown to any
-expiration, the exact timestamp on hover, and long prose truncated.
+The first section pairs a compact operator identity row — the avatar carries the
+badge, which a Gravatar shows in a band across its lower third at the same size —
+with three fixed resident fields: connection, appliance version, and epoch,
+whose loading values keep settled geometry. Quota account cards keep each reset
+credit on its compact line, with a live countdown to any expiration, the exact
+timestamp on hover, and long prose truncated.
 
 ### The global Work page
 
@@ -345,13 +346,16 @@ cursors, while loading, no-match, refusal, and retry states retain the same
 controls and card grid.
 
 Each is the team Work ledger's direction card: the resident's first unquoted
-line in sanitized rich Markdown, marked as a retained excerpt. Recipient badges
-group by current team, keep unknown recipients visible without inventing a link,
+line in sanitized rich Markdown, marked as a retained excerpt and signed by the
+operator's badge, the initials quote bylines use, without restating its section.
+Recipient badges group by current team without a visible team label, since the
+badges already name its members; each group carries the team name only as its
+accessible name. They keep unknown recipients visible without inventing a link,
 open caused work in the shared task detail layer, and link an acknowledged or
 declined badge only when retiring history evidence and a retained authenticated
-reply resolve to that exact team-local Chat card; Back returns to that card.
-The mosaic holds three columns wide, two at intermediate width, and one on a
-narrow screen without changing newest-first order.
+reply resolve to that exact team-local Chat card; Back returns to that card. The
+mosaic holds three columns wide, two at intermediate width, and one on a narrow
+screen without changing newest-first order.
 
 ### The team Work pane
 

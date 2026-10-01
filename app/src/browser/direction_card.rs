@@ -9,10 +9,33 @@ use std::rc::Rc;
 
 use yew::prelude::*;
 
-/// Who authored a direction: a peer lane, or the operator when unaccented.
-pub(super) struct Author {
-    pub label: String,
-    pub accent: Option<String>,
+/// Who authored a direction.
+pub(super) enum Author {
+    /// The operator, shown by the badge its published identity carries.
+    Operator,
+    /// A peer lane, by its label and accent slot.
+    Lane {
+        label: String,
+        accent: Option<String>,
+    },
+}
+
+impl Author {
+    fn accent(&self) -> Option<String> {
+        match self {
+            Self::Operator => None,
+            Self::Lane { accent, .. } => accent.clone(),
+        }
+    }
+
+    fn render(&self) -> Html {
+        match self {
+            Self::Operator => html! {
+                <strong class="team-direction-operator" role="img" aria-label="Operator"></strong>
+            },
+            Self::Lane { label, .. } => html! { <strong>{label.clone()}</strong> },
+        }
+    }
 }
 
 /// One recipient badge with its independently evolving state.
@@ -89,7 +112,7 @@ pub(super) fn render(card: &Card<'_>, controls: &Controls<'_>) -> Html {
             tabindex="-1"
             data-card-return-origin="work"
             data-direction={card.identity.to_string()}
-            data-accent={card.author.accent.clone()}
+            data-accent={card.author.accent()}
         >
             <super::mermaid::MarkdownBody
                 html={AttrValue::from(rendered.html)}
@@ -100,10 +123,9 @@ pub(super) fn render(card: &Card<'_>, controls: &Controls<'_>) -> Html {
             {render_attachments(card.attachments)}
             {render_tasks(&card.keys, controls)}
             <footer class="team-direction-footer">
-                <span class="team-direction-attribution" data-accent={card.author.accent.clone()}>
+                <span class="team-direction-attribution" data-accent={card.author.accent()}>
                     <span class="agent-presence" aria-hidden="true"></span>
-                    <strong>{card.author.label.clone()}</strong>
-                    <span>{"Direction"}</span>
+                    {card.author.render()}
                 </span>
                 if !card.complete {
                     <span class="team-direction-excerpt">{"retained excerpt"}</span>
@@ -190,12 +212,9 @@ fn render_recipients(recipients: &Recipients, follow: &Callback<MouseEvent>) -> 
         Recipients::Teams(groups) => html! {
             <div class="team-direction-recipient-groups" aria-label="Recipients grouped by team">
                 {for groups.iter().map(|(team, recipients)| html! {
-                    <div class="team-direction-recipient-group">
-                        <span class="team-direction-recipient-team">{team.clone()}</span>
-                        <ul class="team-direction-recipients">
-                            {for recipients.iter().map(|recipient| render_recipient(recipient, follow))}
-                        </ul>
-                    </div>
+                    <ul class="team-direction-recipients" aria-label={format!("Recipients in {team}")}>
+                        {for recipients.iter().map(|recipient| render_recipient(recipient, follow))}
+                    </ul>
                 })}
             </div>
         },

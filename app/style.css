@@ -774,6 +774,8 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .operator-avatar {
+  position: relative;
+  container-type: inline-size;
   display: inline-grid;
   flex: 0 0 80px;
   width: 80px;
@@ -787,6 +789,23 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
   font: 750 1rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .operator-avatar img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* A Gravatar still carries the operator badge: a band across the lower third
+   of the same circle, so the avatar never grows to make room for it. The child
+   selector outranks the host rows' generic span rules. */
+.operator-avatar > .operator-avatar-badge {
+  position: absolute;
+  inset: auto 0 0;
+  height: 34%;
+  display: grid;
+  place-items: center;
+  margin: 0;
+  overflow: visible;
+  background: color-mix(in srgb, var(--page) 78%, transparent);
+  color: var(--ink);
+  font: inherit;
+  font-size: max(.5rem, 22cqi);
+  letter-spacing: .02em;
+}
 .dash-overview-operator .operator-avatar {
   flex-basis: 44px;
   width: 44px;

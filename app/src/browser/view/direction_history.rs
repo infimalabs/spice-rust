@@ -233,10 +233,7 @@ fn card<'a>(
         body: group.preview.as_deref().unwrap_or("Preview unavailable"),
         complete: false,
         attachments: &[],
-        author: Author {
-            label: "You".to_owned(),
-            accent: None,
-        },
+        author: Author::Operator,
         keys: group
             .recipients
             .iter()
