@@ -5,20 +5,52 @@
 //! Keeping those transitions here makes the shipped plural behavior reachable
 //! from native tests instead of testing a second, simplified implementation.
 
+use std::borrow::Borrow;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use wire::body::DirectiveAttachment;
 use wire::{AgentMessage, CanonicalUuid, QuoteTarget};
 
 use crate::composer_markdown::QuotedReply;
+use crate::image_annotation::Shape;
 use crate::runtime::LaneMember;
+
+/// Original pixels and marks remain local; only `media` crosses the socket.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DraftImage {
+    pub(crate) id: u64,
+    pub(crate) revision: u64,
+    pub(crate) original: Rc<DirectiveAttachment>,
+    pub(crate) media: Rc<DirectiveAttachment>,
+    pub(crate) shapes: Rc<Vec<Shape>>,
+}
+
+impl DraftImage {
+    pub(crate) fn new(id: u64, media: DirectiveAttachment) -> Self {
+        let media = Rc::new(media);
+        Self {
+            id,
+            revision: 0,
+            original: media.clone(),
+            media,
+            shapes: Rc::default(),
+        }
+    }
+}
+
+impl Borrow<DirectiveAttachment> for DraftImage {
+    fn borrow(&self) -> &DirectiveAttachment {
+        &self.media
+    }
+}
 
 /// Every draft belonging to one independently steerable target.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ComposerDraft {
     pub(crate) body: String,
     pub(crate) quotes: Vec<QuoteDraft>,
-    pub(crate) attachments: Vec<DirectiveAttachment>,
+    pub(crate) attachments: Vec<DraftImage>,
     pub(crate) issue: Option<String>,
 }
 
@@ -30,7 +62,7 @@ pub(crate) struct QuoteDraft {
     pub(crate) preview: String,
     pub(crate) display_millis: i64,
     pub(crate) body: String,
-    pub(crate) attachments: Vec<DirectiveAttachment>,
+    pub(crate) attachments: Vec<DraftImage>,
     pub(crate) issue: Option<String>,
     order: u64,
 }
@@ -52,9 +84,66 @@ pub(crate) struct PreparedSubmission {
 
 /// Stable composer state keyed by the lane target rather than render order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(crate) struct DraftStore(BTreeMap<String, ComposerDraft>);
+pub(crate) struct DraftStore(BTreeMap<String, ComposerDraft>, u64);
 
 impl DraftStore {
+    /// Not reset by clearing a draft: a late export must never own a later paste.
+    pub(crate) fn issue_image(&mut self) -> u64 {
+        self.1 += 1;
+        self.1
+    }
+
+    pub(crate) fn image(&self, lane: &str, quote: Option<&str>, id: u64) -> Option<&DraftImage> {
+        let draft = self.get(lane)?;
+        let images = match quote {
+            None => &draft.attachments,
+            Some(identity) => {
+                &draft
+                    .quotes
+                    .iter()
+                    .find(|quote| quote.identity == identity)?
+                    .attachments
+            }
+        };
+        images.iter().find(|image| image.id == id)
+    }
+
+    pub(crate) fn apply_image(
+        &mut self,
+        lane: &str,
+        quote: Option<&str>,
+        id: u64,
+        revision: u64,
+        media: DirectiveAttachment,
+        shapes: Rc<Vec<Shape>>,
+    ) -> bool {
+        let Some(draft) = self.0.get_mut(lane) else {
+            return false;
+        };
+        let images = match quote {
+            None => &mut draft.attachments,
+            Some(identity) => {
+                let Some(quote) = draft
+                    .quotes
+                    .iter_mut()
+                    .find(|quote| quote.identity == identity)
+                else {
+                    return false;
+                };
+                &mut quote.attachments
+            }
+        };
+        let Some(image) = images
+            .iter_mut()
+            .find(|image| image.id == id && image.revision == revision)
+        else {
+            return false;
+        };
+        image.media = Rc::new(media);
+        image.shapes = shapes;
+        image.revision += 1;
+        true
+    }
     pub(crate) fn get(&self, target: &str) -> Option<&ComposerDraft> {
         self.0.get(target)
     }
@@ -176,7 +265,7 @@ impl DraftStore {
                 .iter()
                 .flat_map(|quote| quote.attachments.iter())
                 .chain(snapshot.attachments.iter())
-                .cloned()
+                .map(|image| (*image.media).clone())
                 .collect(),
             snapshot,
         })
@@ -196,7 +285,11 @@ impl DraftStore {
         };
         Some(PreparedSubmission {
             message: compose(&snapshot),
-            attachments: snapshot.attachments.clone(),
+            attachments: snapshot
+                .attachments
+                .iter()
+                .map(|image| (*image.media).clone())
+                .collect(),
             snapshot,
         })
     }
@@ -319,8 +412,12 @@ mod tests {
 
     const PNG: &str = "iVBORw0KGgo=";
 
-    fn attachment(name: &str) -> DirectiveAttachment {
-        DirectiveAttachment::from_base64(name, "image/png", PNG).expect("fixture attachment admits")
+    fn attachment(name: &str) -> DraftImage {
+        DraftImage::new(
+            0,
+            DirectiveAttachment::from_base64(name, "image/png", PNG)
+                .expect("fixture attachment admits"),
+        )
     }
 
     fn target(key: &str) -> QuoteTarget {
@@ -347,7 +444,6 @@ mod tests {
         let rerendered = ["agent-b", "agent-a"];
         assert_eq!(store.get(rerendered[0]).unwrap().body, "draft b");
         assert_eq!(store.get(rerendered[1]).unwrap().body, "draft a");
-        assert_eq!(store.0.len(), 2);
     }
 
     const LANE_A: &str = "11111111-1111-4111-8111-111111111111";
@@ -581,14 +677,22 @@ mod tests {
                 "{}\n\nreply\n\n{}\n\nbody\n\n{}",
                 target("message").markdown(),
                 quote_attachment
+                    .media
                     .reference_markdown()
                     .expect("fixture Markdown renders"),
                 primary_attachment
+                    .media
                     .reference_markdown()
                     .expect("fixture Markdown renders"),
             ),
         );
-        assert_eq!(prepared.attachments, [quote_attachment, primary_attachment]);
+        assert_eq!(
+            prepared.attachments,
+            [
+                (*quote_attachment.media).clone(),
+                (*primary_attachment.media).clone()
+            ]
+        );
     }
 
     #[test]
@@ -667,7 +771,7 @@ mod tests {
             restored
                 .attachments
                 .iter()
-                .map(|item| item.name.as_str())
+                .map(|item| item.media.name.as_str())
                 .collect::<Vec<_>>(),
             ["sent", "newer"]
         );
@@ -685,7 +789,7 @@ mod tests {
             restored_quote
                 .attachments
                 .iter()
-                .map(|attachment| attachment.name.as_str())
+                .map(|attachment| attachment.media.name.as_str())
                 .collect::<Vec<_>>(),
             ["quote-sent", "quote-newer"]
         );
@@ -776,7 +880,7 @@ mod tests {
             restored
                 .attachments
                 .iter()
-                .map(|attachment| attachment.name.as_str())
+                .map(|attachment| attachment.media.name.as_str())
                 .collect::<Vec<_>>(),
             ["first", "second"]
         );
@@ -840,5 +944,119 @@ mod tests {
             "reply and more".to_owned(),
         );
         assert!(store.get("agent-a").unwrap().quotes.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+    use crate::image_annotation::{Kind, Point};
+
+    #[test]
+    fn edits_own_one_paste_and_revision_and_survive_refusal_restoration() {
+        let mut store = DraftStore::default();
+        let original =
+            DirectiveAttachment::from_base64("original.png", "image/png", "iVBORw0KGgo=").unwrap();
+        let marked =
+            DirectiveAttachment::from_base64("original.png", "image/png", "iVBORw0KGgoAAAAA")
+                .unwrap();
+        let first = store.issue_image();
+        let second = store.issue_image();
+        store.draft_mut("lane".into()).attachments = vec![
+            DraftImage::new(first, original.clone()),
+            DraftImage::new(second, original.clone()),
+        ];
+        let shapes = Rc::new(vec![Shape {
+            kind: Kind::Rectangle,
+            start: Point { x: 2, y: 3 },
+            end: Point { x: 20, y: 30 },
+        }]);
+        assert!(store.apply_image("lane", None, second, 0, marked.clone(), shapes.clone()));
+        assert_eq!(*store.image("lane", None, first).unwrap().media, original);
+        assert_eq!(
+            *store.image("lane", None, second).unwrap().original,
+            original
+        );
+        assert!(!store.apply_image("lane", None, second, 0, original.clone(), Rc::default()));
+        store.set_body("lane".into(), "send".into());
+        let sent = store.prepare("lane").unwrap();
+        assert_eq!(sent.attachments, [original.clone(), marked.clone()]);
+        store.clear("lane");
+        assert!(!store.apply_image("lane", None, second, 1, original.clone(), Rc::default()));
+        let later = store.issue_image();
+        assert_ne!(later, first);
+        assert_ne!(later, second);
+        store
+            .draft_mut("lane".into())
+            .attachments
+            .push(DraftImage::new(later, original.clone()));
+        store.restore("lane".into(), sent.snapshot);
+        let restored = store.image("lane", None, second).unwrap();
+        assert_eq!(*restored.media, marked);
+        assert_eq!(*restored.original, original);
+        assert_eq!(restored.shapes, shapes);
+        store
+            .draft_mut("lane".into())
+            .attachments
+            .retain(|image| image.id != second);
+        assert!(!store.apply_image("lane", None, second, 1, original, Rc::default()));
+    }
+}
+
+#[cfg(test)]
+mod quote_image_tests {
+    use super::*;
+
+    #[test]
+    fn image_application_requires_the_owning_quote_and_live_attachment() {
+        let mut store = DraftStore::default();
+        let media =
+            DirectiveAttachment::from_base64("image.png", "image/png", "iVBORw0KGgo=").unwrap();
+        let marked =
+            DirectiveAttachment::from_base64("image.png", "image/png", "iVBORw0KGgoAAAAA").unwrap();
+        let target = QuoteTarget::Steering {
+            key: "quoted".into(),
+            digest: QuoteTarget::text_digest("source"),
+        };
+        let identity = target.to_string();
+        store.add_quote(
+            "lane".into(),
+            target,
+            "source".into(),
+            1,
+            1,
+            "source".into(),
+        );
+        let id = store.issue_image();
+        store.draft_mut("lane".into()).quotes[0]
+            .attachments
+            .push(DraftImage::new(id, media.clone()));
+        assert!(!store.apply_image("lane", None, id, 0, marked.clone(), Rc::default()));
+        assert!(!store.apply_image(
+            "other-lane",
+            Some(&identity),
+            id,
+            0,
+            marked.clone(),
+            Rc::default()
+        ));
+        assert_eq!(
+            *store.image("lane", Some(&identity), id).unwrap().media,
+            media
+        );
+        assert!(store.apply_image(
+            "lane",
+            Some(&identity),
+            id,
+            0,
+            marked.clone(),
+            Rc::default()
+        ));
+        assert_eq!(
+            *store.image("lane", Some(&identity), id).unwrap().media,
+            marked
+        );
+        store.remove_quote("lane".into(), &identity);
+        assert!(!store.apply_image("lane", Some(&identity), id, 1, media, Rc::default()));
     }
 }

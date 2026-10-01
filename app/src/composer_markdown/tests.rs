@@ -87,7 +87,7 @@ fn math_aliases_preserve_code_escaped_literals_and_authenticated_ranges() {
 
 #[test]
 fn composed_markdown_emits_canonical_target_links_in_visible_shard_order() {
-    assert_eq!(compose("  body only  ", &[], &[]), "body only");
+    assert_eq!(compose::<Media>("  body only  ", &[], &[]), "body only");
     let tape = tape_target("agent source text");
     let directive = steering_target("dTVQdQfLw", "directive source text");
     let quotes = [(tape.to_string(), ""), (directive.to_string(), "reply")];
@@ -104,7 +104,7 @@ fn composed_markdown_emits_canonical_target_links_in_visible_shard_order() {
 #[test]
 fn operator_typed_block_quotes_remain_ordinary_composed_markdown() {
     let typed = "> copied words\n>\n> still operator-authored";
-    assert_eq!(compose(typed, &[], &[]), typed);
+    assert_eq!(compose::<Media>(typed, &[], &[]), typed);
 }
 
 #[test]

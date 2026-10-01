@@ -16,6 +16,7 @@ pub(super) struct ActionsProps {
     pub name: AttrValue,
     pub onclose: Callback<()>,
     pub image_status: AttrValue,
+    pub onedit: Option<Callback<()>>,
 }
 
 #[function_component(Actions)]
@@ -91,6 +92,7 @@ pub(super) fn actions(props: &ActionsProps) -> Html {
     let copy_button = use_button(copy);
     let download_button = use_button(download);
     let close_button = use_button(props.onclose.clone());
+    let edit_button = use_button(props.onedit.clone().unwrap_or_default());
     // A showing action result outranks the image's own load state; once it
     // fades, its text stays so the toast leaves without collapsing first.
     let action_shown = *shown && !status.is_empty();
@@ -104,6 +106,9 @@ pub(super) fn actions(props: &ActionsProps) -> Html {
     html! {
         <>
             <div class="image-lightbox-actions">
+                if props.onedit.is_some() {
+                    <button ref={edit_button} type="button" data-image-edit="" aria-label="Annotate image">{"Annotate"}</button>
+                }
                 <button ref={copy_button} type="button" disabled={*busy} aria-disabled={copy_unavailable.to_string()} aria-label="Copy image" title="Copy image as PNG">{"Copy"}</button>
                 <button ref={download_button} type="button" disabled={*busy} aria-disabled={download_unavailable.to_string()} aria-label="Download image" title="Download original image">{"Download"}</button>
                 <button ref={close_button} type="button" autofocus=true aria-label="Close full-size image">{"Close"}</button>

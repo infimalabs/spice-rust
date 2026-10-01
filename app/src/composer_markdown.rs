@@ -6,7 +6,7 @@
 //! Nothing here may be duplicated there: a second copy is what let the shipped
 //! quote drift from the tested one until the copies disagreed on blank input.
 
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::collections::BTreeMap;
 use std::ops::Range;
 
@@ -1032,13 +1032,13 @@ fn sanitize_markdown_url(url: CowStr<'_>, image: bool) -> CowStr<'_> {
 }
 
 /// One canonical quote target and the reply the operator typed beneath it.
-pub(crate) struct QuotedReply<'a> {
+pub(crate) struct QuotedReply<'a, A = Media> {
     /// Canonical resident-supplied source target.
     pub(crate) target: &'a str,
     /// Reply body shown under the link, blank when the operator wrote none.
     pub(crate) body: &'a str,
     /// Attachments pasted into this quoted reply composer.
-    pub(crate) attachments: &'a [Media],
+    pub(crate) attachments: &'a [A],
 }
 
 /// Join every visible quote shard, the primary body, and their attachments.
@@ -1048,7 +1048,11 @@ pub(crate) struct QuotedReply<'a> {
 /// attachment follows the text block whose composer received it. Parts are
 /// separated by the blank line Markdown reads as a block boundary, and a part
 /// that would contribute nothing is dropped rather than emitted empty.
-pub(crate) fn compose(body: &str, quotes: &[QuotedReply<'_>], attachments: &[Media]) -> String {
+pub(crate) fn compose<A: Borrow<Media>>(
+    body: &str,
+    quotes: &[QuotedReply<'_, A>],
+    attachments: &[A],
+) -> String {
     let mut parts = Vec::new();
     for quoted in quotes {
         let link = format!("[quote]({})", quoted.target);
@@ -1058,13 +1062,22 @@ pub(crate) fn compose(body: &str, quotes: &[QuotedReply<'_>], attachments: &[Med
         } else {
             format!("{link}\n\n{body}")
         });
-        parts.extend(quoted.attachments.iter().map(attachment_markdown));
+        parts.extend(
+            quoted
+                .attachments
+                .iter()
+                .map(|attachment| attachment_markdown(attachment.borrow())),
+        );
     }
     let body = body.trim();
     if !body.is_empty() {
         parts.push(body.to_owned());
     }
-    parts.extend(attachments.iter().map(attachment_markdown));
+    parts.extend(
+        attachments
+            .iter()
+            .map(|attachment| attachment_markdown(attachment.borrow())),
+    );
     parts.join("\n\n")
 }
 

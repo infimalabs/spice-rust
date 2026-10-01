@@ -9,7 +9,8 @@ use wire::body::DirectiveAttachment;
 use yew::prelude::*;
 
 use super::MAX_ATTACHMENTS;
-use crate::composer_drafts::{ComposerDraft, DraftStore};
+use crate::composer_drafts::{ComposerDraft, DraftImage, DraftStore};
+use crate::image_annotation::Shape;
 
 #[derive(Clone, Default, PartialEq)]
 pub(in crate::browser) struct ComposerDrafts(pub(super) DraftStore);
@@ -35,7 +36,15 @@ pub(in crate::browser) enum ComposerAction {
     RemoveAttachment {
         lane: String,
         quote: Option<String>,
-        index: usize,
+        id: u64,
+    },
+    ApplyImage {
+        lane: String,
+        quote: Option<String>,
+        id: u64,
+        revision: u64,
+        media: DirectiveAttachment,
+        shapes: Rc<Vec<Shape>>,
     },
     SetIssue {
         lane: String,
@@ -94,6 +103,7 @@ impl Reducible for ComposerDrafts {
                 quote,
                 attachment,
             } => {
+                let id = next.0.issue_image();
                 let draft = next.0.draft_mut(lane);
                 let attachment_count = draft.attachments.len()
                     + draft
@@ -105,17 +115,30 @@ impl Reducible for ComposerDrafts {
                     if attachment_count >= MAX_ATTACHMENTS {
                         *issue = Some("Maximum images attached.".to_owned());
                     } else {
-                        attachments.push(attachment);
+                        attachments.push(DraftImage::new(id, attachment));
                         *issue = None;
                     }
                 }
             }
-            ComposerAction::RemoveAttachment { lane, quote, index } => {
+            ComposerAction::RemoveAttachment { lane, quote, id } => {
                 let draft = next.0.draft_mut(lane);
-                if let Some((attachments, _)) = attachment_state_mut(draft, quote.as_deref())
-                    && index < attachments.len()
+                if let Some((attachments, _)) = attachment_state_mut(draft, quote.as_deref()) {
+                    attachments.retain(|image| image.id != id);
+                }
+            }
+            ComposerAction::ApplyImage {
+                lane,
+                quote,
+                id,
+                revision,
+                media,
+                shapes,
+            } => {
+                if !next
+                    .0
+                    .apply_image(&lane, quote.as_deref(), id, revision, media, shapes)
                 {
-                    attachments.remove(index);
+                    return self;
                 }
             }
             ComposerAction::SetIssue { lane, quote, issue } => {
@@ -168,7 +191,7 @@ fn clear_issue_family(draft: &mut ComposerDraft, quote: Option<&str>, family: &s
 fn attachment_state_mut<'a>(
     draft: &'a mut ComposerDraft,
     quote_identity: Option<&str>,
-) -> Option<(&'a mut Vec<DirectiveAttachment>, &'a mut Option<String>)> {
+) -> Option<(&'a mut Vec<DraftImage>, &'a mut Option<String>)> {
     match quote_identity {
         None => Some((&mut draft.attachments, &mut draft.issue)),
         Some(identity) => draft
@@ -180,6 +203,14 @@ fn attachment_state_mut<'a>(
 }
 
 impl ComposerDrafts {
+    pub(in crate::browser) fn image(
+        &self,
+        lane: &str,
+        quote: Option<&str>,
+        id: u64,
+    ) -> Option<&DraftImage> {
+        self.0.image(lane, quote, id)
+    }
     pub(super) fn get(&self, lane: &str) -> Option<&ComposerDraft> {
         self.0.get(lane)
     }

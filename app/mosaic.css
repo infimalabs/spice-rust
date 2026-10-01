@@ -380,6 +380,24 @@
   border: var(--canvas-edge); border-radius: var(--canvas-radius-pill); background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
 }
 .image-lightbox-actions > button:not([aria-disabled="true"]):hover { border-color: var(--accent); }
+.image-annotation-controls { justify-self: stretch; justify-content: space-between; }
+.image-annotation-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+.image-annotation-tools > button {
+  border: var(--canvas-edge); border-radius: var(--canvas-radius-pill);
+  background: color-mix(in srgb, var(--panel) 88%, transparent); box-shadow: var(--shadow);
+}
+.image-annotation-tools > button[aria-pressed="true"], .image-annotation-tools > .image-annotation-apply {
+  border-color: var(--accent); background: var(--accent); color: var(--on-accent, var(--panel));
+}
+.image-annotation-tools > button:disabled { opacity: .45; cursor: default; }
+.image-annotation-stage { grid-area: image; min-width: 0; min-height: 0; outline: none; }
+.image-annotation-stage:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.image-annotation-svg { display: block; width: 100%; height: 100%; touch-action: none; user-select: none; }
+.image-annotation-svg--draw { cursor: crosshair; }
+.image-annotation-hit { fill: transparent; stroke: transparent; stroke-width: 20px; vector-effect: non-scaling-stroke; cursor: move; }
+.image-annotation-mark { pointer-events: none; stroke-linejoin: round; }
+.image-annotation-handle { fill: white; stroke: #ef4444; stroke-width: 2px; vector-effect: non-scaling-stroke; cursor: crosshair; }
+.image-annotation-loading { text-align: center; color: var(--muted); }
 /* Out of flow, so showing or clearing a result never moves what is beneath it. */
 .toast {
   position: fixed; inset: auto 16px 24px; z-index: 10; width: fit-content; height: auto; max-width: 36rem; margin: 0 auto; padding: 7px 14px;

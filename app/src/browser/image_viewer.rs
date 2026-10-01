@@ -14,6 +14,16 @@ use yew::prelude::*;
 use super::overlay;
 
 mod actions;
+mod editor;
+
+use super::watchband::{ComposerAction, ComposerDrafts};
+
+#[derive(Clone, PartialEq)]
+struct DraftTarget {
+    lane: String,
+    quote: Option<String>,
+    id: u64,
+}
 
 #[derive(Clone, PartialEq)]
 struct Selection {
@@ -22,6 +32,7 @@ struct Selection {
     alt: AttrValue,
     name: AttrValue,
     opener: web_sys::Element,
+    draft: Option<DraftTarget>,
 }
 
 #[derive(Default, PartialEq)]
@@ -36,6 +47,7 @@ enum Change {
         alt: AttrValue,
         name: AttrValue,
         opener: web_sys::Element,
+        draft: Option<DraftTarget>,
     },
     Close(u64),
 }
@@ -50,6 +62,7 @@ impl Reducible for Viewing {
                 alt,
                 name,
                 opener,
+                draft,
             } => {
                 let generation = self.issued + 1;
                 Rc::new(Self {
@@ -60,6 +73,7 @@ impl Reducible for Viewing {
                         alt,
                         name,
                         opener,
+                        draft,
                     }),
                 })
             }
@@ -82,6 +96,7 @@ impl Reducible for Viewing {
 #[derive(Properties, PartialEq)]
 pub(super) struct ProviderProps {
     pub children: Children,
+    pub drafts: UseReducerHandle<ComposerDrafts>,
 }
 
 #[function_component(Provider)]
@@ -117,6 +132,13 @@ pub(super) fn provider(props: &ProviderProps) -> Html {
                     .get_attribute("data-image-name")
                     .unwrap_or_default()
                     .into(),
+                draft: opener.get_attribute("data-image-lane").and_then(|lane| {
+                    Some(DraftTarget {
+                        lane,
+                        quote: opener.get_attribute("data-image-quote"),
+                        id: opener.get_attribute("data-image-id")?.parse().ok()?,
+                    })
+                }),
                 opener,
             });
         });
@@ -136,6 +158,7 @@ pub(super) fn provider(props: &ProviderProps) -> Html {
                     key={selection.generation.to_string()}
                     selection={selection.clone()}
                     viewing={viewing.dispatcher()}
+                    drafts={props.drafts.clone()}
                 />
             }
         </>
@@ -171,12 +194,72 @@ pub(super) fn use_button(action: Callback<()>) -> NodeRef {
 struct ViewerProps {
     selection: Selection,
     viewing: UseReducerDispatcher<Viewing>,
+    drafts: UseReducerHandle<ComposerDrafts>,
 }
 
 #[function_component(Viewer)]
 fn viewer(props: &ViewerProps) -> Html {
     let host = use_node_ref();
     let image_status = use_state_eq(|| AttrValue::from("Loading image"));
+    let editing = use_state_eq(|| false);
+    let image = props
+        .selection
+        .draft
+        .as_ref()
+        .and_then(|target| {
+            props
+                .drafts
+                .image(&target.lane, target.quote.as_deref(), target.id)
+        })
+        .cloned();
+    let source = use_memo(
+        (
+            props.selection.source.clone(),
+            image.as_ref().map(|image| image.media.clone()),
+        ),
+        |(fallback, media)| {
+            media.as_ref().map_or_else(
+                || fallback.clone(),
+                |media| AttrValue::from(media.data_url.clone()),
+            )
+        },
+    );
+    let latest = use_mut_ref(|| props.drafts.clone());
+    *latest.borrow_mut() = props.drafts.clone();
+    let edit = use_callback(editing.clone(), |(), editing| editing.set(true));
+    let cancel = use_callback(editing.clone(), |(), editing| editing.set(false));
+    let apply = use_callback(
+        (
+            props.selection.draft.clone(),
+            latest,
+            editing.clone(),
+            image_status.clone(),
+        ),
+        |applied: editor::Applied, (target, latest, editing, status)| {
+            let Some(target) = target else {
+                return;
+            };
+            let drafts = latest.borrow();
+            if !drafts
+                .image(&target.lane, target.quote.as_deref(), target.id)
+                .is_some_and(|image| image.revision == applied.revision)
+            {
+                status
+                    .set("This draft image changed or was removed. Reopen it to annotate.".into());
+                editing.set(false);
+                return;
+            }
+            drafts.dispatch(ComposerAction::ApplyImage {
+                lane: target.lane.clone(),
+                quote: target.quote.clone(),
+                id: target.id,
+                revision: applied.revision,
+                media: applied.media,
+                shapes: applied.shapes,
+            });
+            editing.set(false);
+        },
+    );
     let loaded = use_callback(image_status.clone(), |_: Event, status| {
         status.set(AttrValue::default())
     });
@@ -204,10 +287,24 @@ fn viewer(props: &ViewerProps) -> Html {
             move || drop(presentation)
         },
     );
+    use_effect_with((host.clone(), *editing), |(host, editing)| {
+        if !editing
+            && let Some(dialog) = host.cast::<web_sys::HtmlDialogElement>()
+            && dialog.open()
+            && let Ok(Some(button)) = dialog.query_selector("[data-image-edit]")
+            && let Some(button) = button.dyn_ref::<web_sys::HtmlElement>()
+        {
+            let _ = button.focus();
+        }
+    });
     html! {
         <dialog ref={host} class="image-lightbox" aria-label="Full-size image">
-            <actions::Actions source={props.selection.source.clone()} name={props.selection.name.clone()} onclose={close} image_status={(*image_status).clone()} />
-            <img class="image-lightbox-image" src={props.selection.source.clone()} alt={props.selection.alt.clone()} onload={loaded} onerror={failed} />
+            if *editing && let Some(image) = image {
+                <editor::Editor {image} onapply={apply} oncancel={cancel} onclose={close} />
+            } else {
+                <actions::Actions source={(*source).clone()} name={props.selection.name.clone()} onclose={close} image_status={(*image_status).clone()} onedit={image.is_some().then_some(edit)} />
+                <img class="image-lightbox-image" src={(*source).clone()} alt={props.selection.alt.clone()} onload={loaded} onerror={failed} />
+            }
         </dialog>
     }
 }
