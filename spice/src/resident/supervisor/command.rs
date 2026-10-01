@@ -214,15 +214,10 @@ impl<W: Write + Send + 'static> Driver<W> {
         self.interject(InboxDelivery::Update);
     }
 
+    /// Steer one progress reminder without touching the calls in flight: it
+    /// asks for prose, not for the work to stop, so omp delivers it at the
+    /// next boundary and a running command stays in the foreground.
     fn deliver_narration(&self, prod: &wire::body::NarrationProdded) {
-        for handle in self
-            .calls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .values()
-        {
-            handle.interrupt();
-        }
         let urgency = if prod.count > 1 {
             "Progress update overdue"
         } else {
@@ -238,6 +233,9 @@ impl<W: Write + Send + 'static> Driver<W> {
         let _sent = self.steer(&message);
     }
 
+    /// Steer one stale-claim reminder without touching the calls in flight:
+    /// completion and review refuse until the reclaim, so the reminder can
+    /// wait for omp's next boundary.
     fn deliver_task_generation(&self, notice: &TaskGenerationNotice) {
         let previous = {
             let mut delivered = self
@@ -251,14 +249,6 @@ impl<W: Write + Send + 'static> Driver<W> {
             }
             delivered.replace((notice.task.clone(), notice.claim, notice.generation))
         };
-        for handle in self
-            .calls
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .values()
-        {
-            handle.interrupt();
-        }
         let message = format!(
             "<system-notice>\nTask {} changed after this claim last acknowledged it: \
              generation {} is {} by {} at position {}. Run `spice task reclaim {}` \

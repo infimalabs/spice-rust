@@ -159,9 +159,10 @@ transformation.
 Each hint appears once on every matching command invocation. Neither session
 identity nor compaction suppresses later matching commands; no delivery receipts
 or repository state are needed. Nonmatches remain silent. These are
-command-attached suggestions, not narration prods: OMP's progress prod uses a
-separate injected system notice and can interrupt a pending tool call, while
-shell advice accompanies that call's initial response. No ACK, escalation, or
+command-attached suggestions, not narration prods: OMP's progress prod is a
+separate injected system notice that omp delivers at its next tool or turn
+boundary without interrupting a pending tool call, while shell advice
+accompanies that call's initial response. No ACK, escalation, or
 periodic reminder is attached to either hint.
 
 Spice's OMP shell and job results show at most 16 KiB of log text, preserving
