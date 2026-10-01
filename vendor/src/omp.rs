@@ -49,6 +49,19 @@ pub const ABORT_REQUEST_ID: &str = "spice-abort";
 /// Request identity of the protocol negotiation that opens every launch.
 pub const PROTOCOL_REQUEST_ID: &str = "spice-protocol";
 
+/// Request identity of the event filter that trims streamed message updates.
+pub const EVENT_FILTER_REQUEST_ID: &str = "spice-event-filter";
+
+/// How omp writes `message_update` frames: each carries only its delta.
+///
+/// By default every update repeats the whole assistant message so far, twice,
+/// so a reply's frames grow with the square of its length. The lane keeps none
+/// of those snapshots: capture drops every update but `text_end`, which keeps
+/// its block in delta mode, and `message_end` still carries the settled
+/// message whole. A server that predates the option ignores it and keeps
+/// writing full snapshots, which capture already drops.
+const MESSAGE_UPDATES: &str = "delta";
+
 /// Request identity of the steering disposition the lane states at open.
 pub const STEERING_MODE_REQUEST_ID: &str = "spice-steering-mode";
 
@@ -445,20 +458,21 @@ fn anchored(preamble: &str, body: &str, anchor: Option<String>) -> String {
     prompt
 }
 
-/// The request lines that open a launch: the wire, the queue dispositions,
-/// the lane's shell, a state query, then the first turn.
+/// The request lines that open a launch: the wire, the event filter, the queue
+/// dispositions, the lane's shell, a state query, then the first turn.
 ///
 /// omp writes its `ready` frame before reading stdin, so every request may be
 /// queued before the child has answered anything. The version is negotiated
 /// first because omp switches its frame encoder on the reply, and everything
 /// after it — a `get_state` answer over a megabyte included — is then framed
-/// the way the lane's capture reads. The three queue dispositions follow:
-/// omp leaves them to whatever the machine's own settings say, so a lane
-/// that depends on how steering drains states them rather than inheriting
-/// them. The lane's shell is registered next so the first turn's schema
-/// carries it; the state reply declares the session; the prompt starts the
-/// turn by naming the skill the system prompt already carries, so the agent
-/// re-grounds in it.
+/// the way the lane's capture reads. The event filter follows: it admits every
+/// event and trims each `message_update` to its delta. The three queue dispositions
+/// follow: omp leaves them to whatever the machine's own settings say, so a
+/// lane that depends on how steering drains states them rather than
+/// inheriting them. The lane's shell is registered next so the first turn's
+/// schema carries it; the state reply declares the session; the prompt starts
+/// the turn by naming the skill the system prompt already carries, so the
+/// agent re-grounds in it.
 ///
 /// A refused command answers `success: false`, which the lane reads as a
 /// vendor failure and reaps; a refused negotiation therefore ends the launch
@@ -470,6 +484,12 @@ pub fn opening_request(launch: &Launch) -> Vec<u8> {
         kind: "negotiate_protocol",
         protocol_version: listen::OMP_PROTOCOL_VERSION,
     });
+    bytes.extend(request_line(&EventFilter {
+        id: EVENT_FILTER_REQUEST_ID,
+        kind: "set_event_filter",
+        events: None,
+        message_updates: MESSAGE_UPDATES,
+    }));
     for (id, kind, mode) in [
         (STEERING_MODE_REQUEST_ID, "set_steering_mode", STEERING_MODE),
         (
@@ -635,6 +655,17 @@ struct Negotiation {
     kind: &'static str,
     #[serde(rename = "protocolVersion")]
     protocol_version: u8,
+}
+
+/// `events: null` admits every event; a list would drop any it leaves out.
+#[derive(Serialize)]
+struct EventFilter {
+    id: &'static str,
+    #[serde(rename = "type")]
+    kind: &'static str,
+    events: Option<()>,
+    #[serde(rename = "messageUpdates")]
+    message_updates: &'static str,
 }
 
 #[derive(Serialize)]
