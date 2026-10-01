@@ -527,6 +527,15 @@
   font-size: 9px;
   font-weight: 700;
 }
+/* A counted tab centres its label alone and hangs its badge in the trailing
+   column, so a badge appearing, vanishing, or gaining a digit never moves the
+   label. The equal outer columns keep the label on the tab's centre line. */
+.team-mode--counted {
+  display: inline-grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
+}
+.team-mode--counted > .team-mode-label { grid-column: 2; }
+.team-mode--counted > .team-mode-badge { grid-column: 3; justify-self: start; }
 @container (max-width: 20rem) {
   .team-mode-rail { gap: 0; }
   .team-mode { gap: 2px; padding-inline: 3px; }

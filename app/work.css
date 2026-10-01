@@ -131,6 +131,15 @@
   font-weight: 700;
   text-align: center;
 }
+/* A lane count reserves three tabular digits and keeps its slot while the
+   count is unknown, so the label rail, and the card track beside it, holds one
+   width as the count appears, vanishes, or grows. */
+.work-lane-heading > span {
+  min-inline-size: calc(3ch + 12px);
+  font-variant-numeric: tabular-nums;
+}
+.work-lane-heading > span[data-shown="false"],
+.team-task-section > header > span[data-shown="false"] { visibility: hidden; }
 
 .work-lane[data-work-lane="in-flight"] { --work-state: var(--work-in-flight); }
 .work-lane[data-work-lane="ready"] { --work-state: var(--work-ready); }

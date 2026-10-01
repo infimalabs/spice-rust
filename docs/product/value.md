@@ -394,7 +394,10 @@ In flight with the claiming member's name and accent, and Waiting for blocked,
 deferred, and review work. Like the global rows, each lane keeps the card
 cap's height even when empty ([a changing region holds its largest
 footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)),
-and keyed cards move without disturbing unchanged ones.
+and keyed cards move without disturbing unchanged ones. Every lane count, and
+each section count beside Kept jobs, Settled, and Directions, keeps its slot
+while unknown or zero, and lane counts reserve three digits, so a count never
+moves a label or the card track.
 
 A directive ledger joins browser-owned submissions to the resident inbox by
 directive or fanout identity. A fanout stays one row with per-member state
@@ -551,10 +554,13 @@ to use without pretending to have settled.
 ### The team mode rail and its scroll ownership
 
 Each live team's rail keeps its selected mode per team, and selection replaces
-the pane without transition. Info and Work never mount the message plane. In
-Chat, member columns own horizontal overflow and the browser keeps native
-ownership of every vertical gesture. The composer overlays the plane, whose
-content starts below a composer-height spacer, and moves exactly as far as the
+the pane without transition. A rail tab centres its label alone and hangs its
+count badge after it, as the canvas navigation does, so a badge appearing,
+vanishing, or gaining a digit never moves a label. Info and Work never mount
+the message plane. In Chat, member columns own horizontal overflow and the
+browser keeps native ownership of every vertical gesture. The composer
+overlays the plane, whose content starts below a composer-height spacer, and
+moves exactly as far as the
 cards scroll until hidden or revealed; it never cancels an event or writes the
 scroll position. Home and End also set composer exposure. The toolbar and ticker
 stay fixed.

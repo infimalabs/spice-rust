@@ -140,7 +140,7 @@ fn team_lane(
     tasks: Option<Vec<Html>>,
 ) -> Html {
     let heading = format!("{key}-{team}");
-    // Without a snapshot the count is unknown, so the rail shows none.
+    // Without a snapshot the count is unknown: its slot stays, hidden.
     let count = tasks.as_ref().map(Vec::len);
     html! {
         <section
@@ -151,9 +151,10 @@ fn team_lane(
         >
             <header class="work-lane-heading">
                 <h3 id={heading}>{label}</h3>
-                if let Some(count) = count {
-                    <span aria-label={format!("{count} tasks")}>{count}</span>
-                }
+                <span
+                    data-shown={count.is_some().to_string()}
+                    aria-label={format!("{} tasks", count.unwrap_or(0))}
+                >{count.unwrap_or(0)}</span>
             </header>
             <div
                 class="work-lane-track"
@@ -215,9 +216,7 @@ pub(super) fn render_directive_ledger(
         <section class="team-task-section" aria-labelledby={heading.clone()}>
             <header>
                 <h3 id={heading.clone()}>{"Directions"}</h3>
-                if !rows.is_empty() {
-                    <span>{rows.len()}</span>
-                }
+                <span data-shown={(!rows.is_empty()).to_string()}>{rows.len()}</span>
                 <a
                     class="team-direction-history-link"
                     href={format!("#{}", history.path())}
@@ -365,9 +364,9 @@ fn render_settled_lane(
         >
             <header>
                 <h3 id={format!("settled-{team}")}>{"Settled"}</h3>
-                if let Some(total) = total.filter(|total| *total > 0) {
-                    <span>{total}</span>
-                }
+                <span data-shown={total.is_some_and(|total| total > 0).to_string()}>
+                    {total.unwrap_or(0)}
+                </span>
             </header>
             {render_settled_finder(settled, team)}
             {crate::browser::archive_status::render(&crate::browser::archive_status::ArchiveStatus {
@@ -476,9 +475,7 @@ pub(super) fn render_team_jobs(standings: &[Standing], team: wire::CanonicalUuid
         <section class="team-task-section team-jobs" aria-labelledby={heading.clone()}>
             <header>
                 <h3 id={heading.clone()}>{"Kept jobs"}</h3>
-                if !jobs.is_empty() {
-                    <span>{jobs.len()}</span>
-                }
+                <span data-shown={(!jobs.is_empty()).to_string()}>{jobs.len()}</span>
             </header>
             <div
                 class="team-job-scroll"

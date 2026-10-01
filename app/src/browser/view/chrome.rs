@@ -178,7 +178,7 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                 let badge = navigation_badge(destination, runtime, render.submissions);
                 html! {
                     <button
-                        class={classes!("team-mode", selected.then_some("selected"))}
+                        class={classes!("team-mode", "team-mode--counted", selected.then_some("selected"))}
                         type="button"
                         aria-current={selected.then_some("page")}
                         title={destination.description()}
