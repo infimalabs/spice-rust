@@ -93,11 +93,12 @@ information.
 
 The field guide is diagram-led: a 20-figure linked contact sheet, a UTC
 delivery calendar, integration-aligned exposure, conditional quantile plots,
-first-verdict shares, ordered correction paths, a proof mechanism schematic,
-observed provider-session spans, an origin tree, typed adjacency maps and
-exact merge-parent joins. The print edition has 23 portrait sheets. The
-publication data and measurement definitions are unchanged by this renderer
-revision; complete alternatives remain in `tables.html`.
+an exact window–phase–outcome alluvial, first-verdict shares, a complete
+selected-task verdict braid, ordered correction paths, a proof mechanism
+schematic, observed provider-session spans, an origin tree, a layered typed
+campaign topology and exact merge-parent joins. The print edition has 23
+portrait sheets. The publication data and measurement definitions are unchanged
+by this renderer revision; complete alternatives remain in `tables.html`.
 
 Figure numbers follow reading order. Colour belongs to the diagram family:
 magnitude is orange, flow blue, structure violet, time magenta and topology

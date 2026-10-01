@@ -82,6 +82,116 @@ pub(in super::super) fn flows(q: &Quantity, public: &Path, name: &str) -> Result
     )
 }
 
+pub(in super::super) fn review_braid(p: &Publication, public: &Path, name: &str) -> Result<String> {
+    const SELECTED_TASK_COUNT: usize = 1_500;
+    const RIGHT_LABEL_THRESHOLD: f64 = 550.0;
+    const LABELS: [&str; 7] = [
+        "No recorded verdict",
+        "Clean",
+        "Finding",
+        "Finding → clean",
+        "Finding → finding → clean",
+        "3 findings → clean",
+        "4 findings → clean",
+    ];
+    const FILLS: [&str; 7] = [
+        "#c9ced1", "#2a78d6", "#c05629", "#8c7bc2", "#7965b2", "#6554a4", "#4f3c91",
+    ];
+    let mut counts = [0_usize; LABELS.len()];
+    for task in p.tasks.iter().filter(|task| task.selected) {
+        let verdicts = &task.review_verdicts;
+        let category = match verdicts.as_slice() {
+            [] => 0,
+            [verdict] if verdict == "clean" => 1,
+            [verdict] if verdict == "finding" => 2,
+            _ if (2..=5).contains(&verdicts.len())
+                && verdicts.last().is_some_and(|verdict| verdict == "clean")
+                && verdicts[..verdicts.len() - 1]
+                    .iter()
+                    .all(|verdict| verdict == "finding") =>
+            {
+                verdicts.len() + 1
+            }
+            _ => return Err("selected task has an unsupported ordered verdict history".into()),
+        };
+        counts[category] += 1;
+    }
+    let total = counts.iter().sum::<usize>();
+    if total != SELECTED_TASK_COUNT {
+        return Err("ordered verdict braid does not cover the selected cohort".into());
+    }
+    let scale = 112.5 / total as f64;
+    let round_x = [210.0, 300.0, 390.0, 480.0, 570.0];
+    let mut svg = opening(250.0, "Every selected task's ordered review history", name);
+    svg.push_str(
+        "<text x=\"0\" y=\"17\">1,500 selected tasks · ribbon thickness is task count</text>",
+    );
+    for (round, x) in round_x.iter().enumerate() {
+        svg.push_str(&format!(
+            "<path d=\"M{x} 30V228\" stroke=\"#e3e5e7\"/><text x=\"{x}\" y=\"27\" text-anchor=\"middle\" style=\"font-size:10px\">R{}</text>",
+            round + 1
+        ));
+    }
+    let mut source_y = 50.0;
+    let mut destination_y = 50.0;
+    let label_y = [58.0, 105.0, 145.0, 166.0, 187.0, 207.0, 225.0];
+    for (category, count) in counts.iter().copied().enumerate() {
+        let thickness = count as f64 * scale;
+        let source_top = source_y;
+        let destination_top = destination_y;
+        let destination_bottom = destination_top + thickness;
+        let end_x = match category {
+            0 => 160.0,
+            1 | 2 => round_x[0],
+            _ => round_x[category - 2],
+        };
+        svg.push_str(&format!(
+            "<path d=\"M70 {source_top:.3}C115 {source_top:.3} 140 {destination_top:.3} 170 {destination_top:.3}\
+             H{end_x}V{destination_bottom:.3}H170C140 {destination_bottom:.3} 115 {:.3} 70 {:.3}Z\" \
+             fill=\"{}\" fill-opacity=\".86\"><title>{}: {count}</title></path>",
+            source_top + thickness,
+            source_top + thickness,
+            FILLS[category],
+            LABELS[category]
+        ));
+        let center = destination_top + thickness / 2.0;
+        if category > 0 {
+            let rounds = if category <= 2 { 1 } else { category - 1 };
+            for round in 0..rounds {
+                let clean = category == 1 || (category >= 3 && round + 1 == rounds);
+                svg.push_str(&format!(
+                    "<circle cx=\"{}\" cy=\"{center:.3}\" r=\"4.5\" fill=\"{}\" stroke=\"#faf7ef\" stroke-width=\"1.5\"><title>{}</title></circle>",
+                    round_x[round],
+                    if clean { "#2a78d6" } else { "#c05629" },
+                    if clean { "clean" } else { "finding" }
+                ));
+            }
+        }
+        let (label_x, anchor) = if end_x >= RIGHT_LABEL_THRESHOLD {
+            (658.0, "end")
+        } else {
+            (end_x + 8.0, "start")
+        };
+        svg.push_str(&format!(
+            "<path d=\"M{} {center:.3}V{}\" stroke=\"#48565c\" stroke-width=\".7\"/>\
+             <text x=\"{label_x}\" y=\"{}\" text-anchor=\"{anchor}\" style=\"font-size:10px\">{} · {count}</text>",
+            end_x + 5.0,
+            label_y[category] - 4.0,
+            label_y[category],
+            LABELS[category]
+        ));
+        source_y += thickness;
+        destination_y = destination_bottom + 6.0;
+    }
+    svg.push_str("<path d=\"M70 50V162.5\" stroke=\"#242d31\"/><text x=\"0\" y=\"243\" style=\"font-size:10px\">Orange node: finding · blue node: clean · R: canonical verdict round, not elapsed time</text></svg>");
+    figure(
+        public,
+        name,
+        svg,
+        "Q13–Q14 · All 1,500 selected tasks appear once. Exact histories: 131 without a verdict; 1,104 clean; 127 finding; 104 finding → clean; 27 two findings → clean; six three findings → clean; one four findings → clean. Ribbon thickness is proportional to task count; verdict nodes preserve canonical order, not duration. <a href=\"tables.html#Q13\">Round counts</a> and <a href=\"tables.html#tasks\">task alternatives</a>.",
+    )
+}
+
 pub(in super::super) fn proof(public: &Path, name: &str) -> Result<String> {
     let mut svg = opening(
         260.0,
