@@ -1,8 +1,8 @@
 use app::Session;
 use app::runtime::{CanvasRuntime, LaneMember, LaneRow};
 use app::watchband::{
-    ACCENTS, FIELD_BUDGET, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TeamDrop,
-    UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, dissolve_team,
+    ACCENTS, FIELD_BUDGET, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TEAM_MEMBER_LIMIT,
+    TeamDrop, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, dissolve_team,
     elapsed_label, elapsed_label_deadline_millis, first_nonquoted_prose, jobs_kept,
     latest_lane_prose, leaf, member_presence, one_line, remaining_label,
     remaining_label_deadline_millis, reported_tasks, short, split_member, split_team,
@@ -1064,41 +1064,27 @@ fn arranged(
 }
 
 #[test]
-fn a_reorder_moves_the_dragged_team_into_the_target_position_without_moving_an_agent() {
-    // No team is named for one of its own members: a team read off its first
-    // member would arrange the same three teams into the same three orders.
+fn a_swap_exchanges_exactly_the_two_team_positions_without_moving_an_agent() {
     let lanes = [
         seated(TEAM_ONE, &[(LANE_A, "main-a"), (LANE_B, "main-b")]),
         seated(TEAM_TWO, &[(LANE_C, "main-c")]),
         seated(TEAM_THREE, &[(LANE_D, "main-d")]),
     ];
+    let expected = vec![
+        (uuid(TEAM_THREE), vec![uuid(LANE_D)]),
+        (uuid(TEAM_TWO), vec![uuid(LANE_C)]),
+        (uuid(TEAM_ONE), vec![uuid(LANE_A), uuid(LANE_B)]),
+    ];
 
-    let backward = arranged(&lanes, TEAM_THREE, TEAM_ONE, TeamDrop::Reorder);
     assert_eq!(
-        backward,
-        vec![
-            (uuid(TEAM_THREE), vec![uuid(LANE_D)]),
-            (uuid(TEAM_ONE), vec![uuid(LANE_A), uuid(LANE_B)]),
-            (uuid(TEAM_TWO), vec![uuid(LANE_C)]),
-        ],
-        "the dragged team takes the target's position and every agent stays put",
+        arranged(&lanes, TEAM_THREE, TEAM_ONE, TeamDrop::Swap),
+        expected,
+        "the target and source exchange positions while the middle team stays put",
     );
-
-    // Dragging the other way is not the mirror image. A reorder always inserts
-    // the dragged team immediately before the target, which only coincides with
-    // the target's own index when the drag came from later in the row: here
-    // TEAM_THREE stood third, and TEAM_ONE lands second, because removing
-    // it first shifts the target one place earlier than the row it was read
-    // from. Asserting only the backward case would let "insert before" and
-    // "take the target's index" pass as the same rule.
-    let forward = arranged(&lanes, TEAM_ONE, TEAM_THREE, TeamDrop::Reorder);
     assert_eq!(
-        forward,
-        vec![
-            (uuid(TEAM_TWO), vec![uuid(LANE_C)]),
-            (uuid(TEAM_ONE), vec![uuid(LANE_A), uuid(LANE_B)]),
-            (uuid(TEAM_THREE), vec![uuid(LANE_D)]),
-        ],
+        arranged(&lanes, TEAM_ONE, TEAM_THREE, TeamDrop::Swap),
+        expected,
+        "pairwise swap has the same result in either drag direction",
     );
 }
 
@@ -1144,25 +1130,6 @@ fn only_a_team_stands_in_the_fleet_while_a_lone_seat_stays_in_the_topology() {
 }
 
 #[test]
-fn an_after_reorder_places_the_dragged_team_after_its_target() {
-    let lanes = [
-        seated(TEAM_ONE, &[(LANE_A, "main-a")]),
-        seated(TEAM_TWO, &[(LANE_C, "main-c")]),
-        seated(TEAM_THREE, &[(LANE_D, "main-d")]),
-    ];
-
-    let arranged = arranged(&lanes, TEAM_ONE, TEAM_TWO, TeamDrop::ReorderAfter);
-    assert_eq!(
-        arranged,
-        vec![
-            (uuid(TEAM_TWO), vec![uuid(LANE_C)]),
-            (uuid(TEAM_ONE), vec![uuid(LANE_A)]),
-            (uuid(TEAM_THREE), vec![uuid(LANE_D)]),
-        ],
-    );
-}
-
-#[test]
 fn a_join_gives_the_dragged_agents_to_the_target_and_keeps_its_primary_composer() {
     let lanes = [
         seated(TEAM_ONE, &[(LANE_A, "main-a")]),
@@ -1182,6 +1149,66 @@ fn a_join_gives_the_dragged_agents_to_the_target_and_keeps_its_primary_composer(
         joined[0].1.first(),
         Some(&uuid(LANE_A)),
         "the target's first agent stays its primary composer",
+    );
+}
+
+#[test]
+fn a_join_admits_six_members_and_rejects_a_seventh() {
+    assert_eq!(TEAM_MEMBER_LIMIT, 6);
+    let admitted = [
+        seated(
+            TEAM_ONE,
+            &[
+                (LANE_A, "main-a"),
+                (LANE_B, "main-b"),
+                (LANE_C, "main-c"),
+                (LANE_D, "main-d"),
+            ],
+        ),
+        seated(TEAM_TWO, &[(LANE_E, "main-e"), (LANE_F, "main-f")]),
+        seated(TEAM_THREE, &[(LANE_G, "main-g")]),
+    ];
+    assert_eq!(
+        arranged(&admitted, TEAM_TWO, TEAM_ONE, TeamDrop::Join),
+        vec![
+            (
+                uuid(TEAM_ONE),
+                vec![
+                    uuid(LANE_A),
+                    uuid(LANE_B),
+                    uuid(LANE_C),
+                    uuid(LANE_D),
+                    uuid(LANE_E),
+                    uuid(LANE_F),
+                ],
+            ),
+            (uuid(TEAM_THREE), vec![uuid(LANE_G)]),
+        ],
+        "the receiver keeps its identity and order, then appends source members",
+    );
+
+    let over_capacity = [
+        seated(
+            TEAM_ONE,
+            &[
+                (LANE_A, "main-a"),
+                (LANE_B, "main-b"),
+                (LANE_C, "main-c"),
+                (LANE_D, "main-d"),
+                (LANE_G, "main-g"),
+            ],
+        ),
+        seated(TEAM_TWO, &[(LANE_E, "main-e"), (LANE_F, "main-f")]),
+    ];
+    assert_eq!(
+        arrangement(
+            &topology(&over_capacity),
+            uuid(TEAM_TWO),
+            uuid(TEAM_ONE),
+            TeamDrop::Join,
+        ),
+        None,
+        "an interactive join that would create a seventh member sends nothing",
     );
 }
 
@@ -1296,62 +1323,37 @@ fn a_drop_that_states_nothing_sends_nothing() {
             &topology(&lanes),
             uuid(TEAM_ONE),
             uuid(TEAM_ONE),
-            TeamDrop::Reorder
+            TeamDrop::Swap,
         ),
         None,
         "a team dropped on itself is not an arrangement",
     );
-    // Two live teams, two distinct identities, and a gesture the up-front
-    // guards all admit: only the arrangement it produces shows there is nothing
-    // to state. Inserting before the neighbour it already precedes rebuilds the
-    // row the canvas is showing, and committing that would write a durable fact
-    // recording no change.
-    assert_eq!(
-        arrangement(
-            &topology(&lanes),
-            uuid(TEAM_ONE),
-            uuid(TEAM_TWO),
-            TeamDrop::Reorder
-        ),
-        None,
-        "a team dropped in front of the team it already precedes states nothing",
-    );
-    assert_eq!(
-        arrangement(
-            &topology(&lanes),
-            uuid(TEAM_TWO),
-            uuid(TEAM_ONE),
-            TeamDrop::ReorderAfter
-        ),
-        None,
-        "a team moved behind the team it already follows states nothing",
-    );
     assert_eq!(
         arrangement(
             &topology(&lanes),
             uuid(TEAM_THREE),
             uuid(TEAM_ONE),
-            TeamDrop::Join
+            TeamDrop::Swap,
         ),
         None,
-        "a team the surface no longer shows cannot be dragged",
+        "a removed source cannot commit a stale pointer session",
     );
     assert_eq!(
         arrangement(
             &topology(&lanes),
             uuid(TEAM_ONE),
             uuid(TEAM_THREE),
-            TeamDrop::Join
+            TeamDrop::Join,
         ),
         None,
-        "a team the surface no longer shows cannot be dropped on",
+        "a removed receiver cannot accept a stale drop",
     );
     assert_eq!(
         arrangement(
             &topology(&lanes),
             uuid(LANE_A),
             uuid(TEAM_TWO),
-            TeamDrop::Join
+            TeamDrop::Join,
         ),
         None,
         "one member of a team is not the team, and drags nothing",
@@ -1363,14 +1365,11 @@ fn the_gutter_that_joins_is_the_outer_fifth_of_the_team_under_the_pointer() {
     assert_eq!(TEAM_JOIN_GUTTER, 0.2);
     assert_eq!(TeamDrop::at(0.0, 100.0), TeamDrop::Join);
     assert_eq!(TeamDrop::at(20.0, 100.0), TeamDrop::Join);
-    assert_eq!(TeamDrop::at(20.001, 100.0), TeamDrop::Reorder);
-    assert_eq!(TeamDrop::at(50.0, 100.0), TeamDrop::Reorder);
-    assert_eq!(TeamDrop::at(79.999, 100.0), TeamDrop::Reorder);
+    assert_eq!(TeamDrop::at(20.001, 100.0), TeamDrop::Swap);
+    assert_eq!(TeamDrop::at(50.0, 100.0), TeamDrop::Swap);
+    assert_eq!(TeamDrop::at(79.999, 100.0), TeamDrop::Swap);
     assert_eq!(TeamDrop::at(80.0, 100.0), TeamDrop::Join);
     assert_eq!(TeamDrop::at(100.0, 100.0), TeamDrop::Join);
-    // A team with no width has no gutter, so it can only be reordered. The
-    // offset outside it is the case that needs stating: dividing by a zero
-    // width there is an infinite fraction, which lands in a gutter.
-    assert_eq!(TeamDrop::at(0.0, 0.0), TeamDrop::Reorder);
-    assert_eq!(TeamDrop::at(-5.0, 0.0), TeamDrop::Reorder);
+    assert_eq!(TeamDrop::at(0.0, 0.0), TeamDrop::Swap);
+    assert_eq!(TeamDrop::at(-5.0, 0.0), TeamDrop::Swap);
 }

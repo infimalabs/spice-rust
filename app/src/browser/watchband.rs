@@ -22,6 +22,7 @@ mod fleet;
 mod member_controls;
 mod mosaic_view;
 mod state;
+mod team_drag;
 mod team_flow;
 mod team_menu;
 mod team_work;
@@ -38,11 +39,13 @@ pub(super) use composer::{
 };
 pub(super) use controls::{TeamControlAction, TeamControls, TeamSpeech};
 use controls::{TeamLife, render_team_controls};
-use fleet::{FleetRender, carries_team, render_empty_fleet, render_populated_fleet};
+use fleet::{FleetRender, render_empty_fleet, render_populated_fleet};
 pub(in crate::browser) use fleet::{TeamMode, use_team_menu_escape};
 pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
+use team_drag::team_dragging;
+pub(super) use team_drag::{TeamDragState, use_team_drag_state};
 use team_flow::{PageRequest as TeamFlowPageRequest, TeamFlow};
 use team_work::render_tasks;
 pub(super) use vendor_icon::{render_composer_vendor_icon, render_dash_vendor_icon};
@@ -84,6 +87,7 @@ pub(super) fn render_team(
         team_fleet,
         team_controls,
         composer_drag,
+        team_drag,
         agents: controls,
         selected_task,
         select_task,
@@ -167,6 +171,7 @@ pub(super) fn render_team(
         team_controls,
         controls,
         composer_drag,
+        team_drag,
     };
     if teams.is_empty() {
         return render_empty_fleet(team_fleet, &render);
@@ -689,11 +694,6 @@ fn renewal_callback(
 fn copy_dragover() -> Callback<DragEvent> {
     Callback::from(move |event: DragEvent| {
         if let Some(transfer) = event.data_transfer() {
-            // A team in flight is passing over on its way to a team surface;
-            // claiming it here would drop a whole team onto one composer.
-            if carries_team(&transfer) {
-                return;
-            }
             transfer.set_drop_effect("copy");
         }
         event.prevent_default();

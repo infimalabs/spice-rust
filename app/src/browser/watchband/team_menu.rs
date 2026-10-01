@@ -220,14 +220,14 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
         .filter(|target| *target != team)
         .flat_map(|target| {
             [
-                ("before", "Move before", watchband::TeamDrop::Reorder),
-                ("after", "Move after", watchband::TeamDrop::ReorderAfter),
+                ("swap", "Swap positions", watchband::TeamDrop::Swap),
                 ("join", "Join into", watchband::TeamDrop::Join),
             ]
             .into_iter()
-            .filter_map(|(kind, verb, drop)| {
-                watchband::arrangement(context.topology, team, target, drop)
-                    .map(|rows| (kind, verb, target, topology(&rows)))
+            .map(|(kind, verb, drop)| {
+                let teams = watchband::arrangement(context.topology, team, target, drop)
+                    .map(|rows| topology(&rows));
+                (kind, verb, target, teams)
             })
             .collect::<Vec<_>>()
         })
@@ -242,19 +242,22 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
                 let sender = context.sender.clone();
                 let controls = context.controls.clone();
                 let topology_revision = context.topology_revision;
+                let enabled = context.can_arrange && teams.is_some();
                 html! {
                     <button
                         type="button"
                         class="team-action team-arrangement-action"
                         role="menuitem"
+                        disabled={!enabled}
                         data-team-arrangement={kind}
                         data-team-arrangement-target={target.to_string()}
                         onclick={Callback::from(move |_| {
+                            let Some(teams) = teams.clone() else { return; };
                             if !admit_action(
                                 &sender,
                                 ClientAction::ArrangeTeams {
                                     topology_revision,
-                                    teams: teams.clone(),
+                                    teams,
                                 },
                             ) {
                                 return;
@@ -264,7 +267,13 @@ fn render_arrangement(team: CanonicalUuid, context: &Context<'_>) -> Html {
                     >
                         <span class="team-action-label">{format!("{verb} team {}", watchband::short(target))}</span>
                         <span class="team-action-detail">{
-                            if kind == "join" { "combine agents" } else { "reorder teams" }
+                            if kind == "join" && !enabled {
+                                "limited to six agents"
+                            } else if kind == "join" {
+                                "combine agents"
+                            } else {
+                                "exchange team positions"
+                            }
                         }</span>
                     </button>
                 }

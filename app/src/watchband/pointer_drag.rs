@@ -1,11 +1,11 @@
-//! Pointer ownership for one lifted primary composer.
+//! Pointer ownership shared by composer and whole-team lifts.
 
 use wire::CanonicalUuid;
 
-const COMPOSER_DRAG_LIFT_PX: u32 = 6;
+const POINTER_DRAG_LIFT_PX: u32 = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct ComposerDragPointer {
+pub(crate) struct PointerDrag {
     pub(crate) source: CanonicalUuid,
     pub(crate) pointer_id: i32,
     pub(crate) start_x: i32,
@@ -15,11 +15,11 @@ pub(crate) struct ComposerDragPointer {
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct ComposerDragSession {
-    active: Option<ComposerDragPointer>,
+pub(crate) struct PointerDragSession {
+    active: Option<PointerDrag>,
 }
 
-impl ComposerDragSession {
+impl PointerDragSession {
     pub(crate) fn begin(
         &mut self,
         enabled: bool,
@@ -32,7 +32,7 @@ impl ComposerDragSession {
         if !enabled || self.active.is_some() {
             return false;
         }
-        self.active = Some(ComposerDragPointer {
+        self.active = Some(PointerDrag {
             source,
             pointer_id,
             start_x,
@@ -50,15 +50,15 @@ impl ComposerDragSession {
         client_x: i32,
         client_y: i32,
         topology_revision: u64,
-    ) -> Option<&mut ComposerDragPointer> {
+    ) -> Option<&mut PointerDrag> {
         let active = self.active.as_mut().filter(|active| {
             active.source == source
                 && active.pointer_id == pointer_id
                 && active.topology_revision == topology_revision
         })?;
         if !active.dragging
-            && client_x.abs_diff(active.start_x) < COMPOSER_DRAG_LIFT_PX
-            && client_y.abs_diff(active.start_y) < COMPOSER_DRAG_LIFT_PX
+            && client_x.abs_diff(active.start_x) < POINTER_DRAG_LIFT_PX
+            && client_y.abs_diff(active.start_y) < POINTER_DRAG_LIFT_PX
         {
             return None;
         }
@@ -70,7 +70,7 @@ impl ComposerDragSession {
         source: CanonicalUuid,
         pointer_id: i32,
         topology_revision: u64,
-    ) -> Option<ComposerDragPointer> {
+    ) -> Option<PointerDrag> {
         self.active
             .as_ref()
             .is_some_and(|active| {
@@ -124,7 +124,7 @@ impl ComposerDragSession {
 
 #[cfg(test)]
 mod tests {
-    use super::ComposerDragSession;
+    use super::PointerDragSession;
 
     fn id(suffix: u8) -> wire::CanonicalUuid {
         format!("00000000-0000-4000-8000-{suffix:012}")
@@ -133,8 +133,8 @@ mod tests {
     }
 
     #[test]
-    fn composer_drag_session_survives_same_topology_and_cancels_stale_context() {
-        let mut session = ComposerDragSession::default();
+    fn pointer_drag_session_survives_same_topology_and_cancels_stale_context() {
+        let mut session = PointerDragSession::default();
         assert!(session.begin(true, id(1), 17, 100, 200, 7));
         assert!(session.movement(id(1), 17, 105, 205, 7).is_none());
         assert!(!session.reconcile(true, Some(7)));

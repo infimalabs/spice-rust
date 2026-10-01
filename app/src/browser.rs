@@ -287,6 +287,25 @@ fn use_composer_drag(surface: &SurfaceData) -> watchband::PrimaryComposerDragSta
     watchband::use_primary_composer_drag_state(context.0, context.1)
 }
 
+#[hook]
+fn use_team_drag(surface: &SurfaceData) -> watchband::TeamDragState {
+    let context = {
+        let surface = surface.read();
+        surface
+            .as_ref()
+            .and_then(|runtime| {
+                runtime.lanes().map(|lanes| {
+                    (
+                        runtime.offers(CommandKind::TeamArrange),
+                        Some(lanes.topology_revision),
+                    )
+                })
+            })
+            .unwrap_or((false, None))
+    };
+    watchband::use_team_drag_state(context.0, context.1)
+}
+
 #[function_component(CanvasRouter)]
 fn canvas_router() -> Html {
     let (route, notice, navigate) = navigation::use_route();
@@ -340,6 +359,7 @@ struct CanvasAppState {
     submissions: SubmissionHandle,
     sender: SenderHandle,
     composer_drag: watchband::PrimaryComposerDragState,
+    team_drag: watchband::TeamDragState,
     work_detail: task_detail::Controls,
     task_inspector: message_task_inspector::Controls,
     direction_history: direction_history::Controls,
@@ -391,6 +411,7 @@ impl CanvasAppState {
                 composer_drafts: &self.composer_drafts,
                 submissions: &self.submissions,
                 composer_drag: &self.composer_drag,
+                team_drag: &self.team_drag,
                 team_fleet: &self.team_fleet,
                 unsafe_intent: self.unsafe_intent,
                 sender: &self.sender,
@@ -441,6 +462,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
         refusals: toast::use_toaster(),
     };
     let composer_drag = use_composer_drag(&surface);
+    let team_drag = use_team_drag(&surface);
     let navigate = navigation::intent_callback(
         route.clone(),
         properties.navigate.clone(),
@@ -511,6 +533,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
             submissions,
             sender,
             composer_drag,
+            team_drag,
             work_detail,
             task_inspector,
             direction_history,
