@@ -52,16 +52,22 @@ pub(super) fn render(
     }
     let identity = team.lane;
     let member_count = team.members.len();
+    let policy = TeamLife::from(team.subscription).label();
     let close = close_team(team, context);
     let closable = close.is_some();
     let import = context.controls.clone();
     let topology_actions = render_topology_actions(identity, control, context);
     html! {
         <div
-            class="team-action-menu"
+            class="team-action-menu team-action-panel"
             role="menu"
             aria-label={format!("Actions for team {}", watchband::short(identity))}
         >
+            <header class="team-action-head" role="none">
+                <strong>{format!("Team {}", watchband::short(identity))}</strong>
+                <span>{members(member_count)}</span>
+                <span>{policy}</span>
+            </header>
             <button
                 type="button"
                 class="team-action"

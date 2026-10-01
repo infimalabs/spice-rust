@@ -1005,19 +1005,22 @@ tbody tr:last-child td { border-bottom: 0; }
     linear-gradient(currentColor, currentColor) 0 50% / 100% 1.5px no-repeat,
     linear-gradient(currentColor, currentColor) 0 100% / 100% 1.5px no-repeat;
 }
+/* A team's menus drop from its toolbar and end at their last row, so no
+   empty band covers the pane below them. */
 .team-action-menu {
   position: absolute;
   z-index: 6;
-  inset: 44px 0 0;
+  inset: 44px 0 auto;
+  max-block-size: calc(100% - 44px);
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(148px, 100%), 1fr));
-  grid-auto-rows: minmax(72px, 1fr);
-  align-content: stretch;
+  align-content: start;
   gap: 6px;
   padding: 8px 10px;
   overflow-y: auto;
   border-bottom: var(--canvas-edge);
   background: color-mix(in srgb, var(--panel) 94%, var(--control));
+  box-shadow: 0 8px 16px -12px rgb(0 0 0 / .6);
 }
 .team-action {
   container-type: inline-size;
@@ -1066,14 +1069,33 @@ tbody tr:last-child td { border-bottom: 0; }
   color: var(--accent-slot, var(--accent));
   font: 650 .67rem/1 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.team-action-menu:not(.team-import-menu, .team-arrangement-menu) {
-  grid-template-columns: repeat(auto-fit, minmax(min(136px, 100%), 1fr));
-  grid-auto-rows: auto;
-  align-content: start;
+/* The team menu: one line of team state, then compact action chips that
+   wrap; each chip keeps its detail, which also names why it is refused. */
+.team-action-panel { display: flex; flex-wrap: wrap; gap: 6px; }
+.team-action-head {
+  display: flex;
+  flex: 1 0 100%;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  color: var(--muted);
+  font: 12px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.team-action-menu:not(.team-import-menu, .team-arrangement-menu) > .team-action {
-  aspect-ratio: 1;
+.team-action-head > strong { color: var(--ink); font-weight: 650; }
+.team-action-panel > .team-action {
+  container-type: normal;
+  flex: 0 1 auto;
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-start;
+  gap: 2px 8px;
+  min-height: 30px;
+  padding: 5px 10px;
+  text-align: left;
 }
+.team-action-panel .team-action-label { font-size: 13px; }
+.team-action-panel .team-action-detail { width: auto; font-size: 11px; }
 .team-action-label {
   max-width: 100%;
   overflow-wrap: anywhere;
