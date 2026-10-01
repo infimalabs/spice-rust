@@ -70,6 +70,7 @@ const CASES: &[Case] = &[
     case("dev cargo", &["dev", "cargo", "--", "--version"]),
     case("dev xtask", &["dev", "xtask", "--", "help"]),
     case("dev cargo-store", &["dev", "cargo-store"]),
+    case("dev report-page", &["dev", "report-page", "{}"]),
     case("lock", &["lock"]),
     case(
         "lock run",

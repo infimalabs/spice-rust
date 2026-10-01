@@ -2,8 +2,7 @@
 
 This repository-native Rust loop runs from narrow falsifiers to the commit
 boundary. Package checks and staged selection are completion evidence; unscoped
-verification is refused. The inventory below is only an ownership map, so
-re-run Cargo metadata when manifests change.
+verification is refused.
 
 Run developer task commands from the repository's supervised shell. Tracked
 wrapper policy resolves ambient `spice` to the validated Git-common appliance:
@@ -29,7 +28,7 @@ metadata is the executable resolved graph and acyclicity authority.
 These are ownership seams. Wire changes cross browser, journal, and resident;
 process lifecycle starts at `sill`. Authority writes belong to `journal`/`bus`,
 replayable task views to `board`, and browser code cannot reach server
-internals. Re-observe manifest changes through Cargo metadata.
+internals.
 
 ## Tracked and generated surfaces
 
@@ -59,7 +58,7 @@ test binaries; add the intended target selector when narrowing to `--lib`,
 | Parent-launched ignored fixtures | Process death, resource-limit, supervisor, and benchmark children. | Run the named parent; never blanket-run `--ignored`. |
 | Canvas-only WASM typecheck | Rust changes whose dependency reach includes `app`; unrelated native workspace packages and the xtask bootstrap are outside this check. | `spice dev cargo -- canvas-wasm-typecheck`. |
 | Canvas pure checks | Rust client reducers, message rendering, layout, and state transitions. | `spice dev cargo -- test --locked -p app --lib`, or the relevant app test target. |
-| Canvas browser interaction | Actual app build, resident, and browser behavior. No permanent process-backed browser suite is registered. | Build with `spice dev xtask -- app`, then exercise the changed surface through a disposable `spice demo` or isolated resident, under the host color scheme (below). Record observations and remove the experiment. |
+| Canvas browser interaction | Actual app build, resident, and browser behavior. No permanent process-backed browser suite is registered. | Build with `spice dev xtask -- app`, then exercise the changed surface through a disposable `spice demo` or isolated resident, under the host color scheme ([`app/BROWSER.md`](app/BROWSER.md)). Record observations and remove the experiment. |
 | Change-local proof and landing | Trusted receipts for the exact staged action set plus final pre-commit admission. | Inspect with `spice gate prove`; run a named miss with `spice gate prove ACTION` or all current misses with `spice gate prove --missing`, then commit normally. |
 
 Metadata selection is conservative target-root reachability, not line coverage.
@@ -102,134 +101,14 @@ three one-job Cargo children; do not widen the slice.
 
 Canvas compilation remains part of staged gate selection when the source reach
 requires it. Actual browser interaction evidence is disposable feedback, not a
-reusable browser-shard receipt. No separate slow-test classification command or
-JavaScript test package remains.
+reusable browser-shard receipt.
 
-## Browser evidence follows the host system theme
+## Subsystem guides
 
-Use the repository-owned `launchCanvasBrowser` helper for disposable Canvas
-browser checks. It detects the host appearance and gives the headless context
-the matching `prefers-color-scheme`; callers do not repeat theme setup:
-
-```js
-import { chromium } from "playwright";
-import launchCanvasBrowser from "./app/browser/canvas.mjs";
-
-const canvas = await launchCanvasBrowser(chromium);
-try {
-  await canvas.page.goto(canvasUrl);
-  // Inspect or capture the actual Canvas surface.
-} finally {
-  await canvas.close();
-}
-```
-
-An intentional theme-matrix check overrides `contextOptions.colorScheme`.
-Ordinary screenshots and visual checks retain the system default. The returned
-`colorScheme` and `colorSchemeSource` report the selected value and whether it
-came from `"system"` detection or `"explicit"` configuration. This browser
-preference never changes an explicit Canvas preference: a stored
-`spice:canvas-theme` still wins.
-
-```js
-const lightCanvas = await launchCanvasBrowser(chromium, {
-  contextOptions: { colorScheme: "light" },
-});
-```
-
-## Profile Canvas latency in Firefox
-
-Canvas exposes opt-in User Timing diagnostics without changing route parsing.
-Open the ordinary Canvas URL, run
-`sessionStorage.setItem("spice:canvas-trace", "1"); location.reload()` in its
-developer console, and leave that tab open for the capture. A traced page
-installs `window.__spiceCanvasTrace`; an ordinary page does not attach the
-native input listeners or create timing entries.
-
-Build the current browser body with `spice dev xtask -- app` and serve that
-generation through the development Canvas. Then capture two short runs of the
-same interaction:
-
-1. Open `about:profiling` in Firefox, select the **Web Developer** preset, and
-   start the profiler.
-2. In the traced Canvas tab, run `window.__spiceCanvasTrace.clear()` in the
-   developer console immediately before the scenario.
-3. Perform one fixed scenario: use the same loaded board, focus the same
-   composer, enter or dictate the same text, and trigger the same resident
-   update. Keep the capture short enough that the entire interaction is easy to
-   inspect.
-4. For the loaded comparison, start
-   `spice dev cargo -- check --locked -p spice` in another terminal and perform
-   the scenario while that real compile is active. Stop and save the profile.
-5. Wait for the command and all compiler processes to exit. Clear the Canvas
-   trace, repeat the identical scenario without compilation, then stop and save
-   the settled profile.
-6. In each Firefox profile, use the Marker Chart and filter for
-   `spice.canvas.`. Compare those markers on the Canvas content main thread
-   against DOM events, task scheduling gaps, style recalculation, layout, and
-   paint. Retain the profile URLs or exported profiles with the investigation
-   notes.
-
-Marker names carry only bounded structural metadata:
-
-| Marker | Interpretation |
-| --- | --- |
-| `trace.start` | App source/build identity for the capture. |
-| `frame.received`, `frame.decode.*` | Incoming frame size and browser-side decode/admission work. |
-| `state.apply.*`, `state.publish` | Runtime mutation and the Yew publication that schedules rendering. |
-| `render.canvas` | Rust/Yew virtual-DOM construction with the retained card count. |
-| `layout.measure` | Mosaic DOM measurement, including card count and measured width. |
-| `composer.textarea.mount`, `composer.textarea.unmount` | Native textarea instance lifetime, focus, and selection. A changed instance during one interaction is a remount. |
-| `composer.input`, `composer.keydown` | Native event kind, composition state, focus, and selection without draft text. |
-
-The browser retains at most 256 Canvas diagnostic records; completed spans use
-one measure and two marks, and the oldest record is removed as the bound rolls.
-`window.__spiceCanvasTrace.clear()` removes only entries owned by the current
-Canvas trace. Run
-`sessionStorage.removeItem("spice:canvas-trace"); location.reload()` to disable
-collection.
-
-Interpret ordering conservatively. `render.canvas` ends when Rust finishes
-building Yew nodes, not when the DOM is committed or painted.
-`layout.measure` covers synchronous Mosaic DOM reads and writes, but a later
-paint must be established from Firefox's own markers. A DOM `beforeinput` or
-`input` marker is not the start of speech recognition. The trace intentionally
-has no animation-frame marker: an animation-frame callback would show callback
-eligibility, not presentation.
-
-## Bounded historical report read
-
-`spice dev report-page REQUEST` reads one page of retained journal facts for
-private report evidence through the same authenticated resident door as every
-other command. It is development-scoped: it is not a board export, and its
-answers are private originals, never publication payloads. `REQUEST` is a JSON
-file of at most 16 KiB:
-
-```json
-{"version": 1, "upper": 797204, "kinds": ["task::added", "task::phased"]}
-```
-
-- `upper` is the inclusive study barrier. A bound beyond the resident's cursor
-  refuses with `report::boundary-unavailable`.
-- `kinds` must come from the report vocabulary (`wire::intent::REPORT_FACT_KINDS`);
-  anything else refuses with `report::kind-outside-scope`.
-- Rows are limited to tasks in public projects. Claim and lease facts are
-  admitted by the task they concern, so a hidden task's leases stay hidden.
-- The first answer carries a `pin`: journal schema, the resident executable's
-  digest, and the residency epoch. While an answer carries `continuation`,
-  request the next page with `after` set to it and the same `pin`. A
-  continuation without a pin refuses with `report::pin-required`. A changed
-  decoder, schema, or residency refuses with `report::generation-changed`, so
-  the acquisition restarts instead of splicing two generations together.
-- `command_at` optionally attaches the retained review command record at one
-  position, for a case study of a single correction flow; it refuses unless
-  the record lies wholly within the barrier and a public task.
-
-Client and resident must both carry this command. A client that has it,
-talking to a resident that predates it, faults with
-`command::answer-undecodable`. Bringing the resident up to date is an
-operator install (`spice dev xtask -- install` from a worktree containing the
-change); a lane cannot run it.
+- Canvas browser checks and Firefox latency profiling:
+  [`app/BROWSER.md`](app/BROWSER.md).
+- `spice dev report-page` and the `spice dev xtask -- report` study:
+  [`xtask/REPORT.md`](xtask/REPORT.md).
 
 ## Disk budget and safe cleanup
 

@@ -269,8 +269,7 @@ pub const fn contracts() -> &'static [Contract] {
 /// Classify executable landing independently from parser registration.
 ///
 /// This second closed table is intentional: adding a command contract does
-/// not make its implementation real. The closure test requires every current
-/// leaf to appear here, while the binary terminal branch uses the same
+/// not make its implementation real. The binary terminal branch uses this
 /// classification to distinguish tracked work from a dispatch defect.
 pub fn landing(path: &[&str]) -> Landing {
     if observation_landed(path) || repository_landed(path) || coordination_landed(path) {

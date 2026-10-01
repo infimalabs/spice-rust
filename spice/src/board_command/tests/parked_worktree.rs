@@ -1,23 +1,62 @@
 use super::*;
 
-use std::process::Command;
+use crate::test_repository;
 
-fn git(root: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .output()
-        .expect("fixture Git launches");
-    assert!(
-        output.status.success(),
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
+fn open(lane: &Path) -> gix::Repository {
+    gix::open_opts(lane, gix::open::Options::isolated()).expect("open lane repository")
+}
+
+fn head_commit(lane: &Path) -> String {
+    open(lane).head_id().expect("lane HEAD").to_string()
+}
+
+/// Names at the root of the lane's HEAD tree.
+fn head_names(lane: &Path) -> Vec<String> {
+    let repository = open(lane);
+    let tree = repository
+        .head_commit()
+        .expect("lane HEAD commit")
+        .tree()
+        .expect("lane HEAD tree");
+    tree.iter()
+        .map(|entry| entry.expect("tree entry").filename().to_string())
+        .collect()
+}
+
+/// Whether any reference's history reaches the commit.
+fn referenced(lane: &Path, commit: &str) -> bool {
+    let repository = open(lane);
+    let target = gix::ObjectId::from_hex(commit.as_bytes()).expect("commit id");
+    let tips = repository
+        .references()
+        .expect("lane references")
+        .all()
+        .expect("reference iterator")
+        .filter_map(|reference| reference.ok()?.into_fully_peeled_id().ok())
+        .map(gix::Id::detach)
+        .collect::<Vec<_>>();
+    repository
+        .rev_walk(tips)
+        .all()
+        .expect("reference history")
+        .any(|info| info.expect("history commit").id == target)
+}
+
+/// HEAD's tree, the index and the opening worktree file all agree.
+fn assert_clean(lane: &Path) {
+    let tree = open(lane)
+        .head_commit()
+        .expect("lane HEAD commit")
+        .tree_id()
+        .expect("lane HEAD tree")
+        .to_string();
+    assert_eq!(test_repository::write_tree(lane, None), tree);
+    assert_eq!(
+        fs::read_to_string(lane.join("tracked.txt")).expect("tracked file"),
+        "opening\n"
     );
-    String::from_utf8(output.stdout)
-        .expect("fixture Git text")
-        .trim()
-        .to_owned()
+    assert!(!lane.join("staged.txt").exists());
+    assert!(!lane.join("untracked.bin").exists());
 }
 
 fn issue_git<B: Serialize>(
@@ -56,13 +95,10 @@ fn bind_lane(
 ) -> (PathBuf, Repository, String) {
     let lane = root.join("lane");
     fs::create_dir(&lane).expect("lane directory");
-    git(&lane, &["init", "-b", "main"]);
-    git(&lane, &["config", "user.name", "Spice Test"]);
-    git(&lane, &["config", "user.email", "spice@example.invalid"]);
+    test_repository::initialize(&lane);
     fs::write(lane.join("tracked.txt"), "opening\n").expect("opening file");
-    git(&lane, &["add", "."]);
-    git(&lane, &["commit", "-m", "opening"]);
-    let head = git(&lane, &["rev-parse", "HEAD"]);
+    test_repository::stage_all(&lane);
+    let head = test_repository::commit(&lane, "opening");
     let repository = Repository::discover(&lane).expect("lane repository");
     let before = board(bus, epoch, Actor::Operator);
     let mut residency = before.residency.body;
@@ -218,7 +254,7 @@ fn free_self_defer_and_plan_completion_keep_dirty_work_on_the_task() {
         claim_next(&bus, &repository, epoch, seat, &task);
         fs::write(lane.join("tracked.txt"), "working edit\n").expect("tracked edit");
         fs::write(lane.join("staged.txt"), "staged edit\n").expect("staged file");
-        git(&lane, &["add", "staged.txt"]);
+        test_repository::stage(&lane, &["staged.txt"]);
         fs::write(lane.join("untracked.bin"), [0, 255, 128]).expect("untracked binary");
         release(route, &bus, &repository, epoch, seat, &task);
 
@@ -233,9 +269,13 @@ fn free_self_defer_and_plan_completion_keep_dirty_work_on_the_task() {
             heads.claim.as_ref().expect("claim").body.disposition,
             ClaimDisposition::Freed
         );
-        assert_eq!(git(&lane, &["rev-parse", "HEAD"]), head);
-        assert_eq!(git(&lane, &["status", "--porcelain"]), "");
-        assert_eq!(git(&lane, &["for-each-ref", "--contains", &snapshot]), "");
+        assert_eq!(head_commit(&lane), head);
+        assert_clean(&lane);
+        assert!(referenced(&lane, &head), "the walk reaches the branch head");
+        assert!(
+            !referenced(&lane, &snapshot),
+            "the snapshot stays unreferenced"
+        );
         assert_eq!(heads.workflow.body.phase.as_str(), "todo");
 
         let CommandAnswer::Claim(answer) = claim_next(&bus, &repository, epoch, seat, &task) else {
@@ -249,7 +289,7 @@ fn free_self_defer_and_plan_completion_keep_dirty_work_on_the_task() {
                 .as_deref(),
             Some(snapshot.as_str())
         );
-        assert_eq!(git(&lane, &["rev-parse", "HEAD"]), head);
+        assert_eq!(head_commit(&lane), head);
         assert_eq!(
             fs::read_to_string(lane.join("tracked.txt")).expect("tracked edit"),
             "working edit\n"
@@ -262,10 +302,7 @@ fn free_self_defer_and_plan_completion_keep_dirty_work_on_the_task() {
             fs::read(lane.join("untracked.bin")).expect("binary draft"),
             [0, 255, 128]
         );
-        assert_eq!(
-            git(&lane, &["ls-tree", "--name-only", "HEAD"]),
-            "tracked.txt"
-        );
+        assert_eq!(head_names(&lane), ["tracked.txt"]);
         clean(&root, bus);
     }
 }
