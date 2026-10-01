@@ -405,7 +405,9 @@ retained team message mentioning its handle, and a directive row to a retained
 acknowledgement or decline; with no retained card, no link. Following one shows
 that team's Chat and focuses the message; Back restores the Work row and scroll,
 Forward returns to the message, and modified clicks open the card route without
-changing this tab's team mode.
+changing this tab's team mode. The ledger keeps the card cap's height whether
+empty, unavailable, or holding one direction; each direction is capped there
+and scrolls its body, so the first direction moves nothing below it.
 
 A full-width Settled history shows tasks the team created or whose last winning
 claim a current member held, newest first. Search and Completed-by narrow it,
@@ -414,7 +416,9 @@ teams. Its controls share one row when the pane can hold them and stack without
 clipping when it cannot; its total stays beside the heading. At team-history
 widths of 40rem or less, cards form one column regardless of viewport width.
 It reads only while that pane is on screen, again when work leaves the open
-board or the connection resumes.
+board or the connection resumes. Its entries keep the card cap's height
+whether empty, loading, or holding one card, so the first task to settle moves
+the Directions ledger below it by nothing.
 
 ### The team console
 
