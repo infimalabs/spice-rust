@@ -111,15 +111,11 @@ pub(super) fn render(
                     {"Showing the last admitted board snapshot while reconnecting."}
                 </p>
             }
-            if open == 0 {
-                <div class="empty">{"No open tasks in this scope."}</div>
-            } else {
-                <div class="work-lanes">
-                    {for board_lanes.into_iter().map(|(availability, clusters)| {
-                        render_lane(availability, &clusters, &cards)
-                    })}
-                </div>
-            }
+            <div class="work-lanes">
+                {for board_lanes.into_iter().map(|(availability, clusters)| {
+                    render_lane(availability, &clusters, &cards)
+                })}
+            </div>
             {render_history_archive(history, history_state, history_controls, &cards)}
         </div>
     }
@@ -180,17 +176,19 @@ fn render_history_archive(
                     older: controls.older.clone(),
                     retry: controls.retry.clone(),
                 })}
-                if history.is_empty() && state.and_then(WorkHistoryState::total) == Some(0) {
-                    <div class="empty">
-                        {if state.is_some_and(WorkHistoryState::filtered) {
-                            "No history matches these filters."
-                        } else {
-                            "No completed or deleted tasks."
-                        }}
-                    </div>
-                } else if !history.is_empty() {
-                    {render_history(history, cards)}
-                }
+                <div class="work-history-entries">
+                    if history.is_empty() && state.and_then(WorkHistoryState::total) == Some(0) {
+                        <div class="empty">
+                            {if state.is_some_and(WorkHistoryState::filtered) {
+                                "No history matches these filters."
+                            } else {
+                                "No completed or deleted tasks."
+                            }}
+                        </div>
+                    } else if !history.is_empty() {
+                        {render_history(history, cards)}
+                    }
+                </div>
             }
         </details>
     }
