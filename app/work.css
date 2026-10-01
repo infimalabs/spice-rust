@@ -1125,6 +1125,21 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   padding-top: 12px;
 }
+/* One entry footprint, linked-task row reserved, shared with the empty line:
+   the first direction or first linked task never moves the page. */
+.work-directions { --work-direction-entry-size: 7.5rem; }
+.work-directions > .empty {
+  display: grid;
+  align-content: center;
+  block-size: var(--work-direction-entry-size);
+  padding-block: 0;
+}
+.work-direction-ledger .team-direction-ledger-row {
+  align-content: start;
+  min-block-size: var(--work-direction-entry-size);
+}
+.work-direction-ledger .team-direction-tasks { min-block-size: 17px; }
+.work-direction-ledger .team-direction-tasks:empty { display: flex; }
 .work-direction-newer-edge {
   display: block;
   width: 100%;
