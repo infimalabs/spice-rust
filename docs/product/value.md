@@ -384,8 +384,9 @@ moves nothing below it.
 
 Each team projects open work into three stable lanes: Up next in offer order,
 In flight with the claiming member's name and accent, and Waiting for blocked,
-deferred, and review work. Empty lanes remain, and keyed cards move without
-disturbing unchanged ones.
+deferred, and review work. Like the global rows, each lane keeps the card
+cap's height even when empty, so the first card or the last to leave moves
+nothing below, and keyed cards move without disturbing unchanged ones.
 
 A directive ledger joins browser-owned submissions to the resident inbox by
 directive or fanout identity. A fanout stays one row with per-member state

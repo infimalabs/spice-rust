@@ -154,10 +154,11 @@
   --work-group-label-gutter: 1.35rem;
   padding-top: calc(5px + var(--work-group-label-gutter));
 }
-/* A global band is one height whether empty or full: its row reserves the
-   card cap, so the first task arriving or the last one settling never moves
-   the bands below. */
-.work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-track > :is(.work-card-list, .work-lane-empty) {
+/* A lane is one height whether empty or full: its row reserves the card cap,
+   which is also every card's max-block-size, so the first task arriving, the
+   last one settling, or a snapshot replacing its placeholder never moves the
+   lanes below. Global and team lanes share the rule. */
+.work-lanes > .work-lane > .work-lane-track > :is(.work-card-list, .work-lane-empty) {
   min-block-size: var(--mosaic-image-large-size);
 }
 /* Global lane headings pack against the lane rule: every label sits the same

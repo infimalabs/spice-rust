@@ -1296,7 +1296,6 @@ a.relative-age {
   .team-work-history .work-history-pagination { align-items: stretch; flex-direction: column; }
 }
 .team-work-lanes .work-lane-track { padding-bottom: 6px; }
-.team-work-lanes .work-lane-empty { min-height: 2rem; }
 .team-task-section { min-width: 0; }
 .team-task-section > header {
   display: flex; align-items: center;
