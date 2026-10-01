@@ -911,11 +911,20 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   color: var(--page);
   font: 1rem/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
+/* Holding the command modifier previews which button Enter submits next from
+   a focused draft: the team send, the observation Add, or, with Shift too, the
+   offered observation Close. */
 html[data-command-modifier-held="true"]
   .team-composer:has(
     .composer-shard--primary[data-command-submit-eligible="true"] textarea:focus
   )
-  .team-send:not(:disabled) {
+  .team-send:not(:disabled),
+html[data-command-modifier-held="true"]:not([data-shift-modifier-held="true"])
+  .work-note-composer:has(textarea:focus)
+  .team-send:not([value="close"]):not(:disabled),
+html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
+  .work-note-composer:has(textarea:focus)
+  .team-send[value="close"]:not(:disabled) {
   outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
