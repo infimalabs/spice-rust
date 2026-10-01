@@ -149,28 +149,8 @@ body:has(.shell--mosaic),
   grid-area: 1 / 1; position: relative; z-index: 1; font-size: 15px; line-height: 1; filter: var(--canvas-pepper-halo);
 }
 .canvas-menu-quota { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
-.canvas-menu-quota-layer { filter: saturate(var(--quota-saturation, 1)) brightness(var(--quota-account-intensity, 1)); }
-.canvas-menu-quota-layer[data-quota-intensity="0"] { --quota-account-intensity: .88; }
-.canvas-menu-quota-layer[data-quota-intensity="1"] { --quota-account-intensity: .92; }
-.canvas-menu-quota-layer[data-quota-intensity="2"] { --quota-account-intensity: .96; }
-.canvas-menu-quota-layer[data-quota-intensity="3"] { --quota-account-intensity: 1; }
-.canvas-menu-quota-layer[data-quota-intensity="4"] { --quota-account-intensity: 1.04; }
-.canvas-menu-quota-layer[data-quota-intensity="5"] { --quota-account-intensity: 1.08; }
-.canvas-menu-quota-layer[data-quota-intensity="6"] { --quota-account-intensity: 1.12; }
-.canvas-menu-quota-layer[data-quota-intensity="7"] { --quota-account-intensity: 1.16; }
-.canvas-menu-quota-layer[data-quota-level="0"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 34%, var(--page)); }
-.canvas-menu-quota-layer[data-quota-level="1"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 40%, var(--page)); }
-.canvas-menu-quota-layer[data-quota-level="2"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 46%, var(--page)); }
-.canvas-menu-quota-layer[data-quota-level="3"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 52%, var(--page)); }
-.canvas-menu-quota-layer[data-quota-level="4"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 58%, var(--page)); }
-.canvas-menu-quota-layer[data-quota-level="5"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 64%, var(--page)); }
-.canvas-menu-quota-layer[data-quota-level="6"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 70%, var(--page)); }
-.canvas-menu-quota-layer[data-quota-level="7"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 76%, var(--page)); }
-.canvas-menu-quota-layer[data-quota-level="8"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 82%, var(--page)); }
-.canvas-menu-quota-layer[data-quota-level="9"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 88%, var(--page)); }
-.canvas-menu-quota-layer[data-quota-level="10"] { --quota-fill: color-mix(in srgb, var(--accent-slot) 94%, var(--page)); }
-.canvas-menu-quota-account { fill: var(--quota-fill); stroke: none; }
-.canvas-menu > summary[data-quota-stale] .canvas-menu-quota-layer { --quota-saturation: .35; }
+.canvas-menu-quota-account { fill: var(--accent-slot); stroke: none; }
+.canvas-menu > summary[data-quota-stale] .canvas-menu-quota-account { filter: saturate(.35); }
 .canvas-menu > summary:not([data-accent]):is([data-connection="starting"], [data-connection="connecting"]) {
   --canvas-menu-edge: var(--focus);
 }
