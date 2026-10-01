@@ -132,6 +132,19 @@ fn a_settled_turn_promotes_only_its_latest_assistant_message() {
 }
 
 #[test]
+fn extension_command_completion_leaves_active_agent_prose_nonfinal() {
+    let publisher = publish_records(&[
+        OMP_PROSE.as_bytes(),
+        br#"{"type":"prompt_result","id":"spice-aside-17","agentInvoked":false,"status":"completed","sessionSettled":false}"#,
+    ]);
+    let messages = publisher.0.lock().expect("message lock");
+    let prose = messages.last().expect("the agent's progress publishes");
+    assert!(!prose.final_answer);
+    assert!(prose.automatic_speech.is_none());
+    assert_eq!(*publisher.1.lock().expect("revision lock"), 0);
+}
+
+#[test]
 fn a_failed_turn_leaves_its_assistant_message_nonfinal() {
     let messages = publish_records(&[
         br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"not a final answer"}],"stopReason":"error"}}"#,

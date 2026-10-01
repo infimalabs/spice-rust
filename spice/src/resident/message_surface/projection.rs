@@ -76,7 +76,9 @@ pub(super) fn publish_agent_record(
         .context
         .prompt_outcome
         .as_ref()
-        .is_some_and(|outcome| outcome.status == listen::PromptStatus::Completed);
+        .is_some_and(|outcome| {
+            outcome.agent_invoked && outcome.status == listen::PromptStatus::Completed
+        });
     for &(ordinal, decoded) in record.events {
         let Some(projected) = project_agent_event(
             AgentEvent {
