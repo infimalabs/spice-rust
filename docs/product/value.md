@@ -281,6 +281,15 @@ refresh desaturates them. The
 button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
 available Canvas update, and red for both; quota colors never change.
 
+Inside the open menu, "No open teams" holds one team of one agent, "No
+unassigned agents" and an import menu's "No available agents" hold one agent
+row, the team sections stand inert saying what they await until agent state
+arrives, and the operator section stands as its disabled identity form while
+settings load. Agent rows stay one row however long their names, so the first
+team or agent, and the identity's arrival, move no later section ([a changing
+region holds its largest
+footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
+
 Action-delivery refusals and best-effort speech failures use the shared root
 toast, above every destination and outside page flow, clearing after a fixed
 dwell. Validation, failures with an explicit retry, and durable degraded state
@@ -298,7 +307,9 @@ badge, which a Gravatar shows in a band across its lower third at the same size 
 with three fixed resident fields: connection, appliance version, and epoch,
 whose loading values keep settled geometry. Quota account cards keep each reset
 credit on its compact line, with a live countdown to any expiration, the exact
-timestamp on hover, and long prose truncated.
+timestamp on hover, and long prose truncated. "No account usage reports" holds
+one single-limit card, and each "None." holds one list row; list rows stay one
+line, the full row in their title, so a first account moves nothing below.
 
 ### The global Work page
 

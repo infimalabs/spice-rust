@@ -676,6 +676,22 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 .quota-detail-group { margin-top: 18px; }
 .quota-detail-group > h3 { margin: 0 0 9px; font-size: .86rem; }
 .quota-empty { margin: 0; color: var(--muted); font-size: .76rem; }
+/* An empty list line is boxed like one list row, and no reports like one
+   card of one limit, so a refresh that adds the first entry moves nothing
+   below. */
+.quota-detail-group { --quota-account-block: 5rem; }
+.quota-detail-group > .quota-empty {
+  padding: 10px 12px;
+  border: 1px dashed var(--control-line-soft);
+  border-radius: var(--canvas-radius-element);
+  font-size: .74rem;
+}
+.quota-detail-group > .quota-account-empty {
+  min-block-size: var(--quota-account-block);
+  padding: 9px 12px 10px;
+  border-radius: var(--canvas-radius-surface);
+  font-size: .76rem;
+}
 .quota-simple-list li {
   padding: 10px 12px;
   border: var(--canvas-control-edge);
@@ -690,6 +706,7 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
   gap: 10px;
 }
 .quota-account {
+  min-block-size: var(--quota-account-block);
   padding: 9px 12px 10px;
   border: var(--canvas-control-edge);
   border-radius: var(--canvas-radius-surface);
@@ -734,7 +751,11 @@ a.dash-overview-agent:focus-visible { outline: 2px solid var(--focus); outline-o
 .quota-reset-credit-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .quota-reset-credit-expiry { flex: none; white-space: nowrap; }
 .quota-simple-list { display: grid; gap: 7px; margin: 0; padding: 0; list-style: none; }
-.quota-simple-list li { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: .74rem; }
+/* One line per row however long the account label, so a long entry holds the
+   footprint the empty line reserves; the row's title carries the full text. */
+.quota-simple-list li { display: flex; gap: 12px; font-size: .74rem; white-space: nowrap; }
+.quota-simple-list li > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.quota-simple-list strong { flex: none; max-width: 40%; }
 .quota-simple-list span { color: var(--muted); }
 .dash-overview-quota-age { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .dash-overview-operator-section .section-heading { align-items: baseline; }
@@ -1020,6 +1041,7 @@ tbody tr:last-child td { border-bottom: 0; }
 .team-action:disabled { cursor: not-allowed; opacity: .52; }
 /* Import candidates carry the global menu's agent-row grammar while the whole
    row remains the import action rather than pretending to be draggable. */
+.team-import-menu { --team-import-row: 62px; }
 .team-import-choice {
   display: grid;
   grid-column: 1 / -1;
@@ -1027,7 +1049,7 @@ tbody tr:last-child td { border-bottom: 0; }
   align-items: center;
   gap: 9px;
   min-width: 0;
-  min-height: 62px;
+  min-height: var(--team-import-row);
   padding: 8px 10px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--accent-slot) 58%, var(--line));
@@ -1078,5 +1100,13 @@ tbody tr:last-child td { border-bottom: 0; }
 }
 .team-import-menu > header button { min-height: 30px; }
 .team-import-heading { grid-column: 1 / -1; margin: 8px 0 0; font-size: .8rem; }
-.team-import-empty { grid-column: 1 / -1; color: var(--muted); text-align: center; }
+/* With no candidate, the line holds one candidate row's place. */
+.team-import-empty {
+  display: grid;
+  grid-column: 1 / -1;
+  place-items: center;
+  min-block-size: var(--team-import-row);
+  margin: 0;
+  color: var(--muted);
+}
 
