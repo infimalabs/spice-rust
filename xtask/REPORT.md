@@ -13,7 +13,7 @@ private report evidence through the same authenticated resident door as every
 other command. `REQUEST` is a JSON file of at most 16 KiB:
 
 ```json
-{"version": 1, "upper": 797204, "kinds": ["task::added", "task::phased"]}
+{"version": 2, "upper": 797204, "kinds": ["task::added", "task::phased"]}
 ```
 
 - `upper` is the inclusive study barrier. A bound beyond the resident's cursor
@@ -22,6 +22,9 @@ other command. `REQUEST` is a JSON file of at most 16 KiB:
   anything else refuses with `report::kind-outside-scope`.
 - Rows are limited to tasks in public projects. Claim and lease facts are
   admitted by the task they concern, so a hidden task's leases stay hidden.
+- Rows use the Canvas stream's credential-free fact form: `lane::seated`
+  carries the seat's public fields but never the lane's socket capability.
+  Version 1 answered with full journal envelopes and is refused.
 - The first answer carries a `pin`: journal schema, the resident executable's
   digest, and the residency epoch. While an answer carries `continuation`,
   request the next page with `after` set to it and the same `pin`. A
@@ -54,6 +57,8 @@ spice dev xtask -- report render PRIVATE PUBLIC FONTS LPPL
   command record and `snapshot-manifest.json` into a new `0700` directory
   `PRIVATE`. `BOARD-ORACLE` is a `spice board --json` capture taken at the
   same cursor `UPPER`. It is copied in as an independent cross-check.
+  Evidence acquired before version 2 retained lane capabilities; `analyze`
+  refuses it, and it should be deleted rather than reused.
 - `analyze` rebuilds every task from the facts. It selects the last 1500
   completed births and refuses unless both the selected and complete
   identity sets match the oracle exactly (`cohort-reconciliation.json`). It

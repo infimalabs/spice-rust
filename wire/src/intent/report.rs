@@ -2,10 +2,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{AnyFact, CanonicalUuid, Digest, Envelope, FactKind, Instant, Seq};
+use crate::{CanonicalUuid, Digest, FactKind, Instant, Seq, StreamFact};
 
 /// Version of the bounded report read and answer contract.
-pub const REPORT_READ_VERSION: u32 = 1;
+pub const REPORT_READ_VERSION: u32 = 2;
 
 /// Explicit vocabulary consumed by the report reducer; ingestion is excluded.
 pub const REPORT_FACT_KINDS: &[FactKind] = &[
@@ -123,8 +123,9 @@ pub struct ReportAnswer {
     pub upper: Seq,
     /// Exact instant of the retained barrier, not the acquisition wall clock.
     pub horizon_at: Instant,
-    /// Authorized typed envelopes, in strictly increasing position order.
-    pub rows: Vec<Envelope<AnyFact>>,
+    /// Authorized credential-free envelopes, in strictly increasing position
+    /// order; `lane::seated` rows omit the lane's socket capability.
+    pub rows: Vec<StreamFact>,
     /// Next exclusive cursor, even if a page contains only omitted hidden rows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation: Option<Seq>,

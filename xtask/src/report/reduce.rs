@@ -8,7 +8,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
-use wire::{AnyFact, Envelope, FactKind, Instant, Seq};
+use wire::{FactKind, Instant, Seq, StreamFact};
 
 use super::{Result, SnapshotManifest, hash_file};
 
@@ -63,7 +63,7 @@ pub(super) struct Study {
     pub projects: BTreeMap<String, usize>,
     pub earliest_delivery: Instant,
     pub latest_delivery: Instant,
-    pub lifecycle: Vec<Envelope<AnyFact>>,
+    pub lifecycle: Vec<StreamFact>,
 }
 
 #[derive(Deserialize)]
@@ -109,7 +109,7 @@ struct OracleVisibility {
 pub(super) fn analyze(directory: &Path, output: &mut dyn Write) -> Result<()> {
     let manifest: SnapshotManifest =
         serde_json::from_reader(File::open(directory.join("snapshot-manifest.json"))?)?;
-    if manifest.version != 1
+    if manifest.version != super::SNAPSHOT_VERSION
         || hash_file(&directory.join("facts.ndjson"))? != manifest.facts_sha256
         || hash_file(&directory.join("independent-board-oracle.json"))? != manifest.oracle_sha256
     {
@@ -121,11 +121,11 @@ pub(super) fn analyze(directory: &Path, output: &mut dyn Write) -> Result<()> {
     let mut line = String::new();
     let mut input = BufReader::new(File::open(directory.join("facts.ndjson"))?);
     while input.read_line(&mut line)? != 0 {
-        let fact: Envelope<AnyFact> = serde_json::from_str(&line)?;
-        if fact.seq > manifest.upper || previous.is_some_and(|seq| fact.seq <= seq) {
+        let fact: StreamFact = serde_json::from_str(&line)?;
+        if fact.seq() > manifest.upper || previous.is_some_and(|seq| fact.seq() <= seq) {
             return Err("snapshot is not a strictly ordered historical prefix".into());
         }
-        previous = Some(fact.seq);
+        previous = Some(fact.seq());
         fact_count += 1;
         history.push(fact)?;
         line.clear();
@@ -212,14 +212,14 @@ pub(super) fn analyze(directory: &Path, output: &mut dyn Write) -> Result<()> {
 struct History {
     tasks: BTreeMap<String, Task>,
     reviews: BTreeMap<Seq, (String, usize)>,
-    lifecycle: Vec<Envelope<AnyFact>>,
+    lifecycle: Vec<StreamFact>,
 }
 
 impl History {
-    fn push(&mut self, fact: Envelope<AnyFact>) -> Result<()> {
+    fn push(&mut self, fact: StreamFact) -> Result<()> {
         fold_task(&fact, &mut self.tasks, &mut self.reviews)?;
         if !matches!(
-            fact.fact.kind(),
+            fact.kind(),
             FactKind::TaskAdded
                 | FactKind::TaskPhased
                 | FactKind::TaskDone
@@ -238,24 +238,24 @@ impl History {
 }
 
 fn fold_task(
-    fact: &Envelope<AnyFact>,
+    fact: &StreamFact,
     tasks: &mut BTreeMap<String, Task>,
     reviews: &mut BTreeMap<Seq, (String, usize)>,
 ) -> Result<()> {
-    let body = fact.fact.body();
+    let body = fact.body();
     let Some(birth) = body.get("task").and_then(Value::as_str) else {
         return Ok(());
     };
-    if fact.fact.kind() == FactKind::TaskAdded {
+    if fact.kind() == FactKind::TaskAdded {
         return fold_admission(fact, birth, tasks, reviews);
     }
     let Some(task) = tasks.get_mut(birth) else {
-        if fact.fact.task_subject().is_some() {
-            return Err(format!("task history has no admission: {birth} at {}", fact.seq).into());
+        if fact.task().is_some() {
+            return Err(format!("task history has no admission: {birth} at {}", fact.seq()).into());
         }
         return Ok(());
     };
-    match fact.fact.kind() {
+    match fact.kind() {
         FactKind::TaskPhased => {
             task.phase = text(body, "phase")?.to_owned();
             task.closure = None;
@@ -286,10 +286,10 @@ fn fold_task(
                 correction_births: Vec::new(),
                 parent_statement_changed: false,
             });
-            reviews.insert(fact.seq, (birth.to_owned(), index));
+            reviews.insert(fact.seq(), (birth.to_owned(), index));
         }
         FactKind::TaskEdited => {
-            if let Some((parent, index)) = fact.cause.and_then(|cause| reviews.get(&cause))
+            if let Some((parent, index)) = fact.cause().and_then(|cause| reviews.get(&cause))
                 && parent == birth
                 && task.reviews[*index].verdict == "finding"
             {
@@ -329,12 +329,12 @@ fn fold_task(
 }
 
 fn fold_admission(
-    fact: &Envelope<AnyFact>,
+    fact: &StreamFact,
     birth: &str,
     tasks: &mut BTreeMap<String, Task>,
     reviews: &BTreeMap<Seq, (String, usize)>,
 ) -> Result<()> {
-    let body = fact.fact.body();
+    let body = fact.body();
     let phase = text(body, "phase")?.to_owned();
     let task = Task {
         birth: birth.to_owned(),
@@ -360,13 +360,13 @@ fn fold_admission(
         withdrawals: Vec::new(),
         first_claim: None,
         claims: Vec::new(),
-        origin: fact.cause,
+        origin: fact.cause(),
         creation: body.get("creation").cloned(),
     };
     if tasks.insert(birth.to_owned(), task).is_some() {
         return Err("duplicate task birth".into());
     }
-    if let Some((parent, index)) = fact.cause.and_then(|cause| reviews.get(&cause)) {
+    if let Some((parent, index)) = fact.cause().and_then(|cause| reviews.get(&cause)) {
         tasks
             .get_mut(parent)
             .ok_or("correction parent absent")?
@@ -377,15 +377,15 @@ fn fold_admission(
     Ok(())
 }
 
-fn observation(fact: &Envelope<AnyFact>, phase: &str) -> Result<Observation> {
+fn observation(fact: &StreamFact, phase: &str) -> Result<Observation> {
     Ok(Observation {
-        seq: fact.seq,
-        at: fact.at,
-        kind: fact.fact.kind().as_str().to_owned(),
+        seq: fact.seq(),
+        at: *fact.at(),
+        kind: fact.kind().as_str().to_owned(),
         phase: phase.to_owned(),
-        actor: serde_json::to_value(&fact.actor)?,
-        cause: fact.cause,
-        git: fact.fact.body().get("git").cloned(),
+        actor: serde_json::to_value(fact.actor())?,
+        cause: fact.cause(),
+        git: fact.body().get("git").cloned(),
     })
 }
 

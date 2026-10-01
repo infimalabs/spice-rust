@@ -145,7 +145,7 @@ pub(super) fn measure(study: &Study, outcomes: &Outcomes) -> Result<Vec<Quantity
     let seals = study
         .lifecycle
         .iter()
-        .filter(|fact| fact.fact.kind().as_str() == "proof::sealed")
+        .filter(|fact| fact.kind() == wire::FactKind::ProofSealed)
         .count();
     result.push(quantity("Q30", "Retained proof-seal observations", "Proof-seal facts retained in the admitted consumed history", "events",
         "A retained event count, not a denominator for historical proof executions, cost or reuse. Missing inventories and receipt GC do not imply zero proof activity.", seals,

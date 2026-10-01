@@ -77,13 +77,13 @@ impl Ledger {
         Ok(self.configurations.entry(config).or_insert(next).clone())
     }
 
-    fn fold(&mut self, fact: &wire::Envelope<wire::AnyFact>, window: wire::Instant) -> Result<()> {
-        let kind = fact.fact.kind().as_str();
+    fn fold(&mut self, fact: &wire::StreamFact, window: wire::Instant) -> Result<()> {
+        let kind = fact.kind().as_str();
         if !kind.starts_with("lane::") {
             return Ok(());
         }
-        let body = fact.fact.body();
-        let in_window = fact.at >= window;
+        let body = fact.body();
+        let in_window = *fact.at() >= window;
         if in_window {
             *self.counts.entry(kind.to_owned()).or_default() += 1;
         }
@@ -113,7 +113,7 @@ impl Ledger {
             .spans
             .get_mut(&key)
             .ok_or("provider-session span disappeared")?;
-        span.last = fact.at;
+        span.last = *fact.at();
         match kind {
             "lane::compacted" => span.compactions += 1,
             "lane::started" => span.starts += 1,
@@ -124,13 +124,8 @@ impl Ledger {
         Ok(())
     }
 
-    fn declare(
-        &mut self,
-        fact: &wire::Envelope<wire::AnyFact>,
-        lane: &str,
-        in_window: bool,
-    ) -> Result<()> {
-        let body = fact.fact.body();
+    fn declare(&mut self, fact: &wire::StreamFact, lane: &str, in_window: bool) -> Result<()> {
+        let body = fact.body();
         let (Some(vendor), Some(identity)) = (string(body, "vendor"), string(body, "identity"))
         else {
             self.unknown_declarations += usize::from(in_window);
@@ -139,15 +134,15 @@ impl Ledger {
         let key = (lane.to_owned(), vendor.to_owned(), identity.to_owned());
         let config = self.configuration(vendor, body)?;
         let span = self.spans.entry(key.clone()).or_insert_with(|| Span {
-            first: fact.at,
-            last: fact.at,
+            first: *fact.at(),
+            last: *fact.at(),
             configurations: std::collections::BTreeSet::new(),
             declarations: 0,
             compactions: 0,
             starts: 0,
             exits: 0,
         });
-        span.last = fact.at;
+        span.last = *fact.at();
         span.declarations += 1;
         span.configurations.insert(config);
         if let Some(occupant) = string(body, "occupant") {

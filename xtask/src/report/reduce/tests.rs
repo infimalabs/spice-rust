@@ -15,7 +15,7 @@ fn hour(hours: u32) -> String {
     format!("2026-01-0{}T{:02}:00:00.000Z", 1 + hours / 24, hours % 24)
 }
 
-fn fact(seq: u64, at: &str, cause: Option<u64>, body: Value) -> Envelope<AnyFact> {
+fn fact(seq: u64, at: &str, cause: Option<u64>, body: Value) -> StreamFact {
     let mut envelope = json!({
         "v": 1, "seq": seq, "at": at, "actor": format!("lane:{LANE}"), "origin": "task:fixture",
         "fact": body,
@@ -26,7 +26,7 @@ fn fact(seq: u64, at: &str, cause: Option<u64>, body: Value) -> Envelope<AnyFact
     serde_json::from_value(envelope).expect("fixture fact decodes")
 }
 
-fn added(seq: u64, cause: Option<u64>, task: &str) -> Envelope<AnyFact> {
+fn added(seq: u64, cause: Option<u64>, task: &str) -> StreamFact {
     fact(
         seq,
         &hour(0),
@@ -36,7 +36,7 @@ fn added(seq: u64, cause: Option<u64>, task: &str) -> Envelope<AnyFact> {
     )
 }
 
-fn claim(seq: u64, at: u32, task: &str, occupant: u8, until: u32) -> Envelope<AnyFact> {
+fn claim(seq: u64, at: u32, task: &str, occupant: u8, until: u32) -> StreamFact {
     fact(
         seq,
         &hour(at),
@@ -47,7 +47,7 @@ fn claim(seq: u64, at: u32, task: &str, occupant: u8, until: u32) -> Envelope<An
     )
 }
 
-fn done(seq: u64, at: u32, task: &str) -> Envelope<AnyFact> {
+fn done(seq: u64, at: u32, task: &str) -> StreamFact {
     fact(
         seq,
         &hour(at),
@@ -56,7 +56,7 @@ fn done(seq: u64, at: u32, task: &str) -> Envelope<AnyFact> {
     )
 }
 
-fn phased(seq: u64, task: &str) -> Envelope<AnyFact> {
+fn phased(seq: u64, task: &str) -> StreamFact {
     fact(
         seq,
         &hour(1),
@@ -65,7 +65,7 @@ fn phased(seq: u64, task: &str) -> Envelope<AnyFact> {
     )
 }
 
-fn edited(seq: u64, cause: u64, task: &str) -> Envelope<AnyFact> {
+fn edited(seq: u64, cause: u64, task: &str) -> StreamFact {
     fact(
         seq,
         &hour(1),
@@ -74,7 +74,7 @@ fn edited(seq: u64, cause: u64, task: &str) -> Envelope<AnyFact> {
     )
 }
 
-fn history(facts: Vec<Envelope<AnyFact>>) -> History {
+fn history(facts: Vec<StreamFact>) -> History {
     let mut history = History::default();
     for fact in facts {
         history.push(fact).expect("fixture history folds");
