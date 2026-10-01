@@ -62,7 +62,7 @@ pub(crate) fn render_task_text(markdown: &str, resolves: impl Fn(&TaskStamp) -> 
         }
     }
     let mut html = String::new();
-    pulldown_cmark::html::push_html(&mut html, tables::align_by_attribute(linked));
+    pulldown_cmark::html::push_html(&mut html, tables::lay_out_tables(linked));
     html
 }
 

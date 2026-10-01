@@ -348,7 +348,7 @@ fn render(
         terminal::period(&mut events);
     }
     let mut html = String::new();
-    pulldown_cmark::html::push_html(&mut html, tables::align_by_attribute(events));
+    pulldown_cmark::html::push_html(&mut html, tables::lay_out_tables(events));
     RenderedMarkdown {
         html,
         image_only,
