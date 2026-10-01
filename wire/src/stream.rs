@@ -1159,15 +1159,39 @@ impl StreamFact {
     /// Decode this row through the DTO registered for `F`, when its kind agrees.
     ///
     /// Stream facts validate their complete body during admission, so a
-    /// matching kind must read back through the same registered DTO.
+    /// matching kind must read back through the same registered DTO. The stream
+    /// omits the `lane::seated` socket credential, so that kind is refused at
+    /// compile time; read it through [`Self::lane_seated`].
     #[must_use]
     pub fn read<F: Body>(&self) -> Option<F> {
+        const {
+            assert!(
+                !matches!(F::KIND, FactKind::LaneSeated),
+                "stream lane::seated omits its credential; read it with StreamFact::lane_seated",
+            );
+        }
         if self.kind() != F::KIND {
             return None;
         }
         Some(
             crate::fact::read_registered_body(self.body())
                 .expect("a stream body validated on decode reads through its registered DTO"),
+        )
+    }
+
+    /// Decode the public fields of a `lane::seated` row.
+    #[must_use]
+    pub fn lane_seated(&self) -> Option<StreamLaneSeated> {
+        if self.kind() != FactKind::LaneSeated {
+            return None;
+        }
+        Some(
+            StreamLaneSeated::deserialize(serde::de::value::MapDeserializer::new(
+                self.body()
+                    .iter()
+                    .map(|(field, value)| (field.as_str(), value)),
+            ))
+            .expect("a stream lane::seated body validated on decode reads through its stream DTO"),
         )
     }
 }
@@ -1267,30 +1291,38 @@ impl<'de> Deserialize<'de> for StreamFactBody {
 /// Public fields of `lane::seated`; the socket credential is intentionally absent.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StreamLaneSeated {
-    lane: CanonicalUuid,
-    team: CanonicalUuid,
+pub struct StreamLaneSeated {
+    /// Seated lane.
+    pub lane: CanonicalUuid,
+    /// Team the lane is seated in.
+    pub team: CanonicalUuid,
+    /// Operator-chosen display name.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    name: Option<String>,
-    worktree: String,
-    life: String,
-    vendor: Name,
+    pub name: Option<String>,
+    /// Worktree the lane runs in.
+    pub worktree: String,
+    /// Lane life policy.
+    pub life: String,
+    /// Vendor that runs the lane.
+    pub vendor: Name,
+    /// Requested vendor model.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    model: Option<String>,
+    pub model: Option<String>,
+    /// Requested reasoning effort.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    effort: Option<String>,
+    pub effort: Option<String>,
 }
 
 fn validate_exact_body<T>(

@@ -219,9 +219,7 @@ impl CanvasRuntime {
 
     fn observe_presence_transition(&mut self, row: &wire::StreamFact) {
         let transition = match row.kind() {
-            FactKind::LaneSeated => row
-                .read::<wire::body::LaneSeated>()
-                .map(|body| (body.lane, None)),
+            FactKind::LaneSeated => row.lane_seated().map(|body| (body.lane, None)),
             FactKind::LaneStarted => row
                 .read::<wire::body::LaneStarted>()
                 .map(|body| (body.lane, Some(body.occupant))),
