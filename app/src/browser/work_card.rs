@@ -37,17 +37,26 @@ pub(super) struct Controls<'a> {
     pub creator_messages: &'a [Rc<wire::AgentMessage>],
 }
 
-#[derive(Clone, Copy)]
 struct CellGutter<'a> {
     reserved: bool,
+    lead: Option<Html>,
     label: Option<&'a str>,
 }
 
-fn render_group_label(label: Option<&str>) -> Html {
-    label.map_or_else(
-        Html::default,
-        |label| html! { <p class="work-card-group-label">{label}</p> },
-    )
+/// The reserved gutter above a grouped card: the lane heading it may host
+/// leads, and its cluster label aligns to the card's far edge.
+fn render_gutter(gutter: CellGutter<'_>) -> Html {
+    if gutter.lead.is_none() && gutter.label.is_none() {
+        return Html::default();
+    }
+    html! {
+        <div class="work-card-gutter">
+            {gutter.lead.unwrap_or_default()}
+            if let Some(label) = gutter.label {
+                <p class="work-card-group-label">{label}</p>
+            }
+        </div>
+    }
 }
 
 fn card_return_id(
@@ -75,17 +84,20 @@ pub(super) fn render(task: &WorkTask<'_>, controls: &Controls<'_>) -> Html {
         controls,
         CellGutter {
             reserved: false,
+            lead: None,
             label: None,
         },
     )
 }
 
-/// A global-board card with an optional label in the lane's reserved group
-/// gutter. Every global card uses this path so changing the arrangement only
-/// changes label content and keyed card order.
+/// A global-board card in the lane's reserved gutter, which may host the
+/// lane heading and the label of the cluster the card opens. Every global card
+/// uses this path so changing the arrangement only changes gutter content and
+/// keyed card order.
 pub(super) fn render_grouped(
     task: &WorkTask<'_>,
     controls: &Controls<'_>,
+    lead: Option<Html>,
     group_label: Option<&str>,
 ) -> Html {
     render_cell(
@@ -93,6 +105,7 @@ pub(super) fn render_grouped(
         controls,
         CellGutter {
             reserved: true,
+            lead,
             label: group_label,
         },
     )
@@ -128,13 +141,13 @@ fn render_cell(task: &WorkTask<'_>, controls: &Controls<'_>, gutter: CellGutter<
         "work-card-cell",
         gutter.reserved.then_some("work-card-cell--grouped"),
     );
-    let group_label = render_group_label(gutter.label);
+    let gutter = render_gutter(gutter);
     let open = open_task(controls.select, &born);
     // The cell is the list item and the size container, so a card's layout
     // follows its own width rather than the section that holds the list.
     html! {
         <div key={born.to_string()} class={cell_class}>
-            {group_label}
+            {gutter}
             <article
                 id={return_id}
                 tabindex={has_chat_target.then_some("-1")}

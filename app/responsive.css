@@ -97,16 +97,10 @@
     gap: 8px;
     padding-block: 10px;
   }
-  .work-lane-heading {
+  .team-work-lanes .work-lane-heading {
     flex-direction: column;
     justify-content: flex-start;
     padding-right: 8px;
-  }
-  /* The stack keeps card track width; global lanes still hug their rule. */
-  .work-lanes:not(.team-work-lanes) > .work-lane > .work-lane-heading {
-    align-items: flex-end;
-    justify-content: flex-start;
-    gap: 5px;
   }
   .work-card-list > .work-card-cell {
     flex-basis: min(16rem, calc(100vw - 7.5rem));
