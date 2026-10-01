@@ -187,7 +187,14 @@ enum Pending {
 pub fn capture(repository: &Repository) -> Result<Capture, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
-    require_clean(root, "task capture")?;
+    require_clean_or(
+        root,
+        "task capture",
+        concat!(
+            "task capture records commits only and the reported paths belong to no ",
+            "claim; clear them from the worktree, then retry",
+        ),
+    )?;
     let target = resolve_target(root)?.ok_or_else(|| {
         Error::refusal(
             "git::capture-no-baseline",
@@ -461,7 +468,15 @@ fn prepare_claim_observed(
 ) -> Result<GitBoundary, Error> {
     let root = repository.worktree_root();
     recover_pending(root)?;
-    require_clean(root, "task next")?;
+    require_clean_or(
+        root,
+        "task next",
+        concat!(
+            "the reported paths belong to no claim, because release parks a claim's ",
+            "uncommitted work on its task; if a held claim left them, run ",
+            "spice task free HANDLE under that claim, otherwise clear them before claiming",
+        ),
+    )?;
     let before = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     let target = resolve_target(root)?;
     preflight()?;
@@ -573,7 +588,7 @@ fn publish_inner(
         ));
     }
     if !resolution_state {
-        require_clean(root, "task completion")?;
+        require_clean_or(root, "task completion", &completion_dirty_remedy(meta))?;
     }
     let observed_head = required_read(root, &["rev-parse", "HEAD"], "read lane HEAD")?;
     require_plan_opening(meta.phase, resolution_state, opening)?;
@@ -663,6 +678,24 @@ fn publish_inner(
         Some(published_upstream),
         local_commits,
     ))
+}
+
+/// The holder's routes for dirty completion; plan phase admits no commit.
+fn completion_dirty_remedy(meta: Metadata<'_>) -> String {
+    if meta.phase == "plan" {
+        format!(
+            "run spice task free {} to park the reported paths on the task",
+            meta.label
+        )
+    } else {
+        format!(
+            concat!(
+                "commit the reported paths through the pre-commit gate, or run ",
+                "spice task free {label} to park them on the task uncommitted",
+            ),
+            label = meta.label
+        )
+    }
 }
 
 fn prepare_completion_target(
