@@ -153,6 +153,35 @@ pub(crate) struct WeeklyQuotaAccount {
     pub available: f64,
 }
 
+/// One account's layer in the drawn stack.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct WeeklyQuotaLayer {
+    /// The account's place in capacity order, which picks its accent; it
+    /// follows the account through any reorder.
+    pub accent: usize,
+    pub available: f64,
+}
+
+impl WeeklyQuotaStack<'_> {
+    /// Account layers bottom to top: the most available capacity lowest and
+    /// the account nearest to running out highest. Equal availability keeps
+    /// capacity order, so equal refreshes draw the same stack.
+    pub(crate) fn layers(&self) -> Vec<WeeklyQuotaLayer> {
+        let mut layers = self
+            .bands
+            .iter()
+            .flat_map(|band| &band.accounts)
+            .enumerate()
+            .map(|(accent, account)| WeeklyQuotaLayer {
+                accent,
+                available: account.available,
+            })
+            .collect::<Vec<_>>();
+        layers.sort_by(|lower, upper| upper.available.total_cmp(&lower.available));
+        layers
+    }
+}
+
 /// Build the account layers behind the global weekly-quota presentation.
 pub(crate) fn weekly_quota_stack(snapshot: &wire::QuotaSnapshot) -> Option<WeeklyQuotaStack<'_>> {
     let mut bands: Vec<WeeklyQuotaBand<'_>> = Vec::new();
@@ -528,6 +557,33 @@ mod tests {
         assert!((openai.available - 20.0).abs() < f64::EPSILON);
         assert!((anthropic.available - 19.0).abs() < f64::EPSILON);
         assert!((stack.remaining - 39.0 / 60.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn layers_stack_by_remaining_capacity_and_keep_capacity_order_accents() {
+        let layers = |snapshot: &wire::QuotaSnapshot| {
+            weekly_quota_stack(snapshot)
+                .expect("weekly quota")
+                .layers()
+                .iter()
+                .map(|layer| (layer.accent, layer.available))
+                .collect::<Vec<_>>()
+        };
+        // Capacity order assigns accents: pro 0, pro_20x 1, free 2, anthropic 3.
+        let mut snapshot = snapshot();
+        assert_eq!(
+            layers(&snapshot),
+            vec![(3, 20.0), (0, 10.0), (2, 0.2), (1, 0.0)],
+            "fullest lowest, nearest to empty highest"
+        );
+
+        // Pro refills to tie Anthropic: it moves with its color, and the tie
+        // keeps capacity order.
+        snapshot.reports[2].limits[1].amount.remaining_fraction = Some("1".to_owned());
+        assert_eq!(
+            layers(&snapshot),
+            vec![(0, 20.0), (3, 20.0), (2, 0.2), (1, 0.0)],
+        );
     }
 
     fn snapshot() -> wire::QuotaSnapshot {

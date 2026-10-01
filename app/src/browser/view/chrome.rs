@@ -278,8 +278,8 @@ fn render_canvas_menu(
     }
 }
 
-/// Plan-weighted weekly quota drawn as account liquid layers, one agent accent
-/// per account in the stack's capacity order.
+/// Plan-weighted weekly quota drawn as account liquid layers, ordered by
+/// remaining capacity, each in the accent its capacity order assigns.
 struct QuotaLevel<'a> {
     stale: bool,
     stack: crate::quota::WeeklyQuotaStack<'a>,
@@ -293,17 +293,15 @@ impl QuotaLevel<'_> {
         let mut surface = 100.0;
         let layers = self
             .stack
-            .bands
-            .iter()
-            .flat_map(|band| &band.accounts)
-            .enumerate()
-            .map(|(index, account)| {
-                let depth = account.available / self.stack.capacity * 100.0;
+            .layers()
+            .into_iter()
+            .map(|layer| {
+                let depth = layer.available / self.stack.capacity * 100.0;
                 surface = (surface - depth).max(0.0);
                 html! {
                     <rect
                         class="canvas-menu-quota-account"
-                        data-accent={(index % watchband::ACCENTS).to_string()}
+                        data-accent={(layer.accent % watchband::ACCENTS).to_string()}
                         x="0"
                         y={format!("{surface:.3}")}
                         width="100"
