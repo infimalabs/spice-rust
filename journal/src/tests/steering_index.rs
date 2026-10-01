@@ -359,6 +359,7 @@ fn retired_window_keeps_each_lanes_newest_retirements_in_retirement_order() {
     let mut body = sent(indexed_uuid(7), "fanned");
     body.lane = other;
     body.fanout = Some(fanout);
+    body.attachments = vec![image_attachment()];
     let pending = fanned_write
         .fact(body.clone(), FactCause::Root)
         .expect("fanned fact builds");
@@ -429,6 +430,7 @@ fn retired_window_keeps_each_lanes_newest_retirements_in_retirement_order() {
     assert_eq!(projected.directive, fanned.body().directive);
     assert_eq!(projected.fanout, Some(fanout));
     assert_eq!(projected.text, fanned.body().text);
+    assert_eq!(projected.attachments, fanned.body().attachments);
     assert_eq!(projected.published, fanned.body().published);
 
     let scoped = journal
@@ -733,6 +735,14 @@ fn retire_write(observed: &JournalHead<SteeringHead>, disposition: Disposition) 
     next.disposition = disposition;
     write.steering_head(pending, move |_| next);
     write
+}
+
+fn image_attachment() -> wire::Media {
+    wire::Media {
+        name: "diagram.png".to_owned(),
+        content_type: "image/png".to_owned(),
+        data_url: "data:image/png;base64,aW1hZ2U=".to_owned(),
+    }
 }
 
 fn sent(directive: CanonicalUuid, key: &str) -> SteerSent {

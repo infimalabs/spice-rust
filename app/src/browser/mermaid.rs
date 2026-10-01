@@ -668,6 +668,7 @@ fn quote_task_chips(props: &QuoteTaskChipsProps) -> Html {
 #[function_component(MarkdownBody)]
 pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let host = use_node_ref();
+    super::watchband::use_markdown_image_resolution_events(host.clone(), props.html.clone());
     let diagram_slots = use_state(Vec::<Slot>::new);
     let math_slots = use_state(Vec::<MathSlot>::new);
     let quote_age_slots = use_state(Vec::<QuoteAgeSlot>::new);

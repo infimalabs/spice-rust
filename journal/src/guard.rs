@@ -123,11 +123,10 @@ impl SteeringPage {
     }
 }
 
-/// One retired directive's standing, projected without its attachments.
+/// One recently retired directive's complete admitted presentation.
 ///
-/// Retired heads keep their complete bodies, whose attachments can run to
-/// megabytes; this projection reads only the fields a history presentation
-/// needs, so a bounded window never materializes attachment bytes.
+/// The bounded retirement window limits how many complete heads this
+/// projection materializes; bodies outside that window are never loaded.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RetiredSteering {
     /// Stable directive identity.
@@ -142,6 +141,8 @@ pub struct RetiredSteering {
     pub from: Option<wire::CanonicalUuid>,
     /// Original direction text.
     pub text: String,
+    /// Exact attachments retained with the direction.
+    pub attachments: Vec<wire::body::DirectiveAttachment>,
     /// Instant the creating fact was recorded.
     pub published: wire::Instant,
     /// Terminal disposition; never [`wire::Disposition::Live`].

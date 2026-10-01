@@ -755,12 +755,16 @@ fn retired_directive(
     resolver: &spice::quote::Resolver<'_>,
     head: &journal::RetiredSteering,
 ) -> RetiredDirective {
+    let text = resolver.expand(&head.text);
+    let preview = directive_preview(&text);
     RetiredDirective {
         directive: head.directive,
         key: head.key.clone(),
         fanout: head.fanout,
+        text,
         from: head.from,
-        preview: directive_preview(&resolver.expand(&head.text)),
+        preview,
+        attachments: head.attachments.clone(),
         authored: head.published,
         disposition: head.disposition,
         position: head.retired,

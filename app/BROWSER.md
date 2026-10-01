@@ -48,6 +48,20 @@ accepted interaction sends the complete topology at the revision currently
 drawn by Canvas; cancellation, a changed revision, or a removed source clears
 the lift without sending.
 
+## Rich team directions
+
+The team-local **Work** tab renders each direction from its complete admitted
+body. Markdown links, internal Canvas routes, quotes, diagrams, and image
+references use the same sanitized renderer and image viewer as Chat. Embedded
+images resolve from their admitted bytes, keep their authored names and
+alternatives, and are not repeated as loose attachments.
+
+The recent retired-direction window carries that same body and media, so a
+recipient moving from delivered to acknowledged, declined, lapsed,
+dead-lettered, or canceled changes only its lifecycle badge. Retirement does
+not replace the card with an attachment-free preview. Direction identity,
+attribution, task chips, return links, and age remain stable.
+
 ## Profile Canvas latency in Firefox
 
 Canvas exposes opt-in User Timing diagnostics without changing route parsing.

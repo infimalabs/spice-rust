@@ -540,6 +540,11 @@ fn a_lane_inbox_keeps_its_retired_direction_with_fanout_beside_live_direction() 
     assert_eq!(retired.disposition, Disposition::Canceled);
     assert_eq!(retired.authored, sent.authored);
     assert_eq!(
+        retired.text,
+        "> quoted context\nkeep the parser where it is"
+    );
+    assert!(retired.attachments.is_empty());
+    assert_eq!(
         retired.preview.as_deref(),
         Some("keep the parser where it is")
     );
