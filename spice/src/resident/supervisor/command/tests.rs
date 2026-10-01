@@ -29,7 +29,21 @@ impl Sink {
         written
             .split(|byte| *byte == b'\n')
             .filter(|line| !line.is_empty())
-            .map(|line| serde_json::from_slice(line).expect("one JSON request per line"))
+            .map(|line| {
+                let mut frame: serde_json::Value =
+                    serde_json::from_slice(line).expect("one JSON request per line");
+                if let Some(args) = frame["message"]
+                    .as_str()
+                    .and_then(|message| message.strip_prefix("/spice-aside "))
+                {
+                    let notice: serde_json::Value =
+                        serde_json::from_str(args).expect("one SDK bridge notice");
+                    frame["type"] = serde_json::json!("aside");
+                    frame["purpose"] = notice["purpose"].clone();
+                    frame["message"] = notice["message"].clone();
+                }
+                frame
+            })
             .collect()
     }
 }
@@ -144,6 +158,176 @@ fn heard(scratch: &Scratch, job: &str) {
     }
 }
 
+fn aside(sequence: u64, message: &str) -> serde_json::Value {
+    serde_json::json!({"id": format!("spice-aside-{sequence}"), "type": "aside", "purpose":"inbox", "message": message})
+}
+
+/// The SDK bridge replaces pending notices by purpose; foreground steering
+/// is kept separate from that batch.
+fn queued_asides(sink: &Sink) -> Vec<String> {
+    let mut pending = BTreeMap::new();
+    for frame in sink
+        .frames()
+        .into_iter()
+        .filter(|frame| frame["type"] == "aside")
+    {
+        let purpose = frame["purpose"].as_str().unwrap().to_owned();
+        let message = frame["message"].as_str().unwrap();
+        if message.is_empty() {
+            pending.remove(&purpose);
+        } else {
+            pending.insert(purpose, message.to_owned());
+        }
+    }
+    pending.into_values().collect()
+}
+
+#[test]
+fn peer_notes_join_the_background_batch_while_operator_direction_steers() {
+    let scratch = Scratch::new("peer-aside");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, None);
+    let peer = "directive=d2 key=1kJK6M0V stage=new expires=never from=lane:peer\n\
+                [PEER] Findings from another lane.\n";
+    scratch.publish(NEWS.replace("</seal>\n", &format!("{peer}</seal>\n")));
+    driver.deliver_inbox();
+    let frames = sink.frames();
+    assert_eq!(frames[0], steer(1, NEWS));
+    assert_eq!(frames[1], aside(2, &format!("<seal>\n{peer}</seal>\n")));
+    driver.deliver_inbox();
+    assert_eq!(
+        sink.frames(),
+        frames,
+        "unchanged peer notes are not repeated"
+    );
+}
+
+#[test]
+fn new_direction_is_sent_once_while_reminders_replace_one_background_snapshot() {
+    let scratch = Scratch::new("bounded-inbox");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, None);
+    scratch.publish(NEWS);
+    driver.deliver_inbox();
+    let more = NEWS.replace(
+        "</seal>\n",
+        "directive=d2 key=1kJK6M0V stage=new expires=never\nsecond\n</seal>\n",
+    );
+    scratch.publish(&more);
+    driver.deliver_inbox();
+    assert!(
+        queued_asides(&sink).is_empty(),
+        "new direction does not restate old direction"
+    );
+    for stage in ["reminded", "escalated", "overdue"] {
+        scratch.publish(more.replace("stage=new", &format!("stage={stage}")));
+        driver.deliver_inbox();
+    }
+    let foreground = sink
+        .frames()
+        .into_iter()
+        .filter(|frame| frame["type"] == "prompt")
+        .collect::<Vec<_>>();
+    assert_eq!(foreground.len(), 2);
+    assert_eq!(
+        steer::inbox::keys(foreground[0]["message"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["1kJK6N3R"]
+    );
+    assert_eq!(
+        steer::inbox::keys(foreground[1]["message"].as_str().unwrap()).collect::<Vec<_>>(),
+        ["1kJK6M0V"]
+    );
+    let pending = queued_asides(&sink);
+    assert_eq!(
+        pending.len(),
+        1,
+        "three reminders leave one queued snapshot"
+    );
+    assert!(pending[0].contains("stage=overdue"));
+    assert_eq!(
+        steer::inbox::keys(&pending[0]).collect::<Vec<_>>(),
+        ["1kJK6N3R", "1kJK6M0V"]
+    );
+    scratch.publish("");
+    driver.deliver_inbox();
+    assert!(
+        queued_asides(&sink).is_empty(),
+        "an empty inbox cancels its queued reminder"
+    );
+}
+
+#[test]
+fn visible_acknowledgments_cancel_only_answered_background_keys_before_journal_catch_up() {
+    let scratch = Scratch::new("cancel-ack");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, None);
+    scratch.publish(THREE_PENDING);
+    driver.deliver_inbox();
+    scratch.publish(THREE_PENDING.replace("stage=new", "stage=reminded"));
+    driver.deliver_inbox();
+    driver.observe(&decoded(br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kJK6N3R: handled. NAK 1kJK6M0V: declined."}]}}"#));
+    let pending = queued_asides(&sink);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(
+        steer::inbox::keys(&pending[0]).collect::<Vec<_>>(),
+        ["1kJK7Sqy"]
+    );
+    driver.observe(&decoded(br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ACK 1kJK7Sqy: handled."}]}}"#));
+    assert!(queued_asides(&sink).is_empty());
+    assert_eq!(
+        *scratch.1.lock().unwrap(),
+        Some(
+            THREE_PENDING
+                .replace("stage=new", "stage=reminded")
+                .into_bytes()
+        ),
+        "queue cancellation does not rewrite journal authority"
+    );
+}
+
+#[test]
+fn recovery_keeps_the_original_body_until_background_delivery_is_observed() {
+    let scratch = Scratch::new("unheard-recovery");
+    let sink = Sink::default();
+    let driver = make_driver(sink.clone(), &scratch, None);
+    scratch.publish(NEWS);
+    driver.deliver_inbox();
+    driver.observe(&decoded(br#"{"type":"compaction"}"#));
+    let reminder = NEWS.replace("stage=new", "stage=reminded");
+    scratch.publish(&reminder);
+    driver.deliver_inbox();
+    let pending = queued_asides(&sink);
+    assert_eq!(pending.len(), 1);
+    assert!(pending[0].contains("look at this and answer it"));
+    assert!(
+        !pending[0].contains("[NUDGE]"),
+        "replacing recovery must not erase unheard text"
+    );
+    driver.observe(&decoded(serde_json::to_vec(&serde_json::json!({
+        "type":"message_end", "message":{"role":"user","content":[{"type":"text","text":pending[0]}]}
+    })).unwrap().as_slice()));
+    scratch.publish(reminder.replace("stage=reminded", "stage=escalated"));
+    driver.deliver_inbox();
+    let messages = sink.frames();
+    let latest = messages
+        .iter()
+        .rev()
+        .find(|frame| frame["type"] == "aside")
+        .unwrap();
+    assert!(
+        latest["message"].as_str().unwrap().contains("[NUDGE]"),
+        "delivered recovery may be condensed"
+    );
+    assert_eq!(
+        messages
+            .iter()
+            .filter(|frame| frame["type"] == "prompt")
+            .count(),
+        1,
+        "compaction and reminders never create fresh live steering"
+    );
+}
+
 fn steer(sequence: u64, message: &str) -> serde_json::Value {
     serde_json::json!({
         "id": format!("spice-steer-{sequence}"),
@@ -199,7 +383,7 @@ fn the_inbox_is_interjected_once_per_change_and_again_after_a_compaction() {
                 2,
                 "<key>\ndirective=d2 key=1kJK6M0V stage=new expires=never\ngo\n</key>\n"
             ),
-            steer(
+            aside(
                 3,
                 &steer::inbox::post_compaction(
                     "<key>\ndirective=d2 key=1kJK6M0V stage=new expires=never\ngo\n</key>\n"
@@ -397,7 +581,10 @@ fn hidden_ack_attempts_receive_one_private_visible_prose_nudge() {
         br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"1kJK7Sqy bare; `ACK 1kJK7Sqy: quoted`; ACK 1kJKZZZZ: unknown."}]}}"#,
     ));
     assert_eq!(
-        sink.frames().len(),
+        sink.frames()
+            .iter()
+            .filter(|frame| !(frame["type"] == "aside" && frame["message"] == ""))
+            .count(),
         2,
         "repetition and non-attempts stay silent"
     );
@@ -406,7 +593,14 @@ fn hidden_ack_attempts_receive_one_private_visible_prose_nudge() {
     driver.observe(&decoded(
         br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"ACK 1kJK7Sqy: no longer pending."}]}}"#,
     ));
-    assert_eq!(sink.frames().len(), 2, "retired keys stay silent");
+    assert_eq!(
+        sink.frames()
+            .iter()
+            .filter(|frame| !(frame["type"] == "aside" && frame["message"] == ""))
+            .count(),
+        2,
+        "retired keys stay silent"
+    );
 
     scratch.publish(ONE_PENDING);
     driver.deliver_inbox();
@@ -414,14 +608,23 @@ fn hidden_ack_attempts_receive_one_private_visible_prose_nudge() {
         br#"{"type":"message_end","message":{"role":"assistant","content":[{"type":"thinking","thinking":"NAK 1kJK7Sqy: declined."}]}}"#,
     );
     driver.observe(&remaining_attempt);
-    assert_eq!(sink.answered(4).len(), 4);
+    assert_eq!(
+        sink.frames()
+            .iter()
+            .filter(|frame| !(frame["type"] == "aside" && frame["message"] == ""))
+            .count(),
+        4
+    );
 
     driver.observe(&decoded(br#"{"type":"compaction"}"#));
     driver.observe(&remaining_attempt);
     assert_eq!(
-        sink.answered(6).len(),
-        6,
-        "a lost context receives one fresh correction"
+        sink.frames()
+            .iter()
+            .filter(|frame| !(frame["type"] == "aside" && frame["message"] == ""))
+            .count(),
+        5,
+        "pending recovery and the already queued correction survive without duplicating the correction"
     );
 }
 
@@ -476,7 +679,15 @@ fn a_visible_header_naming_no_held_key_receives_one_private_correction() {
         4,
         "one pending replay and one typo correction"
     );
-    let notice = frames[3]["message"].as_str().expect("correction text");
+    let notices = frames
+        .iter()
+        .filter(|frame| frame["type"] == "aside")
+        .filter_map(|frame| frame["message"].as_str())
+        .collect::<Vec<_>>();
+    let notice = notices
+        .iter()
+        .find(|message| message.contains("acknowledgment named"))
+        .expect("the queued correction remains available");
     assert!(notice.contains("dTrHz4R3"), "{notice}");
     assert!(
         !notice.contains("dTrSSg90C"),
@@ -550,7 +761,7 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
     driver.deliver_inbox();
     let pointer = steer::inbox::nudge(&reminder, |_| Some(steer::inbox::Told::Silent));
     let frames = sink.answered(2);
-    assert_eq!(frames, [steer(1, NEWS), steer(2, &pointer)]);
+    assert_eq!(frames, [steer(1, NEWS), aside(2, &pointer)]);
     assert!(
         pointer.len() < reminder.len(),
         "a pointer that costs the telling is not a pointer",
@@ -572,9 +783,7 @@ fn a_resend_of_heard_direction_costs_a_pointer_and_leaves_the_running_command_al
     );
     scratch.publish(&more);
     driver.deliver_inbox();
-    let told = steer::inbox::nudge(&more, |key| {
-        (key == "1kJK6N3R").then_some(steer::inbox::Told::Silent)
-    });
+    let told = steer::inbox::retain(&more, |key| key == "1kJK6M0V");
     let frames = sink.answered(4);
     assert!(frames.contains(&steer(3, &told)), "{frames:?}");
     assert!(
@@ -612,7 +821,11 @@ fn a_resend_says_whether_any_visible_reply_followed_the_telling() {
     driver.deliver_inbox();
 
     let pointer = |rendering: &str, told| steer::inbox::nudge(rendering, |_| Some(told));
-    let frames = sink.answered(4);
+    let frames = sink
+        .frames()
+        .into_iter()
+        .filter(|frame| !(frame["type"] == "aside" && frame["message"] == ""))
+        .collect::<Vec<_>>();
     assert_eq!(frames[0], steer(1, NEWS));
     assert!(
         frames[1]["message"]
@@ -622,11 +835,11 @@ fn a_resend_says_whether_any_visible_reply_followed_the_telling() {
     );
     assert_eq!(
         frames[2],
-        steer(3, &pointer(&reminder, steer::inbox::Told::Silent))
+        aside(3, &pointer(&reminder, steer::inbox::Told::Silent))
     );
     assert_eq!(
         frames[3],
-        steer(4, &pointer(&again, steer::inbox::Told::Replied))
+        aside(4, &pointer(&again, steer::inbox::Told::Replied))
     );
 }
 
@@ -647,7 +860,7 @@ fn a_compaction_replays_pending_steering_and_says_nothing_over_an_empty_inbox() 
         frames,
         [
             steer(1, NEWS),
-            steer(2, &steer::inbox::post_compaction(NEWS))
+            aside(2, &steer::inbox::post_compaction(NEWS))
         ],
         "a context that dropped the telling gets the full telling plus recovery syntax",
     );
@@ -872,7 +1085,7 @@ fn steering_one_agent_backgrounds_only_that_agents_running_shell() {
 }
 
 #[test]
-fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_as_steering() {
+fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_without_steering() {
     let scratch = Scratch::new("steered");
     let sink = Sink::default();
     let driver = make_driver(sink.clone(), &scratch, Some(scratch.terminal()));
@@ -928,9 +1141,9 @@ fn a_message_backgrounds_the_running_command_and_its_ending_is_delivered_as_stee
     assert_eq!(frames.len(), 3, "{frames:?}");
     let delivery = frames
         .iter()
-        .find(|frame| frame["id"] == "spice-steer-2")
+        .find(|frame| frame["id"] == "spice-aside-2")
         .and_then(|frame| frame["message"].as_str())
-        .expect("the ending is delivered as the second steer");
+        .expect("the ending is delivered without steering");
     assert!(
         delivery.starts_with(&format!(
             "<system-notice>\nBackground job {job} has completed. Resume your work using the \
@@ -991,8 +1204,8 @@ fn spice_reminders_leave_the_running_command_in_the_foreground() {
     });
     let steered = sink.answered(2);
     assert!(
-        steered.iter().all(|frame| frame["type"] == "prompt"),
-        "both reminders are steered and the call is not answered: {steered:?}"
+        steered.iter().all(|frame| frame["type"] == "aside"),
+        "both reminders are asides and the call is not answered: {steered:?}"
     );
 
     // An interruption from either reminder would precede this release, so
@@ -1089,9 +1302,12 @@ fn task_generation_reminders_are_private_and_deduplicated_by_authority() {
     });
     driver.deliver_task_generation(&notice);
     assert_eq!(
-        sink.answered(2).len(),
+        sink.answered(2)
+            .iter()
+            .filter(|frame| frame["type"] == "aside")
+            .count(),
         2,
-        "a later generation receives one new reminder and suppresses older replay",
+        "a later generation replaces the queued reminder and suppresses older replay",
     );
 }
 
@@ -1174,9 +1390,8 @@ fn a_settled_prompt_closes_the_stream_and_later_deliveries_are_dropped() {
         br#"{"type":"prompt_result","id":"prompt-7","agentInvoked":true,"status":"completed","sessionSettled":true}"#,
     ));
 
-    scratch.publish(b"<key>\ndirective=d1\nstop\n</key>\n");
+    scratch.publish(NEWS);
     driver.deliver_inbox();
-    assert_eq!(driver.interjections(), 1, "the attempt is counted");
     assert!(sink.frames().is_empty(), "nothing reaches a closed stream");
     assert_eq!(
         driver.open(b"late\n").expect_err("closed").kind(),

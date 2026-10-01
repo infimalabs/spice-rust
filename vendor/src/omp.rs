@@ -69,10 +69,8 @@ const STEERING_MODE: &str = "all";
 
 /// How omp drains messages queued for the next turn: all of them together.
 ///
-/// The lane interjects with [`steer_request`] rather than queueing follow-ups,
-/// so this queue fills only when a prompt arrives while omp is busy. One turn
-/// that reads everything waiting beats a turn apiece, for the same reason
-/// steering drains whole.
+/// Spice uses the SDK aside queue for background notices. This setting keeps
+/// any ordinary follow-up prompts together when the current work ends.
 const FOLLOW_UP_MODE: &str = "all";
 
 /// What omp does with a running tool batch when steering arrives: notice it
@@ -83,9 +81,8 @@ const FOLLOW_UP_MODE: &str = "all";
 /// a batch of pure waits runs to the end before the operator's message is
 /// read. On `immediate` a not-yet-started wait is skipped and the message
 /// lands at the next boundary, which is the latency the lane's steering
-/// contract assumes. That boundary is a tool or turn boundary on every model
-/// because [`config_overlay`] turns off omp's OpenAI live steering, which
-/// would otherwise push the message into a GPT-6 response still streaming.
+/// contract assumes. On OpenAI, new direction can also reach a response still
+/// streaming; background notices never enter that steering queue.
 const INTERRUPT_MODE: &str = "immediate";
 
 /// Environment name carrying the session identity the lane pinned at launch.
@@ -290,14 +287,9 @@ pub fn record(binary: impl Into<OsString>, launch: &Launch) -> Result<Record, Co
 /// it. The occupant's plan is the task it holds, and only the allocator
 /// closes that.
 ///
-/// OpenAI live steering is off. omp otherwise delivers a message that
-/// arrives while a GPT-6 response streams over the Codex WebSocket into that
-/// in-flight response. Every lane interjection takes that path: operator
-/// steering, progress reminders, job and compaction notices. On gpt-6.1-sol
-/// a response steered that way usually ended with reasoning alone, no text
-/// and no tool call, so the reminder meant to make the lane talk silenced it
-/// instead. Off, the message waits for the next tool or turn boundary, as on
-/// every other model.
+/// Steering transport follows omp's own settings and model capabilities.
+/// Background notices use the SDK aside path, so reminders cannot repeatedly
+/// steer a response that is still trying to answer the operator.
 #[must_use]
 pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool, fast_mode: bool) -> String {
     let mut overlay = format!("compaction:\n  thresholdTokens: {auto_compact_threshold_tokens}\n");
@@ -312,7 +304,6 @@ pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool, fast_mode: 
         "tier:\n  anthropic: none\n"
     });
     overlay.push_str("todo:\n  reminders: false\n");
-    overlay.push_str("providers:\n  openaiLiveSteering: false\n");
     overlay
 }
 
@@ -325,8 +316,8 @@ pub fn config_overlay(auto_compact_threshold_tokens: u64, lsp: bool, fast_mode: 
 /// steering already names its own authority and key, so the notice only
 /// restates it more loudly. The extension's `context` hook clears the
 /// steering flag on the copies omp converts for the provider; omp has no
-/// setting for this. Delivery is untouched: the message still waits in the
-/// steering queue for the next tool or turn boundary, and the stored
+/// setting for this. Delivery is untouched: new direction still uses the
+/// steering queue, including live OpenAI delivery, and the stored
 /// transcript keeps the flag, the text, and any images.
 pub const STEERING_EXTENSION: &str = ::std::include_str!("omp/steering.mjs");
 
@@ -522,6 +513,26 @@ pub fn steer_request(sequence: u64, message: &str) -> Vec<u8> {
         kind: "prompt",
         message: Some(message.to_owned()),
         streaming_behavior: Some("steer"),
+    })
+}
+
+/// Replace or cancel a background notice through the extension's SDK bridge.
+/// RPC has no aside command; the extension coalesces by purpose and calls
+/// `sendUserMessage(..., { deliverAs: "aside" })` at the next step boundary.
+#[must_use]
+pub fn aside_request(sequence: u64, purpose: &str, message: &str) -> Vec<u8> {
+    #[derive(Serialize)]
+    struct Notice<'a> {
+        purpose: &'a str,
+        message: &'a str,
+    }
+    let notice = serde_json::to_string(&Notice { purpose, message })
+        .expect("a background notice serializes");
+    request_line(&Request {
+        id: format!("spice-aside-{sequence}"),
+        kind: "prompt",
+        message: Some(format!("/spice-aside {notice}")),
+        streaming_behavior: None,
     })
 }
 

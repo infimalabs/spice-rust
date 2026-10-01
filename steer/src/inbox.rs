@@ -110,6 +110,51 @@ pub fn keys(rendered: &str) -> impl Iterator<Item = &str> {
         })
 }
 
+/// Keys originating from other lanes, whose notes carry information rather
+/// than operator authority.
+pub fn peer_keys(rendered: &str) -> impl Iterator<Item = &str> {
+    rendered
+        .lines()
+        .filter(|line| line.split(' ').any(|field| field.starts_with("from=lane:")))
+        .filter_map(header_key)
+}
+
+/// Keep selected directives verbatim, including their media and peer framing.
+/// An empty selection is empty; recovery instructions name only retained keys.
+#[must_use]
+pub fn retain(rendered: &str, mut keep: impl FnMut(&str) -> bool) -> String {
+    let mut lines = rendered.split_inclusive('\n').peekable();
+    let Some(open) = lines.next() else {
+        return String::new();
+    };
+    let recovery = lines
+        .peek()
+        .is_some_and(|line| line.starts_with("[POST-COMPACTION] Pending keys:"));
+    let mut retained = open.to_owned();
+    let mut keeping = false;
+    let mut any = false;
+    while let Some(line) = lines.next() {
+        if lines.peek().is_none() {
+            retained.push_str(line);
+            break;
+        }
+        if let Some(key) = header_key(line) {
+            keeping = keep(key);
+            any |= keeping;
+        }
+        if keeping {
+            retained.push_str(line);
+        }
+    }
+    if !any {
+        String::new()
+    } else if recovery {
+        post_compaction(&retained)
+    } else {
+        retained
+    }
+}
+
 /// What an occupant still holds of one directive, and what it has said since.
 ///
 /// A resend that only says "still unanswered" cannot tell an occupant that
@@ -294,7 +339,25 @@ fn render_body(
 
 #[cfg(test)]
 mod tests {
-    use super::{Told, keys, nudge, post_compaction};
+    use super::{Told, keys, nudge, post_compaction, retain};
+
+    #[test]
+    fn selecting_direction_preserves_its_body_media_and_seal() {
+        let first = "directive=d1 key=1kJK6N3R stage=published expires=never\nfirst\n";
+        let second = "directive=d2 key=1kJK6M0V stage=published expires=never from=lane:peer\n\
+                      [PEER] second\nmedia-reference=image\nmedia-projection=exact-bytes\n";
+        let rendering = format!("<seal>\n{first}{second}</seal>\n");
+        assert_eq!(
+            retain(&rendering, |key| key == "1kJK6M0V"),
+            format!("<seal>\n{second}</seal>\n")
+        );
+        assert_eq!(retain(&rendering, |_| true), rendering);
+        assert_eq!(retain(&rendering, |_| false), "");
+        assert_eq!(
+            retain(&post_compaction(&rendering), |key| key == "1kJK6M0V"),
+            post_compaction(&format!("<seal>\n{second}</seal>\n"))
+        );
+    }
 
     #[test]
     fn a_rendering_names_its_keys_in_order_and_nothing_else() {

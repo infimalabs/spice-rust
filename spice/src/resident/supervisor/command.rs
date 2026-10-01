@@ -17,7 +17,7 @@
 //! so far while the command keeps running as a job. The resident reaches the
 //! driver through a datagram signal; the payload remains in journal authority.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -43,9 +43,12 @@ pub(in crate::resident) struct Driver<W: Write + Send = std::process::ChildStdin
     read_inbox: InboxReader,
     sequence: AtomicU64,
     delivered: Mutex<Option<Vec<u8>>>,
-    /// Keys whose telling this occupant still holds verbatim, so a resend can
-    /// point at it instead of spending it again. A compaction drops the
-    /// context, and with it this set.
+    /// Latest queued background notice per purpose. Superseded notices are
+    /// coalesced in the extension until omp's next step boundary.
+    background: Mutex<BTreeMap<String, String>>,
+    /// Keys whose original was queued without replacement, or whose recovery
+    /// was observed on the transcript. Reminders can point at that telling.
+    /// Compaction drops the context and this set.
     told: Mutex<BTreeSet<String>>,
     /// Successfully delivered keys recognized for this occupant's lifetime,
     /// even when compaction drops the verbatim telling.
@@ -185,6 +188,7 @@ impl<W: Write + Send + 'static> Driver<W> {
             read_inbox: Box::new(read_inbox),
             sequence: AtomicU64::new(0),
             delivered: Mutex::new(None),
+            background: Mutex::new(BTreeMap::new()),
             told: Mutex::new(BTreeSet::new()),
             recognized: Mutex::new(BTreeSet::new()),
             replied: Mutex::new(BTreeSet::new()),
@@ -214,9 +218,7 @@ impl<W: Write + Send + 'static> Driver<W> {
         self.interject(InboxDelivery::Update);
     }
 
-    /// Steer one progress reminder without touching the calls in flight: it
-    /// asks for prose, not for the work to stop, so omp delivers it at the
-    /// next boundary and a running command stays in the foreground.
+    /// Replace the progress reminder waiting for the next step boundary.
     fn deliver_narration(&self, prod: &wire::body::NarrationProdded) {
         let urgency = if prod.count > 1 {
             "Progress update overdue"
@@ -230,12 +232,10 @@ impl<W: Write + Send + 'static> Driver<W> {
              key is required.\n</system-notice>",
             prod.moments, prod.count,
         );
-        let _sent = self.steer(&message);
+        let _sent = self.background("narration", &message);
     }
 
-    /// Steer one stale-claim reminder without touching the calls in flight:
-    /// completion and review refuse until the reclaim, so the reminder can
-    /// wait for omp's next boundary.
+    /// Replace a stale-claim reminder without interrupting current work.
     fn deliver_task_generation(&self, notice: &TaskGenerationNotice) {
         let previous = {
             let mut delivered = self
@@ -262,7 +262,10 @@ impl<W: Write + Send + 'static> Driver<W> {
             notice.position,
             notice.task,
         );
-        if self.steer(&message).is_err() {
+        if self
+            .background(&format!("task:{}", notice.task), &message)
+            .is_err()
+        {
             let mut delivered = self
                 .task_generation
                 .lock()
@@ -275,16 +278,11 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
     }
 
-    /// Interject the journal-backed inbox once per rendering.
-    ///
-    /// Direction the lane has not heard interrupts the calls in flight, so the
-    /// agent sees it as early as it can; a rendering that only restates what
-    /// the lane heard waits for the turn's next boundary. After a compaction,
-    /// pending steering is replayed with one authenticated recovery instruction;
-    /// an empty inbox says nothing, since the acknowledgment protocol rides the
-    /// system prompt that compaction never summarizes.
+    /// Send new direction once; replace reminders in the SDK aside bridge.
+    /// An empty inbox cancels a queued reminder. Compaction replays pending
+    /// direction in full without interrupting the response that follows it.
     fn interject(&self, delivery: InboxDelivery) {
-        let Some(rendered) = (self.read_inbox)().filter(|rendered| !rendered.is_empty()) else {
+        let Some(rendered) = (self.read_inbox)() else {
             return;
         };
         let mut delivered = self
@@ -296,16 +294,23 @@ impl<W: Write + Send + 'static> Driver<W> {
         }
         let message =
             std::str::from_utf8(&rendered).expect("the in-memory inbox renderer produces UTF-8");
-        let post_compaction;
-        let message = if delivery == InboxDelivery::PostCompaction {
-            post_compaction = steer::inbox::post_compaction(message);
-            post_compaction.as_str()
-        } else {
-            message
-        };
         let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
-        let unheard = steer::inbox::keys(message).any(|key| !told.contains(key));
-        if delivery == InboxDelivery::Update && unheard {
+        let mut recognized = self
+            .recognized
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let peers = steer::inbox::peer_keys(message).collect::<BTreeSet<_>>();
+        let fresh = if delivery == InboxDelivery::Update {
+            steer::inbox::retain(message, |key| {
+                !recognized.contains(key) && !peers.contains(key)
+            })
+        } else {
+            String::new()
+        };
+        let standing = steer::inbox::retain(message, |key| {
+            recognized.contains(key) || peers.contains(key)
+        });
+        if !fresh.is_empty() {
             for handle in self
                 .calls
                 .lock()
@@ -314,33 +319,43 @@ impl<W: Write + Send + 'static> Driver<W> {
             {
                 handle.interrupt();
             }
+            if self.steer(&fresh).is_err() {
+                return;
+            }
+            // This original is never replaced or removed. A later reminder
+            // follows it, whether omp took it live or at a tool boundary.
+            told.extend(steer::inbox::keys(&fresh).map(str::to_owned));
+            recognized.extend(steer::inbox::keys(&fresh).map(str::to_owned));
+        }
+        drop(recognized);
+        let previous = delivered
+            .as_deref()
+            .and_then(|bytes| std::str::from_utf8(bytes).ok());
+        let unchanged = previous == Some(standing.as_str());
+        if delivery == InboxDelivery::Update && unchanged && !standing.is_empty() {
+            *delivered = Some(rendered);
+            return;
         }
         let replied = self.replied.lock().unwrap_or_else(PoisonError::into_inner);
-        let resent = steer::inbox::keys(message)
-            .any(|key| told.contains(key))
-            .then(|| {
-                steer::inbox::nudge(message, |key| {
-                    told.contains(key).then(|| {
-                        if replied.contains(key) {
-                            steer::inbox::Told::Replied
-                        } else {
-                            steer::inbox::Told::Silent
-                        }
-                    })
+        let reminder = if delivery == InboxDelivery::PostCompaction {
+            steer::inbox::post_compaction(message)
+        } else {
+            steer::inbox::nudge(&standing, |key| {
+                told.contains(key).then(|| {
+                    if replied.contains(key) {
+                        steer::inbox::Told::Replied
+                    } else {
+                        steer::inbox::Told::Silent
+                    }
                 })
-            });
+            })
+        };
         drop(replied);
-        if self.steer(resent.as_deref().unwrap_or(message)).is_ok() {
-            told.extend(steer::inbox::keys(message).map(str::to_owned));
-            let mut recognized = self
-                .recognized
+        if self.background("inbox", &reminder).is_ok() {
+            self.recognized
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            for key in steer::inbox::keys(message) {
-                if !recognized.contains(key) {
-                    recognized.insert(key.to_owned());
-                }
-            }
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(steer::inbox::keys(message).map(str::to_owned));
             *delivered = Some(rendered);
         }
     }
@@ -349,6 +364,35 @@ impl<W: Write + Send + 'static> Driver<W> {
     fn steer(&self, message: &str) -> io::Result<()> {
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
         self.write(&vendor::omp::steer_request(sequence, message))
+    }
+
+    /// Replace one queued notice without interrupting model or tool work.
+    fn background(&self, purpose: &str, message: &str) -> io::Result<()> {
+        self.update_background(purpose, |_| message.to_owned())
+    }
+
+    fn update_background(
+        &self,
+        purpose: &str,
+        update: impl FnOnce(&str) -> String,
+    ) -> io::Result<()> {
+        let mut queued = self
+            .background
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let previous = queued.get(purpose).map_or("", String::as_str);
+        let message = update(previous);
+        if previous == message {
+            return Ok(());
+        }
+        let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
+        self.write(&vendor::omp::aside_request(sequence, purpose, &message))?;
+        if message.is_empty() {
+            queued.remove(purpose);
+        } else {
+            queued.insert(purpose.to_owned(), message);
+        }
+        Ok(())
     }
 
     /// Correct attempts to answer pending steering in hidden reasoning.
@@ -419,7 +463,7 @@ impl<W: Write + Send + 'static> Driver<W> {
              the first tool intent when the message calls a tool, with `ACK {keys}: response` or \
              `NAK {keys}: reason`.\n</system-notice>"
         );
-        if self.steer(&message).is_ok() {
+        if self.background("hidden-ack", &message).is_ok() {
             reminder.nudged.extend(mentioned);
         }
     }
@@ -501,8 +545,49 @@ impl<W: Write + Send + 'static> Driver<W> {
              it acknowledged nothing. {pending}\n</system-notice>",
             quoted(&mut named.iter().map(String::as_str)),
         );
-        if self.steer(&message).is_ok() {
+        if self.background("misdirected-ack", &message).is_ok() {
             misdirected.extend(named);
+        }
+    }
+
+    /// Cancel answered reminders before the asynchronous journal catches up.
+    /// Durable steering disposition remains the resident's transcript-backed job.
+    fn cancel_answered_reminders(&self, decoded: &Decoded) {
+        let acknowledgement = decoded
+            .events()
+            .iter()
+            .filter_map(Event::assistant_text)
+            .any(steer::has_acknowledgement);
+        let pending = acknowledgement.then(|| (self.read_inbox)().unwrap_or_default());
+        if let Some(rendered) = pending
+            .as_deref()
+            .and_then(|pending| std::str::from_utf8(pending).ok())
+        {
+            let standing = PendingKeys(
+                steer::inbox::keys(rendered)
+                    .filter_map(|key| key.parse().ok())
+                    .collect(),
+            );
+            let answered = decoded
+                .events()
+                .iter()
+                .filter_map(Event::assistant_text)
+                .flat_map(|text| steer::scan(text, &standing))
+                .filter_map(|recognition| match recognition.outcome {
+                    steer::Outcome::Retired { key, .. } => Some(key),
+                    steer::Outcome::Missed { .. } => None,
+                })
+                .collect::<BTreeSet<_>>();
+            if !answered.is_empty() {
+                let _cancelled = self.update_background("inbox", |message| {
+                    steer::inbox::retain(message, |key| {
+                        key.parse().is_ok_and(|key| !answered.contains(&key))
+                    })
+                });
+                if standing.0.is_subset(&answered) {
+                    let _cancelled = self.background("hidden-ack", "");
+                }
+            }
         }
     }
 
@@ -518,6 +603,27 @@ impl<W: Write + Send + 'static> Driver<W> {
     /// turn ends its input, so the child drains and exits rather than idling
     /// for a prompt nobody sends.
     pub(in crate::resident) fn observe(self: &Arc<Self>, decoded: &Decoded) -> Option<Ask> {
+        // A telling seen on the transcript is now held verbatim. Background
+        // delivery also releases its replacement slot for a future notice.
+        for prose in decoded.events().iter().filter_map(|event| match event {
+            Event::Prose(prose) if prose.role == ProseRole::Operator => Some(prose),
+            _ => None,
+        }) {
+            let mut told = self.told.lock().unwrap_or_else(PoisonError::into_inner);
+            let recognized = self
+                .recognized
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            told.extend(
+                steer::inbox::keys(&prose.text)
+                    .filter(|key| recognized.contains(*key))
+                    .map(str::to_owned),
+            );
+            self.background
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .retain(|_, message| !prose.text.contains(message.as_str()));
+        }
         let context = decoded.context();
         let asked = match context.and_then(|context| context.dialog.as_ref()) {
             Some(Dialog::Confirm { id, title, message }) => Some(self.ask(id, title, message)),
@@ -548,7 +654,9 @@ impl<W: Write + Send + 'static> Driver<W> {
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .extend(told.iter().cloned());
+            let _cancelled = self.background("narration", "");
         }
+        self.cancel_answered_reminders(decoded);
         let compacted = decoded
             .events()
             .iter()
@@ -704,8 +812,9 @@ impl<W: Write + Send + 'static> Driver<W> {
             return;
         };
         let sequence = self.sequence.fetch_add(1, Ordering::Relaxed) + 1;
-        let notice = vendor::omp::steer_request(
+        let notice = vendor::omp::aside_request(
             sequence,
+            &format!("job:{}", job.id()),
             &vendor::omp::job_delivery(job.id(), &report.output),
         );
         if written(stream, &notice).is_err() {

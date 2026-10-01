@@ -719,8 +719,8 @@ fn pin_omp(
 /// writes an overlay stating the threshold the tracked policy derives for the
 /// model this seat runs. The same file states whether this seat runs omp's
 /// language-server integration, whether Anthropic requests use the priority
-/// tier, and that OpenAI live steering is off, all of which omp otherwise
-/// decides from persistent settings. The steering extension rides beside it,
+/// tier, all of which omp otherwise decides from persistent settings.
+/// Steering transport follows omp's native settings. The extension rides beside it,
 /// so neither touches omp's own settings.
 fn pin_seat_file(
     path: &Path,
