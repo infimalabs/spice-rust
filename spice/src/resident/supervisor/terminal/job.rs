@@ -765,14 +765,38 @@ impl Job {
         File::create(self.directory.join(STOP)).map(drop)
     }
 
-    /// Record that the lane has heard how the job ended: in the answer to
-    /// the call that ran it, or as steering once it was kept.
+    /// Claim the record that the lane has heard how the job ended: in the
+    /// answer to the call that ran it, in a job answer that reported its
+    /// ending, or as steering once it was kept. The record is created at most
+    /// once, so of two tellers racing to it exactly one wins; the loser has
+    /// nothing left to say.
     ///
     /// # Errors
     ///
-    /// Returns the failure of writing the record.
-    pub(in crate::resident) fn mark_delivered(&self) -> io::Result<()> {
-        File::create(self.directory.join(DELIVERED)).map(drop)
+    /// Returns the failure of creating the record other than its existence.
+    pub(in crate::resident) fn claim_heard(&self) -> io::Result<bool> {
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.directory.join(DELIVERED))
+        {
+            Ok(_) => Ok(true),
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// Give back a claim whose telling never reached the lane, so the next
+    /// seat's catch-up owes it again.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of removing the record other than its absence.
+    pub(in crate::resident) fn release_heard(&self) -> io::Result<()> {
+        match fs::remove_file(self.directory.join(DELIVERED)) {
+            Err(error) if error.kind() != ErrorKind::NotFound => Err(error),
+            _ => Ok(()),
+        }
     }
 
     /// Complete keeper-owned output, including bytes omitted from previews.

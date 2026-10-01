@@ -47,7 +47,7 @@
 | <a id="lifecycle-a-refusal-payload-names-which-wake-arm-produced-it"></a>**A refusal payload names which wake arm produced it** | A refusal payload names which wake arm produced it. |
 | <a id="lifecycle-stop-criteria-are-inherited-by-every-arm-through-the-shared-ensure-path"></a>**Stop criteria are inherited by every arm through the shared ensure path** | Stop criteria are inherited by every arm through the shared ensure path rather than recopied. |
 | <a id="lifecycle-ending-a-turn-vacates-the-lane"></a>**Ending a turn vacates the lane** | Every turn or process exit, including code zero, ends that occupant and vacates the lane. A kept command remains owned by its detached keeper. If its non-stopped ending remains unheard through the delivery grace, the keeper requests a lane wake; a successor receives the completion during startup catch-up. |
-| <a id="lifecycle-background-jobs-survive-turn-exit"></a>**Background jobs survive turn exit** | Waiting is optional lifecycle policy, not protection for the command: use `job wait` when its result blocks current work, while ending the turn neither cancels the job nor loses its completion. |
+| <a id="lifecycle-background-jobs-survive-turn-exit"></a>**Background jobs survive turn exit** | Waiting is optional lifecycle policy, not protection for the command: use `job wait` when its result blocks current work, while ending the turn neither cancels the job nor loses its completion. A job answer that reports the ending is the agent hearing it, so no completion notice repeats it. |
 
 ## Topology
 

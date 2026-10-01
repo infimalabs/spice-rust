@@ -102,7 +102,7 @@ impl Terminal {
     }
 
     #[cfg(test)]
-    fn foreground(self, foreground: Duration) -> Self {
+    pub(in crate::resident::supervisor) fn foreground(self, foreground: Duration) -> Self {
         Self { foreground, ..self }
     }
 
@@ -186,7 +186,7 @@ impl Terminal {
                 wall: None,
             },
         };
-        let _heard = job.mark_delivered();
+        let _heard = job.claim_heard();
         Run::Ended(prefixed(finished(&job, &ended), diagnostic))
     }
 
@@ -218,7 +218,8 @@ impl Terminal {
         }
     }
 
-    /// Answer one request on the lane's jobs.
+    /// Answer one request on the lane's jobs. An answer that reports how a
+    /// job ended is the lane hearing it, so its completion notice is not owed.
     pub(in crate::resident) fn job(&self, call: &JobCall, control: &Control) -> Report {
         let job = match call.id.as_deref().map(|id| self.jobs.open(id)) {
             Some(Ok(job)) => Some(job),
@@ -227,9 +228,12 @@ impl Terminal {
         };
         match (call.op, job) {
             (JobOp::List, _) => self.list(),
-            (JobOp::Logs, Some(job)) => snapshot(&job, job.ended().as_ref()),
+            (JobOp::Logs, Some(job)) => match job.ended() {
+                Some(ended) => told(&job, &ended),
+                None => snapshot(&job, None),
+            },
             (JobOp::Wait, Some(job)) => match job.observe(control, call.timeout) {
-                Ok(Observed::Ended(ended)) => snapshot(&job, Some(&ended)),
+                Ok(Observed::Ended(ended)) => told(&job, &ended),
                 Ok(Observed::Elapsed) => snapshot(&job, None),
                 Ok(Observed::Interrupted) => still(&job, "wait interrupted by an incoming message"),
                 Ok(Observed::Cancelled) => still(&job, "wait cancelled"),
@@ -238,7 +242,7 @@ impl Terminal {
                 }
             },
             (JobOp::Stop, Some(job)) => match stop(&job, control) {
-                Some(ended) => snapshot(&job, Some(&ended)),
+                Some(ended) => told(&job, &ended),
                 None => still(&job, "stop asked"),
             },
             (op, None) => Report::refused(&format!("job {} needs an id", op.name())),
@@ -297,6 +301,12 @@ impl Terminal {
 /// or ended while nobody was there.
 pub(in crate::resident) fn undelivered(jobs: &Jobs) -> Vec<Job> {
     jobs.kept().unwrap_or_default()
+}
+
+/// The answer that tells the lane how a job ended, claiming that telling.
+fn told(job: &Job, ended: &Ended) -> Report {
+    let _heard = job.claim_heard();
+    snapshot(job, Some(ended))
 }
 
 /// What a lane is still waiting on, as its row in the lane table lists it.
@@ -759,7 +769,7 @@ mod tests {
         std::fs::write(root.join("hold"), "\n").expect("the fifo takes a line");
         assert!(terminal.follow(&job, &control).is_some());
         assert_eq!(unheard(&terminal.jobs), row(LaneJobStanding::Unheard));
-        job.mark_delivered().expect("the ending is heard");
+        assert!(job.claim_heard().expect("the ending is heard"));
         assert!(unheard(&terminal.jobs).is_empty());
         let _ = std::fs::remove_dir_all(&root);
     }
