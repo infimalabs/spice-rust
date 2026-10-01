@@ -551,7 +551,7 @@ fn render_mode_rail(
                     <button
                         type="button"
                         role="tab"
-                        class={classes!("team-mode", selected.then_some("selected"))}
+                        class={classes!("team-mode", "team-mode--counted", selected.then_some("selected"))}
                         aria-selected={selected.to_string()}
                         onclick={Callback::from(move |_| {
                             choose.dispatch(TeamControlAction::SetMode {
