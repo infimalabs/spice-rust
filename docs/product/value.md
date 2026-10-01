@@ -281,14 +281,15 @@ refresh desaturates them. The
 button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
 available Canvas update, and red for both; quota colors never change.
 
-Inside the open menu, each open team holds two agent rows and scrolls any
-further members inside itself, "No open teams" holds that same team, "No
+Inside the open menu, each open team shows every member row, so a team of one
+is one row tall and a team of three shows all three; membership is content,
+not a placeholder to hold. "No open teams" holds one team of one agent, "No
 unassigned agents" and an import menu's "No available agents" hold one agent
 row, the team sections stand inert saying what they await until agent state
 arrives, and the operator section stands as its disabled identity form while
 settings load. Agent rows stay one row however long their names, so the first
-team opening, the last closing, the first agent, and the identity's arrival
-move no later section ([a changing
+team of one opening, the first agent, and the identity's arrival move no later
+section ([a changing
 region holds its largest
 footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
 

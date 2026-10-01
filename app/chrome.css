@@ -481,23 +481,17 @@ body:has(.shell--mosaic),
   font-size: .7rem;
   line-height: 1.5;
 }
-/* One agent row is the footprint the unassigned empty line reserves. An open
-   team holds two agent rows, scrolling any further members inside it, and
-   "No open teams" reserves that same team, so a first team opening or a last
-   team closing moves nothing below. */
+/* One agent row is the footprint the unassigned empty line reserves, and one
+   team of one agent is the footprint "No open teams" reserves, so the first
+   team or unassigned agent moves nothing below. An open team shows every
+   member: a larger team grows the section rather than hiding rows. */
 .canvas-menu-page {
   --canvas-member-row: 58px;
   --canvas-team-pad: 9px;
   --canvas-team-gap: 8px;
   --canvas-team-head: calc(2 * .64rem * 1.25 + 2px);
-  --canvas-open-team-size: calc(2 * (var(--canvas-team-pad) + 1px) + var(--canvas-team-head) + var(--canvas-team-gap) + 2 * var(--canvas-member-row) + 6px);
 }
 .canvas-open-teams { gap: 10px; }
-.canvas-open-teams > .canvas-team {
-  grid-template-rows: auto minmax(0, 1fr);
-  block-size: var(--canvas-open-team-size);
-}
-.canvas-open-teams .canvas-team-members { align-content: start; min-block-size: 0; overflow-y: auto; }
 .canvas-team {
   display: grid;
   gap: var(--canvas-team-gap);
@@ -607,7 +601,9 @@ body:has(.shell--mosaic),
   color: var(--muted);
 }
 .canvas-menu-empty { margin: 0; padding: 3px 1px; color: var(--muted); font-size: .68rem; line-height: 1.4; }
-.canvas-open-teams > .canvas-menu-empty { block-size: var(--canvas-open-team-size); }
+.canvas-open-teams > .canvas-menu-empty {
+  min-block-size: calc(2 * (var(--canvas-team-pad) + 1px) + var(--canvas-team-head) + var(--canvas-team-gap) + var(--canvas-member-row));
+}
 .canvas-team-members > .canvas-menu-empty { min-block-size: var(--canvas-member-row); }
 .team-dash-frame {
   --team-dash-member-height: 12.75rem;
