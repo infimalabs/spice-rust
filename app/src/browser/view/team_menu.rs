@@ -73,37 +73,29 @@ fn render_axis(
     }
 }
 
+/// Until the resident and its agent state arrive, the same three sections
+/// stand inert with their empty lines saying what is awaited, so the footer and
+/// every section keep their place when teams land.
 fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
-    let Some(runtime) = runtime else {
-        return html! {
-            <div class="canvas-menu-page" data-menu-page="Chat">
-                {render_global_settings(None, context.sender)}
-                <p>{"Waiting for resident teams…"}</p>
-                {render_version_footer(context.cursor, context.identity, context.update)}
-            </div>
-        };
-    };
-    let Some(lanes) = runtime.lanes() else {
-        return html! {
-            <div class="canvas-menu-page" data-menu-page="Chat">
-                {render_global_settings(Some(runtime), context.sender)}
-                <p>{"Waiting for agent state…"}</p>
-                {render_version_footer(context.cursor, context.identity, context.update)}
-            </div>
-        };
+    let lanes = runtime.and_then(CanvasRuntime::lanes);
+    let awaited = match (runtime, lanes) {
+        (None, _) => Some("Waiting for resident teams…"),
+        (Some(_), None) => Some("Waiting for agent state…"),
+        (Some(_), Some(_)) => None,
     };
     let waiting = runtime
-        .inbox()
+        .and_then(CanvasRuntime::inbox)
         .map(|inbox| inbox.lanes.as_slice())
         .unwrap_or(&[]);
-    let can_configure = runtime.offers(CommandKind::TeamConfigure);
-    let grouped_teams = lanes
-        .lanes
+    let can_configure = lanes.is_some()
+        && runtime.is_some_and(|runtime| runtime.offers(CommandKind::TeamConfigure));
+    let topology_revision = lanes.map_or(0, |lanes| lanes.topology_revision);
+    let teams = lanes.map_or(&[][..], |lanes| lanes.lanes.as_slice());
+    let grouped_teams = teams
         .iter()
         .filter(|team| team.teamed())
         .collect::<Vec<_>>();
-    let solo_members = lanes
-        .lanes
+    let solo_members = teams
         .iter()
         .filter(|team| !team.teamed())
         .flat_map(|team| &team.members)
@@ -118,15 +110,16 @@ fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
         submissions: context.submissions,
         sender: context.sender,
         can_configure,
-        topology_revision: lanes.topology_revision,
+        topology_revision,
+        empty: awaited.unwrap_or("No unassigned agents"),
     };
     html! {
         <div class="canvas-menu-page" data-menu-page="Chat">
-            {render_global_settings(Some(runtime), context.sender)}
+            {render_global_settings(runtime, context.sender)}
             <section class="canvas-menu-section canvas-open-teams">
                 <h2>{"Open Team"}</h2>
                 if grouped_teams.is_empty() {
-                    <p class="canvas-menu-empty">{"No open teams"}</p>
+                    <p class="canvas-menu-empty">{awaited.unwrap_or("No open teams")}</p>
                 } else {
                     {for grouped_teams.into_iter().map(|team| {
                         render_team(
@@ -135,7 +128,7 @@ fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
                             context.submissions,
                             context.sender,
                             can_configure,
-                            lanes.topology_revision,
+                            topology_revision,
                         )
                     })}
                 }
@@ -144,7 +137,7 @@ fn render_chat(runtime: Option<&CanvasRuntime>, context: &Context<'_>) -> Html {
                 new_team,
                 context.sender,
                 can_configure,
-                lanes.topology_revision,
+                topology_revision,
             )}
             {render_solo_members_drop(
                 &solo_members,
@@ -213,29 +206,56 @@ fn render_global_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle
     }
 }
 
+/// The operator's identity and its override form. Until settings arrive the
+/// same summary and form stand disabled and say they are loading, so the
+/// sections below stay put when the identity lands.
 fn render_operator_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHandle) -> Html {
-    let Some(settings) = runtime.and_then(CanvasRuntime::settings) else {
-        return html! {
-            <section class="canvas-menu-section canvas-menu-operator">
-                <h2>{"You"}</h2>
-                <p class="canvas-menu-empty">{"Loading operator identity…"}</p>
-            </section>
-        };
+    const LOADING: &str = "loading";
+    let settings = runtime.and_then(CanvasRuntime::settings);
+    let unresolved = wire::OperatorIdentity::default();
+    let operator = settings.map_or(&unresolved, |settings| &settings.operator);
+    let enabled = settings.is_some()
+        && runtime.is_some_and(|runtime| runtime.offers(CommandKind::GlobalSettingsSet));
+    let name = settings
+        .and_then(|settings| settings.operator_name.clone())
+        .unwrap_or_default();
+    let email = settings
+        .and_then(|settings| settings.operator_email.clone())
+        .unwrap_or_default();
+    let (summary_name, summary_email, name_placeholder, email_placeholder) = match settings {
+        Some(_) => (
+            operator
+                .name
+                .clone()
+                .unwrap_or_else(|| "Operator".to_owned()),
+            operator
+                .email
+                .clone()
+                .unwrap_or_else(|| "No email configured".to_owned()),
+            operator
+                .name
+                .clone()
+                .unwrap_or_else(|| "Git user.name is not set".to_owned()),
+            operator
+                .email
+                .clone()
+                .unwrap_or_else(|| "Git user.email is not set".to_owned()),
+        ),
+        None => (
+            "Loading operator identity…".to_owned(),
+            LOADING.to_owned(),
+            LOADING.to_owned(),
+            LOADING.to_owned(),
+        ),
     };
-    let enabled = runtime.is_some_and(|runtime| runtime.offers(CommandKind::GlobalSettingsSet));
-    let name = settings.operator_name.clone().unwrap_or_default();
-    let email = settings.operator_email.clone().unwrap_or_default();
-    let name_placeholder = settings
-        .operator
-        .name
-        .clone()
-        .unwrap_or_else(|| "Git user.name is not set".to_owned());
-    let email_placeholder = settings
-        .operator
-        .email
-        .clone()
-        .unwrap_or_else(|| "Git user.email is not set".to_owned());
-    let fast_mode = settings.fast_mode;
+    let source = |explicit: Option<&Option<String>>| match explicit {
+        None => LOADING,
+        Some(Some(_)) => "explicit",
+        Some(None) => "Git",
+    };
+    let name_source = source(settings.map(|settings| &settings.operator_name));
+    let email_source = source(settings.map(|settings| &settings.operator_email));
+    let fast_mode = settings.is_some_and(|settings| settings.fast_mode);
     let sender = sender.clone();
     let onsubmit = Callback::from(move |event: SubmitEvent| {
         event.prevent_default();
@@ -262,16 +282,16 @@ fn render_operator_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHand
         <section class="canvas-menu-section canvas-menu-operator" data-operator-member="">
             <h2>{"You"}</h2>
             <div class="canvas-operator-summary">
-                {super::render_operator_avatar(&settings.operator)}
+                {super::render_operator_avatar(operator)}
                 <div>
-                    <strong>{settings.operator.name.as_deref().unwrap_or("Operator")}</strong>
-                    <span>{settings.operator.email.as_deref().unwrap_or("No email configured")}</span>
+                    <strong>{summary_name}</strong>
+                    <span>{summary_email}</span>
                 </div>
             </div>
             <form class="canvas-operator-form" {onsubmit}>
                 <label for="operator-name">
                     <span>{"Name"}</span>
-                    <small>{if settings.operator_name.is_some() { "explicit" } else { "Git" }}</small>
+                    <small>{name_source}</small>
                 </label>
                 <input
                     id="operator-name"
@@ -283,7 +303,7 @@ fn render_operator_settings(runtime: Option<&CanvasRuntime>, sender: &SenderHand
                 />
                 <label for="operator-email">
                     <span>{"Email"}</span>
-                    <small>{if settings.operator_email.is_some() { "explicit" } else { "Git" }}</small>
+                    <small>{email_source}</small>
                 </label>
                 <input
                     id="operator-email"
@@ -630,6 +650,8 @@ struct SoloDropRender<'a> {
     sender: &'a SenderHandle,
     can_configure: bool,
     topology_revision: u64,
+    /// What the empty member list says: none unassigned, or what is awaited.
+    empty: &'a str,
 }
 
 fn render_solo_members_drop(
@@ -657,7 +679,7 @@ fn render_solo_members_drop(
             </header>
             <div class="canvas-team-members" data-team-drop="unassigned">
                 if members.is_empty() {
-                    <p class="canvas-menu-empty">{"No unassigned agents"}</p>
+                    <p class="canvas-menu-empty">{render.empty}</p>
                 } else {
                     {for members.iter().map(|member| {
                         render_member(

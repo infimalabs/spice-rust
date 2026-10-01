@@ -76,7 +76,7 @@ fn render_reports(reports: &[wire::QuotaReport]) -> Html {
         <section class="quota-detail-group" aria-labelledby="quota-accounts-heading">
             <h3 id="quota-accounts-heading">{"Account limits"}</h3>
             if reports.is_empty() {
-                <p class="quota-empty">{"No account usage reports were returned."}</p>
+                <p class="quota-empty quota-account-empty">{"No account usage reports were returned."}</p>
             } else {
                 <div class="quota-account-list">
                     {for reports.iter().enumerate().map(|(index, report)| render_report(index, report))}
@@ -265,8 +265,8 @@ fn render_accounts_without_usage(accounts: &[wire::QuotaAccountWithoutUsage]) ->
             if accounts.is_empty() {
                 <p class="quota-empty">{"None."}</p>
             } else {
-                <ul class="quota-simple-list">{for accounts.iter().map(|entry| html! {
-                    <li><strong>{entry.provider.clone()}</strong><span>{crate::quota::account_label(&entry.account)}</span><span>{entry.credential_type.clone()}</span></li>
+                <ul class="quota-simple-list">{for accounts.iter().map(|entry| {
+                    render_simple_row(&entry.provider, &entry.account, &entry.credential_type)
                 })}</ul>
             }
         </section>
@@ -280,10 +280,22 @@ fn render_disabled(credentials: &[wire::QuotaDisabledCredential]) -> Html {
             if credentials.is_empty() {
                 <p class="quota-empty">{"None."}</p>
             } else {
-                <ul class="quota-simple-list">{for credentials.iter().map(|entry| html! {
-                    <li><strong>{entry.provider.clone()}</strong><span>{crate::quota::account_label(&entry.account)}</span><span>{entry.credential_type.clone()}</span></li>
+                <ul class="quota-simple-list">{for credentials.iter().map(|entry| {
+                    render_simple_row(&entry.provider, &entry.account, &entry.credential_type)
                 })}</ul>
             }
         </section>
+    }
+}
+
+/// One single-line row; the title spells what the line may ellipsize.
+fn render_simple_row(provider: &str, account: &wire::QuotaAccount, credential: &str) -> Html {
+    let label = crate::quota::account_label(account);
+    html! {
+        <li title={format!("{provider} · {label} · {credential}")}>
+            <strong>{provider.to_owned()}</strong>
+            <span>{label}</span>
+            <span>{credential.to_owned()}</span>
+        </li>
     }
 }
