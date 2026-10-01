@@ -574,7 +574,10 @@ overlays the plane, whose content starts below a composer-height spacer, and
 moves exactly as far as the
 cards scroll until hidden or revealed; it never cancels an event or writes the
 scroll position. Home and End also set composer exposure. The toolbar and ticker
-stay fixed.
+stay fixed. With no team at all the surface keeps that frame — an empty ticker
+row and the same mode pane — so the first team to form, or the last to dissolve,
+moves nothing ([a changing region holds its largest
+footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
 
 **Value:** the console becomes a reading surface without a toggle, threshold, or
 animation, and the mounted composer keeps drafts and controls intact.
