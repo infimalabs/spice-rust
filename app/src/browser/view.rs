@@ -587,6 +587,9 @@ pub(super) fn render_operator_avatar(operator: &wire::OperatorIdentity) -> Html 
                     src={format!("https://gravatar.com/avatar/{}?s=160&d=retro", gravatar.as_str())}
                     alt={format!("{label} Gravatar")}
                 />
+                if let Some(initials) = operator.initials.as_deref() {
+                    <span class="operator-avatar-badge" aria-hidden="true">{initials}</span>
+                }
             </span>
         },
         None => html! {

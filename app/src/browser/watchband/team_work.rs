@@ -398,9 +398,21 @@ fn direction_card<'a>(
     message_links: &watchband::WorkMessageLinks<'_>,
 ) -> super::super::direction_card::Card<'a> {
     use super::super::direction_card::{Author, Card, Recipient, Recipients};
-    let author = row
-        .author
-        .and_then(|lane| standings.iter().find(|standing| standing.lane == lane));
+    let author = row.author.map_or(Author::Operator, |lane| {
+        standings
+            .iter()
+            .find(|standing| standing.lane == lane)
+            .map_or_else(
+                || Author::Lane {
+                    label: format!("lane {}", watchband::short(lane)),
+                    accent: None,
+                },
+                |standing| Author::Lane {
+                    label: standing.label.clone(),
+                    accent: Some(standing.accent.to_string()),
+                },
+            )
+    });
     let recipients = standings
         .iter()
         .filter_map(|standing| {
@@ -427,10 +439,7 @@ fn direction_card<'a>(
         body: &row.body,
         complete: row.body_complete,
         attachments: &row.attachments,
-        author: Author {
-            label: author.map_or_else(|| "You".to_owned(), |standing| standing.label.clone()),
-            accent: author.map(|standing| standing.accent.to_string()),
-        },
+        author,
         keys: row.keys.iter().map(String::as_str).collect(),
         recipients: Recipients::Team(recipients),
         authored_millis: row.authored_millis,
