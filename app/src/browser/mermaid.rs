@@ -439,7 +439,61 @@ pub(super) struct MarkdownBodyProps {
     pub(super) sources: Rc<Vec<AttrValue>>,
     pub(super) final_answer: bool,
     pub(super) quote_tasks: Rc<crate::runtime::QuoteTasks>,
+    /// The card's own signoff: it closes a final prose paragraph inline and
+    /// otherwise takes its own trailing line.
+    #[prop_or_default]
+    pub(super) signoff: Option<Html>,
 }
+
+/// Where a card's signoff mounts once its raw body is in the DOM.
+#[derive(Clone, PartialEq)]
+enum SignoffPlace {
+    Pending,
+    Inline {
+        target: web_sys::Element,
+        key: yew::virtual_dom::Key,
+    },
+    Line,
+}
+
+/// A signoff joins the body's last raw block when that block is a prose
+/// paragraph; an image stack, list, quote, table, or code block keeps it on a
+/// line of its own so it never breaks that block's layout.
+fn collect_signoff_place(
+    host: &web_sys::Element,
+    previous: &SignoffPlace,
+    counter: &Cell<u64>,
+) -> SignoffPlace {
+    let has_class = |element: &web_sys::Element, class: &str| {
+        element
+            .get_attribute("class")
+            .is_some_and(|classes| classes.split_whitespace().any(|name| name == class))
+    };
+    let mut last = host.last_element_child();
+    while let Some(element) = last.as_ref().filter(|element| {
+        has_class(element, MARKDOWN_BODY_PORTALS) || has_class(element, "message-signoff-line")
+    }) {
+        last = element.previous_element_sibling();
+    }
+    let Some(target) = last
+        .filter(|element| element.tag_name() == "P" && !has_class(element, "message-image-stack"))
+    else {
+        return SignoffPlace::Line;
+    };
+    let key = match previous {
+        SignoffPlace::Inline {
+            target: previous,
+            key,
+        } if *previous == target => key.clone(),
+        _ => {
+            counter.set(counter.get().wrapping_add(1));
+            counter.get().into()
+        }
+    };
+    SignoffPlace::Inline { target, key }
+}
+
+const MARKDOWN_BODY_PORTALS: &str = "markdown-body-portals";
 
 struct Slot {
     index: usize,
@@ -672,31 +726,56 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
     let math_slots = use_state(Vec::<MathSlot>::new);
     let quote_age_slots = use_state(Vec::<QuoteAgeSlot>::new);
     let quote_task_slots = use_state(Vec::<QuoteTaskSlot>::new);
+    let signoff_place = use_state(|| SignoffPlace::Pending);
     let counter = use_memo((), |()| Cell::new(0_u64));
-    use_effect_with((props.html.clone(), props.sources.len()), {
-        let host = host.clone();
-        let diagram_slots = diagram_slots.clone();
-        let math_slots = math_slots.clone();
-        let quote_age_slots = quote_age_slots.clone();
-        let quote_task_slots = quote_task_slots.clone();
-        let counter = counter.clone();
-        move |(_, source_count)| {
-            let Some(host) = host.cast::<web_sys::Element>() else {
-                return;
-            };
-            diagram_slots.set(collect_slots(
-                &host,
-                "[data-mermaid-slot]",
-                "data-mermaid-slot",
-                *source_count,
-                &diagram_slots,
-                &counter,
-            ));
-            math_slots.set(collect_math_slots(&host, &math_slots, &counter));
-            quote_age_slots.set(collect_quote_age_slots(&host, &quote_age_slots, &counter));
-            quote_task_slots.set(collect_quote_task_slots(&host, &quote_task_slots, &counter));
-        }
-    });
+    use_effect_with(
+        (
+            props.html.clone(),
+            props.sources.len(),
+            props.signoff.is_some(),
+        ),
+        {
+            let host = host.clone();
+            let diagram_slots = diagram_slots.clone();
+            let math_slots = math_slots.clone();
+            let quote_age_slots = quote_age_slots.clone();
+            let quote_task_slots = quote_task_slots.clone();
+            let signoff_place = signoff_place.clone();
+            let counter = counter.clone();
+            move |(_, source_count, has_signoff)| {
+                let Some(host) = host.cast::<web_sys::Element>() else {
+                    return;
+                };
+                diagram_slots.set(collect_slots(
+                    &host,
+                    "[data-mermaid-slot]",
+                    "data-mermaid-slot",
+                    *source_count,
+                    &diagram_slots,
+                    &counter,
+                ));
+                math_slots.set(collect_math_slots(&host, &math_slots, &counter));
+                quote_age_slots.set(collect_quote_age_slots(&host, &quote_age_slots, &counter));
+                quote_task_slots.set(collect_quote_task_slots(&host, &quote_task_slots, &counter));
+                signoff_place.set(if *has_signoff {
+                    collect_signoff_place(&host, &signoff_place, &counter)
+                } else {
+                    SignoffPlace::Pending
+                });
+            }
+        },
+    );
+    let inline_signoff = match (&props.signoff, &*signoff_place) {
+        (Some(signoff), SignoffPlace::Inline { target, key }) => Some(yew::create_portal(
+            html! { <span key={key.clone()} class="message-signoff">{signoff.clone()}</span> },
+            target.clone(),
+        )),
+        _ => None,
+    };
+    let line_signoff = match (&props.signoff, &*signoff_place) {
+        (Some(signoff), SignoffPlace::Line) => Some(signoff.clone()),
+        _ => None,
+    };
     // Keep the portal list under a stable VDOM parent. Mixing keyed portals
     // directly with VRaw replaces the raw nodes when the first portal mounts.
     html! {
@@ -708,8 +787,8 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
             })}
         >
             {Html::from_html_unchecked(props.html.clone())}
-            if !props.sources.is_empty() || !math_slots.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() {
-            <span hidden=true>
+            if !props.sources.is_empty() || !math_slots.is_empty() || !quote_age_slots.is_empty() || !quote_task_slots.is_empty() || inline_signoff.is_some() {
+            <span class={MARKDOWN_BODY_PORTALS} hidden=true>
             {for diagram_slots.iter().filter_map(|slot| {
                 let source = props.sources.get(slot.index)?.clone();
                 Some(yew::create_portal(html! {
@@ -744,7 +823,11 @@ pub(super) fn markdown_body(props: &MarkdownBodyProps) -> Html {
                     slot.before.clone(),
                 )))
             })}
+            {for inline_signoff}
             </span>
+            }
+            if let Some(signoff) = line_signoff {
+                <p class="message-signoff-line"><span class="message-signoff">{signoff}</span></p>
             }
         </div>
     }

@@ -553,7 +553,7 @@
   margin-left: auto;
   float: none;
 }
-.markdown-body .message-quote-signoff {
+.markdown-body :is(.message-quote-signoff, .message-signoff) {
   display: inline-flex;
   max-width: 100%;
   min-width: 0;
@@ -573,6 +573,10 @@
 .markdown-body .message-quote-signoff-line:has(> .message-quote-signoff:empty) {
   display: none;
 }
+/* A prose card signs its final paragraph the way a quote signs its tail; a
+   card ending in any other block gives the signoff its own trailing line. */
+.markdown-body > p:has(> .message-signoff) { display: flow-root; }
+.markdown-body .message-signoff .message-agent-name { flex: 0 1 auto; font-size: inherit; font-weight: 600; line-height: inherit; }
 .markdown-body .message-quote-card:has(
   > .message-quote-body > p.message-image-stack:last-child
 ) > .message-quote-signoff {
