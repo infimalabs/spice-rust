@@ -88,3 +88,27 @@ ISO timestamps carrying seconds, home paths and credential markers. Dates are
 published at day or hour granularity, in UTC. The aliases reduce disclosure.
 They do not guarantee protection against re-identification from outside
 information.
+
+## Visual edition
+
+The field guide is diagram-led: a 20-figure linked contact sheet, a UTC
+delivery calendar, integration-aligned exposure, conditional quantile plots,
+first-verdict shares, ordered correction paths, a proof mechanism schematic,
+observed provider-session spans, an origin tree, typed adjacency maps and
+exact merge-parent joins. The print edition has 23 portrait sheets. The
+publication data and measurement definitions are unchanged by this renderer
+revision; complete alternatives remain in `tables.html`.
+
+Figure numbers follow reading order. Colour belongs to the diagram family:
+magnitude is orange, flow blue, structure violet, time magenta and topology
+green. Counts, units and populations travel with each figure. Calendar width,
+count width, within-group shares, canonical sequence and schematic connections
+are explicitly different encodings. Observed session spans never imply
+continuous activity, and integration bands never imply runtime activation.
+
+Print admission is necessary but not a visual review. Rasterize the admitted
+PDF and inspect every page for readable labels, connectors crossing text,
+legends, scale, clipping, crowding and footer spacing. Exercise the contact
+sheet's figure links and the figures' complete-table links with the network
+disabled. Keep screenshots and the private admission receipt outside the
+publication tree; the public manifest carries only the sanitized print receipt.

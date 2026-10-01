@@ -4,13 +4,89 @@ use super::super::publication::{Publication, Quantity};
 use super::{Result, escape, number};
 use std::path::Path;
 
+pub(super) mod intervals;
+pub(super) mod sequences;
+pub(super) mod topology;
+
+// Figure order is editorial; colour belongs to the visual family, never rank.
+pub(super) const ATLAS: [(&str, &str, &str); 20] = [
+    ("delivery-calendar", "A month, not an average day", "Time"),
+    ("delivery-composition", "Where the work lives", "Magnitude"),
+    (
+        "integration-windows",
+        "Integration is not activation",
+        "Time",
+    ),
+    ("phase-outcomes", "Same follow-up, different mix", "Flow"),
+    ("waiting-clock", "The queue has a long tail", "Magnitude"),
+    ("held-clock", "A different clock", "Magnitude"),
+    (
+        "admission-disposition",
+        "The unfinished denominator",
+        "Magnitude",
+    ),
+    ("inter-claim-gaps", "Between claims", "Magnitude"),
+    (
+        "first-review-verdict",
+        "First clean is not final clean",
+        "Flow",
+    ),
+    (
+        "ordered-review-rounds",
+        "Most reviews stop at one",
+        "Magnitude",
+    ),
+    (
+        "correction-flows",
+        "The correction has its own route",
+        "Structure",
+    ),
+    (
+        "correction-circuit",
+        "Finding, correction, re-review",
+        "Structure",
+    ),
+    (
+        "recorded-materialization-seconds",
+        "Unchanged bytes, avoided seconds",
+        "Magnitude",
+    ),
+    (
+        "recorded-materialization-crates",
+        "Recompilation is a separate measure",
+        "Magnitude",
+    ),
+    (
+        "proof-boundary",
+        "Reuse credit, keep the obligation",
+        "Structure",
+    ),
+    ("session-spans", "Stable lanes, changing sessions", "Time"),
+    (
+        "lane-exposure",
+        "Exposure does not rank workers",
+        "Magnitude",
+    ),
+    ("campaign-origins", "One seed, many hands", "Topology"),
+    (
+        "campaign-layers",
+        "Three relations, one node set",
+        "Topology",
+    ),
+    (
+        "git-joins",
+        "The implementation is a merge parent",
+        "Topology",
+    ),
+];
+
 const WIDTH: f64 = 660.0;
-const ROW: f64 = 25.0;
+const ROW: f64 = 35.0;
 const TOP: f64 = 34.0;
 const LABEL: f64 = 280.0;
 const VALUE: f64 = 58.0;
 const COLORS: [&str; 6] = [
-    "#255b60", "#963f2d", "#5a627b", "#696c34", "#6e525e", "#4b6475",
+    "#2a78d6", "#c05629", "#6554a4", "#737329", "#b34d7a", "#128c68",
 ];
 const SVG_FONT_FACE: &str =
     "@font-face{font-family:LMSans;src:url('lmsans10-regular.otf') format('opentype')}";
@@ -42,7 +118,7 @@ pub(super) fn bars(
     for (index, row) in rows.iter().enumerate() {
         let y = TOP + index as f64 * ROW;
         let width = row.value / maximum * (WIDTH - LABEL - VALUE);
-        svg.push_str(&format!("<text x=\"0\" y=\"{}\">{}</text><rect x=\"{LABEL}\" y=\"{y}\" width=\"{width:.3}\" height=\"17\" fill=\"{}\"/><text x=\"{}\" y=\"{}\" text-anchor=\"end\">{}</text>",y+13.0,escape(&short(&row.label)),COLORS[index%COLORS.len()],WIDTH-2.0,y+13.0,number(row.value)));
+        svg.push_str(&format!("<text x=\"0\" y=\"{}\">{}</text><path d=\"M{LABEL} {}H602\" stroke=\"#dde1e3\"/><rect x=\"{LABEL}\" y=\"{y}\" width=\"{width:.3}\" height=\"23\" fill=\"#c05629\"/><text x=\"{}\" y=\"{}\" text-anchor=\"end\">{}</text>",y+16.0,escape(&short(&row.label)),y+24.0,WIDTH-2.0,y+16.0,number(row.value)));
     }
     svg.push_str("</svg>");
     figure(
@@ -78,12 +154,22 @@ pub(super) fn outcomes(publication: &Publication, public: &Path, name: &str) -> 
             .or_default()
             .push((outcome, row.value));
     }
+    let mut groups = groups.into_iter().collect::<Vec<_>>();
+    groups.sort_by_key(|(group, _)| {
+        if group.starts_with("Before") {
+            0
+        } else if group.starts_with("After blocking") {
+            1
+        } else {
+            2
+        }
+    });
     let mut svg = opening(
         TOP + groups.len() as f64 * (OUTCOME_ROW + OUTCOME_ROW) + OUTCOME_ROW,
         "Phase outcomes within 24 hours",
         name,
     );
-    svg.push_str(&format!("<defs><pattern id=\"{name}-release\" width=\"7\" height=\"7\" patternUnits=\"userSpaceOnUse\"><rect width=\"7\" height=\"7\" fill=\"#963f2d\"/><path d=\"M-2 2L2-2M0 7L7 0M5 9L9 5\" stroke=\"#faf7ef\" stroke-width=\"1\"/></pattern><pattern id=\"{name}-lapse\" width=\"7\" height=\"7\" patternUnits=\"userSpaceOnUse\"><rect width=\"7\" height=\"7\" fill=\"#5a627b\"/><circle cx=\"3\" cy=\"3\" r=\"1\" fill=\"#faf7ef\"/></pattern></defs><text x=\"0\" y=\"18\">First boundary in 24h · counts remain in each group's denominator</text>"));
+    svg.push_str(&format!("<defs><pattern id=\"{name}-release\" width=\"7\" height=\"7\" patternUnits=\"userSpaceOnUse\"><rect width=\"7\" height=\"7\" fill=\"#c05629\"/><path d=\"M-2 2L2-2M0 7L7 0M5 9L9 5\" stroke=\"#faf7ef\" stroke-width=\"1\"/></pattern><pattern id=\"{name}-lapse\" width=\"7\" height=\"7\" patternUnits=\"userSpaceOnUse\"><rect width=\"7\" height=\"7\" fill=\"#6554a4\"/><circle cx=\"3\" cy=\"3\" r=\"1\" fill=\"#faf7ef\"/></pattern></defs><text x=\"0\" y=\"18\">First boundary in 24h · shares within each row</text>"));
     for (index, (group, outcomes)) in groups.iter().enumerate() {
         let y = TOP + index as f64 * (OUTCOME_ROW + OUTCOME_ROW);
         let total = outcomes.iter().map(|(_, count)| count).sum::<f64>();
@@ -114,80 +200,17 @@ pub(super) fn outcomes(publication: &Publication, public: &Path, name: &str) -> 
         public,
         name,
         svg,
-        "Solid teal: completed. Diagonal stripe: released. Dots: lapsed. Olive: deleted or transferred. Labels give counts where space permits; every count, including narrow segments, is in <a href=\"tables.html#Q06\">Q06</a>. Equal-width rows show within-group shares, not throughput. <a href=\"tables.html#Q07\">Q07 exposure</a>.",
-    )
-}
-
-pub(super) fn campaign(publication: &Publication, public: &Path, name: &str) -> Result<String> {
-    const LINE: f64 = 16.0;
-    let campaign = &publication.campaign;
-    let mut rows = Vec::with_capacity(campaign.nodes.len());
-    for node in &campaign.nodes {
-        let columns = ["origin", "blocking dependency", "correction dependency"].map(|layer| {
-            campaign
-                .edges
-                .iter()
-                .filter(|edge| edge.from == node.task && edge.layer == layer)
-                .map(|edge| edge.to.as_str())
-                .collect::<Vec<_>>()
-        });
-        let lines = columns
-            .iter()
-            .map(|targets| targets.len().div_ceil(2))
-            .max()
-            .unwrap_or(1)
-            .max(1);
-        rows.push((node, columns, (lines as f64 * LINE + 9.0).max(ROW)));
-    }
-    let height = TOP + rows.iter().map(|(_, _, height)| height).sum::<f64>() + ROW;
-    let mut svg = opening(height, "Aligned campaign relationship layers", name);
-    svg.push_str("<text x=\"0\" y=\"18\">Task / recorded phase authors</text><text x=\"300\" y=\"18\">Origin</text><text x=\"410\" y=\"18\">Blocking</text><text x=\"520\" y=\"18\">Correction</text>");
-    let mut y = TOP;
-    for (node, columns, height) in rows {
-        svg.push_str(&format!(
-            "<text x=\"0\" y=\"{}\">{} / {}</text>",
-            y + 13.0,
-            node.task,
-            if node.authors.is_empty() {
-                "no phase author".to_owned()
-            } else {
-                node.authors.join(", ")
-            }
-        ));
-        for (x, targets) in [300, 410, 520].into_iter().zip(columns) {
-            if targets.is_empty() {
-                svg.push_str(&format!("<text x=\"{x}\" y=\"{}\">—</text>", y + 13.0));
-            }
-            for (index, chunk) in targets.chunks(2).enumerate() {
-                svg.push_str(&format!(
-                    "<text x=\"{x}\" y=\"{}\">{}</text>",
-                    y + 13.0 + index as f64 * LINE,
-                    chunk.join(", ")
-                ));
-            }
-        }
-        svg.push_str(&format!(
-            "<path d=\"M0 {}H660\" stroke=\"#bcc3be\" stroke-width=\"0.5\"/>",
-            y + height - 3.0
-        ));
-        y += height;
-    }
-    svg.push_str("</svg>");
-    figure(
-        public,
-        name,
-        svg,
-        "Each column names the destination of that row's typed relationship. Origin points from child to filing parent; blocking and correction dependencies point from dependent to prerequisite. Correction requests are separately listed in the alternatives. A dash means no displayed relation, not no outside dependency. <a href=\"tables.html#campaign\">Complete node/edge alternatives and Q28–Q29 frontier</a>.",
+        "Solid blue: completed. Orange stripe: released. Violet dots: lapsed. Olive: deleted or transferred. Labels give counts where space permits; every count, including narrow segments, is in <a href=\"tables.html#Q06\">Q06</a>. Equal-width rows show within-group shares, not throughput. <a href=\"tables.html#Q07\">Q07 exposure</a>.",
     )
 }
 
 pub(super) fn continuity(publication: &Publication, public: &Path, name: &str) -> Result<String> {
+    const EXPOSURE_ROW: f64 = 20.0;
     let lanes = publication
         .continuity
         .lanes
         .iter()
         .filter(|lane| lane.admitted_episodes > 0)
-        .take(12)
         .collect::<Vec<_>>();
     let maximum = lanes
         .iter()
@@ -195,21 +218,24 @@ pub(super) fn continuity(publication: &Publication, public: &Path, name: &str) -
         .fold(0.0_f64, f64::max)
         .max(1.0);
     let mut svg = opening(
-        TOP + lanes.len() as f64 * ROW + ROW,
+        TOP + lanes.len() as f64 * EXPOSURE_ROW + EXPOSURE_ROW,
         "Lane-stable exposure and provider spans",
         name,
     );
     svg.push_str("<text x=\"0\" y=\"18\">Lane · episodes / provider spans / compactions · bar: held minutes</text>");
     for (index, lane) in lanes.iter().enumerate() {
-        let y = TOP + index as f64 * ROW;
-        svg.push_str(&format!("<text x=\"0\" y=\"{}\">{} · {} / {} / {}</text><rect x=\"{LABEL}\" y=\"{y}\" height=\"17\" width=\"{:.3}\" fill=\"#255b60\"/><text x=\"{}\" y=\"{}\" text-anchor=\"end\">{}</text>",y+13.0,lane.lane,lane.admitted_episodes,lane.provider_sessions,lane.compactions,lane.held_minutes/maximum*(WIDTH-LABEL-VALUE),WIDTH-2.0,y+13.0,number(lane.held_minutes)));
+        let y = TOP + index as f64 * EXPOSURE_ROW;
+        svg.push_str(&format!("<text x=\"0\" y=\"{}\">{} · {} / {} / {}</text><rect x=\"{LABEL}\" y=\"{y}\" height=\"13\" width=\"{:.3}\" fill=\"#c05629\"/><text x=\"{}\" y=\"{}\" text-anchor=\"end\">{}</text>",y+12.0,lane.lane,lane.admitted_episodes,lane.provider_sessions,lane.compactions,lane.held_minutes/maximum*(WIDTH-LABEL-VALUE),WIDTH-2.0,y+12.0,number(lane.held_minutes)));
     }
     svg.push_str("</svg>");
     figure(
         public,
         name,
         svg,
-        "Literal identity order, not a ranking. All lanes and session strips, including omitted lanes, are in the <a href=\"tables.html#continuity\">complete alternatives</a>. Held minutes are wall exposure, not labor or CPU. Q21–Q24.",
+        &format!(
+            "All {} lanes with in-window admissions, in literal identity order. Zero-admission lanes remain in the <a href=\"tables.html#continuity\">complete alternatives</a>. Bars: horizon-capped held minutes, not labor or CPU. Counts: admitted episodes / provider-session spans / compactions. Q21–Q24.",
+            lanes.len()
+        ),
     )
 }
 
@@ -226,8 +252,24 @@ fn figure(public: &Path, name: &str, mut svg: String, caption: &str) -> Result<S
         svg.replace_range(start..start + SVG_FONT_FACE.len(), "");
     }
     Ok(format!(
-        "<figure>{svg}<figcaption>{caption}</figcaption></figure>"
+        "<figure id=\"fig-{name}\" class=\"family-{}\"><div class=\"figure-label\">{}</div>{svg}<figcaption>{caption}</figcaption></figure>",
+        family(name).to_lowercase(),
+        figure_label(name)
     ))
+}
+
+fn family(name: &str) -> &'static str {
+    ATLAS
+        .iter()
+        .find(|row| row.0 == name)
+        .map_or("Magnitude", |row| row.2)
+}
+
+fn figure_label(name: &str) -> String {
+    ATLAS.iter().position(|row| row.0 == name).map_or_else(
+        || "Magnitude · wall exposure".to_owned(),
+        |index| format!("{:02} · {} · {}", index + 1, ATLAS[index].2, ATLAS[index].1),
+    )
 }
 fn short(label: &str) -> String {
     label
