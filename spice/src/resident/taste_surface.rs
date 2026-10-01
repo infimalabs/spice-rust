@@ -1270,6 +1270,7 @@ fn guarded_context(
     let page = read.selected_fact_page(
         &CONTEXT_KINDS,
         Some(anchor),
+        None,
         journal::FactReadBudget::RETAINED,
     )?;
     if let Some(continuation) = page.continuation {

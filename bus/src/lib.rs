@@ -400,7 +400,7 @@ mod runtime {
             let (answer, receiver) = mpsc::sync_channel(1);
             let transaction = Box::new(move |journal: &mut Journal| {
                 let result =
-                    journal.read(move |read| read.selected_fact_page(&kinds, after, budget));
+                    journal.read(move |read| read.selected_fact_page(&kinds, after, None, budget));
                 let respond = Box::new(move || {
                     let _ = answer.send(result);
                 });

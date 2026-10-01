@@ -37,6 +37,7 @@ fn dispatch_client(
 ) -> Outcome<CommandAnswer> {
     match contract.path {
         ["board"] => client_board(repository, contract, matches),
+        ["dev", "report-page"] => client_report(repository, contract, matches),
         ["board", "graph"] => client_graph(repository, contract, matches),
         ["board", "handout"] => client_handout(repository, contract, matches),
         ["doc"] => run_doc(repository, contract, matches, dialect::emit),
@@ -66,6 +67,43 @@ fn dispatch_client(
             "use a registered board, task, or doc leaf",
         ),
     }
+}
+
+fn client_report(
+    repository: &Repository,
+    contract: &Contract,
+    matches: &ArgMatches,
+) -> Outcome<CommandAnswer> {
+    const MAX_REQUEST_BYTES: u64 = 16 * 1024;
+    let path = matches
+        .get_one::<String>("REQUEST")
+        .expect("generated development report parser requires REQUEST");
+    let file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(error) => return environment_fault("report::request-unreadable", &error.to_string()),
+    };
+    let mut bytes = Vec::new();
+    if let Err(error) = file.take(MAX_REQUEST_BYTES + 1).read_to_end(&mut bytes) {
+        return environment_fault("report::request-unreadable", &error.to_string());
+    }
+    if bytes.len() as u64 > MAX_REQUEST_BYTES {
+        return refusal(
+            "report::request-too-large",
+            None,
+            "the development request exceeds 16 KiB",
+        );
+    }
+    let body: wire::intent::ReportRead = match wire::decode(&bytes) {
+        Ok(body) => body,
+        Err(error) => return refusal("report::request-invalid", None, &error.to_string()),
+    };
+    crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::ReportRead,
+        Vec::new(),
+        &body,
+    )
 }
 
 fn client_board(
@@ -1005,6 +1043,7 @@ pub(crate) fn dispatch_with_repository(
     allocation: &board::NextConfig,
 ) -> Option<Outcome<CommandAnswer>> {
     let outcome = match command.body() {
+        wire::intent::Intent::ReportRead(read) => read_report(bus, read, command, projects),
         wire::intent::Intent::BoardRead(read) => {
             read_board(bus, read, command.actor().clone(), projects, allocation)
         }

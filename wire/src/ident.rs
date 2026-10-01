@@ -86,6 +86,8 @@ pub enum Domain {
     JournalBackupMember,
     /// The exact bytes of one task-addressed sidecar artifact.
     TaskArtifactPayload,
+    /// Exact retained command request used as private report provenance.
+    ReportCommandRecord,
     /// One complete manifest-referenced task artifact store generation.
     TaskArtifactStore,
     /// The exact restore action pinned before authority replacement.
@@ -205,6 +207,7 @@ impl Domain {
             | Self::JournalBackupManifest
             | Self::JournalBackupMember
             | Self::TaskArtifactPayload
+            | Self::ReportCommandRecord
             | Self::TaskArtifactStore
             | Self::JournalRestorePlan
             | Self::DistTargetPayload
@@ -268,6 +271,7 @@ impl Domain {
             Self::JournalBackupManifest => "spice.journal.backup-manifest.v1",
             Self::JournalBackupMember => "spice.journal.backup-member.v1",
             Self::TaskArtifactPayload => "spice.task.artifact-payload.v1",
+            Self::ReportCommandRecord => "spice.report.command-record.v1",
             Self::TaskArtifactStore => "spice.task.artifact-store.v1",
             Self::JournalRestorePlan => "spice.journal.restore-plan.v1",
             Self::DistTargetPayload => "spice.dist.target-payload.v1",

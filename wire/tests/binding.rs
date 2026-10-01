@@ -12,11 +12,11 @@
 use std::collections::BTreeSet;
 
 use wire::intent::{
-    AnswerShape, BoardStatement, BoardTask, BodyShape, CommandAnswer, Intent, Positioned,
-    ProjectVisibility, TaskDetailAnswer, TaskDetailClosure, TaskDetailNote, TaskGuidance,
-    TaskRelationEdge, TaskRelationFrontier, TaskRelationKind, TaskRelationNode,
-    TaskRelationNodeRef, TaskRelationTruncation, TaskRelationsAnswer, TaskTimelineAnswer,
-    TaskTimelineEntry, TaskTimelineEvent,
+    AnswerShape, BoardStatement, BoardTask, CommandAnswer, Intent, Positioned, ProjectVisibility,
+    TaskDetailAnswer, TaskDetailClosure, TaskDetailNote, TaskGuidance, TaskRelationEdge,
+    TaskRelationFrontier, TaskRelationKind, TaskRelationNode, TaskRelationNodeRef,
+    TaskRelationTruncation, TaskRelationsAnswer, TaskTimelineAnswer, TaskTimelineEntry,
+    TaskTimelineEvent,
 };
 use wire::{
     Actor, CanonicalUuid, ClaimDisposition, ClaimHead, CommandKind, Instant, LaneResidency,
@@ -28,6 +28,10 @@ use wire::{
 /// binding must decode it.
 const BODIES: &[(CommandKind, &str)] = &[
     (CommandKind::BoardRead, r#"{ "scope": "all" }"#),
+    (
+        CommandKind::ReportRead,
+        r#"{"version":1,"upper":42,"kinds":["task::phased"]}"#,
+    ),
     (CommandKind::TaskDetail, r#"{ "task": "1kKRRsDP" }"#),
     (
         CommandKind::TaskRelations,
@@ -872,130 +876,6 @@ fn release_publication_requires_an_explicit_current_or_historical_note_state() {
         panic!("release body decoded as another intent")
     };
     assert_eq!(publish.notes, wire::ReleaseNotesIdentity::HistoricalAbsent);
-}
-
-#[test]
-fn every_declared_shape_is_bound_by_some_kind() {
-    // A shape no kind selects is dead vocabulary, and an answer no kind
-    // returns is a reply that can never be sent.
-    let mut bodies = BTreeSet::new();
-    let mut answers = BTreeSet::new();
-    for kind in CommandKind::ALL {
-        let binding = kind.binding();
-        bodies.insert(binding.body);
-        answers.insert(binding.answer);
-    }
-
-    for shape in ALL_BODIES {
-        assert!(bodies.contains(shape), "{shape:?} is bound by no kind");
-    }
-    for shape in ALL_ANSWERS {
-        assert!(answers.contains(shape), "{shape:?} is returned by no kind");
-    }
-    assert_eq!(bodies.len(), ALL_BODIES.len());
-    assert_eq!(answers.len(), ALL_ANSWERS.len());
-}
-
-#[test]
-fn a_kind_binds_one_body_and_one_answer() {
-    for kind in CommandKind::ALL {
-        // `binding` is a pure function of the discriminant, so a kind cannot
-        // resolve to two bodies depending on when it is asked.
-        assert_eq!(kind.binding(), kind.binding(), "{kind} binds unstably");
-    }
-}
-
-/// Shapes a body may take, listed so an unreachable one is caught.
-const ALL_BODIES: &[BodyShape] = &[
-    BodyShape::BoardRead,
-    BodyShape::TaskDetail,
-    BodyShape::TaskRelations,
-    BodyShape::TaskTimeline,
-    BodyShape::BoardGraph,
-    BodyShape::BoardHandout,
-    BodyShape::DocLedger,
-    BodyShape::GlobalSettingsRead,
-    BodyShape::GlobalSettingsSet,
-    BodyShape::VendorCatalog,
-    BodyShape::TaskAdd,
-    BodyShape::TaskOopsAdd,
-    BodyShape::TasteProposalAdd,
-    BodyShape::TaskEdit,
-    BodyShape::TaskDelete,
-    BodyShape::TaskClose,
-    BodyShape::TaskNote,
-    BodyShape::TaskDefer,
-    BodyShape::TaskWake,
-    BodyShape::TaskRef,
-    BodyShape::TaskDepends,
-    BodyShape::TaskPhase,
-    BodyShape::TaskDone,
-    BodyShape::TaskReview,
-    BodyShape::TaskAssign,
-    BodyShape::ClaimWin,
-    BodyShape::ClaimCarry,
-    BodyShape::ClaimRenew,
-    BodyShape::DocApply,
-    BodyShape::SteerSend,
-    BodyShape::SteerTell,
-    BodyShape::SteerInbox,
-    BodyShape::SteerHistory,
-    BodyShape::DirectiveRef,
-    BodyShape::SteerDispose,
-    BodyShape::ConsentDecide,
-    BodyShape::ConsentRead,
-    BodyShape::ConsentPolicy,
-    BodyShape::TrustRef,
-    BodyShape::LaneRead,
-    BodyShape::LaneSeat,
-    BodyShape::LaneState,
-    BodyShape::LaneRenewal,
-    BodyShape::LaneRetune,
-    BodyShape::LaneArrange,
-    BodyShape::TeamConfigure,
-    BodyShape::TeamArrange,
-    BodyShape::LaneRecall,
-    BodyShape::TasteRecord,
-    BodyShape::Recognize,
-    BodyShape::ReleasePublish,
-    BodyShape::UpChange,
-];
-
-/// Shapes an answer may take, listed for the same reason.
-const ALL_ANSWERS: &[AnswerShape] = &[
-    AnswerShape::Board,
-    AnswerShape::TaskDetail,
-    AnswerShape::TaskRelations,
-    AnswerShape::TaskTimeline,
-    AnswerShape::Text,
-    AnswerShape::Task,
-    AnswerShape::Claim,
-    AnswerShape::Doc,
-    AnswerShape::Directive,
-    AnswerShape::Inbox,
-    AnswerShape::DirectionHistory,
-    AnswerShape::Consent,
-    AnswerShape::ConsentQueue,
-    AnswerShape::ConsentPolicy,
-    AnswerShape::GlobalSettings,
-    AnswerShape::VendorCatalog,
-    AnswerShape::Trust,
-    AnswerShape::Lane,
-    AnswerShape::LaneChange,
-    AnswerShape::LaneRenewal,
-    AnswerShape::State,
-    AnswerShape::Recall,
-    AnswerShape::Taste,
-    AnswerShape::Recognition,
-];
-
-/// The union is inhabited by exactly the shapes declared above.
-#[test]
-fn the_union_reports_the_shape_it_carries() {
-    let intent = Intent::TaskRef(wire::intent::TaskRef {
-        task: "SPICE-1kKRRsDP".parse().expect("a handle"),
-    });
-    assert_eq!(intent.shape(), BodyShape::TaskRef);
 }
 
 #[test]

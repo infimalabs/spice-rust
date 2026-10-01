@@ -27,7 +27,12 @@ fn selected_fact_pages_use_the_kind_index_and_decode_only_matching_rows() {
     reset_indexed_read_metrics();
     let selected = journal
         .read(|read| {
-            read.selected_fact_page(&[FactKind::TaskPhased], None, FactReadBudget::RETAINED)
+            read.selected_fact_page(
+                &[FactKind::TaskPhased],
+                None,
+                None,
+                FactReadBudget::RETAINED,
+            )
         })
         .expect("selected fact page read");
     assert_eq!(selected.rows.len(), 1);
@@ -84,7 +89,7 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
         FactReadBudget::new(4, MAX_RETAINED_FACT_PAGE_BYTES).expect("small row budget is admitted");
     reset_indexed_read_metrics();
     let first = journal
-        .read(|read| read.selected_fact_page(&[FactKind::TaskPhased], None, row_budget))
+        .read(|read| read.selected_fact_page(&[FactKind::TaskPhased], None, None, row_budget))
         .expect("bounded retained page");
     assert_eq!(
         first.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
@@ -98,7 +103,12 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
     reset_indexed_read_metrics();
     let second = journal
         .read(|read| {
-            read.selected_fact_page(&[FactKind::TaskPhased], first.continuation, row_budget)
+            read.selected_fact_page(
+                &[FactKind::TaskPhased],
+                first.continuation,
+                None,
+                row_budget,
+            )
         })
         .expect("retained page resumes after its cursor");
     assert_eq!(
@@ -123,7 +133,7 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
         .expect("exact first-row byte budget is admitted");
     reset_indexed_read_metrics();
     let bytes = journal
-        .read(|read| read.selected_fact_page(&[FactKind::TaskPhased], None, byte_budget))
+        .read(|read| read.selected_fact_page(&[FactKind::TaskPhased], None, None, byte_budget))
         .expect("byte-bounded retained page");
     assert_eq!(bytes.rows.len(), 1);
     assert_eq!(bytes.continuation, Some(seq(2)));
@@ -136,7 +146,7 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
         .expect("smaller positive byte budget is admitted");
     reset_indexed_read_metrics();
     let indivisible = journal
-        .read(|read| read.selected_fact_page(&[FactKind::TaskPhased], None, too_small))
+        .read(|read| read.selected_fact_page(&[FactKind::TaskPhased], None, None, too_small))
         .expect("a first indivisible row advances beyond the aggregate target");
     assert_eq!(indivisible.rows.len(), 1);
     assert_eq!(indivisible.continuation, Some(seq(2)));
@@ -154,6 +164,75 @@ fn retained_fact_pages_bound_matching_rows_and_bytes_independently_of_history() 
     let recent_metrics = indexed_read_metrics();
     assert_eq!((recent_metrics.queries, recent_metrics.rows), (1, 5));
     assert!(recent_metrics.decoded_bytes <= MAX_RETAINED_FACT_PAGE_BYTES as u64);
+}
+
+#[test]
+fn historical_selected_pages_keep_their_upper_bound_across_appends() {
+    let journal = authority_fixture();
+    insert_fact(
+        &journal,
+        fact(
+            3,
+            None,
+            FactKind::TaskPhased,
+            json!({"task": "1kKRRsDP", "phase": "todo"}),
+        ),
+    );
+    journal
+        .connection
+        .execute("UPDATE cursor_head SET seq = 3 WHERE singleton = 1", [])
+        .expect("advance historical fixture");
+    let budget = FactReadBudget::new(1, MAX_RETAINED_FACT_PAGE_BYTES).expect("one-row budget");
+    let first = journal
+        .read(|read| read.selected_fact_page(&[FactKind::TaskPhased], None, Some(seq(3)), budget))
+        .expect("historical first page");
+    assert_eq!(
+        first.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        [seq(2)]
+    );
+    assert_eq!(first.continuation, Some(seq(2)));
+    assert_eq!(first.horizon, Some(seq(3)));
+
+    insert_fact(
+        &journal,
+        fact(
+            4,
+            None,
+            FactKind::TaskPhased,
+            json!({"task": "1kKRRsDP", "phase": "review"}),
+        ),
+    );
+    journal
+        .connection
+        .execute("UPDATE cursor_head SET seq = 4 WHERE singleton = 1", [])
+        .expect("append beyond the historical prefix");
+    let second = journal
+        .read(|read| {
+            read.selected_fact_page(
+                &[FactKind::TaskPhased],
+                first.continuation,
+                Some(seq(3)),
+                budget,
+            )
+        })
+        .expect("historical continuation after an append");
+    assert_eq!(
+        second.rows.iter().map(|fact| fact.seq).collect::<Vec<_>>(),
+        [seq(3)]
+    );
+    assert_eq!(second.continuation, None);
+    assert_eq!(second.horizon, Some(seq(3)));
+
+    assert!(matches!(
+        journal.read(|read| {
+            read.selected_fact_page(&[FactKind::TaskPhased], None, Some(seq(5)), budget)
+        }),
+        Err(GuardError::Invalid(_))
+    ));
+    assert!(matches!(
+        journal.read(|read| read.selected_fact_page(&[], Some(seq(4)), Some(seq(3)), budget)),
+        Err(GuardError::Invalid(_))
+    ));
 }
 
 #[test]
@@ -196,6 +275,7 @@ fn ordinary_retained_pages_keep_decoded_bytes_within_the_aggregate_target() {
             read.selected_fact_page(
                 &[FactKind::TaskNoted],
                 Some(seq(2)),
+                None,
                 FactReadBudget::RETAINED,
             )
             .map(drop)
@@ -321,6 +401,7 @@ fn retained_fact_readers_refuse_oversized_corruption_before_decoding_it() {
             read.selected_fact_page(
                 &[FactKind::TaskAdded],
                 Some(seq(2)),
+                None,
                 FactReadBudget::RETAINED,
             )
         })

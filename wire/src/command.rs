@@ -28,6 +28,8 @@ use crate::witness::{Witness, WitnessKind};
 pub enum CommandKind {
     /// Read the validated current board heads.
     BoardRead,
+    /// Read one bounded historical evidence page for the development exporter.
+    ReportRead,
     /// Read one task's current evidence and durable note history.
     TaskDetail,
     /// Read a bounded typed relationship graph centered on selected tasks.
@@ -585,6 +587,7 @@ impl CommandKind {
     /// Every command in the closed registry, in declaration order.
     pub const ALL: &'static [Self] = &[
         Self::BoardRead,
+        Self::ReportRead,
         Self::TaskDetail,
         Self::TaskRelations,
         Self::TaskTimeline,
@@ -655,6 +658,7 @@ impl CommandKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BoardRead
+            | Self::ReportRead
             | Self::TaskDetail
             | Self::TaskRelations
             | Self::TaskTimeline
@@ -720,6 +724,7 @@ impl CommandKind {
     const fn board_spelling(self) -> &'static str {
         match self {
             Self::BoardRead => "board::read",
+            Self::ReportRead => "report::read",
             Self::TaskDetail => "task::detail",
             Self::TaskRelations => "task::relations",
             Self::TaskTimeline => "task::timeline",
@@ -806,6 +811,7 @@ impl CommandKind {
     pub const fn law(self) -> Law {
         match self {
             Self::BoardRead
+            | Self::ReportRead
             | Self::TaskDetail
             | Self::TaskRelations
             | Self::TaskTimeline
@@ -977,6 +983,7 @@ impl CommandKind {
         matches!(
             self,
             Self::BoardRead
+                | Self::ReportRead
                 | Self::TaskDetail
                 | Self::TaskRelations
                 | Self::TaskTimeline

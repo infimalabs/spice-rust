@@ -18,6 +18,20 @@ use wire::intent::AnswerShape;
 /// field added to the DTO fails this crate's build.
 pub(super) const ANSWERS: &[(AnswerShape, &str)] = &[
     (
+        AnswerShape::Report,
+        r#"{
+  "version": 1,
+  "pin": {
+    "schema": 13,
+    "decoder": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c4"
+  },
+  "upper": 42,
+  "horizon_at": "2026-09-30T22:43:49.465Z",
+  "rows": []
+}"#,
+    ),
+    (
         AnswerShape::Board,
         r#"{
   "schema": 1,

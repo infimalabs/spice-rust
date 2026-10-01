@@ -195,33 +195,41 @@ impl JournalRead<'_> {
 
     /// Read one bounded page of the named fact kinds after an admitted cursor.
     ///
-    /// The `(kind, seq)` authority index makes this proportional to matching
-    /// rows. Original positions and order are retained. The continuation is
-    /// the last returned cursor, so the next call resumes strictly after it.
+    /// `upper` freezes a historical prefix; `None` uses this guard's cursor.
+    /// An unavailable upper bound or an `after` beyond it is refused. The
+    /// `(kind, seq)` index preserves original positions and order, and the
+    /// continuation resumes strictly after the last returned position.
     pub fn selected_fact_page(
         &self,
         kinds: &[wire::FactKind],
         after: Option<wire::Seq>,
+        upper: Option<wire::Seq>,
         budget: FactReadBudget,
     ) -> Result<SelectedFactPage, GuardError> {
-        let Some(horizon) = self.cursor else {
+        if upper.is_some_and(|upper| self.cursor.is_none_or(|cursor| upper > cursor)) {
+            return Err(GuardError::Invalid(format!(
+                "selected fact upper bound {upper:?} is beyond journal cursor {:?}",
+                self.cursor
+            )));
+        }
+        let Some(horizon) = upper.or(self.cursor) else {
             return Ok(SelectedFactPage {
                 rows: Vec::new(),
                 continuation: None,
                 horizon: None,
             });
         };
+        if after.is_some_and(|after| after > horizon) {
+            return Err(GuardError::Invalid(format!(
+                "selected fact cursor {after:?} is beyond selected horizon {horizon}"
+            )));
+        }
         if kinds.is_empty() || after == Some(horizon) {
             return Ok(SelectedFactPage {
                 rows: Vec::new(),
                 continuation: None,
                 horizon: Some(horizon),
             });
-        }
-        if after.is_some_and(|after| after > horizon) {
-            return Err(GuardError::Invalid(format!(
-                "selected fact cursor {after:?} is beyond journal cursor {horizon}"
-            )));
         }
         let placeholders = (3..kinds.len() + 3)
             .map(|index| format!("?{index}"))

@@ -610,7 +610,8 @@ fn report_facts(
     let mut facts = Vec::new();
     let mut after = None;
     loop {
-        let page = read.selected_fact_page(&kinds, after, journal::FactReadBudget::RETAINED)?;
+        let page =
+            read.selected_fact_page(&kinds, after, None, journal::FactReadBudget::RETAINED)?;
         facts.extend(page.rows);
         let Some(continuation) = page.continuation else {
             return Ok(facts);

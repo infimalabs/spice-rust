@@ -608,6 +608,26 @@ impl AnyFact {
             _ => None,
         }
     }
+
+    /// Task addressed by a task-content, workflow, claim, or lease fact.
+    ///
+    /// Unlike [`Self::mutated_task`], this includes maintenance that does not
+    /// advance the task generation. Read-scope admission must include those
+    /// subjects without changing mutation-generation semantics.
+    #[must_use]
+    pub fn task_subject(&self) -> Option<&crate::witness::TaskStamp> {
+        use sealed::RegisteredBody as Decoded;
+        match &self.decoded {
+            Decoded::ClaimWon(body) => Some(&body.task),
+            Decoded::ClaimCarried(body) => Some(&body.task),
+            Decoded::ClaimRebound(body) => Some(&body.task),
+            Decoded::ClaimFreed(body) => Some(&body.task),
+            Decoded::ClaimLapsed(body) => Some(&body.task),
+            Decoded::ClaimRenewed(body) => Some(&body.task),
+            Decoded::ClaimLeaseWarned(body) => Some(&body.task),
+            _ => self.mutated_task(),
+        }
+    }
 }
 
 impl<F: Body> Fact<F> {
