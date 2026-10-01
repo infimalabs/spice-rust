@@ -283,22 +283,26 @@ fn render_lane(
 ) -> Html {
     let key = availability.key();
     let label = work_card::availability_label(availability);
-    let heading = format!("work-lane-{key}");
+    let heading_id = format!("work-lane-{key}");
     let count = clusters
         .iter()
         .map(|cluster| cluster.tasks.len())
         .sum::<usize>();
+    // The lane heading rides in the reserved gutter of the lane's first card,
+    // or of its empty message, beside the first cluster's label.
+    let heading = html! {
+        <header class="work-lane-heading">
+            <h3 id={heading_id.clone()}>{label}</h3>
+            <span aria-label={format!("{count} tasks")}>{count}</span>
+        </header>
+    };
     html! {
         <section
             key={key}
             class="work-lane"
             data-work-lane={key}
-            aria-labelledby={heading.clone()}
+            aria-labelledby={heading_id}
         >
-            <header class="work-lane-heading">
-                <h3 id={heading}>{label}</h3>
-                <span aria-label={format!("{count} tasks")}>{count}</span>
-            </header>
             <div
                 class="work-lane-track"
                 tabindex="0"
@@ -306,15 +310,20 @@ fn render_lane(
                 aria-label={format!("{label} task row")}
             >
                 if count == 0 {
-                    <p class="work-lane-empty">{format!("No {} tasks.", label.to_lowercase())}</p>
+                    <div class="work-lane-vacancy">
+                        <div class="work-card-gutter">{heading}</div>
+                        <p class="work-lane-empty">{format!("No {} tasks.", label.to_lowercase())}</p>
+                    </div>
                 } else {
                     <div class="work-card-list">
-                        {for clusters.iter().flat_map(|cluster| {
+                        {for clusters.iter().enumerate().flat_map(|(cluster_index, cluster)| {
                             let label = cluster_label(cluster.key);
+                            let heading = heading.clone();
                             cluster.tasks.iter().enumerate().map(move |(index, task)| {
                                 work_card::render_grouped(
                                     task,
                                     cards,
+                                    (cluster_index == 0 && index == 0).then(|| heading.clone()),
                                     if index == 0 { label } else { None },
                                 )
                             })
