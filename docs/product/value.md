@@ -461,8 +461,9 @@ unrecognized provider shows the omp π identity. A per-member seat-details
 disclosure, scrolling inside its box, holds channel, occupant, worktree,
 residency, and session identifiers and the lane controls: Wake only on a
 seatable vacant seat, Drain only on an occupied one, Remove only on a vacant
-seat holding no claim, plus renewal and the next-launch model, which reports the
-pinned model. Drain, Remove, and renewal confirm first; the command shows in
+seat holding no claim, plus renewal on any seat (a vacant one is marked for its
+next start) and the next-launch model, which reports the pinned model. Drain,
+Remove, and renewal confirm first; the command shows in
 flight until answered, and a refusal stays with its reason. A control the
 principal's authority does not admit is absent, not disabled.
 

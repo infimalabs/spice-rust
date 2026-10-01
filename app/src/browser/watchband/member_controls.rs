@@ -252,21 +252,22 @@ fn render_renewal(
             .lanes()
             .and_then(|lanes| lanes.renewal(standing.team, member.lane)),
     );
-    // A vacant seat has no occupancy to renew, but a request already placed
-    // on it can still be withdrawn.
-    if member.occupant.is_none() && renewal.next_requested {
-        return Html::default();
-    }
     let next = MemberCommand::Renew {
         requested: renewal.next_requested,
     };
     let onclick = send(command, member.lane, next);
     if renewal.next_requested {
+        // A vacant seat is marked for replacement and stays vacant until its next start.
+        let consequence = if member.occupant.is_some() {
+            "Its current occupancy ends at the handoff."
+        } else {
+            "The seat stays vacant; its next start launches the successor."
+        };
         confirmed(
             "renew",
             renewal.heading,
             format!(
-                "Start a fresh successor for {}? Its current occupancy ends at the handoff.",
+                "Start a fresh successor for {}? {consequence}",
                 standing.label
             ),
             format!("Renew {}", standing.label),

@@ -98,10 +98,6 @@
   color: var(--ink);
   text-align: center;
 }
-.agent-renew-request {
-  border-color: color-mix(in srgb, var(--accent-slot, var(--accent)) 58%, var(--line));
-  background: color-mix(in srgb, var(--accent-slot, var(--accent)) 8%, var(--panel));
-}
 .agent-renew-request[aria-pressed="true"] {
   border-color: var(--accent-slot, var(--accent));
   background: color-mix(in srgb, var(--accent-slot, var(--accent)) 18%, var(--panel));
