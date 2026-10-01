@@ -40,7 +40,7 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) authority: SubmissionAuthority,
     pub(super) can_arrange_teams: bool,
     pub(super) can_configure: bool,
-    pub(super) topology: Vec<(CanonicalUuid, Vec<CanonicalUuid>)>,
+    pub(super) topology: Rc<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>>,
     pub(super) quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
     pub(super) surface: UseStateHandle<SurfaceData>,
     pub(super) timeline_request: Callback<TeamFlowPageRequest>,

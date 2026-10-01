@@ -118,7 +118,7 @@ pub(super) fn render_team(
         SubmissionAuthority::derive(connection.is_online(), |kind| runtime.offers(kind));
     let can_configure = runtime.offers(CommandKind::TeamConfigure);
     let can_arrange_teams = runtime.offers(CommandKind::TeamArrange);
-    let topology = watchband::topology(&lanes.lanes);
+    let topology = Rc::new(watchband::topology(&lanes.lanes));
     let quote_agents = Rc::new(
         lanes
             .lanes
