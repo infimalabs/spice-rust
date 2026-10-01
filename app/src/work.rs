@@ -13,7 +13,7 @@ pub use relationship::{
     WorkRelationshipOriginNode, WorkRelationshipTaskNode,
 };
 mod team;
-pub use team::{TeamWait, TeamWork, team_work};
+pub use team::team_held_work;
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
