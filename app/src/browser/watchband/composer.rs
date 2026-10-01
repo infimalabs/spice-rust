@@ -461,6 +461,7 @@ fn render_agent_message_card(
         unlinked_media,
         media_description,
         image_only,
+        lone_tool_image,
         card_label,
         classifications,
     } = agent_message_presentation(
@@ -481,6 +482,7 @@ fn render_agent_message_card(
                 "mosaic-message-card",
                 is_boundary.then_some("mosaic-compaction-card"),
                 (!is_boundary && image_only).then_some("mosaic-message-card--image-only"),
+                lone_tool_image.then_some("mosaic-message-card--lone-image"),
                 message.final_answer.then_some("final"),
                 correspondent.speaking.then_some("now-playing"),
                 layout.lifecycle.as_str(),
@@ -592,6 +594,8 @@ struct AgentMessagePresentation<'a> {
     /// What a tool card says about its images in place of its preview line.
     media_description: Option<String>,
     image_only: bool,
+    /// A tool card whose whole face is one image, which fills its committed card.
+    lone_tool_image: bool,
     card_label: String,
     classifications: ClassificationMetrics,
 }
@@ -701,6 +705,7 @@ fn agent_message_presentation<'a>(
         .collect::<Vec<_>>();
     let image_only = rendered_markdown.image_only
         || (!unlinked_media.is_empty() && shown_text.trim().is_empty());
+    let lone_tool_image = is_tool && image_only && unlinked_media.len() == 1;
     AgentMessagePresentation {
         source_id: agent_message_source_id(message),
         attribution,
@@ -718,6 +723,7 @@ fn agent_message_presentation<'a>(
         unlinked_media,
         media_description,
         image_only,
+        lone_tool_image,
         card_label,
         classifications,
     }
