@@ -703,10 +703,9 @@
 .task-text { min-width: 0; overflow-wrap: anywhere; }
 .task-text > :first-child { margin-top: 0; }
 .task-text > :last-child { margin-bottom: 0; }
-.task-text :is(p, ul, ol, pre, blockquote, table) { margin: 0 0 8px; }
+.task-text :is(p, ul, ol, pre, blockquote, .markdown-table) { margin: 0 0 8px; }
 .task-text h5 { margin: 12px 0 6px; font-size: .8rem; }
 .task-text pre { max-height: 24rem; overflow: auto; }
-.task-text table { display: block; max-width: 100%; overflow-x: auto; }
 .task-text img { max-width: 100%; }
 .task-text a { color: var(--accent); }
 .work-detail-section ul > li + li { margin-top: 4px; }

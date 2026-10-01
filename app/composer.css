@@ -463,6 +463,20 @@
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
+/* Tables scroll inside their own box, like fenced code. The box contains its
+   inline size so a wide table cannot widen the card or detail column around
+   it. Cells keep words whole rather than inheriting overflow-wrap:anywhere,
+   which would let every column collapse to one glyph instead of overflowing.
+   The renderer marks columns (composer_markdown/tables.rs): short cells stay
+   on one line, prose wraps at words above a readable floor, and a column with
+   a token too long to keep whole breaks it above its floor. */
+.markdown-table { max-width: 100%; margin: .55em 0; overflow-x: auto; contain: inline-size; }
+.markdown-table table { margin: 0; }
+.markdown-table :is(th, td) { overflow-wrap: normal; white-space: nowrap; }
+.markdown-table :is(th, td)[data-measure="prose"] { min-width: 14ch; white-space: normal; }
+.markdown-table :is(th, td)[data-measure="token"] {
+  min-width: 18ch; overflow-wrap: anywhere; white-space: normal;
+}
 .markdown-body blockquote:has(.message-quote-signoff:not(:empty)) {
   display: flow-root;
 }
