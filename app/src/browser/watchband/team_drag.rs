@@ -345,7 +345,7 @@ fn team_drag_start(
 fn team_drag_movement(
     team: CanonicalUuid,
     topology_revision: u64,
-    topology: Vec<(CanonicalUuid, Vec<CanonicalUuid>)>,
+    topology: Rc<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>>,
     state: &TeamDragState,
 ) -> Callback<PointerEvent> {
     let state = state.clone();
@@ -381,7 +381,7 @@ fn team_drag_movement(
 fn team_drag_finish(
     team: CanonicalUuid,
     topology_revision: u64,
-    topology: Vec<(CanonicalUuid, Vec<CanonicalUuid>)>,
+    topology: Rc<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>>,
     sender: SenderHandle,
     state: &TeamDragState,
 ) -> Callback<PointerEvent> {
@@ -449,21 +449,16 @@ pub(super) fn team_dragging(
     team: CanonicalUuid,
     enabled: bool,
     topology_revision: u64,
-    topology: &[(CanonicalUuid, Vec<CanonicalUuid>)],
+    topology: &Rc<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>>,
     sender: &SenderHandle,
     state: &TeamDragState,
 ) -> TeamDragging {
     let cancel = team_drag_cancel(team, state);
+    let topology = Rc::clone(topology);
     TeamDragging {
         start: team_drag_start(team, enabled, topology_revision, state),
-        movement: team_drag_movement(team, topology_revision, topology.to_vec(), state),
-        finish: team_drag_finish(
-            team,
-            topology_revision,
-            topology.to_vec(),
-            sender.clone(),
-            state,
-        ),
+        movement: team_drag_movement(team, topology_revision, Rc::clone(&topology), state),
+        finish: team_drag_finish(team, topology_revision, topology, sender.clone(), state),
         cancel,
     }
 }
