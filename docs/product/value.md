@@ -379,7 +379,8 @@ an accented card with member, standing, two reserved command lines, and age,
 keeping headers for assistive technology. Five jobs show in full; more scroll
 inside the table under pinned headers with the sixth peeking, so the pane never
 grows past that. The full command shows on hover, standing changes update in
-place, and an empty table holds one fixed-height line.
+place, and an empty table reserves one job's height, so the first kept job
+moves nothing below it.
 
 Each team projects open work into three stable lanes: Up next in offer order,
 In flight with the claiming member's name and accent, and Waiting for blocked,

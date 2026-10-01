@@ -461,7 +461,9 @@ const KEPT_JOBS_VISIBLE: usize = 5;
 
 /// Every command the team's members keep, oldest first, one keyed row each.
 /// Up to [`KEPT_JOBS_VISIBLE`] rows show in full; beyond that the table
-/// scrolls inside a keyboard-reachable region under pinned headers.
+/// scrolls inside a keyboard-reachable region under pinned headers. The
+/// region stands with no jobs too, reserving one job's height, so the first
+/// job lands without moving what follows.
 pub(super) fn render_team_jobs(standings: &[Standing], team: wire::CanonicalUuid) -> Html {
     let jobs = watchband::team_jobs(standings);
     let heading = format!("kept-jobs-{team}");
@@ -474,15 +476,15 @@ pub(super) fn render_team_jobs(standings: &[Standing], team: wire::CanonicalUuid
                     <span>{jobs.len()}</span>
                 }
             </header>
-            if jobs.is_empty() {
-                <p class="team-task-empty">{"No kept jobs."}</p>
-            } else {
-                <div
-                    class="team-job-scroll"
-                    tabindex={scrolls.then_some("0")}
-                    role={scrolls.then_some("region")}
-                    aria-labelledby={scrolls.then_some(heading)}
-                >
+            <div
+                class="team-job-scroll"
+                tabindex={scrolls.then_some("0")}
+                role={scrolls.then_some("region")}
+                aria-labelledby={scrolls.then_some(heading)}
+            >
+                if jobs.is_empty() {
+                    <p class="team-job-empty">{"No kept jobs."}</p>
+                } else {
                     <table class="team-job-table">
                         <thead>
                             <tr>
@@ -496,8 +498,8 @@ pub(super) fn render_team_jobs(standings: &[Standing], team: wire::CanonicalUuid
                             {for jobs.iter().map(render_team_job)}
                         </tbody>
                     </table>
-                </div>
-            }
+                }
+            </div>
         </section>
     }
 }

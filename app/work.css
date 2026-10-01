@@ -1299,14 +1299,20 @@
 /* Kept jobs show in full up to --team-job-visible rows, which must equal
    KEPT_JOBS_VISIBLE in watchband/team_work.rs; beyond that the table scrolls
    in place under pinned headers, capped half a row past the limit so the next
-   row peeks. Pitches approximate one row, and the half-row margin absorbs
-   their rounding. The inner scroll chains to the pane at its ends. */
+   row peeks. The header and each row are held at --team-job-head and
+   --team-job-row, floors their contents fit, so with no jobs the region
+   reserves exactly one job and the first job moves nothing below it. Sizes
+   are of the content box, outside the region's own edges. The inner scroll
+   chains to the pane at its ends. */
 .team-jobs { min-width: 0; container-type: inline-size; }
 .team-job-scroll {
   --team-job-visible: 5;
-  --team-job-head: 1.75rem;
-  --team-job-pitch: 1.75rem;
-  max-block-size: calc(var(--team-job-head) + (var(--team-job-visible) + .5) * var(--team-job-pitch));
+  --team-job-head: 1.5rem;
+  --team-job-row: 1.75rem;
+  --team-job-gap: 0px;
+  box-sizing: content-box;
+  min-block-size: calc(var(--team-job-head) + var(--team-job-row));
+  max-block-size: calc(var(--team-job-head) + (var(--team-job-visible) + .5) * (var(--team-job-row) + var(--team-job-gap)));
   overflow-y: auto;
   border-block: var(--canvas-edge);
 }
@@ -1314,8 +1320,15 @@
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+.team-job-empty {
+  margin: 0;
+  padding: 7px 10px;
+  color: var(--muted);
+  font-size: .67rem;
+}
 
 .team-job-table { table-layout: fixed; font-size: .65rem; }
+.team-job-table thead tr { block-size: var(--team-job-head); }
 .team-job-table thead th {
   position: sticky;
   z-index: 1;
@@ -1327,6 +1340,7 @@
 .team-job-table th:nth-child(2),
 .team-job-table th:nth-child(4) { width: 5.5rem; }
 .team-job-table td { padding: 7px 10px; vertical-align: middle; background: color-mix(in srgb, var(--panel) 76%, var(--page)); }
+.team-job-row { block-size: var(--team-job-row); }
 .team-job-row td:first-child { border-left: 2px solid var(--accent-slot, var(--accent)); }
 .team-job-row .team-task-member { max-width: 100%; }
 .team-job-age,
@@ -1342,11 +1356,18 @@
 .team-job-row[data-job-standing="unheard"] .team-job-standing { color: var(--muted); }
 
 @container (max-width: 40rem) {
-  /* Card rows: no visible header, and each pitch is one card plus the gap. */
+  /* Card rows: no visible header, and each row is one card. */
   .team-jobs .team-job-scroll {
     --team-job-head: 0px;
-    --team-job-pitch: calc(5.875rem + 8px);
+    --team-job-row: 5.875rem;
+    --team-job-gap: 8px;
     border-block: 0;
+  }
+  /* With no jobs, an empty card slot holds the one card's place. */
+  .team-jobs .team-job-empty {
+    min-block-size: var(--team-job-row);
+    padding: 9px 10px;
+    border-block: var(--canvas-edge);
   }
   .team-jobs .team-job-table {
     display: block;
@@ -1363,9 +1384,11 @@
     white-space: nowrap;
     border: 0;
   }
-  .team-jobs .team-job-table tbody { display: grid; gap: 8px; }
+  .team-jobs .team-job-table tbody { display: grid; gap: var(--team-job-gap); }
   .team-jobs .team-job-row {
     display: grid;
+    block-size: auto;
+    min-block-size: var(--team-job-row);
     grid-template:
       "member standing" auto
       "command command" auto
