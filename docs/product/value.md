@@ -307,8 +307,9 @@ rows. Cards fill each row in allocator order and scroll horizontally, so churn
 changes contents, not board size or labels. Creation order and project/phase
 clusters rearrange the same keyed cards; each lane reserves a label gutter, so
 rearranging never moves a card vertically. Rows keep the card cap's height even
-when empty, status is textual as well as colored, and narrow layouts keep
-labeled rows.
+when empty ([a changing region holds its largest
+footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)),
+status is textual as well as colored, and narrow layouts keep labeled rows.
 
 Tasks created from a retained transcript expose one creator-context link on
 their card, Chat quick view, and detail. Its visible label is the live relative
@@ -382,14 +383,16 @@ an accented card with member, standing, two reserved command lines, and age,
 keeping headers for assistive technology. Five jobs show in full; more scroll
 inside the table under pinned headers with the sixth peeking, so the pane never
 grows past that. The full command shows on hover, standing changes update in
-place, and an empty table reserves one job's height, so the first kept job
-moves nothing below it.
+place, and an empty table reserves one job's height ([a changing region holds
+its largest
+footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
 
 Each team projects open work into three stable lanes: Up next in offer order,
 In flight with the claiming member's name and accent, and Waiting for blocked,
 deferred, and review work. Like the global rows, each lane keeps the card
-cap's height even when empty, so the first card or the last to leave moves
-nothing below, and keyed cards move without disturbing unchanged ones.
+cap's height even when empty ([a changing region holds its largest
+footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)),
+and keyed cards move without disturbing unchanged ones.
 
 A directive ledger joins browser-owned submissions to the resident inbox by
 directive or fanout identity. A fanout stays one row with per-member state
