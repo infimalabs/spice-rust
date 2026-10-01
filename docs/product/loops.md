@@ -474,6 +474,29 @@ Existing directives and transcript media retain their canonical decoding
 contract: up to 8 images, each at most 8 MiB decoded. Reading or presenting
 those bytes is not a new steering send.
 
+**Draft image annotations.** Open a pasted or dropped lane/quote attachment,
+then choose **Annotate** in its full-size preview. **Rectangle** and **Arrow**
+draw red marks in original-image coordinates; **Select** moves a mark and its
+two handles adjust rectangle corners or arrow endpoints. Selected marks can
+be moved with arrow keys (Shift moves ten pixels), removed with **Delete** or
+Backspace, and undone/redone with the toolbar or Command/Control+Z and
+Shift+Command/Control+Z. An interrupted pointer gesture is discarded.
+
+**Apply** replaces that exact draft attachment with a native-resolution PNG.
+The draft retains the original raster and editable shape list, so reopening
+**Annotate** edits the marks without drawing over previously flattened marks.
+**Cancel**, closing the preview, or leaving its owning composer discards
+unapplied edits. Identical pasted images are separate edit targets; a removed,
+submitted, or superseded attachment cannot receive a stale export.
+
+Original pixels and marks survive optimistic-send refusal restoration, but
+remain browser-local draft state: reloading the page does not persist them.
+The resident receives only the rendered raster under the existing media and
+send-size limits, not an SVG document or editable drawing state. Already-sent
+media, Markdown images, and diagrams retain the read-only Copy/Download/Close
+preview. SVG presentation and direct canvas PNG export require no drawing
+dependency or relaxation of the application CSP.
+
 OMP session records may replace inline image data with
 `blob:sha256:<lowercase-hex>`. Session readers resolve that reference only
 against the OMP state root's `blobs/` directory, require a regular

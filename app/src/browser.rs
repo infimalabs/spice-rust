@@ -413,7 +413,7 @@ impl CanvasAppState {
             },
             work.as_ref(),
         );
-        message_task_inspector::provide(self.task_inspector, canvas)
+        message_task_inspector::provide(self.task_inspector, canvas, self.composer_drafts)
     }
 }
 

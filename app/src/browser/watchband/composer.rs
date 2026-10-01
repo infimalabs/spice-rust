@@ -986,13 +986,15 @@ pub(super) fn render_quote_shards(
 /// final control still as the first image arrives.
 pub(super) fn render_image_indicators(
     lane_key: &str,
-    attachments: &[DirectiveAttachment],
+    attachments: &[crate::composer_drafts::DraftImage],
     quote_identity: Option<&str>,
     drafts: &UseReducerHandle<ComposerDrafts>,
 ) -> Html {
     html! {
         <span class="composer-shard-image-indicators">
-            {for attachments.iter().enumerate().map(|(index, attachment)| {
+            {for attachments.iter().map(|image| {
+                let attachment = &image.media;
+                let id = image.id;
                 let remove_key = lane_key.to_owned();
                 let remove_drafts = drafts.clone();
                 let remove_quote = quote_identity.map(str::to_owned);
@@ -1000,15 +1002,16 @@ pub(super) fn render_image_indicators(
                     remove_drafts.dispatch(ComposerAction::RemoveAttachment {
                         lane: remove_key.clone(),
                         quote: remove_quote.clone(),
-                        index,
+                        id,
                     });
                 });
                 html! {
                     <span
+                        key={id.to_string()}
                         class="composer-shard-image-indicator"
                         title={attachment.name.clone()}
                     >
-                        <button type="button" class="composer-shard-image-open" data-image-preview="" data-image-name={attachment.name.clone()} aria-label={format!("Open {} full size", attachment.name)}>
+                        <button type="button" class="composer-shard-image-open" data-image-preview="" data-image-name={attachment.name.clone()} data-image-lane={lane_key.to_owned()} data-image-quote={quote_identity.map(str::to_owned)} data-image-id={id.to_string()} aria-label={format!("Open {} full size", attachment.name)}>
                             <img src={attachment.data_url.clone()} alt={attachment.name.clone()} />
                         </button>
                         <button

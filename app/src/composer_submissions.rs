@@ -13,7 +13,7 @@ use wire::Disposition;
 use wire::body::DirectiveAttachment;
 use wire::intent::PendingDirective;
 
-use crate::composer_drafts::{ComposerDraft, QuoteDraft};
+use crate::composer_drafts::{ComposerDraft, DraftImage, QuoteDraft};
 
 const SUBMISSION_LIMIT: usize = 64;
 const LANE_SUBMISSION_LIMIT: usize = 16;
@@ -214,13 +214,44 @@ fn attachments_bytes(attachments: &Vec<DirectiveAttachment>) -> usize {
     )
 }
 
+fn draft_images_bytes(images: &Vec<DraftImage>) -> usize {
+    images.iter().fold(
+        images
+            .capacity()
+            .saturating_mul(std::mem::size_of::<DraftImage>()),
+        |bytes, image| {
+            let media_bytes = |media: &DirectiveAttachment| {
+                media
+                    .name
+                    .capacity()
+                    .saturating_add(media.content_type.capacity())
+                    .saturating_add(media.data_url.capacity())
+                    .saturating_add(std::mem::size_of::<DirectiveAttachment>())
+            };
+            bytes
+                .saturating_add(media_bytes(&image.media))
+                .saturating_add(if Rc::ptr_eq(&image.media, &image.original) {
+                    0
+                } else {
+                    media_bytes(&image.original)
+                })
+                .saturating_add(
+                    image
+                        .shapes
+                        .capacity()
+                        .saturating_mul(std::mem::size_of::<crate::image_annotation::Shape>()),
+                )
+        },
+    )
+}
+
 fn draft_bytes(draft: &ComposerDraft) -> usize {
     draft.quotes.iter().fold(
         draft
             .body
             .capacity()
             .saturating_add(draft.issue.as_ref().map_or(0, String::capacity))
-            .saturating_add(attachments_bytes(&draft.attachments))
+            .saturating_add(draft_images_bytes(&draft.attachments))
             .saturating_add(
                 draft
                     .quotes
@@ -232,7 +263,7 @@ fn draft_bytes(draft: &ComposerDraft) -> usize {
                 .saturating_add(quote.identity.capacity())
                 .saturating_add(quote.preview.capacity())
                 .saturating_add(quote.body.capacity())
-                .saturating_add(attachments_bytes(&quote.attachments))
+                .saturating_add(draft_images_bytes(&quote.attachments))
                 .saturating_add(quote.issue.as_ref().map_or(0, String::capacity))
         },
     )
