@@ -20,9 +20,9 @@ pub(super) fn render_tasks(
     let select = render.select_task;
     let submissions = render.submissions;
     let team_controls = render.team_controls;
-    let work = render
+    let held = render
         .work
-        .map(|projection| crate::work::team_work(projection, team));
+        .map(|projection| crate::work::team_held_work(projection, team));
     let settled_state = runtime.team_settled(team.lane);
     let settled_work = settled_state
         .and_then(crate::runtime::TeamSettledState::pages)
@@ -33,14 +33,9 @@ pub(super) fn render_tasks(
         controls,
     });
     let policy = TeamLife::from(team.subscription).label();
-    let work_summary = work.as_ref().map_or_else(
+    let work_summary = held.as_ref().map_or_else(
         || "Task state unavailable".to_owned(),
-        |work| {
-            format!(
-                "{} open",
-                work.up_next().len() + work.in_flight().len() + work.waiting().len()
-            )
-        },
+        |held| format!("{} in flight", held.len()),
     );
     let member_lanes = team
         .members
@@ -89,7 +84,7 @@ pub(super) fn render_tasks(
                 </div>
             </header>
             {render_team_jobs(standings, team.lane)}
-            {render_team_work_lanes(work.as_ref(), team.lane, &cards, settled.as_ref())}
+            {render_team_work_lanes(held.as_deref(), team.lane, &cards, settled.as_ref())}
             {render_directive_ledger(
                 runtime,
                 team,
@@ -103,23 +98,19 @@ pub(super) fn render_tasks(
     }
 }
 
+/// The team's open work is what its members hold now; ready and waiting
+/// queues stay on the global Work board.
 pub(super) fn render_team_work_lanes(
-    work: Option<&crate::work::TeamWork<'_, '_>>,
+    held: Option<&[&crate::work::WorkTask<'_>]>,
     team: wire::CanonicalUuid,
     cards: &work_card::Controls<'_>,
     settled: Option<&Settled<'_, '_, '_>>,
 ) -> Html {
     html! {
         <div class="team-work-flow">
-            <div class="work-lanes team-work-lanes" aria-label="Team work lanes">
-                {team_lane(team, "up-next", "ready", "Up next", "No work is up next.", work.map(|work| {
-                    work.up_next().iter().map(|task| work_card::render(task, cards)).collect()
-                }))}
-                {team_lane(team, "in-flight", "in-flight", "In flight", "No work is in flight.", work.map(|work| {
-                    work.in_flight().iter().map(|task| work_card::render(task, cards)).collect()
-                }))}
-                {team_lane(team, "waiting", "blocked", "Waiting", "No work is waiting.", work.map(|work| {
-                    work.waiting().iter().map(|(_, task)| work_card::render(task, cards)).collect()
+            <div class="work-lanes team-work-lanes">
+                {held_lane(team, held.map(|held| {
+                    held.iter().map(|task| work_card::render(task, cards)).collect()
                 }))}
             </div>
             if let Some(settled) = settled {
@@ -129,28 +120,21 @@ pub(super) fn render_team_work_lanes(
     }
 }
 
-/// One open-work state as a row: a label and count in the shared rail beside a
+/// Member-held work as a row: a label and count in the shared rail beside a
 /// horizontal card track, the same grammar as the global Work lanes.
-fn team_lane(
-    team: wire::CanonicalUuid,
-    key: &'static str,
-    state: &'static str,
-    label: &'static str,
-    empty: &'static str,
-    tasks: Option<Vec<Html>>,
-) -> Html {
-    let heading = format!("{key}-{team}");
+fn held_lane(team: wire::CanonicalUuid, tasks: Option<Vec<Html>>) -> Html {
+    let heading = format!("in-flight-{team}");
     // Without a snapshot the count is unknown: its slot stays, hidden.
     let count = tasks.as_ref().map(Vec::len);
     html! {
         <section
             class="work-lane team-work-lane"
-            data-work-lane={state}
-            data-team-work-lane={key}
+            data-work-lane="in-flight"
+            data-team-work-lane="in-flight"
             aria-labelledby={heading.clone()}
         >
             <header class="work-lane-heading">
-                <h3 id={heading}>{label}</h3>
+                <h3 id={heading}>{"In flight"}</h3>
                 <span
                     data-shown={count.is_some().to_string()}
                     aria-label={format!("{} tasks", count.unwrap_or(0))}
@@ -160,13 +144,15 @@ fn team_lane(
                 class="work-lane-track"
                 tabindex="0"
                 role="region"
-                aria-label={format!("{label} task row")}
+                aria-label="Work team members hold"
             >
                 {match tasks {
                     None => html! {
                         <p class="work-lane-empty" role="status">{"Task snapshot unavailable."}</p>
                     },
-                    Some(tasks) if tasks.is_empty() => html! { <p class="work-lane-empty">{empty}</p> },
+                    Some(tasks) if tasks.is_empty() => html! {
+                        <p class="work-lane-empty">{"No member holds work."}</p>
+                    },
                     Some(tasks) => html! { <div class="work-card-list">{for tasks}</div> },
                 }}
             </div>
