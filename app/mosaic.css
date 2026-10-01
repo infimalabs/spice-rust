@@ -1423,15 +1423,21 @@ a.relative-age {
    or holding one entry. The region and its empty line reserve the card cap,
    which is also each entry's max-block-size, so the first entry arriving or
    the last leaving moves nothing below. A direction's body scrolls inside the
-   cap, as a work card's title row absorbs it. */
+   cap, as a work card's title row absorbs it. The capped row is a column
+   flexbox: an auto-height grid sizes its tracks at max-content before the cap
+   clamps it, so the body would spill out with the footer instead of shrinking. */
 .team-entry-region,
 .team-entry-region > .team-task-empty {
   min-block-size: var(--mosaic-image-large-size);
 }
 .team-entry-region .team-direction-ledger-row {
+  display: flex;
+  flex-direction: column;
   max-block-size: var(--mosaic-image-large-size);
 }
+.team-entry-region .team-direction-ledger-row > * { flex: none; }
 .team-entry-region .team-direction-ledger-row > .message-body {
+  flex: 0 1 auto;
   min-block-size: 0;
   overflow-y: auto;
 }
