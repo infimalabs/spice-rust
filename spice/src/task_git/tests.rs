@@ -734,6 +734,50 @@ fn release_parks_only_unpublished_work_and_claim_replays_it_onto_a_moved_upstrea
     );
 }
 
+/// Parked work that already reached upstream, as the same commit or as an
+/// equivalent change, is reported present and never recommitted on top of it.
+#[test]
+fn a_claim_does_not_duplicate_parked_commits_that_upstream_already_carries() {
+    let fixture = published_fixture("replay-integrated");
+    let root = &fixture.root;
+    let claimed = prepare_claim(&fixture.repository).expect("claim the opening");
+    let landed = commit_file(root, "landed.txt", "landed\n", "landed task change");
+    let equivalent = commit_file(root, "equivalent.txt", "equivalent\n", "equivalent change");
+    let released = prepare_free(&fixture.repository, Some(&claimed))
+        .expect("release the task")
+        .expect("both task commits park");
+    assert_eq!(
+        released.parked().commits,
+        [landed.clone(), equivalent.clone()]
+    );
+
+    git(root, &["push", "origin", &format!("{landed}:main")]);
+    let remote = root.join(".git/fixture-origin.git");
+    let peer = root.join(".git/fixture-peer");
+    git(
+        root,
+        &[
+            "clone",
+            remote.to_str().expect("fixture remote path is UTF-8"),
+            peer.to_str().expect("fixture peer path is UTF-8"),
+        ],
+    );
+    git(&peer, &["config", "user.name", "Peer Test"]);
+    git(&peer, &["config", "user.email", "peer@example.invalid"]);
+    let upstream = commit_file(&peer, "equivalent.txt", "equivalent\n", "peer re-landed");
+    assert_ne!(upstream, equivalent);
+    git(&peer, &["push", "origin", "main"]);
+
+    let claim = prepare_task_claim(&fixture.repository, Some(released.parked()))
+        .expect("claim replays the parked commits");
+    let report = claim.transplant().expect("the claim reports its replay");
+    assert_eq!(report.onto, upstream);
+    assert_eq!(report.present, [landed, equivalent]);
+    assert!(report.applied.is_empty() && report.conflict.is_none());
+    assert_eq!(lane_head(root), upstream);
+    assert_eq!(claim.boundary.local_commits, 0);
+}
+
 #[test]
 fn a_conflicting_replay_stays_paused_for_the_claimant_until_the_claim_rolls_back() {
     let fixture = published_fixture("replay-conflict");

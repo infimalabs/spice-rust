@@ -138,7 +138,7 @@ pub(super) fn task_done(
     };
     let published = match publish_task_boundary(repository, &snapshot, command, entry) {
         Ok(published) => published,
-        Err(outcome) => return release::rollback_release(parked, outcome),
+        Err(outcome) => return rollback_release(parked, outcome),
     };
     let next = projected_done_next_action(&snapshot, entry, &transition, projects);
     let mut write = JournalWrite::new(command.actor().clone(), origin, at, Producer::CommandDoor);
@@ -154,14 +154,14 @@ pub(super) fn task_done(
         parked.as_ref().map(|release| release.parked()),
     ) {
         Ok(answer) => answer,
-        Err(outcome) => return release::rollback_release(parked, outcome),
+        Err(outcome) => return rollback_release(parked, outcome),
     };
     if let Err(error) = write.command_result(
         request(command, done.clone()),
         command.epoch(),
         answer.clone(),
     ) {
-        return release::rollback_release(
+        return rollback_release(
             parked,
             store_fault("task::done-receipt", &error.to_string()),
         );

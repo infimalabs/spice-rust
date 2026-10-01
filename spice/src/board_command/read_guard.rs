@@ -1119,6 +1119,20 @@ impl PreparedTaskGit {
     }
 }
 
+/// Undo a prepared parked release after its board write could not commit.
+pub(super) fn rollback_release(
+    parked: Option<spice::task_git::ParkedRelease>,
+    outcome: Outcome<CommandAnswer>,
+) -> Outcome<CommandAnswer> {
+    match parked {
+        Some(parked) => match parked.rollback() {
+            Ok(()) => outcome,
+            Err(error) => task_git_outcome(error),
+        },
+        None => outcome,
+    }
+}
+
 pub(super) fn committed_with_task_git(
     bus: &Bus,
     write: JournalWrite,

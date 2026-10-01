@@ -33,18 +33,26 @@ pub(crate) fn claim_automatic(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Result<AutomaticClaim, Outcome<CommandAnswer>> {
-    let prepared = prepare_claim(
+    let PreparedClaim {
+        write,
+        selected,
+        entries,
+        task,
+        born,
+        actor,
+        git,
+    } = prepare_claim(
         bus, observed, repository, epoch, lane, occupant, projects, allocation,
     )?;
-    let answer = automatic_answer(
-        &prepared.selected,
-        &prepared.entries,
-        prepared.task.clone(),
-        prepared.actor,
-    );
-    match committed(bus, prepared.write, CommandAnswer::Claim(Box::new(answer))) {
+    let answer = automatic_answer(&selected, &entries, task, actor, git.transplant());
+    match committed_with_task_git(
+        bus,
+        write,
+        CommandAnswer::Claim(Box::new(answer)),
+        PreparedTaskGit::Claim(git),
+    ) {
         Outcome::Reply(_) => Ok(AutomaticClaim {
-            task: prepared.born,
+            task: born,
             lane,
             occupant,
         }),
@@ -60,6 +68,7 @@ struct PreparedClaim {
     task: TaskHandle,
     born: TaskStamp,
     actor: Actor,
+    git: spice::task_git::ClaimPreparation,
 }
 
 #[allow(
@@ -85,9 +94,16 @@ fn prepare_claim(
     let task = selected.handle().clone();
     let born = selected.born().clone();
     let (at, expiry, maximum) = claim_deadlines()?;
-    let git = prepare_git(repository, &row.worktree)?;
     let source = claim_source_boundary(bus, &lane)?;
     let origin = task_origin(&born)?;
+    let lane_repository = lane_repository(repository, &row.worktree)?;
+    // A resident claim inherits the task's parked work exactly as an allocator
+    // claim does, so a release followed by an automatic wake loses nothing.
+    let git = spice::task_git::prepare_task_claim(
+        &lane_repository,
+        task_parked_commits(&snapshot, &born),
+    )
+    .map_err(task_git_outcome)?;
     let mut write = JournalWrite::new(actor.clone(), origin, at, Producer::CommandDoor);
     guard_allocation(
         &mut write,
@@ -98,10 +114,25 @@ fn prepare_claim(
             residency_position: snapshot.answer.residency.position,
         },
     );
-    mint_claim(
-        &mut write, &selected, &born, &actor, lane, occupant, epoch, at, expiry, maximum, git,
+    if let Err(outcome) = mint_claim(
+        &mut write,
+        &selected,
+        &born,
+        &actor,
+        lane,
+        occupant,
+        epoch,
+        at,
+        expiry,
+        maximum,
+        git.boundary.clone(),
         source,
-    )?;
+    ) {
+        return Err(match git.rollback() {
+            Ok(()) => outcome,
+            Err(error) => task_git_outcome(error),
+        });
+    }
     Ok(PreparedClaim {
         write,
         selected,
@@ -109,6 +140,7 @@ fn prepare_claim(
         task,
         born,
         actor,
+        git,
     })
 }
 
@@ -208,10 +240,11 @@ fn select_task(
     })
 }
 
-fn prepare_git(
+/// The lane's own repository, refused unless it is still the resident's worktree.
+fn lane_repository(
     repository: &Repository,
     worktree: &str,
-) -> Result<GitBoundary, Outcome<CommandAnswer>> {
+) -> Result<Repository, Outcome<CommandAnswer>> {
     let lane_repository = Repository::discover(worktree)
         .map_err(|error| environment_fault("git::worktree-unresolved", &error.to_string()))?;
     if lane_repository.common_dir() != repository.common_dir()
@@ -222,7 +255,7 @@ fn prepare_git(
             "the allocating lane no longer names one worktree in the resident repository",
         ));
     }
-    spice::task_git::prepare_claim(&lane_repository).map_err(task_git_outcome)
+    Ok(lane_repository)
 }
 
 fn claim_deadlines() -> Result<(Instant, Instant, Instant), Outcome<CommandAnswer>> {
@@ -298,6 +331,7 @@ fn automatic_answer(
     entries: &[Entry],
     task: TaskHandle,
     actor: Actor,
+    transplant: Option<&wire::intent::ClaimTransplant>,
 ) -> wire::intent::ClaimAnswer {
     wire::intent::ClaimAnswer {
         task,
@@ -316,18 +350,32 @@ fn automatic_answer(
         origin_context: None,
         next: None,
         phase: None,
-        transplant: None,
+        transplant: transplant.cloned(),
     }
 }
 
 /// Release exactly the automatic claim whose launch did not become durable.
+///
+/// The claim may already have replayed parked work into the lane, so the
+/// release parks the lane exactly as an ordinary task free does and the next
+/// claim replays it again.
 pub(crate) fn release_automatic(
     bus: &Bus,
+    repository: &Repository,
     automatic: &AutomaticClaim,
 ) -> Result<(), Outcome<CommandAnswer>> {
-    let (observed, actor, handle) = active_claim(bus, automatic)?;
+    let ActiveClaim {
+        observed,
+        actor,
+        handle,
+        worktree,
+        opening,
+    } = active_claim(bus, automatic)?;
     let at = current_instant()?;
     let origin = task_origin(&automatic.task)?;
+    let lane_repository = lane_repository(repository, &worktree)?;
+    let parked = spice::task_git::prepare_free(&lane_repository, opening.as_ref())
+        .map_err(task_git_outcome)?;
     let mut write = JournalWrite::new(actor.clone(), origin, at, Producer::CommandDoor);
     guard(
         &mut write,
@@ -336,16 +384,22 @@ pub(crate) fn release_automatic(
             head: Some(observed.position()),
         }],
     );
-    let freed = write
-        .fact(
-            body::ClaimFreed {
-                task: automatic.task.clone(),
-                actor: actor.clone(),
-                parked: None,
-            },
-            FactCause::Root,
-        )
-        .map_err(|error| store_fault("lifecycle::claim-release-build", &error.to_string()))?;
+    let freed = match write.fact(
+        body::ClaimFreed {
+            task: automatic.task.clone(),
+            actor: actor.clone(),
+            parked: parked.as_ref().map(|release| release.parked().clone()),
+        },
+        FactCause::Root,
+    ) {
+        Ok(freed) => freed,
+        Err(error) => {
+            return Err(rollback_release(
+                parked,
+                store_fault("lifecycle::claim-release-build", &error.to_string()),
+            ));
+        }
+    };
     let mut next = observed.body().clone();
     next.disposition = ClaimDisposition::Freed;
     let task = automatic.task.clone();
@@ -361,17 +415,31 @@ pub(crate) fn release_automatic(
         phase: None,
         transplant: None,
     };
-    match committed(bus, write, CommandAnswer::Claim(Box::new(answer))) {
+    let body = CommandAnswer::Claim(Box::new(answer));
+    let outcome = match parked {
+        Some(parked) => committed_with_task_git(bus, write, body, PreparedTaskGit::Release(parked)),
+        None => committed(bus, write, body),
+    };
+    match outcome {
         Outcome::Reply(_) => Ok(()),
         Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
         Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
     }
 }
 
+/// The still-active automatic claim and the lane boundary it opened.
+struct ActiveClaim {
+    observed: journal::JournalHead<ClaimHead>,
+    actor: Actor,
+    handle: TaskHandle,
+    worktree: String,
+    opening: Option<GitBoundary>,
+}
+
 fn active_claim(
     bus: &Bus,
     automatic: &AutomaticClaim,
-) -> Result<(journal::JournalHead<ClaimHead>, Actor, TaskHandle), Outcome<CommandAnswer>> {
+) -> Result<ActiveClaim, Outcome<CommandAnswer>> {
     let snapshot = bus
         .task_snapshot()
         .map_err(|error| store_fault("lifecycle::claim-release-read", &error.to_string()))?;
@@ -416,7 +484,34 @@ fn active_claim(
         &heads.statement().body().project,
         &heads.statement().body().born,
     );
-    Ok((observed, actor, handle))
+    let worktree = snapshot
+        .residency()
+        .and_then(|residency| {
+            residency
+                .body()
+                .lanes
+                .iter()
+                .find(|row| row.lane == automatic.lane)
+        })
+        .map(|row| row.worktree.clone())
+        .ok_or_else(|| {
+            store_fault(
+                "lifecycle::claim-release-lane-missing",
+                "the automatic claim lane disappeared before launch compensation",
+            )
+        })?;
+    let opening = snapshot
+        .facts()
+        .at(claim.claimed)
+        .and_then(|envelope| envelope.fact.read::<body::ClaimWon>())
+        .and_then(|won| won.git);
+    Ok(ActiveClaim {
+        observed,
+        actor,
+        handle,
+        worktree,
+        opening,
+    })
 }
 
 #[cfg(test)]

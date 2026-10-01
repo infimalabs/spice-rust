@@ -647,6 +647,19 @@ pub(in crate::board_command) struct ClaimGit {
     prepared: Option<spice::task_git::ClaimPreparation>,
 }
 
+/// Commits and dirty work the task's latest release parked for its next claim.
+pub(in crate::board_command) fn task_parked_commits<'a>(
+    snapshot: &'a ValidatedSnapshot,
+    task: &TaskStamp,
+) -> Option<&'a wire::body::TaskParkedCommits> {
+    snapshot
+        .answer
+        .tasks
+        .iter()
+        .find(|row| row.statement.body.born == *task)
+        .and_then(|row| row.parked_commits.as_ref())
+}
+
 pub(in crate::board_command) fn claim_git_boundary(
     repository: Option<&Repository>,
     snapshot: &ValidatedSnapshot,
@@ -658,12 +671,7 @@ pub(in crate::board_command) fn claim_git_boundary(
         return Ok(None);
     };
     let lane = task_repository(snapshot, command, resident)?;
-    let parked = snapshot
-        .answer
-        .tasks
-        .iter()
-        .find(|task| task.statement.body.born == *selected.born())
-        .and_then(|task| task.parked_commits.as_ref());
+    let parked = task_parked_commits(snapshot, selected.born());
     let result = match possession {
         Possession::Capture if parked.is_none() => {
             spice::task_git::capture(&lane).map(|capture| ClaimGit {

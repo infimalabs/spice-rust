@@ -375,19 +375,6 @@ fn append_deferral_release(
     Ok(())
 }
 
-fn rollback_release(
-    parked: Option<spice::task_git::ParkedRelease>,
-    outcome: Outcome<CommandAnswer>,
-) -> Outcome<CommandAnswer> {
-    match parked {
-        Some(parked) => match parked.rollback() {
-            Ok(()) => outcome,
-            Err(error) => task_git_outcome(error),
-        },
-        None => outcome,
-    }
-}
-
 #[allow(
     clippy::too_many_arguments,
     reason = "the receipt closes one guarded deferral and its two exclusive Git transitions"
