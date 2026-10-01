@@ -311,17 +311,39 @@ pub(super) fn require_no_open_merge(root: &Path, label: &str) -> Result<(), Erro
     Ok(())
 }
 
+/// Refuse a dirty lane with recovery's generic advice.
 pub(super) fn require_clean(root: &Path, action: &str) -> Result<(), Error> {
+    require_clean_or(
+        root,
+        action,
+        "commit or clear every reported path before retrying",
+    )
+}
+
+/// Refuse a dirty lane with advice for the caller's own route.
+///
+/// An open merge overrides `remedy`: its paths are a merge to resolve, and
+/// committing it by hand would bypass the completion that owns it.
+pub(super) fn require_clean_or(root: &Path, action: &str, remedy: &str) -> Result<(), Error> {
     let status = required_read(root, &["status", "--porcelain"], "inspect worktree")?;
     if status.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::refusal(
-            "git::worktree-dirty",
-            format!("{action} requires a clean worktree:\n{status}"),
-            "commit or clear every reported path before retrying",
-        ))
+        return Ok(());
     }
+    let merging = try_read(root, &["rev-parse", "--verify", "--quiet", "MERGE_HEAD"])?.is_some();
+    let remedy = if merging {
+        concat!(
+            "a Git merge is open: resolve and git add its paths without committing, ",
+            "then retry task completion under the claim that owns it, ",
+            "or run git merge --abort to drop it",
+        )
+    } else {
+        remedy
+    };
+    Err(Error::refusal(
+        "git::worktree-dirty",
+        format!("{action} requires a clean worktree:\n{status}"),
+        remedy,
+    ))
 }
 
 pub(super) fn is_ancestor(root: &Path, ancestor: &str, descendant: &str) -> Result<bool, Error> {

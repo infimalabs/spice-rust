@@ -232,7 +232,17 @@ pub(super) fn defer(root: &Path, commit: &str) -> Result<(), Error> {
 pub(super) fn resume(root: &Path, commit: &str, marker: &Path) -> Result<(), Error> {
     require_no_replay(root)?;
     require_no_open_merge(root, "restore task snapshot")?;
-    require_clean(root, "restore task snapshot after parked replay")?;
+    require_clean_or(
+        root,
+        "restore task snapshot after parked replay",
+        &format!(
+            concat!(
+                "commit the reported paths through the pre-commit gate so pending ",
+                "snapshot {commit} can restore on top of them, then retry",
+            ),
+            commit = commit
+        ),
+    )?;
     let conflict = apply(root, commit)?;
     remove_marker(marker)?;
     if let Some(conflict) = conflict {
