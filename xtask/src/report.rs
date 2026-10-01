@@ -15,6 +15,8 @@ use wire::{Instant, Seq};
 type Result<T, E = Box<dyn std::error::Error>> = std::result::Result<T, E>;
 
 const ACQUISITION_PROGRESS_PAGES: usize = 25;
+/// Frozen evidence format; version 1 retained lane socket capabilities.
+const SNAPSHOT_VERSION: u32 = 2;
 
 #[derive(Deserialize)]
 struct PageReply {
@@ -122,7 +124,7 @@ fn acquire(upper: Seq, directory: &Path, oracle: &Path, output: &mut dyn Write) 
         .ok_or("retained correction command record is unavailable")?;
     write_json(&directory.join("correction-command-record.json"), &record)?;
     let manifest = SnapshotManifest {
-        version: 1,
+        version: SNAPSHOT_VERSION,
         upper,
         horizon_at,
         pin: request.pin.ok_or("missing report generation pin")?,
@@ -166,10 +168,10 @@ fn acquire_pages(
             return Err("report horizon instant changed during acquisition".into());
         }
         for fact in &page.rows {
-            if fact.seq > upper
-                || request.after.is_some_and(|after| fact.seq <= after)
-                || last_seen.is_some_and(|previous| fact.seq <= previous)
-                || !REPORT_FACT_KINDS.contains(&fact.fact.kind())
+            if fact.seq() > upper
+                || request.after.is_some_and(|after| fact.seq() <= after)
+                || last_seen.is_some_and(|previous| fact.seq() <= previous)
+                || !REPORT_FACT_KINDS.contains(&fact.kind())
             {
                 return Err(
                     "report returned an unordered, duplicate, out-of-prefix or undeclared fact"
@@ -178,7 +180,7 @@ fn acquire_pages(
             }
             serde_json::to_writer(&mut *facts, fact)?;
             facts.write_all(b"\n")?;
-            last_seen = Some(fact.seq);
+            last_seen = Some(fact.seq());
             count += 1;
         }
         request.pin = Some(page.pin);

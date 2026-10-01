@@ -131,7 +131,7 @@ impl Aliases {
             }
         }
         for fact in &study.lifecycle {
-            if let Some(lane) = fact.fact.body().get("lane").and_then(Value::as_str) {
+            if let Some(lane) = fact.body().get("lane").and_then(Value::as_str) {
                 lanes.insert(lane.to_owned());
             }
         }

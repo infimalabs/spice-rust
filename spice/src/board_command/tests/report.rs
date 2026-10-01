@@ -72,15 +72,15 @@ fn report_admits_public_facts_and_refuses_a_different_generation_pin() {
         answer
             .rows
             .iter()
-            .filter_map(|fact| fact.fact.task_subject())
+            .filter_map(wire::StreamFact::task)
             .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from([&public.born().expect("public identity")]),
+        std::collections::BTreeSet::from([public.born().expect("public identity")]),
     );
     assert_eq!(
         answer
             .rows
             .iter()
-            .map(|fact| fact.fact.kind())
+            .map(wire::StreamFact::kind)
             .collect::<Vec<_>>(),
         [wire::FactKind::TaskAdded, wire::FactKind::ClaimLapsed],
     );
@@ -98,4 +98,81 @@ fn report_admits_public_facts_and_refuses_a_different_generation_pin() {
         ),
         Outcome::Refusal(_)
     ));
+}
+
+#[test]
+fn report_pages_carry_seat_fields_but_never_a_lane_socket_capability() {
+    let (_root, bus, epoch, seats) = fixture("report-seat-credential", 1);
+    let seat = &seats[0];
+    let capability = uuid(777_777);
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        format!("resident:{epoch}")
+            .parse()
+            .expect("resident origin"),
+        current_instant().expect("clock"),
+        Producer::ResidentRecognition,
+    );
+    write
+        .fact(
+            body::LaneSeated {
+                lane: seat.lane,
+                team: seat.team,
+                capability,
+                name: Some("Ava".to_owned()),
+                worktree: "/fixture".to_owned(),
+                life: "drive".to_owned(),
+                vendor: "omp".parse().expect("fixture vendor"),
+                model: None,
+                effort: None,
+            },
+            FactCause::Root,
+        )
+        .expect("seat fact builds");
+    assert!(matches!(
+        bus.commit(write).expect("seat fixture commits"),
+        CommitOutcome::Committed(_)
+    ));
+    let actor = Actor::Lane(seat.lane);
+    let request = ReportRead {
+        version: REPORT_READ_VERSION,
+        after: None,
+        upper: board(&bus, epoch, actor.clone()).cursor,
+        kinds: vec![wire::FactKind::LaneSeated],
+        pin: None,
+        command_at: None,
+    };
+    let answer = match issue(
+        &bus,
+        epoch,
+        actor,
+        CommandKind::ReportRead,
+        Vec::new(),
+        &request,
+    ) {
+        Outcome::Reply(Reply {
+            body: CommandAnswer::Report(answer),
+            ..
+        }) => answer,
+        outcome => panic!("report read failed: {outcome:?}"),
+    };
+    let encoded = serde_json::to_string(&answer).expect("report answer encodes");
+    assert!(!encoded.contains(&capability.to_string()), "{encoded}");
+    assert_eq!(
+        answer
+            .rows
+            .iter()
+            .filter_map(wire::StreamFact::lane_seated)
+            .collect::<Vec<_>>(),
+        [wire::StreamLaneSeated {
+            lane: seat.lane,
+            team: seat.team,
+            name: Some("Ava".to_owned()),
+            worktree: "/fixture".to_owned(),
+            life: "drive".to_owned(),
+            vendor: "omp".parse().expect("fixture vendor"),
+            model: None,
+            effort: None,
+        }],
+    );
 }

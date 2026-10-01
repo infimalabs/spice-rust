@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use wire::{AnyFact, Envelope, FactKind, Instant, Seq};
+use wire::{FactKind, Instant, Seq, StreamFact};
 
 use super::Result;
 use super::reduce::{Observation, Study};
@@ -45,14 +45,14 @@ pub(super) struct Outcomes {
 }
 
 enum Event<'a> {
-    Fact(&'a Envelope<AnyFact>),
+    Fact(&'a StreamFact),
     End(&'a str, &'a Observation),
 }
 
 impl Event<'_> {
     fn seq(&self) -> Seq {
         match self {
-            Self::Fact(fact) => fact.seq,
+            Self::Fact(fact) => fact.seq(),
             Self::End(_, observation) => observation.seq,
         }
     }
@@ -177,23 +177,24 @@ pub(super) fn measure(study: &Study) -> Result<Outcomes> {
 }
 
 fn transition(
-    fact: &Envelope<AnyFact>,
+    fact: &StreamFact,
     study: &Study,
     active: &mut BTreeMap<String, Episode>,
     finished: &mut Vec<Episode>,
 ) -> Result<()> {
-    let body = fact.fact.body();
+    let body = fact.body();
+    let (seq, at) = (fact.seq(), *fact.at());
     let Some(task) = body.get("task").and_then(Value::as_str) else {
         return Ok(());
     };
-    match fact.fact.kind() {
+    match fact.kind() {
         FactKind::ClaimWon => {
             let lane = field(body, "lane")?;
             let occupant = field(body, "occupant")?;
             let phase = study
                 .tasks
                 .get(task)
-                .and_then(|task| task.claims.iter().find(|claim| claim.seq == fact.seq))
+                .and_then(|task| task.claims.iter().find(|claim| claim.seq == seq))
                 .map(|claim| claim.phase.as_str())
                 .ok_or("claim has no ordered phase witness")?;
             if let Some(previous) = active.remove(task) {
@@ -202,7 +203,7 @@ fn transition(
                 } else {
                     "missing history"
                 };
-                finish(previous, fact.at, fact.seq, outcome, finished);
+                finish(previous, at, seq, outcome, finished);
             }
             if phase == "review" {
                 return Ok(());
@@ -212,11 +213,11 @@ fn transition(
                 task.to_owned(),
                 Episode {
                     task: task.to_owned(),
-                    claim: fact.seq,
+                    claim: seq,
                     phase: phase.to_owned(),
                     lane: lane.to_owned(),
                     occupant: occupant.to_owned(),
-                    admitted: fact.at,
+                    admitted: at,
                     until,
                     coverage_broken: false,
                     transition_broken: false,
@@ -230,7 +231,7 @@ fn transition(
         }
         FactKind::ClaimFreed => {
             if let Some(episode) = active.remove(task) {
-                finish(episode, fact.at, fact.seq, "released", finished);
+                finish(episode, at, seq, "released", finished);
             }
         }
         FactKind::ClaimLapsed => {
@@ -240,10 +241,10 @@ fn transition(
                 .is_some_and(|episode| episode.occupant == occupant)
             {
                 let episode = active.remove(task).expect("matched canonical occupant");
-                finish(episode, fact.at, fact.seq, "lapsed", finished);
+                finish(episode, at, seq, "lapsed", finished);
             } else if let Some(mut episode) = active.remove(task) {
                 episode.coverage_broken = true;
-                finish(episode, fact.at, fact.seq, "missing history", finished);
+                finish(episode, at, seq, "missing history", finished);
             }
         }
         FactKind::ClaimCarried | FactKind::ClaimRebound => {
@@ -268,9 +269,9 @@ fn transition(
     Ok(())
 }
 
-fn extend_lease(fact: &Envelope<AnyFact>, episode: &mut Episode) -> Result<()> {
-    if let Some(until) = fact.fact.body().get("until").and_then(Value::as_str) {
-        if fact.at > episode.until {
+fn extend_lease(fact: &StreamFact, episode: &mut Episode) -> Result<()> {
+    if let Some(until) = fact.body().get("until").and_then(Value::as_str) {
+        if *fact.at() > episode.until {
             episode.coverage_broken = true;
         }
         let until: Instant = until.parse()?;

@@ -160,7 +160,7 @@ fn page(
         pin,
         upper: request.upper,
         horizon_at,
-        rows: page.rows,
+        rows: page.rows.into_iter().map(wire::StreamFact::from).collect(),
         continuation: page.continuation,
         command_record,
     }))
