@@ -8,7 +8,7 @@ use crate::Effort;
 
 /// oh-my-pi's compiled model selection, matched fuzzily by omp itself: an
 /// OpenAI model served through omp's Codex provider.
-pub const DEFAULT_OMP_MODEL: &str = "gpt-6.1-sol";
+pub const DEFAULT_OMP_MODEL: &str = "gpt-5.6-sol";
 /// Input tokens beyond which OpenAI bills a request at long-context rates.
 const OPENAI_LONG_CONTEXT_TOKENS: u64 = 272_000;
 /// The window of the smallest Claude a lane runs: Claude Haiku 4.5 holds
