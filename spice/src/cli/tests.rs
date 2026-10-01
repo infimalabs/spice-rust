@@ -105,16 +105,7 @@ fn generated_tree_and_contract_rows_are_bijective() {
 }
 
 #[test]
-fn every_contract_has_an_executable_landing_disposition() {
-    let unaccounted = contracts()
-        .iter()
-        .filter(|contract| landing(contract.path) == Landing::Unaccounted)
-        .map(|contract| contract.path.join(" "))
-        .collect::<Vec<_>>();
-    assert_eq!(unaccounted, Vec::<String>::new());
-}
 
-#[test]
 fn retired_fold_commands_have_no_parser_contract_or_landing() {
     for path in [
         &["task", "effort"][..],

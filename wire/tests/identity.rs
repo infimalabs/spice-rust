@@ -117,7 +117,8 @@ const fn position(domain: Domain) -> usize {
         | Domain::TasteProse
         | Domain::TasteBag
         | Domain::MediaContent
-        | Domain::QuoteText => late_position(domain),
+        | Domain::QuoteText
+        | Domain::ReportCommandRecord => late_position(domain),
     }
 }
 
@@ -193,6 +194,7 @@ const fn late_position(domain: Domain) -> usize {
         Domain::TasteBag => 55,
         Domain::MediaContent => 56,
         Domain::QuoteText => 57,
+        Domain::ReportCommandRecord => 58,
         _ => panic!("domain position partition is closed"),
     }
 }
@@ -209,7 +211,7 @@ fn the_sweep_names_every_domain_exactly_once() {
 }
 
 /// Every domain, so a new class cannot be added without being swept here.
-const DOMAINS: [Domain; 58] = [
+const DOMAINS: [Domain; 59] = [
     Domain::BoardDocument,
     Domain::BoardTaskIdentity,
     Domain::BoardBarrier,
@@ -268,6 +270,7 @@ const DOMAINS: [Domain; 58] = [
     Domain::TasteBag,
     Domain::MediaContent,
     Domain::QuoteText,
+    Domain::ReportCommandRecord,
 ];
 
 #[test]
@@ -377,6 +380,7 @@ fn a_domain_tag_is_frozen_and_distinct_from_every_other() {
             "spice.taste.bag.v1",
             "spice.media.content.v1",
             "spice.quote.text.v1",
+            "spice.report.command-record.v1",
         ],
         "a domain tag changed; that re-points digests already published under it"
     );

@@ -12,6 +12,8 @@ mod gate_command;
 mod proof_image;
 mod release;
 #[cfg(not(target_arch = "wasm32"))]
+mod report;
+#[cfg(not(target_arch = "wasm32"))]
 mod test_evidence;
 mod verify_error;
 mod verify_execution;
@@ -37,6 +39,8 @@ pub use proof_image::{ProofImageError, build_proof_image, load_proof_image};
 pub use release::{
     CommandRecord, MacSymbols, ReleaseEnvironment, TargetBuild, TargetBuildError, stage_target,
 };
+#[cfg(not(target_arch = "wasm32"))]
+pub use report::report;
 #[cfg(not(target_arch = "wasm32"))]
 pub use test_evidence::{TestEvidenceRunError, run as run_test_evidence};
 #[cfg(not(target_arch = "wasm32"))]

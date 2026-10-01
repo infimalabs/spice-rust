@@ -1209,7 +1209,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a791e6620676a875f362f3156ed213e73ca099a09bf992c18812abe65cc37b1"
 dependencies = [
  "bstr",
- "hashbrown 0.16.1",
+ "hashbrown 0.17.1",
 ]
 
 [[package]]
@@ -4087,6 +4087,7 @@ dependencies = [
  "atomic",
  "dist",
  "gate",
+ "jiff",
  "libc",
  "proof",
  "serde",
