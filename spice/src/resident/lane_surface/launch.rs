@@ -85,10 +85,7 @@ pub(in crate::resident) fn occupant_launch(
             occupant,
         )?
     } else {
-        Pinned {
-            resume,
-            config_overlay: None,
-        }
+        Pinned::nothing(resume)
     };
     let selection = Selection {
         vendor: name,
@@ -246,6 +243,7 @@ fn launch_plan(
             lane,
             resume: pinned.resume,
             config_overlay: pinned.config_overlay,
+            steering_extension: pinned.steering_extension,
             fast_mode,
             model: model.map(str::to_owned),
             effort,
@@ -659,12 +657,25 @@ mod shell_path_tests {
 struct Pinned {
     resume: vendor::Resume,
     config_overlay: Option<PathBuf>,
+    steering_extension: Option<PathBuf>,
+}
+
+impl Pinned {
+    /// A vendor that reads nothing back from disk: the resume as requested.
+    const fn nothing(resume: vendor::Resume) -> Self {
+        Self {
+            resume,
+            config_overlay: None,
+            steering_extension: None,
+        }
+    }
 }
 
 /// Pin what an oh-my-pi occupant reads from disk before it launches: the
-/// session it resumes and the overlay carrying its compaction threshold,
-/// Anthropic service tier, and language-server disposition. The caller selects
-/// omp before entering.
+/// session it resumes, the overlay carrying its compaction threshold,
+/// Anthropic service tier, and language-server disposition, and the
+/// extension that hands the provider steering as the lane wrote it. The
+/// caller selects omp before entering.
 fn pin_omp(
     paths: &RuntimePaths,
     repository: &Repository,
@@ -680,50 +691,55 @@ fn pin_omp(
         None => pin_session(repository)?,
     };
     let threshold = omp.auto_compact_threshold_tokens_for(model.unwrap_or_else(|| omp.model()));
-    let config_overlay =
-        pin_config_overlay(paths, threshold, omp.lsp(), fast_mode, lane, occupant)?;
+    let directory = crate::resident::supervisor::supervisor_directory(paths, lane, occupant);
+    let config_overlay = pin_seat_file(
+        &directory.join("omp.yml"),
+        &vendor::omp::config_overlay(threshold, omp.lsp(), fast_mode),
+        "lane::config-overlay-unavailable",
+        "configuration overlay",
+    )?;
+    let steering_extension = pin_seat_file(
+        &directory.join("omp-steering.mjs"),
+        vendor::omp::STEERING_EXTENSION,
+        "lane::steering-extension-unavailable",
+        "steering extension",
+    )?;
     Ok(Pinned {
         resume,
         config_overlay: Some(config_overlay),
+        steering_extension: Some(steering_extension),
     })
 }
 
-/// Write this occupant's configuration overlay beside its supervisor record.
+/// Write one file this occupant's omp reads at launch beside its supervisor
+/// record.
 ///
 /// omp compacts at its own share of the model's window unless told a fixed
 /// limit, and it takes that limit only from a settings file, so every launch
-/// writes one stating the threshold the tracked policy derives for the model
-/// this seat runs. The same file states whether this seat runs omp's
+/// writes an overlay stating the threshold the tracked policy derives for the
+/// model this seat runs. The same file states whether this seat runs omp's
 /// language-server integration, whether Anthropic requests use the priority
 /// tier, and that OpenAI live steering is off, all of which omp otherwise
-/// decides from persistent settings.
-fn pin_config_overlay(
-    paths: &RuntimePaths,
-    threshold: u64,
-    lsp: bool,
-    fast_mode: bool,
-    lane: CanonicalUuid,
-    occupant: CanonicalUuid,
+/// decides from persistent settings. The steering extension rides beside it,
+/// so neither touches omp's own settings.
+fn pin_seat_file(
+    path: &Path,
+    contents: &str,
+    code: &'static str,
+    what: &str,
 ) -> CommandResult<PathBuf> {
-    let path =
-        crate::resident::supervisor::supervisor_directory(paths, lane, occupant).join("omp.yml");
-    fs::create_dir_all(path.parent().expect("an overlay has a directory"))
-        .and_then(|()| {
-            fs::write(
-                &path,
-                vendor::omp::config_overlay(threshold, lsp, fast_mode),
-            )
-        })
+    fs::create_dir_all(path.parent().expect("a seat file has a directory"))
+        .and_then(|()| fs::write(path, contents))
         .map_err(|error| {
             store_fault(
-                "lane::config-overlay-unavailable",
+                code,
                 &format!(
-                    "oh-my-pi configuration overlay {} cannot be written: {error}",
+                    "oh-my-pi {what} {} cannot be written: {error}",
                     path.display()
                 ),
             )
         })?;
-    Ok(path)
+    Ok(path.to_path_buf())
 }
 
 /// Pin a fresh oh-my-pi session before launch so its identity is known.

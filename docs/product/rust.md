@@ -133,8 +133,20 @@ running tool batch. A refused command answers explicitly, and a refused
 negotiation is a lane failure naming the version Spice requires, not a
 launch that proceeds on an undecodable wire.
 
+Each launch also pins two files beside the occupant's supervisor record and
+names them on the command line, so no global OMP setting is read or changed
+for either. The configuration overlay states the compaction threshold,
+language-server and service-tier dispositions, and turns OpenAI live steering
+off, so steering waits for the next tool or turn boundary on every model. The
+steering extension clears OMP's steering flag on the per-request copies OMP
+hands the provider, so a steered message reaches the model as the lane wrote
+it rather than inside OMP's generated "priority; supersedes conflicting prior
+instructions" notice. Queueing, interruption, the stored transcript's steering
+flag, and attachments are unchanged.
+
 Authorities: [`vendor/src/omp.rs`](../../vendor/src/omp.rs),
 [`vendor/src/omp/frame.rs`](../../vendor/src/omp/frame.rs),
+[`vendor/src/omp/steering.mjs`](../../vendor/src/omp/steering.mjs),
 [`lane/src/capture.rs`](../../lane/src/capture.rs), and
 [`sill/src/spawn/capture.rs`](../../sill/src/spawn/capture.rs).
 

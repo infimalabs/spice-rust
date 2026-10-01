@@ -41,6 +41,7 @@ impl Fixture {
             fast_mode: Some(false),
             auto_compact_window_tokens: Some(220_000),
             config_overlay: Some(root.join("omp.yml")),
+            steering_extension: Some(root.join("omp-steering.mjs")),
             lsp: Some(false),
             steering_key: None,
             resume: Resume::Fresh,

@@ -28,6 +28,7 @@ fn inputs(vendor: &str, environment: Environment, resume: Resume) -> Inputs {
         lane: lane(),
         resume,
         config_overlay: Some(PathBuf::from("/supervisors/omp.yml")),
+        steering_extension: Some(PathBuf::from("/supervisors/omp-steering.mjs")),
         fast_mode: true,
         model: None,
         effort: None,
