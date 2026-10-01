@@ -1107,6 +1107,12 @@
   grid-template-columns: repeat(3, minmax(0, 1fr));
   padding-top: 12px;
 }
+.work-direction-newer-edge {
+  display: block;
+  width: 100%;
+  margin-top: 12px;
+  min-height: 30px;
+}
 
 .team-direction-ledger {
   display: grid;

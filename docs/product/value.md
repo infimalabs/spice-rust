@@ -237,7 +237,9 @@ instruction.
 Dash, Work, and Chat are the sole global and team panel names, routed as
 `#/dash`, `#/work`, and `#/chat`; history, reload, and copied URLs restore the
 addressed view. Work may add a scope, `/public/{stem}` or `/hidden/{stem}`, then
-`/task/{stamp}`; Chat may add `/card/{target}` or `/direction/{team}/{id}`. A
+`/task/{stamp}`, or name Directions as `/directions`, `/directions/team/{team}`,
+or `/direction/{directive, fanout, or key}`; Chat may add `/card/{target}` or
+`/direction/{team}/{id}`. A
 stem or target is one segment with letters, digits, `-._~` literal and every
 other byte as uppercase `%XX`; any other spelling is refused. A missing or
 empty fragment, or stray slashes around a route, is replaced in place with the
@@ -349,7 +351,13 @@ state chips, and an authored-before date filter the resident read before
 paging; Apply returns to the newest matching page and Clear removes every
 filter. Newer and Older replace one bounded page through durable journal
 cursors, while loading, no-match, refusal, and retry states retain the same
-controls and card grid.
+controls and card grid. A direction route clears the filters and reads the page
+that starts at its card, with a Newer directions edge above it, then marks and
+focuses that card. A team route selects that team's chip. An unknown or
+malformed direction or team leaves the route for `#/work/directions` and names
+it. Each team's Directions header links to its team route, Dash direction
+attention opens its oldest waiting direction, and a quote with no team-local
+direction links to its global route by key.
 
 Each is the team Work ledger's direction card: the resident's first unquoted
 line in sanitized rich Markdown, marked as a retained excerpt and signed by the

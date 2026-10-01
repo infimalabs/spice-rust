@@ -122,7 +122,7 @@ pub(super) async fn send_direction_history(
         CommandKind::SteerHistory,
         vec![],
         SteerHistory {
-            window: request.window,
+            window: request.window.clone(),
             query: request.query.clone(),
             lanes: request.lanes.clone(),
             dispositions: request.dispositions.clone(),

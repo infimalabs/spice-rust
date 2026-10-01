@@ -315,10 +315,21 @@ pub(super) fn team_quote_sources(
         }
         for context in &message.directive_contexts {
             let source = match &context.quote_target {
-                wire::QuoteTarget::Steering { key, .. } => runtime.inbox().and_then(|inbox| {
-                    watchband::directive_ledger::direction_identity(&member_lanes, inbox, key)
-                        .map(|direction| crate::view::direction_quote_source(team.lane, direction))
-                }),
+                wire::QuoteTarget::Steering { key, .. } => Some(
+                    runtime
+                        .inbox()
+                        .and_then(|inbox| {
+                            watchband::directive_ledger::direction_identity(
+                                &member_lanes,
+                                inbox,
+                                key,
+                            )
+                        })
+                        .map_or_else(
+                            || crate::view::global_direction_quote_source(key),
+                            |direction| crate::view::direction_quote_source(team.lane, direction),
+                        ),
+                ),
                 _ => None,
             };
             sources

@@ -51,11 +51,9 @@ pub(super) fn attention_band(props: &AttentionBandProps) -> Html {
 
 /// What one team's band needs to render its items' controls.
 pub(super) struct AttentionControls<'a> {
-    pub(super) team: CanonicalUuid,
     pub(super) runtime: &'a CanvasRuntime,
     pub(super) sender: &'a SenderHandle,
     pub(super) select: &'a Callback<wire::TaskStamp>,
-    pub(super) controls: &'a UseReducerHandle<TeamControls>,
 }
 
 /// This team's candidate items, dropping consent requests already ruled.
@@ -78,7 +76,6 @@ pub(super) fn team_items(
 
 /// One item renderer that owns every handle its controls need.
 pub(super) fn item_view(controls: &AttentionControls<'_>) -> Callback<AttentionItem, Html> {
-    let team = controls.team;
     let decide = controls.runtime.offers(CommandKind::ConsentDecide);
     let rulings = controls
         .runtime
@@ -94,7 +91,6 @@ pub(super) fn item_view(controls: &AttentionControls<'_>) -> Callback<AttentionI
         .collect::<BTreeMap<_, _>>();
     let sender = controls.sender.clone();
     let select = controls.select.clone();
-    let team_controls = controls.controls.clone();
     Callback::from(move |item: AttentionItem| {
         let body = match &item.subject {
             AttentionSubject::Consent(pending) => render_consent(
@@ -115,10 +111,11 @@ pub(super) fn item_view(controls: &AttentionControls<'_>) -> Callback<AttentionI
                 expires_at,
             } => render_lease(&item, task.as_ref(), handle, *expires_at, &select),
             AttentionSubject::Direction {
+                directive,
                 pending,
                 oldest,
                 preview,
-            } => render_direction(&item, team, *pending, *oldest, preview, &team_controls),
+            } => render_direction(&item, *directive, *pending, *oldest, preview),
         };
         html! {
             <li
@@ -261,25 +258,27 @@ fn open_task(task: &wire::TaskStamp, select: &Callback<wire::TaskStamp>) -> Call
 
 fn render_direction(
     item: &AttentionItem,
-    team: CanonicalUuid,
+    directive: CanonicalUuid,
     pending: usize,
     oldest: i64,
     preview: &str,
-    controls: &UseReducerHandle<TeamControls>,
 ) -> Html {
-    let target = primary_textarea_id(&item.lane.to_string());
     let waiting = if pending == 1 {
         "1 waiting".to_owned()
     } else {
         format!("{pending} waiting")
     };
+    let route = crate::view::CanvasRoute::Directions {
+        focus: Some(crate::view::DirectionsFocus::Direction(
+            crate::runtime::DirectionRef::Identity(directive),
+        )),
+    };
     html! {
         <a
             class="team-dash-attention-chip"
-            href={crate::view::card_href(&target)}
-            aria-label={format!("Open {}'s composer in Chat", item.label)}
+            href={format!("#{}", route.path())}
+            aria-label={format!("Open {}'s oldest waiting direction in Work", item.label)}
             title={preview.to_owned()}
-            onclick={dash::dash_chat_click(team, controls)}
         >
             <span class="team-dash-flow-member">{item.label.clone()}</span>
             <span class="team-dash-attention-copy">

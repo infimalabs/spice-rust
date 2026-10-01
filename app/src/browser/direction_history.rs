@@ -76,38 +76,134 @@ fn queue(
     }
 }
 
+/// Replace a focused Directions route once the reader's own filters take
+/// over, so the URL never names a narrowing the page no longer shows.
+fn release_route(navigate: &Callback<navigation::Navigation>, focused: bool) {
+    if focused {
+        navigate.emit(navigation::Navigation::Step(
+            crate::view::RouteStep::Replace(CanvasRoute::Directions { focus: None }),
+        ));
+    }
+}
+
+fn team_lanes(
+    surface: &UseStateHandle<SurfaceData>,
+    teams: &BTreeSet<CanonicalUuid>,
+) -> Vec<CanonicalUuid> {
+    surface
+        .read()
+        .as_ref()
+        .and_then(CanvasRuntime::lanes)
+        .map(|topology| {
+            topology
+                .lanes
+                .iter()
+                .filter(|team| teams.contains(&team.lane))
+                .flat_map(|team| team.members.iter().map(|member| member.lane))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn apply_filters(
     sender: &SenderHandle,
     surface: &UseStateHandle<SurfaceData>,
-    selected_teams: &BTreeSet<CanonicalUuid>,
-    selected_agents: &BTreeSet<CanonicalUuid>,
-    selected_states: &BTreeSet<wire::Disposition>,
-    validation: &UseStateHandle<Option<String>>,
-) {
+    selections: &Selections,
+) -> bool {
     let query = input_value("direction-history-query");
     let cutoff = input_value("direction-history-cutoff");
     let authored_before = match crate::runtime::direction_history_authored_cutoff(&cutoff) {
         Ok(cutoff) => cutoff,
         Err(issue) => {
-            validation.set(Some(issue));
-            return;
+            selections.validation.set(Some(issue));
+            return false;
         }
     };
-    validation.set(None);
-    let mut lanes = selected_agents.iter().copied().collect::<Vec<_>>();
-    if let Some(topology) = surface.read().as_ref().and_then(CanvasRuntime::lanes) {
-        lanes.extend(
-            topology
-                .lanes
-                .iter()
-                .filter(|team| selected_teams.contains(&team.lane))
-                .flat_map(|team| team.members.iter().map(|member| member.lane)),
-        );
-    }
-    let dispositions = selected_states.iter().copied().collect();
+    selections.validation.set(None);
+    let mut lanes = selections.agents.iter().copied().collect::<Vec<_>>();
+    lanes.extend(team_lanes(surface, &selections.teams));
+    let dispositions = selections.states.iter().copied().collect();
     queue(sender, surface, move |runtime| {
         runtime.apply_direction_history_filters(query, lanes, dispositions, authored_before)
     });
+    true
+}
+
+/// Local filter selections a routed read replaces.
+#[derive(Clone)]
+struct Selections {
+    teams: UseStateHandle<BTreeSet<CanonicalUuid>>,
+    agents: UseStateHandle<BTreeSet<CanonicalUuid>>,
+    states: UseStateHandle<BTreeSet<wire::Disposition>>,
+    validation: UseStateHandle<Option<String>>,
+}
+
+impl Selections {
+    fn reset(&self, teams: BTreeSet<CanonicalUuid>) {
+        clear_input("direction-history-query");
+        clear_input("direction-history-cutoff");
+        self.teams.set(teams);
+        self.agents.set(BTreeSet::new());
+        self.states.set(BTreeSet::new());
+        self.validation.set(None);
+    }
+}
+
+/// A click that queues one direction-history read.
+fn read_on_click(
+    sender: &SenderHandle,
+    surface: &UseStateHandle<SurfaceData>,
+    reserve: fn(&mut CanvasRuntime) -> Option<crate::runtime::DirectionHistoryRequest>,
+) -> Callback<MouseEvent> {
+    let sender = sender.clone();
+    let surface = surface.clone();
+    Callback::from(move |_: MouseEvent| queue(&sender, &surface, reserve))
+}
+
+/// Start the read a Directions route names, once per arrival at it: the
+/// page anchored on its direction, or the history of its team's members.
+/// Returns whether the route is now served.
+fn serve_route(
+    sender: &SenderHandle,
+    surface: &UseStateHandle<SurfaceData>,
+    focus: &crate::view::DirectionsFocus,
+    selections: &Selections,
+) -> bool {
+    match focus {
+        crate::view::DirectionsFocus::Direction(target) => {
+            let served = |surface: &UseStateHandle<SurfaceData>| {
+                surface.read().as_ref().is_some_and(|runtime| {
+                    let history = runtime.direction_history();
+                    history.locate(target) == Some(true) || history.anchoring(target)
+                })
+            };
+            if served(surface) {
+                return true;
+            }
+            selections.reset(BTreeSet::new());
+            queue(sender, surface, |runtime| {
+                runtime.anchor_direction_history(target)
+            });
+            served(surface)
+        }
+        crate::view::DirectionsFocus::Team(team) => {
+            if surface
+                .read()
+                .as_ref()
+                .and_then(CanvasRuntime::lanes)
+                .is_none()
+            {
+                return false;
+            }
+            let teams = BTreeSet::from([*team]);
+            let lanes = team_lanes(surface, &teams);
+            selections.reset(teams);
+            queue(sender, surface, move |runtime| {
+                runtime.apply_direction_history_filters(String::new(), lanes, Vec::new(), None)
+            });
+            true
+        }
+    }
 }
 
 fn toggle_set<T>(selected: &UseStateHandle<BTreeSet<T>>) -> Callback<T>
@@ -129,14 +225,46 @@ pub(super) fn use_controls(
     sender: SenderHandle,
     surface: UseStateHandle<SurfaceData>,
     active: bool,
+    focus: Option<crate::view::DirectionsFocus>,
+    navigate: Callback<navigation::Navigation>,
 ) -> Controls {
-    let validation = use_state(|| None);
-    let selected_teams = use_state(BTreeSet::new);
-    let selected_agents = use_state(BTreeSet::new);
-    let selected_states = use_state(BTreeSet::new);
-    let (revision, surface_ready) = surface.read().as_ref().map_or((0, false), |runtime| {
-        (runtime.direction_history().revision(), true)
-    });
+    let selections = Selections {
+        teams: use_state(BTreeSet::new),
+        agents: use_state(BTreeSet::new),
+        states: use_state(BTreeSet::new),
+        validation: use_state(|| None),
+    };
+    let served = use_mut_ref(|| None::<crate::view::DirectionsFocus>);
+    let (revision, surface_ready, roster_ready) =
+        surface
+            .read()
+            .as_ref()
+            .map_or((0, false, false), |runtime| {
+                (
+                    runtime.direction_history().revision(),
+                    true,
+                    runtime.lanes().is_some(),
+                )
+            });
+    {
+        let sender = sender.clone();
+        let surface = surface.clone();
+        let selections = selections.clone();
+        use_effect_with(
+            (active, focus.clone(), revision, surface_ready, roster_ready),
+            move |(active, focus, _, surface_ready, _)| {
+                let Some(focus) = focus.as_ref().filter(|_| *active && *surface_ready) else {
+                    served.borrow_mut().take();
+                    return;
+                };
+                if served.borrow().as_ref() != Some(focus)
+                    && serve_route(&sender, &surface, focus, &selections)
+                {
+                    *served.borrow_mut() = Some(focus.clone());
+                }
+            },
+        );
+    }
     {
         let sender = sender.clone();
         let surface = surface.clone();
@@ -149,75 +277,50 @@ pub(super) fn use_controls(
             },
         );
     }
+    let focused = focus.is_some();
     let apply = {
         let sender = sender.clone();
         let surface = surface.clone();
-        let selected_teams = selected_teams.clone();
-        let selected_agents = selected_agents.clone();
-        let selected_states = selected_states.clone();
-        let validation = validation.clone();
+        let selections = selections.clone();
+        let navigate = navigate.clone();
         Callback::from(move |_: MouseEvent| {
-            apply_filters(
-                &sender,
-                &surface,
-                &selected_teams,
-                &selected_agents,
-                &selected_states,
-                &validation,
-            );
+            if apply_filters(&sender, &surface, &selections) {
+                release_route(&navigate, focused);
+            }
         })
     };
     let clear = {
         let sender = sender.clone();
         let surface = surface.clone();
-        let selected_teams = selected_teams.clone();
-        let selected_agents = selected_agents.clone();
-        let selected_states = selected_states.clone();
-        let validation = validation.clone();
+        let selections = selections.clone();
         Callback::from(move |_: MouseEvent| {
-            clear_input("direction-history-query");
-            clear_input("direction-history-cutoff");
-            selected_teams.set(BTreeSet::new());
-            selected_agents.set(BTreeSet::new());
-            selected_states.set(BTreeSet::new());
-            validation.set(None);
+            selections.reset(BTreeSet::new());
             queue(&sender, &surface, |runtime| {
                 runtime.apply_direction_history_filters(String::new(), Vec::new(), Vec::new(), None)
             });
+            release_route(&navigate, focused);
         })
     };
+    let Selections {
+        teams: selected_teams,
+        agents: selected_agents,
+        states: selected_states,
+        validation,
+    } = selections;
     let toggle_agent = toggle_set(&selected_agents);
     let toggle_team = toggle_set(&selected_teams);
     let toggle_state = toggle_set(&selected_states);
-    let newer = {
-        let sender = sender.clone();
-        let surface = surface.clone();
-        Callback::from(move |_: MouseEvent| {
-            queue(
-                &sender,
-                &surface,
-                CanvasRuntime::begin_newer_direction_history,
-            );
-        })
-    };
-    let older = {
-        let sender = sender.clone();
-        let surface = surface.clone();
-        Callback::from(move |_: MouseEvent| {
-            queue(
-                &sender,
-                &surface,
-                CanvasRuntime::begin_older_direction_history,
-            );
-        })
-    };
-    let retry = {
-        let sender = sender;
-        let surface = surface;
-        Callback::from(move |_: MouseEvent| {
-            queue(&sender, &surface, CanvasRuntime::retry_direction_history);
-        })
-    };
+    let newer = read_on_click(
+        &sender,
+        &surface,
+        CanvasRuntime::begin_newer_direction_history,
+    );
+    let older = read_on_click(
+        &sender,
+        &surface,
+        CanvasRuntime::begin_older_direction_history,
+    );
+    let retry = read_on_click(&sender, &surface, CanvasRuntime::retry_direction_history);
     Controls {
         validation,
         selected_agents,

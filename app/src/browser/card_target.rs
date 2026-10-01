@@ -757,6 +757,54 @@ pub(super) fn use_direction_target(
     );
 }
 
+/// Focus and mark the global Work direction card a durable route names, once
+/// its anchored page renders it.
+#[hook]
+pub(super) fn use_global_direction_target(
+    target: Option<String>,
+    team_controls: UseReducerHandle<TeamControls>,
+    visible: bool,
+) {
+    let status = use_state(|| None::<Status>);
+    let opened = use_mut_ref(|| None::<String>);
+    let held = use_mut_ref(|| None::<Hold>);
+    use_effect_with((target, visible), move |(target, visible)| {
+        let mut selected = None;
+        if let Some(requested) = target.as_deref().filter(|_| *visible) {
+            if held
+                .borrow()
+                .as_ref()
+                .is_some_and(|hold| hold.target != requested)
+            {
+                held.borrow_mut().take();
+            }
+            let document = web_sys::window().and_then(|window| window.document());
+            let route = Route {
+                target: requested,
+                status_target: requested,
+                returned: false,
+                document: document.as_ref(),
+                status: &status,
+                team_controls: &team_controls,
+                team: None,
+                mode: TeamMode::Work,
+            };
+            selected = route.reach(&held, &opened);
+        } else {
+            held.borrow_mut().take();
+            opened.borrow_mut().take();
+            if status.is_some() {
+                status.set(None);
+            }
+        }
+        move || {
+            if let Some(element) = selected {
+                let _ = element.remove_attribute("data-card-route-selected");
+            }
+        }
+    });
+}
+
 /// One visible route target once Chat state is ready.
 struct Route<'a> {
     /// Concrete rendered card ID.

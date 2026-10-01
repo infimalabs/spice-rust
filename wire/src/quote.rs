@@ -236,7 +236,7 @@ impl FromStr for QuoteTarget {
                 },
                 digest: coordinate("digest", digest)?,
             }),
-            ["steer", key, digest] if steering_key_segment(key) => Ok(Self::Steering {
+            ["steer", key, digest] if steering_key(key) => Ok(Self::Steering {
                 key: (*key).to_owned(),
                 digest: coordinate("digest", digest)?,
             }),
@@ -272,7 +272,9 @@ where
     coordinate(field, text)
 }
 
-fn steering_key_segment(key: &str) -> bool {
+/// Whether text has the shape of a minted steering acknowledgment key.
+#[must_use]
+pub fn steering_key(key: &str) -> bool {
     matches!(key.len(), 8 | 9) && key.bytes().all(|byte| byte.is_ascii_alphanumeric())
 }
 

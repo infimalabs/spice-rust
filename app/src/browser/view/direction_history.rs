@@ -47,7 +47,12 @@ pub(super) fn render(
         follow: &follow,
     };
     html! {
-        <section class="work-directions" aria-labelledby="work-directions-heading">
+        <section
+            id={crate::view::DIRECTIONS_SECTION_ID}
+            class="work-directions"
+            tabindex="-1"
+            aria-labelledby="work-directions-heading"
+        >
             <header class="work-directions-heading">
                 <div>
                     <span class="team-task-eyebrow">{"Operator history"}</span>
@@ -79,6 +84,14 @@ pub(super) fn render(
                     }}
                 </div>
             } else if !state.groups().is_empty() {
+                if state.has_newer() {
+                    <button
+                        type="button"
+                        class="team-mode work-direction-newer-edge"
+                        disabled={state.loading()}
+                        onclick={controls.newer.clone()}
+                    >{"Newer directions"}</button>
+                }
                 <ol
                     class="team-direction-ledger work-direction-ledger"
                     role="feed"
@@ -229,7 +242,7 @@ fn card<'a>(
     }
     Card {
         identity: group.fanout,
-        id: format!("work-direction-{}", group.fanout),
+        id: crate::view::global_direction_card_id(group.fanout),
         body: group.preview.as_deref().unwrap_or("Preview unavailable"),
         complete: false,
         attachments: &[],
