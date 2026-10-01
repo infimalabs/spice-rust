@@ -11,16 +11,21 @@ with the Git index.
 `reference-transaction` under the Git-common `.spice-install/git-hooks`. These
 are installed artifacts rather than tracked shell files. Their exact forms are
 shown with a representative absolute Git-common prefix. `pre-commit` first
-normalizes Git and Command Line Tools environment inherited from the hook:
+normalizes Git and Command Line Tools environment inherited from the hook.
+Nested Git invocations prepend Git's execution directory once per level, so
+every leading repetition is removed; later authored `PATH` entries survive:
 
 ```sh
 #!/bin/sh -eu
 SPICE_SHELL_HOOK_INSTALLED_APPLIANCE=1
 export SPICE_SHELL_HOOK_INSTALLED_APPLIANCE
 git_exec_path=${GIT_EXEC_PATH-}
-case ${PATH-} in
-  "$git_exec_path":*) PATH=${PATH#"$git_exec_path":}; export PATH ;;
-esac
+while [ -n "$git_exec_path" ]; do
+  case ${PATH-} in
+    "$git_exec_path":*) PATH=${PATH#"$git_exec_path":}; export PATH ;;
+    *) break ;;
+  esac
+done
 unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX
 case $git_exec_path in
   /Library/Developer/CommandLineTools/*)

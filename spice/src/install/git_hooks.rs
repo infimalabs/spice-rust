@@ -50,9 +50,12 @@ const PRE_COMMIT_ENVIRONMENT: &str = concat!(
     "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE=1\n",
     "export SPICE_SHELL_HOOK_INSTALLED_APPLIANCE\n",
     "git_exec_path=${GIT_EXEC_PATH-}\n",
-    "case ${PATH-} in\n",
-    "  \"$git_exec_path\":*) PATH=${PATH#\"$git_exec_path\":}; export PATH ;;\n",
-    "esac\n",
+    "while [ -n \"$git_exec_path\" ]; do\n",
+    "  case ${PATH-} in\n",
+    "    \"$git_exec_path\":*) PATH=${PATH#\"$git_exec_path\":}; export PATH ;;\n",
+    "    *) break ;;\n",
+    "  esac\n",
+    "done\n",
     "unset GIT_DIR GIT_EXEC_PATH GIT_PREFIX\n",
     "case $git_exec_path in\n",
     "  /Library/Developer/CommandLineTools/*)\n",
@@ -113,6 +116,39 @@ mod tests {
             "exec '/tmp/space tab\tquote'\\''$`\\common/",
             ".spice-install/bin/spice' gate pre-commit \"$@\"\n"
         )));
+    }
+
+    #[test]
+    fn pre_commit_prelude_strips_every_leading_git_exec_path_and_keeps_authored_entries() {
+        for (exec_path, path, expected) in [
+            (
+                "/git/core",
+                "/git/core:/git/core:/git/core:/usr/bin:/git/core:/bin",
+                "/usr/bin:/git/core:/bin",
+            ),
+            (
+                "/git/core",
+                "/usr/bin:/git/core:/bin",
+                "/usr/bin:/git/core:/bin",
+            ),
+            ("/git/core", "/git/core/sub:/bin", "/git/core/sub:/bin"),
+            ("", "::/usr/bin", "::/usr/bin"),
+        ] {
+            let output = std::process::Command::new("/bin/sh")
+                .args(["-eu", "-c"])
+                .arg(format!("{PRE_COMMIT_ENVIRONMENT}printf '%s' \"$PATH\""))
+                .env_clear()
+                .env("GIT_EXEC_PATH", exec_path)
+                .env("PATH", path)
+                .output()
+                .expect("POSIX shell runs the pre-commit prelude");
+            assert!(output.status.success(), "{output:?}");
+            assert_eq!(
+                String::from_utf8(output.stdout).unwrap(),
+                expected,
+                "{path}"
+            );
+        }
     }
 
     #[test]
