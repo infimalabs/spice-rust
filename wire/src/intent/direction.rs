@@ -52,7 +52,7 @@ pub struct SteerHistory {
 /// Keyset position of one direction history page.
 ///
 /// Positions are group positions: the first creating fact of a fanout.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum DirectionWindow {
     /// The newest matching groups.
@@ -65,6 +65,9 @@ pub enum DirectionWindow {
     /// Start at the group holding this directive or fanout identity, then
     /// continue with older matching groups.
     Anchor { identity: CanonicalUuid },
+    /// Start at the group holding the directive with this acknowledgment
+    /// key, then continue with older matching groups.
+    AnchorKey { key: String },
 }
 
 /// One bounded page of operator direction history.
@@ -77,6 +80,9 @@ pub struct DirectionHistoryAnswer {
     pub limit: u16,
     /// Total matching groups at this answer's snapshot.
     pub total: u64,
+    /// Zero-based index of the first returned group among all matching
+    /// groups, so an anchored page knows where it sits.
+    pub offset: u64,
     /// Pass as [`DirectionWindow::Before`] for older groups; absent once
     /// none remain.
     #[serde(

@@ -74,8 +74,9 @@ pub enum AttentionSubject {
         handle: String,
         expires_at: i64,
     },
-    /// Direction waiting on the member, answered from its composer.
+    /// Direction waiting on the member; `directive` is the oldest.
     Direction {
+        directive: CanonicalUuid,
         pending: usize,
         oldest: i64,
         preview: String,
@@ -204,6 +205,7 @@ pub fn team_attention(
                 row.lane,
                 Some(authored.saturating_add(DIRECTION_ATTENTION_MILLIS)),
                 AttentionSubject::Direction {
+                    directive: oldest.directive,
                     pending: row.pending.len(),
                     oldest: authored,
                     preview: super::one_line(&preview),

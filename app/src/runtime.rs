@@ -37,7 +37,7 @@ mod team_settled;
 mod work_history;
 pub use consent::ConsentRuling;
 pub use direction_history::{
-    DIRECTION_HISTORY_PAGE_SIZE, DirectionHistoryRequest, DirectionHistoryState,
+    DIRECTION_HISTORY_PAGE_SIZE, DirectionHistoryRequest, DirectionHistoryState, DirectionRef,
     direction_history_authored_cutoff,
 };
 pub use lanes::{LaneMember, LaneRow, LaneStatus, LaneView};

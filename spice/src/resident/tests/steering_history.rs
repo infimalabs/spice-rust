@@ -270,6 +270,7 @@ fn history_pages_whole_operator_fanouts_newest_first_with_cursors_both_ways() {
     assert_eq!(fanouts(&newest), [gamma, beta]);
     assert_eq!(newest.total, 3, "the peer tell is not operator direction");
     assert_eq!(newest.newer, None);
+    assert_eq!(newest.offset, 0);
     assert_eq!(newest.older, Some(newest.groups[1].position));
     assert_eq!(
         newest.groups[0].preview.as_deref(),
@@ -299,6 +300,7 @@ fn history_pages_whole_operator_fanouts_newest_first_with_cursors_both_ways() {
         "a fanout arrives whole, with each recipient's own standing"
     );
     assert_eq!(older.older, None);
+    assert_eq!(older.offset, 2, "a page reports where it starts");
     let alpha_position = older.groups[0].position;
     assert_eq!(older.newer, Some(alpha_position));
 
@@ -315,6 +317,7 @@ fn history_pages_whole_operator_fanouts_newest_first_with_cursors_both_ways() {
     );
     assert_eq!(newer.older, Some(newer.groups[0].position));
     assert_eq!(newer.newer, Some(newer.groups[0].position));
+    assert_eq!(newer.offset, 1);
 
     let by_directive = fixture.page(&read(
         DirectionWindow::Anchor {
@@ -329,6 +332,20 @@ fn history_pages_whole_operator_fanouts_newest_first_with_cursors_both_ways() {
     assert_eq!(fanouts(&by_fanout), [beta, alpha]);
     assert_eq!(by_fanout.newer, Some(by_fanout.groups[0].position));
     assert_eq!(by_fanout.older, None);
+    assert_eq!(by_fanout.offset, 1, "an anchored page knows where it sits");
+    let beta_key = newest.groups[1].recipients[0].key.clone();
+    let by_key = fixture.page(&read(DirectionWindow::AnchorKey { key: beta_key }, 5));
+    assert_eq!(fanouts(&by_key), [beta, alpha]);
+    assert_eq!(by_key.offset, 1);
+    assert_eq!(
+        fixture.refusal(&read(
+            DirectionWindow::AnchorKey {
+                key: "dNoSuchKy".to_owned(),
+            },
+            5,
+        )),
+        "steer::history-anchor-unknown",
+    );
 
     assert_eq!(
         fixture.refusal(&read(

@@ -208,6 +208,9 @@ pub(super) fn render_directive_ledger(
     let rows = watchband::directive_ledger::directive_ledger(&members, &local, runtime.inbox());
     let board = runtime.board();
     let heading = format!("direction-ledger-{}", team.lane);
+    let history = crate::view::CanvasRoute::Directions {
+        focus: Some(crate::view::DirectionsFocus::Team(team.lane)),
+    };
     html! {
         <section class="team-task-section" aria-labelledby={heading.clone()}>
             <header>
@@ -215,6 +218,11 @@ pub(super) fn render_directive_ledger(
                 if !rows.is_empty() {
                     <span>{rows.len()}</span>
                 }
+                <a
+                    class="team-direction-history-link"
+                    href={format!("#{}", history.path())}
+                    aria-label="Open this team's direction history in Work"
+                >{"History"}</a>
             </header>
             if rows.is_empty() {
                 <p

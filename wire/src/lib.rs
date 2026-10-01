@@ -105,7 +105,7 @@ pub use quota::{
 };
 pub use quote::{
     QUOTE_DEPTH_LIMIT, QuoteAuthor, QuotePresentation, QuoteResolution, QuoteTarget,
-    QuoteTargetError, QuoteUnavailable, ResolvedQuote,
+    QuoteTargetError, QuoteUnavailable, ResolvedQuote, steering_key,
 };
 pub use reply::{
     CanvasOpen, DemoAnswer, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,

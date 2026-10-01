@@ -8,6 +8,55 @@ use super::CanvasRuntime;
 /// Number of fanout groups in one bounded Work Directions page.
 pub const DIRECTION_HISTORY_PAGE_SIZE: u16 = 20;
 
+/// Refusal naming an anchor no operator direction holds.
+const ANCHOR_UNKNOWN: &str = "steer::history-anchor-unknown";
+
+/// One operator direction a durable route names: a directive or fanout
+/// identity, or a directive's acknowledgment key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DirectionRef {
+    Identity(CanonicalUuid),
+    Key(String),
+}
+
+impl DirectionRef {
+    /// Whether this group is the direction named.
+    #[must_use]
+    pub fn names(&self, group: &DirectionGroup) -> bool {
+        match self {
+            Self::Identity(identity) => {
+                group.fanout == *identity
+                    || group
+                        .recipients
+                        .iter()
+                        .any(|recipient| recipient.directive == *identity)
+            }
+            Self::Key(key) => group
+                .recipients
+                .iter()
+                .any(|recipient| recipient.key == *key),
+        }
+    }
+
+    fn window(&self) -> DirectionWindow {
+        match self {
+            Self::Identity(identity) => DirectionWindow::Anchor {
+                identity: *identity,
+            },
+            Self::Key(key) => DirectionWindow::AnchorKey { key: key.clone() },
+        }
+    }
+}
+
+impl std::fmt::Display for DirectionRef {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Identity(identity) => identity.fmt(formatter),
+            Self::Key(key) => formatter.write_str(key),
+        }
+    }
+}
+
 /// One exact request against the current Work Directions generation.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DirectionHistoryRequest {
@@ -17,7 +66,6 @@ pub struct DirectionHistoryRequest {
     pub lanes: Vec<CanonicalUuid>,
     pub dispositions: Vec<Disposition>,
     pub authored_before: Option<wire::Instant>,
-    offset: u64,
 }
 
 /// Capability-scoped state for one replaceable operator-direction page.
@@ -36,6 +84,8 @@ pub struct DirectionHistoryState {
     pending: Option<DirectionHistoryRequest>,
     loading: bool,
     issue: Option<String>,
+    /// An anchored read's target that no operator direction holds.
+    missing: Option<DirectionRef>,
 }
 
 impl DirectionHistoryState {
@@ -96,6 +146,34 @@ impl DirectionHistoryState {
             || !self.dispositions.is_empty()
             || self.authored_before.is_some()
     }
+
+    /// Settled evidence for one routed direction: held by the loaded page,
+    /// refused by an anchored read, or not yet known.
+    #[must_use]
+    pub fn locate(&self, target: &DirectionRef) -> Option<bool> {
+        if self.groups.iter().any(|group| target.names(group)) {
+            Some(true)
+        } else if self.missing.as_ref() == Some(target) {
+            Some(false)
+        } else {
+            None
+        }
+    }
+
+    /// The loaded group a route names.
+    #[must_use]
+    pub fn group(&self, target: &DirectionRef) -> Option<&DirectionGroup> {
+        self.groups.iter().find(|group| target.names(group))
+    }
+
+    /// Whether a read anchored on this target is in flight.
+    #[must_use]
+    pub fn anchoring(&self, target: &DirectionRef) -> bool {
+        self.pending
+            .as_ref()
+            .is_some_and(|pending| pending.window == target.window())
+    }
+
     pub(super) const fn active(&self) -> bool {
         self.total.is_some() || self.loading || self.pending.is_some()
     }
@@ -110,6 +188,7 @@ impl DirectionHistoryState {
         self.pending = None;
         self.loading = false;
         self.issue = None;
+        self.missing = None;
     }
 }
 
@@ -141,7 +220,7 @@ impl CanvasRuntime {
         if self.direction_history.total.is_some() {
             return None;
         }
-        self.reserve_direction_history(DirectionWindow::Newest, 0)
+        self.reserve_direction_history(DirectionWindow::Newest)
     }
 
     /// Replace every server-side filter and return to the newest matching page.
@@ -167,22 +246,28 @@ impl CanvasRuntime {
         self.begin_direction_history()
     }
 
+    /// Clear every filter and read the page starting at one routed direction.
+    pub fn anchor_direction_history(
+        &mut self,
+        target: &DirectionRef,
+    ) -> Option<DirectionHistoryRequest> {
+        let history = &mut self.direction_history;
+        history.query = None;
+        history.lanes.clear();
+        history.dispositions.clear();
+        history.authored_before = None;
+        history.reset_page();
+        self.reserve_direction_history(target.window())
+    }
+
     pub fn begin_older_direction_history(&mut self) -> Option<DirectionHistoryRequest> {
         let position = self.direction_history.older?;
-        self.reserve_direction_history(
-            DirectionWindow::Before { position },
-            self.direction_history.last_result(),
-        )
+        self.reserve_direction_history(DirectionWindow::Before { position })
     }
 
     pub fn begin_newer_direction_history(&mut self) -> Option<DirectionHistoryRequest> {
         let position = self.direction_history.newer?;
-        self.reserve_direction_history(
-            DirectionWindow::After { position },
-            self.direction_history
-                .offset
-                .saturating_sub(u64::from(DIRECTION_HISTORY_PAGE_SIZE)),
-        )
+        self.reserve_direction_history(DirectionWindow::After { position })
     }
 
     pub fn retry_direction_history(&mut self) -> Option<DirectionHistoryRequest> {
@@ -209,7 +294,6 @@ impl CanvasRuntime {
     fn reserve_direction_history(
         &mut self,
         window: DirectionWindow,
-        offset: u64,
     ) -> Option<DirectionHistoryRequest> {
         if self.direction_history.loading {
             return None;
@@ -221,7 +305,6 @@ impl CanvasRuntime {
             lanes: self.direction_history.lanes.clone(),
             dispositions: self.direction_history.dispositions.clone(),
             authored_before: self.direction_history.authored_before,
-            offset,
         };
         self.direction_history.loading = true;
         self.direction_history.issue = None;
@@ -245,12 +328,27 @@ impl CanvasRuntime {
         let answer = match &admitted.get().outcome {
             Outcome::Reply(reply) => &reply.body,
             Outcome::Refusal(refusal) => {
-                self.direction_history.issue = Some(
-                    refusal
-                        .diagnostic()
-                        .map_or("steer::history-refused", wire::RefusalDiagnostic::reason)
-                        .to_owned(),
-                );
+                let reason = refusal
+                    .diagnostic()
+                    .map_or("steer::history-refused", wire::RefusalDiagnostic::reason);
+                let anchor = match &request.window {
+                    DirectionWindow::Anchor { identity } => Some(DirectionRef::Identity(*identity)),
+                    DirectionWindow::AnchorKey { key } => Some(DirectionRef::Key(key.clone())),
+                    DirectionWindow::Newest
+                    | DirectionWindow::Before { .. }
+                    | DirectionWindow::After { .. } => None,
+                };
+                if let Some(target) = anchor.filter(|_| reason == ANCHOR_UNKNOWN) {
+                    // The route names nothing; a new generation reads the
+                    // newest page while the evidence refuses the route.
+                    let history = &mut self.direction_history;
+                    history.revision = history.revision.saturating_add(1);
+                    history.pending = None;
+                    history.issue = None;
+                    history.missing = Some(target);
+                } else {
+                    self.direction_history.issue = Some(reason.to_owned());
+                }
                 return;
             }
             Outcome::Fault(fault) => {
@@ -260,7 +358,7 @@ impl CanvasRuntime {
         };
         if answer.limit != DIRECTION_HISTORY_PAGE_SIZE
             || answer.groups.len() > usize::from(answer.limit)
-            || request.offset.saturating_add(answer.groups.len() as u64) > answer.total
+            || answer.offset.saturating_add(answer.groups.len() as u64) > answer.total
             || answer
                 .groups
                 .windows(2)
@@ -270,7 +368,7 @@ impl CanvasRuntime {
             return;
         }
         self.direction_history.groups.clone_from(&answer.groups);
-        self.direction_history.offset = request.offset;
+        self.direction_history.offset = answer.offset;
         self.direction_history.total = Some(answer.total);
         self.direction_history.older = answer.older;
         self.direction_history.newer = answer.newer;

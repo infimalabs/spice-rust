@@ -566,11 +566,9 @@ fn render_details(
     let member_command = member_controls::command_callback(render.sender, surface, team.lane);
     let attention_items = attention::team_items(runtime, standings, render.work);
     let attention_view = attention::item_view(&attention::AttentionControls {
-        team: team.lane,
         runtime,
         sender: render.sender,
         select: render.select,
-        controls: render.controls,
     });
     html! {
         <main class="team-dash-frame" aria-label="Team Dash">

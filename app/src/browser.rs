@@ -462,6 +462,8 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
         sender.clone(),
         surface.clone(),
         route.canvas_destination() == CanvasDestination::Work,
+        route.directions().flatten().cloned(),
+        properties.navigate.clone(),
     );
     let work_history = work_history::use_controls(sender.clone(), surface.clone());
     let team_settled = team_settled::use_controls(
@@ -562,6 +564,11 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
         state.team_controls.clone(),
         chat_visible,
     );
+    card_target::use_global_direction_target(
+        global_direction_card(&state.route, &state.surface),
+        state.team_controls.clone(),
+        state.destination == CanvasDestination::Work,
+    );
     use_mosaic_root_scroll(chat_visible);
     canvas_menu::use_dismissal(state.canvas_menu_open.clone());
     message_task_inspector::use_surface_lifetime(&state.task_inspector, chat_visible);
@@ -613,6 +620,21 @@ fn teamed_lane_count(surface: &SurfaceData) -> usize {
         })
 }
 
+/// The element a Directions route brings into view: its direction's card
+/// once the anchored page holds it, otherwise the Directions section.
+fn global_direction_card(route: &CanvasRoute, surface: &SurfaceData) -> Option<String> {
+    match route.directions()? {
+        Some(crate::view::DirectionsFocus::Direction(target)) => {
+            let surface = surface.read();
+            let group = surface.as_ref()?.direction_history().group(target)?;
+            Some(crate::view::global_direction_card_id(group.fanout))
+        }
+        Some(crate::view::DirectionsFocus::Team(_)) | None => {
+            Some(crate::view::DIRECTIONS_SECTION_ID.to_owned())
+        }
+    }
+}
+
 /// A task opened over Dash or Chat: browser-local, so any route change ends it.
 #[hook]
 fn use_local_task(route: &CanvasRoute) -> UseStateHandle<Option<TaskStamp>> {
@@ -651,6 +673,18 @@ fn use_route_settlement(
                 .and_then(TaskDetailState::known)
         }),
         card,
+        direction: route.directions().flatten().and_then(|focus| {
+            let surface = surface.read();
+            let runtime = surface.as_ref()?;
+            match focus {
+                crate::view::DirectionsFocus::Team(team) => runtime
+                    .lanes()
+                    .map(|topology| topology.lanes.iter().any(|row| row.lane == *team)),
+                crate::view::DirectionsFocus::Direction(target) => {
+                    runtime.direction_history().locate(target)
+                }
+            }
+        }),
     };
     use_effect_with((route.clone(), evidence), move |(route, evidence)| {
         if let Some((next, notice)) = route.unavailable(*evidence) {

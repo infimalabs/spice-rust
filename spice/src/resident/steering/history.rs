@@ -41,6 +41,10 @@ impl Group {
                 .iter()
                 .any(|member| member.directive == identity)
     }
+
+    fn holds_key(&self, key: &str) -> bool {
+        self.members.iter().any(|member| member.key == key)
+    }
 }
 
 pub(in crate::resident) fn history(
@@ -79,6 +83,7 @@ pub(in crate::resident) fn history(
         .then(|| matching[range.end - 1].position());
     let newer = (!range.is_empty() && range.start > 0).then(|| matching[range.start].position());
     let total = u64::try_from(matching.len()).expect("direction group count fits the wire total");
+    let offset = u64::try_from(range.start).expect("direction group index fits the wire offset");
     let page = &matching[range];
     let texts = match reader
         .operator_direction_texts(page.iter().map(|group| group.first().directive).collect())
@@ -107,6 +112,7 @@ pub(in crate::resident) fn history(
             groups: rows,
             limit: request.limit,
             total,
+            offset,
             older,
             newer,
         })),
@@ -204,27 +210,34 @@ fn window(
     limit: usize,
 ) -> Result<Range<usize>, Outcome<CommandAnswer>> {
     let older_from = |start: usize| start..start.saturating_add(limit).min(matching.len());
-    Ok(match *window {
-        DirectionWindow::Newest => older_from(0),
-        DirectionWindow::Before { position } => {
-            older_from(matching.partition_point(|group| group.position() >= position))
-        }
+    let anchored = |start: Option<usize>, identity: String| {
+        start.map(older_from).ok_or_else(|| {
+            refusal(
+                "steer::history-anchor-unknown",
+                Some("an operator direction matching the filters".to_owned()),
+                Some(identity),
+                "anchor on a directive, fanout, or key this filtered history holds",
+            )
+        })
+    };
+    match window {
+        DirectionWindow::Newest => Ok(older_from(0)),
+        DirectionWindow::Before { position } => Ok(older_from(
+            matching.partition_point(|group| group.position() >= *position),
+        )),
         DirectionWindow::After { position } => {
-            let end = matching.partition_point(|group| group.position() > position);
-            end.saturating_sub(limit)..end
+            let end = matching.partition_point(|group| group.position() > *position);
+            Ok(end.saturating_sub(limit)..end)
         }
-        DirectionWindow::Anchor { identity } => {
-            let Some(start) = matching.iter().position(|group| group.holds(identity)) else {
-                return Err(refusal(
-                    "steer::history-anchor-unknown",
-                    Some("an operator direction matching the filters".to_owned()),
-                    Some(identity.to_string()),
-                    "anchor on a directive or fanout this filtered history holds",
-                ));
-            };
-            older_from(start)
-        }
-    })
+        DirectionWindow::Anchor { identity } => anchored(
+            matching.iter().position(|group| group.holds(*identity)),
+            identity.to_string(),
+        ),
+        DirectionWindow::AnchorKey { key } => anchored(
+            matching.iter().position(|group| group.holds_key(key)),
+            key.clone(),
+        ),
+    }
 }
 
 fn presented(group: &Group, preview: Option<String>) -> DirectionGroup {
