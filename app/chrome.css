@@ -42,7 +42,7 @@ body:has(.shell--mosaic),
   display: grid;
   contain: layout;
   flex: 1 1 auto;
-  grid-template-columns: minmax(0, 1fr) 35px;
+  grid-template-columns: auto minmax(0, 1fr) 35px;
   align-items: center;
   gap: 7px;
   min-width: 0;
@@ -53,7 +53,7 @@ body:has(.shell--mosaic),
   border-radius: var(--canvas-radius-element);
 }
 .canvas-disclosure[data-transient-status="true"] {
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto) 35px;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto) 35px;
 }
 .canvas-disclosure[data-expanded="true"] {
   z-index: 20;
@@ -68,8 +68,33 @@ body:has(.shell--mosaic),
   backdrop-filter: var(--overlay-frost);
 }
 
-.task-pill-strip {
+/* The operator's face opens global Dash; it sits at the head of the bar beside
+   the aggregate Work count and is sized to the same band as the task pills. */
+.canvas-operator-link {
   grid-area: 1 / 1;
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  min-height: 0;
+  margin-inline: 2px 8px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+}
+.canvas-operator-link .operator-avatar {
+  flex-basis: 26px;
+  width: 26px;
+  height: 26px;
+  font-size: .55rem;
+}
+.canvas-operator-link.selected .operator-avatar {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.task-pill-strip {
+  grid-area: 1 / 2;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -104,7 +129,7 @@ body:has(.shell--mosaic),
 .task-pill.dormant .task-pill-count { background: var(--muted); }
 .task-pill.system .task-pill-count { background: var(--triage); }
 .canvas-global-status {
-  grid-area: 1 / 2;
+  grid-area: 1 / 3;
   min-width: 0;
   max-width: min(22rem, 42vw);
   overflow: hidden;

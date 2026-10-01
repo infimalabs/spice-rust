@@ -94,6 +94,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 </button>
             }
         });
+    let operator_link = render_operator_link(&render, runtime);
     let connection_label: AttrValue = render.connection.label().into();
     html! {
         <header class="commandbar commandbar--mosaic">
@@ -102,6 +103,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 data-transient-status={status.is_some().to_string()}
                 data-expanded={(**render.menu_open).to_string()}
             >
+                {operator_link}
                 <nav class="task-pill-strip" aria-label="Open task projects">
                     {all_work_pill}
                     {for task_pills.into_iter().map(|pill| {
@@ -156,6 +158,41 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 {render_canvas_menu(&render, runtime, &connection_label)}
             </div>
         </header>
+    }
+}
+
+/// The operator's face at the head of the bar, opening global Dash the way the
+/// aggregate count beside it opens global Work. It keeps its place and size
+/// while identity loads, so the pills after it never shift.
+fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
+    let operator = runtime
+        .and_then(CanvasRuntime::settings)
+        .map(|settings| &settings.operator);
+    let selected = render.destination == CanvasDestination::Dash;
+    let name = operator
+        .and_then(|operator| operator.name.as_deref())
+        .unwrap_or("Operator");
+    let label = format!("{name}: open Dash");
+    let navigate = render.navigate.clone();
+    html! {
+        <button
+            class={classes!("canvas-operator-link", selected.then_some("selected"))}
+            type="button"
+            title={label.clone()}
+            aria-label={label}
+            aria-pressed={selected.to_string()}
+            aria-current={selected.then_some("page")}
+            data-operator-state={if operator.is_some() { "ready" } else { "loading" }}
+            onclick={Callback::from(move |_| navigate.emit(navigation::Intent::Dash))}
+        >
+            if let Some(operator) = operator {
+                {super::render_operator_avatar(operator)}
+            } else {
+                <span class="operator-avatar" data-avatar-source="loading" aria-hidden="true">
+                    {"…"}
+                </span>
+            }
+        </button>
     }
 }
 
