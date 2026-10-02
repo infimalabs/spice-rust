@@ -286,6 +286,22 @@
 }
 .composer-vendor-icon:not([data-composer-vendor-provider]) { opacity: .9; }
 
+/* The provider mark is a behind-text watermark, not a heading control. */
+.composer-shard--primary > .composer-vendor-icon {
+  position: absolute;
+  right: 9px;
+  bottom: 7px;
+  width: 16px;
+  height: 16px;
+  opacity: .32;
+  pointer-events: none;
+}
+.composer-shard--primary > textarea {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
 .team-surface .mosaic-composer {
   gap: 0;
   height: auto;

@@ -62,6 +62,15 @@ and worktree, and Create new team and Leave all teams. Wide lanes lay those
 groups side by side; narrow lanes stack them and scroll within the lane. The
 button, Escape, or a click elsewhere in the team restores the composer.
 
+## Composer provider watermark
+
+Each Chat lane paints its provider emblem as a small, faint watermark in the
+primary composer's lower-right corner. It occupies no layout space, accepts no
+pointer events, and sits behind the transparent textarea so selection, typing,
+and pasted images retain the entire composer. Provider identity remains
+available through the emblem's accessible label. Quote shards carry no
+watermark, and Dash agent tiles keep their full-size provider emblem.
+
 ## Rich team directions
 
 The team-local **Work** tab renders each direction from its complete admitted
