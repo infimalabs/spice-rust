@@ -13,12 +13,14 @@ use wire::body::SourceBoundary;
 mod bounds;
 mod head_page;
 mod origin;
+mod taste;
 mod thread;
 
 use bounds::{admitted_envelope_length, decode_bounded_fact};
 #[cfg(test)]
 pub(crate) use head_page::verify_task_page_plan;
 pub use head_page::{CurrentHeadWitness, TaskHeadPage, TrustHeadPage};
+pub use taste::{TasteEvidenceFact, TasteEvidencePage, TasteEvidenceSummary};
 pub use thread::ThreadError;
 
 struct CausalPage {

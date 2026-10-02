@@ -5,7 +5,7 @@
 //! see and what it is told when a head is incomplete.
 
 use super::*;
-use crate::GuardError;
+use crate::{FactCause, GuardError, JournalWrite};
 
 #[test]
 fn selected_fact_pages_use_the_kind_index_and_decode_only_matching_rows() {
@@ -44,6 +44,56 @@ fn selected_fact_pages_use_the_kind_index_and_decode_only_matching_rows() {
     assert_eq!(metrics.queries, 1);
     assert_eq!(metrics.rows, 1);
     assert!(metrics.decoded_bytes > 0);
+}
+
+#[test]
+fn taste_pages_decode_only_the_named_bounded_frontier() {
+    let mut journal = authority_fixture();
+    for offset in 0..3 {
+        append_taste_judgment(&mut journal, "target", offset);
+    }
+    let before = measured_taste_page(&journal);
+
+    for offset in 3..303 {
+        append_taste_judgment(&mut journal, "unrelated", offset);
+    }
+    let after = measured_taste_page(&journal);
+
+    assert_eq!(after, before);
+}
+
+fn measured_taste_page(journal: &Journal) -> crate::guard::IndexedReadMetrics {
+    reset_indexed_read_metrics();
+    let page = journal
+        .read(|read| {
+            let horizon = read.cursor()?.expect("fixture has a journal cursor");
+            read.taste_evidence_page("target", horizon, horizon, 3)
+        })
+        .expect("bounded taste page reads");
+    assert_eq!((page.population, page.confirmed, page.cleared), (3, 3, 0));
+    assert_eq!(page.rows.len(), 3);
+    indexed_read_metrics()
+}
+
+fn append_taste_judgment(journal: &mut Journal, taste: &str, offset: u64) {
+    let mut write = JournalWrite::new(
+        Actor::Operator,
+        format!("taste:test-{offset}")
+            .parse()
+            .expect("fixture origin"),
+        instant(),
+        wire::Producer::Judge,
+    );
+    write
+        .fact(
+            wire::body::TasteConfirmed {
+                taste: taste.to_owned(),
+                locus: format!("fixture:{offset}"),
+            },
+            FactCause::Root,
+        )
+        .expect("taste judgment builds");
+    journal.apply(write).expect("taste judgment commits");
 }
 
 /// 300 added then 300 phased facts after the two authority facts.

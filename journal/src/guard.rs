@@ -21,7 +21,10 @@ use commit::visible_cursor;
 pub(crate) use commit::{steering_fact_identity, steering_head_agrees};
 #[cfg(test)]
 pub(crate) use indexed_read::verify_task_page_plan;
-pub use indexed_read::{CurrentHeadWitness, TaskHeadPage, ThreadError, TrustHeadPage};
+pub use indexed_read::{
+    CurrentHeadWitness, TaskHeadPage, TasteEvidenceFact, TasteEvidencePage, TasteEvidenceSummary,
+    ThreadError, TrustHeadPage,
+};
 #[cfg(test)]
 pub(crate) use read_metrics::{
     IndexedReadMetrics, indexed_read_metrics, reset_indexed_read_metrics,
