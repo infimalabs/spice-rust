@@ -37,8 +37,8 @@ pub use surface::{
     Mode, Observation, RetroSelector, StreamOutcome, SurfaceError, SurfaceEvent, SurfaceReasoning,
     SurfaceResidue, SurfaceToolMoment, SurfaceToolResult, TranscriptContinuation, TranscriptCursor,
     TranscriptCursorError, TranscriptFilter, TranscriptHistory, TranscriptObservation,
-    TranscriptPage, TranscriptPageRequest, TranscriptRecord, TranscriptWork, Watch, retro,
-    transcript_page,
+    TranscriptPage, TranscriptPageRequest, TranscriptPageRow, TranscriptPageStart,
+    TranscriptRecord, TranscriptStatus, TranscriptWork, Watch, retro, transcript_page,
 };
 pub use tape::{Locus, SourceId};
 

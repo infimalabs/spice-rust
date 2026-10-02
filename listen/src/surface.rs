@@ -32,7 +32,8 @@ mod page;
 pub use page::{
     TranscriptContinuation, TranscriptCursor, TranscriptCursorError, TranscriptFilter,
     TranscriptHistory, TranscriptObservation, TranscriptPage, TranscriptPageRequest,
-    TranscriptRecord, TranscriptWork, transcript_page,
+    TranscriptPageRow, TranscriptPageStart, TranscriptRecord, TranscriptStatus, TranscriptWork,
+    transcript_page,
 };
 
 /// Which daemonless surface produced a stream outcome.

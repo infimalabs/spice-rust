@@ -242,15 +242,17 @@ output-bearing surface admits through the one contract in `wire::output`:
 
 The transcript reader enforces the same law before a CLI chooses how to render
 it. `listen::transcript_page` scans only a caller-bounded newest window of one
-tape, keeps every vendor record atomic, and pages older records with a cursor
-that carries the tape generation and complete-record boundary. Event filters
-run before presentation admission. Per-field UTF-8 clipping reports withheld
-text bytes. An oversized record names its exact source spans for export and an
-authenticated cursor immediately before that record, so the caller can export
-it and continue with strictly older records without replaying it. History
-outside the decoded window reports the exact withheld source-byte count and
-its authenticated older cursor. A cursor from a replaced tape is refused
-rather than replayed against the new generation.
+tape. Its current pending-byte and decoder-canary status enters the same row
+and encoded-byte admission as complete vendor records, then records page newest
+first without splitting a record. Older pages use a cursor that carries the
+tape generation and complete-record boundary. Event filters run before record
+admission. Per-field UTF-8 clipping reports withheld text bytes. An oversized
+record names its exact source spans for export and an authenticated cursor
+immediately before that record, so the caller can export it and continue with
+strictly older records without replaying it. History outside the decoded window
+reports the exact withheld source-byte count and its authenticated older cursor.
+A cursor from a replaced tape is refused rather than replayed against the new
+generation.
 
 The task surfaces apply that contract directly. Bare `spice task show HANDLE`
 prints only the current execution contract: identity, title, project, phase,
