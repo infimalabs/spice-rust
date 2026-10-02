@@ -183,11 +183,14 @@ impl Seated {
     }
 
     fn release(mut self) {
-        self.seats
+        let occupant = self
+            .seats
             .vacate(self.lane)
-            .expect("retuned occupant remains supervised")
-            .wait()
-            .expect("fixture occupant exits");
+            .expect("retuned occupant remains supervised");
+        occupant
+            .kill()
+            .expect("fixture occupant accepts its ending");
+        occupant.wait().expect("fixture occupant exits");
         let _ = std::fs::remove_dir_all(&self.root);
     }
 

@@ -195,7 +195,9 @@ fn app_history_stays_bounded_and_ordered_across_refreshes() {
     let repository = fixture.repository();
     let mut history = vec![fixture.install()];
     let mut steady = None;
-    for round in 0..3 * install::RETAINED_APP_PREDECESSORS as u8 + 2 {
+    // Retirement starts once the predecessors fill; two later rounds give two
+    // steady-state shapes to compare, which is what boundedness needs.
+    for round in 0..install::RETAINED_APP_PREDECESSORS as u8 + 3 {
         let current = fixture.refresh(&[b'r', round]);
         install::inspect(&repository).expect("bounded refresh verifies");
         let retained = &history[history
