@@ -16,8 +16,6 @@ use super::overlay;
 mod actions;
 mod editor;
 
-pub(super) use actions::copy_image;
-
 use super::watchband::{ComposerAction, ComposerDrafts};
 
 #[derive(Clone, PartialEq)]
