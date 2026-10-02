@@ -32,9 +32,9 @@ pub use residue::{
     PromptStatus, RecordContext, Residue, ResidueKind, TurnMoment,
 };
 pub use stream::{
-    BOUNDARY_CHUNK_BYTES, Checkpoint, Position, Record, RecordPayload, Scan, ScanError,
+    BOUNDARY_CHUNK_BYTES, Checkpoint, Position, Record, RecordPayload, Scan, ScanEnd, ScanError,
     SourcedEvent, SourcedResidue, Span, TailBudget, TailBudgetError, TailScan, TailSearch,
-    TailWork, scan, scan_before, scan_tail, search_tail,
+    TailWork, scan, scan_before, scan_each, scan_tail, search_tail,
 };
 pub use surface::{
     Mode, Observation, RetroSelector, RetroSession, StreamOutcome, SurfaceError, SurfaceEvent,
@@ -42,7 +42,7 @@ pub use surface::{
     TranscriptCursor, TranscriptCursorError, TranscriptFilter, TranscriptHistory,
     TranscriptObservation, TranscriptPage, TranscriptPageRequest, TranscriptPageRow,
     TranscriptPageStart, TranscriptRecord, TranscriptStatus, TranscriptWork, Watch, WatchBatch,
-    WatchCursor, WatchDelta, WatchDeltaRow, retro, retro_sessions, transcript_page,
+    WatchCursor, WatchDelta, WatchDeltaRow, retro, retro_each, retro_sessions, transcript_page,
 };
 pub use tape::{Locus, SourceId};
 

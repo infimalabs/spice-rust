@@ -267,7 +267,12 @@ withheld bytes. A cursor from a replaced tape is refused as
 tape-path order, paged by `--after TAPE`; a locus, or a selector that resolves
 nothing, shows its observations. `--export FILE` writes the complete selected
 transcript, unpaged and unclipped (still narrowed by `--kind`), atomically to
-that file and prints only the export receipt.
+that file and prints only the export receipt. Export streams: tapes are read
+forward in 1 MiB chunks and each observation is written and hashed as it
+decodes, so memory holds one chunk, the record being decoded (at most the
+64 MiB vendor record limit), and a 1 MiB write buffer, whatever the
+transcript's size. A scan or write failure partway leaves the destination
+unchanged.
 
 Bare `spice watch [ROOT]` is one bounded current snapshot and exits. Persistent
 observation is explicit: `--follow` requires a positive

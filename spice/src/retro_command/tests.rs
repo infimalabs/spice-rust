@@ -290,6 +290,11 @@ fn export_writes_the_complete_unclipped_transcript_that_a_clipped_page_names() {
     let written = fs::read(&destination).expect("export is written");
     assert_eq!(receipt.digest, Digest::compute(Domain::CliExport, &written));
     let outcome: StreamOutcome = serde_json::from_slice(&written).expect("export decodes");
+    assert_eq!(
+        written,
+        wire::encode(&outcome).expect("outcome encodes"),
+        "the export is the canonical encoding of the whole outcome"
+    );
     let texts = outcome
         .observations
         .iter()

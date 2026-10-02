@@ -28,6 +28,8 @@ const ACTIVE_MEMBER_RECORDS: usize = 5;
 const RECORD_FIXTURE_COUNT: usize = 3;
 const PENDING_WINDOW_BYTES: u64 = 4;
 const MULTI_MEMBER_WINDOW_RECORDS: usize = 7;
+/// Member bytes one forward scan reads at once.
+const SCAN_CHUNK_BYTES: usize = 1024 * 1024;
 
 #[test]
 fn a_sealed_tail_cannot_hide_whole_member_decompression_behind_a_small_window() {
@@ -732,6 +734,39 @@ fn one_record_can_cross_a_seal_without_losing_identity_or_exact_spans() {
     assert_eq!(events[0].spans.len(), 2);
     assert_eq!(events[0].spans[0].member, 1);
     assert_eq!(events[0].spans[1].member, 2);
+    scratch.remove();
+}
+
+#[test]
+fn a_forward_scan_joins_a_record_across_read_chunks_and_resumes_inside_a_sealed_member() {
+    let scratch = Scratch::new("forward-chunks");
+    let tape = Tape::open(scratch.path()).expect("tape opens");
+    let prose = line(PROSE);
+    let lead = SCAN_CHUNK_BYTES - prose.len() / 2;
+    tape.tee(&filler(lead))
+        .expect("filler ends inside the first read");
+    tape.tee(&prose).expect("prose straddles the read boundary");
+    tape.tee(&prose).expect("prose follows in the same member");
+    tape.seal().expect("member seals");
+    tape.tee(&prose).expect("active member grows");
+
+    let full = scan(scratch.path(), Dialect::Omp, None).expect("forward scan succeeds");
+    let straddling = Span {
+        member: 1,
+        offset: lead as u64,
+        length: prose.len() as u64,
+    };
+    let RecordPayload::Events(events) = &full.records[1].payload else {
+        panic!("straddling prose became residue");
+    };
+    assert_eq!(full.records.len(), 4);
+    assert_eq!(events[0].spans, [straddling], "one contiguous span");
+    assert_eq!(events[0].event.kind(), EventKind::Prose);
+
+    let resumed = scan(scratch.path(), Dialect::Omp, Some(&full.records[0].next))
+        .expect("a checkpoint inside the sealed member resumes");
+    assert_eq!(resumed.records, full.records[1..]);
+    assert_eq!(resumed.checkpoint, full.checkpoint);
     scratch.remove();
 }
 

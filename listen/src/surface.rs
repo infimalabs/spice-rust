@@ -24,8 +24,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use tape::{Locus, Tape};
 
 use crate::{
-    Decoded, Dialect, Event, EventKind, ProseRole, ReasoningContent, RecordPayload, ResidueKind,
-    Scan, ScanError, Span, ToolMoment, ToolResult, decode, scan as scan_records,
+    Decoded, Dialect, Event, EventKind, ProseRole, ReasoningContent, Record, RecordPayload,
+    ResidueKind, Scan, ScanError, Span, ToolMoment, ToolResult, decode, scan_each,
 };
 mod page;
 pub use page::{
@@ -755,55 +755,92 @@ pub fn retro(
     dialects: &[(&'static str, Dialect)],
 ) -> Result<StreamOutcome, SurfaceError> {
     let root = root.into();
-    let selector_text = selector_text(&selector);
-    let sessions = retro_sessions(&root, &selector, dialects)?;
-
     let mut observations = Vec::new();
-    if sessions.is_empty() {
-        observations.push(Observation::Missing {
-            selector: selector_text,
-            detail: "no preserved session tape resolved".to_owned(),
-        });
-        return Ok(StreamOutcome {
-            mode: Mode::Retro,
-            root,
-            observations,
-        });
-    }
-
-    if let RetroSelector::Locus(span) = selector {
-        if sessions.len() != 1 {
-            observations.push(Observation::Ambiguous {
-                selector: span.to_string(),
-                candidates: sessions.into_iter().map(|session| session.tape).collect(),
-            });
-        } else {
-            observations.extend(replay_locus(&sessions[0], span)?);
-        }
-    } else {
-        for session in sessions {
-            let scanned =
-                scan_records(&session.tape, session.decoder(), None).map_err(|source| {
-                    SurfaceError::Scan {
-                        path: session.tape.clone(),
-                        source,
-                    }
-                })?;
-            let surfaced = surface_scan(&session, &scanned, true);
-            if surfaced.observations.is_empty() && scanned.extents_empty {
-                observations.push(Observation::Absent {
-                    selector: session.tape.display().to_string(),
-                });
-            }
-            observations.extend(surfaced.observations);
-        }
-    }
-
+    retro_each(&root, selector, dialects, |observation| {
+        observations.push(observation);
+        Ok::<_, SurfaceError>(())
+    })?;
     Ok(StreamOutcome {
         mode: Mode::Retro,
         root,
         observations,
     })
+}
+
+/// Replay exactly what [`retro`] replays, handing each observation to
+/// `visit` in order instead of holding them.
+///
+/// Tapes are scanned forward in fixed chunks, so memory stays independent of
+/// transcript size.
+///
+/// # Errors
+///
+/// Returns [`retro`]'s failures, converted into `E`, and the first failure
+/// `visit` reports; observations already visited stay visited.
+pub fn retro_each<E: From<SurfaceError>>(
+    root: &Path,
+    selector: RetroSelector,
+    dialects: &[(&'static str, Dialect)],
+    mut visit: impl FnMut(Observation) -> Result<(), E>,
+) -> Result<(), E> {
+    let sessions = retro_sessions(root, &selector, dialects)?;
+    if sessions.is_empty() {
+        return visit(Observation::Missing {
+            selector: selector_text(&selector),
+            detail: "no preserved session tape resolved".to_owned(),
+        });
+    }
+    if let RetroSelector::Locus(span) = selector {
+        if sessions.len() != 1 {
+            return visit(Observation::Ambiguous {
+                selector: span.to_string(),
+                candidates: sessions.into_iter().map(|session| session.tape).collect(),
+            });
+        }
+        return replay_locus(&sessions[0], span)?
+            .into_iter()
+            .try_for_each(visit);
+    }
+    let mut surfaced = Vec::new();
+    for session in sessions {
+        let mut any = false;
+        let end = scan_each(&session.tape, session.decoder(), None, |record| {
+            surface_record(&session, &record, &mut surfaced);
+            any |= !surfaced.is_empty();
+            surfaced
+                .drain(..)
+                .try_for_each(&mut visit)
+                .map_err(Replayed::Visit)
+        })
+        .map_err(|stop| match stop {
+            Replayed::Scan(source) => SurfaceError::Scan {
+                path: session.tape.clone(),
+                source,
+            }
+            .into(),
+            Replayed::Visit(error) => error,
+        })?;
+        if let Some(pending) = surface_pending(&session, end.pending, true) {
+            visit(pending)?;
+        } else if !any && end.extents_empty {
+            visit(Observation::Absent {
+                selector: session.tape.display().to_string(),
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Why one streamed replay stopped early.
+enum Replayed<E> {
+    Scan(ScanError),
+    Visit(E),
+}
+
+impl<E> From<ScanError> for Replayed<E> {
+    fn from(error: ScanError) -> Self {
+        Self::Scan(error)
+    }
 }
 
 struct SurfacedScan {
@@ -815,52 +852,70 @@ fn surface_scan(session: &RetroSession, scan: &Scan, finish_partial: bool) -> Su
     let mut observations = Vec::new();
     let mut event_kinds = Vec::new();
     for record in &scan.records {
-        match &record.payload {
-            RecordPayload::Events(events) => {
-                for sourced in events {
-                    event_kinds.push(sourced.event.kind());
-                    observations.push(Observation::Event {
-                        lane: session.lane.clone(),
-                        dialect: session.dialect,
-                        tape: session.tape.clone(),
-                        spans: sourced.spans.clone(),
-                        event: (&sourced.event).into(),
-                    });
-                }
-            }
-            RecordPayload::Residue(sourced) => observations.push(Observation::Residue {
-                lane: session.lane.clone(),
-                dialect: session.dialect,
-                tape: session.tape.clone(),
-                spans: sourced.spans.clone(),
-                residue: (&sourced.residue.kind).into(),
-            }),
+        if let RecordPayload::Events(events) = &record.payload {
+            event_kinds.extend(events.iter().map(|sourced| sourced.event.kind()));
         }
+        surface_record(session, record, &mut observations);
     }
-
-    if !scan.pending.is_empty() {
-        if finish_partial {
-            observations.push(Observation::Residue {
-                lane: session.lane.clone(),
-                dialect: session.dialect,
-                tape: session.tape.clone(),
-                spans: scan.pending.clone(),
-                residue: SurfaceResidue::Truncated {},
-            });
-        } else {
-            observations.push(Observation::Pending {
-                lane: session.lane.clone(),
-                dialect: session.dialect,
-                tape: session.tape.clone(),
-                spans: scan.pending.clone(),
-            });
-        }
-    }
-
+    observations.extend(surface_pending(
+        session,
+        scan.pending.clone(),
+        finish_partial,
+    ));
     SurfacedScan {
         observations,
         event_kinds,
     }
+}
+
+/// Append the observations one complete record surfaces.
+fn surface_record(session: &RetroSession, record: &Record, observations: &mut Vec<Observation>) {
+    match &record.payload {
+        RecordPayload::Events(events) => {
+            observations.extend(events.iter().map(|sourced| Observation::Event {
+                lane: session.lane.clone(),
+                dialect: session.dialect,
+                tape: session.tape.clone(),
+                spans: sourced.spans.clone(),
+                event: (&sourced.event).into(),
+            }));
+        }
+        RecordPayload::Residue(sourced) => observations.push(Observation::Residue {
+            lane: session.lane.clone(),
+            dialect: session.dialect,
+            tape: session.tape.clone(),
+            spans: sourced.spans.clone(),
+            residue: (&sourced.residue.kind).into(),
+        }),
+    }
+}
+
+/// Bytes after the final delimiter: truncated residue once a finite replay
+/// ends, pending while a watch may still see them complete.
+fn surface_pending(
+    session: &RetroSession,
+    pending: Vec<Span>,
+    finish_partial: bool,
+) -> Option<Observation> {
+    if pending.is_empty() {
+        return None;
+    }
+    Some(if finish_partial {
+        Observation::Residue {
+            lane: session.lane.clone(),
+            dialect: session.dialect,
+            tape: session.tape.clone(),
+            spans: pending,
+            residue: SurfaceResidue::Truncated {},
+        }
+    } else {
+        Observation::Pending {
+            lane: session.lane.clone(),
+            dialect: session.dialect,
+            tape: session.tape.clone(),
+            spans: pending,
+        }
+    })
 }
 
 fn decode_record(

@@ -22,6 +22,9 @@ pub use tail::{
     BOUNDARY_CHUNK_BYTES, TailBudget, TailBudgetError, TailScan, TailWork, scan_before, scan_tail,
 };
 
+/// Member bytes one forward scan reads at once.
+const SCAN_CHUNK_BYTES: usize = 1 << 20;
+
 /// Serializable spelling of one durable tape span.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -175,19 +178,54 @@ pub fn scan(
     dialect: Dialect,
     checkpoint: Option<&Checkpoint>,
 ) -> Result<Scan, ScanError> {
+    let mut records = Vec::new();
+    let end = scan_each(root, dialect, checkpoint, |record| {
+        records.push(record);
+        Ok::<_, ScanError>(())
+    })?;
+    Ok(Scan {
+        records,
+        checkpoint: end.checkpoint,
+        pending: end.pending,
+        extents_empty: end.extents_empty,
+    })
+}
+
+/// Where a forward scan stopped after handing over every complete record.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScanEnd {
+    /// Boundary after the last complete record.
+    pub checkpoint: Checkpoint,
+    /// Exact trailing bytes awaiting a delimiter.
+    pub pending: Vec<Span>,
+    /// Whether the tape currently contains no readable member.
+    pub extents_empty: bool,
+}
+
+/// Resume a tape scan and hand each complete record to `visit` as it decodes.
+///
+/// The checkpoint contract is [`scan`]'s. Member bytes are read forward in
+/// fixed chunks, so memory holds one chunk, one partial record, and the
+/// records one chunk completes, whatever the tape's size.
+///
+/// # Errors
+///
+/// Returns [`scan`]'s failures, converted into `E`, and the first failure
+/// `visit` reports; records already visited stay visited.
+pub fn scan_each<E: From<ScanError>>(
+    root: impl AsRef<Path>,
+    dialect: Dialect,
+    checkpoint: Option<&Checkpoint>,
+    mut visit: impl FnMut(Record) -> Result<(), E>,
+) -> Result<ScanEnd, E> {
     let root = root.as_ref();
-    let tape = Tape::open_existing(root).map_err(|source| ScanError::Tape {
+    let tape_error = |source| ScanError::Tape {
         path: root.to_path_buf(),
         source,
-    })?;
-    let source = tape.source_id().map_err(|source| ScanError::Tape {
-        path: root.to_path_buf(),
-        source,
-    })?;
-    let mut extents = tape.extents().map_err(|source| ScanError::Tape {
-        path: root.to_path_buf(),
-        source,
-    })?;
+    };
+    let tape = Tape::open_existing(root).map_err(tape_error)?;
+    let source = tape.source_id().map_err(tape_error)?;
+    let mut extents = tape.extents().map_err(tape_error)?;
     let mut position = resume_position(checkpoint, &source)?;
     position = match validate_position(position, &extents) {
         Ok(position) => position,
@@ -196,37 +234,80 @@ pub fn scan(
             // One extent observation can therefore miss the active file while
             // still holding the predecessor index. A fresh observation either
             // sees that completed seal or repeats the continuity violation.
-            extents = tape.extents().map_err(|source| ScanError::Tape {
-                path: root.to_path_buf(),
-                source,
-            })?;
+            extents = tape.extents().map_err(tape_error)?;
             validate_position(position, &extents)?
         }
     };
-    let extents_empty = extents.is_empty();
-    let state = scan_extents(&tape, dialect, &source, &extents, position, None)?;
+    let mut state = ScanState {
+        position,
+        records: Vec::new(),
+        bytes: Vec::new(),
+        spans: Vec::new(),
+    };
+    let mut buffer = vec![0; SCAN_CHUNK_BYTES];
+    for extent in &extents {
+        let Some((start, end)) = unread_range(extent, None, &mut state) else {
+            continue;
+        };
+        let mut offset = start;
+        tape.stream_extent(
+            Locus::new(extent.member, start, end - start),
+            *extent,
+            &mut buffer,
+            |chunk| {
+                feed(
+                    extent,
+                    offset,
+                    chunk,
+                    dialect,
+                    &source,
+                    &mut state,
+                    &mut || Ok(()),
+                )
+                .map_err(|error| Streamed::Visit(error.into()))?;
+                offset += chunk.len() as u64;
+                state
+                    .records
+                    .drain(..)
+                    .try_for_each(&mut visit)
+                    .map_err(Streamed::Visit)
+            },
+        )
+        .map_err(|stop| match stop {
+            Streamed::Tape(source) => tape_error(source).into(),
+            Streamed::Visit(error) => error,
+        })?;
+    }
 
-    let observed_source = tape.source_id().map_err(|source| ScanError::Tape {
-        path: root.to_path_buf(),
-        source,
-    })?;
+    let observed_source = tape.source_id().map_err(tape_error)?;
     if observed_source != source {
         return Err(ScanError::SourceChanged {
             expected: source,
             observed: observed_source,
             next: state.position,
-        });
+        }
+        .into());
     }
-
-    Ok(Scan {
-        records: state.records,
+    Ok(ScanEnd {
         checkpoint: Checkpoint {
             source,
             next: state.position,
         },
         pending: state.spans,
-        extents_empty,
+        extents_empty: extents.is_empty(),
     })
+}
+
+/// Why one streamed member read stopped early.
+enum Streamed<E> {
+    Tape(tape::Error),
+    Visit(E),
+}
+
+impl<E> From<tape::Error> for Streamed<E> {
+    fn from(error: tape::Error) -> Self {
+        Self::Tape(error)
+    }
 }
 
 struct ScanState {
@@ -236,42 +317,36 @@ struct ScanState {
     spans: Vec<Span>,
 }
 
-fn scan_extents(
-    tape: &Tape,
-    dialect: Dialect,
-    source: &SourceId,
-    extents: &[tape::Extent],
-    position: Position,
+/// The member bytes a scan at `state.position` still has to read, up to
+/// `end`, or `None` when this extent has nothing left.
+///
+/// A fully consumed sealed member advances the position to its successor.
+fn unread_range(
+    extent: &tape::Extent,
     end: Option<Position>,
-) -> Result<ScanState, ScanError> {
-    let mut state = ScanState {
-        position,
-        records: Vec::new(),
-        bytes: Vec::new(),
-        spans: Vec::new(),
-    };
-    let mut admit_record = || Ok(());
-    for extent in extents {
-        if end.is_some_and(|end| extent.member > end.member) {
-            break;
-        }
-        scan_extent(
-            |locus, extent| {
-                tape.read_extent(locus, extent)
-                    .map_err(|source| ScanError::Tape {
-                        path: tape.root().to_path_buf(),
-                        source,
-                    })
-            },
-            dialect,
-            source,
-            extent,
-            end,
-            &mut state,
-            &mut admit_record,
-        )?;
+    state: &mut ScanState,
+) -> Option<(u64, u64)> {
+    if extent.member < state.position.member {
+        return None;
     }
-    Ok(state)
+    let start = if extent.member == state.position.member {
+        state.position.offset
+    } else {
+        0
+    };
+    let extent_end = end
+        .filter(|end| end.member == extent.member)
+        .map_or(extent.length, |end| end.offset.min(extent.length));
+    if start == extent_end {
+        if end.is_none() && extent.sealed && state.bytes.is_empty() {
+            state.position = Position {
+                member: extent.member + 1,
+                offset: 0,
+            };
+        }
+        return None;
+    }
+    Some((start, extent_end))
 }
 
 fn scan_extent(
@@ -283,32 +358,33 @@ fn scan_extent(
     state: &mut ScanState,
     admit_record: &mut impl FnMut() -> Result<(), ScanError>,
 ) -> Result<(), ScanError> {
-    if extent.member < state.position.member {
+    let Some((start, extent_end)) = unread_range(extent, end, state) else {
         return Ok(());
-    }
-    let start = if extent.member == state.position.member {
-        state.position.offset
-    } else {
-        0
     };
-    let extent_end = end
-        .filter(|end| end.member == extent.member)
-        .map_or(extent.length, |end| end.offset.min(extent.length));
-    if start == extent_end {
-        if end.is_some() {
-            return Ok(());
-        }
-        if extent.sealed && state.bytes.is_empty() {
-            state.position = Position {
-                member: extent.member + 1,
-                offset: 0,
-            };
-        }
-        return Ok(());
-    }
-
     let locus = Locus::new(extent.member, start, extent_end - start);
     let fragment = read(locus, *extent)?;
+    feed(
+        extent,
+        start,
+        &fragment,
+        dialect,
+        source,
+        state,
+        admit_record,
+    )
+}
+
+/// Split one contiguous fragment starting at `start` into complete records,
+/// holding bytes after the last delimiter for the next fragment.
+fn feed(
+    extent: &tape::Extent,
+    start: u64,
+    fragment: &[u8],
+    dialect: Dialect,
+    source: &SourceId,
+    state: &mut ScanState,
+    admit_record: &mut impl FnMut() -> Result<(), ScanError>,
+) -> Result<(), ScanError> {
     let mut fragment_start = 0_usize;
     for (index, byte) in fragment.iter().enumerate() {
         if *byte != b'\n' {
