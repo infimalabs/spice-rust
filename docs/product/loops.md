@@ -704,6 +704,10 @@ block-beta
    and compaction card repeats explicit short author/lane plus worktree-leaf
    attribution, including unnamed members; accent is redundant continuity rather
    than sole identity.
+- **Card controls are an island in the prose.** An agent card's badges and
+   actions float as one group in the top inline-end corner of its message, so
+   prose fills the lines beside them and regains the full width below. A column
+   too narrow for the island and a readable line stacks it above the prose.
 - **Autonomy is never implicit.** The submit control carries the lifetime's own
   name, so intent cannot be sent without its autonomy being visible in the same
   gesture.

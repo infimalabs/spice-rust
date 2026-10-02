@@ -573,11 +573,12 @@ fn render_normal_face(
     correspondent: &view::chrome::Correspondent,
     face: NormalFace<'_>,
 ) -> Html {
-    let signed = message.activity == wire::AgentActivityKind::Prose || face.lone_tool_image;
     let media = render_agent_message_media(face.unlinked_media, face.media_description);
-    html! {
-        <>
-            if face.lone_tool_image {
+    // A lone tool image carries no badges or card actions, so it has no
+    // controls to draw.
+    if face.lone_tool_image {
+        return html! {
+            <>
                 {media}
                 <div class="message-body markdown-body">
                     <p class="message-signoff-line">
@@ -586,23 +587,23 @@ fn render_normal_face(
                         </span>
                     </p>
                 </div>
-            } else {
-                {face.rendered_html}
-                {media}
-            }
-            // A lone tool image carries no badges or card actions, so it has
-            // no footer to draw.
-            if !face.lone_tool_image {
-                {render_agent_message_footer(
-                    message,
-                    face.shown_text,
-                    correspondent,
-                    signed,
-                    face.footer_label,
-                    face.attribution,
-                )}
-            }
-        </>
+            </>
+        };
+    }
+    let signed = message.activity == wire::AgentActivityKind::Prose;
+    html! {
+        <div class="message-flow">
+            {render_message_controls(
+                message,
+                face.shown_text,
+                correspondent,
+                signed,
+                face.footer_label,
+                face.attribution,
+            )}
+            {face.rendered_html}
+            {media}
+        </div>
     }
 }
 
@@ -938,9 +939,10 @@ fn render_message_age(message: &wire::AgentMessage, attribution: &str) -> Html {
     }
 }
 
-/// The card footer. A prose card's producer and age live in its signoff, so its
-/// footer keeps only badges and actions; other cards keep both here.
-fn render_agent_message_footer(
+/// The card's controls: a corner island emitted before the prose so the prose
+/// flows around it. A prose card's producer and age live in its signoff, so its
+/// island keeps only badges and actions; other cards keep both here.
+fn render_message_controls(
     message: &wire::AgentMessage,
     shown_text: &str,
     correspondent: &view::chrome::Correspondent,
@@ -950,16 +952,20 @@ fn render_agent_message_footer(
 ) -> Html {
     let has_actions = !shown_text.trim().is_empty();
     html! {
-        <footer class="message-footer">
-            <div class="message-footer-left">
+        <div
+            class="message-controls"
+            role="group"
+            aria-label={format!("Message controls for {attribution}")}
+        >
+            <div class="message-controls-meta">
                 if !signed {
                     {render_message_age(message, attribution)}
                 }
                 {message_badges::render(message)}
             </div>
-            <div class="message-footer-right">
+            <div class="message-controls-actions">
                 if !signed {
-                    <span class="message-footer-identity">
+                    <span class="message-controls-identity">
                         {render_producer_identity(message, producer_label, attribution)}
                     </span>
                 }
@@ -967,7 +973,7 @@ fn render_agent_message_footer(
                     {view::chrome::render_card_actions(shown_text, correspondent)}
                 }
             </div>
-        </footer>
+        </div>
     }
 }
 

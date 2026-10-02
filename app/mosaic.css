@@ -266,20 +266,20 @@
   min-height: 0; overflow: hidden; justify-content: center; align-items: center;
 }
 .mosaic-message-card:not(.mosaic-message-card--image-only)
-  .mosaic-message-normal > .message-body:has(> p.message-image-stack + p.message-image-stack) {
+  .message-flow > .message-body:has(> p.message-image-stack + p.message-image-stack) {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   gap: 7px;
 }
 .mosaic-message-card:not(.mosaic-message-card--image-only)
-  .mosaic-message-normal > .message-body:has(> p.message-image-stack + p.message-image-stack)
+  .message-flow > .message-body:has(> p.message-image-stack + p.message-image-stack)
   > :not(.message-image-stack) {
   flex: 0 0 100%;
   min-width: 0;
 }
 .mosaic-message-card:not(.mosaic-message-card--image-only)
-  .mosaic-message-normal > .message-body:has(> p.message-image-stack + p.message-image-stack)
+  .message-flow > .message-body:has(> p.message-image-stack + p.message-image-stack)
   > p.message-image-stack {
   display: contents;
 }
@@ -1059,42 +1059,41 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   scroll-margin-block: 8px;
 }
 .team-surface .mosaic-message-card p { line-height: 1.25; }
-/* Sticky insets resolve inside the plane's padding, which reserves the
-   composer's block; cancel it so controls stick to the plane's top edge and pass
-   beneath the composer overlay rather than above it. */
-.team-surface .mosaic-message-card .message-footer {
-  position: sticky; top: calc(-1 * var(--team-composer-block, 0px));
-  order: -1; display: grid; align-self: start; align-items: center;
-  grid-template-columns: 3ch minmax(0, 1fr);
-  gap: 8px; min-height: 32px; min-width: 0; width: 100%;
-  margin-bottom: .5rem; background: var(--message-card-surface);
+/* The card's controls are a corner island in the wall of its message flow: they
+   float at the top inline-end, the prose fills the lines beside them and regains
+   the full width below. Below the narrow-column threshold the island takes its
+   own row instead. */
+.team-surface .mosaic-message-card .message-controls {
+  display: flex; float: inline-end; align-items: center; gap: 6px;
+  min-height: 32px; min-width: 0; max-inline-size: 100%;
+  margin-block-end: .25rem; margin-inline-start: .5rem;
   color: var(--muted); font-size: 12px;
 }
-.team-surface .message-footer-left,
-.team-surface .message-footer-right {
+.team-surface .message-controls-meta,
+.team-surface .message-controls-actions {
+  display: flex;
   align-items: center;
+  gap: 6px;
   min-width: 0;
 }
-.team-surface .message-footer-left {
-  display: flex;
-  gap: 6px;
-  width: 3ch;
-}
-.team-surface .mosaic-message-card .message-footer:has(.message-badges) {
-  grid-template-columns: max-content minmax(0, 1fr);
-}
-.team-surface .message-footer:has(.message-badges) .message-footer-left {
-  width: auto;
-}
-.team-surface .message-footer-right {
-  display: flex;
+.team-surface .message-controls-meta:empty { display: none; }
+.team-surface .message-controls-actions {
   flex-wrap: nowrap;
-  gap: 6px;
-  justify-content: flex-end; min-height: 32px;
+  justify-content: flex-end;
+  min-height: 32px;
 }
-.team-surface .message-footer-identity {
+.team-surface .message-controls-identity {
   display: inline-flex; flex: 1 1 auto; align-items: flex-end;
   min-width: 0; gap: 6px;
+}
+/* Narrow-column threshold: a card this narrow cannot hold the island and a
+   readable line beside it, so the island stacks above the prose. */
+@container (max-width: 16rem) {
+  .team-surface .mosaic-message-card .message-controls {
+    float: none;
+    justify-content: space-between;
+    margin: 0 0 .5rem;
+  }
 }
 .relative-age {
   display: block;

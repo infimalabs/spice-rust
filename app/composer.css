@@ -445,14 +445,14 @@
   padding-block-end: var(--message-card-inset);
   overflow: clip;
 }
-/* The normal face fills the card's committed height. Its controls take the
-   first row and stick to the top of the scroller while the card passes under
-   it; the body rests on the card's bottom edge, so spare committed height
-   opens between the controls and the content and never below the content. */
+/* The normal face fills the card's committed height. Its message flow rests on
+   the card's bottom edge, so spare committed height opens above the content and
+   never below it. The flow is its own block formatting context: the controls
+   island floats in its top inline-end corner and the prose wraps beside it. */
 .team-surface .mosaic-message-normal {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   grid-area: 1 / 1;
   min-width: 0;
   opacity: 1;
@@ -461,7 +461,8 @@
     opacity var(--canvas-motion-fast) var(--canvas-ease-standard),
     transform var(--canvas-motion-settle) var(--canvas-ease-standard);
 }
-.team-surface .mosaic-message-normal > .message-body { align-self: end; }
+.team-surface .mosaic-message-normal > :is(.message-flow, .message-body) { align-self: end; }
+.team-surface .message-flow { display: flow-root; min-width: 0; }
 .team-surface .mosaic-message-task-layer {
   position: absolute;
   inset: 0;
@@ -743,8 +744,11 @@
   display: none;
 }
 /* A prose card signs its final paragraph the way a quote signs its tail; a
-   card ending in any other block gives the signoff its own trailing line. */
-.markdown-body > p:has(> .message-signoff) { display: flow-root; }
+   card ending in any other block gives the signoff its own trailing line. The
+   paragraph contains its floated signoff by clearing rather than by becoming a
+   formatting context, which would keep it narrow beside the controls island
+   for its whole height instead of regaining the full width below it. */
+.markdown-body > p:has(> .message-signoff)::after { display: block; clear: both; content: ""; }
 .markdown-body .message-signoff .message-agent-name { flex: 0 1 auto; font-size: inherit; font-weight: 600; line-height: inherit; }
 .markdown-body .message-signoff .relative-age { color: var(--muted); }
 .markdown-body .message-quote-card:has(
