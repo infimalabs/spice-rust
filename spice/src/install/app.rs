@@ -101,7 +101,6 @@ pub(super) fn asset_file(file: &str) -> Option<Asset> {
 /// Common-directory root under which every installed app generation lives.
 pub(super) const GENERATIONS_PATH: &str = ".spice-install/app/generations";
 
-
 pub(super) fn generation_spelling(asset: Asset, path: &str) -> Option<&str> {
     let (generation, file) = split_generation_path(path)?;
     (asset_file(file) == Some(asset)).then_some(generation)
