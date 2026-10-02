@@ -91,10 +91,6 @@ body:has(.shell--mosaic),
   height: var(--canvas-header-control);
   font-size: .7rem;
 }
-.canvas-operator-link.selected .operator-avatar {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-}
 
 .task-pill-strip {
   grid-area: 1 / 2;
