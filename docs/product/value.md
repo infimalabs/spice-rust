@@ -403,8 +403,9 @@ filters and reads the page that starts at its card, with a Newer directions
 edge above it, then marks and focuses that card. A team route selects that
 team's chip. An unknown or malformed direction or team leaves the route for
 `#/work/directions` and names it. Each team's Directions header links to its
-team route, lane-menu direction attention opens its oldest waiting direction, and a
-quote with no team-local direction links to its global route by key.
+team route, lane-menu direction attention opens its oldest waiting direction, and
+the relative time on a retained Chat quote of a direction links to its route: by
+directive or fanout identity when the team's inbox holds it, otherwise by key.
 
 Each is the team Work ledger's direction card: the resident's first unquoted
 line in sanitized rich Markdown, marked as a retained excerpt and signed by the
@@ -522,11 +523,9 @@ changing their order, identity, or source data.
 
 Recipient badges keep their lane accent and independent delivery state. An
 acknowledged or declined badge links to that recipient's exact retained Chat
-card; task chips open the shared task detail. In the opposite direction, the
-relative time on a retained Chat quote of an operator direction links through
-a durable team-and-fanout route to the exact Work card. Each crossing records
-its origin so browser Back restores the prior team tab, card, and reading
-position.
+card; task chips open the shared task detail. In the opposite direction, a
+retained Chat quote of a direction links to its global Directions card, not to
+this mosaic, and browser Back restores the Chat card and reading position.
 
 ### Lane, team, occupant
 

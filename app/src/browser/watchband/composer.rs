@@ -315,8 +315,8 @@ pub(super) fn team_quote_sources(
         }
         for context in &message.directive_contexts {
             let source = match &context.quote_target {
-                wire::QuoteTarget::Steering { key, .. } => Some(
-                    runtime
+                wire::QuoteTarget::Steering { key, .. } => {
+                    let direction = runtime
                         .inbox()
                         .and_then(|inbox| {
                             watchband::directive_ledger::direction_identity(
@@ -326,10 +326,11 @@ pub(super) fn team_quote_sources(
                             )
                         })
                         .map_or_else(
-                            || crate::view::global_direction_quote_source(key),
-                            |direction| crate::view::direction_quote_source(team.lane, direction),
-                        ),
-                ),
+                            || crate::runtime::DirectionRef::Key(key.clone()),
+                            crate::runtime::DirectionRef::Identity,
+                        );
+                    Some(crate::view::direction_quote_source(&direction))
+                }
                 _ => None,
             };
             sources

@@ -660,66 +660,6 @@ pub(super) fn use_target(
     );
 }
 
-/// Select one team-local Work direction named by a durable route.
-#[hook]
-pub(super) fn use_direction_target(
-    target: Option<crate::view::DirectionTarget>,
-    team_controls: UseReducerHandle<TeamControls>,
-    visible: bool,
-) {
-    let status = use_state(|| None::<Status>);
-    let opened = use_mut_ref(|| None::<String>);
-    let held = use_mut_ref(|| None::<Hold>);
-    use_effect_with(
-        (target, visible, team_controls),
-        move |(target, visible, team_controls)| {
-            let mut selected = None;
-            if let Some(target) = target.as_ref().filter(|_| *visible) {
-                let requested = target.element_id();
-                let team = target.team();
-                if held
-                    .borrow()
-                    .as_ref()
-                    .is_some_and(|hold| hold.target != requested)
-                {
-                    held.borrow_mut().take();
-                }
-                let first_open = opened.borrow().as_deref() != Some(requested.as_str());
-                if first_open && team_controls.mode(team) != TeamMode::Work {
-                    team_controls.dispatch(TeamControlAction::SetMode {
-                        team: Some(team),
-                        mode: TeamMode::Work,
-                    });
-                } else if team_controls.mode(team) == TeamMode::Work {
-                    let document = web_sys::window().and_then(|window| window.document());
-                    let route = Route {
-                        target: &requested,
-                        status_target: &requested,
-                        returned: false,
-                        document: document.as_ref(),
-                        status: &status,
-                        team_controls,
-                        team: Some(team),
-                        mode: TeamMode::Work,
-                    };
-                    selected = route.reach(&held, &opened);
-                }
-            } else {
-                held.borrow_mut().take();
-                opened.borrow_mut().take();
-                if status.is_some() {
-                    status.set(None);
-                }
-            }
-            move || {
-                if let Some(element) = selected {
-                    let _ = element.remove_attribute("data-card-route-selected");
-                }
-            }
-        },
-    );
-}
-
 /// Focus and mark the global Work direction card a durable route names, once
 /// its anchored page renders it.
 #[hook]
