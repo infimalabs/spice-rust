@@ -3,7 +3,7 @@
 use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::Instant as MonotonicInstant;
+use std::time::{Duration, Instant as MonotonicInstant};
 
 use gate::{
     ActionFingerprintAuthority, ActionFingerprintAuthorityFields, ActionFingerprintManifest,
@@ -16,9 +16,12 @@ use gate::{
 };
 use serde::Serialize;
 use sill::Environment;
+use wire::output::Export;
 use wire::{Digest, Domain, Fault, FaultClass, Outcome, Refusal, Reply, ReplyPosition};
 
 use spice::change_gate::{ChangeGateError, StagedActionSelection};
+
+use super::output;
 use spice::repository::Repository;
 
 mod action;
@@ -68,6 +71,25 @@ pub(crate) struct ProveReport {
     candidate_tree: String,
     source: Digest,
     actions: Vec<ProveActionReport>,
+    /// The decision-first terminal projection; `--json` carries the fields.
+    #[serde(skip)]
+    text: String,
+}
+
+impl ProveReport {
+    const fn new(candidate_tree: String, source: Digest, actions: Vec<ProveActionReport>) -> Self {
+        Self {
+            candidate_tree,
+            source,
+            actions,
+            text: String::new(),
+        }
+    }
+
+    /// The terminal reply text, set once the report is complete.
+    pub(crate) fn text(&self) -> Option<&str> {
+        Some(&self.text)
+    }
 }
 
 #[derive(Serialize)]
@@ -77,6 +99,25 @@ struct ProveActionReport {
     action_key: ActionKey,
     disposition: ProveDisposition,
     receipt: gate::ReceiptId,
+    /// How long this invocation spent producing the receipt.
+    #[serde(skip)]
+    elapsed: Option<Duration>,
+    /// The retained complete subprocess capture of that production.
+    #[serde(skip)]
+    capture: Option<Export>,
+}
+
+impl ProveActionReport {
+    const fn present(action: String, action_key: ActionKey, receipt: gate::ReceiptId) -> Self {
+        Self {
+            action,
+            action_key,
+            disposition: ProveDisposition::Present,
+            receipt,
+            elapsed: None,
+            capture: None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -383,6 +424,7 @@ struct PendingReceipt {
     action: String,
     action_key: ActionKey,
     receipt: PassReceipt,
+    capture: Option<Export>,
 }
 
 pub(crate) fn prove(matches: &clap::ArgMatches) -> Outcome<ProveReport> {
@@ -399,12 +441,87 @@ pub(crate) fn prove(matches: &clap::ArgMatches) -> Outcome<ProveReport> {
         );
     }
     match run(request) {
-        Ok(report) => Outcome::Reply(Reply {
-            position: ReplyPosition::Direct {},
-            body: report,
-        }),
+        Ok(mut report) => {
+            report.text = summary(&report, request, matches.get_flag("verbose"));
+            Outcome::Reply(Reply {
+                position: ReplyPosition::Direct {},
+                body: report,
+            })
+        }
         Err(failure) => failure.outcome(),
     }
+}
+
+/// Counts first, then each action this run proved, then the next command.
+/// Already-proven actions are counted; `--verbose` lists them with identities.
+fn summary(report: &ProveReport, request: Request<'_>, verbose: bool) -> String {
+    let published =
+        |action: &&ProveActionReport| matches!(action.disposition, ProveDisposition::Published);
+    let proved = report.actions.iter().filter(published).count();
+    let present = report.actions.len() - proved;
+    let tree = report
+        .candidate_tree
+        .get(..12)
+        .unwrap_or(&report.candidate_tree);
+    let mut summary = output::Summary::new(format_args!(
+        "gate prove: {} actions current for tree {tree} ({proved} proved now, {present} already)",
+        report.actions.len(),
+    ));
+    let already = report
+        .actions
+        .iter()
+        .filter(|action| verbose && !published(action));
+    for action in report.actions.iter().filter(published).chain(already) {
+        let verdict = match action.disposition {
+            ProveDisposition::Published => "proved",
+            ProveDisposition::Present => "already",
+        };
+        summary.row(verdict, &action.action, action.elapsed);
+        if verbose {
+            summary.detail(format_args!(
+                "key {} receipt {}",
+                action.action_key, action.receipt
+            ));
+            if let Some(capture) = &action.capture {
+                summary.detail(format_args!(
+                    "output {} ({} bytes)",
+                    capture.path, capture.bytes
+                ));
+            }
+        }
+    }
+    if !verbose && present > 0 {
+        summary.closing("detail", &prove_command(request, "--verbose"));
+    }
+    let next = if request.action.is_some() {
+        prove_command(
+            Request {
+                action: None,
+                missing: false,
+            },
+            "",
+        )
+    } else {
+        "git commit".to_owned()
+    };
+    summary.closing("next", &next);
+    summary.finish()
+}
+
+fn prove_command(request: Request<'_>, flag: &str) -> String {
+    let mut command = "spice gate prove".to_owned();
+    if let Some(action) = request.action {
+        command.push(' ');
+        command.push_str(action);
+    }
+    if request.missing {
+        command.push_str(" --missing");
+    }
+    if !flag.is_empty() {
+        command.push(' ');
+        command.push_str(flag);
+    }
+    command
 }
 
 fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
@@ -436,11 +553,11 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
             Ok(Some(actions)) => {
                 validate_source(&repository, &anchor, &candidate_tree)?;
                 anchor.reject_state().map_err(ProveFailure::run)?;
-                return Ok(ProveReport {
-                    candidate_tree: candidate_tree.to_string(),
-                    source: anchor.source().clone(),
+                return Ok(ProveReport::new(
+                    candidate_tree.to_string(),
+                    anchor.source().clone(),
                     actions,
-                });
+                ));
             }
             Ok(None) => {}
             Err(error) => {
@@ -500,15 +617,16 @@ fn run(request: Request<'_>) -> Result<ProveReport, ProveFailure> {
         pending,
         || validate_source(&repository, staged.anchor(), &candidate_tree),
         || staged.reject_state().map_err(ProveFailure::run),
-        &mut std::io::stderr(),
+        &output::Progress::stderr("gate prove"),
+        &output::capture_directory(repository.common_dir()),
     )?;
     actions.extend(published);
     actions.sort_by(|left, right| proof_action_order(&left.action, &right.action));
-    Ok(ProveReport {
-        candidate_tree: candidate_tree.to_string(),
-        source: staged.selection().source().clone(),
+    Ok(ProveReport::new(
+        candidate_tree.to_string(),
+        staged.selection().source().clone(),
         actions,
-    })
+    ))
 }
 
 #[cfg(test)]
@@ -638,12 +756,11 @@ fn classify_prepared(
         pending.push(prepared);
     } else {
         let receipt = current.expect("a filtered action has a current receipt");
-        present.push(ProveActionReport {
-            action: prepared.action,
-            action_key: prepared.action_key,
-            disposition: ProveDisposition::Present,
-            receipt: receipt.id().map_err(ProveFailure::store)?,
-        });
+        present.push(ProveActionReport::present(
+            prepared.action,
+            prepared.action_key,
+            receipt.id().map_err(ProveFailure::store)?,
+        ));
     }
     Ok(())
 }
@@ -697,15 +814,17 @@ fn normalized_search_path(value: &OsStr) -> OsString {
     std::env::join_paths(retained).unwrap_or_else(|_| value.to_owned())
 }
 
-fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
+/// Produce one receipt. Subprocess output is retained under `captures`, never
+/// streamed; a failure carries its bounded tail.
+fn execute(action: PreparedAction, captures: &Path) -> Result<PendingReceipt, ProveFailure> {
     let started_at = now()?;
     let started = MonotonicInstant::now();
-    let typed_result = match action.execution {
+    let (typed_result, capture) = match action.execution {
         PreparedExecution::Gate {
             arm,
             tools: expected_tools,
-        } => tools::execute(*arm, expected_tools)?,
-        PreparedExecution::Cargo(execution) => cargo::execute(*execution)?,
+        } => (tools::execute(*arm, expected_tools, captures)?, None),
+        PreparedExecution::Cargo(execution) => cargo::execute(*execution, captures)?,
     };
     let duration_millis = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
     let finished_at = now()?;
@@ -725,6 +844,7 @@ fn execute(action: PreparedAction) -> Result<PendingReceipt, ProveFailure> {
         action: action.action,
         action_key: action.action_key,
         receipt,
+        capture,
     })
 }
 

@@ -84,11 +84,11 @@ Use that boundary in this order:
    an exact test. Add direct downstream packages for public-seam changes.
 3. At a checkpoint, run formatting and `spice dev xtask -- verify --package PACKAGE`.
    Add the owning app, Canvas, proof, or staging command for its seam.
-4. Stage the intended change and run `spice gate prove`. Generate only a named
-   miss with `spice gate prove ACTION`, or every current miss with
-   `spice gate prove --missing`. Treat Cargo, Canvas, and shell transcripts as
-   feedback rather than receipts; only the proof runner publishes reusable
-   evidence. Stop at executable-configuration trust refusal for the operator.
+4. Stage the change and run `spice gate prove`. Generate a named miss with
+   `spice gate prove ACTION`, or every miss with `spice gate prove --missing`.
+   Proof shows progress and a decision summary (`--verbose` for receipts); a
+   failure shows a bounded tail and its full-output path. Other transcripts
+   are feedback, not receipts. Stop at trust refusal for the operator.
 5. Confirm no owned process remains, inspect the diff, and use the installed
    hooks. File unexpected failures outside the selected slice as separate work;
    do not widen the current run. Commit, hand off, or land according to the

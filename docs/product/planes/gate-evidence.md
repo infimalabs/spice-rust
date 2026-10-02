@@ -164,14 +164,30 @@ aggregate command. Staged content is the unconditional source for inspection
 and generation; `spice gate prove ACTION --missing` reuses an already-current
 receipt.
 
-Proof progress on stderr is best-effort diagnostic output. A failed progress
-write or flush does not stop later actions, lose their reports, or prevent
-receipt publication. Execution, lease, source-validation, cleanup, and final
-result failures remain authoritative and keep their ordinary error semantics.
-Losing stdout can still prevent delivery of the final result; it is distinct
-from losing diagnostic progress. An enclosing shell pipeline can mask the
-producer's exit status, so callers must preserve that status rather than infer
-success from a downstream filter or the last progress line.
+Proof progress on stderr is best-effort diagnostic output: one line when an
+action starts, an elapsed heartbeat every 30 seconds while it runs, and one
+line with its elapsed time when it proves or fails. Cargo, compiler, and test
+output never streams. Each executed action's complete subprocess output is
+retained as `.spice-rs/gate-output/DIGEST.log` under the Git common directory,
+named by the content digest of its bytes; the newest 64 captures are kept. A
+failed action's refusal carries a bounded tail of diagnostic lines (Cargo's
+machine records dropped), the count of withheld bytes, and that capture's path
+and size.
+
+The text reply is decision-first: the action count for the candidate tree,
+how many this run proved, one row per proved action with its elapsed time, and
+the exact next command. `--verbose` adds rows for already-proven actions with
+their action keys, receipts, and capture paths. `--json` carries the typed
+report unchanged; none of these text projections enter it.
+
+A failed progress write or flush does not stop later actions, lose their
+reports, or prevent receipt publication. Execution, lease, source-validation,
+cleanup, and final result failures remain authoritative and keep their
+ordinary error semantics. Losing stdout can still prevent delivery of the
+final result; it is distinct from losing diagnostic progress. An enclosing
+shell pipeline can mask the producer's exit status, so callers must preserve
+that status rather than infer success from a downstream filter or the last
+progress line.
 
 A candidate-tree directory may contain more than one immutable admission. This
 is required when two branches or linked worktrees produce equal tree content

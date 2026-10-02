@@ -3,7 +3,7 @@
 use gate::{ActionToolRequirement, ArmEvidence, BatteryContext, BatteryState, BatteryToolEvidence};
 use wire::{Digest, Domain};
 
-use super::{ProveFailure, digest_encoded, refusal_detail};
+use super::{ProveFailure, digest_encoded};
 
 pub(super) fn prepare(
     arm: &spice::gate::PreparedArm<'_>,
@@ -21,6 +21,7 @@ pub(super) fn prepare(
 pub(super) fn execute(
     mut arm: spice::gate::PreparedArm<'static>,
     expected: Vec<gate::ToolEvidence>,
+    captures: &std::path::Path,
 ) -> Result<Digest, ProveFailure> {
     if arm.action_tools().map_err(ProveFailure::run)? != expected {
         return Err(moved("before execution"));
@@ -34,7 +35,12 @@ pub(super) fn execute(
     if !report.admits() {
         return Err(ProveFailure::refusal(
             "gate::prove-action-regressed",
-            refusal_detail(&report),
+            format!(
+                "action={} state={}\n{}",
+                report.gate_id(),
+                report.result().state().as_str(),
+                super::output::failure_evidence(captures, report.result().reason().as_bytes()),
+            ),
         ));
     }
     Ok(Digest::compute(
