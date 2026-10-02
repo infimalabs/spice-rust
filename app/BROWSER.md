@@ -73,7 +73,12 @@ dead-lettered, or canceled changes only its lifecycle badge. Retirement does
 not replace the card with an attachment-free preview. Direction identity,
 attribution, task chips, return links, and age remain stable.
 
-## Card relative ages
+## Card endings and relative ages
+
+Invisible renderer portal hosts do not add trailing space. A card whose final
+visible Markdown block precedes that host therefore keeps the same visual
+bottom inset as its sides, including when its producer and age share the final
+prose line.
 
 A signed prose card keeps its agent attribution in the lane accent, but its
 linked top-level relative age is neutral. The age remains an underlined card
