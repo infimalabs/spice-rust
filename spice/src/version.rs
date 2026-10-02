@@ -19,7 +19,28 @@ pub struct Running {
     pub product: ProductVersion,
 }
 
+static PRODUCT: LazyLock<ProductVersion> = LazyLock::new(|| {
+    let stamp = SOURCE_STAMP.map(|stamp| {
+        stamp
+            .parse::<TaskStamp>()
+            .expect("xtask injects a canonical source stamp")
+    });
+    qualify(
+        &dist::current_product_version()
+            .expect("the compiled product version is repository-validated"),
+        stamp.as_ref(),
+    )
+});
+
 static RUNNING: LazyLock<Result<Running, Fault>> = LazyLock::new(capture);
+
+/// The product version this executable was built as.
+///
+/// Fixed at compile time, so naming it does not hash the executable the way
+/// [`running`] must.
+pub fn product() -> &'static ProductVersion {
+    &PRODUCT
+}
 
 /// The running executable's identity, captured once per process.
 ///
@@ -37,17 +58,10 @@ pub fn running() -> Result<&'static Running, Fault> {
 
 fn capture() -> Result<Running, Fault> {
     let binary = binary_digest()?;
-    let stamp = SOURCE_STAMP.map(|stamp| {
-        stamp
-            .parse::<TaskStamp>()
-            .expect("xtask injects a canonical source stamp")
-    });
-    let product = qualify(
-        &dist::current_product_version()
-            .expect("the compiled product version is repository-validated"),
-        stamp.as_ref(),
-    );
-    Ok(Running { binary, product })
+    Ok(Running {
+        binary,
+        product: product().clone(),
+    })
 }
 
 /// Extend a pre-release with the source stamp.

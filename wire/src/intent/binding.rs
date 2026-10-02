@@ -286,6 +286,25 @@ impl AnswerShape {
     /// refuse unknown fields, so a body spelled for the wrong command is a
     /// decode failure rather than a silently truncated value.
     pub fn decode(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
+        self.decode_from(bytes)
+    }
+
+    /// Decode a reply body that was already parsed as part of its envelope.
+    ///
+    /// Equivalent to [`Self::decode`] of the value's encoding, without
+    /// serializing a possibly megabyte-sized body only to parse it again.
+    ///
+    /// # Errors
+    ///
+    /// Returns the decoder error when the value is not that shape.
+    pub fn decode_value(
+        self,
+        value: serde_json::Value,
+    ) -> Result<CommandAnswer, serde_json::Error> {
+        self.decode_from(value)
+    }
+
+    fn decode_from(self, source: impl AnswerSource) -> Result<CommandAnswer, serde_json::Error> {
         match self {
             Self::Board
             | Self::Report
@@ -299,7 +318,7 @@ impl AnswerShape {
             | Self::Directive
             | Self::Inbox
             | Self::Consent
-            | Self::ConsentQueue => self.decode_primary(bytes),
+            | Self::ConsentQueue => self.decode_primary(source),
             Self::ConsentPolicy
             | Self::GlobalSettings
             | Self::VendorCatalog
@@ -311,47 +330,63 @@ impl AnswerShape {
             | Self::Recall
             | Self::Taste
             | Self::Recognition
-            | Self::DirectionHistory => self.decode_secondary(bytes),
+            | Self::DirectionHistory => self.decode_secondary(source),
         }
     }
 
-    fn decode_primary(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
+    fn decode_primary(self, body: impl AnswerSource) -> Result<CommandAnswer, serde_json::Error> {
         Ok(match self {
-            Self::Board => CommandAnswer::Board(Box::new(crate::decode(bytes)?)),
-            Self::Report => CommandAnswer::Report(Box::new(crate::decode(bytes)?)),
-            Self::TaskDetail => CommandAnswer::TaskDetail(Box::new(crate::decode(bytes)?)),
-            Self::TaskRelations => CommandAnswer::TaskRelations(Box::new(crate::decode(bytes)?)),
-            Self::TaskTimeline => CommandAnswer::TaskTimeline(Box::new(crate::decode(bytes)?)),
-            Self::Text => CommandAnswer::Text(crate::decode(bytes)?),
-            Self::Task => CommandAnswer::Task(crate::decode(bytes)?),
-            Self::Claim => CommandAnswer::Claim(Box::new(crate::decode(bytes)?)),
-            Self::Doc => CommandAnswer::Doc(crate::decode(bytes)?),
-            Self::Directive => CommandAnswer::Directive(crate::decode(bytes)?),
-            Self::Inbox => CommandAnswer::Inbox(crate::decode(bytes)?),
-            Self::Consent => CommandAnswer::Consent(crate::decode(bytes)?),
-            Self::ConsentQueue => CommandAnswer::ConsentQueue(crate::decode(bytes)?),
+            Self::Board => CommandAnswer::Board(Box::new(body.read()?)),
+            Self::Report => CommandAnswer::Report(Box::new(body.read()?)),
+            Self::TaskDetail => CommandAnswer::TaskDetail(Box::new(body.read()?)),
+            Self::TaskRelations => CommandAnswer::TaskRelations(Box::new(body.read()?)),
+            Self::TaskTimeline => CommandAnswer::TaskTimeline(Box::new(body.read()?)),
+            Self::Text => CommandAnswer::Text(body.read()?),
+            Self::Task => CommandAnswer::Task(body.read()?),
+            Self::Claim => CommandAnswer::Claim(Box::new(body.read()?)),
+            Self::Doc => CommandAnswer::Doc(body.read()?),
+            Self::Directive => CommandAnswer::Directive(body.read()?),
+            Self::Inbox => CommandAnswer::Inbox(body.read()?),
+            Self::Consent => CommandAnswer::Consent(body.read()?),
+            Self::ConsentQueue => CommandAnswer::ConsentQueue(body.read()?),
             _ => unreachable!("answer-shape decode partition is closed"),
         })
     }
 
-    fn decode_secondary(self, bytes: &[u8]) -> Result<CommandAnswer, serde_json::Error> {
+    fn decode_secondary(self, body: impl AnswerSource) -> Result<CommandAnswer, serde_json::Error> {
         Ok(match self {
-            Self::ConsentPolicy => CommandAnswer::ConsentPolicy(crate::decode(bytes)?),
-            Self::GlobalSettings => CommandAnswer::GlobalSettings(crate::decode(bytes)?),
-            Self::VendorCatalog => CommandAnswer::VendorCatalog(crate::decode(bytes)?),
-            Self::Trust => CommandAnswer::Trust(crate::decode(bytes)?),
-            Self::Lane => CommandAnswer::Lane(Box::new(crate::decode(bytes)?)),
-            Self::LaneChange => CommandAnswer::LaneChange(Box::new(crate::decode(bytes)?)),
-            Self::LaneRenewal => CommandAnswer::LaneRenewal(Box::new(crate::decode(bytes)?)),
-            Self::State => CommandAnswer::State(crate::decode(bytes)?),
-            Self::Recall => CommandAnswer::Recall(Box::new(crate::decode(bytes)?)),
-            Self::Taste => CommandAnswer::Taste(crate::decode(bytes)?),
-            Self::Recognition => CommandAnswer::Recognition(crate::decode(bytes)?),
-            Self::DirectionHistory => {
-                CommandAnswer::DirectionHistory(Box::new(crate::decode(bytes)?))
-            }
+            Self::ConsentPolicy => CommandAnswer::ConsentPolicy(body.read()?),
+            Self::GlobalSettings => CommandAnswer::GlobalSettings(body.read()?),
+            Self::VendorCatalog => CommandAnswer::VendorCatalog(body.read()?),
+            Self::Trust => CommandAnswer::Trust(body.read()?),
+            Self::Lane => CommandAnswer::Lane(Box::new(body.read()?)),
+            Self::LaneChange => CommandAnswer::LaneChange(Box::new(body.read()?)),
+            Self::LaneRenewal => CommandAnswer::LaneRenewal(Box::new(body.read()?)),
+            Self::State => CommandAnswer::State(body.read()?),
+            Self::Recall => CommandAnswer::Recall(Box::new(body.read()?)),
+            Self::Taste => CommandAnswer::Taste(body.read()?),
+            Self::Recognition => CommandAnswer::Recognition(body.read()?),
+            Self::DirectionHistory => CommandAnswer::DirectionHistory(Box::new(body.read()?)),
             _ => unreachable!("answer-shape decode partition is closed"),
         })
+    }
+}
+
+/// Where one answer body's JSON comes from: received bytes, or a value its
+/// envelope already parsed.
+trait AnswerSource {
+    fn read<T: serde::de::DeserializeOwned>(self) -> Result<T, serde_json::Error>;
+}
+
+impl AnswerSource for &[u8] {
+    fn read<T: serde::de::DeserializeOwned>(self) -> Result<T, serde_json::Error> {
+        crate::decode(self)
+    }
+}
+
+impl AnswerSource for serde_json::Value {
+    fn read<T: serde::de::DeserializeOwned>(self) -> Result<T, serde_json::Error> {
+        serde_json::from_value(self)
     }
 }
 
