@@ -446,6 +446,75 @@ fn task_bootstrap_status_and_authored_add_fields_are_parser_owned() {
 }
 
 #[test]
+fn bounded_task_read_and_ledger_export_options_are_parser_owned() {
+    let list = command()
+        .try_get_matches_from([
+            "spice",
+            "task",
+            "list",
+            "--max-bytes",
+            "4096",
+            "--max-text",
+            "120",
+            "--after",
+            "TASK-1k4Q5gJw",
+        ])
+        .expect("bounded task list parses");
+    let leaf = selected_matches(&list);
+    assert_eq!(
+        leaf.get_one::<String>("max-bytes").map(String::as_str),
+        Some("4096")
+    );
+    assert_eq!(
+        leaf.get_one::<String>("after").map(String::as_str),
+        Some("TASK-1k4Q5gJw")
+    );
+
+    let show = command()
+        .try_get_matches_from([
+            "spice",
+            "task",
+            "show",
+            "TASK-1k4Q5gJw",
+            "--context",
+            "--history",
+            "--limit",
+            "5",
+            "--max-bytes",
+            "4096",
+            "--max-text",
+            "512",
+            "--after",
+            "42",
+        ])
+        .expect("bounded task show parses");
+    let leaf = selected_matches(&show);
+    assert!(leaf.get_flag("context"));
+    assert!(leaf.get_flag("history"));
+    assert_eq!(
+        leaf.get_one::<String>("after").map(String::as_str),
+        Some("42")
+    );
+
+    let ledger = command()
+        .try_get_matches_from([
+            "spice",
+            "doc",
+            "ledger",
+            "TASK-1k4Q5gJw",
+            "--output",
+            "ledger.md",
+        ])
+        .expect("exact ledger export parses");
+    assert_eq!(
+        selected_matches(&ledger)
+            .get_one::<String>("output")
+            .map(String::as_str),
+        Some("ledger.md")
+    );
+}
+
+#[test]
 fn task_creation_repair_origins_are_parser_owned() {
     for argv in [
         vec![

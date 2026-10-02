@@ -200,6 +200,48 @@ fn document_rationale_and_later_notes_recover_through_the_task_ledger() {
 }
 
 #[test]
+fn document_ledger_previews_with_a_bound_and_exports_the_exact_document() {
+    let (root, bus, epoch, _) = fixture("document-ledger-output", 0);
+    let task = add_project(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "DOC-ledger01",
+        "Export one ledger",
+        "task.document",
+        Some("todo"),
+    );
+    let document = format!("# Export one ledger\n\n{}\n", "x".repeat(9_000));
+    let budget = wire::output::INTERACTIVE
+        .budget(wire::output::Request::default())
+        .expect("interactive defaults admit");
+    let preview = ledger_output(&task, &document, None, budget).expect("preview renders");
+    assert!(preview.contains("… [+"), "{preview}");
+    assert!(
+        preview.contains(&format!(
+            "complete: spice doc ledger {task} --output {task}-ledger.md"
+        )),
+        "{preview}"
+    );
+    assert!(!preview.contains(&document), "{preview}");
+
+    let destination = root.join("ledger.md");
+    let receipt = ledger_output(
+        &task,
+        &document,
+        Some(destination.to_str().expect("fixture path is UTF-8")),
+        budget,
+    )
+    .expect("ledger exports");
+    assert!(receipt.starts_with("exported 9022 bytes to "), "{receipt}");
+    assert_eq!(
+        std::fs::read_to_string(destination).expect("exported ledger reads"),
+        document
+    );
+    clean(&root, bus);
+}
+
+#[test]
 fn authored_document_apply_refuses_to_edit_a_withdrawn_task() {
     let (root, bus, epoch, _) = fixture("document-withdrawn", 0);
     let initial_board = board(&bus, epoch, Actor::Operator);

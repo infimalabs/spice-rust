@@ -170,6 +170,115 @@ fn task_show_prints_only_the_named_tasks_notes() {
 }
 
 #[test]
+fn task_show_separates_current_context_and_bounded_history() {
+    let (root, bus, epoch, _) = fixture("task-show-bounded-sections", 0);
+    let task = add_born(
+        &bus,
+        epoch,
+        stamp("task-show-bounded-sections"),
+        "Bound one task read",
+    );
+    let answer = board(&bus, epoch, Actor::Operator);
+    let row = at(&answer, &task);
+    let current = task_show_bounded(
+        &answer,
+        row,
+        &[],
+        TaskShowHistory::default(),
+        None,
+        &TaskShowOptions {
+            context: false,
+            history: false,
+            limit: None,
+            max_bytes: None,
+            max_text: None,
+            after: None,
+        },
+    );
+    for required in [
+        "handle ",
+        "title Bound one task read",
+        "project ",
+        "phase ",
+        "status ",
+        "claim ",
+        "requirements:",
+        "acceptance:",
+        "depends:",
+        "artifacts:",
+        "next: ",
+    ] {
+        assert!(current.contains(required), "{current}");
+    }
+    for historical in [
+        "description ",
+        "origin ",
+        "creation_context ",
+        "claim_context ",
+        "git_context ",
+        "notes:",
+    ] {
+        assert!(!current.contains(historical), "{current}");
+    }
+
+    let notes = (1..=205)
+        .map(|index| wire::intent::TaskDetailNote {
+            position: Seq::new(1_000 + index).expect("fixture position"),
+            at: "2026-10-02T00:00:00.000Z".parse().expect("fixture instant"),
+            author: Actor::Operator,
+            text: format!("note-{index}"),
+        })
+        .collect::<Vec<_>>();
+    let history = task_show_bounded(
+        &answer,
+        row,
+        &[],
+        TaskShowHistory {
+            notes: &notes,
+            acknowledgments: &[],
+            closure: None,
+        },
+        None,
+        &TaskShowOptions {
+            context: false,
+            history: true,
+            limit: None,
+            max_bytes: None,
+            max_text: None,
+            after: None,
+        },
+    );
+    assert_eq!(history.matches("    note-").count(), 20, "{history}");
+    assert!(history.contains("withheld 185 of 205 rows"), "{history}");
+    assert!(history.contains("continue: spice task show"), "{history}");
+    assert!(history.contains("--after"), "{history}");
+
+    let oversized = "x".repeat(5_000);
+    let context = task_show_bounded(
+        &answer,
+        row,
+        &[],
+        TaskShowHistory::default(),
+        Some(&oversized),
+        &TaskShowOptions {
+            context: true,
+            history: false,
+            limit: None,
+            max_bytes: None,
+            max_text: None,
+            after: None,
+        },
+    );
+    assert!(
+        context.contains("origin_context withheld 4760 bytes"),
+        "{context}"
+    );
+    assert!(context.contains("spice doc ledger"), "{context}");
+    assert!(!context.contains(&oversized), "{context}");
+    clean(&root, bus);
+}
+
+#[test]
 fn task_detail_carries_browser_renderable_artifacts_without_text_sidecars() {
     let (root, bus, epoch, _) = fixture("task-detail-media", 0);
     let born = stamp("task-detail-media");

@@ -784,7 +784,7 @@ fn task_status_counts_one_snapshot_and_task_add_retains_authored_context() {
 }
 
 #[test]
-fn task_list_preserves_scope_status_project_and_newest_limit_semantics() {
+fn task_list_preserves_scope_status_project_and_relevance_limit_semantics() {
     let (root, bus, epoch, _) = fixture("task-list", 0);
     let (answer, first, descendant, waiting) = task_list_fixture(&bus, epoch);
     assert_task_list_queries(&answer, &first, &descendant, &waiting);
@@ -805,12 +805,10 @@ fn shortened_task_list_names_original_and_withheld_row_counts() {
         },
     );
 
-    assert!(
-        listed
-            .lines()
-            .any(|line| line == "limited --limit 2 original 4 withheld 2"),
-        "{listed}"
-    );
+    assert_eq!(listed.matches(" [todo]").count(), 2, "{listed}");
+    assert!(listed.contains("withheld 2 of 4 rows"), "{listed}");
+    assert!(listed.contains("continue: spice task list"), "{listed}");
+    assert!(listed.contains("--after"), "{listed}");
     clean(&root, bus);
 }
 
@@ -1045,7 +1043,7 @@ fn assert_task_list_queries(
     assert!(completed_only.contains("board.test Completed board route"));
     assert!(!completed_only.contains(first.as_str()));
 
-    let newest_global = task_list(
+    let relevant_global = task_list(
         answer,
         &TaskListOptions {
             all: true,
@@ -1054,20 +1052,21 @@ fn assert_task_list_queries(
             status: None,
         },
     );
-    let completed = answer
-        .tasks
-        .iter()
-        .find(|task| task.presentation_title() == "Completed board route")
-        .expect("completed fixture row");
+    assert!(
+        relevant_global.contains(descendant.as_str()),
+        "{relevant_global}"
+    );
+    assert!(
+        !relevant_global.contains("Completed board route"),
+        "{relevant_global}"
+    );
     assert_eq!(
-        newest_global,
-        format!(
-            concat!(
-                "scope global --all\n",
-                "limited --limit 1 original 4 withheld 3\n",
-                "{} [done] board.test Completed board route"
-            ),
-            completed.statement.body.handle
-        )
+        relevant_global.matches(" [todo]").count(),
+        1,
+        "{relevant_global}"
+    );
+    assert!(
+        relevant_global.contains("withheld 3 of 4 rows"),
+        "{relevant_global}"
     );
 }
