@@ -180,6 +180,71 @@ impl Seated {
             .expect("fixture occupant exits");
         let _ = std::fs::remove_dir_all(&self.root);
     }
+
+    /// Give the occupant a declared OMP launch running `effort`.
+    fn declare_launch(&self, effort: &str) {
+        let session = wire::LaneSession {
+            lane: self.lane,
+            occupant: self.occupant,
+            worktree: self.root.display().to_string(),
+            vendor: "omp".parse().expect("fixture vendor"),
+            launch: Some(wire::body::LaneLaunchIdentity::new("sonnet", effort)),
+            epoch: self.epoch,
+            stream: "stdout".to_owned(),
+            identity: "fixture-session".to_owned(),
+            locus: wire::TapeLocus {
+                member: 1,
+                offset: 0,
+                length: 1,
+            },
+        };
+        rewrite_row(&self.bus, self.epoch, self.lane, |row| {
+            row.session = Some(session);
+        });
+    }
+}
+
+/// Commit one residency row change as an unrelated writer would.
+fn rewrite_row(
+    bus: &Bus,
+    epoch: CanonicalUuid,
+    lane: CanonicalUuid,
+    change: impl FnOnce(&mut wire::LaneResidency),
+) {
+    let current = current_residency(bus, epoch).expect("residency reads");
+    let mut head = current.body().clone();
+    change(
+        head.lanes
+            .iter_mut()
+            .find(|row| row.lane == lane)
+            .expect("fixture lane is seated"),
+    );
+    let mut write =
+        write(Actor::Spice, epoch, Producer::ResidentRecognition).expect("fixture write starts");
+    let fact = write
+        .fact(
+            wire::body::LaneRetuned {
+                lane,
+                from: None,
+                model: None,
+            },
+            FactCause::Existing(current.position()),
+        )
+        .expect("fixture fact builds");
+    write.residency_head(fact, move |_| head);
+    commit(bus, write).expect("fixture row commits");
+}
+
+impl Seated {
+    fn running_effort(&self) -> Option<String> {
+        self.head()
+            .lanes
+            .iter()
+            .find(|row| row.lane == self.lane)
+            .and_then(|row| row.session.as_ref())
+            .and_then(|session| session.launch.as_ref())
+            .map(|launch| launch.effort.clone())
+    }
 }
 
 fn committed_rows(outcome: Outcome<CommandAnswer>) -> Vec<wire::intent::LaneAnswerRow> {
@@ -320,6 +385,69 @@ fn effort_retune_persists_next_launch_and_keeps_unconfirmed_runtime_separate() {
     );
     assert_eq!(fixture.seated_effort(), None);
 
+    fixture.release();
+}
+
+/// The seat commits before the occupant is touched, so a residency write that
+/// lands while OMP is answering neither loses the seat nor the confirmed
+/// running change.
+#[cfg(unix)]
+#[test]
+fn a_residency_write_during_a_live_retune_keeps_seat_and_running_effort() {
+    use std::os::unix::net::UnixDatagram;
+
+    let fixture = Seated::new("lane-effort-live-race");
+    fixture.declare_launch("low");
+    let door = crate::resident::supervisor::command::kick_path(&fixture.paths, fixture.lane);
+    let _ = std::fs::remove_file(&door);
+    let listener = UnixDatagram::bind(&door).expect("fixture kick door binds");
+    let revision = fixture.head().topology_revision;
+    let (bus, epoch, lane) = (&fixture.bus, fixture.epoch, fixture.lane);
+
+    let rows = std::thread::scope(|scope| {
+        scope.spawn(move || {
+            let mut bytes = [0u8; 4096];
+            let length = listener.recv(&mut bytes).expect("the retune kick arrives");
+            let kick: serde_json::Value =
+                serde_json::from_slice(&bytes[..length]).expect("kick decodes");
+            assert_eq!(kick["kind"], "retune");
+            assert_eq!(kick["retune"]["setting"], "effort");
+            // Another writer advances residency while OMP is still answering.
+            rewrite_row(bus, epoch, lane, |row| row.capabilities.push(test_uuid(10)));
+            let answer = serde_json::json!({
+                "request": kick["request"],
+                "result": {"disposition": "applied"},
+            });
+            UnixDatagram::unbound()
+                .expect("reply socket")
+                .send_to(
+                    answer.to_string().as_bytes(),
+                    kick["reply"].as_str().expect("reply door"),
+                )
+                .expect("applied reply sends");
+        });
+        committed_rows(fixture.retune_effort(4, Some("max"), revision))
+    });
+    let _ = std::fs::remove_file(&door);
+
+    let row = rows
+        .iter()
+        .find(|row| row.lane == fixture.lane)
+        .expect("the retuned lane is in the answer");
+    assert_eq!(row.seat_effort.as_deref(), Some("max"));
+    assert_eq!(
+        row.effort.as_deref(),
+        Some("max"),
+        "the confirmed change is running"
+    );
+    assert_eq!(fixture.seated_effort().as_deref(), Some("max"));
+    assert_eq!(fixture.running_effort().as_deref(), Some("max"));
+    assert!(
+        fixture.head().lanes[0]
+            .capabilities
+            .contains(&test_uuid(10)),
+        "the concurrent write survives"
+    );
     fixture.release();
 }
 
