@@ -128,8 +128,9 @@ pub use stream::{
     valid_message_directives,
 };
 pub use witness::{
-    Answer, Disposition, Name, NameError, Phase, PhaseError, TaskHandle, TaskHandleError,
-    TaskStamp, TaskStampError, TaskStampMintError, Witness, WitnessKind,
+    Answer, Disposition, Name, NameError, OOPS_STEM, Phase, PhaseError, TaskHandle,
+    TaskHandleError, TaskStamp, TaskStampError, TaskStampMintError, Witness, WitnessKind,
+    is_oops_project,
 };
 
 /// Decode wire bytes into a DTO.

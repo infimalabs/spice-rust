@@ -174,8 +174,15 @@ ordinary phase grammar. With no named flow, a task lacking acceptance receives
 `plan` to `todo` to `review`; every other task receives `todo` to `review`,
 independent of visibility. A hidden `.oops` row is parked in `plan` but retains
 the complete `plan` to `todo` to `review`
-flow and must be promoted explicitly. Self-authored review is a last-resort
-eligibility class, not an urgency coefficient.
+flow and leaves `.oops` only through an explicit `task wake`.
+`task oops --project PROJECT` parks the row as `.oops.PROJECT`, refusing a
+project manual filing would not admit. `task wake --into PROJECT` names the
+destination outright; a bare wake promotes into the parked recommendation while
+it still passes manual admission, otherwise into `task` followed by the parked
+segments up to the minimum public depth (`.oops` becomes `task.oops`). Every
+destination passes manual admission or the wake refuses without writing. The
+parked row keeps the `OOPS` handle family; promotion renames it. Self-authored
+review is a last-resort eligibility class, not an urgency coefficient.
 
 **Incidental** — the task store, the handle alphabet, concrete phase names, and
 flow length beyond the nonempty, unique-name membership law. The three workflow

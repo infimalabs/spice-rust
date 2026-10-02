@@ -335,23 +335,11 @@ const BODIES: &[(CommandKind, &str)] = &[
 ];
 
 #[test]
-fn oops_route_body_cannot_name_or_cross_target_a_hidden_project() {
+fn generic_hidden_creation_discriminant_stays_retired() {
     assert!(
         "task::system-add".parse::<CommandKind>().is_err(),
         "the retired generic hidden-creation discriminant still crosses the wire",
     );
-    for project in [".oops", ".maxim_proposal.theme_2", ".sandbox.audit"] {
-        let body =
-            format!(r#"{{"title":"forged route","description":"detail","project":"{project}"}}"#);
-        assert!(
-            CommandKind::TaskOopsAdd
-                .binding()
-                .body
-                .decode(body.as_bytes())
-                .is_err(),
-            "oops route decoded caller-selected project {project}",
-        );
-    }
 }
 
 #[path = "binding/answers.rs"]

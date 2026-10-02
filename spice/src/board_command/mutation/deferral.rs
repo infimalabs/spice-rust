@@ -7,19 +7,25 @@ pub(in crate::board_command) fn task_defer(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
     change_deferral(
         bus,
         command,
+        &snapshot,
         &defer.task,
         Some(defer.wait),
         defer.clone(),
         repository,
         false,
         projects,
-        allocation,
     )
 }
 
+/// Wake deferred work, or promote a parked `.oops` row: into `--into` when
+/// named, otherwise into the destination its parked project resolves to.
 pub(in crate::board_command) fn task_wake(
     bus: &Bus,
     command: &wire::AdmittedCommand,
@@ -28,21 +34,24 @@ pub(in crate::board_command) fn task_wake(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    if let Some(project) = wake.into.as_deref() {
-        return promote_oops(
-            bus, command, wake, project, repository, projects, allocation,
-        );
+    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
+        Ok(snapshot) => snapshot,
+        Err(outcome) => return outcome,
+    };
+    let parked = task_entry(&snapshot.entries, &wake.task).is_some_and(is_oops);
+    if wake.into.is_some() || parked {
+        return promote_oops(bus, command, &snapshot, wake, repository, projects);
     }
     change_deferral(
         bus,
         command,
+        &snapshot,
         &wake.task,
         None,
         wake.clone(),
         repository,
         wake.claim,
         projects,
-        allocation,
     )
 }
 
@@ -119,19 +128,34 @@ fn append_promotion(
     }
 }
 
+/// The public project a promotion lands in: the explicit destination, which
+/// must pass manual admission, or else the parked row's own resolution.
+fn promotion_destination(
+    entry: &Entry,
+    requested: Option<&str>,
+    projects: &ProjectPolicy,
+) -> Result<board::Project, Outcome<CommandAnswer>> {
+    let admitted = match requested {
+        Some(requested) => projects.admit_manual_creation(requested),
+        None => projects.oops_promotion(entry.project()),
+    };
+    admitted.map_err(|error| {
+        refusal(
+            "task::promotion-project-refused",
+            Some(error.to_string()),
+            "name a public project this board admits for manual filing",
+        )
+    })
+}
+
 fn promote_oops(
     bus: &Bus,
     command: &wire::AdmittedCommand,
+    snapshot: &ValidatedSnapshot,
     wake: &TaskWake,
-    requested: &str,
     repository: Option<&Repository>,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
     let Some(entry) = task_entry(&snapshot.entries, &wake.task) else {
         return refusal(
             "task::unknown",
@@ -142,15 +166,9 @@ fn promote_oops(
     if let Err(outcome) = validate_promotion_entry(entry, command) {
         return outcome;
     }
-    let project = match projects.admit_manual_creation(requested) {
+    let project = match promotion_destination(entry, wake.into.as_deref(), projects) {
         Ok(project) => project,
-        Err(error) => {
-            return refusal(
-                "task::promotion-project-refused",
-                Some(error.to_string()),
-                "name a public project this board admits for manual filing",
-            );
-        }
+        Err(outcome) => return outcome,
     };
     let mut statement = entry.statement().clone();
     statement.project = project.as_str().to_owned();
@@ -264,16 +282,6 @@ fn deferral_transition(
     deferral: Option<Instant>,
     projects: &ProjectPolicy,
 ) -> Result<DeferralTransition, Outcome<CommandAnswer>> {
-    if deferral.is_none() && is_oops(entry) {
-        return Err(refusal(
-            "task::promotion-required",
-            Some(oops_state(entry)),
-            &format!(
-                "promote the parked row first with spice task wake {} --into PUBLIC_PROJECT",
-                entry.handle(),
-            ),
-        ));
-    }
     // Settled is the question, not completed. A withdrawn task carries the same
     // completion instant and never becomes workable again.
     if entry.workflow().completion.is_some() {
@@ -417,18 +425,14 @@ fn finish_deferral<B: serde::Serialize>(
 fn change_deferral<B: serde::Serialize + Clone>(
     bus: &Bus,
     command: &wire::AdmittedCommand,
+    snapshot: &ValidatedSnapshot,
     task: &TaskHandle,
     deferral: Option<Instant>,
     intent: B,
     repository: Option<&Repository>,
     claim_requested: bool,
     projects: &ProjectPolicy,
-    allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let snapshot = match validated_snapshot(bus, command.actor().clone(), projects, allocation) {
-        Ok(snapshot) => snapshot,
-        Err(outcome) => return outcome,
-    };
     let Some(entry) = task_entry(&snapshot.entries, task) else {
         return refusal(
             "task::unknown",

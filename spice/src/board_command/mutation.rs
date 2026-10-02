@@ -138,7 +138,21 @@ pub(super) fn task_oops_add(
     projects: &ProjectPolicy,
     allocation: &board::NextConfig,
 ) -> Outcome<CommandAnswer> {
-    let project = match projects.admit_system_creation(&SystemTaskRoute::oops()) {
+    let recommended = match add.project.as_deref().map(|project| {
+        projects.admit_manual_creation(project).map_err(|error| {
+            refusal(
+                "task::oops-project-refused",
+                Some(error.to_string()),
+                "recommend a public project this board admits for manual filing, or omit --project",
+            )
+        })
+    }) {
+        Some(Ok(project)) => Some(project),
+        Some(Err(outcome)) => return outcome,
+        None => None,
+    };
+    let route = SystemTaskRoute::oops(recommended.as_ref());
+    let project = match projects.admit_system_creation(&route) {
         Ok(project) => project,
         Err(error) => {
             return protocol_fault(
@@ -871,7 +885,7 @@ fn dependency_reaches(entries: &[Entry], start: &TaskStamp, target: &TaskStamp) 
 }
 
 pub(super) fn is_oops(entry: &Entry) -> bool {
-    entry.project().visibility().hidden_stem() == Some("oops")
+    entry.project().visibility().hidden_stem() == Some(wire::OOPS_STEM)
 }
 
 pub(super) fn oops_state(entry: &Entry) -> String {
@@ -899,7 +913,7 @@ fn oops_dependency_refusal(entries: &[&Entry]) -> Outcome<CommandAnswer> {
         "task::dependency-oops-refused",
         Some(offenders.clone()),
         &format!(
-            "parked dependency endpoint(s): {offenders}; promote every parked row first with spice task wake HANDLE --into PUBLIC_PROJECT",
+            "parked dependency endpoint(s): {offenders}; promote every parked row first with spice task wake HANDLE [--into PUBLIC_PROJECT]",
         ),
     )
 }

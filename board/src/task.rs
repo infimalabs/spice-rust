@@ -4,11 +4,14 @@ use std::fmt;
 use wire::intent::ProjectVisibility;
 use wire::{ClaimHead, LeaseHead, TaskHandle, TaskHead, TaskStamp, WorkflowHead};
 
+/// Public root a parked `.oops` row lands in when its recommendation cannot.
+pub const OOPS_PROMOTION_STEM: &str = "task";
+
 /// Public scheduler roots compiled into every project policy.
-pub const BUILTIN_PUBLIC_STEMS: [&str; 2] = ["task", "serve"];
+pub const BUILTIN_PUBLIC_STEMS: [&str; 2] = [OOPS_PROMOTION_STEM, "serve"];
 
 /// Hidden system roots compiled into every project policy, in declaration order.
-pub const BUILTIN_HIDDEN_STEMS: [&str; 2] = ["oops", "maxim_proposal"];
+pub const BUILTIN_HIDDEN_STEMS: [&str; 2] = [wire::OOPS_STEM, "maxim_proposal"];
 
 /// One non-serializable, server-owned hidden task creation route.
 ///
@@ -31,7 +34,7 @@ enum SystemTaskOwner {
 impl SystemTaskOwner {
     fn stem(&self) -> &str {
         match self {
-            Self::Oops => "oops",
+            Self::Oops => wire::OOPS_STEM,
             Self::Proposal => "maxim_proposal",
             Self::Configured(stem) => stem,
         }
@@ -39,12 +42,15 @@ impl SystemTaskOwner {
 }
 
 impl SystemTaskRoute {
-    /// The fixed root used by `task oops`.
+    /// The fixed root used by `task oops`, with the admitted public project it
+    /// recommends parked beneath that root.
     #[must_use]
-    pub fn oops() -> Self {
+    pub fn oops(recommended: Option<&Project>) -> Self {
         Self {
             owner: SystemTaskOwner::Oops,
-            descendants: Vec::new(),
+            descendants: recommended
+                .map(|project| project.as_str().split('.').map(str::to_owned).collect())
+                .unwrap_or_default(),
         }
     }
 
@@ -192,6 +198,39 @@ impl ProjectPolicy {
             return Err(ProjectError::SystemRouteCollision(stem.clone()));
         }
         self.admit(&route.project())
+    }
+
+    /// The public project a parked `.oops` row promotes into when its wake
+    /// names none.
+    ///
+    /// The recommendation parked beneath the root wins while it still passes
+    /// manual admission. Otherwise the row lands in the built-in `task` root
+    /// followed by its parked segments, `oops` first, cut or padded with `oops`
+    /// to the minimum public depth, so the result passes that same admission.
+    pub fn oops_promotion(&self, parked: &Project) -> Result<Project, ProjectError> {
+        let segments = parked
+            .as_str()
+            .strip_prefix('.')
+            .unwrap_or(parked.as_str())
+            .split('.')
+            .collect::<Vec<_>>();
+        if let [_, recommended @ ..] = segments.as_slice()
+            && !recommended.is_empty()
+            && let Ok(project) = self.admit_manual_creation(&recommended.join("."))
+        {
+            return Ok(project);
+        }
+        let depth = usize::try_from(self.public_min_depth).unwrap_or(usize::MAX);
+        let derived = std::iter::once(OOPS_PROMOTION_STEM)
+            .chain(
+                segments
+                    .iter()
+                    .copied()
+                    .chain(std::iter::repeat(wire::OOPS_STEM))
+                    .take(depth.saturating_sub(1)),
+            )
+            .collect::<Vec<_>>();
+        self.admit_manual_creation(&derived.join("."))
     }
 
     /// Fully resolved hidden roots in allocator classification order.

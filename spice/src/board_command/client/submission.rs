@@ -205,6 +205,7 @@ pub(super) fn client_oops(
             title: text.clone(),
             description: text,
             origin,
+            project: matches.get_one::<String>("project").cloned(),
         },
     )
 }

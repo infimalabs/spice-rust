@@ -13,6 +13,7 @@ fn add_parked(bus: &Bus, epoch: CanonicalUuid, name: &str) -> TaskHandle {
             title: format!("Triage {name}"),
             description: format!("Evidence for {name}"),
             origin: Some("fixture:wake-claim".parse().expect("fixture origin")),
+            project: None,
         },
     ));
     task
@@ -293,7 +294,7 @@ fn self_defer_releases_the_claim_but_peer_defer_leaves_it_held() {
 }
 
 #[test]
-fn parked_oops_requires_into_then_promotes_and_claims_in_one_transaction() {
+fn parked_oops_wake_promotes_and_claims_in_one_transaction() {
     let (root, bus, epoch, seats) = fixture("wake-promote-claim", 1);
     let seat = &seats[0];
     let actor = Actor::Lane(seat.lane);
@@ -301,7 +302,7 @@ fn parked_oops_requires_into_then_promotes_and_claims_in_one_transaction() {
     let parked = add_parked(&bus, epoch, "WAKE-oops0001");
     let visible = board(&bus, epoch, actor.clone());
     let facts = fact_count(&bus);
-    let missing_into = issue(
+    let unwitnessed = issue(
         &bus,
         epoch,
         actor.clone(),
@@ -314,11 +315,11 @@ fn parked_oops_requires_into_then_promotes_and_claims_in_one_transaction() {
         },
     );
     assert!(
-        matches!(missing_into, Outcome::Refusal(ref refusal)
-            if refusal.reason() == "task::promotion-required"),
-        "parked claim wake must require --into: {missing_into:?}",
+        matches!(&unwitnessed, Outcome::Refusal(refusal)
+            if refusal.reason() == "task::promotion-statement-witness-moved"),
+        "parked claim wake must witness the statement it promotes: {unwitnessed:?}",
     );
-    assert_eq!(fact_count(&bus), facts, "missing --into wrote facts");
+    assert_eq!(fact_count(&bus), facts, "unwitnessed promotion wrote facts");
 
     let Outcome::Reply(Reply {
         position: ReplyPosition::Committed(range),

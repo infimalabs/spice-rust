@@ -108,7 +108,7 @@ pub(super) fn task_done(
             "task::promotion-required",
             Some(oops_state(entry)),
             &format!(
-                "promote with spice task wake {} --into PUBLIC_PROJECT, add required public dependencies, then complete it",
+                "promote with spice task wake {} [--into PUBLIC_PROJECT], add required public dependencies, then complete it",
                 entry.handle(),
             ),
         );

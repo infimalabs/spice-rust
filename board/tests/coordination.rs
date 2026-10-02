@@ -434,7 +434,15 @@ fn project_policy_admits_only_resolved_hidden_roots_without_broadening_public_la
         ));
     }
     for (route, expected) in [
-        (board::SystemTaskRoute::oops(), ".oops"),
+        (board::SystemTaskRoute::oops(None), ".oops"),
+        (
+            board::SystemTaskRoute::oops(Some(
+                &projects
+                    .admit_manual_creation("board.cli")
+                    .expect("recommended public project"),
+            )),
+            ".oops.board.cli",
+        ),
         (
             board::SystemTaskRoute::proposal(["theme_2".to_owned()]),
             ".maxim_proposal.theme_2",

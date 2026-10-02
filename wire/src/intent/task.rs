@@ -64,8 +64,9 @@ pub struct TaskAdd {
 
 /// Add one task through the fixed server-owned `.oops` route.
 ///
-/// The route owns the project, flow, and dependency policy. None crosses the
-/// wire, so a caller cannot turn this DTO into generic hidden-project creation.
+/// The route owns the hidden root, flow, and dependency policy. A caller may
+/// recommend only a public project, which the route parks beneath `.oops`, so
+/// this DTO cannot become generic hidden-project creation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskOopsAdd {
@@ -80,6 +81,14 @@ pub struct TaskOopsAdd {
         deserialize_with = "crate::optional::present"
     )]
     pub origin: Option<Origin>,
+    /// Public project a bare `task wake` promotes the row into while that
+    /// project still passes manual admission.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub project: Option<String>,
 }
 
 /// File one evidence-backed taste candidate through the fixed hidden proposal route.
