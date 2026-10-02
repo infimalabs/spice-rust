@@ -28,6 +28,7 @@ impl MappedCommand {
             SelectedCommand::LaneSeat { body } => Self::lane_seat(contract, body),
             SelectedCommand::LaneState { body } => Self::lane_state(contract, body),
             SelectedCommand::LaneRetune { body } => Self::lane_retune(contract, body),
+            SelectedCommand::LaneEffortRetune { body } => Self::lane_effort_retune(contract, body),
             SelectedCommand::LaneRecall { body } => Self::lane_recall(contract, body),
             SelectedCommand::SteerCancel { directive } => Self::steer_cancel(contract, directive),
             SelectedCommand::SteerResend { directive } => Self::steer_resend(contract, directive),
@@ -192,6 +193,18 @@ impl MappedCommand {
             contract,
             &["lane", "model"],
             CommandKind::LaneRetune,
+            Vec::new(),
+            body,
+        )
+    }
+    fn lane_effort_retune(
+        contract: &Contract,
+        body: &wire::intent::LaneEffortRetune,
+    ) -> ClientResult<Self> {
+        Self::new(
+            contract,
+            &["lane", "effort"],
+            CommandKind::LaneEffortRetune,
             Vec::new(),
             body,
         )

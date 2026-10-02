@@ -57,10 +57,12 @@ fn issue(
             requested,
             member: Some(request.clone()),
         },
-        MemberCommand::Retune { .. } => ClientAction::RetuneLane {
-            topology_revision,
-            request: request.clone(),
-        },
+        MemberCommand::Retune { .. } | MemberCommand::RetuneEffort { .. } => {
+            ClientAction::RetuneLane {
+                topology_revision,
+                request: request.clone(),
+            }
+        }
     };
     if !admit_action(sender, action) {
         let mut data = surface.write();
@@ -82,7 +84,8 @@ fn issue(
 struct Offered {
     lifecycle: bool,
     renew: bool,
-    retune: bool,
+    model: bool,
+    effort: bool,
 }
 
 impl Offered {
@@ -90,7 +93,8 @@ impl Offered {
         Self {
             lifecycle: runtime.offers(CommandKind::LaneState),
             renew: runtime.offers(CommandKind::LaneRenewal),
-            retune: runtime.offers(CommandKind::LaneRetune),
+            model: runtime.offers(CommandKind::LaneRetune),
+            effort: runtime.offers(CommandKind::LaneEffortRetune),
         }
     }
 }
@@ -210,34 +214,126 @@ fn model_form(props: &ModelFormProps) -> Html {
         </form>
     }
 }
+#[derive(Properties, PartialEq)]
+struct EffortFormProps {
+    lane: CanonicalUuid,
+    /// Current running effort, shown separately from launch authority.
+    current: Option<String>,
+    /// The seat's authoritative next-launch effort.
+    effort: Option<String>,
+    default_effort: String,
+    choices: Vec<String>,
+    busy: bool,
+    command: Callback<(CanonicalUuid, MemberCommand)>,
+}
+
+#[function_component(EffortForm)]
+fn effort_form(props: &EffortFormProps) -> Html {
+    let draft = use_state(|| props.effort.clone().unwrap_or_default());
+    {
+        let draft = draft.clone();
+        use_effect_with(props.effort.clone(), move |effort| {
+            draft.set(effort.clone().unwrap_or_default());
+        });
+    }
+    let onchange = {
+        let draft = draft.clone();
+        Callback::from(move |event: Event| {
+            let select: HtmlSelectElement = event.target_unchecked_into();
+            draft.set(select.value());
+        })
+    };
+    let lane = props.lane;
+    let submit = {
+        let command = props.command.clone();
+        let draft = draft.clone();
+        Callback::from(move |event: SubmitEvent| {
+            event.prevent_default();
+            event.stop_propagation();
+            let effort = Some((*draft).clone()).filter(|effort| !effort.is_empty());
+            command.emit((lane, MemberCommand::RetuneEffort { effort }));
+        })
+    };
+    let running = props.current.as_deref().unwrap_or("not running");
+    let next = props.effort.as_deref().map_or_else(
+        || format!("default ({})", props.default_effort),
+        str::to_owned,
+    );
+    html! {
+        <form class="member-effort" data-member-control="effort" onsubmit={submit}>
+            <label for={format!("member-effort-{lane}")}>{"Reasoning effort"}</label>
+            <p class="member-setting-status">{format!("Running: {running}; next launch: {next}")}</p>
+            <select
+                id={format!("member-effort-{lane}")}
+                value={(*draft).clone()}
+                disabled={props.busy}
+                {onchange}
+            >
+                <option value="">{format!("default ({})", props.default_effort)}</option>
+                {for props.choices.iter().map(|effort| html! {
+                    <option value={effort.clone()}>{effort}</option>
+                })}
+            </select>
+            <button type="submit" class="agent-menu-action" disabled={props.busy}>{"Set effort"}</button>
+        </form>
+    }
+}
 
 fn render_retune(
     runtime: &CanvasRuntime,
     member: &crate::runtime::LaneMember,
+    offered: &Offered,
     busy: bool,
     command: &Callback<(CanonicalUuid, MemberCommand)>,
 ) -> Html {
-    let placeholder = runtime
+    let vendor = runtime.vendor_catalog().and_then(|catalog| {
+        catalog
+            .vendors
+            .iter()
+            .find(|vendor| vendor.name == member.vendor)
+            .map(|vendor| (vendor.default_model.clone(), vendor.default_effort.clone()))
+    });
+    let (default_model, default_effort) =
+        vendor.unwrap_or_else(|| ("vendor default".to_owned(), "vendor default".to_owned()));
+    let choices = runtime
         .vendor_catalog()
-        .and_then(|catalog| {
-            catalog
-                .vendors
-                .iter()
-                .find(|vendor| vendor.name == member.vendor)
-        })
-        .map_or_else(
-            || "vendor default".to_owned(),
-            |vendor| format!("{} (default)", vendor.default_model),
-        );
+        .map(|catalog| catalog.efforts.clone())
+        .unwrap_or_default();
+    let running_model = member.model.as_deref().unwrap_or("not running");
+    let next_model = member
+        .seat_model
+        .as_deref()
+        .map_or_else(|| format!("default ({default_model})"), str::to_owned);
     html! {
-        <ModelForm
-            key={member.lane.to_string()}
-            lane={member.lane}
-            model={member.seat_model.clone()}
-            {placeholder}
-            {busy}
-            command={command.clone()}
-        />
+        <>
+            if offered.model {
+                <div class="member-model-control">
+                    <p class="member-setting-status">
+                        {format!("Running model: {running_model}; next launch: {next_model}")}
+                    </p>
+                    <ModelForm
+                        key={format!("model-{}", member.lane)}
+                        lane={member.lane}
+                        model={member.seat_model.clone()}
+                        placeholder={format!("{default_model} (default)")}
+                        {busy}
+                        command={command.clone()}
+                    />
+                </div>
+            }
+            if offered.effort {
+                <EffortForm
+                    key={format!("effort-{}", member.lane)}
+                    lane={member.lane}
+                    current={member.effort.clone()}
+                    effort={member.seat_effort.clone()}
+                    {default_effort}
+                    {choices}
+                    {busy}
+                    command={command.clone()}
+                />
+            }
+        </>
     }
 }
 
@@ -354,7 +450,7 @@ pub(super) fn render(
     command: &Callback<(CanonicalUuid, MemberCommand)>,
 ) -> Html {
     let offered = Offered::of(runtime);
-    if !(offered.lifecycle || offered.renew || offered.retune) {
+    if !(offered.lifecycle || offered.renew || offered.model || offered.effort) {
         return Html::default();
     }
     let busy = runtime
@@ -375,8 +471,8 @@ pub(super) fn render(
                     {render_renewal(runtime, member, standing, busy, command)}
                 }
             </div>
-            if offered.retune {
-                {render_retune(runtime, member, busy, command)}
+            if offered.model || offered.effort {
+                {render_retune(runtime, member, &offered, busy, command)}
             }
         </section>
     }

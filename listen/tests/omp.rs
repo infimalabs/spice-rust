@@ -112,6 +112,14 @@ fn the_get_state_reply_declares_the_session_and_its_context_window() {
             .and_then(|context| context.model_context_window),
         Some(1_000_000)
     );
+    assert!(matches!(
+        session.context().and_then(|context| context.response.as_ref()),
+        Some(response)
+            if response.id.as_deref() == Some("spice-state")
+                && response.command == "get_state"
+                && response.success
+                && response.error.is_none()
+    ));
     let refused =
         decode_record(None, PROSE, locus(PROSE)).expect("an omp envelope is uniquely owned");
     assert_eq!(refused.dialect, Dialect::Omp);
@@ -178,6 +186,14 @@ fn compaction_and_refusals_are_typed_while_lifecycle_frames_stay_silent() {
         failure.events(),
         [Event::Failure(failure)]
             if failure.message == "prompt refused: Agent is already processing"
+    ));
+    assert!(matches!(
+        failure.context().and_then(|context| context.response.as_ref()),
+        Some(response)
+            if response.id.as_deref() == Some("spice-prompt")
+                && response.command == "prompt"
+                && !response.success
+                && response.error.as_deref() == Some("Agent is already processing")
     ));
     let unsupported = br#"{"id":"spice-protocol","type":"response","command":"negotiate_protocol","success":false,"error":"Unsupported RPC protocol version: 2"}"#;
     let refused = decoded(unsupported);

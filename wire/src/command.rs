@@ -134,6 +134,8 @@ pub enum CommandKind {
     LaneRenewal,
     /// Change the model spelling one seated lane launches with.
     LaneRetune,
+    /// Change the effort spelling one seated lane launches with.
+    LaneEffortRetune,
     /// Change the shared task-allocation lifetime of one Canvas team.
     TeamConfigure,
     /// Rearrange the order of every Canvas team and the lanes each holds.
@@ -637,6 +639,7 @@ impl CommandKind {
         Self::LaneState,
         Self::LaneRenewal,
         Self::LaneRetune,
+        Self::LaneEffortRetune,
         Self::TeamConfigure,
         Self::TeamArrange,
         Self::LaneRecall,
@@ -705,6 +708,7 @@ impl CommandKind {
             | Self::LaneState
             | Self::LaneRenewal
             | Self::LaneRetune
+            | Self::LaneEffortRetune
             | Self::TeamConfigure
             | Self::TeamArrange
             | Self::LaneRecall
@@ -783,6 +787,7 @@ impl CommandKind {
             Self::LaneState => "lane::state",
             Self::LaneRenewal => "lane::renewal",
             Self::LaneRetune => "lane::retune",
+            Self::LaneEffortRetune => "lane::effort-retune",
             Self::TeamConfigure => "team::configure",
             Self::TeamArrange => "team::arrange",
             Self::LaneRecall => "lane::recall",
@@ -963,6 +968,7 @@ impl CommandKind {
             | Self::LaneState
             | Self::LaneRenewal
             | Self::LaneRetune
+            | Self::LaneEffortRetune
             | Self::TeamConfigure
             | Self::TeamArrange => Law::LANE,
             Self::LaneRecall => Law::LANE_RECALL,

@@ -87,6 +87,10 @@ pub(crate) enum SelectedCommand<'a> {
     LaneState { body: &'a wire::intent::LaneState },
     /// State the model spelling one seated lane's next launch runs.
     LaneRetune { body: &'a wire::intent::LaneRetune },
+    /// State the effort spelling one seated lane's next launch runs.
+    LaneEffortRetune {
+        body: &'a wire::intent::LaneEffortRetune,
+    },
     /// Read one bounded continuity account.
     LaneRecall { body: &'a wire::intent::LaneRecall },
     /// The operator appends one durable directive to a seated lane.

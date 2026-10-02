@@ -424,6 +424,9 @@ impl ClientAction {
                 crate::runtime::MemberCommand::Retune { model } => {
                     model.as_ref().map_or(0, String::len)
                 }
+                crate::runtime::MemberCommand::RetuneEffort { effort } => {
+                    effort.as_ref().map_or(0, String::len)
+                }
                 _ => 0,
             },
             Self::Note { task, note, .. } => task.as_str().len().saturating_add(note.len()),

@@ -562,6 +562,32 @@ pub fn steer_request(sequence: u64, message: &str) -> Vec<u8> {
         streaming_behavior: Some("steer"),
     })
 }
+/// Change the live session's reasoning level.
+///
+/// The caller owns request correlation and must not project the change until
+/// omp answers this exact `id` with a successful `set_thinking_level` response.
+#[must_use]
+pub fn set_thinking_level_request(id: &str, level: &str) -> Vec<u8> {
+    request_line(&serde_json::json!({
+        "id": id,
+        "type": "set_thinking_level",
+        "level": level,
+    }))
+}
+
+/// Change the live session's exact provider/model selection.
+///
+/// OMP's live command does not accept its CLI's fuzzy bare-model selector, so
+/// callers must supply both parts rather than infer a provider.
+#[must_use]
+pub fn set_model_request(id: &str, provider: &str, model: &str) -> Vec<u8> {
+    request_line(&serde_json::json!({
+        "id": id,
+        "type": "set_model",
+        "provider": provider,
+        "modelId": model,
+    }))
+}
 
 /// Replace or cancel a background notice through the extension's SDK bridge.
 /// RPC has no aside command; the extension coalesces by purpose and calls

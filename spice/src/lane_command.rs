@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use clap::ArgMatches;
 use spice::repository::Repository;
 use wire::intent::{
-    CommandAnswer, LaneAction, LaneAnswer, LaneRecall, LaneRetune, LaneSeat, LaneState,
+    CommandAnswer, LaneAction, LaneAnswer, LaneEffortRetune, LaneRecall, LaneRetune, LaneSeat,
+    LaneState,
 };
 use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal, Reply};
 
@@ -52,6 +53,7 @@ pub(crate) fn run(
         ["lane", "drain"] => state(canvas, matches, contract, LaneAction::Drain),
         ["lane", "wake"] => state(canvas, matches, contract, LaneAction::Wake),
         ["lane", "model"] => model(canvas, matches, contract),
+        ["lane", "effort"] => effort(canvas, matches, contract),
         ["lane", "remove"] => state(canvas, matches, contract, LaneAction::Remove),
         ["lane", "import"] => import(&repository, canvas, &current, matches, contract),
         ["recall"] => recall(canvas, matches, contract),
@@ -300,6 +302,46 @@ fn model(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<Co
         canvas,
         contract,
         SelectedCommand::LaneRetune { body: &body },
+    )
+}
+/// State the reasoning effort one seated lane's next launch runs.
+fn effort(canvas: &Path, matches: &ArgMatches, contract: &Contract) -> Outcome<CommandAnswer> {
+    let Some(id) = matches.get_one::<String>("ID") else {
+        return protocol_fault(
+            "lane::id-missing",
+            "generated parser omitted required lane ID",
+        );
+    };
+    let lane = match id.parse::<CanonicalUuid>() {
+        Ok(lane) => lane,
+        Err(error) => return protocol_fault("lane::id-invalid", &error.to_string()),
+    };
+    let topology_revision = match observe_topology(canvas) {
+        Ok(revision) => revision,
+        Err(outcome) => return outcome,
+    };
+    let effort = matches
+        .get_one::<String>("EFFORT")
+        .map(|effort| effort.trim().to_owned())
+        .filter(|effort| !effort.is_empty());
+    if effort
+        .as_deref()
+        .is_some_and(|effort| effort.parse::<vendor::Effort>().is_err())
+    {
+        return protocol_fault(
+            "lane::effort-invalid",
+            "effort must be low, medium, high, xhigh, or max",
+        );
+    }
+    let body = LaneEffortRetune {
+        topology_revision,
+        lane,
+        effort,
+    };
+    command_client::execute(
+        canvas,
+        contract,
+        SelectedCommand::LaneEffortRetune { body: &body },
     )
 }
 

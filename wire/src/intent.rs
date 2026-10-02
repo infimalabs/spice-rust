@@ -496,6 +496,25 @@ pub struct LaneRetune {
     )]
     pub model: Option<String>,
 }
+/// State the reasoning effort one seated lane launches with.
+///
+/// A named effort pins the seat. Absence returns future launches to the
+/// vendor's configured effort.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LaneEffortRetune {
+    /// Topology revision observed before this retune was requested.
+    pub topology_revision: u64,
+    /// Seated member whose next launch changes.
+    pub lane: CanonicalUuid,
+    /// Effort spelling this seat names, absent to follow vendor configuration.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub effort: Option<String>,
+}
 
 /// Select one lane's continuity account, or the operator-wide account.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -993,7 +1012,7 @@ pub struct LaneAnswerRow {
     pub life: String,
     /// Vendor selected for occupants of this lane.
     pub vendor: Name,
-    /// Concrete model supplied to the declared session's vendor launch.
+    /// Concrete model currently selected in the declared vendor session.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -1012,13 +1031,23 @@ pub struct LaneAnswerRow {
         deserialize_with = "crate::optional::present"
     )]
     pub seat_model: Option<String>,
-    /// Reasoning effort supplied to the declared session's vendor launch.
+    /// Reasoning effort currently selected in the declared vendor session.
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
     pub effort: Option<String>,
+    /// Effort spelling this seat pins for the launches it governs, absent when
+    /// the seat follows the vendor's configured effort.
+    ///
+    /// `effort` reports the running process; this reports the next launch.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::optional::present"
+    )]
+    pub seat_effort: Option<String>,
     /// Whether the declared occupant was launched in the vendor's fast mode.
     #[serde(default, skip_serializing_if = "is_false")]
     pub fast_mode: bool,

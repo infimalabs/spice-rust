@@ -453,19 +453,38 @@ fn tool_result(message: &Object, locus: Locus) -> Events {
     })])
 }
 
-/// A command reply. Only `get_state` carries content: the exact session
-/// identity a resumed launch names again. A refused command is a failure the
-/// lane must see, whatever the command was.
-fn response(record: &Object, locus: Locus) -> Events {
+/// Correlation and disposition carried by one RPC command response.
+pub(crate) fn command_response(
+    record: &Object,
+) -> Result<Option<crate::CommandResponse>, ResidueKind> {
+    if record.get("type").and_then(Value::as_str) != Some("response") {
+        return Ok(None);
+    }
     let success = required(record, "success")?
         .as_bool()
         .ok_or(ResidueKind::Malformed {
             field: "success",
             expected: "boolean",
         })?;
-    let command = string(record, "command")?;
-    if !success {
-        let reason = optional_string(record, "error")?.unwrap_or("no reason given");
+    Ok(Some(crate::CommandResponse {
+        id: optional_string(record, "id")?.map(str::to_owned),
+        command: string(record, "command")?.to_owned(),
+        success,
+        error: optional_string(record, "error")?.map(str::to_owned),
+    }))
+}
+
+/// A command reply. Only `get_state` carries content: the exact session
+/// identity a resumed launch names again. A refused command is a failure the
+/// lane must see, whatever the command was.
+fn response(record: &Object, locus: Locus) -> Events {
+    let response = command_response(record)?.expect("response records carry response context");
+    let command = response.command.as_str();
+    if !response.success {
+        let reason = response.error.as_deref().unwrap_or("no reason given");
+        if matches!(command, "set_model" | "set_thinking_level") {
+            return Ok(Vec::new());
+        }
         let mut message = format!("{command} refused: {reason}");
         if command == "negotiate_protocol" {
             // The wire spice cannot read is not a wire it may run on, so the
