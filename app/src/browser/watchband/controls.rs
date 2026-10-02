@@ -532,11 +532,9 @@ fn commit_life_callback(
     topology_revision: u64,
     controls: UseReducerHandle<TeamControls>,
     sender: SenderHandle,
-) -> Callback<Event> {
-    Callback::from(move |event: Event| {
-        let input: HtmlInputElement = event.target_unchecked_into();
-        let index = input.value().parse::<usize>().unwrap_or(0).min(2);
-        let life = TeamLife::ALL[index];
+) -> Callback<usize> {
+    Callback::from(move |index: usize| {
+        let life = TeamLife::ALL[index.min(TeamLife::ALL.len() - 1)];
         if !admit_action(
             &sender,
             ClientAction::ConfigureTeam {
@@ -553,6 +551,33 @@ fn commit_life_callback(
             authoritative_life,
             life,
         });
+    })
+}
+
+/// Engines disagree on Left/Right for a vertical range: WebKit and Firefox
+/// keep the native vertical mapping, where Left raises. On every engine Right
+/// raises and Left lowers by exactly one stop, as Up and Down do natively, and
+/// the engine's own handling of the press is suppressed.
+fn horizontal_arrows(last: usize, select: Callback<usize>) -> Callback<KeyboardEvent> {
+    Callback::from(move |event: KeyboardEvent| {
+        let raise = match event.key().as_str() {
+            "ArrowRight" => true,
+            "ArrowLeft" => false,
+            _ => return,
+        };
+        event.prevent_default();
+        let input: HtmlInputElement = event.target_unchecked_into();
+        let Ok(index) = input.value().parse::<usize>() else {
+            return;
+        };
+        let next = if raise {
+            (index + 1).min(last)
+        } else {
+            index.saturating_sub(1)
+        };
+        if next != index {
+            select.emit(next);
+        }
     })
 }
 
@@ -581,8 +606,6 @@ pub(super) fn render_team_controls(
     ready: bool,
 ) -> Html {
     let speech = control.speech;
-    let update_speech = team_controls.clone();
-    let suppress_automatic_speech = suppress_automatic_speech.clone();
     let selected = control.preview_life.unwrap_or(control.life);
     let preview_life = preview_life_callback(team, authoritative_life, team_controls.clone());
     let commit_life = commit_life_callback(
@@ -600,58 +623,20 @@ pub(super) fn render_team_controls(
             data-lifetime={selected.label()}
             data-lifetime-pending={control.pending_life.is_some().to_string()}
         >
-            <label class={classes!(
-                "team-slider",
-                "team-speech",
-                (speech == TeamSpeech::Quiet).then_some("armed"),
-                (speech == TeamSpeech::Narrate).then_some("maxed"),
-            )}>
-                <input
-                    type="range"
-                    min="0"
-                    max="2"
-                    step="1"
-                    aria-orientation="vertical"
-                    value={speech.index().to_string()}
-                    aria-label={format!("Speech mode: {}", speech.label())}
-                    oninput={Callback::from(move |event: InputEvent| {
-                        let input: HtmlInputElement = event.target_unchecked_into();
-                        let index = input.value().parse::<usize>().unwrap_or(1).min(2);
-                        let speech = TeamSpeech::ALL[index];
-                        if speech == TeamSpeech::Quiet {
-                            suppress_automatic_speech.emit(());
-                        }
-                        update_speech.dispatch(TeamControlAction::SetSpeech {
-                            team,
-                            authoritative_life,
-                            speech,
-                        });
-                    })}
-                />
-                <span>{speech.label()}</span>
-            </label>
-            <label class={classes!(
-                "team-slider",
-                "team-lifetime",
-                (selected == TeamLife::Steer).then_some("armed"),
-                (selected == TeamLife::Drain).then_some("maxed"),
-            )}>
-                <input
-                    type="range"
-                    min="0"
-                    max="2"
-                    step="1"
-                    aria-orientation="vertical"
-                    value={selected.index().to_string()}
-                    aria-label={format!("Task allocation policy: {}", selected.help())}
-                    title={selected.help()}
-                    disabled={!can_configure || control.pending_life.is_some()}
-                    oninput={preview_life}
-                    onchange={commit_life}
-                    onblur={cancel_life_preview}
-                />
-                <span>{selected.label()}</span>
-            </label>
+            {speech_slider(
+                team,
+                authoritative_life,
+                speech,
+                team_controls.clone(),
+                suppress_automatic_speech.clone(),
+            )}
+            {lifetime_slider(
+                selected,
+                !can_configure || control.pending_life.is_some(),
+                preview_life,
+                commit_life,
+                cancel_life_preview,
+            )}
             <button
                 class={classes!(
                     "team-send",
@@ -663,5 +648,88 @@ pub(super) fn render_team_controls(
                 title={format!("Send with {}: {}", selected.label(), selected.help())}
             >{selected.label()}</button>
         </aside>
+    }
+}
+
+fn speech_slider(
+    team: CanonicalUuid,
+    authoritative_life: wire::intent::TeamLife,
+    speech: TeamSpeech,
+    controls: UseReducerHandle<TeamControls>,
+    suppress_automatic_speech: Callback<()>,
+) -> Html {
+    let select = Callback::from(move |index: usize| {
+        let speech = TeamSpeech::ALL[index.min(TeamSpeech::ALL.len() - 1)];
+        if speech == TeamSpeech::Quiet {
+            suppress_automatic_speech.emit(());
+        }
+        controls.dispatch(TeamControlAction::SetSpeech {
+            team,
+            authoritative_life,
+            speech,
+        });
+    });
+    let oninput = select.reform(|event: InputEvent| {
+        let input: HtmlInputElement = event.target_unchecked_into();
+        input.value().parse::<usize>().unwrap_or(1)
+    });
+    html! {
+        <label class={classes!(
+            "team-slider",
+            "team-speech",
+            (speech == TeamSpeech::Quiet).then_some("armed"),
+            (speech == TeamSpeech::Narrate).then_some("maxed"),
+        )}>
+            <input
+                type="range"
+                min="0"
+                max="2"
+                step="1"
+                aria-orientation="vertical"
+                value={speech.index().to_string()}
+                aria-label={format!("Speech mode: {}", speech.label())}
+                oninput={oninput}
+                onkeydown={horizontal_arrows(TeamSpeech::ALL.len() - 1, select)}
+            />
+            <span>{speech.label()}</span>
+        </label>
+    }
+}
+
+fn lifetime_slider(
+    selected: TeamLife,
+    disabled: bool,
+    preview: Callback<InputEvent>,
+    commit: Callback<usize>,
+    cancel_preview: Callback<FocusEvent>,
+) -> Html {
+    let onchange = commit.reform(|event: Event| {
+        let input: HtmlInputElement = event.target_unchecked_into();
+        input.value().parse::<usize>().unwrap_or(0)
+    });
+    html! {
+        <label class={classes!(
+            "team-slider",
+            "team-lifetime",
+            (selected == TeamLife::Steer).then_some("armed"),
+            (selected == TeamLife::Drain).then_some("maxed"),
+        )}>
+            <input
+                type="range"
+                min="0"
+                max="2"
+                step="1"
+                aria-orientation="vertical"
+                value={selected.index().to_string()}
+                aria-label={format!("Task allocation policy: {}", selected.help())}
+                title={selected.help()}
+                disabled={disabled}
+                oninput={preview}
+                onchange={onchange}
+                onkeydown={horizontal_arrows(TeamLife::ALL.len() - 1, commit)}
+                onblur={cancel_preview}
+            />
+            <span>{selected.label()}</span>
+        </label>
     }
 }
