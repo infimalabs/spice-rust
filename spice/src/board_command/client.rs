@@ -181,20 +181,95 @@ fn client_ledger(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    match required(matches, "HANDLE").parse() {
-        Ok(task) => crate::command_client::execute_typed(
-            repository,
-            contract,
-            CommandKind::DocLedger,
-            Vec::new(),
-            &DocLedger { task },
-        ),
-        Err(error) => refusal(
-            "doc::handle-invalid",
-            Some(required(matches, "HANDLE")),
-            &error.to_string(),
-        ),
+    let task = match required(matches, "HANDLE").parse::<TaskHandle>() {
+        Ok(task) => task,
+        Err(error) => {
+            return refusal(
+                "doc::handle-invalid",
+                Some(required(matches, "HANDLE")),
+                &error.to_string(),
+            );
+        }
+    };
+    let output = matches.get_one::<String>("output");
+    let requested_bytes = match matches.get_one::<String>("max-bytes") {
+        Some(written) => match written.parse::<usize>() {
+            Ok(value) => Some(value),
+            Err(_) => {
+                return refusal(
+                    "doc::ledger-max-bytes",
+                    Some(written.clone()),
+                    "name a positive integer after --max-bytes",
+                );
+            }
+        },
+        None => None,
+    };
+    if output.is_some() && requested_bytes.is_some() {
+        return refusal(
+            "doc::ledger-destination",
+            None,
+            "choose a bounded terminal preview or --output FILE",
+        );
     }
+    let budget = match wire::output::INTERACTIVE.budget(wire::output::Request {
+        rows: None,
+        bytes: requested_bytes,
+        text: None,
+    }) {
+        Ok(budget) => budget,
+        Err(error) => {
+            return refusal(
+                "doc::ledger-limits",
+                Some(error.to_string()),
+                &error.to_string(),
+            );
+        }
+    };
+    match crate::command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::DocLedger,
+        Vec::new(),
+        &DocLedger { task: task.clone() },
+    ) {
+        Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Text(answer),
+        }) => match ledger_output(&task, &answer.text, output.map(String::as_str), budget) {
+            Ok(text) => Outcome::Reply(Reply {
+                position,
+                body: CommandAnswer::Text(TextAnswer { text }),
+            }),
+            Err(refusal) => Outcome::Refusal(refusal),
+        },
+        Outcome::Reply(_) => protocol_fault(
+            "doc::ledger-answer",
+            "doc ledger read returned another answer shape",
+        ),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
+pub(in crate::board_command) fn ledger_output(
+    task: &TaskHandle,
+    document: &str,
+    output: Option<&str>,
+    budget: wire::output::Budget,
+) -> Result<String, Refusal> {
+    if let Some(path) = output {
+        return spice::export::export(std::path::Path::new(path), document.as_bytes())
+            .map(|receipt| receipt.to_string());
+    }
+    let preview = wire::output::clip(document, budget.limits().bytes);
+    Ok(match preview.withheld_bytes {
+        Some(withheld) => format!(
+            "{}\n… [+{withheld} bytes]\ncomplete: spice doc ledger {} --output {}-ledger.md",
+            preview.text, task, task
+        ),
+        None => preview.text,
+    })
 }
 
 fn client_next(repository: &Repository, contract: &Contract) -> TaskNext {

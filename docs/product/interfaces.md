@@ -18,10 +18,13 @@ input) classifies ordinary Markdown, emits the one canonical dialect spelling,
 previews the tasks that spelling would touch, and applies only that exact digest
 against the board snapshot captured by the apply invocation.
 `spice doc ledger HANDLE` travels the other direction only as a narrow
-single-task display containing the current title, description, acceptance,
+single-task document containing the current title, description, acceptance,
 flow, authored tags, priority, and append-only task notes when those values are
-representable in the dialect. It is not the inverse of document apply and does
-not export a family or dependency graph.
+representable in the dialect. The terminal receives an 8 KiB preview by
+default, may request at most 128 KiB with `--max-bytes`, and uses
+`--output FILE` for the complete canonical bytes plus an export receipt. It is
+not the inverse of document apply and does not export a family or dependency
+graph.
 
 ```mermaid
 flowchart TD
@@ -236,6 +239,16 @@ output-bearing surface admits through the one contract in `wire::output`:
 - **Exact export.** Complete canonical documents and evidence are written to
   an explicitly named file, atomically, with a receipt naming the resolved
   path, byte length, and `spice.cli.export.v1` digest. `-` is refused.
+
+The task surfaces apply that contract directly. Bare `spice task show HANDLE`
+prints only the current execution contract: identity, title, project, phase,
+status, active claim, requirements, acceptance, dependencies, artifacts, phase
+guidance, and next command. `--context` adds origin, acknowledgment, hydration,
+Git, parked-commit, and authored metadata; `--history` adds newest-first notes
+under the interactive row, byte, and text limits. `spice task list` always
+orders current/actionable rows before waiting and terminal rows, then newest
+first, and applies the 20-row interactive default even with `--all` or
+`--project`. Both surfaces emit an exact `--after` continuation when rows remain.
 
 Mutation replies are outside this contract: they stay complete and concise.
 

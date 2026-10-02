@@ -453,8 +453,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "list"],
-        "task list [--all] [--project PROJECT] [--limit N] \
-         [--status pending|waiting|completed|deleted]",
+        "task list [--all] [--project PROJECT] [--limit N] [--max-bytes N] \
+         [--max-text N] [--after HANDLE] [--status pending|waiting|completed|deleted]",
         OperatorOrLane,
         Read,
         [],
@@ -474,7 +474,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "show"],
-        "task show HANDLE",
+        "task show HANDLE [--context] [--history] [--limit N] [--max-bytes N] \
+         [--max-text N] [--after POSITION]",
         OperatorOrLane,
         Read,
         [],
@@ -708,7 +709,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["doc", "ledger"],
-        "doc ledger HANDLE",
+        "doc ledger HANDLE [--max-bytes N] [--output FILE]",
         OperatorOrLane,
         Read,
         [],

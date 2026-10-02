@@ -1,5 +1,11 @@
 use super::*;
 
+mod list;
+pub(super) use list::actor_route_matches;
+#[cfg(test)]
+pub(in crate::board_command) use list::{TaskListOptions, TaskListStatus, task_list};
+use list::{TaskListPageOptions, task_list_page};
+
 pub(super) fn client_status(
     repository: &Repository,
     contract: &Contract,
@@ -35,7 +41,7 @@ pub(super) fn client_list(
     contract: &Contract,
     matches: &ArgMatches,
 ) -> Outcome<CommandAnswer> {
-    let options = match TaskListOptions::from_matches(matches) {
+    let options = match TaskListPageOptions::from_matches(matches) {
         Ok(options) => options,
         Err(outcome) => return outcome,
     };
@@ -49,12 +55,13 @@ pub(super) fn client_list(
         Outcome::Reply(Reply {
             position,
             body: CommandAnswer::Board(board),
-        }) => Outcome::Reply(Reply {
-            position,
-            body: CommandAnswer::Text(TextAnswer {
-                text: task_list(&board, &options),
+        }) => match task_list_page(&board, &options) {
+            Ok(text) => Outcome::Reply(Reply {
+                position,
+                body: CommandAnswer::Text(TextAnswer { text }),
             }),
-        }),
+            Err(outcome) => outcome,
+        },
         Outcome::Reply(_) => protocol_fault(
             "task::list-answer",
             "task list board read returned another answer shape",
@@ -79,6 +86,10 @@ pub(super) fn client_show(
             );
         }
     };
+    let options = match TaskShowOptions::from_matches(matches) {
+        Ok(options) => options,
+        Err(outcome) => return outcome,
+    };
     match crate::command_client::execute_typed(
         repository,
         contract,
@@ -91,7 +102,7 @@ pub(super) fn client_show(
             ],
             dependencies: true,
             claims: false,
-            notes: true,
+            notes: options.context || options.history,
         },
     ) {
         Outcome::Reply(Reply {
@@ -110,17 +121,34 @@ pub(super) fn client_show(
                 .acknowledgments
                 .get(&task.statement.body.born)
                 .map_or(&[][..], Vec::as_slice);
-            let origin_context = match task_show_origin_context(
-                repository,
-                &task_acknowledgment_keys(&task.statement.body.provenance, acknowledgments),
-            ) {
-                Ok(context) => context,
-                Err(outcome) => return outcome,
+            if let Some(after) = options.after {
+                let known = board
+                    .notes
+                    .get(&task.statement.body.born)
+                    .is_some_and(|notes| notes.iter().any(|note| note.position == after));
+                if !known {
+                    return refusal(
+                        "task::show-after-unknown",
+                        Some(after.to_string()),
+                        "name a note position present on this task",
+                    );
+                }
+            }
+            let origin_context = if options.context {
+                match task_show_origin_context(
+                    repository,
+                    &task_acknowledgment_keys(&task.statement.body.provenance, acknowledgments),
+                ) {
+                    Ok(context) => context,
+                    Err(outcome) => return outcome,
+                }
+            } else {
+                None
             };
             Outcome::Reply(Reply {
                 position,
                 body: CommandAnswer::Text(TextAnswer {
-                    text: task_show_with_origin(
+                    text: task_show_bounded(
                         &board,
                         task,
                         &artifacts,
@@ -133,6 +161,7 @@ pub(super) fn client_show(
                             closure: board.closures.get(&task.statement.body.born),
                         },
                         origin_context.as_deref(),
+                        &options,
                     ),
                 }),
             })
@@ -147,238 +176,99 @@ pub(super) fn client_show(
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::board_command) enum TaskListStatus {
-    Pending,
-    Waiting,
-    Completed,
-    Deleted,
-}
-
-pub(in crate::board_command) struct TaskListOptions {
-    pub(in crate::board_command) all: bool,
-    pub(in crate::board_command) project: Option<String>,
+pub(in crate::board_command) struct TaskShowOptions {
+    pub(in crate::board_command) context: bool,
+    pub(in crate::board_command) history: bool,
     pub(in crate::board_command) limit: Option<usize>,
-    pub(in crate::board_command) status: Option<TaskListStatus>,
+    pub(in crate::board_command) max_bytes: Option<usize>,
+    pub(in crate::board_command) max_text: Option<usize>,
+    pub(in crate::board_command) after: Option<Seq>,
 }
 
-impl TaskListOptions {
+impl TaskShowOptions {
     fn from_matches(matches: &ArgMatches) -> Result<Self, Outcome<CommandAnswer>> {
-        let all = matches.get_flag("all");
-        let project = matches.get_one::<String>("project").map(|written| {
-            written
-                .trim()
-                .strip_prefix("project:")
-                .unwrap_or(written.trim())
-                .to_owned()
-        });
-        if all && project.is_some() {
-            return Err(refusal(
-                "task::list-scope",
-                None,
-                "choose either --all or --project PROJECT",
-            ));
-        }
-        if project.as_ref().is_some_and(String::is_empty) {
-            return Err(refusal(
-                "task::list-project",
-                matches.get_one::<String>("project").cloned(),
-                "name a non-empty project after --project",
-            ));
-        }
-        let limit = matches
-            .get_one::<String>("limit")
+        let context = matches.get_flag("context");
+        let history = matches.get_flag("history");
+        let limit = numeric_option(matches, "limit", "task::show-limit")?;
+        let max_bytes = numeric_option(matches, "max-bytes", "task::show-max-bytes")?;
+        let max_text = numeric_option(matches, "max-text", "task::show-max-text")?;
+        let _ = read_budget(limit, max_bytes, max_text, "task::show-limits")?;
+        let after = matches
+            .get_one::<String>("after")
             .map(|written| {
-                written.parse::<usize>().map_err(|_| {
+                let value = written.parse::<u64>().ok().and_then(Seq::new);
+                value.ok_or_else(|| {
                     refusal(
-                        "task::list-limit",
+                        "task::show-after",
                         Some(written.clone()),
-                        "name a positive integer after --limit",
+                        "name a positive journal position after --after",
                     )
                 })
             })
             .transpose()?;
-        if limit == Some(0) {
+        if (limit.is_some() || after.is_some()) && !history {
             return Err(refusal(
-                "task::list-limit",
-                Some("0".to_owned()),
-                "name a positive integer after --limit",
+                "task::show-history-required",
+                None,
+                "add --history when paging historical rows",
             ));
         }
-        let status = matches
-            .get_one::<String>("status")
-            .map(|status| match status.as_str() {
-                "pending" => TaskListStatus::Pending,
-                "waiting" => TaskListStatus::Waiting,
-                "completed" => TaskListStatus::Completed,
-                "deleted" => TaskListStatus::Deleted,
-                _ => unreachable!("contract parser owns task list status values"),
-            });
+        if (max_bytes.is_some() || max_text.is_some()) && !(context || history) {
+            return Err(refusal(
+                "task::show-detail-required",
+                None,
+                "add --context or --history when raising detail limits",
+            ));
+        }
         Ok(Self {
-            all,
-            project,
+            context,
+            history,
             limit,
-            status,
+            max_bytes,
+            max_text,
+            after,
         })
     }
-}
 
-pub(in crate::board_command) fn task_list(
-    board: &BoardAnswer,
-    options: &TaskListOptions,
-) -> String {
-    let mut rows = board
-        .tasks
-        .iter()
-        .filter(|task| list_scope_matches(board, task, options))
-        .filter(|task| list_status_matches(task, options))
-        .collect::<Vec<_>>();
-    let truncation = if let Some(limit) = options.limit {
-        rows.sort_by(|left, right| {
-            task_newest_position(right)
-                .cmp(&task_newest_position(left))
-                .then_with(|| right.statement.body.handle.cmp(&left.statement.body.handle))
-        });
-        let original = rows.len();
-        rows.truncate(limit);
-        let withheld = original - rows.len();
-        (withheld > 0).then_some((limit, original, withheld))
-    } else {
-        None
-    };
-
-    let (scope, empty) = if options.all {
-        (
-            "scope global --all".to_owned(),
-            "no tasks in global scope".to_owned(),
+    fn budget(self) -> wire::output::Budget {
+        read_budget(
+            self.limit,
+            self.max_bytes,
+            self.max_text,
+            "task::show-limits",
         )
-    } else if let Some(project) = &options.project {
-        (
-            format!("scope explicit-project project:{project}"),
-            "no tasks in scope; use --all for global rows or --project PROJECT for one project"
-                .to_owned(),
-        )
-    } else {
-        (
-            format!("scope actor-route filter {}", actor_route_filter(board)),
-            "no tasks in scope; use --all for global rows or --project PROJECT for one project"
-                .to_owned(),
-        )
-    };
-    if rows.is_empty() {
-        return format!("{scope}\n{empty}");
-    }
-    let mut output = scope;
-    if let Some((limit, original, withheld)) = truncation {
-        output.push('\n');
-        output.push_str(&format!(
-            "limited --limit {limit} original {original} withheld {withheld}"
-        ));
-    }
-    for task in rows {
-        output.push('\n');
-        output.push_str(&render_task_list_row(task));
-    }
-    output
-}
-
-fn list_scope_matches(board: &BoardAnswer, task: &BoardTask, options: &TaskListOptions) -> bool {
-    if let Some(project) = &options.project {
-        let candidate = task.statement.body.project.as_str();
-        return candidate == project
-            || candidate
-                .strip_prefix(project)
-                .is_some_and(|suffix| suffix.starts_with('.'));
-    }
-    options.all || actor_route_matches(board, task)
-}
-
-/// Whether the actor may *read* the row.
-///
-/// Stem scoped, not subscription scoped, and deliberately wider than the
-/// allocation scope in `board::next::selectable`, which states the rule and
-/// why the two must stay apart.
-pub(super) fn actor_route_matches(board: &BoardAnswer, task: &BoardTask) -> bool {
-    let statement = &task.statement.body;
-    statement.project == board.actor_route.project
-        || task.origin_thread == board.actor_route.origin_thread
-        || (!task.visibility.is_hidden()
-            && board.project_policy.public_stems.iter().any(|stem| {
-                statement.project == *stem
-                    || statement
-                        .project
-                        .strip_prefix(stem)
-                        .is_some_and(|suffix| suffix.starts_with('.'))
-            }))
-}
-
-fn list_status_matches(task: &BoardTask, options: &TaskListOptions) -> bool {
-    let pending = task.workflow.body.status == "pending"
-        && task.workflow.body.completion.is_none()
-        && task.workflow.body.deferral.is_none();
-    let waiting = task.workflow.body.status == "pending"
-        && task.workflow.body.completion.is_none()
-        && task.workflow.body.deferral.is_some();
-    match options.status {
-        Some(TaskListStatus::Pending) => pending,
-        Some(TaskListStatus::Waiting) => waiting,
-        Some(TaskListStatus::Completed) => task.workflow.body.status == "completed",
-        // A withdrawal leaves the row readable but off the working board, so the
-        // only way to reach one is to ask for it by name or to ask for all.
-        Some(TaskListStatus::Deleted) => task.workflow.body.status == "deleted",
-        None if options.all => true,
-        None => {
-            pending
-                || waiting
-                    && task
-                        .claim
-                        .as_ref()
-                        .is_some_and(|claim| claim.body.disposition == ClaimDisposition::Active)
-        }
+        .expect("CLI parsing admits task show limits")
     }
 }
 
-fn task_newest_position(task: &BoardTask) -> Seq {
-    let mut newest = task.statement.position.max(task.workflow.position);
-    if let Some(claim) = &task.claim {
-        newest = newest.max(claim.position);
-    }
-    if let Some(lease) = &task.lease {
-        newest = newest.max(lease.position);
-    }
-    newest
+fn numeric_option(
+    matches: &ArgMatches,
+    name: &str,
+    reason: &str,
+) -> Result<Option<usize>, Outcome<CommandAnswer>> {
+    matches
+        .get_one::<String>(name)
+        .map(|written| {
+            written.parse::<usize>().map_err(|_| {
+                refusal(
+                    reason,
+                    Some(written.clone()),
+                    &format!("name a non-negative integer after --{name}"),
+                )
+            })
+        })
+        .transpose()
 }
 
-fn render_task_list_row(task: &BoardTask) -> String {
-    // A terminal row shows how it ended, not the phase it stopped in. Falling
-    // through to the phase would print a withdrawn task as `[todo]`, which is
-    // the one thing it is not, and the predecessor prints `[deleted]` here.
-    let state = match task.workflow.body.status.as_str() {
-        "completed" => "done",
-        "deleted" => "deleted",
-        _ => task.workflow.body.phase.as_str(),
-    };
-    let priority = task
-        .statement
-        .body
-        .tags
-        .iter()
-        .find_map(|tag| tag.strip_prefix(board::PRIORITY_TAG_PREFIX))
-        // A spelling the allocator does not score is rendered as written. It
-        // ranks as if no priority were declared, and printing the word rather
-        // than a letter is how a reader sees which task carries it.
-        .map(|priority| {
-            board::priority_from_wire(priority).map_or_else(
-                || priority.to_owned(),
-                |kind| board::priority_label(kind).to_owned(),
-            )
-        });
-    let priority = priority.map_or_else(String::new, |value| format!(" P:{value}"));
-    format!(
-        "{} [{state}]{priority} {} {}",
-        task.statement.body.handle,
-        task.statement.body.project,
-        task.presentation_title()
-    )
+fn read_budget(
+    rows: Option<usize>,
+    bytes: Option<usize>,
+    text: Option<usize>,
+    reason: &str,
+) -> Result<wire::output::Budget, Outcome<CommandAnswer>> {
+    wire::output::INTERACTIVE
+        .budget(wire::output::Request { rows, bytes, text })
+        .map_err(|error| refusal(reason, Some(error.to_string()), &error.to_string()))
 }
 
 fn task_show_artifacts(
@@ -467,6 +357,7 @@ pub(in crate::board_command) fn task_show(
     task_show_with_origin(board, task, artifacts, TaskShowHistory::default(), None)
 }
 
+#[cfg(test)]
 pub(in crate::board_command) fn task_show_with_origin(
     board: &BoardAnswer,
     task: &BoardTask,
@@ -474,49 +365,46 @@ pub(in crate::board_command) fn task_show_with_origin(
     history: TaskShowHistory<'_>,
     origin_context: Option<&str>,
 ) -> String {
+    let maximum = wire::output::INTERACTIVE.maximum();
+    task_show_bounded(
+        board,
+        task,
+        artifacts,
+        history,
+        origin_context,
+        &TaskShowOptions {
+            context: true,
+            history: true,
+            limit: Some(maximum.rows),
+            max_bytes: Some(maximum.bytes),
+            max_text: Some(maximum.text),
+            after: None,
+        },
+    )
+}
+
+pub(in crate::board_command) fn task_show_bounded(
+    board: &BoardAnswer,
+    task: &BoardTask,
+    artifacts: &[artifact::Artifact],
+    history: TaskShowHistory<'_>,
+    origin_context: Option<&str>,
+    options: &TaskShowOptions,
+) -> String {
     let statement = &task.statement.body;
     let workflow = &task.workflow.body;
     let environment = board.environment();
+    let budget = options.budget();
     let mut lines = vec![
         format!("handle {}", statement.handle),
         format!("title {}", task.presentation_title()),
-        format!(
-            "description {}",
-            statement.description.as_deref().unwrap_or("-")
-        ),
-        format!("origin {}", statement.provenance),
         format!("project {}", statement.project),
         format!("phase {}", workflow.phase),
-        task_flow_line(&workflow.flow),
-        format!("review {}", workflow.review),
         format!("status {}", workflow.status),
-        format!("version {}", statement.revision),
         format!("claim {}", claim_line(task)),
-        format!("claim_thread {}", claim_thread(task)),
     ];
-    lines.extend(acknowledgment_lines(
-        &statement.provenance,
-        history.acknowledgments,
-    ));
-    if let Some(origin_context) = origin_context {
-        lines.extend(origin_context.lines().map(str::to_owned));
-    }
-    lines.extend(creation_context_lines(statement));
-    lines.extend(claim_context_lines(task));
-    lines.push(format!("spice doc ledger {}", statement.handle));
-    lines.extend(git_context_lines(task));
-    lines.extend(parked_commit_lines(task));
-    let tags = visible_tags(&statement.tags).collect::<Vec<_>>();
-    if tags.is_empty() {
-        lines.push("tags -".to_owned());
-    } else {
-        lines.push(format!(
-            "tags {}",
-            tags.iter()
-                .map(|tag| format!("+{tag}"))
-                .collect::<Vec<_>>()
-                .join(" ")
-        ));
+    if options.context {
+        append_task_show_context(&mut lines, task, history, origin_context, budget);
     }
     if has_taste_review(&statement.tags) {
         lines.push("taste_review required".to_owned());
@@ -542,8 +430,10 @@ pub(in crate::board_command) fn task_show_with_origin(
             push_bulleted(&mut lines, item);
         }
     }
-    if !statement.dependencies.is_empty() {
-        lines.push("depends:".to_owned());
+    lines.push("depends:".to_owned());
+    if statement.dependencies.is_empty() {
+        lines.push("  -".to_owned());
+    } else {
         for dependency in &statement.dependencies {
             lines.push(render_dependency(board, dependency));
         }
@@ -563,11 +453,192 @@ pub(in crate::board_command) fn task_show_with_origin(
             ));
         }
     }
-    lines.extend(closure_lines(history.closure));
-    lines.extend(note_lines(history));
+    if options.history {
+        lines.extend(bounded_history_lines(
+            statement.handle.clone(),
+            history,
+            *options,
+        ));
+    }
     lines.extend(phase_guidance_lines(task));
     lines.push(next_command_line(board, task));
     lines.join("\n")
+}
+
+fn append_task_show_context(
+    lines: &mut Vec<String>,
+    task: &BoardTask,
+    history: TaskShowHistory<'_>,
+    origin_context: Option<&str>,
+    budget: wire::output::Budget,
+) {
+    let statement = &task.statement.body;
+    let workflow = &task.workflow.body;
+    lines.extend([
+        format!(
+            "description {}",
+            budget.clip(statement.description.as_deref().unwrap_or("-"))
+        ),
+        format!("origin {}", statement.provenance),
+        task_flow_line(&workflow.flow),
+        format!("review {}", workflow.review),
+        format!("version {}", statement.revision),
+        format!("claim_thread {}", claim_thread(task)),
+    ]);
+    lines.extend(acknowledgment_lines(
+        &statement.provenance,
+        history.acknowledgments,
+    ));
+    if let Some(origin_context) = origin_context {
+        let clipped = budget.clip(origin_context);
+        lines.extend(clipped.text.lines().map(str::to_owned));
+        if let Some(withheld) = clipped.withheld_bytes {
+            lines.push(format!(
+                "origin_context withheld {withheld} bytes; recover with the session context commands below"
+            ));
+        }
+    }
+    lines.extend(creation_context_lines(statement));
+    lines.extend(claim_context_lines(task));
+    lines.push(format!(
+        "spice doc ledger {} --output {}-ledger.md",
+        statement.handle, statement.handle
+    ));
+    lines.extend(git_context_lines(task));
+    lines.extend(parked_commit_lines(task));
+    let tags = visible_tags(&statement.tags).collect::<Vec<_>>();
+    if tags.is_empty() {
+        lines.push("tags -".to_owned());
+    } else {
+        lines.push(format!(
+            "tags {}",
+            tags.iter()
+                .map(|tag| format!("+{tag}"))
+                .collect::<Vec<_>>()
+                .join(" ")
+        ));
+    }
+}
+
+#[derive(serde::Serialize)]
+struct TaskShowHistoryRow {
+    position: Seq,
+    text: String,
+}
+
+fn bounded_history_lines(
+    handle: TaskHandle,
+    history: TaskShowHistory<'_>,
+    options: TaskShowOptions,
+) -> Vec<String> {
+    let budget = options.budget();
+    let mut lines = closure_lines_bounded(history.closure, budget);
+    lines.push("notes:".to_owned());
+    let mut notes = history.notes.iter().collect::<Vec<_>>();
+    notes.sort_by_key(|note| std::cmp::Reverse(note.position));
+    if let Some(after) = options.after {
+        if let Some(index) = notes.iter().position(|note| note.position == after) {
+            notes = notes.split_off(index);
+        } else {
+            lines.push(format!("  cursor {after} is not a note on this task"));
+            return lines;
+        }
+    }
+    let mut admission = wire::output::Admission::new(budget);
+    for note in notes {
+        let origin = history
+            .acknowledgments
+            .iter()
+            .find(|row| row.position == note.position)
+            .map_or_else(String::new, |row| format!(" ack:{}", row.key));
+        let text = budget.clip(&note.text);
+        let mut rendered = format!("  {} {} {}{origin}", note.position, note.at, note.author);
+        for line in text.text.lines() {
+            rendered.push('\n');
+            if !line.is_empty() {
+                rendered.push_str("    ");
+                rendered.push_str(line);
+            }
+        }
+        if let Some(withheld) = text.withheld_bytes {
+            rendered.push_str(&format!("\n    … [+{withheld} bytes]"));
+        }
+        admission
+            .offer(TaskShowHistoryRow {
+                position: note.position,
+                text: rendered,
+            })
+            .expect("a task history text row always serializes");
+    }
+    let page = admission.finish(|resume| task_show_continuation(&handle, options, resume));
+    if page.rows.is_empty() && page.omission.is_none() {
+        lines.push("  -".to_owned());
+    } else {
+        lines.extend(page.rows.into_iter().map(|row| row.text));
+        if let Some(omission) = page.omission {
+            lines.push(omission.to_string());
+        }
+    }
+    lines
+}
+
+fn closure_lines_bounded(
+    closure: Option<&wire::intent::TaskDetailClosure>,
+    budget: wire::output::Budget,
+) -> Vec<String> {
+    let Some(closure) = closure else {
+        return Vec::new();
+    };
+    let displaced = closure
+        .claimed
+        .as_ref()
+        .map_or_else(String::new, |actor| format!(" claim-freed={actor}"));
+    let mut lines = vec![format!(
+        "closed {} {} {} phase={}{displaced}",
+        closure.position, closure.at, closure.author, closure.phase
+    )];
+    let validation = budget.clip(&closure.validation);
+    lines.extend(validation.text.lines().map(|line| {
+        if line.is_empty() {
+            String::new()
+        } else {
+            format!("    {line}")
+        }
+    }));
+    if let Some(withheld) = validation.withheld_bytes {
+        lines.push(format!("    … [+{withheld} bytes]"));
+    }
+    lines
+}
+
+fn task_show_continuation(
+    handle: &TaskHandle,
+    options: TaskShowOptions,
+    resume: wire::output::Resume<'_, TaskShowHistoryRow>,
+) -> wire::SpiceCommand {
+    let (row, widened) = match resume {
+        wire::output::Resume::At(row) => (row, None),
+        wire::output::Resume::Widened { record, bytes } => (record, Some(bytes)),
+        wire::output::Resume::Export(row) => (row, Some(wire::output::INTERACTIVE.maximum().bytes)),
+    };
+    let limits = options.budget().limits();
+    wire::SpiceCommand::new(
+        "task",
+        [
+            "show".to_owned(),
+            handle.to_string(),
+            "--history".to_owned(),
+            "--limit".to_owned(),
+            limits.rows.to_string(),
+            "--max-bytes".to_owned(),
+            widened.unwrap_or(limits.bytes).to_string(),
+            "--max-text".to_owned(),
+            limits.text.to_string(),
+            "--after".to_owned(),
+            row.position.to_string(),
+        ],
+    )
+    .expect("task show continuation has structural arguments")
 }
 
 /// One line per distinct steering key naming every task fact it caused.
@@ -586,57 +657,6 @@ fn acknowledgment_lines(
             format!("acknowledgment ack:{key}{carriers}")
         })
         .collect()
-}
-
-/// An operator closure stands in for the claimant's proof, so its validation
-/// reads as the task's completion evidence.
-fn closure_lines(closure: Option<&wire::intent::TaskDetailClosure>) -> Vec<String> {
-    let Some(closure) = closure else {
-        return Vec::new();
-    };
-    let displaced = closure
-        .claimed
-        .as_ref()
-        .map_or_else(String::new, |actor| format!(" claim-freed={actor}"));
-    let mut lines = vec![format!(
-        "closed {} {} {} phase={}{displaced}",
-        closure.position, closure.at, closure.author, closure.phase
-    )];
-    lines.extend(closure.validation.lines().map(|line| {
-        if line.is_empty() {
-            String::new()
-        } else {
-            format!("    {line}")
-        }
-    }));
-    lines
-}
-
-fn note_lines(history: TaskShowHistory<'_>) -> Vec<String> {
-    let mut lines = vec!["notes:".to_owned()];
-    if history.notes.is_empty() {
-        lines.push("  -".to_owned());
-        return lines;
-    }
-    for note in history.notes {
-        let origin = history
-            .acknowledgments
-            .iter()
-            .find(|row| row.position == note.position)
-            .map_or_else(String::new, |row| format!(" ack:{}", row.key));
-        lines.push(format!(
-            "  {} {} {}{origin}",
-            note.position, note.at, note.author
-        ));
-        lines.extend(note.text.lines().map(|line| {
-            if line.is_empty() {
-                String::new()
-            } else {
-                format!("    {line}")
-            }
-        }));
-    }
-    lines
 }
 
 fn requirement_lines(

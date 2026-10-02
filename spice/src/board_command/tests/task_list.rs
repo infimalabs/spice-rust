@@ -49,6 +49,45 @@ fn default_task_list_selects_each_complete_actor_route_branch_only() {
     clean(&root, bus);
 }
 
+#[test]
+fn bare_task_list_applies_the_interactive_default_and_continuation() {
+    let (root, bus, epoch, _) = fixture("task-list-default-bound", 0);
+    let task = add_project(
+        &bus,
+        epoch,
+        Actor::Operator,
+        "CLI-bound0001",
+        "Bounded row",
+        "task.cli",
+        Some("todo"),
+    );
+    let mut answer = board(&bus, epoch, Actor::Operator);
+    let template = at(&answer, &task).clone();
+    for index in 1..206 {
+        let mut row = template.clone();
+        row.statement.body.born =
+            wire::TaskStamp::for_micros(9_000 + index).expect("fixture task stamp");
+        row.statement.body.handle =
+            TaskHandle::for_project(&row.statement.body.project, &row.statement.body.born);
+        row.presentation_title = format!("Bounded row {index}");
+        answer.tasks.push(row);
+    }
+    let listed = task_list(
+        &answer,
+        &TaskListOptions {
+            all: true,
+            project: None,
+            limit: None,
+            status: None,
+        },
+    );
+    assert_eq!(listed.matches(" [todo]").count(), 20, "{listed}");
+    assert!(listed.contains("withheld 186 of 206 rows"), "{listed}");
+    assert!(listed.contains("continue: spice task list"), "{listed}");
+    assert!(listed.contains("--after"), "{listed}");
+    clean(&root, bus);
+}
+
 fn add_actor_route_rows(
     answer: &mut BoardAnswer,
     public: &TaskHandle,
