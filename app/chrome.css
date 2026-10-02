@@ -629,11 +629,12 @@ body:has(.shell--mosaic),
   min-block-size: calc(2 * (var(--canvas-team-pad) + 1px) + var(--canvas-team-head) + var(--canvas-team-gap) + var(--canvas-member-row));
 }
 .canvas-team-members > .canvas-menu-empty { min-block-size: var(--canvas-member-row); }
+/* Lane menu controls: every action is a bounded one-line button, and buttons
+   grow to share their row so no row ends in dead space. */
 .member-controls {
   display: grid;
-  gap: 5px;
+  gap: 4px;
   min-width: 0;
-  font-size: .64rem;
 }
 .member-control-actions {
   display: flex;
@@ -641,9 +642,9 @@ body:has(.shell--mosaic),
   align-items: flex-start;
   gap: 4px;
 }
-.member-control-actions > .team-mode,
-.member-confirm > summary { min-height: 22px; padding-inline: 8px; }
-.member-confirm > summary { list-style: none; cursor: pointer; }
+.member-control-actions > .agent-menu-action,
+.member-confirm { flex: 1 1 auto; }
+.member-confirm > summary { display: flex; list-style: none; }
 .member-confirm > summary::-webkit-details-marker { display: none; }
 .member-confirm[open] { flex-basis: 100%; }
 .member-confirm-body {
@@ -661,20 +662,24 @@ body:has(.shell--mosaic),
   color: var(--danger);
   overflow-wrap: anywhere;
 }
+/* The model field takes a row of its own when its buttons do not fit beside
+   it, rather than collapsing to a sliver. */
 .member-model {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
 }
 .member-model label {
-  grid-column: 1 / -1;
+  flex: 1 1 100%;
   color: var(--muted);
-  font-size: .57rem;
+  font-size: 10px;
   letter-spacing: .05em;
   text-transform: uppercase;
 }
 .member-model input {
+  flex: 1 1 8em;
   min-width: 0;
-  font: .64rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: inherit;
 }
+.member-model .agent-menu-action { flex: 1 1 auto; }

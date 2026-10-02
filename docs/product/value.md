@@ -481,6 +481,13 @@ composer. Presence and its age, and the copyable channel, occupant, session, and
 worktree identifiers, complete the panel beside Create new team and Leave all
 teams.
 
+The panel is among the smallest controls in Canvas, so it spends no pixel twice.
+Its head is one line: label, presence state, and age. The held handle and
+lease countdown live in the Task row. Every control is a bounded one-line
+button, and buttons grow to share their row; the model field takes its own row
+when its buttons cannot fit beside it. Rows stay single-line behind one key
+column sized to the longest key, truncating values that keep copy on click.
+
 ### The team Work direction mosaic
 
 Directions read newest first as message-familiar cards rather than as a

@@ -170,25 +170,21 @@ fn close_on_escape(event: KeyboardEvent) {
     }
 }
 
+/// The head's state and age on one line. The handle a working agent holds is
+/// the Task row's value, so the head names only the state.
 fn render_presence(
     runtime: &CanvasRuntime,
     member: &crate::runtime::LaneMember,
     standing: &Standing,
 ) -> Html {
     let presence = watchband::member_presence(runtime, member, standing);
-    let state = if presence.state == watchband::MemberPresenceState::Working {
-        standing.handle.as_ref().map_or_else(
-            || presence.state.label().to_owned(),
-            |handle| format!("working on {handle}"),
-        )
-    } else {
-        presence.state.label().to_owned()
-    };
     html! {
         <span class="agent-menu-presence" data-agent-presence={presence.state.key()}>
-            <span class="team-presence-state">{state}</span>
-            {" · "}
-            {lease_age(presence.since_millis, "team-presence-age", "—")}
+            <span class="team-presence-state">{presence.state.label()}</span>
+            if let Some(authored) = presence.since_millis {
+                {" · "}
+                <Age {authored} class={classes!("team-presence-age")} />
+            }
         </span>
     }
 }
@@ -237,17 +233,17 @@ fn render_task(standing: &Standing, select: &Callback<wire::TaskStamp>) -> Html 
                 <strong>{handle.to_owned()}</strong>
                 {format!(" · {phase} · {title}")}
             </button>
-            <span class="agent-menu-meta">
-                {lease_age(standing.held_since, "agent-menu-age", "—")}
-                if let Some(expiry) = standing.expires_at {
-                    {" · "}
+            // The head already carries the held age; the row keeps the lease's
+            // remaining time.
+            if let Some(expiry) = standing.expires_at {
+                <span class="agent-menu-meta">
                     <Countdown
                         {expiry}
                         class={classes!("agent-menu-countdown")}
                         title={format!("Lease expiry for {handle}")}
                     />
-                }
-            </span>
+                </span>
+            }
         </li>
     }
 }
