@@ -199,31 +199,31 @@ fn the_opening_a_session_offers_is_the_one_a_resident_admits() {
 }
 
 #[test]
-fn the_requirement_unaware_canvas_generation_is_stopped_at_discovery() {
-    let fault = Session::admit_canvas(Some(wire::CanvasVersion(3)))
-        .expect_err("a requirement-unaware browser does not cross current Canvas DTOs");
-    assert_eq!(fault.reason, "bootstrap::canvas-mismatch");
+fn a_requirement_unaware_app_generation_is_stopped_at_discovery() {
+    let fault = Session::admit_app_protocol(Some(wire::AppProtocolVersion(3)))
+        .expect_err("a requirement-unaware browser does not cross current app DTOs");
+    assert_eq!(fault.reason, "bootstrap::app-protocol-mismatch");
     assert!(
         fault.detail.contains("protocol 3")
             && fault
                 .detail
-                .contains(&format!("speaks {}", wire::CanvasVersion::CURRENT)),
+                .contains(&format!("speaks {}", wire::AppProtocolVersion::CURRENT)),
         "{}",
         fault.detail
     );
 }
 
 #[test]
-fn a_current_canvas_protocol_is_admitted_at_discovery() {
-    Session::admit_canvas(Some(wire::CanvasVersion::CURRENT))
-        .expect("the current Canvas application reaches bootstrap decoding");
+fn the_current_app_protocol_is_admitted_at_discovery() {
+    Session::admit_app_protocol(Some(wire::AppProtocolVersion::CURRENT))
+        .expect("the current app reaches bootstrap decoding");
 }
 
 #[test]
-fn an_absent_canvas_protocol_replaces_the_current_document() {
-    let fault = Session::admit_canvas(None)
+fn an_absent_app_protocol_replaces_the_current_document() {
+    let fault = Session::admit_app_protocol(None)
         .expect_err("a response without the pre-socket clock does not open a socket");
-    assert_eq!(fault.reason, "bootstrap::canvas-mismatch");
+    assert_eq!(fault.reason, "bootstrap::app-protocol-mismatch");
 }
 
 #[test]

@@ -1,6 +1,6 @@
-use wire::{CanonicalUuid, CanvasBootstrap, CanvasVersion};
+use wire::{AppBootstrap, AppProtocolVersion, CanonicalUuid};
 
-const CANVAS_BOOTSTRAP: &str = r#"{
+const APP_BOOTSTRAP: &str = r#"{
   "endpoint": "http://127.0.0.1:48123",
   "capability": "018f82d4-6f59-7d06-92e3-bce9131163c6",
   "epoch": "018f82d4-6f59-7d06-92e3-bce9131163c3",
@@ -9,7 +9,7 @@ const CANVAS_BOOTSTRAP: &str = r#"{
     "binary": "1111111111111111111111111111111111111111111111111111111111111111",
     "wire": 1,
     "journal": 20,
-    "canvas": 10,
+    "app_protocol": 10,
     "app": "2222222222222222222222222222222222222222222222222222222222222222"
   },
   "operator": {
@@ -24,8 +24,8 @@ fn uuid(value: &str) -> CanonicalUuid {
     value.parse().expect("fixture UUID is canonical")
 }
 
-fn round_trip(document: &str) -> CanvasBootstrap {
-    let decoded: CanvasBootstrap = wire::decode(document.as_bytes()).expect("bootstrap decodes");
+fn round_trip(document: &str) -> AppBootstrap {
+    let decoded: AppBootstrap = wire::decode(document.as_bytes()).expect("bootstrap decodes");
     let reencoded: serde_json::Value =
         serde_json::from_slice(&wire::encode(&decoded).expect("bootstrap encodes"))
             .expect("re-encoded bootstrap is JSON");
@@ -36,8 +36,8 @@ fn round_trip(document: &str) -> CanvasBootstrap {
 }
 
 #[test]
-fn canvas_bootstrap_has_one_strict_body_shape() {
-    let bootstrap = round_trip(CANVAS_BOOTSTRAP);
+fn app_bootstrap_has_one_strict_body_shape() {
+    let bootstrap = round_trip(APP_BOOTSTRAP);
 
     assert_eq!(bootstrap.endpoint, "http://127.0.0.1:48123");
     assert_eq!(
@@ -53,13 +53,13 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
 
     for field in ["endpoint", "capability", "epoch", "version", "operator"] {
         let mut value: serde_json::Value =
-            serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
+            serde_json::from_str(APP_BOOTSTRAP).expect("bootstrap fixture is JSON");
         value
             .as_object_mut()
             .expect("bootstrap is an object")
             .remove(field);
         assert!(
-            wire::decode::<CanvasBootstrap>(&serde_json::to_vec(&value).expect("shape encodes"))
+            wire::decode::<AppBootstrap>(&serde_json::to_vec(&value).expect("shape encodes"))
                 .is_err(),
             "bootstrap without {field} was admitted"
         );
@@ -80,7 +80,7 @@ fn canvas_bootstrap_has_one_strict_body_shape() {
 
 #[test]
 fn operator_identity_crosses_with_one_strict_gravatar_hash() {
-    let bootstrap = round_trip(CANVAS_BOOTSTRAP);
+    let bootstrap = round_trip(APP_BOOTSTRAP);
     assert_eq!(bootstrap.operator.name.as_deref(), Some("C Adams"));
     assert_eq!(
         bootstrap.operator.email.as_deref(),
@@ -97,7 +97,7 @@ fn operator_identity_crosses_with_one_strict_gravatar_hash() {
     );
 
     let mut value: serde_json::Value =
-        serde_json::from_str(CANVAS_BOOTSTRAP).expect("bootstrap fixture is JSON");
+        serde_json::from_str(APP_BOOTSTRAP).expect("bootstrap fixture is JSON");
     for malformed in [
         serde_json::Value::Null,
         serde_json::Value::String("0123456789ABCDEF".repeat(4)),
@@ -107,7 +107,7 @@ fn operator_identity_crosses_with_one_strict_gravatar_hash() {
     ] {
         value["operator"]["gravatar"] = malformed.clone();
         assert!(
-            wire::decode::<CanvasBootstrap>(&serde_json::to_vec(&value).expect("shape encodes"))
+            wire::decode::<AppBootstrap>(&serde_json::to_vec(&value).expect("shape encodes"))
                 .is_err(),
             "malformed operator Gravatar was admitted: {malformed}"
         );
@@ -115,20 +115,20 @@ fn operator_identity_crosses_with_one_strict_gravatar_hash() {
 }
 
 #[test]
-fn canvas_version_has_one_http_header_spelling() {
-    assert_eq!(wire::hello::CANVAS_VERSION_HEADER, "x-spice-canvas-version");
+fn app_protocol_version_has_one_http_header_spelling() {
     assert_eq!(
-        wire::hello::CANVAS_GENERATION_HEADER,
-        "x-spice-canvas-generation"
+        wire::hello::APP_PROTOCOL_VERSION_HEADER,
+        "x-spice-app-protocol-version"
     );
+    assert_eq!(wire::hello::APP_GENERATION_HEADER, "x-spice-app-generation");
     assert_eq!(
-        CanvasVersion::CURRENT.to_string().parse(),
-        Ok(CanvasVersion::CURRENT)
+        AppProtocolVersion::CURRENT.to_string().parse(),
+        Ok(AppProtocolVersion::CURRENT)
     );
     for malformed in ["", "current", "-1", "1.0", "+1", "01", " 1", "1 "] {
         assert!(
-            malformed.parse::<CanvasVersion>().is_err(),
-            "malformed Canvas version was admitted: {malformed:?}"
+            malformed.parse::<AppProtocolVersion>().is_err(),
+            "malformed app protocol version was admitted: {malformed:?}"
         );
     }
 }

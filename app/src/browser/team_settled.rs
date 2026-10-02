@@ -54,7 +54,7 @@ pub(super) fn update_input(
 fn queue(
     sender: &SenderHandle,
     surface: &UseStateHandle<SurfaceData>,
-    reserve: impl FnOnce(&mut CanvasRuntime) -> Option<TeamSettledRequest>,
+    reserve: impl FnOnce(&mut AppRuntime) -> Option<TeamSettledRequest>,
 ) {
     let request = {
         let mut data = surface.write();
@@ -99,7 +99,7 @@ pub(super) fn use_controls(
     let revision = surface
         .read()
         .as_ref()
-        .map_or(0, CanvasRuntime::team_settled_revision);
+        .map_or(0, AppRuntime::team_settled_revision);
     {
         let sender = sender.clone();
         let surface = surface.clone();

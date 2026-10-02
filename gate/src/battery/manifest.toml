@@ -87,9 +87,9 @@ declaration = "gate::toolchain::rust-typecheck::toolchain-v1"
 [[arms]]
 predecessor = "serve-web-typecheck"
 disposition = "compiled"
-gate_id = "canvas-web-typecheck"
+gate_id = "app-web-typecheck"
 family = "toolchain"
-declaration = "gate::toolchain::canvas-web-typecheck::toolchain-v1"
+declaration = "gate::toolchain::app-web-typecheck::toolchain-v1"
 
 [[arms]]
 predecessor = "javascript-unused"

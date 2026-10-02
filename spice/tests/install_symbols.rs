@@ -70,10 +70,10 @@ fn verification_reports_the_agreeing_receipt() {
         fs::read(
             app.join("generations")
                 .join(generation.trim())
-                .join(wire::manifest::CANVAS_APP_HTML)
+                .join(wire::manifest::APP_HTML)
         )
         .unwrap(),
-        package.app_bytes(wire::manifest::CANVAS_APP_HTML),
+        package.app_bytes(wire::manifest::APP_HTML),
         "verification leaves the installed generation untouched"
     );
 }

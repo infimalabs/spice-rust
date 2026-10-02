@@ -58,7 +58,7 @@ pub(super) fn stage(root: &Path, stage: &Path) -> Result<(), AppBuildError> {
     members.sort_by_key(|member| member.file);
     let declaration = renderer::encode(&members)
         .map_err(|error| AppBuildError::GeneratedStage(error.to_owned()))?;
-    let path = stage.join(wire::manifest::CANVAS_APP_HTML);
+    let path = stage.join(wire::manifest::APP_HTML);
     let html = String::from_utf8(read_regular(&path)?)
         .map_err(|_| AppBuildError::GeneratedStage("app shell is not UTF-8".to_owned()))?;
     const MAIN: &str = "<main id=\"app\"";

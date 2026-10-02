@@ -2,8 +2,8 @@
 
 use super::*;
 
-// There is deliberately no `open_canvas(path)` convenience that admits and
-// launches in one step. Both commands that can open Canvas gate the launch on
+// There is deliberately no `open_app(path)` convenience that admits and
+// launches in one step. Both commands that can open the app gate the launch on
 // an explicit flag, and a helper that hard-wires `system_browser` is exactly
 // the shape that made `spice demo` seize the operator's browser on every run in
 // an agent's hot loop. Callers pass their own already-gated launcher.
@@ -11,18 +11,18 @@ use super::*;
 /// Admit the browser surface named by the current owner-only discovery file,
 /// and hand its endpoint to `launch`.
 ///
-/// This deliberately shares [`DiscoveryRead`] with resident commands. Canvas
+/// This deliberately shares [`DiscoveryRead`] with resident commands. App
 /// acquisition therefore has one file-identity, ownership, mode, wire-shape,
 /// and loopback-origin admission path rather than a browser-specific reader.
 /// The resident announcing its own freshly published discovery goes through
 /// here too, so the endpoint an operator is told to open is one that already
 /// passed the admission a client would apply to it.
-pub(crate) fn open_canvas_with(
+pub(crate) fn open_app_with(
     discovery_path: &Path,
     before_current_check: impl FnOnce(),
     launch: impl FnOnce(&str) -> Result<(), String>,
-) -> Outcome<wire::CanvasOpen> {
-    match open_canvas_result_with(discovery_path, before_current_check, launch) {
+) -> Outcome<wire::AppOpen> {
+    match open_app_result_with(discovery_path, before_current_check, launch) {
         Ok(body) => Outcome::Reply(Reply {
             position: ReplyPosition::Direct {},
             body,
@@ -32,11 +32,11 @@ pub(crate) fn open_canvas_with(
 }
 
 /// Admit and launch Canvas through the fault-only discovery boundary.
-pub(crate) fn open_canvas_result_with(
+pub(crate) fn open_app_result_with(
     discovery_path: &Path,
     before_current_check: impl FnOnce(),
     launch: impl FnOnce(&str) -> Result<(), String>,
-) -> Result<wire::CanvasOpen, Fault> {
+) -> Result<wire::AppOpen, Fault> {
     let discovery = DiscoveryRead::open_fault(discovery_path, &resident_lock_path(discovery_path))?;
     dialable_endpoint(&discovery.value.endpoint)?;
     before_current_check();
@@ -49,7 +49,7 @@ pub(crate) fn open_canvas_result_with(
             detail,
         });
     }
-    Ok(wire::CanvasOpen {
+    Ok(wire::AppOpen {
         endpoint: discovery.value.endpoint,
         epoch: discovery.value.epoch,
     })

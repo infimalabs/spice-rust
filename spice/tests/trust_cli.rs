@@ -130,7 +130,7 @@ impl Resident {
         let child = Command::new(env!("CARGO_BIN_EXE_spice"))
             .args(["--json", "up", "--foreground", "--port", "0"])
             .current_dir(&fixture.main)
-            .arg(spice::install::TEST_CANVAS_STAGE_ARGUMENT)
+            .arg(spice::install::TEST_APP_STAGE_ARGUMENT)
             .env_remove(spice::agent_launch::SPICE_RS_LANE)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())

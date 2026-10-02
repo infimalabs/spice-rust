@@ -23,7 +23,7 @@ fn lane_response_at(
 fn an_older_lane_snapshot_cannot_replace_a_newer_committed_policy() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let rows = [(LANE, LANE, Some(LANE_CAPABILITY), true)];
     let committed = lane_response_at(
         &rows,
@@ -58,7 +58,7 @@ fn an_older_lane_snapshot_cannot_replace_a_newer_committed_policy() {
 fn an_older_committed_lane_result_cannot_replace_a_later_commit() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let rows = [(LANE, LANE, Some(LANE_CAPABILITY), true)];
     let later = lane_response_at(
         &rows,
@@ -96,7 +96,7 @@ fn an_older_committed_lane_result_cannot_replace_a_later_commit() {
 fn a_positionless_lane_reply_is_not_authority() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let direct = lane_response_at(
         &[(LANE, LANE, Some(LANE_CAPABILITY), true)],
         ReplyPosition::Direct {},
@@ -118,7 +118,7 @@ fn a_positionless_lane_reply_is_not_authority() {
 fn a_never_started_vacant_lane_takes_a_wake_submission() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let mut response: Response<wire::intent::LaneAnswer> = wire::decode(&lane_response(&[
         (LANE, LANE, None, false),
         (SECOND_LANE, SECOND_LANE, None, true),

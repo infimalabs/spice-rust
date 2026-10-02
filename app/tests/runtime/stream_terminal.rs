@@ -6,7 +6,7 @@ use super::*;
 fn stream_overflow_remains_a_typed_terminal() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let bytes = serde_json::to_vec(&serde_json::json!({
         "stream": "overflow",
         "v": 1,

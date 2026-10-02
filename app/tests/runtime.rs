@@ -1,9 +1,7 @@
 //! The real canvas runtime retains only admitted, capability-scoped state.
 
 use app::watchband::{ticker_accessible_label, ticker_chunks};
-use app::{
-    CanvasRuntime, LaneStatus, Session, Stale, StreamDirective, StreamTerminal, stale_reads,
-};
+use app::{AppRuntime, LaneStatus, Session, Stale, StreamDirective, StreamTerminal, stale_reads};
 use wire::{
     CanonicalUuid, CommandKind, Outcome, Reply, ReplyPosition, Response, Seq, StreamFrame,
     ViewSubject, WireVersion,
@@ -199,7 +197,7 @@ fn message_snapshot_frame(
     .expect("message snapshot serializes")
 }
 
-fn initialize_messages(runtime: &mut CanvasRuntime, session: &Session) {
+fn initialize_messages(runtime: &mut AppRuntime, session: &Session) {
     runtime.apply_stream(&admitted_stream(
         session,
         &message_snapshot_frame(0, 256, Vec::new(), Vec::new()),
@@ -473,7 +471,7 @@ fn fact_frame(fact: serde_json::Value) -> Vec<u8> {
 fn stream_application_invalidates_only_observable_runtime_changes() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let live = admitted_stream(&session, &fact_frame(task_fact(41, None)));
 
     assert!(runtime.apply_stream_frame(&live).changed());
@@ -503,7 +501,7 @@ fn stream_application_invalidates_only_observable_runtime_changes() {
 
     let next = Session::open(uuid(NEXT_CAPABILITY), uuid(NEXT_EPOCH));
     let next_accepted = acceptance(&next, "operator", NEXT_EPOCH);
-    let mut foreign_runtime = CanvasRuntime::new(&next_accepted);
+    let mut foreign_runtime = AppRuntime::new(&next_accepted);
     assert!(
         !foreign_runtime.apply_stream_frame(&live).changed(),
         "an admitted frame from another scope does not invalidate the rendered surface"
@@ -541,7 +539,7 @@ fn stream_door_checks_nested_wire_and_terminal_cursor_epoch() {
 fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
     let operator_session = session(OPERATOR, EPOCH);
     let operator = acceptance(&operator_session, "operator", EPOCH);
-    let operator = CanvasRuntime::new(&operator);
+    let operator = AppRuntime::new(&operator);
     assert_eq!(
         operator.subjects(),
         vec![
@@ -554,7 +552,7 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
 
     let lane_session = session(LANE_CAPABILITY, EPOCH);
     let lane = acceptance(&lane_session, &format!("lane:{LANE}"), EPOCH);
-    let lane = CanvasRuntime::new(&lane);
+    let lane = AppRuntime::new(&lane);
     assert_eq!(lane.subjects(), vec![ViewSubject::Facts]);
     assert!(lane.offers(CommandKind::TaskNote));
     assert!(!lane.offers(CommandKind::ConsentDecide));
@@ -564,7 +562,7 @@ fn operator_and_lane_stream_authority_come_from_the_admitted_principal() {
 fn quota_generations_replace_monotonically_and_reconnect_hydrates_current() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
 
     let initial = quota_frame("quota", 2);
     assert!(
@@ -645,7 +643,7 @@ fn lane_floor_snapshot() -> (Vec<serde_json::Value>, serde_json::Value, Vec<u8>)
 fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let (busy, second, snapshot) = lane_floor_snapshot();
     assert!(
         runtime
@@ -748,7 +746,7 @@ fn message_snapshot_and_live_push_bound_each_lane_without_evicting_its_siblings(
 fn paired_tool_capture_becomes_one_media_card_while_distinct_tape_events_stay_distinct() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let snapshot = message_snapshot_frame(0, 8, Vec::new(), Vec::new());
     runtime.apply_stream(&admitted_stream(&session, &snapshot));
 
@@ -843,10 +841,10 @@ fn team_activity_orders_tool_and_prose_without_admitting_snapshot_receipts() {
     assert_eq!(other.detail(), "Read");
 }
 
-fn team_runtime_with_activity_and_receipts() -> CanvasRuntime {
+fn team_runtime_with_activity_and_receipts() -> AppRuntime {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let lanes = lane_response(&[
         (LANE, LANE, Some(LANE_CAPABILITY), true),
         (SECOND_LANE, LANE, Some(SECRET_LANE_CAPABILITY), true),
@@ -907,7 +905,7 @@ fn team_runtime_with_activity_and_receipts() -> CanvasRuntime {
 
 fn apply_receipt_noise(
     session: &Session,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     admitted_lanes: &app::Admitted<Response<wire::intent::LaneAnswer>>,
 ) {
     // Snapshot receipts still belong to the command-outcome chronology, but
@@ -936,7 +934,7 @@ fn apply_receipt_noise(
 fn synthetic_agent_activity_retains_provenance_and_gains_a_display_time() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let lanes = lane_response(&[(LANE, LANE, Some(LANE_CAPABILITY), true)]);
     let admitted_lanes: app::Admitted<Response<wire::intent::LaneAnswer>> = session
         .admit_frame(&lanes)
@@ -987,7 +985,7 @@ fn synthetic_agent_activity_retains_provenance_and_gains_a_display_time() {
 fn redelivered_older_activity_does_not_displace_newer_lane_activity() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let lanes = lane_response(&[(LANE, LANE, Some(LANE_CAPABILITY), true)]);
     let admitted_lanes: app::Admitted<Response<wire::intent::LaneAnswer>> = session
         .admit_frame(&lanes)
@@ -1034,7 +1032,7 @@ fn team_ticker_prose_leads_with_the_first_authored_line_after_borrowed_quotes() 
 
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let lanes = lane_response(&[(LANE, LANE, Some(LANE_CAPABILITY), true)]);
     let admitted_lanes: app::Admitted<Response<wire::intent::LaneAnswer>> = session
         .admit_frame(&lanes)
@@ -1134,7 +1132,7 @@ fn team_ticker_prose_leads_with_the_first_authored_line_after_borrowed_quotes() 
 fn browser_state_retains_hidden_rows_with_their_authored_prose() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let title = "Allocator failure needing triage";
     let response = board_response(&session, title);
     let wire::Outcome::Reply(reply) = &response.get().outcome else {
@@ -1176,7 +1174,7 @@ fn browser_state_retains_hidden_rows_with_their_authored_prose() {
 fn a_liveness_answer_moves_neither_the_resume_cursor_nor_terminal() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     runtime.apply_stream(&admitted_stream(
         &session,
         &packed_frame("facts", &[task_fact(41, None)], None, 41),
@@ -1209,7 +1207,7 @@ fn a_liveness_answer_moves_neither_the_resume_cursor_nor_terminal() {
 fn same_scope_reconnect_preserves_cursor_and_changed_scope_clears_it() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let frame = admitted_stream(
         &session,
         &packed_frame("facts", &[task_fact(41, None)], None, 41),

@@ -18,7 +18,7 @@ fn canvas_refuses_a_record_whose_publisher_no_longer_holds_the_resident_lock() {
     let discovery = fixture.publish();
     let mut launched = Vec::new();
 
-    let live = open_canvas_with(
+    let live = open_app_with(
         &fixture.canvas,
         || {},
         |endpoint| {
@@ -46,7 +46,7 @@ fn canvas_refuses_a_record_whose_publisher_no_longer_holds_the_resident_lock() {
         "a killed resident leaves its holder line naming a pid that is gone"
     );
 
-    let gone = open_canvas_with(
+    let gone = open_app_with(
         &fixture.canvas,
         || {},
         |endpoint| {
@@ -84,7 +84,7 @@ fn canvas_refuses_a_publisher_whose_lock_cannot_be_probed() {
     fs::create_dir(&resident).expect("fixture lock becomes unprobeable");
 
     let mut launched = false;
-    let outcome = open_canvas_with(
+    let outcome = open_app_with(
         &fixture.canvas,
         || {},
         |_| {
@@ -292,7 +292,7 @@ fn canvas_launcher_interruption_is_one_typed_fault() {
     let fixture = Fixture::new("canvas-launch-interruption");
     let discovery = fixture.publish();
 
-    let outcome = open_canvas_with(
+    let outcome = open_app_with(
         &fixture.canvas,
         || {},
         |_| Err("fixture launcher was interrupted".to_owned()),

@@ -8,7 +8,7 @@ pub(super) fn app_version(source: &crate::AppSource) -> wire::Version {
         binary: wire::Digest::compute(wire::Domain::DistArtifact, b"fixture native"),
         wire: wire::WireVersion::CURRENT,
         journal: journal::SCHEMA_VERSION,
-        canvas: wire::CanvasVersion::CURRENT,
+        app_protocol: wire::AppProtocolVersion::CURRENT,
         app: source
             .current_generation()
             .expect("fixture generation reads")
@@ -41,7 +41,7 @@ pub(super) struct TestApp {
 impl TestApp {
     pub(super) fn new() -> Self {
         let root = tempfile::Builder::new()
-            .prefix("spice-canvas-test-app-")
+            .prefix("spice-test-app-")
             .tempdir()
             .expect("fixture temp directory");
         seed_app_generation(root.path(), "test app");

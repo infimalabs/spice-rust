@@ -61,7 +61,7 @@ fn ruling(
 fn an_operator_ruling_carries_the_queue_witnesses_and_the_ruled_request_leaves() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     runtime.apply_consent_queue(&queue(
         &session,
         vec![pending(REQUEST, Some(0)), pending(SECOND_REQUEST, None)],
@@ -165,7 +165,7 @@ fn an_operator_ruling_carries_the_queue_witnesses_and_the_ruled_request_leaves()
 fn a_lane_principal_cannot_rule_on_consent() {
     let session = session(LANE_CAPABILITY, EPOCH);
     let accepted = acceptance(&session, &format!("lane:{LANE}"), EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     runtime.apply_consent_queue(&queue(&session, vec![pending(REQUEST, None)]));
 
     assert!(

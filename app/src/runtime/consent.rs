@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 use wire::intent::{ConsentAnswer, ConsentDecide, ConsentQueueAnswer};
 use wire::{Answer, CanonicalUuid, CommandKind, Outcome, Response, Witness};
 
-use super::CanvasRuntime;
+use super::AppRuntime;
 use crate::socket::Admitted;
 
 /// One ruling Canvas sent on a request the queue still listed.
@@ -28,7 +28,7 @@ pub enum ConsentRuling {
 /// Per-request rulings, retained only while the queue lists the request.
 pub(super) type ConsentRulings = BTreeMap<CanonicalUuid, ConsentRuling>;
 
-impl CanvasRuntime {
+impl AppRuntime {
     /// Requests waiting on the operator, absent until the first read lands or
     /// when this principal is not offered the read.
     #[must_use]

@@ -10,7 +10,7 @@ use std::fmt;
 
 use serde::de::DeserializeOwned;
 use wire::{
-    Accepted, Body, CanonicalUuid, CanvasVersion, Envelope, Fact, Fault, FaultClass, Hello,
+    Accepted, AppProtocolVersion, Body, CanonicalUuid, Envelope, Fact, Fault, FaultClass, Hello,
     Response, StreamFrame, WireVersion,
 };
 
@@ -24,7 +24,7 @@ mod reason {
     /// The frame carried a version this build does not speak.
     pub const WIRE: &str = "frame::wire-mismatch";
     /// Bootstrap metadata belongs to another browser/resident protocol.
-    pub const CANVAS: &str = "bootstrap::canvas-mismatch";
+    pub const APP_PROTOCOL: &str = "bootstrap::app-protocol-mismatch";
     /// The frame answered a generation this session does not address.
     pub const EPOCH: &str = "frame::epoch-mismatch";
     /// The discovery file now presents a different capability.
@@ -120,24 +120,24 @@ fn admit_wire(observed: WireVersion) -> Result<(), Fault> {
 }
 
 /// Admit a browser/resident protocol without weakening DTO decoding.
-fn admit_canvas(observed: Option<CanvasVersion>) -> Result<(), Fault> {
-    if observed.is_some_and(CanvasVersion::is_current) {
+fn admit_app_protocol(observed: Option<AppProtocolVersion>) -> Result<(), Fault> {
+    if observed.is_some_and(AppProtocolVersion::is_current) {
         return Ok(());
     }
     Err(Fault {
         class: FaultClass::Protocol,
-        reason: reason::CANVAS.to_owned(),
+        reason: reason::APP_PROTOCOL.to_owned(),
         detail: observed.map_or_else(
             || {
                 format!(
                     "bootstrap carried no app protocol; this build speaks {}",
-                    CanvasVersion::CURRENT
+                    AppProtocolVersion::CURRENT
                 )
             },
             |observed| {
                 format!(
                     "bootstrap carried app protocol {observed}; this build speaks {}",
-                    CanvasVersion::CURRENT
+                    AppProtocolVersion::CURRENT
                 )
             },
         ),
@@ -199,14 +199,14 @@ impl Session {
         }
     }
 
-    /// Admit the Canvas protocol advertised by bootstrap discovery.
+    /// Admit the app protocol advertised by bootstrap discovery.
     ///
     /// # Errors
     ///
     /// Returns a protocol fault when the resident asks this browser build to
-    /// cross a Canvas DTO generation it does not speak.
-    pub fn admit_canvas(observed: Option<CanvasVersion>) -> Result<(), Fault> {
-        admit_canvas(observed)
+    /// cross an app DTO generation it does not speak.
+    pub fn admit_app_protocol(observed: Option<AppProtocolVersion>) -> Result<(), Fault> {
+        admit_app_protocol(observed)
     }
 
     /// Admit a capability offered by a later discovery read.

@@ -52,7 +52,7 @@ pub(super) fn environment(
     })
 }
 
-pub(super) fn canvas_environment_with<F>(
+pub(super) fn app_environment_with<F>(
     environment: Environment,
     cleanup: bool,
     signals: bool,
@@ -103,7 +103,7 @@ where
     // Resolving it here rather than inside the launcher is what lets a plain
     // run still print an endpoint an operator or agent can open deliberately,
     // and it keeps demo on the one admission path `up` already uses.
-    let opened = crate::command_client::open_canvas_with(
+    let opened = crate::command_client::open_app_with(
         environment.state.canvas(),
         || {},
         |endpoint| if open { browser(endpoint) } else { Ok(()) },
@@ -224,7 +224,7 @@ pub(super) fn start_resident(
         .spawn(move || {
             let outcome = crate::resident::up_from(
                 &root,
-                crate::resident::CanvasBinding::local(crate::resident::EPHEMERAL_LOOPBACK),
+                crate::resident::AppBinding::local(crate::resident::EPHEMERAL_LOOPBACK),
             );
             let _ = events.send(Event::Resident(outcome));
         })

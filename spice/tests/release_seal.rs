@@ -127,7 +127,7 @@ fn release_seal_refuses_a_moved_canvas_and_preserves_the_existing_pointer() {
     fs::create_dir_all(pointer.parent().expect("pointer has a parent")).expect("release directory");
     let existing = b"existing manifest pointer\n";
     fs::write(&pointer, existing).expect("existing manifest pointer");
-    stage_app_named(&fixture.root, "moved Canvas generation");
+    stage_app_named(&fixture.root, "moved app generation");
 
     let output = fixture.invoke(&["--json", "release", "seal"]);
 
@@ -197,7 +197,7 @@ impl Resident {
                 "--foreground",
                 "--port",
                 "0",
-                spice::install::TEST_CANVAS_STAGE_ARGUMENT,
+                spice::install::TEST_APP_STAGE_ARGUMENT,
             ])
             .current_dir(&fixture.root)
             .env_remove(spice::agent_launch::SPICE_RS_LANE)
@@ -258,7 +258,7 @@ impl Drop for Resident {
 }
 
 fn stage_app(root: &Path) -> Digest {
-    stage_app_named(root, "fixture Canvas generation")
+    stage_app_named(root, "fixture app generation")
 }
 
 fn stage_app_named(root: &Path, marker: &str) -> Digest {

@@ -57,35 +57,35 @@ const MACHO_UUID_LENGTH: usize = 36;
 const MACHO_UUID_HYPHENS: [usize; 4] = [8, 13, 18, 23];
 
 /// Required shell files; generation-declared renderer files complete the inventory.
-pub const CANVAS_APP_FILES: [&str; 9] = [
-    CANVAS_APP_HTML,
-    CANVAS_APP_MODULE,
-    CANVAS_STYLE,
-    CANVAS_MOSAIC_STYLE,
-    CANVAS_CHROME_STYLE,
-    CANVAS_COMPOSER_STYLE,
-    CANVAS_WORK_STYLE,
-    CANVAS_RESPONSIVE_STYLE,
-    CANVAS_WASM,
+pub const APP_FILES: [&str; 9] = [
+    APP_HTML,
+    APP_MODULE,
+    APP_STYLE,
+    MOSAIC_STYLE,
+    CHROME_STYLE,
+    COMPOSER_STYLE,
+    WORK_STYLE,
+    RESPONSIVE_STYLE,
+    APP_WASM,
 ];
 /// Browser application HTML shell.
-pub const CANVAS_APP_HTML: &str = "canvas-app.html";
+pub const APP_HTML: &str = "app.html";
 /// Browser application JavaScript module.
-pub const CANVAS_APP_MODULE: &str = "app.module";
+pub const APP_MODULE: &str = "app.module";
 /// Shared browser application stylesheet.
-pub const CANVAS_STYLE: &str = "style.css";
+pub const APP_STYLE: &str = "style.css";
 /// Mosaic workspace stylesheet.
-pub const CANVAS_MOSAIC_STYLE: &str = "mosaic.css";
+pub const MOSAIC_STYLE: &str = "mosaic.css";
 /// Browser chrome stylesheet.
-pub const CANVAS_CHROME_STYLE: &str = "chrome.css";
+pub const CHROME_STYLE: &str = "chrome.css";
 /// Composer stylesheet.
-pub const CANVAS_COMPOSER_STYLE: &str = "composer.css";
+pub const COMPOSER_STYLE: &str = "composer.css";
 /// Global Work page stylesheet.
-pub const CANVAS_WORK_STYLE: &str = "work.css";
+pub const WORK_STYLE: &str = "work.css";
 /// Responsive-layout stylesheet.
-pub const CANVAS_RESPONSIVE_STYLE: &str = "responsive.css";
+pub const RESPONSIVE_STYLE: &str = "responsive.css";
 /// Browser application WebAssembly module.
-pub const CANVAS_WASM: &str = "app_bg.wasm";
+pub const APP_WASM: &str = "app_bg.wasm";
 /// The sole current multi-target release manifest schema.
 pub const RELEASE_MANIFEST_VERSION: u16 = 3;
 /// The sole current deterministic release-note document schema.
@@ -555,7 +555,7 @@ pub struct TargetPayload {
     pub target: ReleaseTarget,
     /// Domain-separated identity of the immutable Git commit built.
     pub source: Digest,
-    /// Identity of the complete immutable Canvas generation.
+    /// Identity of the complete immutable app generation.
     pub app: Digest,
     pub native: Digest,
     #[serde(

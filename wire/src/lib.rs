@@ -93,7 +93,7 @@ pub use head::{
     WorkflowHead,
 };
 pub use hello::{
-    Accepted, CanvasBootstrap, CanvasVersion, GravatarHash, GravatarHashError, Hello,
+    Accepted, AppBootstrap, AppProtocolVersion, GravatarHash, GravatarHashError, Hello,
     OperatorIdentity, Rejected, SpeechPlayback, SpeechRequest,
 };
 pub use ident::{CanonicalUuid, Digest, Domain, IdentError, Instant, ReleaseNotesIdentity};
@@ -109,9 +109,9 @@ pub use quote::{
     QuoteTargetError, QuoteUnavailable, ResolvedQuote, steering_key,
 };
 pub use reply::{
-    CanvasOpen, DemoAnswer, FactRow, Fault, FaultClass, JournalBackup, JournalReindex,
-    JournalReport, JournalRestore, JournalVerification, LanePurge, LanePurgeReport, Outcome,
-    ProofEvidence, Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan,
+    AppOpen, DemoAnswer, FactRow, Fault, FaultClass, JournalBackup, JournalReindex, JournalReport,
+    JournalRestore, JournalVerification, LanePurge, LanePurgeReport, Outcome, ProofEvidence,
+    Refusal, RefusalDiagnostic, ReleaseNotes, ReleaseNotesEntry, ReleasePlan,
     ReleasePlanObservations, ReleaseRegistryEvidence, Reply, ReplyPosition, Response,
     RestoreVerification, RtkGainReport, SealedManifest, SeqRange, SeqRangeError, SpiceCommand,
     ThreadReport, Version,

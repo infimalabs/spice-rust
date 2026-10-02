@@ -137,19 +137,19 @@ impl ExitOutcome {
     }
 }
 
-/// Temporary common bound for every Canvas opening and command answer.
-pub const CANVAS_ANSWER_BOUND: Duration = Duration::from_secs(20);
+/// Temporary common bound for every app opening and command answer.
+pub const APP_ANSWER_BOUND: Duration = Duration::from_secs(20);
 
 /// Bound for an answer the resident composes from state it already holds.
-const HELD_STATE_ANSWER: Duration = CANVAS_ANSWER_BOUND;
+const HELD_STATE_ANSWER: Duration = APP_ANSWER_BOUND;
 
 /// Bound for an answer that first launches a process or publishes durable
 /// objects, or waits for resident quiescence, all of which contend with every
 /// other lane on the host.
-const CONTENDED_ANSWER: Duration = CANVAS_ANSWER_BOUND;
+const CONTENDED_ANSWER: Duration = APP_ANSWER_BOUND;
 
 /// Bound for handing durable task-completion work to its resolution worker.
-const TASK_COMPLETION_ANSWER: Duration = CANVAS_ANSWER_BOUND;
+const TASK_COMPLETION_ANSWER: Duration = APP_ANSWER_BOUND;
 
 /// How long the native client blocks for one command's answer.
 ///

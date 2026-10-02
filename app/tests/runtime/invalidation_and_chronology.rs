@@ -276,7 +276,7 @@ fn only_the_tail_of_a_backlog_invalidates_current_reads() {
 fn only_abnormal_typed_lane_endings_project_durable_lifecycle_boundaries() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let endings = [
         serde_json::json!({
             "kind": "lane::exited", "lane": LANE, "occupant": REQUEST, "code": 0,
@@ -358,7 +358,7 @@ fn only_abnormal_typed_lane_endings_project_durable_lifecycle_boundaries() {
 fn fresh_starts_create_floors_but_resumes_and_unclassified_starts_do_not() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut live = CanvasRuntime::new(&accepted);
+    let mut live = AppRuntime::new(&accepted);
     let starts = [Some(true), Some(false), Some(true), None]
         .into_iter()
         .enumerate()
@@ -391,7 +391,7 @@ fn fresh_starts_create_floors_but_resumes_and_unclassified_starts_do_not() {
     );
 
     let page = admitted_stream(&session, &packed_frame("facts", &starts, None, 44));
-    let mut reloaded = CanvasRuntime::new(&accepted);
+    let mut reloaded = AppRuntime::new(&accepted);
     reloaded.apply_stream_frame(&page);
     assert_eq!(reloaded.lifecycle_boundaries(), live.lifecycle_boundaries());
     live.apply_stream_frame(&page);
@@ -415,7 +415,7 @@ fn fresh_starts_create_floors_but_resumes_and_unclassified_starts_do_not() {
 fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_seat() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let bytes = lane_response(&[
         (SECOND_LANE, SECOND_LANE, None, false),
         (LANE, LANE, Some(OPERATOR), false),
@@ -502,7 +502,7 @@ fn a_lane_tile_ranks_queued_direction_above_liveness_and_liveness_above_a_cold_s
 fn one_team_groups_multiple_steerable_worktrees_without_losing_member_order() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let bytes = lane_response(&[
         (LANE, EPOCH, Some(OPERATOR), false),
         (SECOND_LANE, EPOCH, None, true),
@@ -534,7 +534,7 @@ fn one_team_groups_multiple_steerable_worktrees_without_losing_member_order() {
 fn every_distinct_team_forms_one_console_even_when_members_have_no_name() {
     let session = session(OPERATOR, EPOCH);
     let accepted = acceptance(&session, "operator", EPOCH);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let bytes = lane_response(&[
         (LANE, LANE, None, false),
         (SECOND_LANE, SECOND_LANE, None, false),

@@ -41,13 +41,13 @@ fn write_raw_generation(stage: &Path, label: &str, source_identity: &Digest, val
         ""
     };
     fs::write(
-        stage.join("canvas-app.html"),
+        stage.join("app.html"),
         format!(
             "<link href=\"/style.css\"><link href=\"/mosaic.css\"><link href=\"/chrome.css\">\
              <link href=\"/composer.css\"><link href=\"/work.css\"><link href=\"/responsive.css\">\
              <script src=\"/app.js\"></script>\
              <link href=\"/app.js\"><link href=\"/app_bg.wasm\">{second_wasm}\
-             <main id=\"app\" data-canvas-generation=\"{APP_GENERATION_PLACEHOLDER}\">{label}</main>"
+             <main id=\"app\" data-app-generation=\"{APP_GENERATION_PLACEHOLDER}\">{label}</main>"
         ),
     )
     .expect("write shell");
@@ -70,7 +70,7 @@ fn publish_fixture(root: &Path, label: &str) {
 
 fn fail_partial_build(stage: &Path) -> Result<(), AppBuildError> {
     fs::create_dir_all(stage).expect("create partial build");
-    fs::write(stage.join("canvas-app.html"), b"partial build").expect("write partial build");
+    fs::write(stage.join("app.html"), b"partial build").expect("write partial build");
     Err(AppBuildError::Exit(Some(42)))
 }
 
@@ -238,9 +238,9 @@ fn finalization_produces_the_closed_worktree_stage_inventory() {
     assert_eq!(
         names,
         [
+            "app.html",
             "app.module",
             "app_bg.wasm",
-            "canvas-app.html",
             "chrome.css",
             "composer.css",
             "mosaic.css",
@@ -250,9 +250,9 @@ fn finalization_produces_the_closed_worktree_stage_inventory() {
         ]
         .map(std::ffi::OsString::from)
     );
-    let shell = fs::read_to_string(root.join("canvas-app.html")).expect("read shell");
+    let shell = fs::read_to_string(root.join("app.html")).expect("read shell");
     assert!(
-        shell.contains(&format!("data-canvas-generation=\"{identity}\"")),
+        shell.contains(&format!("data-app-generation=\"{identity}\"")),
         "the shell does not name its loaded generation: {shell}"
     );
     assert!(!shell.contains(APP_GENERATION_PLACEHOLDER));

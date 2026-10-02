@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use wire::intent::{BoardAnswer, BoardTask, TaskHistoryCursor};
 use wire::{CanonicalUuid, CommandKind, Instant, Outcome, Response};
 
-use super::{BoardView, CanvasRuntime};
+use super::{AppRuntime, BoardView};
 use crate::socket::Admitted;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -121,7 +121,7 @@ fn open(task: &BoardTask) -> bool {
     task.workflow.body.status == "pending" && task.workflow.body.completion.is_none()
 }
 
-impl CanvasRuntime {
+impl AppRuntime {
     /// Settled pages loaded for one team, if it was ever shown.
     #[must_use]
     pub fn team_settled(&self, team: CanonicalUuid) -> Option<&TeamSettledState> {

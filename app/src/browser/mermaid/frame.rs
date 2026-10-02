@@ -35,7 +35,7 @@ impl Frame {
         element.set_attribute("aria-hidden", "true")?;
         element.set_attribute("tabindex", "-1")?;
         element.set_attribute("title", "Isolated diagram renderer")?;
-        element.set_attribute("data-canvas-renderer", generation)?;
+        element.set_attribute("data-app-renderer", generation)?;
         // Hidden but measurable. display:none breaks Mermaid's text geometry.
         for (name, value) in [
             ("position", "fixed"),

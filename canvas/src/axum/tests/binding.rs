@@ -105,7 +105,7 @@ async fn a_wildcard_bind_answers_the_dialed_address_and_refuses_a_foreign_origin
     assert!(!origin.contains(REMOTE_TOKEN));
     let admitted = request(dial, opening_host, &format!("/bootstrap?auth={fragment}")).await;
     assert!(admitted.starts_with(b"HTTP/1.1 200 OK\r\n"));
-    let bootstrap: wire::CanvasBootstrap =
+    let bootstrap: wire::AppBootstrap =
         wire::decode(response_body(&admitted)).expect("bootstrap decodes");
     assert_eq!(bootstrap.endpoint, format!("http://{remote}"));
 

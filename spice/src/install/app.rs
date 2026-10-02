@@ -8,15 +8,15 @@ use wire::{Digest, Domain};
 use super::{Asset, DATA_MODE, GeneratedImage, InstallError, InstallPlan, Repository};
 
 pub(super) const ASSETS: [(Asset, &str); 9] = [
-    (Asset::CanvasAppModule, "app.module"),
-    (Asset::CanvasWasm, "app_bg.wasm"),
-    (Asset::CanvasHtml, "canvas-app.html"),
-    (Asset::CanvasChrome, "chrome.css"),
-    (Asset::CanvasComposer, "composer.css"),
-    (Asset::CanvasMosaic, "mosaic.css"),
-    (Asset::CanvasResponsive, "responsive.css"),
-    (Asset::CanvasStyle, "style.css"),
-    (Asset::CanvasWork, "work.css"),
+    (Asset::AppModule, "app.module"),
+    (Asset::AppWasm, "app_bg.wasm"),
+    (Asset::AppHtml, "app.html"),
+    (Asset::AppChrome, "chrome.css"),
+    (Asset::AppComposer, "composer.css"),
+    (Asset::AppMosaic, "mosaic.css"),
+    (Asset::AppResponsive, "responsive.css"),
+    (Asset::AppStyle, "style.css"),
+    (Asset::AppWork, "work.css"),
 ];
 
 pub(super) struct Source {
@@ -45,14 +45,14 @@ impl Source {
     }
 
     pub(super) fn bytes(&self, asset: Asset) -> Option<Vec<u8>> {
-        if asset == Asset::CanvasCurrent {
+        if asset == Asset::AppCurrent {
             return Some(format!("{}\n", self.generation).into_bytes());
         }
         self.files.get(&asset).cloned()
     }
 
     pub(super) fn image(&self, asset: Asset) -> Option<GeneratedImage> {
-        if asset == Asset::CanvasCurrent {
+        if asset == Asset::AppCurrent {
             return Some(GeneratedImage::new(
                 DATA_MODE,
                 format!("{}\n", self.generation).as_bytes(),
@@ -72,7 +72,7 @@ impl Source {
             .iter()
             .map(|operation| (operation.path.as_str(), &operation.generated))
             .collect::<BTreeMap<_, _>>();
-        self.assets().chain([Asset::CanvasCurrent]).any(|asset| {
+        self.assets().chain([Asset::AppCurrent]).any(|asset| {
             let path = operation_path(asset, Some(&self.generation))
                 .expect("the source generation is present")
                 .expect("the source inventory contains only Canvas operations");
@@ -83,7 +83,7 @@ impl Source {
 }
 
 pub(super) fn file(asset: Asset) -> Option<Cow<'static, str>> {
-    if let Asset::CanvasRenderer(file) = asset {
+    if let Asset::AppRenderer(file) = asset {
         return Some(Cow::Owned(file.to_string()));
     }
     ASSETS
@@ -95,10 +95,10 @@ pub(super) fn asset_file(file: &str) -> Option<Asset> {
     ASSETS
         .iter()
         .find_map(|(asset, candidate)| (*candidate == file).then_some(*asset))
-        .or_else(|| wire::manifest::renderer::File::parse_filename(file).map(Asset::CanvasRenderer))
+        .or_else(|| wire::manifest::renderer::File::parse_filename(file).map(Asset::AppRenderer))
 }
 
-/// Common-directory root under which every installed Canvas generation lives.
+/// Common-directory root under which every installed app generation lives.
 pub(super) const GENERATIONS_PATH: &str = ".spice-install/app/generations";
 
 pub(super) fn generation_spelling(asset: Asset, path: &str) -> Option<&str> {
@@ -106,7 +106,7 @@ pub(super) fn generation_spelling(asset: Asset, path: &str) -> Option<&str> {
     (asset_file(file) == Some(asset)).then_some(generation)
 }
 
-/// Generation and file named by any installed Canvas generation file path.
+/// Generation and file named by any installed app generation file path.
 pub(super) fn generation_file(path: &str) -> Option<(&str, &str)> {
     split_generation_path(path).filter(|(_, file)| asset_file(file).is_some())
 }
@@ -125,7 +125,7 @@ pub(super) fn operation_path(
     asset: Asset,
     generation: Option<&Digest>,
 ) -> Result<Option<String>, InstallError> {
-    if asset == Asset::CanvasCurrent {
+    if asset == Asset::AppCurrent {
         return Ok(Some(super::APP_CURRENT_PATH.to_owned()));
     }
     let Some(file) = file(asset) else {
@@ -148,7 +148,7 @@ fn staged(root: &Path) -> Result<Source, InstallError> {
         .map(|(asset, file)| {
             let route = canvas::APP
                 .asset_file(file)
-                .expect("the install inventory matches Canvas");
+                .expect("the install inventory matches the app");
             generation
                 .served(route)
                 .map(|served| (*asset, served.into_bytes()))
@@ -158,7 +158,7 @@ fn staged(root: &Path) -> Result<Source, InstallError> {
     files.extend(
         generation
             .renderers()
-            .map(|(file, served)| (Asset::CanvasRenderer(file), served.bytes().to_vec())),
+            .map(|(file, served)| (Asset::AppRenderer(file), served.bytes().to_vec())),
     );
     Ok(Source {
         generation: generation.identity().clone(),
@@ -224,7 +224,7 @@ fn packaged_files(
         if !metadata.file_type().is_file() {
             return Err(InstallError::PathShape(path));
         }
-        if matches!(asset, Asset::CanvasRenderer(_)) {
+        if matches!(asset, Asset::AppRenderer(_)) {
             renderer_bytes = renderer_bytes
                 .checked_add(metadata.len())
                 .filter(|total| *total <= wire::manifest::renderer::MAX_BYTES)

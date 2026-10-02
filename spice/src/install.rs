@@ -74,22 +74,22 @@ pub use symbol_verification::{
 };
 pub use symbols::SymbolProvenance;
 
-const PLAN_VERSION: u16 = 16;
-const RECORD_VERSION: u16 = 16;
+const PLAN_VERSION: u16 = 17;
+const RECORD_VERSION: u16 = 17;
 const RETIREMENT_WITNESS_MISMATCH: &str =
     "migration rollback archive does not match its retirement witnesses";
 const MIGRATABLE_RECORD_VERSION: u16 = 7;
 const FORWARD_MIGRATABLE_RECORD_VERSION: u16 = 8;
 const INLINE_ROLLBACK_RECORD_VERSION: u16 = 9;
-const PREVIOUS_RECORD_VERSION: u16 = 15;
-/// Canvas generations a plan retains immediately before its current one.
+const PREVIOUS_RECORD_VERSION: u16 = 16;
+/// App generations a plan retains immediately before its current one.
 ///
 /// A page loaded from a generation keeps fetching that generation's lazily
 /// loaded renderers and styles until it notices the new pointer and reloads.
 /// Two predecessors let such a page survive back-to-back refreshes; anything
 /// older retires with the refresh that pushes it past this bound, so installed
 /// bytes and receipt size stay constant however often the appliance refreshes.
-const RETAINED_CANVAS_PREDECESSORS: usize = 2;
+const RETAINED_APP_PREDECESSORS: usize = 2;
 /// Environment marker exported only by the installed pre-commit launcher.
 pub const INSTALLED_PRE_COMMIT_ENVIRONMENT: &str = "SPICE_SHELL_HOOK_INSTALLED_APPLIANCE"; // env-policy: allow
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -99,7 +99,7 @@ enum ReceiptSupport {
     Retired(&'static str),
 }
 
-const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 16] = [
+const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 17] = [
     (1, ReceiptSupport::Retired("SURFACE-1kJQkpFs")),
     (2, ReceiptSupport::Retired("SURFACE-1kJRGpf2")),
     (3, ReceiptSupport::Retired("HOOKS-1kJQnmG8")),
@@ -114,6 +114,7 @@ const RECEIPT_SUPPORT: [(u16, ReceiptSupport); 16] = [
     (12, ReceiptSupport::Retired("RETIREM-1kSR91Zl")),
     (13, ReceiptSupport::Retired("INSTALL-1kSWFBN0")),
     (14, ReceiptSupport::Retired("SYMBOLS-dSPkcQ47R")),
+    (15, ReceiptSupport::Retired("BROWSER-dV0xw93ND")),
     (PREVIOUS_RECORD_VERSION, ReceiptSupport::Direct),
     (RECORD_VERSION, ReceiptSupport::Current),
 ];
@@ -157,7 +158,7 @@ pub const TEST_EXECUTABLE: &str = "SPICE_INSTALL_TEST_EXECUTABLE"; // env-policy
 /// Explicitly selects the worktree app stage for debug-only resident process tests.
 #[cfg(debug_assertions)]
 #[doc(hidden)]
-pub const TEST_CANVAS_STAGE_ARGUMENT: &str = "--spice-test-canvas-stage";
+pub const TEST_APP_STAGE_ARGUMENT: &str = "--spice-test-app-stage";
 
 /// Rewrites one complete debug fixture receipt into a directly upgradable schema.
 #[cfg(debug_assertions)]
@@ -179,7 +180,7 @@ pub struct InstallPlan {
     operations: Vec<Operation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     app: Option<Digest>,
-    /// Retained Canvas generations before `app`, oldest first.
+    /// Retained app generations before `app`, oldest first.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     app_predecessors: Vec<Digest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -211,13 +212,13 @@ impl InstallPlan {
         &self.operations
     }
 
-    /// Canvas generation published by an appliance-bearing plan.
+    /// App generation published by an appliance-bearing plan.
     #[must_use]
     pub const fn app_generation(&self) -> Option<&Digest> {
         self.app.as_ref()
     }
 
-    /// Legacy paths and out-of-bound Canvas generations this plan removes only
+    /// Legacy paths and out-of-bound app generations this plan removes only
     /// after all live assets publish.
     #[must_use]
     pub fn retirements(&self) -> &[Retirement] {
@@ -491,7 +492,7 @@ pub fn inspect(repository: &Repository) -> Result<Option<InstallReceipt>, Instal
 /// installed destination, the executable bytes, and the Git-common Canvas
 /// generation must all agree before an app source is returned. It never reads
 /// the managed worktree's development stage.
-pub fn installed_canvas_source(
+pub fn installed_app_source(
     repository: &Repository,
     executable: &Path,
 ) -> Result<canvas::AppSource, InstallError> {
@@ -984,7 +985,7 @@ fn planned_app_assets(
             .cmp(&right.generation)
             .then(left.asset.cmp(&right.asset))
     });
-    for asset in source.assets().chain([Asset::CanvasCurrent]) {
+    for asset in source.assets().chain([Asset::AppCurrent]) {
         let generated = source
             .image(asset)
             .expect("the complete app source carries every asset");
@@ -1237,17 +1238,17 @@ fn fixed_asset_bytes(asset: Asset, common_git: &Path) -> Result<Option<Vec<u8>>,
         Asset::HookWrapperSpice => steer::hook::STAGES[4].bytes().as_bytes().to_vec(),
         Asset::Skill => SKILL.as_bytes().to_vec(),
         Asset::Exclusions
-        | Asset::CanvasAppModule
-        | Asset::CanvasWasm
-        | Asset::CanvasHtml
-        | Asset::CanvasChrome
-        | Asset::CanvasComposer
-        | Asset::CanvasMosaic
-        | Asset::CanvasResponsive
-        | Asset::CanvasStyle
-        | Asset::CanvasWork
-        | Asset::CanvasRenderer(_)
-        | Asset::CanvasCurrent
+        | Asset::AppModule
+        | Asset::AppWasm
+        | Asset::AppHtml
+        | Asset::AppChrome
+        | Asset::AppComposer
+        | Asset::AppMosaic
+        | Asset::AppResponsive
+        | Asset::AppStyle
+        | Asset::AppWork
+        | Asset::AppRenderer(_)
+        | Asset::AppCurrent
         | Asset::Binary
         | Asset::SymbolsInfo
         | Asset::SymbolsDwarf => return Ok(None),

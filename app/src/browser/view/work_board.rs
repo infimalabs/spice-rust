@@ -157,7 +157,7 @@ fn render_history_archive(
                             type="date"
                         />
                     </label>
-                    <div class="work-history-filter-actions canvas-control-rail team-mode-rail">
+                    <div class="work-history-filter-actions app-control-rail team-mode-rail">
                         <button type="button" class="team-mode" onclick={controls.apply.clone()}>{"Apply"}</button>
                         <button type="button" class="team-mode" onclick={controls.clear.clone()}>{"Clear"}</button>
                     </div>
@@ -252,7 +252,7 @@ fn render_arrangement(state: &UseStateHandle<WorkArrangement>) -> Html {
         <div class="work-arrangement">
             <div class="work-arrangement-group" role="group" aria-label="Order cards">
                 <span aria-hidden="true">{"Order"}</span>
-                <span class="canvas-control-rail team-mode-rail">
+                <span class="app-control-rail team-mode-rail">
                 {for ORDERS.into_iter().map(|(order, label, title)| choice(
                     label,
                     Some(title),
@@ -263,7 +263,7 @@ fn render_arrangement(state: &UseStateHandle<WorkArrangement>) -> Html {
             </div>
             <div class="work-arrangement-group" role="group" aria-label="Cluster cards">
                 <span aria-hidden="true">{"Cluster"}</span>
-                <span class="canvas-control-rail team-mode-rail">
+                <span class="app-control-rail team-mode-rail">
                 {for CLUSTERINGS.into_iter().map(|(clustering, label)| choice(
                     label,
                     None,

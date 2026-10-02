@@ -29,8 +29,8 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     );
     let expected_version = format!(
         "{}: {}\r\n",
-        wire::hello::CANVAS_VERSION_HEADER,
-        wire::CanvasVersion::CURRENT
+        wire::hello::APP_PROTOCOL_VERSION_HEADER,
+        wire::AppProtocolVersion::CURRENT
     );
     assert!(
         response[..split]
@@ -40,7 +40,7 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
     );
     let expected_generation = format!(
         "{}: {FIXTURE_GENERATION}\r\n",
-        wire::hello::CANVAS_GENERATION_HEADER,
+        wire::hello::APP_GENERATION_HEADER,
     );
     assert!(
         response[..split]
@@ -48,13 +48,16 @@ async fn bootstrap_names_the_exact_operator_generation_and_is_not_cached() {
             .any(|window| window == expected_generation.as_bytes()),
         "bootstrap response omitted {expected_generation:?}"
     );
-    let discovery: wire::CanvasBootstrap =
+    let discovery: wire::AppBootstrap =
         wire::decode(&response[split..]).expect("bootstrap decodes");
     assert_eq!(discovery.endpoint, format!("http://{address}"));
     assert_eq!(discovery.capability, operator());
     assert_eq!(discovery.epoch, epoch());
     assert_eq!(discovery.version, app.version());
-    assert_eq!(discovery.version.canvas, wire::CanvasVersion::CURRENT);
+    assert_eq!(
+        discovery.version.app_protocol,
+        wire::AppProtocolVersion::CURRENT
+    );
     assert_eq!(discovery.version.app.as_str(), FIXTURE_GENERATION);
 
     task.abort();

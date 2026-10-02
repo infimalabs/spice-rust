@@ -165,10 +165,7 @@ fn cargo_selectors_are_explicit_and_keep_canonical_report_order() {
         std::cmp::Ordering::Less
     );
     assert_eq!(
-        proof_action_order(
-            "cargo:typecheck:fixture::lib:fixture",
-            "canvas-web-typecheck"
-        ),
+        proof_action_order("cargo:typecheck:fixture::lib:fixture", "app-web-typecheck"),
         std::cmp::Ordering::Less
     );
     assert_eq!(

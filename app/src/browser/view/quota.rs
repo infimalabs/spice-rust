@@ -1,8 +1,8 @@
 use super::*;
 use crate::browser::clock::{Age, Countdown};
 
-pub(super) fn render_dash(runtime: Option<&CanvasRuntime>) -> Html {
-    let Some(generation) = runtime.and_then(CanvasRuntime::quota) else {
+pub(super) fn render_dash(runtime: Option<&AppRuntime>) -> Html {
+    let Some(generation) = runtime.and_then(AppRuntime::quota) else {
         return section_unavailable();
     };
     let presentation = crate::quota::present(generation);

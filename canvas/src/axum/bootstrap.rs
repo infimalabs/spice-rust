@@ -29,7 +29,7 @@ pub(super) async fn bootstrap(
     // of a wildcard bind. It reached this surface somehow; that is the address.
     let mut version = state.version.clone();
     version.app = app_generation.identity().clone();
-    let discovery = wire::CanvasBootstrap {
+    let discovery = wire::AppBootstrap {
         endpoint: format!("http://{host}"),
         capability,
         epoch: state.epoch,
@@ -48,12 +48,12 @@ pub(super) async fn bootstrap(
         .headers_mut()
         .insert(CACHE_CONTROL, HeaderValue::from_static("no-store"));
     response.headers_mut().insert(
-        wire::hello::CANVAS_VERSION_HEADER,
-        HeaderValue::from_str(&discovery.version.canvas.to_string())
-            .expect("the numeric Canvas version is a valid header value"),
+        wire::hello::APP_PROTOCOL_VERSION_HEADER,
+        HeaderValue::from_str(&discovery.version.app_protocol.to_string())
+            .expect("the numeric app protocol version is a valid header value"),
     );
     response.headers_mut().insert(
-        wire::hello::CANVAS_GENERATION_HEADER,
+        wire::hello::APP_GENERATION_HEADER,
         HeaderValue::from_str(app_generation.identity().as_str())
             .expect("the canonical app generation is a valid header value"),
     );

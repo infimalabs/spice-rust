@@ -277,7 +277,7 @@ pub(in crate::browser) fn agent_message_source_id(message: &wire::AgentMessage) 
 /// snapshot lets existing quote cards acquire names and links as their source
 /// cards arrive, without treating an absent source as a permanent failure.
 pub(super) fn team_quote_sources(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     team: &crate::runtime::LaneRow,
 ) -> crate::composer_markdown::QuoteSources {
     let mut sources = crate::composer_markdown::QuoteSources::new();

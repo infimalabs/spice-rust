@@ -12,7 +12,7 @@ use wire::Digest;
 const RUST: [GateId; 7] = [
     GateId::Formatters,
     GateId::RustTypecheck,
-    GateId::CanvasWebTypecheck,
+    GateId::AppWebTypecheck,
     GateId::EnvPolicy,
     GateId::Complexity,
     GateId::MagicNumbers,
@@ -49,7 +49,7 @@ const SHELL: [GateId; 4] = [
     GateId::Complexity,
     GateId::MagicNumbers,
 ];
-const RUST_COMPILER_INPUT: [GateId; 2] = [GateId::RustTypecheck, GateId::CanvasWebTypecheck];
+const RUST_COMPILER_INPUT: [GateId; 2] = [GateId::RustTypecheck, GateId::AppWebTypecheck];
 
 /// Select the richer Spice-source battery from its explicit xtask override.
 ///
@@ -118,7 +118,7 @@ fn class_gates(path: &str, extension: &str) -> Result<Vec<GateId>, ChangeSelecti
         "" if path == "dist/VERSION" => Ok(RUST_COMPILER_INPUT.to_vec()),
         "" if known_extensionless_shell(path) => Ok(SHELL.to_vec()),
         "" if known_extensionless(path) => Ok(vec![GateId::RepoShape]),
-        _ if frontend_path(path) => Ok(vec![GateId::CanvasWebTypecheck]),
+        _ if frontend_path(path) => Ok(vec![GateId::AppWebTypecheck]),
         _ => Err(ChangeSelectionError::new(format!(
             "{path:?} has no compiled change-local policy class"
         ))),
@@ -170,7 +170,7 @@ fn configuration_gates(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> 
         gates.push(GateId::JavascriptUnused);
     }
     if frontend_path(path) || matches!(path, "package.json" | "package-lock.json") {
-        gates.push(GateId::CanvasWebTypecheck);
+        gates.push(GateId::AppWebTypecheck);
     }
     Ok(gates)
 }
@@ -178,7 +178,7 @@ fn configuration_gates(path: &str) -> Result<Vec<GateId>, ChangeSelectionError> 
 fn with_frontend(path: &str, base: &[GateId]) -> Vec<GateId> {
     let mut gates = base.to_vec();
     if frontend_path(path) {
-        gates.push(GateId::CanvasWebTypecheck);
+        gates.push(GateId::AppWebTypecheck);
     }
     gates
 }
@@ -302,6 +302,6 @@ mod tests {
     fn product_version_selects_both_rust_consumers() {
         let selected = gates_for_path("dist/VERSION").expect("product version input");
         assert!(selected.contains(&GateId::RustTypecheck));
-        assert!(selected.contains(&GateId::CanvasWebTypecheck));
+        assert!(selected.contains(&GateId::AppWebTypecheck));
     }
 }

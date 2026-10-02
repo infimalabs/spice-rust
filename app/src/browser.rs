@@ -28,17 +28,17 @@ use crate::browser_branding::{ConnectionState, CountState, use_browser_branding}
 use crate::client_action::ClientAction;
 use crate::compose::{self, Notice};
 use crate::composer_submissions::{Submission, SubmissionQueue, SubmissionStatus};
-use crate::runtime::{CanvasSurface, topology_mutation_requires_refresh};
+use crate::runtime::{AppSurface, topology_mutation_requires_refresh};
 use crate::speech_queue::{NarrationMessage, SpeechQueue, SpeechRequest};
-use crate::view::{CanvasRoute, RouteEvidence};
+use crate::view::{AppRoute, RouteEvidence};
 use crate::work::{WorkArrangement, WorkProjection, WorkScope};
 use crate::{
-    Axis, CanvasDestination, CanvasRuntime, Principal, Session, SteerPane, StreamDirective,
+    AppDestination, AppRuntime, Axis, Principal, Session, SteerPane, StreamDirective,
     TaskDetailState, TeamDestination, stale_reads,
 };
 
+mod app_menu;
 mod archive_status;
-mod canvas_menu;
 mod card_target;
 mod clipboard;
 mod clock;
@@ -74,7 +74,7 @@ use speech_runtime::{
     use_agent_speech_controls, use_page_hide_speech_stop, use_speech_failure_toast,
     use_team_speech_abandonment,
 };
-use view::{CanvasRender, render_canvas};
+use view::{AppRender, render_app};
 use watchband::ComposerAction;
 use watchband::{ComposerDrafts, TeamControlAction, TeamControls};
 
@@ -195,8 +195,8 @@ impl NoteComposers {
 struct SurfaceHandles {
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
-    identity: UseStateHandle<Option<CanvasIdentity>>,
-    canvas_update: UseStateHandle<Option<CanvasUpdate>>,
+    identity: UseStateHandle<Option<AppIdentity>>,
+    app_update: UseStateHandle<Option<AppUpdate>>,
     team_controls: UseReducerHandle<TeamControls>,
     composer_drafts: UseReducerHandle<ComposerDrafts>,
     submissions: SubmissionHandle,
@@ -206,14 +206,14 @@ struct SurfaceHandles {
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct CanvasUpdate {
-    version: wire::CanvasVersion,
+struct AppUpdate {
+    version: wire::AppProtocolVersion,
     generation: wire::Digest,
     loaded_generation: wire::Digest,
 }
 
 #[derive(Clone, PartialEq, Eq)]
-struct CanvasIdentity {
+struct AppIdentity {
     version: wire::Version,
     loaded_app: wire::Digest,
 }
@@ -273,7 +273,7 @@ impl Connection {
     }
 }
 
-type SurfaceData = CanvasSurface;
+type SurfaceData = AppSurface;
 
 #[derive(Deserialize)]
 struct ResponseIdentity {
@@ -318,13 +318,13 @@ fn use_team_drag(surface: &SurfaceData) -> watchband::TeamDragState {
     watchband::use_team_drag_state(context.0, context.1)
 }
 
-#[function_component(CanvasRouter)]
-fn canvas_router() -> Html {
+#[function_component(AppRouter)]
+fn app_router() -> Html {
     let (route, notice, navigate) = navigation::use_route();
     html! {
         <toast::ToastProvider>
             <RouteNotice {notice} />
-            <CanvasApp {route} {navigate} />
+            <App {route} {navigate} />
         </toast::ToastProvider>
     }
 }
@@ -346,25 +346,25 @@ fn route_notice(properties: &RouteNoticeProperties) -> Html {
 }
 
 #[derive(Properties, PartialEq)]
-struct CanvasAppProperties {
-    route: CanvasRoute,
+struct AppProperties {
+    route: AppRoute,
     navigate: Callback<navigation::Navigation>,
 }
 
-struct CanvasAppState {
+struct AppState {
     connection: UseStateHandle<Connection>,
     surface: UseStateHandle<SurfaceData>,
-    canvas_menu_open: UseStateHandle<bool>,
-    destination: CanvasDestination,
-    route: CanvasRoute,
+    app_menu_open: UseStateHandle<bool>,
+    destination: AppDestination,
+    route: AppRoute,
     route_navigate: Callback<navigation::Navigation>,
     card_target: Option<String>,
     card_target_status: UseStateHandle<Option<card_target::Status>>,
     navigate: Callback<navigation::Intent>,
     work_scope: WorkScope,
     work_arrangement: UseStateHandle<WorkArrangement>,
-    identity: UseStateHandle<Option<CanvasIdentity>>,
-    canvas_update: UseStateHandle<Option<CanvasUpdate>>,
+    identity: UseStateHandle<Option<AppIdentity>>,
+    app_update: UseStateHandle<Option<AppUpdate>>,
     team_controls: UseReducerHandle<TeamControls>,
     team_fleet: NodeRef,
     composer_drafts: UseReducerHandle<ComposerDrafts>,
@@ -383,9 +383,9 @@ struct CanvasAppState {
     unsafe_intent: bool,
 }
 
-impl CanvasAppState {
+impl AppState {
     fn render(self) -> Html {
-        let _trace = diagnostics::span("render.canvas", || diagnostics::Metadata {
+        let _trace = diagnostics::span("render.app", || diagnostics::Metadata {
             cards: self
                 .surface
                 .read()
@@ -407,18 +407,18 @@ impl CanvasAppState {
                 status.available && self.card_target.as_deref() == Some(status.target.as_str())
             })
             .map(|_| "Linked card focused.".to_owned());
-        let canvas = render_canvas(
-            CanvasRender {
+        let canvas = render_app(
+            AppRender {
                 connection: &self.connection,
                 surface: &self.surface,
                 destination: self.destination,
                 card_target_notice,
                 navigate: &self.navigate,
-                canvas_menu_open: &self.canvas_menu_open,
+                app_menu_open: &self.app_menu_open,
                 work_scope: &self.work_scope,
                 work_arrangement: &self.work_arrangement,
                 identity: &self.identity,
-                canvas_update: &self.canvas_update,
+                app_update: &self.app_update,
                 team_controls: &self.team_controls,
                 composer_drafts: &self.composer_drafts,
                 submissions: &self.submissions,
@@ -451,16 +451,16 @@ impl CanvasAppState {
 }
 
 #[hook]
-fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, SpeechRuntime) {
+fn use_app_state(properties: &AppProperties) -> (AppState, SpeechRuntime) {
     let route = properties.route.clone();
     let connection = use_state(|| Connection::Starting);
     let surface = use_state(SurfaceData::default);
-    let canvas_menu_open = use_state(|| false);
+    let app_menu_open = use_state(|| false);
     let card_target_status = use_state(|| None::<card_target::Status>);
     let local_task = use_local_task(&route);
     let work_arrangement = use_state(WorkArrangement::default);
-    let identity = use_state(|| None::<CanvasIdentity>);
-    let canvas_update = use_state(|| None::<CanvasUpdate>);
+    let identity = use_state(|| None::<AppIdentity>);
+    let app_update = use_state(|| None::<AppUpdate>);
     let team_controls = use_reducer(TeamControls::restore);
     let team_fleet = use_node_ref();
     let composer_drafts = use_reducer(ComposerDrafts::default);
@@ -496,7 +496,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     let direction_history = direction_history::use_controls(
         sender.clone(),
         surface.clone(),
-        route.canvas_destination() == CanvasDestination::Work,
+        route.app_destination() == AppDestination::Work,
         route.directions().flatten().cloned(),
         properties.navigate.clone(),
     );
@@ -507,7 +507,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
         watchband::work_shown_teams(
             &surface,
             &team_controls,
-            route.canvas_destination() == CanvasDestination::Chat,
+            route.app_destination() == AppDestination::Chat,
         ),
     );
     let work_map = use_state(view::WorkMapState::default);
@@ -526,11 +526,11 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
     let agents = use_agent_controls(sender.clone(), surface.clone(), agent_speech);
     let unsafe_intent = use_unsafe_intent(&composer_drafts, &submission_status);
     (
-        CanvasAppState {
+        AppState {
             connection,
             surface,
-            canvas_menu_open,
-            destination: route.canvas_destination(),
+            app_menu_open,
+            destination: route.app_destination(),
             card_target: route.card_target().map(str::to_owned),
             work_scope: route.work_scope().cloned().unwrap_or_default(),
             route,
@@ -539,7 +539,7 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
             navigate,
             work_arrangement,
             identity,
-            canvas_update,
+            app_update,
             team_controls,
             team_fleet,
             composer_drafts,
@@ -562,12 +562,12 @@ fn use_canvas_app_state(properties: &CanvasAppProperties) -> (CanvasAppState, Sp
 }
 
 #[hook]
-fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime) {
+fn use_app_effects(state: &AppState, speech_runtime: SpeechRuntime) {
     let remaining = state
         .surface
         .read()
         .as_ref()
-        .and_then(CanvasRuntime::board)
+        .and_then(AppRuntime::board)
         .map(|board| board.active_public_tasks().count());
     use_browser_branding(CountState::resolve(
         state.connection.branding_state(),
@@ -579,7 +579,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
             connection: state.connection.clone(),
             surface: state.surface.clone(),
             identity: state.identity.clone(),
-            canvas_update: state.canvas_update.clone(),
+            app_update: state.app_update.clone(),
             team_controls: state.team_controls.clone(),
             composer_drafts: state.composer_drafts.clone(),
             submissions: state.submissions.clone(),
@@ -597,7 +597,7 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
     use_team_speech_abandonment(&state.surface, speech_runtime.clone());
     use_page_hide_speech_stop(speech_runtime);
     use_speech_failure_toast(&state.speech_status);
-    let chat_visible = state.destination == CanvasDestination::Chat;
+    let chat_visible = state.destination == AppDestination::Chat;
     card_target::use_target(
         state.card_target.clone(),
         &state.surface,
@@ -614,10 +614,10 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
     card_target::use_global_direction_target(
         global_direction_card(&state.route, &state.surface),
         state.team_controls.clone(),
-        state.destination == CanvasDestination::Work,
+        state.destination == AppDestination::Work,
     );
     use_mosaic_root_scroll(chat_visible);
-    canvas_menu::use_dismissal(state.canvas_menu_open.clone());
+    app_menu::use_dismissal(state.app_menu_open.clone());
     message_task_inspector::use_surface_lifetime(&state.task_inspector, chat_visible);
     watchband::use_team_menu_escape(&state.team_controls, chat_visible);
     watchband::use_command_modifier_preview();
@@ -635,10 +635,10 @@ fn use_canvas_app_effects(state: &CanvasAppState, speech_runtime: SpeechRuntime)
     );
 }
 
-#[function_component(CanvasApp)]
-fn canvas_app(properties: &CanvasAppProperties) -> Html {
-    let (state, speech_runtime) = use_canvas_app_state(properties);
-    use_canvas_app_effects(&state, speech_runtime);
+#[function_component(App)]
+fn app(properties: &AppProperties) -> Html {
+    let (state, speech_runtime) = use_app_state(properties);
+    use_app_effects(&state, speech_runtime);
     state.render()
 }
 
@@ -647,13 +647,13 @@ fn work_detail_mounted(surface: &SurfaceData) -> bool {
     surface
         .read()
         .as_ref()
-        .and_then(CanvasRuntime::board)
+        .and_then(AppRuntime::board)
         .is_some()
 }
 
-fn project_work(runtime: Option<&CanvasRuntime>) -> Option<WorkProjection<'_>> {
+fn project_work(runtime: Option<&AppRuntime>) -> Option<WorkProjection<'_>> {
     runtime
-        .and_then(CanvasRuntime::board)
+        .and_then(AppRuntime::board)
         .map(WorkProjection::from_board)
 }
 
@@ -661,7 +661,7 @@ fn teamed_lane_count(surface: &SurfaceData) -> usize {
     surface
         .read()
         .as_ref()
-        .and_then(CanvasRuntime::lanes)
+        .and_then(AppRuntime::lanes)
         .map_or(0, |lanes| {
             lanes.lanes.iter().filter(|team| team.teamed()).count()
         })
@@ -669,7 +669,7 @@ fn teamed_lane_count(surface: &SurfaceData) -> usize {
 
 /// The element a Directions route brings into view: its direction's card
 /// once the anchored page holds it, otherwise the Directions section.
-fn global_direction_card(route: &CanvasRoute, surface: &SurfaceData) -> Option<String> {
+fn global_direction_card(route: &AppRoute, surface: &SurfaceData) -> Option<String> {
     match route.directions()? {
         Some(crate::view::DirectionsFocus::Direction(target)) => {
             let surface = surface.read();
@@ -684,7 +684,7 @@ fn global_direction_card(route: &CanvasRoute, surface: &SurfaceData) -> Option<S
 
 /// A task opened over Dash or Chat: browser-local, so any route change ends it.
 #[hook]
-fn use_local_task(route: &CanvasRoute) -> UseStateHandle<Option<TaskStamp>> {
+fn use_local_task(route: &AppRoute) -> UseStateHandle<Option<TaskStamp>> {
     let local_task = use_state(|| None::<TaskStamp>);
     {
         let local_task = local_task.clone();
@@ -702,7 +702,7 @@ fn use_local_task(route: &CanvasRoute) -> UseStateHandle<Option<TaskStamp>> {
 #[hook]
 fn use_route_settlement(
     work: Option<&WorkProjection<'_>>,
-    route: &CanvasRoute,
+    route: &AppRoute,
     surface: &SurfaceData,
     navigate: Callback<navigation::Navigation>,
 ) {
@@ -961,7 +961,7 @@ fn seat_submit(
 fn apply_team_configuration(
     session: &Session,
     team_controls: &UseReducerHandle<TeamControls>,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     team: CanonicalUuid,
     life: Option<TeamLife>,
     bytes: &[u8],
@@ -1044,10 +1044,8 @@ fn state_from_select(state: UseStateHandle<String>) -> Callback<Event> {
 
 #[wasm_bindgen(start)]
 pub fn start() {
-    if connection::capture_opening_auth_token().expect("capture Canvas opening auth token") {
-        navigation::replace_location(&crate::view::CanvasRoute::destination(
-            CanvasDestination::Chat,
-        ));
+    if connection::capture_opening_auth_token().expect("capture app opening auth token") {
+        navigation::replace_location(&crate::view::AppRoute::destination(AppDestination::Chat));
     }
     diagnostics::install();
     let root = web_sys::window()
@@ -1055,8 +1053,8 @@ pub fn start() {
         .document()
         .expect("browser document")
         .get_element_by_id("app")
-        .expect("canvas app root");
+        .expect("app root");
     root.set_attribute("data-app-source", APP_SOURCE_IDENTITY)
-        .expect("stamp canvas app source identity");
-    yew::Renderer::<CanvasRouter>::with_root(root).render();
+        .expect("stamp app source identity");
+    yew::Renderer::<AppRouter>::with_root(root).render();
 }

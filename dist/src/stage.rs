@@ -73,7 +73,7 @@ impl AppFile {
     }
 }
 
-/// Complete immutable Canvas generation produced before the native build.
+/// Complete immutable app generation produced before the native build.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AppBundle {
     generation: Digest,

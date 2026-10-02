@@ -6,7 +6,7 @@ use wasm_bindgen::{JsCast as _, JsValue};
 use wire::CanonicalUuid;
 use yew::prelude::*;
 
-use crate::CanvasRuntime;
+use crate::AppRuntime;
 
 use super::SurfaceData;
 use super::watchband::{TeamControlAction, TeamControls, TeamMode};
@@ -420,7 +420,7 @@ struct Hold {
 /// The latest visible card before one task-creation boundary.
 fn creator_message_target(
     creator: &crate::view::CreatorContextTarget,
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
 ) -> Option<String> {
     runtime
         .messages()
@@ -464,11 +464,11 @@ fn target_resolution(target: Option<&str>, surface: &SurfaceData) -> TargetResol
             runtime.and_then(|runtime| runtime.message_history_target(creator.lane))
         });
     TargetResolution {
-        ready: runtime.and_then(CanvasRuntime::lanes).is_some(),
+        ready: runtime.and_then(AppRuntime::lanes).is_some(),
         routed,
         history,
         creator: creator.is_some(),
-        _revision: runtime.map_or(0, CanvasRuntime::message_history_revision),
+        _revision: runtime.map_or(0, AppRuntime::message_history_revision),
         _completion: creator.as_ref().map_or(0, |creator| {
             runtime.map_or(0, |runtime| {
                 runtime.message_history_completion(creator.lane)
@@ -481,7 +481,7 @@ fn target_resolution(target: Option<&str>, surface: &SurfaceData) -> TargetResol
 /// snapshot and a transcript generation are admitted. Chat renders only
 /// teamed lanes, so a card elsewhere is not retained. A creator-context
 /// target stays unsettled while its lane can still page older history.
-fn retained(target: &str, runtime: &CanvasRuntime) -> Option<bool> {
+fn retained(target: &str, runtime: &AppRuntime) -> Option<bool> {
     let lanes = runtime.lanes()?;
     runtime.message_generation()?;
     if let Some(creator) = crate::view::CreatorContextTarget::parse(target) {

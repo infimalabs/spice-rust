@@ -29,13 +29,13 @@ const TICKER_BUDGET: usize = 160;
 /// The bar of view pills, each wearing what its axis currently counts.
 pub(super) struct CommandBarRender<'a> {
     pub(super) connection: &'a UseStateHandle<Connection>,
-    pub(super) destination: CanvasDestination,
+    pub(super) destination: AppDestination,
     pub(super) navigate: &'a Callback<navigation::Intent>,
     pub(super) menu_open: &'a UseStateHandle<bool>,
     pub(super) work_scope: &'a WorkScope,
     pub(super) work: Option<&'a WorkProjection<'a>>,
-    pub(super) identity: &'a UseStateHandle<Option<CanvasIdentity>>,
-    pub(super) canvas_update: &'a UseStateHandle<Option<CanvasUpdate>>,
+    pub(super) identity: &'a UseStateHandle<Option<AppIdentity>>,
+    pub(super) app_update: &'a UseStateHandle<Option<AppUpdate>>,
     pub(super) surface: &'a SurfaceData,
     pub(super) cursor: &'a str,
     pub(super) sender: &'a SenderHandle,
@@ -45,7 +45,7 @@ pub(super) struct CommandBarRender<'a> {
 pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    let status = crate::view::canvas_notice(
+    let status = crate::view::app_notice(
         render.connection.stage(),
         runtime.is_some(),
         runtime.is_some_and(|runtime| runtime.lanes().is_some()),
@@ -58,7 +58,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
         .map(|counts| {
             let navigate = render.navigate.clone();
             let selected =
-                render.destination == CanvasDestination::Work && render.work_scope.stem().is_none();
+                render.destination == AppDestination::Work && render.work_scope.stem().is_none();
             let ready = counts.ready();
             let active = counts.in_flight();
             let unavailable = counts.unavailable();
@@ -99,7 +99,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
     html! {
         <header class="commandbar commandbar--mosaic">
             <div
-                class="canvas-disclosure"
+                class="app-disclosure"
                 data-transient-status={status.is_some().to_string()}
                 data-expanded={(**render.menu_open).to_string()}
             >
@@ -109,7 +109,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                     {for task_pills.into_iter().map(|pill| {
                         let navigate = render.navigate.clone();
                         let identity = pill.identity.clone();
-                        let selected = render.destination == CanvasDestination::Work
+                        let selected = render.destination == AppDestination::Work
                             && render.work_scope.stem() == Some(&pill.identity);
                         let key = identity.to_string();
                         let title = pill.title();
@@ -147,7 +147,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 </nav>
                 if let Some(status) = status {
                     <span
-                        class="canvas-global-status"
+                        class="app-global-status"
                         role="status"
                         aria-live="polite"
                         data-connection={render.connection.indicator_state()}
@@ -155,7 +155,7 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
                 } else {
                     <span class="visually-hidden" role="status">{connection_label.clone()}</span>
                 }
-                {render_canvas_menu(&render, runtime, &connection_label)}
+                {render_app_menu(&render, runtime, &connection_label)}
             </div>
         </header>
     }
@@ -165,11 +165,11 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
 /// aggregate count beside it opens global Work. It keeps its place and size
 /// while identity loads, so the pills after it never shift, and it looks the
 /// same on every route: being on Dash does not mark the face.
-fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
+fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&AppRuntime>) -> Html {
     let operator = runtime
-        .and_then(CanvasRuntime::settings)
+        .and_then(AppRuntime::settings)
         .map(|settings| &settings.operator);
-    let on_dash = render.destination == CanvasDestination::Dash;
+    let on_dash = render.destination == AppDestination::Dash;
     let name = operator
         .and_then(|operator| operator.name.as_deref())
         .unwrap_or("Operator");
@@ -177,7 +177,7 @@ fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&CanvasRu
     let navigate = render.navigate.clone();
     html! {
         <button
-            class="canvas-operator-link"
+            class="app-operator-link"
             type="button"
             title={label.clone()}
             aria-label={label}
@@ -200,17 +200,17 @@ fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&CanvasRu
 ///
 /// The open menu frame lies over the team surface beneath it, so this rail
 /// wears the team toolbar's own rail classes and lands on the same band.
-fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
+fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&AppRuntime>) -> Html {
     html! {
-        <nav class="canvas-navigation canvas-control-rail team-mode-rail" aria-label="Views">
-            {for CanvasDestination::ALL.map(|destination| {
+        <nav class="app-navigation app-control-rail team-mode-rail" aria-label="Views">
+            {for AppDestination::ALL.map(|destination| {
                 let navigate = render.navigate.clone();
                 let menu_open = render.menu_open.clone();
                 let selected = destination == render.destination;
                 let intent = match destination {
-                    CanvasDestination::Dash => navigation::Intent::Dash,
-                    CanvasDestination::Work => navigation::Intent::Work(WorkScope::AllOpen),
-                    CanvasDestination::Chat => navigation::Intent::Chat,
+                    AppDestination::Dash => navigation::Intent::Dash,
+                    AppDestination::Work => navigation::Intent::Work(WorkScope::AllOpen),
+                    AppDestination::Chat => navigation::Intent::Chat,
                 };
                 let badge = navigation_badge(destination, runtime, render.submissions);
                 html! {
@@ -221,7 +221,7 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
                         title={destination.description()}
                         onclick={Callback::from(move |_| {
                             navigate.emit(intent.clone());
-                            canvas_menu::close(&menu_open);
+                            app_menu::close(&menu_open);
                         })}
                     >
                         <span class="team-mode-label">{destination.label()}</span>
@@ -236,8 +236,8 @@ fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRunti
 }
 
 fn navigation_badge(
-    destination: CanvasDestination,
-    runtime: Option<&CanvasRuntime>,
+    destination: AppDestination,
+    runtime: Option<&AppRuntime>,
     submissions: &SubmissionStatus,
 ) -> Option<String> {
     destination.axis().map_or_else(
@@ -246,16 +246,16 @@ fn navigation_badge(
     )
 }
 
-fn render_canvas_menu(
+fn render_app_menu(
     render: &CommandBarRender<'_>,
-    runtime: Option<&CanvasRuntime>,
+    runtime: Option<&AppRuntime>,
     connection_label: &str,
 ) -> Html {
     let fast_mode = runtime
-        .and_then(CanvasRuntime::settings)
+        .and_then(AppRuntime::settings)
         .is_some_and(|settings| settings.fast_mode);
     let menu_open = render.menu_open.clone();
-    let update = (**render.canvas_update).as_ref();
+    let update = (**render.app_update).as_ref();
     let trigger_label = match (update, fast_mode) {
         (Some(_), true) => "Open spice menu - update available; fast mode on",
         (Some(_), false) => "Open spice menu - update available",
@@ -279,7 +279,7 @@ fn render_canvas_menu(
         menu_open.set(!*menu_open);
     });
     html! {
-        <details class="canvas-menu" open={**render.menu_open}>
+        <details class="app-menu" open={**render.menu_open}>
             <summary
                 data-accent={edge_accent.map(|accent| accent.to_string())}
                 data-connection={render.connection.indicator_state()}
@@ -290,14 +290,14 @@ fn render_canvas_menu(
                 title={trigger_label}
                 onclick={toggle}
             >
-                <span class="canvas-menu-well" aria-hidden="true">
+                <span class="app-menu-well" aria-hidden="true">
                     {quota.as_ref().map(QuotaLevel::render)}
                 </span>
-                <span class="canvas-menu-pepper" aria-hidden="true">{"🌶️"}</span>
+                <span class="app-menu-pepper" aria-hidden="true">{"🌶️"}</span>
             </summary>
-            <div class="canvas-menu-frame">
+            <div class="app-menu-frame">
                 {render_navigation(render, runtime)}
-                <div class="canvas-menu-panel">
+                <div class="app-menu-panel">
                     {super::team_menu::render(
                         render.destination,
                         runtime,
@@ -337,7 +337,7 @@ impl QuotaLevel<'_> {
                 surface = (surface - depth).max(0.0);
                 html! {
                     <rect
-                        class="canvas-menu-quota-account"
+                        class="app-menu-quota-account"
                         data-accent={(layer.accent % watchband::ACCENTS).to_string()}
                         x="0"
                         y={format!("{surface:.3}")}
@@ -348,7 +348,7 @@ impl QuotaLevel<'_> {
             })
             .collect::<Html>();
         html! {
-            <svg class="canvas-menu-quota" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
+            <svg class="app-menu-quota" viewBox="0 0 100 100" preserveAspectRatio="none" focusable="false">
                 {layers}
             </svg>
         }
@@ -357,8 +357,8 @@ impl QuotaLevel<'_> {
 
 /// Only a failed refresh marks the level stale; an in-flight refresh keeps
 /// the retained level steady instead of flashing on every sample.
-fn quota_level(runtime: Option<&CanvasRuntime>) -> Option<QuotaLevel<'_>> {
-    let generation = runtime.and_then(CanvasRuntime::quota)?;
+fn quota_level(runtime: Option<&AppRuntime>) -> Option<QuotaLevel<'_>> {
+    let generation = runtime.and_then(AppRuntime::quota)?;
     let stack = crate::quota::weekly_quota_stack(generation.last_good.as_deref()?)?;
     let stale = matches!(
         generation.latest_attempt,
@@ -389,9 +389,9 @@ fn task_pills(work: Option<&WorkProjection<'_>>) -> Vec<TaskPill> {
 }
 
 /// Directives waiting across every lane, which is what the feed is for.
-fn waiting_directives(runtime: Option<&CanvasRuntime>, submissions: &SubmissionStatus) -> usize {
+fn waiting_directives(runtime: Option<&AppRuntime>, submissions: &SubmissionStatus) -> usize {
     let waiting = runtime
-        .and_then(CanvasRuntime::inbox)
+        .and_then(AppRuntime::inbox)
         .map(|inbox| inbox.lanes.as_slice())
         .unwrap_or(&[]);
     submissions.total_pending(waiting.iter().map(|row| (row.lane, row.pending.as_slice())))
@@ -401,20 +401,20 @@ fn waiting_directives(runtime: Option<&CanvasRuntime>, submissions: &SubmissionS
 ///
 /// Each count is the size of what that axis's own panes render, so a badge
 /// never advertises more than the pill leads to.
-pub(super) fn axis_count(axis: Axis, runtime: Option<&CanvasRuntime>) -> usize {
+pub(super) fn axis_count(axis: Axis, runtime: Option<&AppRuntime>) -> usize {
     match axis {
         Axis::Flow => runtime
-            .and_then(CanvasRuntime::board)
+            .and_then(AppRuntime::board)
             .map_or(0, |board| board.active_public_tasks().count()),
         Axis::Topology => runtime
-            .and_then(CanvasRuntime::lanes)
+            .and_then(AppRuntime::lanes)
             .map_or(0, |lanes| lanes.lanes.len()),
     }
 }
 
 /// Newest activity from any member of one team.
 pub(in crate::browser) fn render_team_ticker(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     team: &crate::runtime::LaneRow,
     standings: &[watchband::Standing],
 ) -> Html {

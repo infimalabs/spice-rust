@@ -25,7 +25,7 @@ fn staged_renames_retain_both_owners_independent_of_git_rename_configuration() {
         GateId::RepoDocs,
         GateId::Taste,
         GateId::Formatters,
-        GateId::CanvasWebTypecheck,
+        GateId::AppWebTypecheck,
         GateId::JavascriptUnused,
     ] {
         assert!(selection.gate_ids().contains(&gate_id));

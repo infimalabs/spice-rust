@@ -617,7 +617,7 @@ fn payload(target: ReleaseTarget) -> TargetPayload {
     };
     let app = Digest::compute(Domain::DistArtifact, b"app generation");
     let native = Digest::compute(Domain::DistArtifact, b"native");
-    let mut inventory = wire::manifest::CANVAS_APP_FILES
+    let mut inventory = wire::manifest::APP_FILES
         .iter()
         .map(|file| InventoryEntry {
             path: format!("app/{file}"),

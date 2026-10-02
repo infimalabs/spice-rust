@@ -35,7 +35,7 @@ pub enum PredecessorFinding {
         suggestion: String,
     },
     /// Opaque predecessor web typecheck output retained across the executor refusal.
-    CanvasWebOutput { bytes: Vec<u8> },
+    AppWebOutput { bytes: Vec<u8> },
     /// Complete predecessor JavaScript declaration evidence.
     JavascriptUnused {
         path: String,
@@ -70,7 +70,7 @@ impl PredecessorFinding {
             Self::FormattingOutput { .. } => GateId::Formatters,
             Self::LocalPath { .. } => GateId::LocalPaths,
             Self::Taste { .. } => GateId::Taste,
-            Self::CanvasWebOutput { .. } => GateId::CanvasWebTypecheck,
+            Self::AppWebOutput { .. } => GateId::AppWebTypecheck,
             Self::JavascriptUnused { .. } => GateId::JavascriptUnused,
             Self::PythonTypeOutput { .. } => GateId::PythonTypecheck,
             Self::EnvironmentAccess { .. } => GateId::EnvPolicy,
@@ -85,7 +85,7 @@ impl PredecessorFinding {
     fn has_valid_shape(&self) -> bool {
         match self {
             Self::FormattingOutput { bytes }
-            | Self::CanvasWebOutput { bytes }
+            | Self::AppWebOutput { bytes }
             | Self::PythonTypeOutput { bytes } => !bytes.is_empty(),
             _ => {
                 let mut finding = self.to_current();
@@ -364,7 +364,7 @@ fn predecessor_gate(name: &str) -> Option<GateId> {
         "formatters" => Some(GateId::Formatters),
         "local-paths" => Some(GateId::LocalPaths),
         "taste" => Some(GateId::Taste),
-        "serve-web-typecheck" => Some(GateId::CanvasWebTypecheck),
+        "serve-web-typecheck" => Some(GateId::AppWebTypecheck),
         "javascript-unused" => Some(GateId::JavascriptUnused),
         "python-typecheck" => Some(GateId::PythonTypecheck),
         "env-policy" => Some(GateId::EnvPolicy),
@@ -386,10 +386,10 @@ fn predecessor_refusal(
                 "under the current declaration"
             ),
         ),
-        GateId::CanvasWebTypecheck => (
+        GateId::AppWebTypecheck => (
             "serve-web-typecheck",
             "0.31.0 checked removed serve JavaScript with an unpinned npm TypeScript package",
-            "rerun canvas-web-typecheck against app/canvas with cargo 1.97.1 and trunk 0.21.14",
+            "rerun app-web-typecheck against app/canvas with cargo 1.97.1 and trunk 0.21.14",
         ),
         GateId::PythonTypecheck => (
             "python-typecheck",

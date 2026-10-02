@@ -3,7 +3,7 @@ use wire::{CanonicalUuid, Disposition, Outcome, Response, Seq};
 
 use crate::socket::Admitted;
 
-use super::CanvasRuntime;
+use super::AppRuntime;
 
 /// Number of fanout groups in one bounded Work Directions page.
 pub const DIRECTION_HISTORY_PAGE_SIZE: u16 = 20;
@@ -204,7 +204,7 @@ pub fn direction_history_authored_cutoff(value: &str) -> Result<Option<wire::Ins
         .map_err(|_| "Choose a valid authored date.".to_owned())
 }
 
-impl CanvasRuntime {
+impl AppRuntime {
     #[must_use]
     pub const fn direction_history(&self) -> &DirectionHistoryState {
         &self.direction_history

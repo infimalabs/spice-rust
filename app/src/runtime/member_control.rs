@@ -11,7 +11,7 @@ use std::collections::BTreeMap;
 
 use wire::CanonicalUuid;
 
-use super::CanvasRuntime;
+use super::AppRuntime;
 
 /// One lifecycle, succession, or launch-model change for a seated member.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -123,7 +123,7 @@ pub(super) struct MemberControls {
 const UNANSWERED: &str =
     "No answer arrived before the connection dropped; the seat shows whether it landed";
 
-impl CanvasRuntime {
+impl AppRuntime {
     /// In-flight and settlement state for one member, if it ever issued a command.
     #[must_use]
     pub fn member_control(&self, lane: CanonicalUuid) -> Option<&MemberControlState> {

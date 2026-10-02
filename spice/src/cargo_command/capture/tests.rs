@@ -245,7 +245,7 @@ fn product_output_is_delivered_and_diagnostic_output_is_captured() {
         (&["test", "--locked", "-p", "spice"], Stdout::Capture),
         (&["check", "--locked"], Stdout::Capture),
         (&["+nightly", "clippy"], Stdout::Capture),
-        (&["canvas-wasm-typecheck"], Stdout::Capture),
+        (&["app-wasm-typecheck"], Stdout::Capture),
         (&["test", "--", "--nocapture"], Stdout::Capture),
         (
             &["run", "--quiet", "-p", "spice", "--", "board"],

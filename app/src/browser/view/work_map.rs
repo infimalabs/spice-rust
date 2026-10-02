@@ -218,7 +218,7 @@ pub(super) fn render_tabs(state: &UseStateHandle<WorkMapState>, selected: &TaskS
     let details = set_mode_callback(state.clone(), WorkDetailMode::Details);
     let map = set_mode_callback(state.clone(), WorkDetailMode::Map);
     html! {
-        <div class="work-detail-tabs canvas-control-rail" role="tablist" aria-label="Task view">
+        <div class="work-detail-tabs app-control-rail" role="tablist" aria-label="Task view">
             <button
                 id="work-detail-tab"
                 type="button"
@@ -276,7 +276,7 @@ pub(super) fn render(render: WorkMapRender<'_, '_>) -> Html {
                         <h3>{"Relationship map unavailable"}</h3>
                         <p><code>{reason}</code></p>
                         if let Some(detail) = detail { <p>{detail}</p> }
-                        <button type="button" class="canvas-compact-control" onclick={render.retry.clone()}>{"Retry lens"}</button>
+                        <button type="button" class="app-compact-control" onclick={render.retry.clone()}>{"Retry lens"}</button>
                     </div>
                 </div>
             };
@@ -376,14 +376,14 @@ fn render_controls(state: &UseStateHandle<WorkMapState>, selected: &TaskStamp) -
     html! {
         <>
             <div class="work-map-primary-controls">
-                <section class="work-map-lenses canvas-control-rail" aria-label="Relationship lens">
+                <section class="work-map-lenses app-control-rail" aria-label="Relationship lens">
                     {lens_button(state, WorkMapLens::Dependency)}
                     {lens_button(state, WorkMapLens::Origin)}
                     {lens_button(state, WorkMapLens::Review)}
                     {lens_button(state, WorkMapLens::Lifecycle)}
                 </section>
                 if state.lens == WorkMapLens::Dependency {
-                    <div class="work-map-control-group work-map-direction canvas-control-rail" aria-label="Dependency direction">
+                    <div class="work-map-control-group work-map-direction app-control-rail" aria-label="Dependency direction">
                         {direction_button(state, WorkRelationshipDirection::Prerequisites, "Prerequisites")}
                         {direction_button(state, WorkRelationshipDirection::Both, "Both")}
                         {direction_button(state, WorkRelationshipDirection::Dependents, "Dependents")}
@@ -391,13 +391,13 @@ fn render_controls(state: &UseStateHandle<WorkMapState>, selected: &TaskStamp) -
                 }
             </div>
             <section class="work-map-controls" aria-label="Map controls">
-                <div class="work-map-control-group canvas-control-rail work-map-depth" aria-label="Relationship depth">
+                <div class="work-map-control-group app-control-rail work-map-depth" aria-label="Relationship depth">
                     <button type="button" aria-label="Decrease map depth" disabled={state.depth == 0} onclick={depth_callback(state.clone(), false)}>{"−"}</button>
                     <span>{format!("Depth {}", state.depth)}</span>
                     <button type="button" aria-label="Increase map depth" disabled={state.depth >= TASK_RELATION_DEPTH_LIMIT} onclick={depth_callback(state.clone(), true)}>{"+"}</button>
                 </div>
                 {render_viewport_controls(state)}
-                <div class="work-map-control-group canvas-control-rail work-map-actions">
+                <div class="work-map-control-group app-control-rail work-map-actions">
                     <button type="button" disabled={state.pinned.is_empty()} onclick={center}>
                         {format!("Center on task {selected}")}
                     </button>
@@ -461,12 +461,12 @@ enum ViewportAction {
 fn render_viewport_controls(state: &UseStateHandle<WorkMapState>) -> Html {
     html! {
         <>
-            <div class="work-map-control-group canvas-control-rail work-map-zoom" aria-label="Map zoom">
+            <div class="work-map-control-group app-control-rail work-map-zoom" aria-label="Map zoom">
                 <button type="button" aria-label="Zoom map out" disabled={state.zoom <= ZOOM_MIN} onclick={viewport_callback(state.clone(), ViewportAction::Zoom(false))}>{"−"}</button>
                 <span>{format!("{}%", state.zoom)}</span>
                 <button type="button" aria-label="Zoom map in" disabled={state.zoom >= ZOOM_MAX} onclick={viewport_callback(state.clone(), ViewportAction::Zoom(true))}>{"+"}</button>
             </div>
-            <div class="work-map-control-group canvas-control-rail work-map-pan" aria-label="Map pan">
+            <div class="work-map-control-group app-control-rail work-map-pan" aria-label="Map pan">
                 <button type="button" aria-label="Pan map left" onclick={viewport_callback(state.clone(), ViewportAction::Pan(-PAN_STEP, 0))}>{"←"}</button>
                 <button type="button" aria-label="Pan map up" onclick={viewport_callback(state.clone(), ViewportAction::Pan(0, -PAN_STEP))}>{"↑"}</button>
                 <button type="button" aria-label="Pan map down" onclick={viewport_callback(state.clone(), ViewportAction::Pan(0, PAN_STEP))}>{"↓"}</button>
@@ -645,7 +645,7 @@ fn render_truncation(
                     <li>{format!("{} additional frontier edges exceed the metadata bound", truncation.omitted)}</li>
                 }
             </ul>
-            <button type="button" class="canvas-compact-control" disabled={cannot_expand} onclick={expand}>{"Expand typed read"}</button>
+            <button type="button" class="app-compact-control" disabled={cannot_expand} onclick={expand}>{"Expand typed read"}</button>
         </section>
     }
 }

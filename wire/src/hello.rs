@@ -8,17 +8,17 @@ use crate::reply::{Fault, FaultClass, Refusal, RefusalDiagnostic};
 
 /// HTTP response header carrying the browser/resident protocol generation.
 ///
-/// The header is admitted before [`CanvasBootstrap`] is decoded, so a document
+/// The header is admitted before [`AppBootstrap`] is decoded, so a document
 /// from another strict body generation can offer an explicit reload without
 /// attempting to decode that body. The admitted body repeats the same clock in
 /// its structured [`crate::Version`] identity.
-pub const CANVAS_VERSION_HEADER: &str = "x-spice-canvas-version";
+pub const APP_PROTOCOL_VERSION_HEADER: &str = "x-spice-app-protocol-version";
 /// HTTP response header carrying the immutable browser-app generation identity.
-pub const CANVAS_GENERATION_HEADER: &str = "x-spice-canvas-generation";
+pub const APP_GENERATION_HEADER: &str = "x-spice-app-generation";
 
 /// The browser/resident protocol version, independent of durable journal wire.
 ///
-/// A Canvas page can remain alive while an installed resident is replaced. Its
+/// An app page can remain alive while an installed resident is replaced. Its
 /// request and reply DTOs therefore need a pre-socket clock whose lifetime is
 /// the browser application, rather than borrowing [`WireVersion`] from durable
 /// facts that must remain readable across upgrades.
@@ -27,32 +27,32 @@ pub const CANVAS_GENERATION_HEADER: &str = "x-spice-canvas-generation";
 /// a socket opens or a strict DTO is decoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct CanvasVersion(pub u32);
+pub struct AppProtocolVersion(pub u32);
 
-impl CanvasVersion {
-    /// The one Canvas protocol this build speaks.
+impl AppProtocolVersion {
+    /// The one app protocol this build speaks.
     ///
     /// Version 10 carries the operator's resolved identity in the bootstrap.
     pub const CURRENT: Self = Self(10);
 
-    /// True when this is the Canvas protocol this build speaks.
+    /// True when this is the app protocol this build speaks.
     #[must_use]
     pub const fn is_current(self) -> bool {
         self.0 == Self::CURRENT.0
     }
 }
 
-impl std::fmt::Display for CanvasVersion {
+impl std::fmt::Display for AppProtocolVersion {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "{}", self.0)
     }
 }
 
-/// A Canvas protocol header that is not its one unsigned decimal spelling.
+/// An app protocol header that is not its one unsigned decimal spelling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CanvasVersionParseError;
+pub struct AppProtocolVersionParseError;
 
-impl std::fmt::Display for CanvasVersionParseError {
+impl std::fmt::Display for AppProtocolVersionParseError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str(
             "app protocol version must be a canonical unsigned decimal integer without padding",
@@ -60,21 +60,23 @@ impl std::fmt::Display for CanvasVersionParseError {
     }
 }
 
-impl std::error::Error for CanvasVersionParseError {}
+impl std::error::Error for AppProtocolVersionParseError {}
 
-impl std::str::FromStr for CanvasVersion {
-    type Err = CanvasVersionParseError;
+impl std::str::FromStr for AppProtocolVersion {
+    type Err = AppProtocolVersionParseError;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let parsed = value.parse::<u32>().map_err(|_| CanvasVersionParseError)?;
+        let parsed = value
+            .parse::<u32>()
+            .map_err(|_| AppProtocolVersionParseError)?;
         if parsed.to_string() != value {
-            return Err(CanvasVersionParseError);
+            return Err(AppProtocolVersionParseError);
         }
         Ok(Self(parsed))
     }
 }
 
-/// Authenticated same-origin bootstrap for one embedded operator canvas.
+/// Authenticated same-origin bootstrap for one embedded operator app.
 ///
 /// The browser obtains this current generation document from the origin that
 /// served its exact embedded assets, then presents the capability only inside
@@ -82,7 +84,7 @@ impl std::str::FromStr for CanvasVersion {
 /// fallback endpoint.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CanvasBootstrap {
+pub struct AppBootstrap {
     /// Current HTTP origin the asking browser used and no other endpoint.
     pub endpoint: String,
     /// Operator capability for the immediately following opening.
@@ -215,7 +217,7 @@ pub enum SpeechPlayback {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SpeechRequest {
-    /// Rendered canvas text; executable selection remains server-owned.
+    /// Rendered card text; executable selection remains server-owned.
     pub text: String,
     /// Canonical originating worktree whose admitted renderer configuration applies.
     pub worktree: String,

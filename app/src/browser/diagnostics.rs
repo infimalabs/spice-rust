@@ -1,4 +1,4 @@
-//! Opt-in bounded User Timing diagnostics for the Canvas browser.
+//! Opt-in bounded User Timing diagnostics for the browser app.
 
 use std::cell::RefCell;
 use std::collections::VecDeque;
@@ -7,9 +7,9 @@ use wasm_bindgen::prelude::*;
 
 use super::APP_SOURCE_IDENTITY;
 
-const STORAGE_KEY: &str = "spice:canvas-trace";
+const STORAGE_KEY: &str = "spice:app-trace";
 const RETAINED_RECORDS: usize = 256;
-const CONTROL_NAME: &str = "__spiceCanvasTrace";
+const CONTROL_NAME: &str = "__spiceAppTrace";
 
 thread_local! {
     static TRACE: RefCell<Option<Trace>> = const { RefCell::new(None) };
@@ -81,7 +81,7 @@ impl Trace {
     fn label(&mut self, phase: &str, metadata: Metadata) -> String {
         self.next = self.next.wrapping_add(1);
         let mut label = format!(
-            "spice.canvas.{phase}#{:06} build={}",
+            "spice.app.{phase}#{:06} build={}",
             self.next, APP_SOURCE_IDENTITY
         );
         metadata.append_to(&mut label);

@@ -2,7 +2,7 @@ use crate::socket::Admitted;
 use wire::intent::{BoardAnswer, TaskHistoryCursor};
 use wire::{Outcome, Response};
 
-use super::CanvasRuntime;
+use super::AppRuntime;
 
 /// One exact request against the current Work-history generation.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -133,7 +133,7 @@ impl WorkHistoryState {
     }
 }
 
-impl CanvasRuntime {
+impl AppRuntime {
     /// Paging state for terminal Work rows retained in the current board.
     #[must_use]
     pub const fn work_history(&self) -> &WorkHistoryState {

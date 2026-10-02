@@ -219,7 +219,7 @@ fn restore_agent_messages_with(
             Ok(Some(page)) => {
                 for message in page.messages {
                     // Historical projections have the same failure boundary as live replay.
-                    canvas_diagnostic(
+                    app_diagnostic(
                         generation.publish(message).map(|_| ()).map_err(|error| {
                             store_fault("canvas::message-publish-failed", &error.to_string())
                         }),

@@ -14,6 +14,8 @@ use super::{
     ReceiptSupport, Repository, RepositoryIdentity, RollbackArchive,
 };
 
+mod migration;
+
 #[cfg(test)]
 mod tests;
 
@@ -190,7 +192,7 @@ impl InstallRecord {
             super::Asset::HookWrapperSpice,
         ];
         assets.extend(super::app::ASSETS.into_iter().map(|(asset, _)| asset));
-        assets.push(super::Asset::CanvasCurrent);
+        assets.push(super::Asset::AppCurrent);
         let app = self.plan.app.take();
         self.remove_test_operations(repository, &assets, app.as_ref())?;
         let app_root = repository.common_dir().join(".spice-install/app");
@@ -400,7 +402,9 @@ impl InstallRecord {
                 "install record repository does not close over its plan".to_owned(),
             ));
         }
-        if self.plan_digest != self.plan.digest()? {
+        if self.version != super::PREVIOUS_RECORD_VERSION
+            && self.plan_digest != self.plan.digest()?
+        {
             return Err(InstallError::InvalidRecord(
                 "install record plan digest does not match its canonical plan".to_owned(),
             ));
@@ -697,13 +701,18 @@ fn decode_record(repository: &Repository) -> Result<Option<LoadedRecord>, Instal
             owner,
         });
     }
-    let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
-    let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
-    if canonical != image.bytes {
-        return Err(InstallError::InvalidRecord(
-            "install record is not canonical".to_owned(),
-        ));
-    }
+    let record = if header.version == super::PREVIOUS_RECORD_VERSION {
+        migration::decode(&image.bytes)?
+    } else {
+        let record: InstallRecord = wire::decode(&image.bytes).map_err(InstallError::Decode)?;
+        let canonical = wire::encode(&record).map_err(InstallError::Encode)?;
+        if canonical != image.bytes {
+            return Err(InstallError::InvalidRecord(
+                "install record is not canonical".to_owned(),
+            ));
+        }
+        record
+    };
     Ok(Some(LoadedRecord {
         record,
         generation,
@@ -870,19 +879,7 @@ pub(super) fn publish_test_historical_receipt(
                 }
             }
         }
-        super::PREVIOUS_RECORD_VERSION => {
-            // Version 15 orders no Canvas history and retires no generation.
-            record.plan.app_predecessors.clear();
-            let kept = record
-                .plan
-                .retirements
-                .iter()
-                .take_while(|retirement| super::app::generation_file(&retirement.path).is_none())
-                .count();
-            record.plan.retirements.truncate(kept);
-            record.retired_parents.truncate(kept);
-            record.restored_retirements.truncate(kept);
-        }
+        super::PREVIOUS_RECORD_VERSION => {}
         _ => {
             return Err(InstallError::InvalidRecord(format!(
                 "test receipt schema {version} is not directly upgradable"
@@ -895,7 +892,11 @@ pub(super) fn publish_test_historical_receipt(
     record.plan_digest = record.plan.digest()?;
     record.validate_with_content(true)?;
     record.plan.publish_staged_rollback(repository)?;
-    let bytes = wire::encode(&record).map_err(InstallError::Encode)?;
+    let bytes = if version == super::PREVIOUS_RECORD_VERSION {
+        migration::encode(&record)?
+    } else {
+        wire::encode(&record).map_err(InstallError::Encode)?
+    };
     let path = record_path(repository)?;
     fs::write(&path, bytes)
         .map_err(|source| InstallError::io("publish historical test receipt", path, source))

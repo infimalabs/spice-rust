@@ -15,7 +15,7 @@ use yew::prelude::*;
 use super::connection::request_external_speech;
 use super::watchband::TeamSpeech;
 use super::{SurfaceData, toast};
-use crate::CanvasRuntime;
+use crate::AppRuntime;
 use crate::speech::{SystemObservers, SystemStart};
 use crate::speech_queue::{
     Advance, Enqueue, ExternalPause, NarrationCursors, NarrationMessage, SpeechEntry, SpeechQueue,
@@ -384,7 +384,7 @@ pub(super) fn use_team_speech_abandonment(
     let teams = surface
         .read()
         .as_ref()
-        .and_then(CanvasRuntime::lanes)
+        .and_then(AppRuntime::lanes)
         .map(|lanes| {
             lanes
                 .lanes

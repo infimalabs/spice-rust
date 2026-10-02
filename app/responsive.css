@@ -48,14 +48,14 @@
 }
 
 @media (max-width: 560px) {
-  .canvas-menu-footer { gap: 6px; }
-  .canvas-menu-version--update { padding-inline: 5px; }
+  .app-menu-footer { gap: 6px; }
+  .app-menu-version--update { padding-inline: 5px; }
   .workspace-tabs { margin-left: auto; }
   .workspace-tabs button { min-width: 34px; padding: 0 7px; font-size: 0; }
   .workspace-tabs button::first-letter { font-size: .72rem; }
   .content { padding: 18px 14px 28px; }
   .team-toolbar { grid-template-columns: max-content minmax(0, 1fr) 30px; padding-inline: 4px; }
-  .canvas-navigation { margin-inline: 4px; }
+  .app-navigation { margin-inline: 4px; }
   .team-mode { padding-inline: 4px; }
   .team-mode-badge { display: none; }
   .team-task-workspace { padding-inline: 8px; }

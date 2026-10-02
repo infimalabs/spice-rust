@@ -844,7 +844,7 @@ pub(super) fn executable_file(path: &Path) -> bool {
     }
 }
 
-pub(super) fn prebuild_canvas_launcher(
+pub(super) fn prebuild_app_launcher(
     root: &Path,
     environment: &Environment,
     cargo: &OsStr,
@@ -857,7 +857,7 @@ pub(super) fn prebuild_canvas_launcher(
         output,
         "cargo build --locked -p xtask --bin xtask",
         ["build", "--locked", "-p", "xtask", "--bin", "xtask"],
-        "Canvas launcher prebuild",
+        "app launcher prebuild",
     )
 }
 

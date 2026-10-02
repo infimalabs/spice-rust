@@ -480,7 +480,7 @@ impl Resident {
         let child = Command::new(spice())
             .args(["--json", "up", "--foreground", "--port", "0"])
             .current_dir(root)
-            .arg(spice::install::TEST_CANVAS_STAGE_ARGUMENT)
+            .arg(spice::install::TEST_APP_STAGE_ARGUMENT)
             .env(spice::cargo_isolation::BOOTSTRAP_HOME_VARIABLE, cargo_home)
             .env(
                 spice::cargo_isolation::NATIVE_CARGO_VARIABLE,

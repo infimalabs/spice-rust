@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use wire::manifest::{
-    BuildPins, CANVAS_APP_FILES, MacSymbolMetadata, ProofEnvironment, ProofReceipt, ProofStanding,
+    APP_FILES, BuildPins, MacSymbolMetadata, ProofEnvironment, ProofReceipt, ProofStanding,
     RELEASE_MANIFEST_VERSION, ReleaseManifestTarget, TargetPayload,
 };
 
@@ -235,7 +235,7 @@ impl Fixture {
         fs::create_dir_all(stage.join("objects")).expect("create object stage");
         fs::create_dir_all(stage.join("release")).expect("create release stage");
         let source = Digest::compute(Domain::DistSourceCommit, b"source");
-        let app = Digest::compute(Domain::DistArtifact, b"Canvas generation");
+        let app = Digest::compute(Domain::DistArtifact, b"app generation");
         let pins = BuildPins {
             rust: "rustc 1.97.1".to_owned(),
             wasm_target: "wasm32-unknown-unknown".to_owned(),
@@ -243,7 +243,7 @@ impl Fixture {
             cargo_mutants: "cargo-mutants 27.1.0".to_owned(),
             proof_container: format!("sha256:{}", "1".repeat(64)),
         };
-        let app_members = CANVAS_APP_FILES
+        let app_members = APP_FILES
             .iter()
             .map(|file| (format!("app/{file}"), format!("asset:{file}").into_bytes()))
             .collect::<Vec<_>>();

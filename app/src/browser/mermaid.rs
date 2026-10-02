@@ -30,7 +30,7 @@ impl Theme {
         let theme = web_sys::window()
             .and_then(|window| window.document())
             .and_then(|document| document.document_element())
-            .and_then(|root| root.get_attribute("data-canvas-effective-theme"));
+            .and_then(|root| root.get_attribute("data-app-effective-theme"));
         match theme.as_deref() {
             Some("light") => Ok(Self::Light),
             Some("dark") => Ok(Self::Dark),
@@ -75,7 +75,7 @@ pub(super) struct ProviderProps {
 #[function_component(Provider)]
 pub(super) fn provider(props: &ProviderProps) -> Html {
     let service = use_memo((), |()| {
-        super::connection::loaded_canvas_generation()
+        super::connection::loaded_app_generation()
             .and_then(Service::new)
             .map_err(AttrValue::from)
     });
@@ -137,7 +137,7 @@ impl ThemeObservation {
         let options = web_sys::MutationObserverInit::new();
         options.set_attributes(true);
         options.set_attribute_filter(&js_sys::Array::of1(&JsValue::from_str(
-            "data-canvas-effective-theme",
+            "data-app-effective-theme",
         )));
         observation.observer.observe_with_options(&root, &options)?;
         Ok(observation)
@@ -359,7 +359,7 @@ pub(super) fn mermaid_image(props: &MermaidImageProps) -> Html {
             <div class="mermaid-source-body" hidden={!*show_source}>
                 if let Some(error) = error { <p>{error}</p> }
                 <pre><code>{props.source.clone()}</code></pre>
-                <button ref={retry_button} type="button" class="canvas-compact-control">{"Retry diagram"}</button>
+                <button ref={retry_button} type="button" class="app-compact-control">{"Retry diagram"}</button>
             </div>
         </div>
     }
@@ -373,7 +373,7 @@ struct MathImageProps {
 
 #[function_component(MathImage)]
 fn math_image(props: &MathImageProps) -> Html {
-    let context = use_context::<Context>().expect("Canvas renderer provider");
+    let context = use_context::<Context>().expect("app renderer provider");
     let host = use_node_ref();
     let state = use_state(Display::default);
     // This callback is a render-effect dependency, even though math ignores geometry.

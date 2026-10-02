@@ -6,9 +6,9 @@
   <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#f7f8f4">
   <title>spice</title>
-  <script data-canvas-theme>
+  <script data-app-theme>
     (() => {
-      const key = "spice:canvas-theme";
+      const key = "spice:app-theme";
       const root = document.documentElement;
       const media = window.matchMedia("(prefers-color-scheme: dark)");
       let stored = null;
@@ -16,19 +16,19 @@
       const mode = stored === "light" || stored === "dark" ? stored : "system";
       const apply = (next) => {
         const effective = next === "system" ? (media.matches ? "dark" : "light") : next;
-        root.dataset.canvasTheme = next;
-        root.dataset.canvasEffectiveTheme = effective;
+        root.dataset.appTheme = next;
+        root.dataset.appEffectiveTheme = effective;
         root.style.colorScheme = effective;
         const meta = document.querySelector('meta[name="theme-color"]');
         if (meta) meta.content = effective === "dark" ? "#101411" : "#f7f8f4";
-        document.querySelectorAll(".canvas-theme-selector").forEach((control) => {
+        document.querySelectorAll(".app-theme-selector").forEach((control) => {
           control.dataset.selectedTheme = next;
         });
-        document.querySelectorAll(".canvas-theme-option").forEach((button) => {
-          button.setAttribute("aria-pressed", String(button.dataset.canvasTheme === next));
+        document.querySelectorAll(".app-theme-option").forEach((button) => {
+          button.setAttribute("aria-pressed", String(button.dataset.appTheme === next));
         });
       };
-      window.__spiceCanvasSetTheme = (next) => {
+      window.__spiceAppSetTheme = (next) => {
         try {
           if (next === "system") window.localStorage.removeItem(key);
           else window.localStorage.setItem(key, next);
@@ -36,7 +36,7 @@
         apply(next);
       };
       media.addEventListener("change", () => {
-        if (root.dataset.canvasTheme === "system") apply("system");
+        if (root.dataset.appTheme === "system") apply("system");
       });
       apply(mode);
     })();
@@ -50,6 +50,6 @@
 <link data-trunk rel="rust">
 </head>
 <body>
-  <main id="app" data-canvas-generation="__SPICE_CANVAS_GENERATION__" aria-live="polite"></main>
+  <main id="app" data-app-generation="__SPICE_APP_GENERATION__" aria-live="polite"></main>
 </body>
 </html>

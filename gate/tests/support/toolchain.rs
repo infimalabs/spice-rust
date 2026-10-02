@@ -31,7 +31,7 @@ pub(crate) const COMPILED_ARMS: [GateId; 9] = [
     GateId::JavascriptUnused,
     GateId::CsharpUnusedCandidates,
     GateId::RustTypecheck,
-    GateId::CanvasWebTypecheck,
+    GateId::AppWebTypecheck,
     GateId::EnvPolicy,
     GateId::EnvNameLedger,
 ];
@@ -354,7 +354,7 @@ pub(crate) fn refusing_stub_directory(label: &str) -> Tree {
 }
 
 /// Exact-version stubs whose cargo analysis refuses before trunk can run.
-pub(crate) fn canvas_nonzero_directory(label: &str) -> Tree {
+pub(crate) fn app_nonzero_directory(label: &str) -> Tree {
     let stubs = Tree::new(label);
     let metadata = serde_json::json!({
         "packages": [{

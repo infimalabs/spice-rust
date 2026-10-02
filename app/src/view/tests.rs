@@ -1,8 +1,7 @@
 use super::{
-    CanvasDestination, CanvasNotice, CanvasRoute, ConnectionStage, CreatorContextTarget,
-    DirectionRef, DirectionTarget, DirectionsFocus, RouteEvidence, RouteStep, canvas_notice,
-    normalize_canvas_location, opening_auth_token, quote_source_href, team_stream_card_target,
-    team_stream_card_team,
+    AppDestination, AppNotice, AppRoute, ConnectionStage, CreatorContextTarget, DirectionRef,
+    DirectionTarget, DirectionsFocus, RouteEvidence, RouteStep, app_notice, normalize_app_location,
+    opening_auth_token, quote_source_href, team_stream_card_target, team_stream_card_team,
 };
 use crate::work::{WorkScope, WorkStemIdentity, WorkVisibility};
 
@@ -16,14 +15,14 @@ fn task(stamp: &str) -> wire::TaskStamp {
     stamp.parse().expect("fixture task stamp")
 }
 
-fn work(scope: WorkScope, task: Option<wire::TaskStamp>) -> CanvasRoute {
-    CanvasRoute::Work { scope, task }
+fn work(scope: WorkScope, task: Option<wire::TaskStamp>) -> AppRoute {
+    AppRoute::Work { scope, task }
 }
 
 #[test]
 fn canonical_routes_round_trip_exactly() {
     for (path, route) in [
-        ("/dash", CanvasRoute::Dash),
+        ("/dash", AppRoute::Dash),
         ("/work", work(WorkScope::AllOpen, None)),
         (
             "/work/task/dTv7zpzTN",
@@ -41,19 +40,19 @@ fn canonical_routes_round_trip_exactly() {
             "/work/public/a%20b%2F%C3%A9.-_~",
             work(stem(WorkVisibility::Public, "a b/é.-_~"), None),
         ),
-        ("/chat", CanvasRoute::Chat { target: None }),
+        ("/chat", AppRoute::Chat { target: None }),
         (
             "/chat/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1",
-            CanvasRoute::card(CARD.to_owned()).expect("fixture card"),
+            AppRoute::card(CARD.to_owned()).expect("fixture card"),
         ),
         (
             concat!(
                 "/chat/direction/01234567-89ab-cdef-0123-456789abcdef/",
                 "fedcba98-7654-3210-fedc-ba9876543210",
             ),
-            CanvasRoute::direction(direction_fixture()),
+            AppRoute::direction(direction_fixture()),
         ),
-        ("/work/directions", CanvasRoute::Directions { focus: None }),
+        ("/work/directions", AppRoute::Directions { focus: None }),
         (
             "/work/directions/team/01234567-89ab-cdef-0123-456789abcdef",
             directions(DirectionsFocus::Team(uuid(
@@ -73,11 +72,11 @@ fn canonical_routes_round_trip_exactly() {
             ))),
         ),
     ] {
-        assert_eq!(CanvasRoute::from_path(path), Some(route.clone()), "{path}");
+        assert_eq!(AppRoute::from_path(path), Some(route.clone()), "{path}");
         assert_eq!(route.path(), path);
     }
-    let card = CanvasRoute::from_path(&format!("/chat/card/{CARD}")).expect("card route");
-    assert_eq!(card.canvas_destination(), CanvasDestination::Chat);
+    let card = AppRoute::from_path(&format!("/chat/card/{CARD}")).expect("card route");
+    assert_eq!(card.app_destination(), AppDestination::Chat);
     assert_eq!(card.card_target(), Some(CARD));
 }
 
@@ -85,8 +84,8 @@ fn uuid(text: &str) -> wire::CanonicalUuid {
     text.parse().expect("fixture identity")
 }
 
-fn directions(focus: DirectionsFocus) -> CanvasRoute {
-    CanvasRoute::Directions { focus: Some(focus) }
+fn directions(focus: DirectionsFocus) -> AppRoute {
+    AppRoute::Directions { focus: Some(focus) }
 }
 
 #[test]
@@ -94,10 +93,10 @@ fn directions_routes_refine_all_open_work_and_refuse_to_the_section() {
     let direction = directions(DirectionsFocus::Direction(DirectionRef::Key(
         "dTvP0GpW6".to_owned(),
     )));
-    assert_eq!(direction.canvas_destination(), CanvasDestination::Work);
+    assert_eq!(direction.app_destination(), AppDestination::Work);
     assert_eq!(direction.work_scope(), Some(&WorkScope::AllOpen));
     assert_eq!(direction.task(), None);
-    let section = CanvasRoute::Directions { focus: None };
+    let section = AppRoute::Directions { focus: None };
     assert_eq!(section.directions(), Some(None));
     assert_eq!(work(WorkScope::AllOpen, None).directions(), None);
     let pending = RouteEvidence::default();
@@ -152,10 +151,10 @@ fn malformed_direction_segments_open_directions_and_name_the_segment() {
         ("#/work/direction/short", "short"),
         ("#/work/directions/team/not-a-team", "not-a-team"),
     ] {
-        let location = normalize_canvas_location("", hash);
+        let location = normalize_app_location("", hash);
         assert_eq!(
             location.route(),
-            &CanvasRoute::Directions { focus: None },
+            &AppRoute::Directions { focus: None },
             "{hash}"
         );
         assert!(location.needs_replace(), "{hash}");
@@ -178,8 +177,8 @@ fn direction_fixture() -> DirectionTarget {
 #[test]
 fn direction_routes_refine_chat_and_name_the_exact_team_card() {
     let target = direction_fixture();
-    let route = CanvasRoute::direction(target.clone());
-    assert_eq!(route.canvas_destination(), CanvasDestination::Chat);
+    let route = AppRoute::direction(target.clone());
+    assert_eq!(route.app_destination(), AppDestination::Chat);
     assert_eq!(route.direction_target(), Some(&target));
     assert_eq!(route.card_target(), None);
     assert_eq!(
@@ -241,8 +240,8 @@ fn only_resident_token_fragments_become_opening_credentials() {
 
 #[test]
 fn stem_visibility_is_part_of_route_identity() {
-    let public = CanvasRoute::from_path("/work/public/oops").expect("public stem");
-    let hidden = CanvasRoute::from_path("/work/hidden/oops").expect("hidden stem");
+    let public = AppRoute::from_path("/work/public/oops").expect("public stem");
+    let hidden = AppRoute::from_path("/work/hidden/oops").expect("hidden stem");
     assert_ne!(public, hidden);
     assert_eq!(
         public.work_scope(),
@@ -292,25 +291,25 @@ fn malformed_or_noncanonical_segments_are_not_routes() {
         "/work/directions/fedcba98-7654-3210-fedc-ba9876543210",
         "/work/public/canvas/directions",
     ] {
-        assert_eq!(CanvasRoute::from_path(path), None, "{path}");
+        assert_eq!(AppRoute::from_path(path), None, "{path}");
     }
 }
 
 #[test]
-fn canvas_locations_canonicalize_destination_spellings_without_changing_routes() {
+fn app_locations_canonicalize_destination_spellings_without_changing_routes() {
     for (hash, destination, replace) in [
-        ("#/chat", CanvasDestination::Chat, false),
-        ("#/dash", CanvasDestination::Dash, false),
-        ("#/work", CanvasDestination::Work, false),
-        ("", CanvasDestination::Chat, true),
-        ("#", CanvasDestination::Chat, true),
-        ("#/", CanvasDestination::Chat, true),
-        ("#dash", CanvasDestination::Dash, true),
-        ("#/work/", CanvasDestination::Work, true),
-        ("#//dash/", CanvasDestination::Dash, true),
+        ("#/chat", AppDestination::Chat, false),
+        ("#/dash", AppDestination::Dash, false),
+        ("#/work", AppDestination::Work, false),
+        ("", AppDestination::Chat, true),
+        ("#", AppDestination::Chat, true),
+        ("#/", AppDestination::Chat, true),
+        ("#dash", AppDestination::Dash, true),
+        ("#/work/", AppDestination::Work, true),
+        ("#//dash/", AppDestination::Dash, true),
     ] {
-        let location = normalize_canvas_location("", hash);
-        assert_eq!(location.route().canvas_destination(), destination, "{hash}");
+        let location = normalize_app_location("", hash);
+        assert_eq!(location.route().app_destination(), destination, "{hash}");
         assert_eq!(location.needs_replace(), replace, "{hash}");
         assert_eq!(location.notice(), None, "{hash}");
     }
@@ -319,7 +318,7 @@ fn canvas_locations_canonicalize_destination_spellings_without_changing_routes()
         "#/chat/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1",
         "#/work/hidden/oops/task/dTv7zpzTN",
     ] {
-        let location = normalize_canvas_location("", hash);
+        let location = normalize_app_location("", hash);
         assert_eq!(format!("#{}", location.route().path()), hash);
         assert!(!location.needs_replace(), "{hash}");
         assert_eq!(location.notice(), None, "{hash}");
@@ -327,7 +326,7 @@ fn canvas_locations_canonicalize_destination_spellings_without_changing_routes()
 }
 
 #[test]
-fn unknown_canvas_locations_open_chat_and_name_the_refused_input() {
+fn unknown_app_locations_open_chat_and_name_the_refused_input() {
     for (search, hash) in [
         ("?page=work", ""),
         ("", "#/unknown"),
@@ -335,8 +334,8 @@ fn unknown_canvas_locations_open_chat_and_name_the_refused_input() {
         ("", "#/card/message-agent"),
         ("", "#/work/public/a%2f"),
     ] {
-        let location = normalize_canvas_location(search, hash);
-        assert_eq!(location.route(), &CanvasRoute::Chat { target: None });
+        let location = normalize_app_location(search, hash);
+        assert_eq!(location.route(), &AppRoute::Chat { target: None });
         assert!(location.needs_replace());
         let notice = location.notice().expect("invalid input is named");
         assert!(notice.contains(&format!("{search}{hash}")), "{notice}");
@@ -348,17 +347,17 @@ fn history_steps_push_openings_and_replace_changes_inside_one_view() {
     let canvas = stem(WorkVisibility::Public, "canvas");
     let all = work(WorkScope::AllOpen, None);
     let open = work(canvas.clone(), Some(task("dTv7zpzTN")));
-    let chat = CanvasRoute::Chat { target: None };
+    let chat = AppRoute::Chat { target: None };
 
-    assert_eq!(chat.show(CanvasDestination::Chat), None);
+    assert_eq!(chat.show(AppDestination::Chat), None);
     assert_eq!(
-        open.show(CanvasDestination::Work),
+        open.show(AppDestination::Work),
         Some(RouteStep::Push(all.clone()))
     );
     assert_eq!(
-        CanvasRoute::card(CARD.to_owned())
+        AppRoute::card(CARD.to_owned())
             .expect("fixture card")
-            .show(CanvasDestination::Chat),
+            .show(AppDestination::Chat),
         Some(RouteStep::Push(chat.clone()))
     );
 
@@ -401,7 +400,7 @@ fn history_steps_push_openings_and_replace_changes_inside_one_view() {
 fn settled_missing_segments_rewrite_to_their_containing_view() {
     let canvas = stem(WorkVisibility::Hidden, "canvas");
     let open = work(canvas.clone(), Some(task("dTv7zpzTN")));
-    let card = CanvasRoute::card(CARD.to_owned()).expect("fixture card");
+    let card = AppRoute::card(CARD.to_owned()).expect("fixture card");
     let pending = RouteEvidence::default();
     let settled = |scope, task, card| RouteEvidence {
         scope,
@@ -438,7 +437,7 @@ fn settled_missing_segments_rewrite_to_their_containing_view() {
     let (next, notice) = card
         .unavailable(settled(None, None, Some(false)))
         .expect("missing card refuses");
-    assert_eq!(next, CanvasRoute::Chat { target: None });
+    assert_eq!(next, AppRoute::Chat { target: None });
     assert!(notice.contains(CARD), "{notice}");
 }
 
@@ -472,7 +471,7 @@ fn creator_context_targets_round_trip_the_exact_source_boundary() {
 
     assert_eq!(target.target(), expected);
     assert_eq!(CreatorContextTarget::parse(expected), Some(target.clone()));
-    assert!(CanvasRoute::card(expected.to_owned()).is_some());
+    assert!(AppRoute::card(expected.to_owned()).is_some());
     let locus = |member, offset| wire::MessageLocus {
         member,
         offset,
@@ -506,24 +505,24 @@ fn creator_context_targets_round_trip_the_exact_source_boundary() {
 #[test]
 fn global_notice_yields_only_to_an_online_admitted_lane_snapshot() {
     assert_eq!(
-        canvas_notice(ConnectionStage::Starting, true, true),
-        Some(CanvasNotice::LoadingCanvas)
+        app_notice(ConnectionStage::Starting, true, true),
+        Some(AppNotice::LoadingApp)
     );
     assert_eq!(
-        canvas_notice(ConnectionStage::Connecting, true, true),
-        Some(CanvasNotice::OpeningResident)
+        app_notice(ConnectionStage::Connecting, true, true),
+        Some(AppNotice::OpeningResident)
     );
     assert_eq!(
-        canvas_notice(ConnectionStage::Offline, true, true),
-        Some(CanvasNotice::Reconnecting)
+        app_notice(ConnectionStage::Offline, true, true),
+        Some(AppNotice::Reconnecting)
     );
     assert_eq!(
-        canvas_notice(ConnectionStage::Online, false, false),
-        Some(CanvasNotice::LoadingCanvas)
+        app_notice(ConnectionStage::Online, false, false),
+        Some(AppNotice::LoadingApp)
     );
     assert_eq!(
-        canvas_notice(ConnectionStage::Online, true, false),
-        Some(CanvasNotice::LoadingAgents)
+        app_notice(ConnectionStage::Online, true, false),
+        Some(AppNotice::LoadingAgents)
     );
-    assert_eq!(canvas_notice(ConnectionStage::Online, true, true), None);
+    assert_eq!(app_notice(ConnectionStage::Online, true, true), None);
 }

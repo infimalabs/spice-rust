@@ -161,7 +161,7 @@ fn held_lane(team: wire::CanonicalUuid, tasks: Option<Vec<Html>>) -> Html {
 }
 
 pub(super) fn render_directive_ledger(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     team: &crate::runtime::LaneRow,
     standings: &[Standing],
     submissions: &SubmissionHandle,
@@ -195,7 +195,7 @@ pub(super) fn render_directive_ledger(
     let rows = watchband::directive_ledger::directive_ledger(&members, &local, runtime.inbox());
     let board = runtime.board();
     let heading = format!("direction-ledger-{}", team.lane);
-    let history = crate::view::CanvasRoute::Directions {
+    let history = crate::view::AppRoute::Directions {
         focus: Some(crate::view::DirectionsFocus::Team(team.lane)),
     };
     html! {
@@ -301,7 +301,7 @@ fn render_settled_finder(settled: &Settled<'_, '_, '_>, team: wire::CanonicalUui
                         oninput={on_cutoff}
                     />
                 </label>
-                <div class="work-history-filter-actions canvas-control-rail team-mode-rail">
+                <div class="work-history-filter-actions app-control-rail team-mode-rail">
                     <button type="button" class="team-mode" onclick={apply}>{"Apply"}</button>
                     <button type="button" class="team-mode" onclick={clear}>{"Clear"}</button>
                 </div>

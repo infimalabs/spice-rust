@@ -33,7 +33,7 @@ impl Fixture {
         for asset in spice::canvas::APP.assets() {
             let contents = match asset.file() {
                 "app_bg.wasm" => TEST_WASM,
-                "canvas-app.html" => TEST_HTML,
+                "app.html" => TEST_HTML,
                 _ => b"lane-built app asset",
             };
             fs::write(app.join(asset.file()), contents).expect("write lane-built app asset");
@@ -448,9 +448,9 @@ fn assert_symbol_result(fixture: &Fixture, programs: &Programs, build: &TargetBu
 
 fn assert_complete_app_inventory(payload: &wire::manifest::TargetPayload) {
     let mut expected = vec![
+        "app/app.html",
         "app/app.module",
         "app/app_bg.wasm",
-        "app/canvas-app.html",
         "app/chrome.css",
         "app/composer.css",
         "app/mosaic.css",

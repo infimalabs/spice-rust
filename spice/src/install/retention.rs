@@ -1,19 +1,18 @@
-//! Bounded Canvas generation history carried from one install to the next.
+//! Bounded app generation history carried from one install to the next.
 
 use wire::Digest;
 
 use super::binding::bind_destination;
 use super::{
-    InstallError, InstallPlan, ParentObservation, RETAINED_CANVAS_PREDECESSORS, Repository,
+    InstallError, InstallPlan, ParentObservation, RETAINED_APP_PREDECESSORS, Repository,
     Retirement, app,
 };
 
 /// Generations a plan publishing `current` retains before it, oldest first.
 ///
 /// The installed current generation is always the newest predecessor. A
-/// version-15 receipt orders none of its older generations, so its migration
-/// retains only that one and later refreshes grow the history back to the
-/// bound.
+/// receipt's ordered predecessor inventory carries forward until the bound
+/// drops the oldest generation.
 pub(super) fn predecessors(installed: Option<&InstallPlan>, current: &Digest) -> Vec<Digest> {
     let mut retained = installed
         .into_iter()
@@ -21,7 +20,7 @@ pub(super) fn predecessors(installed: Option<&InstallPlan>, current: &Digest) ->
         .filter(|generation| *generation != current)
         .cloned()
         .collect::<Vec<_>>();
-    let excess = retained.len().saturating_sub(RETAINED_CANVAS_PREDECESSORS);
+    let excess = retained.len().saturating_sub(RETAINED_APP_PREDECESSORS);
     retained.drain(..excess);
     retained
 }

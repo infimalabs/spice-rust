@@ -89,7 +89,7 @@ struct Offered {
 }
 
 impl Offered {
-    fn of(runtime: &CanvasRuntime) -> Self {
+    fn of(runtime: &AppRuntime) -> Self {
         Self {
             lifecycle: runtime.offers(CommandKind::LaneState),
             renew: runtime.offers(CommandKind::LaneRenewal),
@@ -280,7 +280,7 @@ fn effort_form(props: &EffortFormProps) -> Html {
 }
 
 fn render_retune(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     member: &crate::runtime::LaneMember,
     offered: &Offered,
     busy: bool,
@@ -338,7 +338,7 @@ fn render_retune(
 }
 
 fn render_renewal(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     busy: bool,
@@ -444,7 +444,7 @@ fn render_lifecycle(
 /// The member's controls, held while a command is in flight. The command's
 /// progress and outcome report through the root toast.
 pub(super) fn render(
-    runtime: &CanvasRuntime,
+    runtime: &AppRuntime,
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     command: &Callback<(CanonicalUuid, MemberCommand)>,

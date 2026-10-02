@@ -1,6 +1,6 @@
 //! Same-generation reconnect coverage for a packed Canvas fact backlog.
 
-use app::{CanvasRuntime, Session, StreamDirective};
+use app::{AppRuntime, Session, StreamDirective};
 use wire::{CanonicalUuid, Seq, StreamFrame, ViewSubject};
 
 const OPERATOR: &str = "018f82d4-6f59-7d06-92e3-bce9131163c1";
@@ -68,7 +68,7 @@ fn admitted(session: &Session, bytes: &[u8]) -> app::Admitted<StreamFrame> {
 fn replayed_prefix_cannot_move_reconnect_before_the_backlog_origin() {
     let session = Session::open(uuid(OPERATOR), uuid(EPOCH));
     let accepted = acceptance(&session);
-    let mut runtime = CanvasRuntime::new(&accepted);
+    let mut runtime = AppRuntime::new(&accepted);
     let first = admitted(
         &session,
         &packed_frame(&[task_fact(1, None), task_fact(2, Some(1))], Some((2, 3))),

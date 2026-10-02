@@ -7,7 +7,7 @@
 
 use std::collections::BTreeSet;
 
-use app::{Axis, CanvasDestination};
+use app::{AppDestination, Axis};
 
 /// Every axis, gathered by exhaustive descent rather than by reading `ALL`.
 ///
@@ -22,13 +22,13 @@ fn descend_axes() -> Vec<Axis> {
 }
 
 /// Every global Canvas destination, independent of its convenience registry.
-fn descend_canvas_destinations() -> Vec<CanvasDestination> {
+fn descend_canvas_destinations() -> Vec<AppDestination> {
     std::iter::successors(
-        Some(CanvasDestination::Dash),
+        Some(AppDestination::Dash),
         |destination| match destination {
-            CanvasDestination::Dash => Some(CanvasDestination::Work),
-            CanvasDestination::Work => Some(CanvasDestination::Chat),
-            CanvasDestination::Chat => None,
+            AppDestination::Dash => Some(AppDestination::Work),
+            AppDestination::Work => Some(AppDestination::Chat),
+            AppDestination::Chat => None,
         },
     )
     .collect()
@@ -42,17 +42,17 @@ fn the_axis_registry_lists_every_axis_that_exists() {
 #[test]
 fn every_global_destination_has_one_exact_hash_route() {
     let routes = [
-        (CanvasDestination::Dash, "/dash"),
-        (CanvasDestination::Work, "/work"),
-        (CanvasDestination::Chat, "/chat"),
+        (AppDestination::Dash, "/dash"),
+        (AppDestination::Work, "/work"),
+        (AppDestination::Chat, "/chat"),
     ];
-    assert_eq!(descend_canvas_destinations(), CanvasDestination::ALL);
+    assert_eq!(descend_canvas_destinations(), AppDestination::ALL);
 
     let mut paths = BTreeSet::new();
     for (destination, path) in routes {
         assert!(paths.insert(path), "{path:?} names two destinations");
         assert_eq!(destination.path(), path);
-        assert_eq!(CanvasDestination::from_path(path), Some(destination));
+        assert_eq!(AppDestination::from_path(path), Some(destination));
     }
 }
 
@@ -60,7 +60,7 @@ fn every_global_destination_has_one_exact_hash_route() {
 fn unrecognized_route_paths_are_refused() {
     for path in ["", "/", "/unknown", "/work/", "/dash/", "/work?scope=all"] {
         assert_eq!(
-            CanvasDestination::from_path(path),
+            AppDestination::from_path(path),
             None,
             "{path:?} unexpectedly named a Canvas destination"
         );

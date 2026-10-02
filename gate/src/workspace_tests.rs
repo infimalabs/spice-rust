@@ -409,7 +409,7 @@ pub fn prebuild_shared_at(
         ));
     }
     prebuild_all_tests(root, &environment, OsStr::new("cargo"), &inventory, output)?;
-    prebuild_canvas_launcher(root, &environment, OsStr::new("cargo"), output)
+    prebuild_app_launcher(root, &environment, OsStr::new("cargo"), output)
 }
 
 /// Run every canonical workspace test target from a completed shared-output prebuild.

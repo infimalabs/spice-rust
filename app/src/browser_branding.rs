@@ -164,12 +164,12 @@ fn apply(branding: &BrowserBranding) {
     };
     document.set_title(branding.title());
     let icon = document
-        .query_selector("link[data-spice-canvas-icon]")
+        .query_selector("link[data-spice-app-icon]")
         .ok()
         .flatten()
         .or_else(|| {
             let icon = document.create_element("link").ok()?;
-            icon.set_attribute("data-spice-canvas-icon", "").ok()?;
+            icon.set_attribute("data-spice-app-icon", "").ok()?;
             document
                 .query_selector("head")
                 .ok()

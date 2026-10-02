@@ -196,7 +196,7 @@ impl ChangeSelectionPolicy {
             return gates.into_iter().collect();
         }
         if contains_exact(&self.declared_rust_sources, path) {
-            gates.extend([GateId::RustTypecheck, GateId::CanvasWebTypecheck]);
+            gates.extend([GateId::RustTypecheck, GateId::AppWebTypecheck]);
         }
         let repository_document = contains_exact(&self.repository_documents, path);
         if repository_document {
@@ -220,7 +220,7 @@ impl ChangeSelectionPolicy {
                     gates.extend([
                         GateId::Formatters,
                         GateId::RustTypecheck,
-                        GateId::CanvasWebTypecheck,
+                        GateId::AppWebTypecheck,
                     ]);
                 }
                 gates.insert(GateId::MarkdownLinks);
@@ -233,11 +233,11 @@ impl ChangeSelectionPolicy {
                     GateId::EnvNameLedger,
                 ]);
                 if frontend_path(path) {
-                    gates.insert(GateId::CanvasWebTypecheck);
+                    gates.insert(GateId::AppWebTypecheck);
                 }
             }
             "html" | "css" if frontend_path(path) => {
-                gates.insert(GateId::CanvasWebTypecheck);
+                gates.insert(GateId::AppWebTypecheck);
             }
             "md" => {
                 gates.extend([GateId::Taste, GateId::MarkdownLinks]);
@@ -274,18 +274,18 @@ impl ChangeSelectionPolicy {
                 gates.extend([
                     GateId::Formatters,
                     GateId::RustTypecheck,
-                    GateId::CanvasWebTypecheck,
+                    GateId::AppWebTypecheck,
                 ]);
             }
             "toml" if path == "rust-toolchain.toml" && self.rust_workspace() => {
                 gates.extend([
                     GateId::Formatters,
                     GateId::RustTypecheck,
-                    GateId::CanvasWebTypecheck,
+                    GateId::AppWebTypecheck,
                 ]);
             }
             "lock" if path == "Cargo.lock" && self.rust_workspace() => {
-                gates.extend([GateId::RustTypecheck, GateId::CanvasWebTypecheck]);
+                gates.extend([GateId::RustTypecheck, GateId::AppWebTypecheck]);
             }
             _ => {}
         }
@@ -330,7 +330,7 @@ impl ChangeSelectionPolicy {
             {
                 gates.insert(GateId::JavascriptUnused);
                 if matches!(path, "package.json" | "package-lock.json") {
-                    gates.insert(GateId::CanvasWebTypecheck);
+                    gates.insert(GateId::AppWebTypecheck);
                 }
             }
             _ => {}
@@ -541,7 +541,7 @@ mod tests {
         assert_eq!(selected.len(), 3);
         for expected in [
             GateId::RustTypecheck,
-            GateId::CanvasWebTypecheck,
+            GateId::AppWebTypecheck,
             GateId::LocalPaths,
         ] {
             assert!(selected.contains(&expected));

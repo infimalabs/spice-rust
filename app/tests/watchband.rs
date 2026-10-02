@@ -1,5 +1,5 @@
 use app::Session;
-use app::runtime::{CanvasRuntime, LaneMember, LaneRow};
+use app::runtime::{AppRuntime, LaneMember, LaneRow};
 use app::watchband::{
     ACCENTS, FIELD_BUDGET, MemberPresenceState, SHORT_LEN, TEAM_JOIN_GUTTER, TEAM_MEMBER_LIMIT,
     TeamDrop, UNKNOWN_AGENT_LABEL, accent, arrangement, badge, can_leave_all_teams, dissolve_team,
@@ -51,18 +51,18 @@ fn spell(delta: i64) -> String {
     format!("2026-08-05T{hour:02}:{minute:02}:{second:02}.{millis:03}Z")
 }
 
-fn canvas_runtime() -> (Session, CanvasRuntime) {
+fn app_runtime() -> (Session, AppRuntime) {
     let session = Session::open(uuid(OCCUPANT), uuid(EPOCH));
     let accepted = session
         .admit_accepted(format!(r#"{{"wire":1,"actor":"operator","epoch":"{EPOCH}"}}"#).as_bytes())
         .expect("acceptance is admitted");
-    let runtime = CanvasRuntime::new(&accepted);
+    let runtime = AppRuntime::new(&accepted);
     (session, runtime)
 }
 
 fn apply_agent_message(
     session: &Session,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     lane: &str,
     author: &str,
     authored: &str,
@@ -95,7 +95,7 @@ fn apply_agent_message(
 
 fn apply_lane_fact(
     session: &Session,
-    runtime: &mut CanvasRuntime,
+    runtime: &mut AppRuntime,
     position: u64,
     at: &str,
     fact: serde_json::Value,
@@ -268,7 +268,7 @@ fn task(handle: &str, phase: &str, lane: &str, fact: u64, disposition: &str) -> 
 
 #[test]
 fn presence_prefers_a_claim_then_current_occupant_activity() {
-    let (session, mut runtime) = canvas_runtime();
+    let (session, mut runtime) = app_runtime();
     apply_agent_message(&session, &mut runtime, LANE_A, OCCUPANT, &spell(0));
 
     let mut lane_member = member(LANE_A, "main-a");
@@ -301,7 +301,7 @@ fn presence_prefers_a_claim_then_current_occupant_activity() {
 
 #[test]
 fn presence_dates_successor_start_and_vacancy_from_durable_lane_facts() {
-    let (session, mut runtime) = canvas_runtime();
+    let (session, mut runtime) = app_runtime();
     apply_agent_message(&session, &mut runtime, LANE_A, OCCUPANT, &spell(0));
     apply_lane_fact(
         &session,

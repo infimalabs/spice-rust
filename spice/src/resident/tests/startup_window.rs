@@ -41,7 +41,7 @@ fn a_client_inside_the_startup_window_refuses_the_predecessors_record() {
     let resident_lock = ResidentLock::acquire(&paths).expect("a killed holder leaves no lock");
 
     let mut launched = Vec::new();
-    let inside = open_canvas(&paths.canvas, &mut launched);
+    let inside = open_app(&paths.canvas, &mut launched);
     let Outcome::Fault(fault) = inside else {
         panic!("a record inside the startup window must fault: {inside:?}");
     };
@@ -58,7 +58,7 @@ fn a_client_inside_the_startup_window_refuses_the_predecessors_record() {
     resident_lock
         .set_epoch(stale.epoch)
         .expect("the holder names the generation it published");
-    let claimed = open_canvas(&paths.canvas, &mut launched);
+    let claimed = open_app(&paths.canvas, &mut launched);
     assert!(
         matches!(claimed, Outcome::Reply(_)),
         "a record its holder claims must open: {claimed:?}"
@@ -67,7 +67,7 @@ fn a_client_inside_the_startup_window_refuses_the_predecessors_record() {
 
     // No holder at all is the older fault, and it keeps its own name.
     drop(resident_lock);
-    let orphaned = open_canvas(&paths.canvas, &mut launched);
+    let orphaned = open_app(&paths.canvas, &mut launched);
     let Outcome::Fault(orphaned) = orphaned else {
         panic!("a record whose publisher is gone must fault: {orphaned:?}");
     };
@@ -91,8 +91,8 @@ fn a_client_inside_the_startup_window_refuses_the_predecessors_record() {
 ///
 /// The launcher records rather than dials, so an admission is observable
 /// without a socket and a refusal is observably not one.
-fn open_canvas(path: &Path, launched: &mut Vec<String>) -> Outcome<wire::CanvasOpen> {
-    crate::command_client::open_canvas_with(
+fn open_app(path: &Path, launched: &mut Vec<String>) -> Outcome<wire::AppOpen> {
+    crate::command_client::open_app_with(
         path,
         || {},
         |endpoint| {
