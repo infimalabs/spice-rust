@@ -48,6 +48,13 @@ accepted interaction sends the complete topology at the revision currently
 drawn by Canvas; cancellation, a changed revision, or a removed source clears
 the lift without sending.
 
+## Team composer controls
+
+The speech and allocation sliders share a fixed frame above the team send
+button. Their upright labels keep a natural gap below the vertical ranges at
+both narrow and wide layouts; that breathing room stays inside the upper region
+so the frame and neighboring composer geometry do not move.
+
 ## Lane menu
 
 Each Chat lane's menu button swaps that lane's composer for its seat panel
