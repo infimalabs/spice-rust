@@ -28,6 +28,12 @@ use crate::{
     Checkpoint, Decoded, Dialect, Event, EventKind, ProseRole, ReasoningContent, RecordPayload,
     ResidueKind, Scan, ScanError, Span, ToolMoment, ToolResult, decode, scan as scan_records,
 };
+mod page;
+pub use page::{
+    TranscriptContinuation, TranscriptCursor, TranscriptCursorError, TranscriptFilter,
+    TranscriptHistory, TranscriptObservation, TranscriptPage, TranscriptPageRequest,
+    TranscriptRecord, TranscriptWork, transcript_page,
+};
 
 /// Which daemonless surface produced a stream outcome.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -1115,6 +1121,8 @@ pub enum SurfaceError {
     NonUtf8Lane(PathBuf),
     /// A locus-shaped selector was not the current grammar.
     Selector(String),
+    /// A bounded observation row could not be measured canonically.
+    Encode(String),
     /// The decoder was called with a locus that did not cover its bytes.
     DecodeContract {
         /// Tape involved.
@@ -1157,6 +1165,12 @@ impl fmt::Display for SurfaceError {
                 formatter,
                 "retro selector {selector:?} is neither a lane, path, nor current locus"
             ),
+            Self::Encode(detail) => {
+                write!(
+                    formatter,
+                    "failed to measure bounded transcript row: {detail}"
+                )
+            }
             Self::DecodeContract { tape, detail } => write!(
                 formatter,
                 "decoder contract failed for tape {}: {detail}",
@@ -1172,7 +1186,10 @@ impl Error for SurfaceError {
             Self::Io { source, .. } => Some(source),
             Self::Tape { source, .. } => Some(source),
             Self::Scan { source, .. } => Some(source),
-            Self::NonUtf8Lane(_) | Self::Selector(_) | Self::DecodeContract { .. } => None,
+            Self::NonUtf8Lane(_)
+            | Self::Selector(_)
+            | Self::Encode(_)
+            | Self::DecodeContract { .. } => None,
         }
     }
 }
