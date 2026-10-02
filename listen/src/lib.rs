@@ -23,7 +23,10 @@ pub use event::{
     Reasoning, ReasoningContent, SessionDeclaration, SignOut, Tool, ToolMoment, ToolOutcome,
     ToolResult, Usage,
 };
-pub use omp::PROTOCOL_VERSION as OMP_PROTOCOL_VERSION;
+pub use omp::{
+    PROTOCOL_VERSION as OMP_PROTOCOL_VERSION,
+    RETUNE_REQUEST_ID_PREFIX as OMP_RETUNE_REQUEST_ID_PREFIX,
+};
 pub use residue::{
     CommandResponse, Decoded, Dialog, LocusLengthError, MessageContext, PromptOutcome,
     PromptStatus, RecordContext, Residue, ResidueKind, TurnMoment,

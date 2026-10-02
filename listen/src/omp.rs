@@ -26,6 +26,13 @@ use crate::{
 /// it captures asks for it by name and refuses to run on anything else.
 pub const PROTOCOL_VERSION: u8 = 2;
 
+/// Prefix of the request identities a lane gives live setting changes.
+///
+/// The retune driver correlates those responses and answers each refusal to
+/// its own caller, so the occupant keeps running at its previous value. Any
+/// other refused command, a launch's opening effort included, is a failure.
+pub const RETUNE_REQUEST_ID_PREFIX: &str = "spice-retune-";
+
 /// RPC frames and session entries that carry no listening moment of their own.
 ///
 /// Every partial, lifecycle, and transport frame is named here rather than
@@ -476,13 +483,17 @@ pub(crate) fn command_response(
 
 /// A command reply. Only `get_state` carries content: the exact session
 /// identity a resumed launch names again. A refused command is a failure the
-/// lane must see, whatever the command was.
+/// lane must see, except a live retune its own driver answers.
 fn response(record: &Object, locus: Locus) -> Events {
     let response = command_response(record)?.expect("response records carry response context");
     let command = response.command.as_str();
     if !response.success {
         let reason = response.error.as_deref().unwrap_or("no reason given");
-        if matches!(command, "set_model" | "set_thinking_level") {
+        if response
+            .id
+            .as_deref()
+            .is_some_and(|id| id.starts_with(RETUNE_REQUEST_ID_PREFIX))
+        {
             return Ok(Vec::new());
         }
         let mut message = format!("{command} refused: {reason}");

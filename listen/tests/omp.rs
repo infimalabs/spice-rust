@@ -230,6 +230,30 @@ fn compaction_and_refusals_are_typed_while_lifecycle_frames_stay_silent() {
     );
 }
 
+/// The live retune driver answers its own refusals and the occupant keeps
+/// running; the same command refused while a launch opens is a failure.
+#[test]
+fn only_a_live_retune_refusal_is_left_to_its_driver() {
+    let opening = br#"{"id":"spice-effort","type":"response","command":"set_thinking_level","success":false,"error":"unsupported"}"#;
+    assert!(
+        matches!(
+            decoded(opening).events(),
+            [Event::Failure(failure)] if failure.message == "set_thinking_level refused: unsupported"
+        ),
+        "a refused opening effort must fail the launch"
+    );
+    for command in ["set_thinking_level", "set_model"] {
+        let live = format!(
+            r#"{{"id":"{}0","type":"response","command":"{command}","success":false,"error":"unsupported"}}"#,
+            listen::OMP_RETUNE_REQUEST_ID_PREFIX
+        );
+        assert!(
+            decoded(live.as_bytes()).events().is_empty(),
+            "a refused live {command} belongs to the retune driver"
+        );
+    }
+}
+
 #[test]
 fn prompt_results_preserve_identity_lifecycle_and_structured_provider_failure() {
     let completed = decoded(PROMPT_COMPLETED);

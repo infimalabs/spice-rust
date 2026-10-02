@@ -411,7 +411,11 @@ flowchart LR
   `set_thinking_level` response succeeds, journaled against the then-current
   head while the same occupant still runs. Live model selection requires
   explicit `provider/model`; bare models, clears, unsupported occupants,
-  refusals, and interrupted RPC retain the running value.
+  refusals, and interrupted RPC retain the running value. An OMP launch states
+  its seat effort through that same `set_thinking_level` command at open,
+  before the first turn and over the level a resumed session restores; its
+  model still rides `--model`, because omp's live `set_model` admits no bare
+  model. A refused opening effort fails the launch.
 - A lane names exactly one worktree seat. A team may hold one or many lanes;
    the singular team is the degenerate topology, not a different type.
 - Topology is server truth. The client never mounts a lane from local storage;
