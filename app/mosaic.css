@@ -245,11 +245,10 @@
 .mosaic-message-card--image-only .mermaid-slot {
   --message-image-size: var(--mosaic-image-large-size);
 }
-/* A lone tool image measures at the square floor, so the lattice may commit a
-   card with room left over. Once committed it grows to the largest square that
-   room allows, filled by cover with the same frame as an operator's image, so
-   it never changes the card's committed size. Measuring cards and the in-flow
-   base phase keep the floor they are measured at. */
+/* A lone tool image keeps the standard large square it is measured at. The
+   lattice may commit a card with room left over, so once committed the footer
+   holds the bottom edge and the square sits centred in the room above it,
+   never changing the card's committed size. */
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
   .mosaic-message-layers {
@@ -263,12 +262,7 @@
 .lane-mosaic-plane:not([data-measurement-phase="base"])
   .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
   .message-attachments {
-  min-height: 0; overflow: hidden; container-type: size;
-}
-.lane-mosaic-plane:not([data-measurement-phase="base"])
-  .mosaic-message-card--lone-image[data-layout-phase="committed"]:not([data-mosaic-measurement-active])
-  .message-image {
-  --message-image-size: min(100cqi, 100cqb);
+  min-height: 0; overflow: hidden; place-content: center; align-items: center;
 }
 .mosaic-message-card:not(.mosaic-message-card--image-only)
   .mosaic-message-normal > .message-body:has(> p.message-image-stack + p.message-image-stack) {
