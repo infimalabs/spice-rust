@@ -96,6 +96,23 @@ impl Seated {
         effort: Option<&str>,
         topology_revision: u64,
     ) -> Outcome<CommandAnswer> {
+        let (command, request) = self.effort_command(id, effort, topology_revision);
+        super::super::lane_surface::retune_effort(
+            &self.bus,
+            &self.paths,
+            self.epoch,
+            &self.seats,
+            &command,
+            &request,
+        )
+    }
+
+    fn effort_command(
+        &self,
+        id: u8,
+        effort: Option<&str>,
+        topology_revision: u64,
+    ) -> (wire::AdmittedCommand, wire::intent::LaneEffortRetune) {
         let request = wire::intent::LaneEffortRetune {
             topology_revision,
             lane: self.lane,
@@ -115,14 +132,7 @@ impl Seated {
             epoch: self.epoch,
         })
         .expect("operator effort retune admits");
-        super::super::lane_surface::retune_effort(
-            &self.bus,
-            &self.paths,
-            self.epoch,
-            &self.seats,
-            &command,
-            &request,
-        )
+        (command, request)
     }
 
     fn head(&self) -> wire::ResidencyHead {
@@ -403,8 +413,9 @@ fn a_residency_write_during_a_live_retune_keeps_seat_and_running_effort() {
     let listener = UnixDatagram::bind(&door).expect("fixture kick door binds");
     let revision = fixture.head().topology_revision;
     let (bus, epoch, lane) = (&fixture.bus, fixture.epoch, fixture.lane);
+    let (command, request) = fixture.effort_command(4, Some("max"), revision);
 
-    let rows = std::thread::scope(|scope| {
+    let outcome = std::thread::scope(|scope| {
         scope.spawn(move || {
             let mut bytes = [0u8; 4096];
             let length = listener.recv(&mut bytes).expect("the retune kick arrives");
@@ -426,9 +437,31 @@ fn a_residency_write_during_a_live_retune_keeps_seat_and_running_effort() {
                 )
                 .expect("applied reply sends");
         });
-        committed_rows(fixture.retune_effort(4, Some("max"), revision))
+        super::super::lane_surface::retune_effort(
+            &fixture.bus,
+            &fixture.paths,
+            fixture.epoch,
+            &fixture.seats,
+            &command,
+            &request,
+        )
     });
     let _ = std::fs::remove_file(&door);
+    let returned_position = match &outcome {
+        Outcome::Reply(reply) => reply.position,
+        other => panic!("a live retune replies: {other:?}"),
+    };
+    let replayed = super::super::command_surface::replay_command(&fixture.bus, &command)
+        .expect("the committed retune has a durable receipt");
+    let replayed_position = match replayed {
+        Outcome::Reply(reply) => reply.position,
+        other => panic!("a successful retune receipt replays: {other:?}"),
+    };
+    assert_eq!(
+        returned_position, replayed_position,
+        "the live reply names its durable command transaction, not interleaved facts",
+    );
+    let rows = committed_rows(outcome);
 
     let row = rows
         .iter()
