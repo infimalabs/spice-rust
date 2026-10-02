@@ -239,6 +239,16 @@ output-bearing surface admits through the one contract in `wire::output`:
 
 Mutation replies are outside this contract: they stay complete and concise.
 
+Task artifacts are retained evidence, possibly large or binary. `task artifact
+list` pages citations newest first under `INTERACTIVE`, continuing with
+`--after ARTIFACT`. A bare `task artifact show` returns metadata and the first
+4096 bytes of a text payload, or only the store path of a non-text payload.
+`--offset`/`--bytes` (at most 16384) reads any window: text on character
+boundaries, other payloads as hex, and a short window names the next. No form
+writes raw payload bytes to the terminal. `--output PATH` is the exact export:
+the whole payload, verified against its retained digest after the write. A
+payload that no longer matches its digest is neither shown nor extracted.
+
 The occupant's `job` tool is the one non-CLI read on this contract. Its
 default `list` is every job still owed to the lane, oldest first: running, or
 ended and not yet heard. That is the set Canvas shows as Kept jobs, and it

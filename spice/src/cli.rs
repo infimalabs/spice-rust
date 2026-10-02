@@ -421,6 +421,35 @@ are always counted, with the exact command that continues after them. Complete
 documents and evidence are exported to a named file with their digest, never
 streamed. Mutation replies are complete and concise.";
 
+/// How `task artifact list` pages its citations.
+const ARTIFACT_LIST_HELP: &str = "\
+Lists the task's artifacts newest first: 20 by default, at most 500 (--limit),
+within 8 KiB of encoded rows by default and 128 KiB at most (--max-bytes). A
+partial page states how many it withheld and the exact command that continues
+at the first withheld artifact (--after ARTIFACT, inclusive).";
+
+/// How `task artifact show` reads a payload without flooding a terminal.
+const ARTIFACT_SHOW_HELP: &str = "\
+Shows the artifact's metadata and a bounded window of its payload, after
+proving the payload against its retained digest. Text shows its first 4096
+bytes; a non-text payload shows only its store path. --offset and --bytes
+(1 to 16384) read a window anywhere: text on character boundaries, other
+payloads as hex. A window that stops short names the command for the next.
+No form writes raw payload bytes to the terminal.
+
+--output PATH writes the exact whole payload to PATH atomically, verifies the
+written file against the retained digest, and reports its path, size, and
+digest without echoing contents. It is never truncated; '-' is refused.";
+
+/// Usage notes for a leaf whose bounds its syntax line cannot carry.
+fn leaf_help(path: &[&str]) -> Option<&'static str> {
+    match path {
+        ["task", "artifact", "list"] => Some(ARTIFACT_LIST_HELP),
+        ["task", "artifact", "show"] => Some(ARTIFACT_SHOW_HELP),
+        _ => None,
+    }
+}
+
 fn command_from(contracts: &[Contract], mounts: &[Mount]) -> Command {
     let mut root = Command::new("spice")
         .about("Repository-local coordination appliance")
@@ -463,6 +492,9 @@ fn branch(contracts: &[Contract], mounts: &[Mount], name: &str, path: &[String])
 
     if let Some(contract) = contract {
         command = command.override_usage(format!("spice {}", contract.syntax));
+        if let Some(help) = leaf_help(&borrowed) {
+            command = command.after_help(help);
+        }
         command = register_syntax(command, contract).unwrap_or_else(|error| {
             panic!("invalid CLI contract syntax {:?}: {error}", contract.path)
         });

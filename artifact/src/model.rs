@@ -4,7 +4,8 @@ use std::str::FromStr;
 use serde::de::{Deserializer, Error as _};
 use serde::ser::Serializer;
 use serde::{Deserialize, Serialize};
-use wire::{Digest, Instant, TaskHandle, TaskStamp};
+use wire::output::{Export, Omission};
+use wire::{Digest, Instant, SpiceCommand, TaskHandle, TaskStamp};
 
 pub(crate) const STORE_VERSION: u16 = 2;
 
@@ -140,11 +141,29 @@ pub struct Artifact {
     pub retention: Retention,
 }
 
-/// Content returned after a show operation proves payload integrity.
+/// What a show returns of a payload whose integrity the store proved.
+///
+/// No representation carries raw payload bytes: text is a bounded UTF-8
+/// window, bytes are hex, and a bare show of a non-text payload names only
+/// where the store keeps it.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case", tag = "representation")]
 pub enum ArtifactContent {
-    Text { text: String },
+    /// UTF-8 text at payload bytes `offset..offset + text.len()`; `remaining`
+    /// payload bytes follow it.
+    Text {
+        offset: u64,
+        text: String,
+        remaining: u64,
+    },
+    /// Payload bytes `offset..offset + hex.len() / 2`, hex-encoded; `remaining`
+    /// payload bytes follow them.
+    Bytes {
+        offset: u64,
+        hex: String,
+        remaining: u64,
+    },
+    /// A non-text payload shown without an explicit window: its store path.
     Binary { path: String },
 }
 
@@ -156,14 +175,27 @@ pub enum ArtifactAnswer {
         task: TaskHandle,
         artifact: Artifact,
     },
+    /// Citations newest first, and what the page withheld.
     Listed {
         task: TaskHandle,
         artifacts: Vec<Artifact>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        omission: Option<Omission>,
     },
+    /// Metadata and one bounded window; `next` reads the window after it.
     Shown {
         task: TaskHandle,
         artifact: Artifact,
         content: ArtifactContent,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        next: Option<SpiceCommand>,
+    },
+    /// The exact payload written to a named file and verified against the
+    /// artifact's retained digest after the write.
+    Extracted {
+        task: TaskHandle,
+        artifact: Artifact,
+        export: Export,
     },
     Pruned {
         plan: PrunePlan,

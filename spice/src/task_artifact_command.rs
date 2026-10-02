@@ -2,13 +2,20 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use artifact::{AddRequest, ArtifactAnswer, ArtifactContent, ErrorClass, Retention, Store};
+use artifact::{
+    AddRequest, Artifact, ArtifactAnswer, ArtifactContent, ErrorClass, Retention, Store,
+};
 use spice::cli::Contract;
 use spice::config::LoadError;
 use spice::repository::{Repository, StateError, StatePaths};
+use wire::output::Export;
 use wire::{
-    Fault, FaultClass, Instant, Outcome, Refusal, Reply, ReplyPosition, Seq, TaskHandle, TaskStamp,
+    Fault, FaultClass, Instant, Outcome, Refusal, Reply, ReplyPosition, Seq, SpiceCommand,
+    TaskHandle, TaskStamp,
 };
+
+#[cfg(test)]
+mod tests;
 
 pub(crate) fn run(
     matches: &clap::ArgMatches,
@@ -70,42 +77,27 @@ fn run_inner(
         }
         ["task", "artifact", "list"] => {
             let selected = selected_task(matches, &snapshot)?;
-            let artifacts = store.list(&selected.born).map_err(artifact_failure)?;
-            Ok((
-                position,
-                ArtifactAnswer::Listed {
-                    task: selected.handle,
-                    artifacts,
-                },
-            ))
+            let request = wire::output::Request {
+                rows: count(matches, "limit")?,
+                bytes: count(matches, "max-bytes")?,
+                text: None,
+            };
+            let after = matches.get_one::<String>("after").map(String::as_str);
+            let answer = list_answer(&store, &selected.born, selected.handle, request, after)?;
+            Ok((position, answer))
         }
         ["task", "artifact", "show"] => {
             let selected = selected_task(matches, &snapshot)?;
             let artifact_id = matches
                 .get_one::<String>("ARTIFACT")
                 .expect("generated artifact show parser requires ARTIFACT");
-            let (artifact, bytes) = store
-                .show(&selected.born, artifact_id)
-                .map_err(artifact_failure)?;
-            let content = if artifact.media_type.is_text() {
-                ArtifactContent::Text {
-                    text: String::from_utf8(bytes).expect("store proved text artifact UTF-8"),
-                }
-            } else {
-                ArtifactContent::Binary {
-                    path: payload_path(store.root(), &selected.born, &artifact.digest)
-                        .display()
-                        .to_string(),
-                }
-            };
-            Ok((
-                position,
-                ArtifactAnswer::Shown {
-                    task: selected.handle,
-                    artifact,
-                    content,
-                },
-            ))
+            let window = window(
+                count(matches, "offset")?,
+                count(matches, "bytes")?,
+                matches.get_one::<String>("output").map(String::as_str),
+            )?;
+            let answer = show_answer(&store, &selected.born, selected.handle, artifact_id, window)?;
+            Ok((position, answer))
         }
         ["task", "artifact", "prune"] => {
             let older = matches
@@ -346,6 +338,288 @@ fn cutoff(duration: &Duration) -> Result<Instant, Failure> {
     })
 }
 
+/// Payload bytes a show previews when no `--bytes` is named.
+const PREVIEW_BYTES: usize = 4096;
+
+/// Most payload bytes one show window returns: the repository text ceiling.
+const WINDOW_MAX: usize = wire::output::CEILING.text;
+
+/// What a show reads of the payload.
+enum Window<'a> {
+    /// A bounded window; absent bounds take the preview.
+    Inspect {
+        offset: Option<usize>,
+        length: Option<usize>,
+    },
+    /// The whole payload, to this file.
+    Extract(&'a str),
+}
+
+fn window<'a>(
+    offset: Option<usize>,
+    length: Option<usize>,
+    output: Option<&'a str>,
+) -> Result<Window<'a>, Failure> {
+    if let Some(length) = length
+        && !(1..=WINDOW_MAX).contains(&length)
+    {
+        return Err(Failure::refusal(
+            "artifact::window-bytes",
+            format!("--bytes from 1 to {WINDOW_MAX}"),
+            length.to_string(),
+            "read a larger payload in windows, or extract it with --output PATH",
+        ));
+    }
+    match output {
+        Some(_) if offset.is_some() || length.is_some() => Err(Failure::refusal(
+            "artifact::window-extract",
+            "--output alone, or a window",
+            "--output with --offset or --bytes",
+            "extraction writes the whole payload; drop the window bounds",
+        )),
+        Some(output) => Ok(Window::Extract(output)),
+        None => Ok(Window::Inspect { offset, length }),
+    }
+}
+
+/// One page of the task's citations, newest first from `after` (inclusive).
+fn list_answer(
+    store: &Store,
+    born: &TaskStamp,
+    task: TaskHandle,
+    request: wire::output::Request,
+    after: Option<&str>,
+) -> Result<ArtifactAnswer, Failure> {
+    let budget = wire::output::INTERACTIVE.budget(request).map_err(|error| {
+        Failure::refusal(
+            "artifact::list-limit",
+            "limits within the list maximum",
+            error.to_string(),
+            "lower the named limit or page with the continuation",
+        )
+    })?;
+    let artifacts = store.list(born).map_err(artifact_failure)?;
+    let (artifacts, omission) = page(&task, artifacts, budget, after)?;
+    Ok(ArtifactAnswer::Listed {
+        task,
+        artifacts,
+        omission,
+    })
+}
+
+/// One artifact's metadata with a bounded window of its proved payload, or
+/// the payload extracted whole to a file.
+fn show_answer(
+    store: &Store,
+    born: &TaskStamp,
+    task: TaskHandle,
+    artifact_id: &str,
+    window: Window<'_>,
+) -> Result<ArtifactAnswer, Failure> {
+    let (artifact, bytes) = store.show(born, artifact_id).map_err(artifact_failure)?;
+    let (offset, length) = match window {
+        Window::Inspect { offset, length } => (offset, length),
+        Window::Extract(output) => {
+            let export = extract(Path::new(output), &artifact, &bytes)?;
+            return Ok(ArtifactAnswer::Extracted {
+                task,
+                artifact,
+                export,
+            });
+        }
+    };
+    let (content, end) = match (artifact.media_type.is_text(), offset, length) {
+        (false, None, None) => (
+            ArtifactContent::Binary {
+                path: payload_path(store.root(), born, &artifact.digest)
+                    .display()
+                    .to_string(),
+            },
+            None,
+        ),
+        (true, ..) => {
+            let text = std::str::from_utf8(&bytes).expect("store proved text UTF-8");
+            let (start, end) =
+                text_window(text, offset.unwrap_or(0), length.unwrap_or(PREVIEW_BYTES));
+            (
+                ArtifactContent::Text {
+                    offset: wide(start),
+                    text: text[start..end].to_owned(),
+                    remaining: wide(bytes.len() - end),
+                },
+                Some(end),
+            )
+        }
+        (false, ..) => {
+            let start = offset.unwrap_or(0).min(bytes.len());
+            let end = start
+                .saturating_add(length.unwrap_or(PREVIEW_BYTES))
+                .min(bytes.len());
+            (
+                ArtifactContent::Bytes {
+                    offset: wide(start),
+                    hex: hex(&bytes[start..end]),
+                    remaining: wide(bytes.len() - end),
+                },
+                Some(end),
+            )
+        }
+    };
+    let next = end.filter(|end| *end < bytes.len()).map(|end| {
+        let mut arguments = vec![
+            "artifact".to_owned(),
+            "show".to_owned(),
+            task.to_string(),
+            artifact.id.clone(),
+            "--offset".to_owned(),
+            end.to_string(),
+        ];
+        if let Some(length) = length {
+            arguments.extend(["--bytes".to_owned(), length.to_string()]);
+        }
+        SpiceCommand::new("task", arguments).expect("artifact window command is valid")
+    });
+    Ok(ArtifactAnswer::Shown {
+        task,
+        artifact,
+        content,
+        next,
+    })
+}
+
+/// A non-negative count flag.
+fn count(matches: &clap::ArgMatches, flag: &str) -> Result<Option<usize>, Failure> {
+    matches
+        .get_one::<String>(flag)
+        .map(|value| {
+            value.parse().map_err(|_| {
+                Failure::refusal(
+                    "artifact::count-invalid",
+                    format!("--{flag} as a non-negative integer"),
+                    value.clone(),
+                    "name a whole number",
+                )
+            })
+        })
+        .transpose()
+}
+
+/// The text window from `offset` of at most `length` bytes, on character
+/// boundaries: a start inside a character moves to its end, and a window too
+/// short for the next character widens to hold it, so paging always advances.
+fn text_window(text: &str, offset: usize, length: usize) -> (usize, usize) {
+    let start = text.ceil_char_boundary(offset.min(text.len()));
+    let end = text.floor_char_boundary(start.saturating_add(length));
+    if end == start && start < text.len() {
+        (start, text.ceil_char_boundary(start + 1))
+    } else {
+        (start, end)
+    }
+}
+
+fn wide(length: usize) -> u64 {
+    u64::try_from(length).expect("an in-memory length fits u64")
+}
+
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    bytes
+        .iter()
+        .fold(String::with_capacity(bytes.len() * 2), |mut hex, byte| {
+            let _ = write!(hex, "{byte:02x}");
+            hex
+        })
+}
+
+/// Citations newest first from `after` (inclusive), admitted under `budget`.
+fn page(
+    task: &TaskHandle,
+    mut artifacts: Vec<Artifact>,
+    budget: wire::output::Budget,
+    after: Option<&str>,
+) -> Result<(Vec<Artifact>, Option<wire::output::Omission>), Failure> {
+    artifacts.reverse();
+    let start = match after {
+        None => 0,
+        Some(after) => artifacts
+            .iter()
+            .position(|artifact| artifact.id == after)
+            .ok_or_else(|| {
+                Failure::refusal(
+                    "artifact::cursor-unknown",
+                    "an artifact of this task",
+                    after.to_owned(),
+                    "continue from the cursor the previous page named",
+                )
+            })?,
+    };
+    let mut admission = wire::output::Admission::new(budget);
+    for artifact in artifacts.into_iter().skip(start) {
+        admission.offer(artifact).map_err(|error| {
+            Failure::fault(
+                FaultClass::Protocol,
+                "artifact::list-encode",
+                error.to_string(),
+            )
+        })?;
+    }
+    let limits = budget.limits();
+    let bounded = admission.finish(|resume| {
+        // A record alone past the byte maximum cannot ride any page; its own
+        // show names it singly.
+        let (record, bytes) = match resume {
+            wire::output::Resume::At(record) => (record, limits.bytes),
+            wire::output::Resume::Widened { record, bytes } => (record, bytes),
+            wire::output::Resume::Export(record) => {
+                return SpiceCommand::new(
+                    "task",
+                    ["artifact", "show", &task.to_string(), &record.id],
+                )
+                .expect("artifact show command is valid");
+            }
+        };
+        let arguments = [
+            "artifact".to_owned(),
+            "list".to_owned(),
+            task.to_string(),
+            wire::output::CURSOR_FLAG.to_owned(),
+            record.id.clone(),
+            wire::output::ROWS_FLAG.to_owned(),
+            limits.rows.to_string(),
+            wire::output::BYTES_FLAG.to_owned(),
+            bytes.to_string(),
+        ];
+        SpiceCommand::new("task", arguments).expect("artifact list command is valid")
+    });
+    Ok((bounded.rows, bounded.omission))
+}
+
+/// Write the proved payload to `output` and verify the written file against
+/// the artifact's retained digest.
+fn extract(output: &Path, artifact: &Artifact, bytes: &[u8]) -> Result<Export, Failure> {
+    let export = spice::export::export(output, bytes).map_err(Failure::Refusal)?;
+    let written = std::fs::read(&export.path).map_err(|error| {
+        Failure::fault(
+            FaultClass::Environment,
+            "artifact::extract-unreadable",
+            format!("{}: {error}", export.path),
+        )
+    })?;
+    let observed = wire::Digest::compute(wire::Domain::TaskArtifactPayload, &written);
+    if observed != artifact.digest || export.bytes != artifact.bytes {
+        return Err(Failure::fault(
+            FaultClass::Store,
+            "artifact::extract-mismatch",
+            format!(
+                "{} holds {} bytes with digest {observed}; artifact {} retains {} bytes with \
+                 digest {}",
+                export.path, export.bytes, artifact.id, artifact.bytes, artifact.digest
+            ),
+        ));
+    }
+    Ok(export)
+}
+
 fn payload_path(root: &Path, task: &TaskStamp, digest: &wire::Digest) -> PathBuf {
     root.join(task.as_str())
         .join("objects")
@@ -395,6 +669,7 @@ fn state_failure(error: StateError) -> Failure {
     }
 }
 
+#[derive(Debug)]
 enum Failure {
     Refusal(Refusal),
     Fault(Fault),

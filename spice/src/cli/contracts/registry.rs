@@ -668,7 +668,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "artifact", "list"],
-        "task artifact list HANDLE",
+        "task artifact list HANDLE [--limit N] [--max-bytes N] [--after ARTIFACT]",
         OperatorOrLane,
         Read,
         [],
@@ -678,7 +678,7 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["task", "artifact", "show"],
-        "task artifact show HANDLE ARTIFACT",
+        "task artifact show HANDLE ARTIFACT [--offset N] [--bytes N] [--output PATH]",
         OperatorOrLane,
         Read,
         [],
