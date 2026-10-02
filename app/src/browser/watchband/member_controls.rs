@@ -1,4 +1,4 @@
-//! Lane controls inside one Dash member's disclosure.
+//! One seat's lane controls, drawn in its lane menu and its Dash card.
 //!
 //! Every control is drawn only when the resident offers its command to this
 //! session and the seat's current state admits it, so a missing control means
@@ -99,7 +99,7 @@ fn close_confirmation(event: &MouseEvent) {
     if let Some(confirm) = event
         .target()
         .and_then(|target| target.dyn_into::<web_sys::Element>().ok())
-        .and_then(|target| target.closest(".team-dash-confirm").ok().flatten())
+        .and_then(|target| target.closest(".member-confirm").ok().flatten())
     {
         let _removed = confirm.remove_attribute("open");
     }
@@ -127,9 +127,9 @@ fn confirmed(
     onclick: Callback<MouseEvent>,
 ) -> Html {
     html! {
-        <details class="team-dash-confirm" data-member-control={key}>
+        <details class="member-confirm" data-member-control={key}>
             <summary class="team-mode">{label.to_owned()}</summary>
-            <div class="team-dash-confirm-body">
+            <div class="member-confirm-body">
                 <p>{question}</p>
                 <button type="button" class="team-mode" disabled={busy} {onclick}>{action}</button>
             </div>
@@ -140,6 +140,9 @@ fn confirmed(
 #[derive(Properties, PartialEq)]
 struct ModelFormProps {
     lane: CanonicalUuid,
+    /// Which surface draws the form, keeping its input id unique when the
+    /// lane menu and the Dash card are both mounted.
+    surface: &'static str,
     /// The seat's authoritative model spelling; absent follows the vendor.
     model: Option<String>,
     placeholder: String,
@@ -161,7 +164,7 @@ fn model_form(props: &ModelFormProps) -> Html {
         });
     }
     let lane = props.lane;
-    let id = format!("team-dash-model-{lane}");
+    let id = format!("member-model-{}-{lane}", props.surface);
     let oninput = {
         let draft = draft.clone();
         Callback::from(move |event: InputEvent| {
@@ -173,7 +176,10 @@ fn model_form(props: &ModelFormProps) -> Html {
         let command = props.command.clone();
         let draft = draft.clone();
         Callback::from(move |event: SubmitEvent| {
+            // The lane menu sits inside the team composer form, whose own
+            // submit sends a message; the model form must not reach it.
             event.prevent_default();
+            event.stop_propagation();
             let model = Some(draft.trim().to_owned()).filter(|model| !model.is_empty());
             command.emit((lane, MemberCommand::Retune { model }));
         })
@@ -186,7 +192,7 @@ fn model_form(props: &ModelFormProps) -> Html {
     });
     let busy = props.busy;
     html! {
-        <form class="team-dash-model" data-member-control="model" onsubmit={submit}>
+        <form class="member-model" data-member-control="model" onsubmit={submit}>
             <label for={id.clone()}>{"Next launch model"}</label>
             <input
                 {id}
@@ -213,6 +219,7 @@ fn render_retune(
     member: &crate::runtime::LaneMember,
     busy: bool,
     command: &Callback<(CanonicalUuid, MemberCommand)>,
+    surface: &'static str,
 ) -> Html {
     let placeholder = runtime
         .vendor_catalog()
@@ -230,6 +237,7 @@ fn render_retune(
         <ModelForm
             key={member.lane.to_string()}
             lane={member.lane}
+            {surface}
             model={member.seat_model.clone()}
             {placeholder}
             {busy}
@@ -247,11 +255,16 @@ fn render_renewal(
 ) -> Html {
     let renewal = watchband::agent_renewal_control(
         &standing.label,
-        true,
         runtime
             .lanes()
             .and_then(|lanes| lanes.renewal(standing.team, member.lane)),
     );
+    // A refused launch stays retryable, and its exact reason stays in view.
+    let refusal = renewal.refusal.clone().map(|reason| {
+        html! {
+            <p class="member-refusal" role="status">{format!("Renewal launch refused: {reason}")}</p>
+        }
+    });
     let next = MemberCommand::Renew {
         requested: renewal.next_requested,
     };
@@ -263,17 +276,22 @@ fn render_renewal(
         } else {
             "The seat stays vacant; its next start launches the successor."
         };
-        confirmed(
-            "renew",
-            renewal.heading,
-            format!(
-                "Start a fresh successor for {}? {consequence}",
-                standing.label
-            ),
-            format!("Renew {}", standing.label),
-            busy,
-            onclick,
-        )
+        html! {
+            <>
+                {confirmed(
+                    "renew",
+                    renewal.heading,
+                    format!(
+                        "Start a fresh successor for {}? {consequence}",
+                        standing.label
+                    ),
+                    format!("Renew {}", standing.label),
+                    busy,
+                    onclick,
+                )}
+                {refusal}
+            </>
+        }
     } else {
         html! {
             <button
@@ -339,6 +357,7 @@ pub(super) fn render(
     member: &crate::runtime::LaneMember,
     standing: &Standing,
     command: &Callback<(CanonicalUuid, MemberCommand)>,
+    surface: &'static str,
 ) -> Html {
     let offered = Offered::of(runtime);
     if !(offered.lifecycle || offered.renew || offered.retune) {
@@ -350,11 +369,11 @@ pub(super) fn render(
         .is_some();
     html! {
         <section
-            class="team-dash-member-controls"
+            class="member-controls"
             aria-label={format!("Controls for {}", standing.label)}
             aria-busy={busy.to_string()}
         >
-            <div class="team-dash-member-actions">
+            <div class="member-control-actions">
                 if offered.lifecycle {
                     {render_lifecycle(member, standing, busy, command)}
                 }
@@ -363,7 +382,7 @@ pub(super) fn render(
                 }
             </div>
             if offered.retune {
-                {render_retune(runtime, member, busy, command)}
+                {render_retune(runtime, member, busy, command, surface)}
             }
         </section>
     }

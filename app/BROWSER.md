@@ -48,6 +48,17 @@ accepted interaction sends the complete topology at the revision currently
 drawn by Canvas; cancellation, a changed revision, or a removed source clears
 the lift without sending.
 
+## Lane menu
+
+Each Chat lane's menu button swaps that lane's composer for its seat panel
+instead of opening a floating menu. The panel carries everything one agent
+offers: the same Wake, Drain, Remove, Renew, and next-launch-model commands
+and refusals as the team Dash, the presence and lease age, the current task,
+latest activity, and waiting direction, copyable agent channel, occupant,
+session, and worktree, and Create new team and Leave all teams. Wide lanes lay
+those groups side by side; narrow lanes stack them and scroll within the lane.
+The button, Escape, or a click elsewhere in the team restores the composer.
+
 ## Rich team directions
 
 The team-local **Work** tab renders each direction from its complete admitted

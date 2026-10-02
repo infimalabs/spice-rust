@@ -717,24 +717,24 @@ body:has(.shell--mosaic),
   margin: 0;
 }
 .team-dash-member-disclosure dl div { min-width: 0; }
-.team-dash-member-controls {
+.member-controls {
   display: grid;
   gap: 5px;
   min-width: 0;
   font-size: .64rem;
 }
-.team-dash-member-actions {
+.member-control-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   gap: 4px;
 }
-.team-dash-member-actions > .team-mode,
-.team-dash-confirm > summary { min-height: 22px; padding-inline: 8px; }
-.team-dash-confirm > summary { list-style: none; cursor: pointer; }
-.team-dash-confirm > summary::-webkit-details-marker { display: none; }
-.team-dash-confirm[open] { flex-basis: 100%; }
-.team-dash-confirm-body {
+.member-control-actions > .team-mode,
+.member-confirm > summary { min-height: 22px; padding-inline: 8px; }
+.member-confirm > summary { list-style: none; cursor: pointer; }
+.member-confirm > summary::-webkit-details-marker { display: none; }
+.member-confirm[open] { flex-basis: 100%; }
+.member-confirm-body {
   display: grid;
   gap: 4px;
   margin-top: 4px;
@@ -742,21 +742,27 @@ body:has(.shell--mosaic),
   border: 1px solid var(--control-line-soft);
   border-radius: var(--canvas-radius-control);
 }
-.team-dash-confirm-body p { margin: 0; overflow-wrap: anywhere; }
-.team-dash-model {
+.member-confirm-body p { margin: 0; overflow-wrap: anywhere; }
+.member-refusal {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+.member-model {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 4px;
 }
-.team-dash-model label {
+.member-model label {
   grid-column: 1 / -1;
   color: var(--muted);
   font-size: .57rem;
   letter-spacing: .05em;
   text-transform: uppercase;
 }
-.team-dash-model input {
+.member-model input {
   min-width: 0;
   font: .64rem/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
 }

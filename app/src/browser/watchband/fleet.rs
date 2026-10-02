@@ -190,6 +190,8 @@ pub(super) fn render_populated_fleet(
                                     render.team_controls,
                                     render.can_configure,
                                     render.controls,
+                                    &render.surface,
+                                    render.select_task,
                                 )}
                             </div>
                             if mode != TeamMode::Chat {
