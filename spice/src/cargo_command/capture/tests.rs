@@ -1,18 +1,17 @@
-use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::process::ExitStatusExt as _;
 
 use super::*;
 
 #[derive(Clone, Default)]
-struct Sink(Arc<Mutex<Vec<u8>>>);
+struct Buffer(Arc<Mutex<Vec<u8>>>);
 
-impl Sink {
+impl Buffer {
     fn text(&self) -> String {
         String::from_utf8(self.0.lock().expect("sink lock").clone()).expect("UTF-8 report")
     }
 }
 
-impl Write for Sink {
+impl Write for Buffer {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
         self.0.lock().expect("sink lock").extend_from_slice(bytes);
         Ok(bytes.len())
@@ -30,7 +29,7 @@ static SPAWN: Mutex<()> = Mutex::new(());
 
 struct Fixture {
     directory: PathBuf,
-    sink: Sink,
+    sink: Buffer,
 }
 
 impl Fixture {
@@ -43,7 +42,7 @@ impl Fixture {
                 std::process::id(),
                 uuid::Uuid::new_v4().simple()
             )),
-            sink: Sink::default(),
+            sink: Buffer::default(),
         }
     }
 
@@ -199,23 +198,6 @@ fn a_child_ended_by_a_deadline_signal_reports_it_and_keeps_its_capture() {
         "{report}"
     );
     assert_eq!(retained(&report), b"started\n");
-}
-
-#[test]
-fn arguments_and_environment_reach_the_child_exactly() {
-    let fixture = Fixture::new();
-    let mut command = sh(r#"printf '[%s]\n' "$@" ; printf 'env=[%s]\n' "$TMPDIR""#);
-    command
-        .arg("sh")
-        .args(["a b", "", "ünï"])
-        .arg(std::ffi::OsStr::from_bytes(b"\xff"))
-        .env("TMPDIR", "value with space"); // env-policy: allow
-    let (status, report) = fixture.run(&mut command, false);
-
-    assert!(status.success(), "{report}");
-    let mut expected = "[a b]\n[]\n[ünï]\n[".as_bytes().to_vec();
-    expected.extend_from_slice(b"\xff]\nenv=[value with space]\n");
-    assert_eq!(retained(&report), expected);
 }
 
 #[test]

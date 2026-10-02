@@ -2,6 +2,7 @@
 
 use std::ffi::OsString;
 use std::io;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus};
 #[cfg(unix)]
 use std::thread::JoinHandle;
@@ -16,6 +17,8 @@ use spice::repository::Repository;
 use wire::{Fault, FaultClass, Outcome, Reply, ReplyPosition};
 
 mod capture;
+#[cfg(test)]
+mod tests;
 
 use capture::{Stage, Stdout};
 
@@ -84,26 +87,50 @@ struct Invocation {
     verbose: bool,
 }
 
+impl Invocation {
+    /// Reporting for this invocation, written to `sink` and retained under
+    /// `directory`.
+    fn settings(&self, sink: capture::Sink, directory: PathBuf) -> capture::Settings {
+        capture::Settings {
+            surface: self.surface,
+            identity: self.identity.clone(),
+            sink,
+            heartbeat: crate::gate_command::output::HEARTBEAT,
+            verbose: self.verbose,
+            directory,
+        }
+    }
+}
+
 /// Prepare the exact current lock generation and run native Cargo within it.
 pub(crate) fn run(matches: &clap::ArgMatches) -> RunResult {
+    run_invocation(cargo_invocation(matches))
+}
+
+/// Run the repository's task binary inside the same admitted Cargo boundary.
+pub(crate) fn xtask(matches: &clap::ArgMatches) -> RunResult {
+    run_invocation(xtask_invocation(matches))
+}
+
+/// Every argument after `--` reaches Cargo verbatim; only flags before it are
+/// the wrapper's.
+fn cargo_invocation(matches: &clap::ArgMatches) -> Invocation {
     let arguments = matches
         .get_many::<OsString>("CARGO_ARGS")
         .expect("the generated parser requires trailing Cargo arguments")
         .cloned()
         .collect::<Vec<_>>();
-    run_invocation(Invocation {
+    Invocation {
         identity: capture::identity("cargo", &arguments),
         stdout: capture::cargo_stdout(&arguments),
         surface: "dev cargo",
         verbose: matches.get_flag("verbose"),
         arguments,
-    })
+    }
 }
 
-/// Run the repository's task binary inside the same admitted Cargo boundary.
-///
 /// The task binary's standard output is its product and is always delivered.
-pub(crate) fn xtask(matches: &clap::ArgMatches) -> RunResult {
+fn xtask_invocation(matches: &clap::ArgMatches) -> Invocation {
     let tasks = matches
         .get_many::<OsString>("XTASK_ARGS")
         .expect("the generated parser requires trailing xtask arguments")
@@ -123,13 +150,13 @@ pub(crate) fn xtask(matches: &clap::ArgMatches) -> RunResult {
     .collect::<Vec<_>>();
     let identity = capture::identity("xtask", &tasks);
     arguments.extend(tasks);
-    run_invocation(Invocation {
+    Invocation {
         arguments,
         surface: "dev xtask",
         identity,
         stdout: Stdout::Deliver,
         verbose: matches.get_flag("verbose"),
-    })
+    }
 }
 
 fn run_invocation(invocation: Invocation) -> RunResult {
@@ -225,11 +252,50 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
     })?;
     let host = host(&repository).map_err(isolation_rejection)?;
     let mut prepared = prepare_manual(&repository, &host).map_err(isolation_rejection)?;
-    let mut command = Command::new(prepared.cargo());
+    let mut command = native_command(
+        prepared.cargo(),
+        prepared.home(),
+        &host,
+        &working,
+        &invocation.arguments,
+    );
+    prepared
+        .retain_pin_for_child(&mut command)
+        .map_err(isolation_rejection)?;
+    if supervised_by_pre_commit() {
+        return run_verbatim(&mut command);
+    }
+    let settings = invocation.settings(
+        std::sync::Arc::new(std::sync::Mutex::new(io::stderr())),
+        capture::capture_directory(repository.common_dir()),
+    );
+    capture::run(&mut command, invocation.stdout, &settings, relay).map_err(|stage| match stage {
+        Stage::Log(error) => rejected(
+            FaultClass::Environment,
+            "cargo-isolation::output-capture-unavailable",
+            error.to_string(),
+            1,
+        ),
+        Stage::Spawn(error) => launch_rejection(&error),
+        Stage::Relay(error) => relay_rejection(&error),
+        Stage::Wait(error) => wait_rejection(&error),
+    })
+}
+
+/// Native Cargo over the private home, leading its own process group so a
+/// relayed signal reaches every descendant.
+fn native_command(
+    cargo: &Path,
+    home: &Path,
+    host: &Host,
+    working: &Path,
+    arguments: &[OsString],
+) -> Command {
+    let mut command = Command::new(cargo);
     command
-        .args(&invocation.arguments)
-        .current_dir(&working)
-        .env(CARGO_HOME_VARIABLE, prepared.home())
+        .args(arguments)
+        .current_dir(working)
+        .env(CARGO_HOME_VARIABLE, home)
         .env(BOOTSTRAP_HOME_VARIABLE, host.bootstrap_home())
         .env(NATIVE_CARGO_VARIABLE, host.cargo())
         .env(NATIVE_RUSTC_VARIABLE, host.rustc())
@@ -242,31 +308,7 @@ fn run_inner(invocation: Invocation) -> Result<ExitStatus, (Outcome<()>, i32)> {
         use std::os::unix::process::CommandExt as _;
         command.process_group(0);
     }
-    prepared
-        .retain_pin_for_child(&mut command)
-        .map_err(isolation_rejection)?;
-    if supervised_by_pre_commit() {
-        return run_verbatim(&mut command);
-    }
-    let settings = capture::Settings {
-        surface: invocation.surface,
-        identity: invocation.identity,
-        sink: std::sync::Arc::new(std::sync::Mutex::new(io::stderr())),
-        heartbeat: crate::gate_command::output::HEARTBEAT,
-        verbose: invocation.verbose,
-        directory: capture::capture_directory(repository.common_dir()),
-    };
-    capture::run(&mut command, invocation.stdout, &settings, relay).map_err(|stage| match stage {
-        Stage::Log(error) => rejected(
-            FaultClass::Environment,
-            "cargo-isolation::output-capture-unavailable",
-            error.to_string(),
-            1,
-        ),
-        Stage::Spawn(error) => launch_rejection(&error),
-        Stage::Relay(error) => relay_rejection(&error),
-        Stage::Wait(error) => wait_rejection(&error),
-    })
+    command
 }
 
 /// Run the child with inherited streams, as a supervising worker expects.
@@ -360,34 +402,4 @@ fn rejected(class: FaultClass, reason: &str, detail: String, code: i32) -> (Outc
         }),
         code,
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn developer_children_begin_outside_supervised_shell_state_and_may_opt_in() {
-        let mut command = Command::new("cargo");
-        command
-            .env(steer::hook::BASH_ENV, "/fixture/bash-env")
-            .env(steer::hook::ZDOTDIR, "/fixture/zdotdir")
-            .env(vendor::OMP.thread_id_environment(), "fixture-omp");
-        isolate_developer_environment(&mut command);
-
-        for variable in spice::cargo_isolation::DEVELOPER_CHILD_EXCLUDED_VARIABLES {
-            assert!(
-                command
-                    .get_envs()
-                    .any(|(name, value)| name == variable && value.is_none()),
-                "developer child does not inherit {variable}"
-            );
-        }
-
-        command.env(vendor::OMP.thread_id_environment(), "owned-omp");
-        assert!(command.get_envs().any(|(name, value)| {
-            name == vendor::OMP.thread_id_environment()
-                && value == Some(std::ffi::OsStr::new("owned-omp"))
-        }));
-    }
 }
