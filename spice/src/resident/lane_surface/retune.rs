@@ -254,22 +254,18 @@ fn change(
     };
     let first = seq(seated.first());
     let last = seq(seated.last());
-    let mut answer = answer;
     // The seat is durable before the occupant is touched, so no later refusal
-    // can leave a running change that the journal never heard about.
-    // The reply position remains this receipt's seat transaction; a confirmed
-    // runtime fact can follow unrelated commits and is not part of that range.
-    if let Some((request, occupant)) = live {
-        let applied = matches!(
+    // can leave a running change that the journal never heard about. The reply
+    // is exactly this transaction's receipt, so a retried command replays it
+    // unchanged; a confirmed runtime change is a later residency fact that
+    // lane reads observe.
+    if let Some((request, occupant)) = live
+        && matches!(
             super::super::supervisor::command::retune(paths, selection.lane(), occupant, request),
             Ok(super::super::supervisor::command::LiveRetuneResult::Applied)
-        );
-        if applied
-            && let Some(recorded) =
-                record_runtime(bus, paths, epoch, seats, command, selection, occupant)
-        {
-            answer = recorded;
-        }
+        )
+    {
+        record_runtime(bus, epoch, command, selection, occupant);
     }
     Outcome::Reply(Reply {
         position: ReplyPosition::Committed(SeqRange { first, last }),
@@ -285,46 +281,48 @@ const RUNTIME_RECORD_ATTEMPTS: usize = 3;
 /// the same occupant still runs; a successor launches from the seat instead.
 fn record_runtime(
     bus: &Bus,
-    paths: &RuntimePaths,
     epoch: CanonicalUuid,
-    seats: &Seats,
     command: &wire::AdmittedCommand,
     selection: Selection<'_>,
     occupant: CanonicalUuid,
-) -> Option<wire::intent::LaneAnswer> {
+) {
     for _ in 0..RUNTIME_RECORD_ATTEMPTS {
-        let observed = current_residency(bus, epoch).ok()?;
+        let Ok(observed) = current_residency(bus, epoch) else {
+            return;
+        };
         let mut next = observed.body().clone();
-        let row = next
+        let Some(row) = next
             .lanes
             .iter_mut()
-            .find(|row| row.lane == selection.lane())?;
+            .find(|row| row.lane == selection.lane())
+        else {
+            return;
+        };
         let launched = row
             .session
             .as_ref()
             .is_some_and(|session| session.launch.is_some());
         if row.occupant != Some(occupant) || !launched {
-            return None;
+            return;
         }
         selection.apply_runtime(row);
-        let answer = answer(&next, None, seats, paths).ok()?;
-        let mut write = write(
+        let Ok(mut write) = write(
             command.actor().clone(),
             epoch,
             Producer::ResidentRecognition,
-        )
-        .ok()?;
+        ) else {
+            return;
+        };
         guard_residency(&mut write, &observed);
-        let fact = write
-            .fact(
-                selection.runtime_fact(occupant),
-                FactCause::Existing(observed.position()),
-            )
-            .ok()?;
+        let Ok(fact) = write.fact(
+            selection.runtime_fact(occupant),
+            FactCause::Existing(observed.position()),
+        ) else {
+            return;
+        };
         write.residency_head(fact, move |_| next);
         if commit(bus, write).is_ok() {
-            return Some(answer);
+            return;
         }
     }
-    None
 }

@@ -447,19 +447,11 @@ fn a_residency_write_during_a_live_retune_keeps_seat_and_running_effort() {
         )
     });
     let _ = std::fs::remove_file(&door);
-    let returned_position = match &outcome {
-        Outcome::Reply(reply) => reply.position,
-        other => panic!("a live retune replies: {other:?}"),
-    };
     let replayed = super::super::command_surface::replay_command(&fixture.bus, &command)
         .expect("the committed retune has a durable receipt");
-    let replayed_position = match replayed {
-        Outcome::Reply(reply) => reply.position,
-        other => panic!("a successful retune receipt replays: {other:?}"),
-    };
     assert_eq!(
-        returned_position, replayed_position,
-        "the live reply names its durable command transaction, not interleaved facts",
+        outcome, replayed,
+        "the live reply is exactly the durable receipt a retry replays",
     );
     let rows = committed_rows(outcome);
 
@@ -468,13 +460,12 @@ fn a_residency_write_during_a_live_retune_keeps_seat_and_running_effort() {
         .find(|row| row.lane == fixture.lane)
         .expect("the retuned lane is in the answer");
     assert_eq!(row.seat_effort.as_deref(), Some("max"));
+    assert_eq!(fixture.seated_effort().as_deref(), Some("max"));
     assert_eq!(
-        row.effort.as_deref(),
+        fixture.running_effort().as_deref(),
         Some("max"),
         "the confirmed change is running"
     );
-    assert_eq!(fixture.seated_effort().as_deref(), Some("max"));
-    assert_eq!(fixture.running_effort().as_deref(), Some("max"));
     assert!(
         fixture.head().lanes[0]
             .capabilities
