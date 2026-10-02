@@ -564,10 +564,15 @@ impl Report<'_> {
             }
             if let Ok((path, bytes)) = &retained {
                 text.push_str(&format!(
-                    "\ncomplete output: {} ({bytes} bytes)\ninspect: grep -n -E 'error|warning|FAILED|panicked' {}",
-                    path.display(),
+                    "\ncomplete output: {} ({bytes} bytes)",
                     path.display()
                 ));
+                if let Some(path) = path.to_str() {
+                    text.push_str(&format!(
+                        "\ninspect: grep -n -E 'error|warning|FAILED|panicked' {}",
+                        shell_quote(path)
+                    ));
+                }
             }
         }
         if self.tally.lost {
@@ -578,6 +583,24 @@ impl Report<'_> {
         }
         text
     }
+}
+
+/// One word a POSIX shell reads back as exactly `value`: bare when every byte
+/// is unambiguous, otherwise single-quoted. `task_git/landing.rs` and
+/// `demo_command/recovery.rs` carry the same rule for their pasted recipes.
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric()
+                || matches!(
+                    byte,
+                    b'_' | b'@' | b'%' | b'+' | b'=' | b':' | b',' | b'.' | b'/' | b'-'
+                )
+        })
+    {
+        return value.to_owned();
+    }
+    format!("'{}'", value.replace('\'', "'\"'\"'"))
 }
 
 /// Retain the staged capture as `DIGEST.log` and prune the oldest captures.
