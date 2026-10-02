@@ -297,6 +297,11 @@ fn reindex_inner() -> Result<(ReplyPosition, JournalReindex), Failure> {
     ))
 }
 
+/// Oldest thread facts first, strictly after the caller's `--after SEQ`.
+///
+/// The root resolves and the remaining population counts through the thread
+/// index; retained rows are decoded in bounded pages, so a read costs its page
+/// rather than the journal or the whole thread.
 fn thread_inner(
     reference: &str,
     page: Page,
@@ -304,36 +309,61 @@ fn thread_inner(
 ) -> Result<(ReplyPosition, ThreadReport), Failure> {
     let state = state()?;
     let reader = open_reader(&state)?;
-    let (cursor, thread) = read_authenticated(&state, &reader, contract, |read| {
-        read.thread(reference).map_err(thread_failure)
-    })?;
-    let start = match page.after() {
-        None => 0,
-        Some(after) => thread
-            .entries
-            .iter()
-            .position(|fact| fact.seq.to_string() == after)
-            .ok_or_else(|| Failure::Refusal(page.cursor_refusal("SEQ of a fact in this thread")))?,
-    };
-    let remaining = &thread.entries[start..];
     let text = page.limits().text;
-    let rows = remaining
-        .iter()
-        .take(page.retain())
-        .map(|fact| {
-            let row = FactRow::of(fact, text);
-            let key = row.seq.to_string();
-            (row, key)
+    let retain = page.retain();
+    let cursor_refusal = || Failure::Refusal(page.cursor_refusal("SEQ of a fact in this thread"));
+    let at = page
+        .after()
+        .map(|after| {
+            after
+                .parse::<u64>()
+                .ok()
+                .and_then(Seq::new)
+                .ok_or_else(cursor_refusal)
         })
-        .collect();
-    let entries = page
-        .shown(rows, remaining.len())
-        .map_err(Failure::Refusal)?;
+        .transpose()?;
+    let (cursor, (root, remaining, rows)) =
+        read_authenticated(&state, &reader, contract, |read| {
+            let root = read.thread_root(reference).map_err(thread_failure)?;
+            let mut rows = Vec::new();
+            let mut remaining = None;
+            let mut next = at;
+            loop {
+                let budget = journal::FactReadBudget::new(
+                    (retain - rows.len()).min(journal::MAX_RETAINED_FACT_PAGE_ROWS),
+                    journal::MAX_RETAINED_FACT_PAGE_BYTES,
+                )
+                .map_err(|error| Failure::protocol("thread::read-budget", error.to_string()))?;
+                let fetched = read
+                    .thread_page(root, next, budget)
+                    .map_err(thread_read_failure)?
+                    .ok_or_else(cursor_refusal)?;
+                let omitted = fetched.overflow.map_or(0, |overflow| overflow.omitted);
+                remaining.get_or_insert(
+                    u64::try_from(fetched.rows.len())
+                        .unwrap_or(u64::MAX)
+                        .saturating_add(omitted),
+                );
+                rows.extend(fetched.rows.iter().map(|fact| {
+                    let row = FactRow::of(fact, text);
+                    let key = row.seq.to_string();
+                    (row, key)
+                }));
+                match fetched.overflow {
+                    Some(overflow) if rows.len() < retain => next = Some(overflow.continuation),
+                    _ => break,
+                }
+            }
+            Ok((root, remaining.unwrap_or(0), rows))
+        })?;
+    let population = usize::try_from(remaining)
+        .map_err(|error| Failure::protocol("thread::count-overflow", error.to_string()))?;
+    let entries = page.shown(rows, population).map_err(Failure::Refusal)?;
     Ok((
         ReplyPosition::Snapshot(cursor),
         ThreadReport {
-            reference: thread.reference,
-            root: thread.root,
+            reference: reference.to_owned(),
+            root,
             entries,
         },
     ))
@@ -411,13 +441,19 @@ fn thread_failure(error: journal::ThreadError) -> Failure {
                 "select a fact sequence, or an origin that names exactly one root",
             )
         }
-        journal::ThreadError::Verify(_) | journal::ThreadError::Snapshot(_) => Failure::refusal(
+        journal::ThreadError::Read(error) => thread_read_failure(error),
+    }
+}
+
+fn thread_read_failure(error: journal::GuardError) -> Failure {
+    match error {
+        journal::GuardError::Store(_) => Failure::store("thread::read-failed", error.to_string()),
+        _ => Failure::refusal(
             "thread::authority-invalid",
-            "verified immutable history and thread index",
+            "a decodable thread index and fact envelopes",
             error.to_string(),
             "run `spice journal verify`, then restore or reindex as directed",
         ),
-        journal::ThreadError::Sqlite(_) => Failure::store("thread::read-failed", error.to_string()),
     }
 }
 

@@ -276,7 +276,10 @@ withheld lane in its exact `--after` continuation.
 thread in journal order, both under `INTERACTIVE`; each fact is one row whose
 canonical text is cut to `--max-text`, so an oversized fact costs one bounded
 row. A partial page continues with `--after SEQ`, the first withheld position.
-`spice journal verify` and `spice consent policy` stay concise summaries.
+A thread page resolves its root, counts what remains, and decodes its rows
+through the thread index, so its cost follows the page rather than the journal
+or the whole thread. `spice journal verify` remains the full-authority check;
+it and `spice consent policy` stay concise summaries.
 
 `spice trust` shows the current digest, its standing and provenance, and
 ruling counts first, then a page of recorded rulings: the current digest,

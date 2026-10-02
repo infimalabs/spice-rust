@@ -21,7 +21,7 @@ use commit::visible_cursor;
 pub(crate) use commit::{steering_fact_identity, steering_head_agrees};
 #[cfg(test)]
 pub(crate) use indexed_read::verify_task_page_plan;
-pub use indexed_read::{CurrentHeadWitness, TaskHeadPage, TrustHeadPage};
+pub use indexed_read::{CurrentHeadWitness, TaskHeadPage, ThreadError, TrustHeadPage};
 #[cfg(test)]
 pub(crate) use read_metrics::{
     IndexedReadMetrics, indexed_read_metrics, reset_indexed_read_metrics,
@@ -272,11 +272,6 @@ impl<'a> JournalRead<'a> {
         &self,
     ) -> Result<(crate::Verification, crate::FactSnapshot), crate::VerifyError> {
         crate::replay::verify_connection_after_facts(self.connection, || {})
-    }
-
-    /// Resolve one causal thread inside this exact immutable snapshot.
-    pub fn thread(&self, reference: &str) -> Result<crate::ThreadSnapshot, crate::ThreadError> {
-        crate::replay::thread_connection(self.connection, reference)
     }
 }
 
