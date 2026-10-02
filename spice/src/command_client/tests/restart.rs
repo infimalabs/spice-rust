@@ -369,7 +369,7 @@ fn a_dark_transition_refused_by_an_ending_resident_never_rides_the_handoff() {
     // publishes before the client could possibly reach its bound: if the
     // envelope rode the handoff, this is the resident it would reach.
     let handoff = Arc::clone(&fixture);
-    let handoff_canvas = serve.clone();
+    let handoff_discovery = serve.clone();
     let predecessor_peer = std::thread::spawn(move || {
         let mut socket = accept_fixture_session(predecessor_listener, predecessor_epoch);
         let command = read_fixture_command(&mut socket);
@@ -379,7 +379,7 @@ fn a_dark_transition_refused_by_an_ending_resident_never_rides_the_handoff() {
             ))
             .expect("predecessor refusal sends");
         let mut fixture = handoff.lock().expect("fixture locks");
-        fs::remove_file(&handoff_canvas).expect("predecessor withdraws discovery");
+        fs::remove_file(&handoff_discovery).expect("predecessor withdraws discovery");
         fixture.release_publisher();
         fixture.seat_successor();
         fixture.hold(successor_epoch);

@@ -413,7 +413,7 @@ impl ReleasePreflight {
             .first()
             .ok_or_else(|| PackageFailure::Moved("release manifest has no targets".to_owned()))?
             .inventory;
-        add_canvas(&stage, inventory, &mut pending, &mut shapes, &mut total)?;
+        add_app_assets(&stage, inventory, &mut pending, &mut shapes, &mut total)?;
         add_inline(
             &mut shapes,
             &mut total,
@@ -617,7 +617,7 @@ fn add_targets(
     Ok(())
 }
 
-fn add_canvas(
+fn add_app_assets(
     stage: &Path,
     inventory: &[InventoryEntry],
     pending: &mut BTreeMap<String, PendingFile>,
@@ -822,7 +822,7 @@ fn package_bytes(
             "release manifest has no current complete target inventory".to_owned(),
         ));
     }
-    let first_canvas = manifest.targets[0]
+    let first_app_inventory = manifest.targets[0]
         .inventory
         .iter()
         .filter(|entry| entry.path.starts_with("app/"));
@@ -830,7 +830,7 @@ fn package_bytes(
         .inventory
         .iter()
         .filter(|entry| entry.path.starts_with("app/"))
-        .eq(first_canvas)
+        .eq(first_app_inventory)
     {
         return Err(PackageFailure::Moved(
             "release manifest targets disagree on app inventory".to_owned(),

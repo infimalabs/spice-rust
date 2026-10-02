@@ -924,9 +924,9 @@ tbody tr:last-child td { border-bottom: 0; }
 .form textarea { min-height: 92px; resize: vertical; }
 .form button { justify-self: start; background: var(--accent); border-color: var(--accent); color: #fff; }
 
-/* Every relative age the canvas draws occupies the same exact slot, so ticking
+/* Every relative age the app draws occupies the same exact slot, so ticking
    cannot reflow neighboring controls. The component repeats the slot width in
-   `data-age-slot` because the canvas serves `style-src 'self'`; CSS remains the
+   `data-age-slot` because the app serves `style-src 'self'`; CSS remains the
    layout authority. Tabular figures keep equal-length labels equally wide. */
 [data-age-slot] {
   display: inline-block;

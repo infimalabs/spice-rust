@@ -129,7 +129,7 @@ where
     let completion = wait_for_resident(&environment, &receiver);
     drop(relay);
     let _ = resident.join();
-    finish_canvas(&environment, cleanup, endpoint, completion)
+    finish_app(&environment, cleanup, endpoint, completion)
 }
 
 pub(super) fn watch_environment(
@@ -233,7 +233,7 @@ pub(super) fn start_resident(
         })
 }
 
-pub(super) fn finish_canvas(
+pub(super) fn finish_app(
     environment: &Environment,
     cleanup: bool,
     endpoint: String,
