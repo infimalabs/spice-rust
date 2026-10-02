@@ -288,7 +288,7 @@ pub(super) fn append_operations(
         operations.push(operation(
             directories,
             asset,
-            None,
+            (Location::CommonGit, path.to_owned()),
             bound,
             previous,
             superseded,

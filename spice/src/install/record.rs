@@ -124,6 +124,46 @@ impl InstallRecord {
             .map_err(|source| InstallError::io("remove future symbol test bundle", bundle, source))
     }
 
+    /// Respell every installed app shell, on disk and in the record, as the
+    /// version-16 build published it before the App rename.
+    #[cfg(debug_assertions)]
+    fn respell_test_app_shells(&mut self, repository: &Repository) -> Result<(), InstallError> {
+        if self.plan.rollback_archive.is_some() {
+            return Err(InstallError::InvalidRecord(
+                "test receipt shell respelling does not rewrite rollback archives".to_owned(),
+            ));
+        }
+        for (operation, (_, destination)) in
+            self.plan.operations.iter_mut().zip(&mut self.destinations)
+        {
+            if super::app::operation_generation(operation.asset, &operation.path).is_none()
+                || operation.asset != super::Asset::AppHtml
+            {
+                continue;
+            }
+            let respell = |path: &str| {
+                path.strip_suffix(wire::manifest::APP_HTML)
+                    .map(|parent| format!("{parent}canvas-app.html"))
+            };
+            let (Some(path), Some(renamed)) =
+                (respell(&operation.path), respell(&operation.destination))
+            else {
+                return Err(InstallError::InvalidRecord(
+                    "test receipt shell has no current spelling".to_owned(),
+                ));
+            };
+            let from = repository.common_dir().join(&operation.destination);
+            let to = repository.common_dir().join(&renamed);
+            fs::rename(&from, &to)
+                .map_err(|source| InstallError::io("respell test app shell", from, source))?;
+            operation.path = path;
+            operation.destination.clone_from(&renamed);
+            *destination = renamed;
+        }
+        self.plan_digest = self.plan.digest()?;
+        Ok(())
+    }
+
     /// Remove `assets` from the plan, its bookkeeping, and the filesystem.
     #[cfg(debug_assertions)]
     fn remove_test_operations(
@@ -879,7 +919,7 @@ pub(super) fn publish_test_historical_receipt(
                 }
             }
         }
-        super::PREVIOUS_RECORD_VERSION => {}
+        super::PREVIOUS_RECORD_VERSION => record.respell_test_app_shells(repository)?,
         _ => {
             return Err(InstallError::InvalidRecord(format!(
                 "test receipt schema {version} is not directly upgradable"
