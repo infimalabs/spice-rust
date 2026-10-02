@@ -55,8 +55,8 @@ spice dev xtask -- report render PRIVATE PUBLIC FONTS LPPL
 - `acquire` runs the installed appliance's `dev report-page` until no
   continuation remains. It writes `facts.ndjson`, the retained correction
   command record and `snapshot-manifest.json` into a new `0700` directory
-  `PRIVATE`. `BOARD-ORACLE` is a `spice board --json` capture taken at the
-  same cursor `UPPER`. It is copied in as an independent cross-check.
+  `PRIVATE`. `BOARD-ORACLE` is a `spice board --output FILE` export taken at
+  the same cursor `UPPER`. It is copied in as an independent cross-check.
   Evidence acquired before version 2 retained lane capabilities; `analyze`
   refuses it, and it should be deleted rather than reused.
 - `analyze` rebuilds every task from the facts. It selects the last 1500

@@ -776,13 +776,19 @@ fn assert_review_plan(
 }
 
 fn board(fixture: &Fixture) -> BoardAnswer {
-    let output = fixture.invoke(&["board"]);
+    let document = fixture.root.join(".git/board-export.json");
+    let output = fixture.invoke(&[
+        "board",
+        "--output",
+        document.to_str().expect("fixture path is UTF-8"),
+    ]);
     assert!(output.status.success(), "board failed: {}", spoken(&output));
+    let bytes = fs::read(&document).expect("board export reads");
     let answer = wire::intent::AnswerShape::Board
-        .decode(&output.stdout)
-        .expect("board text body is typed");
+        .decode(&bytes)
+        .expect("board export is typed");
     let CommandAnswer::Board(board) = answer else {
-        panic!("board command returned another answer shape")
+        panic!("board export decoded as another answer shape")
     };
     *board
 }

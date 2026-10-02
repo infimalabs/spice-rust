@@ -17,6 +17,7 @@ use context::{route_actor_identity, task_contexts, task_creator_teams, task_orig
 #[cfg(test)]
 pub(in crate::board_command) use task_selection::history_cursor_order;
 use task_selection::{TaskSelection, retain_family, selected_tasks};
+pub(in crate::board_command) use task_selection::{in_family, validate_family};
 
 pub(super) fn phase(name: &str) -> wire::Phase {
     name.parse()

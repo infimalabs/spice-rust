@@ -90,6 +90,15 @@ pub(super) fn retain_family(
     tasks: &mut Vec<wire::intent::BoardTask>,
     family: &str,
 ) -> Result<(), Outcome<CommandAnswer>> {
+    validate_family(family)?;
+    tasks.retain(|task| in_family(&task.statement.body.handle, family));
+    Ok(())
+}
+
+/// Refuse anything but one upper-case task family name.
+pub(in crate::board_command) fn validate_family(
+    family: &str,
+) -> Result<(), Outcome<CommandAnswer>> {
     if family.is_empty()
         || !family
             .bytes()
@@ -101,15 +110,15 @@ pub(super) fn retain_family(
             "name one upper-case task family",
         ));
     }
-    tasks.retain(|task| {
-        task.statement
-            .body
-            .handle
-            .as_str()
-            .split_once('-')
-            .is_some_and(|(stem, _)| stem == family)
-    });
     Ok(())
+}
+
+/// Whether a handle's stem names this family.
+pub(in crate::board_command) fn in_family(handle: &wire::TaskHandle, family: &str) -> bool {
+    handle
+        .as_str()
+        .split_once('-')
+        .is_some_and(|(stem, _)| stem == family)
 }
 
 fn context_tasks(

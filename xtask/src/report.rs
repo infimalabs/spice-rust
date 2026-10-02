@@ -132,7 +132,8 @@ fn acquire(upper: Seq, directory: &Path, oracle: &Path, output: &mut dyn Write) 
         pages,
         facts_sha256: hash_file(&directory.join("facts.ndjson"))?,
         oracle_sha256: hash_file(&oracle_copy)?,
-        oracle_acquisition: "spice board --json; independently captured cursor 797204".to_owned(),
+        oracle_acquisition: "spice board --output FILE; independently captured cursor 797204"
+            .to_owned(),
         consumer_sha256: hash_file(&std::env::current_exe()?)?,
         command_record_sha256: hash_file(&directory.join("correction-command-record.json"))?,
     };

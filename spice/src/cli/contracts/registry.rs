@@ -425,7 +425,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["board"],
-        "board [FAMILY]",
+        "board [FAMILY] [--limit N] [--max-bytes N] [--max-text N] [--after HANDLE] \
+         [--output FILE]",
         OperatorOrLane,
         Read,
         [],
