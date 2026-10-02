@@ -834,37 +834,32 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   gap: var(--team-control-gap);
   min-width: 0;
 }
-/* The team composer's speech and lifetime sliders stand side by side as
-   vertical pills, min (quiet, steer) at the bottom and max (narrate, drain) at
-   the top, above the full-width send button. A sideways word rides beside the
-   thumb, so even narrate fits a pill half as wide as the stack. */
+/* Speech and lifetime share one control's upper region, values upright beneath
+   vertical ranges, above the full-width lifetime submit. Regions round their own
+   corners rather than the frame clipping, so focus and preview rings stay visible. */
 .team-composer .team-composer-controls {
   --team-control-item-height: calc((var(--team-composer-block-size) - 2 * var(--team-control-gap)) / 3);
-  display: grid;
+  --team-control-inner-radius: calc(var(--canvas-radius-compact) - 1px);
+  display: grid; gap: 0; inline-size: 74px; block-size: var(--team-composer-block-size);
   grid-template: minmax(0, 1fr) var(--team-control-item-height) / repeat(2, minmax(0, 1fr));
-  gap: 4px;
-  inline-size: 74px;
-  block-size: var(--team-composer-block-size);
+  border: var(--canvas-control-edge); border-radius: var(--canvas-radius-compact);
+  background: var(--control); box-shadow: var(--canvas-selection-shadow);
 }
 .team-slider {
   --control-state-accent: var(--accent);
-  display: grid;
-  grid-template-columns: 16px auto;
-  justify-content: center;
-  column-gap: 1px;
-  min-height: 0;
-  padding: 8px 0;
-  overflow: hidden;
-  border: var(--canvas-control-edge);
-  border-radius: var(--canvas-radius-pill);
-  background: var(--control);
-  cursor: ns-resize;
+  display: grid; grid-template-rows: minmax(0, 1fr) auto; justify-items: center;
+  min-height: 0; padding: 7px 2px 6px; overflow: hidden;
+  border: 0; border-radius: 0; background: transparent; cursor: ns-resize;
 }
+.team-slider + .team-slider { border-left: var(--canvas-control-edge); }
+.team-composer .team-speech { border-start-start-radius: var(--team-control-inner-radius); }
+.team-composer .team-lifetime { border-start-end-radius: var(--team-control-inner-radius); }
 .team-slider input {
   writing-mode: vertical-lr;
   direction: rtl;
   width: 16px;
   height: 100%;
+  min-height: 0;
   margin: 0;
   padding: 0;
   border: 0;
@@ -875,24 +870,26 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-slider:has(input:disabled) { opacity: .5; cursor: not-allowed; }
 .team-slider input:disabled { cursor: not-allowed; }
 .team-slider span {
-  align-self: center;
-  writing-mode: vertical-rl;
-  rotate: 180deg;
+  width: 100%;
+  overflow: hidden;
   color: var(--muted);
-  font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  font: 9px/1.1 ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-align: center;
+  text-overflow: clip;
   text-transform: lowercase;
   white-space: nowrap;
 }
-.team-slider.armed span { align-self: end; }
-.team-slider.maxed span { align-self: start; }
-.team-composer .team-send { grid-column: 1 / -1; min-width: 0; padding: 5px 4px; }
+.team-composer .team-send {
+  grid-column: 1 / -1; min-width: 0; padding: 5px 4px;
+  border: 0; border-top: var(--canvas-control-edge);
+  border-radius: 0 0 var(--team-control-inner-radius) var(--team-control-inner-radius);
+}
 .team-slider.armed,
 .team-send.armed { --control-state-accent: var(--accent-1); }
 .team-slider.maxed,
 .team-send.maxed { --control-state-accent: var(--warning); }
 .team-slider.armed,
 .team-slider.maxed {
-  border-color: color-mix(in srgb, var(--control-state-accent) 70%, var(--line));
   background: color-mix(in srgb, var(--control-state-accent) 18%, var(--control));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--control-state-accent) 22%, transparent);
 }
