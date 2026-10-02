@@ -38,11 +38,11 @@ use super::super::{
 pub(in crate::resident::supervisor) const ENTRY: &str = "__lane-job";
 
 const VERSION: u32 = 1;
-const REQUEST: &str = "request.json";
-const STATE: &str = "state.json";
+pub(super) const REQUEST: &str = "request.json";
+pub(super) const STATE: &str = "state.json";
 const LOG: &str = "log";
 const STOP: &str = "stop";
-const DELIVERED: &str = "delivered";
+pub(super) const DELIVERED: &str = "delivered";
 const WAKE: &str = "wake";
 
 /// Bytes of the log a reading keeps: the end, where a failure explains
@@ -604,15 +604,6 @@ impl Jobs {
         })
     }
 
-    /// Every job of this lane, oldest first: the keys order themselves.
-    ///
-    /// # Errors
-    ///
-    /// Returns the failure of reading the lane's job directory.
-    pub(in crate::resident) fn list(&self) -> io::Result<Vec<Job>> {
-        self.select(|_| true)
-    }
-
     /// The jobs whose ending nobody has heard, oldest first, without opening
     /// the record of any job already delivered: a lane's row is read far more
     /// often than a job ends.
@@ -621,32 +612,64 @@ impl Jobs {
     ///
     /// Returns the failure of reading the lane's job directory.
     pub(in crate::resident) fn kept(&self) -> io::Result<Vec<Job>> {
-        self.select(|directory| !directory.join(DELIVERED).exists())
+        let mut jobs = Vec::new();
+        for id in self.ids(|directory| !directory.join(DELIVERED).exists())? {
+            if let Some(job) = self.present(&id)? {
+                jobs.push(job);
+            }
+        }
+        Ok(jobs)
     }
 
-    fn select(&self, wanted: impl Fn(&Path) -> bool) -> io::Result<Vec<Job>> {
+    /// The names of delivered jobs, newest first, from `at` (or the newest when
+    /// none is named) toward the oldest. Names cost a directory read; a
+    /// history page opens only the records it shows.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of reading the lane's job directory.
+    pub(in crate::resident) fn delivered(&self, at: Option<&str>) -> io::Result<Vec<String>> {
+        let mut ids = self.ids(|directory| directory.join(DELIVERED).exists())?;
+        if let Some(at) = at {
+            ids.truncate(ids.partition_point(|id| id.as_str() <= at));
+        }
+        ids.reverse();
+        Ok(ids)
+    }
+
+    /// The names of the jobs whose directories are `wanted`, oldest first: the
+    /// keys order themselves.
+    fn ids(&self, wanted: impl Fn(&Path) -> bool) -> io::Result<Vec<String>> {
         let entries = match fs::read_dir(&self.root) {
             Ok(entries) => entries,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(error),
         };
-        let mut jobs = Vec::new();
+        let mut ids = Vec::new();
         for entry in entries {
             let entry = entry?;
             let Some(id) = entry.file_name().to_str().map(str::to_owned) else {
                 continue;
             };
-            if !wanted(&entry.path()) {
-                continue;
-            }
-            match self.open(&id) {
-                Ok(job) => jobs.push(job),
-                Err(error) if error.kind() == ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
+            if wanted(&entry.path()) {
+                ids.push(id);
             }
         }
-        jobs.sort_by(|a, b| a.id.cmp(&b.id));
-        Ok(jobs)
+        ids.sort_unstable();
+        Ok(ids)
+    }
+
+    /// The job named, or none when its directory is not a job's record.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of reading a record that exists.
+    pub(in crate::resident) fn present(&self, id: &str) -> io::Result<Option<Job>> {
+        match self.open(id) {
+            Ok(job) => Ok(Some(job)),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 }
 

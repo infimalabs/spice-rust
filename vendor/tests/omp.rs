@@ -220,12 +220,17 @@ fn the_lanes_shell_is_registered_essential_in_place_of_omps_own_executors() {
     assert_eq!(job["parameters"]["required"], serde_json::json!(["op"]));
     assert_eq!(
         job["parameters"]["properties"]["op"]["enum"],
-        serde_json::json!(["list", "logs", "wait", "stop"])
+        serde_json::json!(["list", "history", "logs", "wait", "stop"])
     );
     assert_eq!(job["parameters"]["properties"]["id"]["type"], "string");
     assert_eq!(
         job["parameters"]["properties"]["timeout"]["maximum"],
         omp::SHELL_TIMEOUT_MAX
+    );
+    assert_eq!(
+        job["parameters"]["properties"]["limit"]["maximum"],
+        omp::JOB_HISTORY.maximum().rows,
+        "the schema offers exactly the history maximum parsing admits"
     );
 }
 
@@ -280,6 +285,45 @@ fn a_job_call_names_its_op_and_the_job_every_op_but_a_listing_needs() {
     assert_eq!(
         omp::JobCall::parse(&arguments(serde_json::json!({"id": "1"}))),
         Err("job needs an op".to_owned())
+    );
+}
+
+#[test]
+fn a_history_call_admits_limits_within_its_surface_and_refuses_the_rest() {
+    let arguments = |json: serde_json::Value| json.as_object().expect("an argument object").clone();
+    let budget = |json| match omp::JobCall::parse(&arguments(json)) {
+        Ok(omp::JobCall {
+            op: omp::JobOp::History { budget },
+            ..
+        }) => Ok(budget.limits()),
+        other => Err(other),
+    };
+    let (default, maximum) = (
+        omp::JOB_HISTORY.default_limits(),
+        omp::JOB_HISTORY.maximum(),
+    );
+    assert_eq!(budget(serde_json::json!({"op": "history"})), Ok(default));
+    assert_eq!(
+        budget(serde_json::json!({"op": "history", "id": "6ZbQk3mPx", "limit": maximum.rows})),
+        Ok(wire::output::Limits {
+            rows: maximum.rows,
+            ..default
+        }),
+        "a cursor is optional and the maximum itself is admitted"
+    );
+    assert_eq!(
+        omp::JobCall::parse(&arguments(
+            serde_json::json!({"op": "history", "limit": maximum.rows + 1})
+        )),
+        Err(format!(
+            "job history limit {} exceeds the maximum {}",
+            maximum.rows + 1,
+            maximum.rows
+        ))
+    );
+    assert_eq!(
+        omp::JobCall::parse(&arguments(serde_json::json!({"op": "history", "limit": 0}))),
+        Err("job history limit must be at least 1".to_owned())
     );
 }
 

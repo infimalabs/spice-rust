@@ -402,8 +402,10 @@ screen without changing newest-first order.
 
 ### The team Work pane
 
-The pane opens with Kept jobs: every command a member keeps beyond its call,
-team-wide and oldest first; one row per job when wide, and in lane-shaped panes
+The pane opens with Kept jobs: every command a member keeps beyond its call
+until the member hears how it ended, so running or ended but unheard, the same
+set the occupant's job `list` answers; delivered jobs leave it for the job
+`history`. Team-wide and oldest first; one row per job when wide, and in lane-shaped panes
 an accented card with member, standing, two reserved command lines, and age,
 keeping headers for assistive technology. Five jobs show in full; more scroll
 inside the table under pinned headers with the sixth peeking, so the pane never

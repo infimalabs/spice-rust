@@ -62,7 +62,11 @@ fn kept_jobs_are_read_without_opening_delivered_records() {
             .collect::<Vec<_>>(),
         [job.id()]
     );
-    assert!(jobs.list().is_err(), "the full listing opens every record");
+    assert_eq!(
+        jobs.delivered(None).expect("delivered names read"),
+        ["6ZbQk3mPx"],
+        "history names a delivered job without opening its record"
+    );
     // The job is still writing its ending; let it finish before its root goes.
     let Observed::Ended(_) = job
         .observe(&Control::new(), TEST_BOUND)
@@ -103,10 +107,10 @@ fn a_job_runs_to_its_end_and_publishes_how_it_ended() {
             truncated: false
         }
     );
-    let listed = jobs.list().expect("the lane's jobs list");
-    assert_eq!(listed.len(), 1);
-    assert_eq!(listed[0].id(), job.id());
-    assert_eq!(listed[0].command(), "say");
+    let kept = jobs.kept().expect("the lane's kept jobs read");
+    assert_eq!(kept.len(), 1, "an unheard ending is still owed");
+    assert_eq!(kept[0].id(), job.id());
+    assert_eq!(kept[0].command(), "say");
     let reopened = jobs.open(job.id()).expect("the job reopens");
     assert_eq!(reopened.command(), "say");
     assert_eq!(reopened.timeout(), Some(Duration::from_secs(5)));
