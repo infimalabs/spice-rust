@@ -37,8 +37,6 @@ fn dispatch_client(
 ) -> Outcome<CommandAnswer> {
     match contract.path {
         ["dev", "report-page"] => client_report(repository, contract, matches),
-        ["board", "graph"] => client_graph(repository, contract, matches),
-        ["board", "handout"] => client_handout(repository, contract, matches),
         ["doc"] => run_doc(repository, contract, matches, dialect::emit),
         ["doc", "ledger"] => client_ledger(repository, contract, matches),
         ["task", "list"] => client_list(repository, contract, matches),
@@ -109,6 +107,12 @@ mod view;
 pub(crate) use view::{BoardView, board_view};
 #[cfg(test)]
 pub(in crate::board_command) use view::{Posture, Standing, ViewRequest, project_board};
+mod graph;
+#[cfg(test)]
+pub(in crate::board_command) use graph::{
+    Destination, graph_page, handout_destination, page_or_file,
+};
+pub(crate) use graph::{GraphView, graph_view};
 
 mod read;
 pub(super) use read::*;
@@ -129,40 +133,6 @@ pub(in crate::board_command) use submission::{
 use submission::{client_add, client_capture, client_oops};
 pub(crate) use submission::{current_board, submit_task_add, submit_taste_proposal};
 use submission::{mutate_from_board, mutate_task, mutate_task_from_board};
-
-fn client_graph(
-    repository: &Repository,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    crate::command_client::execute_typed(
-        repository,
-        contract,
-        CommandKind::BoardGraph,
-        Vec::new(),
-        &BoardGraph {
-            view: required(matches, "VIEW"),
-            at: matches.get_one::<String>("at").cloned(),
-        },
-    )
-}
-
-fn client_handout(
-    repository: &Repository,
-    contract: &Contract,
-    matches: &ArgMatches,
-) -> Outcome<CommandAnswer> {
-    crate::command_client::execute_typed(
-        repository,
-        contract,
-        CommandKind::BoardHandout,
-        Vec::new(),
-        &BoardHandout {
-            output: required(matches, "OUTPUT"),
-            at: matches.get_one::<String>("at").cloned(),
-        },
-    )
-}
 
 fn client_ledger(
     repository: &Repository,

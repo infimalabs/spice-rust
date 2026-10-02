@@ -169,6 +169,13 @@ pub(crate) struct ExportReceipt {
     text: String,
 }
 
+impl ExportReceipt {
+    /// The receipt line.
+    pub(super) fn text(&self) -> &str {
+        &self.text
+    }
+}
+
 /// The parsed `board` flags.
 pub(crate) struct ViewRequest {
     family: Option<String>,
@@ -588,16 +595,24 @@ fn push_rows(text: &mut String, page: &Bounded<BoardRow>) {
 fn export(board: &BoardAnswer, output: &str) -> Result<ExportReceipt, Outcome<CommandAnswer>> {
     let bytes = wire::encode(board)
         .map_err(|error| protocol_fault("board::answer-unencodable", &error.to_string()))?;
+    export_file(output, &bytes)
+}
+
+/// Write one complete document to `output` and describe the receipt.
+pub(super) fn export_file(
+    output: &str,
+    bytes: &[u8],
+) -> Result<ExportReceipt, Outcome<CommandAnswer>> {
     let export =
-        spice::export::export(std::path::Path::new(output), &bytes).map_err(Outcome::Refusal)?;
+        spice::export::export(std::path::Path::new(output), bytes).map_err(Outcome::Refusal)?;
     Ok(ExportReceipt {
         text: export.to_string(),
         export,
     })
 }
 
-/// Carry a refusal or fault over to the view's answer type.
-fn retag(outcome: Outcome<CommandAnswer>) -> Outcome<BoardView> {
+/// Carry a refusal or fault over to a view's answer type.
+pub(super) fn retag<T>(outcome: Outcome<CommandAnswer>) -> Outcome<T> {
     match outcome {
         Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
         Outcome::Fault(fault) => Outcome::Fault(fault),

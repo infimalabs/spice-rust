@@ -268,6 +268,12 @@ with `--after HANDLE`. The complete board document under the reader's
 visibility, or one family's rows of it, is only
 `spice board [FAMILY] --output FILE`, which takes no limits.
 
+`spice board graph VIEW` pages the diagram's first lines under `INTERACTIVE`;
+a diagram line has no stable cursor, so a partial page continues as
+`spice board graph VIEW --output FILE`, the complete diagram. The multi-view
+`spice board handout FILE` is always a file export. Both refuse `-` with the
+file command.
+
 Task artifacts are retained evidence, possibly large or binary. `task artifact
 list` pages citations newest first under `INTERACTIVE`, continuing with
 `--after ARTIFACT`. A bare `task artifact show` returns metadata and the first

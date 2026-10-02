@@ -436,7 +436,8 @@ pub(super) const CONTRACTS: &[Contract] = &[
     ),
     row!(
         ["board", "graph"],
-        "board graph VIEW [--at BORN]",
+        "board graph VIEW [--limit N] [--max-bytes N] [--max-text N] [--output FILE] \
+         [--at BORN]",
         OperatorOrLane,
         Read,
         [],
