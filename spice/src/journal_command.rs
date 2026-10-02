@@ -297,7 +297,7 @@ fn reindex_inner() -> Result<(ReplyPosition, JournalReindex), Failure> {
     ))
 }
 
-/// Oldest thread facts first, strictly after the caller's `--after SEQ`.
+/// Oldest thread facts first, from the caller's inclusive `--after SEQ`.
 ///
 /// The root resolves and the remaining population counts through the thread
 /// index; retained rows are decoded in bounded pages, so a read costs its page
