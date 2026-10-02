@@ -40,6 +40,20 @@ fn canonical_routes_round_trip_exactly() {
             "/work/public/a%20b%2F%C3%A9.-_~",
             work(stem(WorkVisibility::Public, "a b/é.-_~"), None),
         ),
+        (
+            "/work/team/01234567-89ab-cdef-0123-456789abcdef",
+            work(
+                WorkScope::Team(uuid("01234567-89ab-cdef-0123-456789abcdef")),
+                None,
+            ),
+        ),
+        (
+            "/work/team/01234567-89ab-cdef-0123-456789abcdef/task/dTv7zpzTN",
+            work(
+                WorkScope::Team(uuid("01234567-89ab-cdef-0123-456789abcdef")),
+                Some(task("dTv7zpzTN")),
+            ),
+        ),
         ("/chat", AppRoute::Chat { target: None }),
         (
             "/chat/card/message-agent-01234567-89ab-cdef-0123-456789abcdef-4-8-2-1",
@@ -333,6 +347,8 @@ fn unknown_app_locations_open_chat_and_name_the_refused_input() {
         ("", "#/work?scope=all"),
         ("", "#/card/message-agent"),
         ("", "#/work/public/a%2f"),
+        ("", "#/work/team/not-a-team"),
+        ("", "#/work/teams/01234567-89ab-cdef-0123-456789abcdef"),
     ] {
         let location = normalize_app_location(search, hash);
         assert_eq!(location.route(), &AppRoute::Chat { target: None });
@@ -345,6 +361,7 @@ fn unknown_app_locations_open_chat_and_name_the_refused_input() {
 #[test]
 fn history_steps_push_openings_and_replace_changes_inside_one_view() {
     let canvas = stem(WorkVisibility::Public, "canvas");
+    let team = WorkScope::Team(uuid("01234567-89ab-cdef-0123-456789abcdef"));
     let all = work(WorkScope::AllOpen, None);
     let open = work(canvas.clone(), Some(task("dTv7zpzTN")));
     let chat = AppRoute::Chat { target: None };
@@ -377,6 +394,17 @@ fn history_steps_push_openings_and_replace_changes_inside_one_view() {
         )))
     );
     assert_eq!(open.show_work(canvas.clone()), None);
+    assert_eq!(
+        open.show_work(team.clone()),
+        Some(RouteStep::Replace(work(
+            team.clone(),
+            Some(task("dTv7zpzTN"))
+        )))
+    );
+    assert_eq!(
+        work(team.clone(), Some(task("dTv7zpzTN"))).without_task(),
+        Some(work(team, None))
+    );
 
     assert_eq!(
         all.open_task(task("dTv7zpzTN"), canvas.clone()),
@@ -427,6 +455,19 @@ fn settled_missing_segments_rewrite_to_their_containing_view() {
         .expect("a missing stem outranks its task");
     assert_eq!(next, work(WorkScope::AllOpen, None));
     assert!(notice.contains(".canvas.*"), "{notice}");
+
+    let missing_team = work(
+        WorkScope::Team(uuid("01234567-89ab-cdef-0123-456789abcdef")),
+        Some(task("dTv7zpzTN")),
+    );
+    let (next, notice) = missing_team
+        .unavailable(settled(Some(false), Some(true), None))
+        .expect("missing team refuses");
+    assert_eq!(next, work(WorkScope::AllOpen, None));
+    assert!(
+        notice.contains("01234567-89ab-cdef-0123-456789abcdef"),
+        "{notice}"
+    );
 
     let (next, notice) = open
         .unavailable(settled(Some(true), Some(false), None))

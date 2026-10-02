@@ -472,6 +472,7 @@ impl AppRoute {
                     _ => {}
                 }
                 let (scope, rest) = match rest.as_slice() {
+                    [TEAM_SEGMENT, team, rest @ ..] => (WorkScope::Team(team.parse().ok()?), rest),
                     [visibility, stem, rest @ ..]
                         if matches!(*visibility, PUBLIC_SEGMENT | HIDDEN_SEGMENT) =>
                     {
@@ -575,15 +576,24 @@ impl AppRoute {
             } => format!("/work/{DIRECTION_SEGMENT}/{direction}"),
             Self::Work { scope, task } => {
                 let mut path = AppDestination::Work.path().to_owned();
-                if let Some(stem) = scope.stem() {
-                    path.push('/');
-                    path.push_str(if stem.hidden() {
-                        HIDDEN_SEGMENT
-                    } else {
-                        PUBLIC_SEGMENT
-                    });
-                    path.push('/');
-                    encode_segment(stem.stem(), &mut path);
+                match scope {
+                    WorkScope::AllOpen => {}
+                    WorkScope::Stem(stem) => {
+                        path.push('/');
+                        path.push_str(if stem.hidden() {
+                            HIDDEN_SEGMENT
+                        } else {
+                            PUBLIC_SEGMENT
+                        });
+                        path.push('/');
+                        encode_segment(stem.stem(), &mut path);
+                    }
+                    WorkScope::Team(team) => {
+                        path.push('/');
+                        path.push_str(TEAM_SEGMENT);
+                        path.push('/');
+                        path.push_str(&team.to_string());
+                    }
                 }
                 if let Some(task) = task {
                     path.push('/');
@@ -662,18 +672,23 @@ impl AppRoute {
     }
 
     /// The route replacing this one once settled data refuses a segment,
-    /// with a notice naming the refused identifier. A missing stem leaves
+    /// with a notice naming the refused identifier. A missing Work scope leaves
     /// All open work, a missing task leaves its containing scope, a missing
     /// card leaves plain Chat, and a missing direction leaves Directions.
     #[must_use]
     pub(crate) fn unavailable(&self, evidence: RouteEvidence) -> Option<(Self, String)> {
         match self {
-            Self::Work {
-                scope: WorkScope::Stem(stem),
-                ..
-            } if evidence.scope == Some(false) => Some((
+            Self::Work { scope, .. } if evidence.scope == Some(false) => Some((
                 Self::destination(AppDestination::Work),
-                format!("Work scope {stem} is no longer available; showing All open work."),
+                match scope {
+                    WorkScope::Team(team) => {
+                        format!("Team {team} is not in the roster; showing All open work.")
+                    }
+                    WorkScope::Stem(stem) => {
+                        format!("Work scope {stem} is no longer available; showing All open work.")
+                    }
+                    WorkScope::AllOpen => unreachable!("all Work is always available"),
+                },
             )),
             Self::Work {
                 scope,

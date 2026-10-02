@@ -8,6 +8,7 @@ use super::AppRuntime;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkHistoryRequest {
     pub revision: u64,
+    pub team: Option<wire::CanonicalUuid>,
     pub before: Option<TaskHistoryCursor>,
     pub query: Option<String>,
     pub completed_before: Option<wire::Instant>,
@@ -44,6 +45,7 @@ struct WorkHistoryPosition {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct WorkHistoryState {
     revision: u64,
+    team: Option<wire::CanonicalUuid>,
     query: Option<String>,
     completed_before: Option<wire::Instant>,
     before: Option<TaskHistoryCursor>,
@@ -62,6 +64,11 @@ impl WorkHistoryState {
     #[must_use]
     pub const fn revision(&self) -> u64 {
         self.revision
+    }
+
+    #[must_use]
+    pub const fn team(&self) -> Option<wire::CanonicalUuid> {
+        self.team
     }
 
     #[must_use]
@@ -140,6 +147,19 @@ impl AppRuntime {
         &self.work_history
     }
 
+    /// Select the team whose terminal rows the global archive requests.
+    ///
+    /// A changed scope evicts the prior terminal page before the next request
+    /// can reserve it, so pages from distinct team scopes cannot mix.
+    pub fn select_work_history_team(&mut self, team: Option<wire::CanonicalUuid>) -> bool {
+        if self.work_history.team == team {
+            return false;
+        }
+        self.evict_work_history(false);
+        self.work_history.team = team;
+        true
+    }
+
     /// Reserve the newest history page once an open-board snapshot is present.
     pub fn begin_work_history(&mut self) -> Option<WorkHistoryRequest> {
         if self.work_history.total.is_some() {
@@ -210,6 +230,7 @@ impl AppRuntime {
             return None;
         }
         let request = WorkHistoryRequest {
+            team: self.work_history.team,
             revision: self.work_history.revision,
             before: target.before,
             query: self.work_history.query.clone(),

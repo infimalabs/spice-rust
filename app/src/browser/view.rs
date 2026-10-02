@@ -218,13 +218,16 @@ pub(super) const fn axis_label(axis: Axis) -> &'static str {
 fn analytics_heading(axis: Axis, work: Option<&WorkProjection<'_>>, scope: &WorkScope) -> String {
     match axis {
         Axis::Topology => "Resident dashboard".to_owned(),
-        Axis::Flow => scope
-            .stem()
-            .and_then(|identity| work.and_then(|projection| projection.stem(identity)))
-            .map_or_else(
-                || "All open work".to_owned(),
-                |stem| format!("{} work", stem.identity()),
-            ),
+        Axis::Flow => match scope {
+            WorkScope::AllOpen => "All open work".to_owned(),
+            WorkScope::Team(team) => format!("Team {team} work"),
+            WorkScope::Stem(identity) => work
+                .and_then(|projection| projection.stem(identity))
+                .map_or_else(
+                    || "All open work".to_owned(),
+                    |stem| format!("{} work", stem.identity()),
+                ),
+        },
     }
 }
 
@@ -321,11 +324,13 @@ pub(super) fn render_flow(render: &AppRender<'_>, work: Option<&WorkProjection<'
     };
     let surface = render.surface.read();
     let runtime = surface.as_ref();
-    let scoped_stem = render
-        .work_scope
-        .stem()
-        .filter(|identity| work.stem(identity).is_some());
-    let scope_key = scoped_stem.map_or_else(|| "all".to_owned(), ToString::to_string);
+    let scope_key = match render.work_scope {
+        WorkScope::AllOpen => "all".to_owned(),
+        WorkScope::Stem(identity) if work.stem(identity).is_some() => identity.to_string(),
+        WorkScope::Stem(_) => "all".to_owned(),
+        WorkScope::Team(team) if work.contains_scope(render.work_scope) => format!("team:{team}"),
+        WorkScope::Team(_) => "all".to_owned(),
+    };
     // Every reconnect attempt passes back through Connecting, so the snapshot
     // stays stale until the connection is live again; the notice then toasts
     // once per outage rather than once per attempt.

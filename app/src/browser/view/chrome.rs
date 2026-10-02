@@ -57,8 +57,8 @@ pub(super) fn render_command_bar(render: CommandBarRender<'_>) -> Html {
         .map(|work| work.counts())
         .map(|counts| {
             let navigate = render.navigate.clone();
-            let selected =
-                render.destination == AppDestination::Work && render.work_scope.stem().is_none();
+            let selected = render.destination == AppDestination::Work
+                && matches!(render.work_scope, WorkScope::AllOpen);
             let ready = counts.ready();
             let active = counts.in_flight();
             let unavailable = counts.unavailable();

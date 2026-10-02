@@ -190,3 +190,45 @@ fn work_history_filters_and_reconnects_invalidate_older_requests() {
     assert_eq!(runtime.work_history().last_result(), 0);
     assert!(runtime.work_history().filtered());
 }
+
+#[test]
+fn work_history_scope_changes_restart_requests_without_mixing_pages() {
+    let session = session(OPERATOR, EPOCH);
+    let accepted = acceptance(&session, "operator", EPOCH);
+    let mut runtime = AppRuntime::new(&accepted);
+    let open = board_response(&session, "Open work");
+    runtime.apply_board(&open);
+
+    let all = runtime
+        .begin_work_history()
+        .expect("all Work requests its newest history page");
+    assert_eq!(all.team, None);
+    let team = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        .parse()
+        .expect("fixture team");
+    assert!(runtime.select_work_history_team(Some(team)));
+    let scoped = runtime
+        .begin_work_history()
+        .expect("team Work restarts at its newest page");
+    assert_eq!(scoped.team, Some(team));
+    assert_ne!(scoped.revision, all.revision);
+
+    let stale = history_page_answer(&session, &open, None, Vec::new(), 0, None);
+    runtime.apply_work_history(&all, &stale);
+    assert!(
+        runtime.work_history().loading(),
+        "the prior all-Work response cannot settle the team request"
+    );
+
+    assert!(runtime.select_work_history_team(None));
+    let unscoped = runtime
+        .begin_work_history()
+        .expect("leaving team Work restarts all history");
+    assert_eq!(unscoped.team, None);
+    assert_ne!(unscoped.revision, scoped.revision);
+    runtime.apply_work_history(&scoped, &stale);
+    assert!(
+        runtime.work_history().loading(),
+        "the prior team response cannot settle all Work"
+    );
+}
