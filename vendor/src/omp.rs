@@ -147,32 +147,39 @@ pub const SHELL_TOOL: &str = "shell";
 pub const JOB_TOOL: &str = "job";
 
 /// Seconds a shell command may run when the agent names no deadline.
-pub const SHELL_TIMEOUT_DEFAULT: u64 = 300;
+pub const SHELL_TIMEOUT_DEFAULT: u64 = 900;
 
 /// Seconds a shell command runs in the foreground before the lane keeps it
 /// as a job and answers with what it has said so far: omp's own
 /// auto-background threshold, so the model's habit carries over.
 pub const SHELL_FOREGROUND: u64 = 60;
 
-/// Tightest deadline the agent may ask for, in seconds; zero asks for none.
+/// Tightest deadline the agent may ask for, in seconds.
 pub const SHELL_TIMEOUT_MIN: u64 = 1;
 
-/// Longest deadline the agent may ask for, in seconds; longer work belongs
-/// to a process the lane keeps rather than one command.
+/// Longest deadline the agent may ask for, in seconds. A command never runs
+/// without one; a long-lived development service is asked for as a service.
 pub const SHELL_TIMEOUT_MAX: u64 = 3600;
 
 /// What the model reads about the lane's shell, in place of omp's `bash`.
 const SHELL_DESCRIPTION: &str = "Runs one shell command in the worktree and returns its \
 output. This is the only way to execute anything: the lane runs the command in its own \
-environment and ends it at the deadline. Chain order-dependent commands with `&&`. The \
+environment and ends it at the deadline, 15 minutes unless you name one and never more \
+than 60. Chain order-dependent commands with `&&`. The \
 native wrapper bounds inline output and supplies a readable full-log path when needed; \
 do not append `tail` just to limit output. A command still running after 60 seconds, or \
 when a message arrives for you, is kept as a \
 job: you get its output so far at once, it keeps running, and its result is delivered \
-automatically when it ends.";
+automatically when it ends. A long-lived development service (a dev server, a watcher) \
+is the one thing that runs without a deadline: set `service` and it is kept as a job at \
+once; read it with the job tool's `logs`, see it in `list`, and end it with `stop`.";
 
 /// What the model reads about the command parameter.
 const SHELL_COMMAND_DESCRIPTION: &str = "command to execute";
+
+/// What the model reads about the service parameter.
+const SHELL_SERVICE_DESCRIPTION: &str = "true runs a long-lived development service with no \
+deadline, kept as a job at once until you stop it with the job tool; takes no timeout";
 
 /// What the model reads about the lane's job tool.
 const JOB_DESCRIPTION: &str = "Follows the commands the shell kept as jobs. A job's result \
@@ -686,11 +693,12 @@ struct ModeRequest {
 pub fn host_tools_request() -> Vec<u8> {
     let deadline = serde_json::json!({
         "type": "integer",
-        "minimum": 0,
+        "minimum": SHELL_TIMEOUT_MIN,
         "maximum": SHELL_TIMEOUT_MAX,
         "description": format!(
-            "timeout in seconds; 0 disables the command deadline; nonzero \
-             values are clamped to {SHELL_TIMEOUT_MIN}-{SHELL_TIMEOUT_MAX}"
+            "timeout in seconds; omitted means {SHELL_TIMEOUT_DEFAULT}; longer values are \
+             clamped to {SHELL_TIMEOUT_MAX}; 0 is refused, since only a service runs \
+             without a deadline"
         ),
     });
     let wait = serde_json::json!({
@@ -714,6 +722,7 @@ pub fn host_tools_request() -> Vec<u8> {
                 "properties": {
                     "command": {"type": "string", "description": SHELL_COMMAND_DESCRIPTION},
                     "timeout": deadline,
+                    "service": {"type": "boolean", "description": SHELL_SERVICE_DESCRIPTION},
                 },
                 "required": ["command"],
                 "additionalProperties": false,
@@ -810,13 +819,33 @@ impl JobOp {
     }
 }
 
+/// How long one shell command may live.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Lifetime {
+    /// An ordinary command, ended by the lane at its deadline.
+    Deadline(Duration),
+    /// A long-lived development service, running until the job tool stops it.
+    Service,
+}
+
+impl Lifetime {
+    /// The deadline the lane enforces, which only a service lacks.
+    #[must_use]
+    pub fn deadline(self) -> Option<Duration> {
+        match self {
+            Self::Deadline(deadline) => Some(deadline),
+            Self::Service => None,
+        }
+    }
+}
+
 /// One shell command the agent asked the lane to run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShellCall {
     /// The command line, run by the lane's shell.
     pub command: String,
-    /// How long it may run before the lane ends it; `None` lifts the deadline.
-    pub timeout: Option<Duration>,
+    /// Its deadline, or the service it was explicitly asked to be.
+    pub lifetime: Lifetime,
     /// What omp notes about the call ahead of what the command says: today,
     /// a deadline granted other than the one asked.
     pub notices: Vec<String>,
@@ -825,37 +854,60 @@ pub struct ShellCall {
 impl ShellCall {
     /// Read a call from the arguments a `host_tool_call` frame carried.
     ///
-    /// The deadline is read exactly as omp reads its own `bash` deadline, so
-    /// a model's habit from one carries to the other: omitted means the
-    /// default, zero lifts it, and any other value is clamped to the range
-    /// with omp's own notice when that changes it.
+    /// An omitted deadline is the default and a longer one is clamped to the
+    /// maximum with omp's own notice. Zero is refused rather than read as no
+    /// deadline: the only command that runs without one is a service, asked
+    /// for by name and taking no timeout.
     ///
     /// # Errors
     ///
-    /// Returns the refusal text when the arguments name no command.
+    /// Returns the refusal text when the arguments name no command, ask for
+    /// a zero deadline, or give a service a timeout.
     pub fn parse(arguments: &serde_json::Map<String, serde_json::Value>) -> Result<Self, String> {
         let command = arguments
             .get("command")
             .and_then(serde_json::Value::as_str)
             .ok_or_else(|| "shell needs a command".to_owned())?;
+        let service = arguments
+            .get("service")
+            .and_then(serde_json::Value::as_bool)
+            .is_some_and(|service| service);
         let asked = arguments.get("timeout").and_then(serde_json::Value::as_u64);
-        let (timeout, notices) = match asked {
-            None => (Some(SHELL_TIMEOUT_DEFAULT), Vec::new()),
-            Some(0) => (None, Vec::new()),
-            Some(asked) => {
-                let granted = asked.clamp(SHELL_TIMEOUT_MIN, SHELL_TIMEOUT_MAX);
+        let (lifetime, notices) = match (service, asked) {
+            (true, Some(_)) => {
+                return Err(
+                    "a service runs until the job tool stops it, so it takes no timeout".to_owned(),
+                );
+            }
+            (true, None) => (Lifetime::Service, Vec::new()),
+            (false, Some(0)) => {
+                return Err(format!(
+                    "timeout 0 does not lift the deadline; name {SHELL_TIMEOUT_MIN}-\
+                     {SHELL_TIMEOUT_MAX} seconds, or set service for a long-lived \
+                     development service"
+                ));
+            }
+            (false, None) => (
+                Lifetime::Deadline(Duration::from_secs(SHELL_TIMEOUT_DEFAULT)),
+                Vec::new(),
+            ),
+            (false, Some(asked)) => {
+                let granted = asked.min(SHELL_TIMEOUT_MAX);
                 let clamped = (granted != asked).then(|| {
                     format!(
                         "Timeout clamped to {granted}s (requested {asked}s; allowed range \
                          {SHELL_TIMEOUT_MIN}-{SHELL_TIMEOUT_MAX}s)."
                     )
                 });
-                (Some(granted), clamped.into_iter().collect())
+                (
+                    Lifetime::Deadline(Duration::from_secs(granted)),
+                    clamped.into_iter().collect(),
+                )
             }
         };
         Ok(Self {
             command: command.to_owned(),
-            timeout: timeout.map(Duration::from_secs),
+            lifetime,
             notices,
         })
     }

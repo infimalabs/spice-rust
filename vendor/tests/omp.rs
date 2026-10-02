@@ -195,15 +195,17 @@ fn the_lanes_shell_is_registered_essential_in_place_of_omps_own_executors() {
         shell["parameters"]["properties"]["timeout"]["type"],
         "integer"
     );
-    assert_eq!(shell["parameters"]["properties"]["timeout"]["minimum"], 0);
+    assert_eq!(
+        shell["parameters"]["properties"]["timeout"]["minimum"],
+        omp::SHELL_TIMEOUT_MIN
+    );
     assert_eq!(
         shell["parameters"]["properties"]["timeout"]["maximum"],
         omp::SHELL_TIMEOUT_MAX
     );
     assert_eq!(
-        shell["parameters"]["properties"]["timeout"]["description"],
-        "timeout in seconds; 0 disables the command deadline; nonzero values are clamped to \
-         1-3600"
+        shell["parameters"]["properties"]["service"]["type"],
+        "boolean"
     );
     assert!(
         shell["description"]
@@ -282,37 +284,52 @@ fn a_job_call_names_its_op_and_the_job_every_op_but_a_listing_needs() {
 }
 
 #[test]
-fn a_shell_call_reads_its_command_and_clamps_its_deadline_as_bash_would() {
+fn a_shell_call_always_has_a_bounded_deadline_unless_it_is_asked_for_as_a_service() {
     let arguments = |json: serde_json::Value| json.as_object().expect("an argument object").clone();
-    assert_eq!(
-        omp::ShellCall::parse(&arguments(serde_json::json!({"command": "cargo test"}))),
+    let parse = |json| omp::ShellCall::parse(&arguments(json));
+    let deadline = |seconds| omp::Lifetime::Deadline(Duration::from_secs(seconds));
+    let call = |lifetime, notices: Vec<&str>| {
         Ok(omp::ShellCall {
             command: "cargo test".to_owned(),
-            timeout: Some(Duration::from_secs(omp::SHELL_TIMEOUT_DEFAULT)),
-            notices: Vec::new(),
+            lifetime,
+            notices: notices.into_iter().map(str::to_owned).collect(),
         })
+    };
+    assert_eq!(omp::SHELL_TIMEOUT_DEFAULT, 15 * 60);
+    assert_eq!(omp::SHELL_TIMEOUT_MAX, 60 * 60);
+    assert_eq!(
+        parse(serde_json::json!({"command": "cargo test"})),
+        call(deadline(omp::SHELL_TIMEOUT_DEFAULT), vec![])
+    );
+    for bound in [omp::SHELL_TIMEOUT_MIN, omp::SHELL_TIMEOUT_MAX] {
+        assert_eq!(
+            parse(serde_json::json!({"command": "cargo test", "timeout": bound})),
+            call(deadline(bound), vec![])
+        );
+    }
+    assert_eq!(
+        parse(serde_json::json!({"command": "cargo test", "timeout": 999_999})),
+        call(
+            deadline(omp::SHELL_TIMEOUT_MAX),
+            vec!["Timeout clamped to 3600s (requested 999999s; allowed range 1-3600s)."]
+        )
+    );
+    assert!(
+        parse(serde_json::json!({"command": "cargo test", "timeout": 0})).is_err(),
+        "zero never lifts an ordinary command's deadline"
     );
     assert_eq!(
-        omp::ShellCall::parse(&arguments(
-            serde_json::json!({"command": "sleep 9", "timeout": 0})
-        )),
-        Ok(omp::ShellCall {
-            command: "sleep 9".to_owned(),
-            timeout: None,
-            notices: Vec::new(),
-        })
+        parse(serde_json::json!({"command": "cargo test", "service": true})),
+        call(omp::Lifetime::Service, vec![])
     );
     assert_eq!(
-        omp::ShellCall::parse(&arguments(
-            serde_json::json!({"command": "sleep 9", "timeout": 999_999})
-        )),
-        Ok(omp::ShellCall {
-            command: "sleep 9".to_owned(),
-            timeout: Some(Duration::from_secs(omp::SHELL_TIMEOUT_MAX)),
-            notices: vec![
-                "Timeout clamped to 3600s (requested 999999s; allowed range 1-3600s).".to_owned()
-            ],
-        })
+        parse(serde_json::json!({"command": "cargo test", "service": false})),
+        call(deadline(omp::SHELL_TIMEOUT_DEFAULT), vec![])
+    );
+    assert!(
+        parse(serde_json::json!({"command": "cargo test", "service": true, "timeout": 60}))
+            .is_err(),
+        "a service has no deadline to name"
     );
     assert_eq!(
         omp::job_delivery("0badcafe", "done\n\nWall time: 0.10 seconds"),

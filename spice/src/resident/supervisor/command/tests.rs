@@ -940,7 +940,9 @@ fn kept_job(scratch: &Scratch, fifo: &str) -> (Terminal, Job) {
         .foreground(std::time::Duration::from_millis(50));
     let call = vendor::omp::ShellCall {
         command: format!("read held < {fifo}"),
-        timeout: None,
+        lifetime: vendor::omp::Lifetime::Deadline(std::time::Duration::from_secs(
+            vendor::omp::SHELL_TIMEOUT_DEFAULT,
+        )),
         notices: Vec::new(),
     };
     let Run::Backgrounded(_, job) = terminal.run(&call, &Control::new()) else {

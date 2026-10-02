@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use sill::{Environment, Spec};
-use vendor::omp::{JobCall, JobOp, ShellCall};
+use vendor::omp::{JobCall, JobOp, Lifetime, ShellCall};
 use wire::intent::{LaneJob, LaneJobStanding};
 
 pub(super) mod job;
@@ -106,14 +106,17 @@ impl Terminal {
         Self { foreground, ..self }
     }
 
-    /// The foreground window for one deadline: the threshold, or the
-    /// deadline less omp's buffer when that is shorter, exactly as omp
-    /// bounds its own wait before backgrounding.
-    fn window(&self, timeout: Option<Duration>) -> Duration {
-        timeout.map_or(self.foreground, |timeout| {
-            self.foreground
-                .min(timeout.saturating_sub(FOREGROUND_BUFFER))
-        })
+    /// The foreground window for one command: the threshold, or the deadline
+    /// less omp's buffer when that is shorter, exactly as omp bounds its own
+    /// wait before backgrounding. A service never ends on its own, so it
+    /// opens no window and is kept at once.
+    fn window(&self, lifetime: Lifetime) -> Duration {
+        match lifetime {
+            Lifetime::Deadline(deadline) => self
+                .foreground
+                .min(deadline.saturating_sub(FOREGROUND_BUFFER)),
+            Lifetime::Service => Duration::ZERO,
+        }
     }
 
     /// The occupant's own terminal, read from its launch: its native shell,
@@ -158,7 +161,7 @@ impl Terminal {
             argv,
             &self.cwd,
             &self.environment,
-            call.timeout,
+            call.lifetime.deadline(),
             &call.notices,
         );
         let job = match started {
@@ -167,7 +170,7 @@ impl Terminal {
                 return Run::Ended(Report::refused(&format!("shell launch failed: {error}")));
             }
         };
-        let ended = match job.observe(control, self.window(call.timeout)) {
+        let ended = match job.observe(control, self.window(call.lifetime)) {
             Ok(Observed::Ended(ended)) => ended,
             Ok(Observed::Cancelled) => stop(&job, control).unwrap_or(Ended {
                 ending: Ending::Stopped,
@@ -540,7 +543,7 @@ mod tests {
     fn call(command: &str) -> ShellCall {
         ShellCall {
             command: command.to_owned(),
-            timeout: Some(Duration::from_secs(vendor::omp::SHELL_TIMEOUT_DEFAULT)),
+            lifetime: Lifetime::Deadline(Duration::from_secs(vendor::omp::SHELL_TIMEOUT_DEFAULT)),
             notices: Vec::new(),
         }
     }
@@ -648,19 +651,11 @@ mod tests {
     fn the_foreground_window_is_omps_threshold_bounded_by_the_deadline_less_its_buffer() {
         let root = scratch("window");
         let terminal = terminal(&root, Environment::empty());
-        assert_eq!(terminal.window(None), Duration::from_secs(60));
-        assert_eq!(
-            terminal.window(Some(Duration::from_secs(30))),
-            Duration::from_secs(29)
-        );
-        assert_eq!(
-            terminal.window(Some(Duration::from_secs(300))),
-            Duration::from_secs(60)
-        );
-        assert_eq!(
-            terminal.window(Some(Duration::from_secs(1))),
-            Duration::ZERO
-        );
+        let deadline = |seconds| Lifetime::Deadline(Duration::from_secs(seconds));
+        assert_eq!(terminal.window(deadline(30)), Duration::from_secs(29));
+        assert_eq!(terminal.window(deadline(300)), Duration::from_secs(60));
+        assert_eq!(terminal.window(deadline(1)), Duration::ZERO);
+        assert_eq!(terminal.window(Lifetime::Service), Duration::ZERO);
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -671,7 +666,7 @@ mod tests {
         let terminal = terminal(&root, Environment::empty());
         let control = Control::new();
         let mut brief = call("cat hold");
-        brief.timeout = Some(Duration::from_millis(20));
+        brief.lifetime = Lifetime::Deadline(Duration::from_millis(20));
         // The window is empty, so the command is kept at once unless its
         // deadline has already passed by the first look; either way the
         // expiry is reported in omp's words.
@@ -747,6 +742,61 @@ mod tests {
             format!("[job {}] cat hold\nCommand aborted", job.id())
         );
         assert!(!stopped.failed);
+        assert_eq!(terminal.follow(&job, &control), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_kept_command_still_ends_at_the_deadline_it_was_started_with() {
+        let root = scratch("kept-deadline");
+        hold(&root);
+        let terminal = terminal(&root, Environment::empty()).foreground(Duration::from_millis(50));
+        let control = Control::new();
+        let mut held = call("cat hold");
+        held.lifetime = Lifetime::Deadline(Duration::from_millis(1500));
+        let (_, job) = kept(terminal.run(&held, &control));
+        assert_eq!(job.timeout(), Some(Duration::from_millis(1500)));
+        let delivered = terminal
+            .follow(&job, &control)
+            .expect("the expiry is delivered");
+        assert!(
+            delivered
+                .output
+                .ends_with("[Command timed out after 1 seconds]"),
+            "{}",
+            delivered.output
+        );
+        assert!(delivered.failed);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn a_service_is_kept_at_once_without_a_deadline_until_the_job_tool_stops_it() {
+        let root = scratch("service");
+        hold(&root);
+        let terminal = terminal(&root, Environment::empty());
+        let control = Control::new();
+        let mut service = call("cat hold");
+        service.lifetime = Lifetime::Service;
+        let (report, job) = kept(terminal.run(&service, &control));
+        assert_eq!(
+            report.output,
+            format!(
+                "Backgrounded as job {}; result will be delivered automatically.",
+                job.id()
+            )
+        );
+        assert_eq!(job.timeout(), None);
+        let stop = JobCall {
+            op: JobOp::Stop,
+            id: Some(job.id().to_owned()),
+            timeout: Duration::from_secs(1),
+        };
+        let stopped = terminal.job(&stop, &Control::new());
+        assert_eq!(
+            stopped.output,
+            format!("[job {}] cat hold\nCommand aborted", job.id())
+        );
         assert_eq!(terminal.follow(&job, &control), None);
         let _ = std::fs::remove_dir_all(&root);
     }
