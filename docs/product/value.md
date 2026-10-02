@@ -323,6 +323,13 @@ line, the full row in their title, so a first account moves nothing below.
 
 ### The global Work page
 
+**Running jobs** precedes the board with every command every resident lane
+still keeps, regardless of the selected Work scope. Rows are oldest first and
+name the agent, live started age, full command on hover, and the resident's
+reported standing. Five jobs show in full; more scroll in a keyboard-reachable
+region under pinned headings with the sixth peeking. An empty table reserves
+one row, so the first job does not move the board.
+
 One board shows open work in fixed ready, in-flight, blocked, and deferred
 rows. Cards fill each row in allocator order and scroll horizontally, so churn
 changes contents, not board size or labels. Creation order and project/phase

@@ -1316,13 +1316,14 @@
   white-space: nowrap;
 }
 
-/* Kept jobs show in full up to --team-job-visible rows, which must equal
-   KEPT_JOBS_VISIBLE in watchband/team_work.rs; beyond that the table scrolls
-   in place under pinned headers, capped half a row past the limit so the next
-   row peeks. The header and each row are held at --team-job-head and
-   --team-job-row, floors their contents fit, so with no jobs the region
-   reserves exactly one job and the first job moves nothing below it. Sizes
-   are of the content box, outside the region's own edges. The inner scroll
+/* Team and global job tables show in full up to --team-job-visible rows,
+   which must equal KEPT_JOBS_VISIBLE in watchband/team_work.rs; beyond that
+   each table scrolls in place under pinned headers, capped half a row past
+   the limit so the next row peeks. The header and each row are held at
+   --team-job-head and --team-job-row, floors their contents fit, so with no
+   jobs the region reserves exactly one job and the first job moves nothing
+   below it. The sizes are of the content box, outside the region's own edges.
+   The inner scroll
    chains to the pane at its ends. */
 .team-jobs { min-width: 0; container-type: inline-size; }
 .team-job-scroll {

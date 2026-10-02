@@ -47,6 +47,7 @@ use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
 pub(in crate::browser) use state::{ComposerAction, ComposerDrafts, use_composer_issue_toast};
 use team_drag::team_dragging;
 pub(super) use team_drag::{TeamDragState, use_team_drag_state};
+pub(super) use team_work::render_global_jobs;
 use team_work::render_tasks;
 pub(super) use vendor_icon::render_composer_vendor_icon;
 
