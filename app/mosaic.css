@@ -734,7 +734,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.composer-shard-heading strong:has(+ .composer-shard-image-indicators:not(:empty)) {
+.composer-shard-heading strong:has(+ .composer-shard-image-indicators .composer-shard-image-indicator) {
   -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
   mask-image: linear-gradient(90deg, #000 calc(100% - 18px), transparent);
 }
@@ -773,7 +773,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   overscroll-behavior: contain;
   scrollbar-width: thin;
 }
-.composer-shard-image-indicator {
+.composer-shard-image-indicator, .composer-shard-image-attach {
   display: inline-flex;
   flex: 0 0 26px;
   width: 26px;
@@ -796,7 +796,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
   border-radius: 3px;
   object-fit: cover;
 }
-.composer-shard-image-indicator:hover { border-color: var(--accent); }
+.composer-shard-image-indicator:hover, .composer-shard-image-attach:focus-within { border-color: var(--accent); }
 .composer-shard-image-remove {
   display: inline-flex;
   position: absolute;
