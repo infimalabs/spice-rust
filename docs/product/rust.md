@@ -321,9 +321,9 @@ event loop: **not CPU isolation or a hard timeout**. Loaded modules work offline
 reopening the iframe needs the local appliance.
 
 Diagrams reserve full-width `cover` slots: 15.75rem media-only, 8.75rem mixed.
-A tool card whose face is one image is measured at that 15.75rem floor, then,
-once its card commits, the image fills the room above the footer at its own
-shape from the start corner. It meets three walls without centering and never
+A tool card whose face is one image uses the same standard 15.75rem square as
+an operator's lone image, cover-cropped. Once its card commits, the footer holds
+the bottom edge and the square stays centred in the room above it, so it never
 resizes the committed card. Operator messages and quotes keep their floors.
 Source/error stays in-place. All images share an inert modal over the whole
 viewport: the interface beneath shows through the shared frosted veil, the image
