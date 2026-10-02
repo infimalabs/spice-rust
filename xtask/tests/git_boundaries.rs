@@ -131,9 +131,9 @@ const NETWORK_CALL_SITES: [(&str, &str, usize); 10] = [
     ("spice/src/task_git/command.rs", "push", 1),
     // The task-git module's repository-backed fixtures clone, fetch, and push
     // only against disposable local bare remotes under their owned roots.
-    ("spice/src/task_git/tests.rs", "clone", 2),
+    ("spice/src/task_git/tests.rs", "clone", 3),
     ("spice/src/task_git/tests.rs", "fetch", 2),
-    ("spice/src/task_git/tests.rs", "push", 7),
+    ("spice/src/task_git/tests.rs", "push", 9),
     // This fixture fetches only from its owned local bare remote after moving
     // the upstream branch, exercising divergent task-completion admission.
     (

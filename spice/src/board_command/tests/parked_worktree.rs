@@ -165,23 +165,43 @@ fn claimed_commits(bus: &Bus, epoch: CanonicalUuid, task: &TaskHandle) -> (Strin
     (boundary.head.clone(), boundary.local_commits)
 }
 
-/// Publish the lane's branch to a local bare origin it then tracks.
-fn track_upstream(root: &Path, lane: &Path) {
-    let origin = root.join("origin.git");
-    let origin = origin.to_str().expect("origin path is UTF-8");
-    for arguments in [
-        &["init", "--bare", "--quiet", origin][..],
-        &["remote", "add", "origin", origin],
-        &["push", "--quiet", "-u", "origin", "HEAD"],
+/// Give the lane's main branch a fetchable local bare `origin` at its HEAD.
+///
+/// The bare repository borrows the lane's objects through alternates, so
+/// nothing is copied and no Git process publishes: the result is what
+/// `push -u origin HEAD` to a fresh bare remote leaves behind.
+fn track_origin(lane: &Path, origin: &Path) {
+    gix::ThreadSafeRepository::init_opts(
+        origin,
+        gix::create::Kind::Bare,
+        gix::create::Options::default(),
+        gix::open::Options::isolated(),
+    )
+    .expect("initialize fixture origin");
+    let head = head_commit(lane);
+    let alternates = origin.join("objects/info");
+    fs::create_dir_all(&alternates).expect("create origin alternates parent");
+    fs::write(
+        alternates.join("alternates"),
+        format!("{}\n", lane.join(".git/objects").display()),
+    )
+    .expect("share lane objects with origin");
+    fs::write(origin.join("HEAD"), "ref: refs/heads/main\n").expect("select origin main");
+    for reference in [
+        origin.join("refs/heads/main"),
+        lane.join(".git/refs/remotes/origin/main"),
     ] {
-        let status = std::process::Command::new("git")
-            .arg("-C")
-            .arg(lane)
-            .args(arguments)
-            .status()
-            .expect("git runs");
-        assert!(status.success(), "git {arguments:?}");
+        fs::create_dir_all(reference.parent().expect("reference parent"))
+            .expect("create reference parent");
+        fs::write(reference, format!("{head}\n")).expect("write fixture reference");
     }
+    let mut config = fs::read_to_string(lane.join(".git/config")).expect("read lane config");
+    config.push_str(&format!(
+        "[remote \"origin\"]\n\turl = {}\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n\
+         [branch \"main\"]\n\tremote = origin\n\tmerge = refs/heads/main\n",
+        origin.display()
+    ));
+    fs::write(lane.join(".git/config"), config).expect("configure origin tracking");
 }
 
 /// Bind the seat's lane to a fresh one-commit repository and return it with its HEAD.
@@ -413,7 +433,7 @@ fn automatic_claims_replay_released_commits_once_across_a_failed_launch() {
     let (root, bus, epoch, seats) = fixture("automatic-replay", 1);
     let seat = &seats[0];
     let (lane, repository, opening) = bind_lane(&root, &bus, epoch, seat);
-    track_upstream(&root, &lane);
+    track_origin(&lane, &root.join("origin.git"));
     let task = add_project_with_acceptance(
         &bus,
         epoch,
