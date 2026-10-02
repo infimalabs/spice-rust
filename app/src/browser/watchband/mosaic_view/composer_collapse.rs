@@ -265,6 +265,12 @@ fn sync_metrics(
     scroller: &HtmlElement,
     state: &SharedCollapse,
 ) {
+    // A Chat surface hidden behind Work stays mounted, and its unrendered
+    // composer measures zero. Collapsing the spacer then would shift every card
+    // on return, so the last rendered metrics stand.
+    if composer.offset_parent().is_none() {
+        return;
+    }
     let maximum = f64::from(composer.offset_height());
     surface
         .style()
