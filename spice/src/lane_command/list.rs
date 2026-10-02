@@ -1,0 +1,393 @@
+//! Bounded, relevance-ordered lane list projection.
+
+use std::collections::BTreeMap;
+
+use clap::ArgMatches;
+use spice::repository::Repository;
+use wire::intent::{BoardAnswer, BoardRead, CommandAnswer, TextAnswer};
+use wire::{
+    Actor, CanonicalUuid, ClaimDisposition, CommandKind, Fault, FaultClass, Outcome, Refusal, Reply,
+};
+
+use crate::cli::Contract;
+use crate::command_client;
+
+pub(super) fn run(
+    repository: &Repository,
+    matches: &ArgMatches,
+    contract: &Contract,
+) -> Outcome<CommandAnswer> {
+    let options = match LaneListOptions::from_matches(matches) {
+        Ok(options) => options,
+        Err(outcome) => return outcome,
+    };
+    match command_client::execute_typed(
+        repository,
+        contract,
+        CommandKind::BoardRead,
+        Vec::new(),
+        &BoardRead::All { family: None },
+    ) {
+        Outcome::Reply(Reply {
+            position,
+            body: CommandAnswer::Board(board),
+        }) => match lane_list_text(&board, &options) {
+            Ok(text) => Outcome::Reply(Reply {
+                position,
+                body: CommandAnswer::Text(TextAnswer { text }),
+            }),
+            Err(outcome) => outcome,
+        },
+        Outcome::Reply(_) => protocol_fault(
+            "lane::list-answer-invalid",
+            "lane list board read returned another answer shape",
+        ),
+        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
+        Outcome::Fault(fault) => Outcome::Fault(fault),
+    }
+}
+
+#[derive(Clone, Default)]
+struct LaneListOptions {
+    limit: Option<usize>,
+    max_bytes: Option<usize>,
+    after: Option<CanonicalUuid>,
+}
+
+impl LaneListOptions {
+    fn from_matches(matches: &ArgMatches) -> Result<Self, Outcome<CommandAnswer>> {
+        let limit = numeric_option(matches, "limit", "lane::list-limit")?;
+        let max_bytes = numeric_option(matches, "max-bytes", "lane::list-max-bytes")?;
+        let _ = lane_list_budget(limit, max_bytes)?;
+        let after = matches
+            .get_one::<String>("after")
+            .map(|written| {
+                written.parse::<CanonicalUuid>().map_err(|error| {
+                    refusal(
+                        "lane::list-after",
+                        Some(written.clone()),
+                        &error.to_string(),
+                    )
+                })
+            })
+            .transpose()?;
+        Ok(Self {
+            limit,
+            max_bytes,
+            after,
+        })
+    }
+
+    fn budget(&self) -> wire::output::Budget {
+        lane_list_budget(self.limit, self.max_bytes)
+            .expect("CLI parsing and test fixtures admit lane list limits")
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LaneListCandidate<'a> {
+    lane: CanonicalUuid,
+    seated: bool,
+    claim: Option<&'a str>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+struct LaneListRow {
+    lane: CanonicalUuid,
+    text: String,
+}
+
+fn lane_list_text(
+    board: &BoardAnswer,
+    options: &LaneListOptions,
+) -> Result<String, Outcome<CommandAnswer>> {
+    let actor = match board.principal {
+        Actor::Lane(lane) => Some(lane),
+        Actor::Operator | Actor::Spice => None,
+    };
+    let page = lane_list_page(lane_list_candidates(board)?, actor, options)?;
+    let mut output = page
+        .rows
+        .into_iter()
+        .map(|row| row.text)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if let Some(omission) = page.omission {
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&omission.to_string());
+    }
+    Ok(output)
+}
+
+fn lane_list_candidates(
+    board: &BoardAnswer,
+) -> Result<Vec<LaneListCandidate<'_>>, Outcome<CommandAnswer>> {
+    let mut claims = BTreeMap::new();
+    for task in &board.tasks {
+        let Some(claim) = task
+            .claim
+            .as_ref()
+            .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
+        else {
+            continue;
+        };
+        if claims
+            .insert(claim.body.lane, task.statement.body.handle.as_str())
+            .is_some()
+        {
+            return Err(protocol_fault(
+                "lane::active-claim-ambiguous",
+                "one lane has more than one active claim in the board snapshot",
+            ));
+        }
+    }
+    Ok(board
+        .residency
+        .body
+        .lanes
+        .iter()
+        .map(|row| LaneListCandidate {
+            lane: row.lane,
+            seated: row.disposition == "occupied" && row.occupant.is_some(),
+            claim: claims.get(&row.lane).copied(),
+        })
+        .collect())
+}
+
+fn lane_list_page(
+    mut candidates: Vec<LaneListCandidate<'_>>,
+    actor: Option<CanonicalUuid>,
+    options: &LaneListOptions,
+) -> Result<wire::output::Bounded<LaneListRow>, Outcome<CommandAnswer>> {
+    candidates.sort_by(|left, right| {
+        lane_relevance(*left, actor)
+            .cmp(&lane_relevance(*right, actor))
+            .then_with(|| left.lane.cmp(&right.lane))
+    });
+    if let Some(after) = options.after {
+        let Some(index) = candidates.iter().position(|row| row.lane == after) else {
+            return Err(refusal(
+                "lane::list-after-unknown",
+                Some(after.to_string()),
+                "name a lane present in the current residency table",
+            ));
+        };
+        candidates = candidates.split_off(index);
+    }
+
+    let mut admission = wire::output::Admission::new(options.budget());
+    for (index, candidate) in candidates.iter().enumerate() {
+        if admission.is_closed() {
+            admission.withhold(candidates.len() - index);
+            break;
+        }
+        admission
+            .offer(LaneListRow {
+                lane: candidate.lane,
+                text: format!(
+                    "lane {} seated={} claim={}",
+                    candidate.lane,
+                    candidate.seated,
+                    candidate.claim.unwrap_or("-")
+                ),
+            })
+            .expect("a lane list row always serializes");
+    }
+    Ok(admission.finish(|resume| lane_list_continuation(options, resume)))
+}
+
+fn lane_relevance(candidate: LaneListCandidate<'_>, actor: Option<CanonicalUuid>) -> u8 {
+    if Some(candidate.lane) == actor {
+        0
+    } else if candidate.seated || candidate.claim.is_some() {
+        1
+    } else {
+        2
+    }
+}
+
+fn lane_list_continuation(
+    options: &LaneListOptions,
+    resume: wire::output::Resume<'_, LaneListRow>,
+) -> wire::SpiceCommand {
+    let (row, widened) = match resume {
+        wire::output::Resume::At(row) => (row, None),
+        wire::output::Resume::Widened { record, bytes } => (record, Some(bytes)),
+        wire::output::Resume::Export(row) => (row, Some(wire::output::INTERACTIVE.maximum().bytes)),
+    };
+    let limits = options.budget().limits();
+    wire::SpiceCommand::new(
+        "lane",
+        [
+            "list".to_owned(),
+            "--limit".to_owned(),
+            limits.rows.to_string(),
+            "--max-bytes".to_owned(),
+            widened.unwrap_or(limits.bytes).to_string(),
+            "--after".to_owned(),
+            row.lane.to_string(),
+        ],
+    )
+    .expect("lane list continuation has structural arguments")
+}
+
+fn numeric_option(
+    matches: &ArgMatches,
+    name: &str,
+    reason: &str,
+) -> Result<Option<usize>, Outcome<CommandAnswer>> {
+    matches
+        .get_one::<String>(name)
+        .map(|written| {
+            written.parse::<usize>().map_err(|_| {
+                refusal(
+                    reason,
+                    Some(written.clone()),
+                    &format!("name a non-negative integer after --{name}"),
+                )
+            })
+        })
+        .transpose()
+}
+
+fn lane_list_budget(
+    rows: Option<usize>,
+    bytes: Option<usize>,
+) -> Result<wire::output::Budget, Outcome<CommandAnswer>> {
+    wire::output::INTERACTIVE
+        .budget(wire::output::Request {
+            rows,
+            bytes,
+            text: None,
+        })
+        .map_err(|error| {
+            refusal(
+                "lane::list-limits",
+                Some(error.to_string()),
+                &error.to_string(),
+            )
+        })
+}
+
+fn refusal(reason: &str, observed: Option<String>, detail: &str) -> Outcome<CommandAnswer> {
+    Outcome::Refusal(Refusal::bare(
+        wire::RefusalDiagnostic::new(reason.to_owned(), None, None, observed).with_detail(detail),
+    ))
+}
+
+fn protocol_fault<B>(reason: &str, detail: &str) -> Outcome<B> {
+    Outcome::Fault(Fault {
+        class: FaultClass::Protocol,
+        reason: reason.to_owned(),
+        detail: detail.to_owned(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn uuid(value: u128) -> CanonicalUuid {
+        CanonicalUuid::new(uuid::Uuid::from_u128(value))
+    }
+
+    fn candidates() -> Vec<LaneListCandidate<'static>> {
+        (1..=206)
+            .map(|value| LaneListCandidate {
+                lane: uuid(value),
+                seated: value % 2 == 0,
+                claim: (value % 5 == 0).then_some("TASK-claim"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn hundreds_of_lanes_page_actor_then_active_rows_without_gaps() {
+        let actor = uuid(206);
+        let first = lane_list_page(candidates(), Some(actor), &LaneListOptions::default())
+            .expect("default lane page renders");
+        assert_eq!(first.rows.len(), 20);
+        assert_eq!(first.rows[0].lane, actor, "actor lane is never displaced");
+        assert_eq!(first.rows[1].lane, uuid(2));
+        assert_eq!(first.rows[2].lane, uuid(4));
+        assert_eq!(first.rows[3].lane, uuid(5));
+        let omission = first.omission.expect("hundreds of lanes need another page");
+        assert_eq!(
+            (omission.population, omission.shown, omission.withheld),
+            (206, 20, 186)
+        );
+        assert_eq!(
+            omission.continuation.arguments()[..5],
+            ["lane", "list", "--limit", "20", "--max-bytes"]
+        );
+
+        let mut options = LaneListOptions {
+            limit: Some(17),
+            max_bytes: Some(wire::output::INTERACTIVE.maximum().bytes),
+            after: None,
+        };
+        let mut seen = Vec::new();
+        loop {
+            let page = lane_list_page(candidates(), Some(actor), &options)
+                .expect("continuation cursor stays in the residency table");
+            seen.extend(page.rows.into_iter().map(|row| row.lane));
+            let Some(omission) = page.omission else {
+                break;
+            };
+            let arguments = omission.continuation.arguments();
+            options.after = Some(
+                arguments
+                    .last()
+                    .expect("continuation carries a cursor")
+                    .parse()
+                    .expect("continuation cursor is a lane UUID"),
+            );
+        }
+
+        let mut expected = vec![actor];
+        expected.extend(
+            (1..206)
+                .filter(|value| value % 2 == 0 || value % 5 == 0)
+                .map(uuid),
+        );
+        expected.extend(
+            (1..206)
+                .filter(|value| value % 2 != 0 && value % 5 != 0)
+                .map(uuid),
+        );
+        assert_eq!(seen, expected);
+    }
+
+    #[test]
+    fn lane_list_parser_owns_limits_and_cursor() {
+        let after = uuid(17);
+        let matches = crate::cli::command()
+            .try_get_matches_from([
+                "spice",
+                "lane",
+                "list",
+                "--limit",
+                "23",
+                "--max-bytes",
+                "4096",
+                "--after",
+                &after.to_string(),
+            ])
+            .expect("bounded lane list parses");
+        let (_, lane) = matches.subcommand().expect("lane command");
+        let (_, list) = lane.subcommand().expect("lane list command");
+        let options = LaneListOptions::from_matches(list).expect("lane list limits are admitted");
+        assert_eq!(options.limit, Some(23));
+        assert_eq!(options.max_bytes, Some(4096));
+        assert_eq!(options.after, Some(after));
+
+        let too_many = crate::cli::command()
+            .try_get_matches_from(["spice", "lane", "list", "--limit", "501"])
+            .expect("syntax accepts a numeric limit for semantic admission");
+        let (_, lane) = too_many.subcommand().expect("lane command");
+        let (_, list) = lane.subcommand().expect("lane list command");
+        assert!(LaneListOptions::from_matches(list).is_err());
+    }
+}

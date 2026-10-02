@@ -1,23 +1,19 @@
 //! CLI acquisition and typed resident mappings for lane lifecycle commands.
 
-use std::collections::BTreeMap;
 use std::ffi::OsString;
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use spice::repository::Repository;
 use wire::intent::{
-    BoardAnswer, BoardRead, CommandAnswer, LaneAction, LaneAnswer, LaneRecall, LaneRetune,
-    LaneSeat, LaneState, TextAnswer,
+    CommandAnswer, LaneAction, LaneAnswer, LaneRecall, LaneRetune, LaneSeat, LaneState,
 };
-use wire::{
-    CanonicalUuid, ClaimDisposition, CommandKind, Fault, FaultClass, Outcome, Refusal, Reply,
-};
+use wire::{CanonicalUuid, Fault, FaultClass, Outcome, Refusal, Reply};
 
 use crate::cli::Contract;
 use crate::command_client::{self, SelectedCommand};
 
+mod list;
 pub(crate) mod purge;
 
 /// Execute one landed lane-family leaf.
@@ -44,7 +40,7 @@ pub(crate) fn run(
 
     match contract.path {
         ["lane"] => command_client::execute(canvas, contract, SelectedCommand::LaneRead),
-        ["lane", "list"] => list(&repository, contract),
+        ["lane", "list"] => list::run(&repository, matches, contract),
         ["lane", "add"] => add(
             &repository,
             canvas,
@@ -204,70 +200,6 @@ fn read_lanes<B>(canvas: &Path) -> Result<Reply<Box<LaneAnswer>>, Outcome<B>> {
         Outcome::Refusal(refusal) => Err(Outcome::Refusal(refusal)),
         Outcome::Fault(fault) => Err(Outcome::Fault(fault)),
     }
-}
-
-fn list(repository: &Repository, contract: &Contract) -> Outcome<CommandAnswer> {
-    match command_client::execute_typed(
-        repository,
-        contract,
-        CommandKind::BoardRead,
-        Vec::new(),
-        &BoardRead::All { family: None },
-    ) {
-        Outcome::Reply(Reply {
-            position,
-            body: CommandAnswer::Board(board),
-        }) => match lane_list_text(&board) {
-            Ok(text) => Outcome::Reply(Reply {
-                position,
-                body: CommandAnswer::Text(TextAnswer { text }),
-            }),
-            Err(outcome) => outcome,
-        },
-        Outcome::Reply(_) => protocol_fault(
-            "lane::list-answer-invalid",
-            "lane list board read returned another answer shape",
-        ),
-        Outcome::Refusal(refusal) => Outcome::Refusal(refusal),
-        Outcome::Fault(fault) => Outcome::Fault(fault),
-    }
-}
-
-fn lane_list_text(board: &BoardAnswer) -> Result<String, Outcome<CommandAnswer>> {
-    let mut claims = BTreeMap::new();
-    for task in &board.tasks {
-        let Some(claim) = task
-            .claim
-            .as_ref()
-            .filter(|claim| claim.body.disposition == ClaimDisposition::Active)
-        else {
-            continue;
-        };
-        if claims
-            .insert(claim.body.lane, &task.statement.body.handle)
-            .is_some()
-        {
-            return Err(protocol_fault(
-                "lane::active-claim-ambiguous",
-                "one lane has more than one active claim in the board snapshot",
-            ));
-        }
-    }
-
-    let mut text = String::new();
-    for row in &board.residency.body.lanes {
-        if !text.is_empty() {
-            text.push('\n');
-        }
-        let seated = row.disposition == "occupied" && row.occupant.is_some();
-        write!(text, "lane {} seated={seated} claim=", row.lane)
-            .expect("writing to a String cannot fail");
-        match claims.get(&row.lane) {
-            Some(claim) => write!(text, "{claim}").expect("writing to a String cannot fail"),
-            None => text.push('-'),
-        }
-    }
-    Ok(text)
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
