@@ -21,6 +21,7 @@ use std::time::Duration;
 use sill::{Environment, Spec};
 use vendor::omp::{JobCall, JobOp, Lifetime, ShellCall};
 use wire::intent::{LaneJob, LaneJobStanding};
+use wire::output::{Admission, Budget, ClippedText, Resume};
 
 pub(super) mod job;
 
@@ -224,13 +225,19 @@ impl Terminal {
     /// Answer one request on the lane's jobs. An answer that reports how a
     /// job ended is the lane hearing it, so its completion notice is not owed.
     pub(in crate::resident) fn job(&self, call: &JobCall, control: &Control) -> Report {
-        let job = match call.id.as_deref().map(|id| self.jobs.open(id)) {
+        // History's id is a cursor into delivered jobs, not a job to open.
+        let id = match call.op {
+            JobOp::History { .. } => None,
+            _ => call.id.as_deref(),
+        };
+        let job = match id.map(|id| self.jobs.open(id)) {
             Some(Ok(job)) => Some(job),
             Some(Err(error)) => return Report::refused(&error.to_string()),
             None => None,
         };
         match (call.op, job) {
             (JobOp::List, _) => self.list(),
+            (JobOp::History { budget }, _) => self.history(budget, call.id.as_deref()),
             (JobOp::Logs, Some(job)) => match job.ended() {
                 Some(ended) => told(&job, &ended),
                 None => snapshot(&job, None),
@@ -252,8 +259,11 @@ impl Terminal {
         }
     }
 
+    /// Every job still owed to the lane, oldest first: running, or ended and
+    /// not yet heard. Delivered jobs are history's, so a long-lived lane's
+    /// listing stays as short as its open work.
     fn list(&self) -> Report {
-        let jobs = match self.jobs.list() {
+        let jobs = match self.jobs.kept() {
             Ok(jobs) => jobs,
             Err(error) => return Report::refused(&format!("jobs could not be listed: {error}")),
         };
@@ -263,13 +273,57 @@ impl Terminal {
             output.push_str(&format!("{}  {status}  {}\n", job.id(), job.command()));
         }
         if output.is_empty() {
-            output.push_str("no jobs");
+            output.push_str("no jobs running or awaiting delivery");
         }
-        Report {
-            output,
-            exit_code: None,
-            failed: false,
+        Report::answered(output)
+    }
+
+    /// Delivered jobs newest first from `at`, admitted under `budget`; a
+    /// page that withholds any names the exact call that continues it.
+    fn history(&self, budget: Budget, at: Option<&str>) -> Report {
+        let refused = |error: &dyn std::fmt::Display| {
+            Report::refused(&format!("job history could not be read: {error}"))
+        };
+        let ids = match self.jobs.delivered(at) {
+            Ok(ids) => ids,
+            Err(error) => return refused(&error),
+        };
+        let mut admission = Admission::new(budget);
+        for (index, id) in ids.iter().enumerate() {
+            if admission.is_closed() {
+                admission.withhold(ids.len() - index);
+                break;
+            }
+            let job = match self.jobs.present(id) {
+                Ok(Some(job)) => job,
+                Ok(None) => continue,
+                Err(error) => return refused(&error),
+            };
+            let row = HistoryRow {
+                status: status(job.ended().as_ref().map(|ended| &ended.ending)),
+                command: budget.clip(job.command()),
+                id: job.id().to_owned(),
+            };
+            if let Err(error) = admission.offer(row) {
+                return refused(&error);
+            }
         }
+        let rows = budget.limits().rows;
+        let page = admission.finish(|resume| {
+            let (Resume::At(next) | Resume::Widened { record: next, .. } | Resume::Export(next)) =
+                resume;
+            format!("job op=history id={} limit={rows}", next.id)
+        });
+        let mut output = String::new();
+        for row in &page.rows {
+            output.push_str(&format!("{}  {}  {}\n", row.id, row.status, row.command));
+        }
+        match &page.omission {
+            Some(omission) => output.push_str(&omission.to_string()),
+            None if output.is_empty() => output.push_str("no delivered jobs"),
+            None => {}
+        }
+        Report::answered(output)
     }
 
     /// The command as the shell runs it, rewritten by RTK when the launch
@@ -328,6 +382,15 @@ pub(in crate::resident) fn unheard(jobs: &Jobs) -> Vec<LaneJob> {
         .collect()
 }
 
+/// One delivered job as a history page shows it: its encoded length is what
+/// the page's byte limit charges.
+#[derive(serde::Serialize)]
+struct HistoryRow {
+    id: String,
+    status: String,
+    command: ClippedText,
+}
+
 /// One job's standing in a listing.
 fn status(ending: Option<&Ending>) -> String {
     match ending {
@@ -342,6 +405,14 @@ fn status(ending: Option<&Ending>) -> String {
 }
 
 impl Report {
+    fn answered(output: String) -> Self {
+        Self {
+            output,
+            exit_code: None,
+            failed: false,
+        }
+    }
+
     fn refused(reason: &str) -> Self {
         Self {
             output: reason.to_owned(),
@@ -887,8 +958,154 @@ mod tests {
         terminal.job(&op(JobOp::Stop), &Control::new());
         assert_eq!(
             terminal.job(&op(JobOp::List), &Control::new()).output,
+            "no jobs running or awaiting delivery",
+            "a stop answered with the ending is heard, so the job leaves the listing"
+        );
+        let history = JobCall {
+            op: JobOp::History {
+                budget: vendor::omp::JOB_HISTORY
+                    .budget(wire::output::Request::default())
+                    .expect("default history budget"),
+            },
+            id: None,
+            timeout: Duration::from_secs(1),
+        };
+        assert_eq!(
+            terminal.job(&history, &Control::new()).output,
             format!("{}  stopped  {command}\n", job.id())
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Plant `count` delivered jobs older than any the clock names, each a
+    /// copy of `template`'s records under its own key, oldest first. Keys are
+    /// base-52 and a case-insensitive filesystem folds `d` into `D`, so each
+    /// of the two low digits stays within the 31 case-distinct ones.
+    fn plant_delivered(jobs_root: &std::path::Path, template: &str, count: i64) -> Vec<String> {
+        const CASE_DISTINCT: i64 = 31;
+        const BASE: i64 = 52 * 52 * 400_000_000_000;
+        assert!(count <= CASE_DISTINCT * CASE_DISTINCT);
+        let rename = |file: &str, id: &str| {
+            let mut record: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(jobs_root.join(template).join(file)).expect("template record"),
+            )
+            .expect("template record parses");
+            record["id"] = id.into();
+            serde_json::to_vec(&record).expect("record encodes")
+        };
+        (0..count)
+            .map(|index| {
+                let micros = BASE + index / CASE_DISTINCT * 52 + index % CASE_DISTINCT;
+                let id = steer::Key::for_micros(micros)
+                    .expect("planted key")
+                    .to_string();
+                let directory = jobs_root.join(&id);
+                std::fs::create_dir(&directory).expect("planted job directory");
+                for file in [job::REQUEST, job::STATE] {
+                    std::fs::write(directory.join(file), rename(file, &id))
+                        .expect("planted record");
+                }
+                std::fs::write(directory.join(job::DELIVERED), b"").expect("planted delivery");
+                id
+            })
+            .collect()
+    }
+
+    /// The lane this surface was built for: hundreds of delivered jobs and
+    /// one still running. The default listing is that one job; history pages
+    /// newest first and its continuations visit every delivered job once.
+    #[test]
+    fn a_long_history_neither_buries_the_running_job_nor_loses_a_delivered_one() {
+        let root = scratch("history");
+        hold(&root);
+        let terminal = terminal(&root, Environment::empty());
+        let control = Control::new();
+        let template = ended(terminal.run(&call("printf old"), &control));
+        assert_eq!(template.exit_code, Some(0));
+        let mut delivered = terminal.jobs.delivered(None).expect("delivered names");
+        assert_eq!(delivered.len(), 1, "an answered command is delivered");
+        let mut planted = plant_delivered(&root.join("jobs"), &delivered[0], 300);
+        planted.reverse();
+        planted.insert(0, delivered.remove(0));
+        let mut service = call("cat hold");
+        service.lifetime = Lifetime::Service;
+        let (_, running) = kept(terminal.run(&service, &control));
+
+        let list = JobCall {
+            op: JobOp::List,
+            id: None,
+            timeout: Duration::from_secs(1),
+        };
+        assert_eq!(
+            terminal.job(&list, &control).output,
+            format!("{}  running  cat hold\n", running.id())
+        );
+
+        let page = |id: Option<String>, limit: usize| {
+            let budget = vendor::omp::JOB_HISTORY
+                .budget(wire::output::Request {
+                    rows: Some(limit),
+                    ..wire::output::Request::default()
+                })
+                .expect("history budget");
+            let call = JobCall {
+                op: JobOp::History { budget },
+                id,
+                timeout: Duration::from_secs(1),
+            };
+            terminal.job(&call, &control).output
+        };
+        let first = page(None, 20);
+        let lines = first.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 21, "twenty rows and the omission line");
+        assert!(
+            lines[..20]
+                .iter()
+                .all(|line| line.ends_with("  exited 0  printf old"))
+        );
+        assert_eq!(
+            lines[20],
+            format!(
+                "withheld 281 of 301 rows (20 shown in {} bytes; row limit 20; next row {} \
+                 bytes); continue: job op=history id={} limit=20",
+                lines[20]
+                    .split(" shown in ")
+                    .nth(1)
+                    .and_then(|rest| rest.split(' ').next())
+                    .expect("shown bytes"),
+                lines[20]
+                    .split("next row ")
+                    .nth(1)
+                    .and_then(|rest| rest.split(' ').next())
+                    .expect("next bytes"),
+                planted[20]
+            )
+        );
+
+        let mut seen = Vec::new();
+        let mut cursor = None;
+        loop {
+            let output = page(cursor.take(), 100);
+            for line in output.lines() {
+                match line.split_once("continue: job op=history id=") {
+                    Some((_, rest)) => {
+                        cursor = Some(rest.split(' ').next().expect("cursor").to_owned());
+                    }
+                    None => seen.push(line.split("  ").next().expect("row id").to_owned()),
+                }
+            }
+            if cursor.is_none() {
+                break;
+            }
+        }
+        assert_eq!(seen, planted, "every delivered job once, newest first");
+        assert!(
+            !seen.iter().any(|id| id == running.id()),
+            "a running job is the listing's, never history's"
+        );
+
+        std::fs::write(root.join("hold"), "\n").expect("the fifo takes a line");
+        assert!(terminal.follow(&running, &control).is_some());
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -161,6 +161,24 @@ pub const SHELL_TIMEOUT_MIN: u64 = 1;
 /// without one; a long-lived development service is asked for as a service.
 pub const SHELL_TIMEOUT_MAX: u64 = 3600;
 
+/// The bounded read one job `history` answer admits through: 20 delivered
+/// jobs by default and 100 at most, each command clipped to 200 bytes. The
+/// tool names no byte limit, so its default is its maximum: 100 clipped rows
+/// fit it, and a page ends early, naming where it continues, only if they
+/// would not.
+pub const JOB_HISTORY: wire::output::Surface = wire::output::Surface::new(
+    wire::output::Limits {
+        rows: 20,
+        bytes: 32_768,
+        text: 200,
+    },
+    wire::output::Limits {
+        rows: 100,
+        bytes: 32_768,
+        text: 200,
+    },
+);
+
 /// What the model reads about the lane's shell, in place of omp's `bash`.
 const SHELL_DESCRIPTION: &str = "Runs one shell command in the worktree and returns its \
 output. This is the only way to execute anything: the lane runs the command in its own \
@@ -184,15 +202,17 @@ deadline, kept as a job at once until you stop it with the job tool; takes no ti
 /// What the model reads about the lane's job tool.
 const JOB_DESCRIPTION: &str = "Follows the commands the shell kept as jobs. A job's result \
 is delivered automatically when it ends, so you never need to poll: use `list` to see every \
-job, `logs` to read what one has said so far, `stop` to end one, and `wait` only when you \
-are blocked on one. A wait returns when the job ends, when the timeout elapses, or when a \
-message arrives for you; the job keeps running.";
+job still running or ended but not yet delivered to you, `history` to page through jobs \
+already delivered, newest first, `logs` to read what one has said so far, `stop` to end \
+one, and `wait` only when you are blocked on one. A wait returns when the job ends, when \
+the timeout elapses, or when a message arrives for you; the job keeps running.";
 
 /// What the model reads about the job operation parameter.
-const JOB_OP_DESCRIPTION: &str = "what to do: list, logs, wait, or stop";
+const JOB_OP_DESCRIPTION: &str = "what to do: list, history, logs, wait, or stop";
 
 /// What the model reads about the job identity parameter.
-const JOB_ID_DESCRIPTION: &str = "the job, as the shell named it; required except for list";
+const JOB_ID_DESCRIPTION: &str = "the job, as the shell named it; required for logs, wait, \
+and stop; with history, where a withheld page continues, as its continuation names it";
 
 /// Width of the fixed title slot that opens every omp session file.
 const TITLE_SLOT_BYTES: usize = 256;
@@ -710,6 +730,17 @@ pub fn host_tools_request() -> Vec<u8> {
              values are clamped to {SHELL_TIMEOUT_MIN}-{SHELL_TIMEOUT_MAX}"
         ),
     });
+    let rows = JOB_HISTORY.default_limits().rows;
+    let most = JOB_HISTORY.maximum().rows;
+    let limit = serde_json::json!({
+        "type": "integer",
+        "minimum": 1,
+        "maximum": most,
+        "description": format!(
+            "delivered jobs history shows; omitted means {rows}, and more than {most} is \
+             refused"
+        ),
+    });
     request_line(&serde_json::json!({
         "id": TOOLS_REQUEST_ID,
         "type": "set_host_tools",
@@ -737,11 +768,12 @@ pub fn host_tools_request() -> Vec<u8> {
                 "properties": {
                     "op": {
                         "type": "string",
-                        "enum": ["list", "logs", "wait", "stop"],
+                        "enum": ["list", "history", "logs", "wait", "stop"],
                         "description": JOB_OP_DESCRIPTION,
                     },
                     "id": {"type": "string", "description": JOB_ID_DESCRIPTION},
                     "timeout": wait,
+                    "limit": limit,
                 },
                 "required": ["op"],
                 "additionalProperties": false,
@@ -754,7 +786,12 @@ pub fn host_tools_request() -> Vec<u8> {
 /// What the model asks of one job.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JobOp {
+    /// The jobs still owed to the lane: running, or ended and not yet heard.
     List,
+    /// Delivered jobs, newest first, within the admitted budget.
+    History {
+        budget: wire::output::Budget,
+    },
     Logs,
     Wait,
     Stop,
@@ -764,7 +801,8 @@ pub enum JobOp {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct JobCall {
     pub op: JobOp,
-    /// The job named, absent only for a listing.
+    /// The job named: absent for a listing, and for history the job a
+    /// withheld page continues at.
     pub id: Option<String>,
     /// How long a wait may last before it answers with the job still running.
     pub timeout: Duration,
@@ -775,11 +813,19 @@ impl JobCall {
     ///
     /// # Errors
     ///
-    /// Returns the refusal text when the operation is unknown or the job
-    /// it needs is unnamed.
+    /// Returns the refusal text when the operation is unknown, the job it
+    /// needs is unnamed, or a history limit is zero or above its maximum.
     pub fn parse(arguments: &serde_json::Map<String, serde_json::Value>) -> Result<Self, String> {
         let op = match arguments.get("op").and_then(serde_json::Value::as_str) {
             Some("list") => JobOp::List,
+            Some("history") => JobOp::History {
+                budget: history_budget(
+                    arguments
+                        .get("limit")
+                        .and_then(serde_json::Value::as_u64)
+                        .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
+                )?,
+            },
             Some("logs") => JobOp::Logs,
             Some("wait") => JobOp::Wait,
             Some("stop") => JobOp::Stop,
@@ -790,7 +836,7 @@ impl JobCall {
             .get("id")
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned);
-        if op != JobOp::List && id.is_none() {
+        if matches!(op, JobOp::Logs | JobOp::Wait | JobOp::Stop) && id.is_none() {
             return Err(format!("job {} needs an id", op.name()));
         }
         let timeout = arguments
@@ -806,12 +852,32 @@ impl JobCall {
     }
 }
 
+/// The budget of one history page. A zero-row page, which the shared contract
+/// admits as a count, is refused here: its continuation would never advance.
+fn history_budget(rows: Option<usize>) -> Result<wire::output::Budget, String> {
+    if rows == Some(0) {
+        return Err("job history limit must be at least 1".to_owned());
+    }
+    JOB_HISTORY
+        .budget(wire::output::Request {
+            rows,
+            ..wire::output::Request::default()
+        })
+        .map_err(|error| match error {
+            wire::output::LimitError::Exceeded {
+                requested, maximum, ..
+            } => format!("job history limit {requested} exceeds the maximum {maximum}"),
+            zero @ wire::output::LimitError::Zero { .. } => format!("job history {zero}"),
+        })
+}
+
 impl JobOp {
     /// The operation as the model spells it.
     #[must_use]
     pub fn name(self) -> &'static str {
         match self {
             Self::List => "list",
+            Self::History { .. } => "history",
             Self::Logs => "logs",
             Self::Wait => "wait",
             Self::Stop => "stop",

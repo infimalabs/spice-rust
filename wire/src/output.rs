@@ -376,9 +376,9 @@ impl<T: Serialize> Admission<T> {
 
     /// Close the admission; `continuation` builds the command that resumes at
     /// the first withheld record.
-    pub fn finish<F>(self, continuation: F) -> Bounded<T>
+    pub fn finish<C, F>(self, continuation: F) -> Bounded<T, C>
     where
-        F: FnOnce(Resume<'_, T>) -> SpiceCommand,
+        F: FnOnce(Resume<'_, T>) -> C,
     {
         let shown = self.rows.len();
         let omission = self.stop.map(|stop| {
@@ -412,9 +412,15 @@ impl<T: Serialize> Admission<T> {
 }
 
 /// Admitted rows and, when they are not the whole population, the omission.
+///
+/// `C` is how a caller continues: a [`SpiceCommand`] for every `spice` CLI
+/// read, or a surface's own cursor type when its caller is not the CLI.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Bounded<T> {
+#[serde(
+    deny_unknown_fields,
+    bound(deserialize = "T: Deserialize<'de>, C: Deserialize<'de>")
+)]
+pub struct Bounded<T, C = SpiceCommand> {
     /// Admitted records, in relevance order.
     pub rows: Vec<T>,
     /// What was withheld and how to continue; absent when nothing was.
@@ -423,13 +429,13 @@ pub struct Bounded<T> {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "crate::optional::present"
     )]
-    pub omission: Option<Omission>,
+    pub omission: Option<Omission<C>>,
 }
 
 /// Every fact about the records a bounded answer withheld.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Omission {
+pub struct Omission<C = SpiceCommand> {
     /// Records offered in total.
     pub population: usize,
     /// Records admitted.
@@ -444,11 +450,11 @@ pub struct Omission {
     pub next_bytes: usize,
     /// Limits the read ran under.
     pub limits: Limits,
-    /// Exact command that resumes at the first withheld record.
-    pub continuation: SpiceCommand,
+    /// Exact command or cursor that resumes at the first withheld record.
+    pub continuation: C,
 }
 
-impl fmt::Display for Omission {
+impl<C: fmt::Display> fmt::Display for Omission<C> {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let (limit, value) = match self.exhausted {
             Exhausted::Rows => ("row", self.limits.rows),

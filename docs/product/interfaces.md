@@ -239,6 +239,16 @@ output-bearing surface admits through the one contract in `wire::output`:
 
 Mutation replies are outside this contract: they stay complete and concise.
 
+The occupant's `job` tool is the one non-CLI read on this contract. Its
+default `list` is every job still owed to the lane, oldest first: running, or
+ended and not yet heard. That is the set Canvas shows as Kept jobs, and it
+says `no jobs running or awaiting delivery` when empty. Jobs whose ending was
+delivered are read only through `history`, newest first, under the
+`JOB_HISTORY` surface: `limit` defaults to 20 and runs 1 to 100, anything else
+refused; commands are clipped to 200 bytes. A withheld page ends with
+the omission line, whose continuation is the job call
+`job op=history id=ID limit=N`, resuming at the first withheld job.
+
 ---
 
 ## Extension surfaces
