@@ -273,18 +273,13 @@ pub(super) fn append_operations(
     repository: &Repository,
     installed: &InstalledOperations<'_>,
     source: &Source,
-    archiving: bool,
-    (directories, operations, observed_operations): AppPlanState<'_>,
+    (directories, operations): AppPlanState<'_>,
 ) -> Result<(), InstallError> {
     for asset in ASSETS {
         let path = path(asset).expect("symbol assets publish fixed paths");
         let bytes = source.bytes(asset).expect("symbol assets carry bytes");
         let (bound, observed) = destination_state(repository, Location::CommonGit, path)?;
-        if archiving {
-            observed_operations.push(observed.as_ref().map(|observed| observed.image.clone()));
-        }
-        let (previous, superseded) =
-            reversal_context(installed, asset, path, observed, None, archiving);
+        let (previous, superseded) = reversal_context(installed, asset, path, observed, None);
         operations.push(operation(
             directories,
             asset,

@@ -122,7 +122,6 @@ pub struct StatePaths {
     install_record: PathBuf,
     local_configuration: PathBuf,
     lane_serve: PathBuf,
-    install_rollback_blobs: PathBuf,
 }
 
 /// Worktree-local files admitted for one steering hook delivery decision.
@@ -178,7 +177,6 @@ impl StatePaths {
             steering_delivery: worktree_runtime.join("steering-delivery.json"),
             steering_delivery_lock: worktree_locks.join("steering-delivery"),
             steering_media: runtime.join("steering-media"),
-            install_rollback_blobs: runtime.join("install-rollback"),
             artifact_data,
             runtime,
             worktree_runtime,
@@ -221,12 +219,6 @@ impl StatePaths {
     #[must_use]
     pub fn steering_media(&self) -> &Path {
         &self.steering_media
-    }
-
-    /// Repository-common content-addressed install rollback bodies.
-    #[must_use]
-    pub fn install_rollback_blobs(&self) -> &Path {
-        &self.install_rollback_blobs
     }
 
     /// Parent of the Rust authority database.
@@ -348,7 +340,6 @@ impl StatePaths {
             self.supervisors(),
             &self.artifact_data,
             self.artifacts(),
-            self.install_rollback_blobs(),
         ];
         for path in [
             self.worktree_runtime(),

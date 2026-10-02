@@ -69,7 +69,6 @@ pub(super) fn retirements(
             previous: None,
             observed: None,
             superseded: Some(operation.generated.clone()),
-            rollback: None,
             discard: true,
         });
     }

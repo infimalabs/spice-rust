@@ -6,18 +6,6 @@
 
 use super::*;
 
-/// Remove indexes introduced after schema 6 when constructing an older authority.
-pub(super) fn drop_steering_index(connection: &Connection) {
-    connection
-        .execute_batch(
-            "DROP TABLE IF EXISTS claim_index;
-             DROP TABLE steering_index;
-             DROP TABLE steering_misses;
-             DROP TABLE steering_heads;",
-        )
-        .expect("remove post-schema-6 indexes from older fixture");
-}
-
 /// How every schema before 26 spelled the lane group in a JSON carrier.
 ///
 /// Only `from_team` has two ancestors: the arranged member's `from_lineage_id`
@@ -153,18 +141,4 @@ pub(super) fn version_records(connection: &Connection) -> (u32, u32) {
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .expect("read schema pragma version"),
     )
-}
-
-pub(super) fn admit_empty_steering_fold(journal: &mut Journal) {
-    let snapshot = journal.fact_snapshot().expect("migration snapshot");
-    assert!(
-        snapshot.facts().iter().all(|envelope| {
-            crate::guard::steering_fact_identity(&envelope.fact).is_none()
-                && envelope.fact.kind() != FactKind::SteerMissed
-        }),
-        "only a fixture with no steering history may publish an empty fold"
-    );
-    journal
-        .rebuild_steering_index(snapshot.horizon(), &[], &[])
-        .expect("publish migrated empty steering fold");
 }

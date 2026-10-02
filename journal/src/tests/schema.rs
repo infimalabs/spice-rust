@@ -490,86 +490,6 @@ fn schema_fourteen_crosses_the_requirement_wire_boundary_once_without_rewriting_
 mod rollout;
 
 #[test]
-fn schema_nine_steps_through_wire_only_expansions_without_rewriting_authority() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-nine.sqlite3");
-    let journal = authority_file_fixture(&path);
-    downgrade_steering_index_to_millis(&journal.connection);
-    journal
-        .connection
-        .execute_batch(
-            "UPDATE journal_schema SET version = 9 WHERE singleton = 1;
-             PRAGMA user_version = 9;",
-        )
-        .expect("downgrade source-unaware fixture identity");
-    let mut before = table_census(&journal.connection);
-    before.remove("journal_schema");
-    before.remove("steering_heads");
-    remove_creation_context_carriers(&mut before);
-    drop(journal);
-
-    let journal = Journal::open(&path).expect("schema-nine authority migrates");
-    let migration = journal.migration().expect("wire-only steps run");
-    assert_eq!((migration.from(), migration.to()), (9, SCHEMA_VERSION));
-    assert_eq!(
-        version_records(&journal.connection),
-        (SCHEMA_VERSION, SCHEMA_VERSION)
-    );
-    let mut after = table_census(&journal.connection);
-    after.remove("journal_schema");
-    after.remove("steering_heads");
-    remove_creation_context_carriers(&mut after);
-    assert_eq!(
-        after, before,
-        "the migration chain rewrites no unrelated authority row"
-    );
-    assert_fixture_creation_context_migrated(&journal);
-    journal
-        .verify()
-        .expect("migrated authority remains coherent");
-}
-
-#[test]
-fn schema_ten_steps_to_fanout_aware_steering_without_rewriting_authority() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-ten.sqlite3");
-    let journal = authority_file_fixture(&path);
-    downgrade_steering_index_to_millis(&journal.connection);
-    journal
-        .connection
-        .execute_batch(
-            "UPDATE journal_schema SET version = 10 WHERE singleton = 1;
-             PRAGMA user_version = 10;",
-        )
-        .expect("downgrade fanout-unaware fixture identity");
-    let mut before = table_census(&journal.connection);
-    before.remove("journal_schema");
-    before.remove("steering_heads");
-    remove_creation_context_carriers(&mut before);
-    drop(journal);
-
-    let journal = Journal::open(&path).expect("schema-ten authority migrates");
-    let migration = journal.migration().expect("fanout-aware step runs");
-    assert_eq!((migration.from(), migration.to()), (10, SCHEMA_VERSION));
-    assert_eq!(
-        version_records(&journal.connection),
-        (SCHEMA_VERSION, SCHEMA_VERSION)
-    );
-    let mut after = table_census(&journal.connection);
-    after.remove("journal_schema");
-    after.remove("steering_heads");
-    remove_creation_context_carriers(&mut after);
-    assert_eq!(
-        after, before,
-        "the migration chain rewrites no unrelated authority row"
-    );
-    assert_fixture_creation_context_migrated(&journal);
-    journal
-        .verify()
-        .expect("fanout-aware authority remains coherent");
-}
-
-#[test]
 fn schema_eleven_steps_to_worktree_aware_trust_without_guessing_legacy_identity() {
     let scratch = Scratch::new();
     let path = scratch.path().join("schema-eleven.sqlite3");
@@ -684,168 +604,16 @@ fn assert_fixture_creation_context_migrated(journal: &Journal) {
     );
 }
 
-/// An authority at schema 1, carrying the rows a schema-1 build would have.
-///
-/// Derived by downgrading the current baseline rather than freezing a copy of
-/// the old DDL here, because commit 7453545b is the entire 1-to-2 delta: it
-/// added `transcript_source_heads` and advanced the two version records, and
-/// touched nothing else. Building the fixture this way keeps it honest as the
-/// baseline grows, and the dropped table takes the one seeded head with it --
-/// which is correct, since schema 1 had nowhere to put it.
-fn schema_one_authority(path: &Path) {
+fn schema_eleven_authority(path: &Path) {
     let journal = authority_file_fixture(path);
-    drop_steering_index(&journal.connection);
-    downgrade_task_identity_to_five(&journal.connection);
-    spell_lineage(&journal.connection);
+    downgrade_steering_index_to_millis(&journal.connection);
     journal
         .connection
         .execute_batch(
-            "DELETE FROM lease_heads;
-             DELETE FROM claim_heads;
-             DROP TABLE transcript_source_heads;
-             DROP TABLE task_generations;
-             UPDATE journal_schema SET version = 1 WHERE singleton = 1;
-             PRAGMA user_version = 1;",
+            "UPDATE journal_schema SET version = 11 WHERE singleton = 1;
+             PRAGMA user_version = 11;",
         )
-        .expect("downgrade the fixture to schema 1");
-    drop(journal);
-}
-
-#[test]
-fn a_schema_one_authority_is_stepped_forward_without_losing_a_row() {
-    let scratch = Scratch::new();
-    let path = scratch.path().join("schema-one.sqlite3");
-    schema_one_authority(&path);
-    let before = {
-        let reader = Connection::open(&path).expect("read the schema-1 fixture back");
-        assert!(
-            !before_has_table(&reader, "transcript_source_heads"),
-            "the fixture must actually be at schema 1, or the step under test never runs"
-        );
-        table_census(&reader)
-    };
-
-    let mut journal = Journal::open(&path).expect("a schema-1 authority opens");
-
-    // The two version records are asserted before anything that reads them
-    // back, because admission refuses a disagreement between them: leaving that
-    // refusal to speak first would shadow whichever record actually stalled.
-    let migration = journal
-        .migration()
-        .expect("the open stepped the schema forward");
-    assert_eq!((migration.from(), migration.to()), (1, SCHEMA_VERSION));
-    let mut after = table_census(&journal.connection);
-    assert_eq!(
-        after.remove("journal_schema").expect("schema row survives"),
-        vec![vec![
-            rusqlite::types::Value::Integer(1),
-            rusqlite::types::Value::Integer(i64::from(SCHEMA_VERSION)),
-            rusqlite::types::Value::Text("finalized".to_owned()),
-            rusqlite::types::Value::Null,
-            rusqlite::types::Value::Null,
-            rusqlite::types::Value::Null,
-        ]],
-        "the schema row must name the current version and stay finalized"
-    );
-    let pragma: u32 = journal
-        .connection
-        .query_row("PRAGMA user_version", [], |row| row.get(0))
-        .expect("read the migrated pragma");
-    assert_eq!(
-        pragma, SCHEMA_VERSION,
-        "the pragma must advance with the row; a disagreement refuses the next open"
-    );
-    assert_eq!(
-        journal.schema_version().expect("migrated schema version"),
-        SCHEMA_VERSION
-    );
-
-    assert_eq!(authority_tables(&journal), expected_tables());
-    assert_eq!(
-        after.remove("transcript_source_heads"),
-        Some(Vec::new()),
-        "the step creates the new table empty; a schema-1 authority has no head to carry"
-    );
-    assert_eq!(
-        after.remove("task_generations"),
-        Some(Vec::new()),
-        "a schema-1 authority never advanced a generation, so the index starts empty"
-    );
-    for table in [
-        "steering_heads",
-        "steering_misses",
-        "steering_index",
-        "claim_index",
-    ] {
-        assert!(
-            after.remove(table).is_some(),
-            "the migration chain must add indexed authority table {table}"
-        );
-    }
-    // Compared one table at a time so a failure prints the unrelated table
-    // that lost a row. Task identity carriers are deliberately rewritten by
-    // schema 4 and have their own byte- and rollback-level migration cases;
-    // schema 26 respells the lane group in the residency head, which
-    // otherwise survives byte for byte.
-    let mut expected = before;
-    expected.remove("journal_schema");
-    assert_eq!(
-        after.keys().collect::<Vec<_>>(),
-        expected.keys().collect::<Vec<_>>(),
-        "the step must add a table and drop none"
-    );
-    for (table, rows) in expected {
-        if [
-            "fact_envelopes",
-            "thread_index",
-            "command_receipts",
-            "task_heads",
-            "workflow_heads",
-            "claim_heads",
-            "lease_heads",
-        ]
-        .contains(&table.as_str())
-        {
-            continue;
-        }
-        let rows = if table == "residency_head" {
-            rows.into_iter()
-                .map(|row| row.into_iter().map(team_spelt).collect())
-                .collect()
-        } else {
-            rows
-        };
-        assert_eq!(
-            after[&table], rows,
-            "unrelated table {table} must survive byte for byte across the chained migration"
-        );
-    }
-
-    admit_empty_steering_fold(&mut journal);
-    let verified = journal.verify().expect("the migrated authority verifies");
-    assert_eq!(verified.facts, 2);
-}
-
-/// A census value as schema 26 spells it.
-fn team_spelt(value: rusqlite::types::Value) -> rusqlite::types::Value {
-    match value {
-        rusqlite::types::Value::Blob(carrier) => {
-            rusqlite::types::Value::Blob(team_spelling(&carrier))
-        }
-        other => other,
-    }
-}
-
-/// Whether the fixture already carries the table the step under test creates.
-fn before_has_table(connection: &Connection, table: &str) -> bool {
-    connection
-        .query_row(
-            "SELECT count(*) FROM sqlite_schema WHERE type = 'table' AND name = ?1",
-            params![table],
-            |row| row.get::<_, u32>(0),
-        )
-        .expect("probe the fixture for a table")
-        > 0
+        .expect("downgrade the fixture to schema 11");
 }
 
 /// A migration abandoned after both version records are written strands nothing.
@@ -863,24 +631,20 @@ fn before_has_table(connection: &Connection, table: &str) -> bool {
 /// records are inside the transaction. Failing here, with both records already
 /// written, is the only moment that can.
 ///
-/// The three assertions taken before the rollback are what keep the three after
-/// it from passing vacuously: an `advance` that wrote nothing at all would leave
-/// the authority at version 1 too.
+/// The assertions taken before the rollback keep the assertions after it from
+/// passing vacuously: an `advance` that wrote nothing would leave the authority
+/// at version 11 too.
 #[test]
 fn a_migration_that_fails_after_writing_both_version_records_commits_nothing() {
     let scratch = Scratch::new();
-    let path = scratch.path().join("schema-one-abandoned.sqlite3");
-    schema_one_authority(&path);
+    let path = scratch.path().join("schema-eleven-abandoned.sqlite3");
+    schema_eleven_authority(&path);
     let before = {
-        let reader = Connection::open(&path).expect("read the schema-1 fixture back");
-        assert!(
-            !before_has_table(&reader, "transcript_source_heads"),
-            "the fixture must actually be at schema 1, or the step under test never runs"
-        );
+        let reader = Connection::open(&path).expect("read the schema-11 fixture back");
         assert_eq!(
             version_records(&reader),
-            (1, 1),
-            "the fixture must start at schema 1 by both records"
+            (11, 11),
+            "the fixture must start at schema 11 by both records"
         );
         table_census(&reader)
     };
@@ -892,13 +656,9 @@ fn a_migration_that_fails_after_writing_both_version_records_commits_nothing() {
             .expect("take the exclusive transaction a write open takes");
         let migration = crate::migrate::advance(&transaction)
             .expect("the migration itself succeeds; this test fails the open around it")
-            .expect("a schema-1 authority has a step to take");
+            .expect("a schema-11 authority has a step to take");
 
-        assert_eq!((migration.from(), migration.to()), (1, SCHEMA_VERSION));
-        assert!(
-            before_has_table(&transaction, "transcript_source_heads"),
-            "the step must have applied, or the rollback below has nothing to undo"
-        );
+        assert_eq!((migration.from(), migration.to()), (11, SCHEMA_VERSION));
         assert_eq!(
             version_records(&transaction),
             (SCHEMA_VERSION, SCHEMA_VERSION),
@@ -917,13 +677,9 @@ fn a_migration_that_fails_after_writing_both_version_records_commits_nothing() {
     let after = Connection::open(&path).expect("read the authority back after the failed open");
     assert_eq!(
         version_records(&after),
-        (1, 1),
+        (11, 11),
         "a failed migration must leave the authority at the version it started \
          from; a record that survived the rollback strands it between two"
-    );
-    assert!(
-        !before_has_table(&after, "transcript_source_heads"),
-        "the step must roll back with the records it was supposed to travel with"
     );
     assert_eq!(
         table_census(&after),
@@ -935,8 +691,8 @@ fn a_migration_that_fails_after_writing_both_version_records_commits_nothing() {
 #[test]
 fn a_read_only_open_names_the_write_open_that_would_migrate() {
     let scratch = Scratch::new();
-    let path = scratch.path().join("schema-one-readonly.sqlite3");
-    schema_one_authority(&path);
+    let path = scratch.path().join("schema-eleven-readonly.sqlite3");
+    schema_eleven_authority(&path);
     let before = FileState::read(&path);
 
     let error = JournalReader::open(&path).expect_err("a read-only open never migrates");
@@ -944,7 +700,7 @@ fn a_read_only_open_names_the_write_open_that_would_migrate() {
     assert!(matches!(
         error,
         OpenError::Migration(MigrationError::UnmigratedRead {
-            found: 1,
+            found: 11,
             current: SCHEMA_VERSION
         })
     ));
@@ -957,7 +713,7 @@ fn a_read_only_open_names_the_write_open_that_would_migrate() {
     assert_eq!(
         FileState::read(&path),
         before,
-        "the refusal must leave the authority at schema 1"
+        "the refusal must leave the authority at schema 11"
     );
 }
 
@@ -1056,13 +812,23 @@ fn malformed_schema_identity_is_refused_by_name() {
     let unmigratable = error.to_string();
     assert!(unmigratable.contains("schema 0 has no migration path"));
     assert!(
-        unmigratable.contains("this build steps forward from schema 1, 2"),
+        unmigratable.contains("this build steps forward from schema 11"),
         "the refusal must name the versions that do have a path: {unmigratable}"
     );
     assert!(
         !unmigratable.contains("empty authority"),
         "an unmigratable version must not be answered by starting over: {unmigratable}"
     );
+
+    let retired = schema_fixture(10, "finalized", None, None, None);
+    let error = Journal::from_connection(retired).expect_err("retired version refuses open");
+    assert!(matches!(
+        error,
+        OpenError::Migration(MigrationError::UnknownVersion { found: 10 })
+    ));
+    let retired = error.to_string();
+    assert!(retired.contains("schema 10 was last migrated by release 1kRNj6X7"));
+    assert!(retired.contains("reach schema 11"));
 
     let disagreement = schema_fixture(SCHEMA_VERSION, "finalized", None, None, None);
     disagreement

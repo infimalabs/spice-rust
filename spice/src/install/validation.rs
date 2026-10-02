@@ -6,31 +6,20 @@ pub(super) fn validate_plan(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<(), InstallError> {
-    let migratable = validate_plan_version(plan, content)?;
+    validate_plan_version(plan)?;
     validate_operation_inventory(plan, content)?;
-    validate_retirement_inventory(plan, migratable)?;
+    validate_retirement_inventory(plan)?;
     validate_plan_destinations(plan, content)
 }
 
-fn validate_plan_version(
-    plan: &InstallPlan,
-    content: GeneratedContentAuthority,
-) -> Result<bool, InstallError> {
-    let historical = content == GeneratedContentAuthority::HistoricalReceipt
-        && matches!(
-            plan.version,
-            MIGRATABLE_RECORD_VERSION
-                | FORWARD_MIGRATABLE_RECORD_VERSION
-                | INLINE_ROLLBACK_RECORD_VERSION
-                | PREVIOUS_RECORD_VERSION
-        );
-    if plan.version != PLAN_VERSION && !historical {
+fn validate_plan_version(plan: &InstallPlan) -> Result<(), InstallError> {
+    if plan.version != PLAN_VERSION {
         return Err(InstallError::InvalidRecord(format!(
             "install plan version {} is not {PLAN_VERSION}",
             plan.version
         )));
     }
-    Ok(plan.version == MIGRATABLE_RECORD_VERSION)
+    Ok(())
 }
 
 fn validate_operation_inventory(
@@ -49,26 +38,7 @@ fn validate_operation_inventory(
         Asset::Skill,
     ];
     current.extend(app_operation_inventory(plan, content)?);
-    let previous = [
-        Asset::GitPreCommit,
-        Asset::GitCommitMessage,
-        Asset::GitReferenceTransaction,
-        Asset::HookEntry,
-        Asset::HookStatic,
-        Asset::Skill,
-        Asset::Binary,
-    ];
-    let expected = if !matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION) {
-        let length = previous.len()
-            - usize::from(
-                plan.operations
-                    .last()
-                    .is_some_and(|operation| operation.asset != Asset::Binary),
-            );
-        &previous[..length]
-    } else {
-        &current[..]
-    };
+    let expected = &current[..];
     if plan.operations.len() < expected.len()
         || plan
             .operations
@@ -95,9 +65,7 @@ fn validate_optional_tail(plan: &InstallPlan, tail: &[Operation]) -> Result<(), 
         .map(|operation| operation.asset)
         .collect::<Vec<_>>();
     let with_symbols = [Asset::Binary, Asset::SymbolsInfo, Asset::SymbolsDwarf];
-    let admitted = tail.is_empty()
-        || tail == [Asset::Binary]
-        || (matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION) && tail == with_symbols);
+    let admitted = tail.is_empty() || tail == [Asset::Binary] || tail == with_symbols;
     if !admitted {
         return Err(InstallError::InvalidRecord(
             "optional executable and symbols do not close the operation inventory".to_owned(),
@@ -129,10 +97,7 @@ fn app_operation_inventory(
     plan: &InstallPlan,
     content: GeneratedContentAuthority,
 ) -> Result<Vec<Asset>, InstallError> {
-    if plan.app_predecessors.len() > RETAINED_APP_PREDECESSORS
-        || (!matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
-            && !plan.app_predecessors.is_empty())
-    {
+    if plan.app_predecessors.len() > RETAINED_APP_PREDECESSORS {
         return Err(InstallError::InvalidRecord(
             "app predecessor inventory exceeds its schema or bound".to_owned(),
         ));
@@ -201,9 +166,7 @@ fn app_operation_inventory(
         .iter()
         .map(Digest::as_str)
         .collect::<BTreeSet<_>>();
-    if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
-        && (listed.len() != plan.app_predecessors.len() || !listed.iter().eq(groups.keys()))
-    {
+    if listed.len() != plan.app_predecessors.len() || !listed.iter().eq(groups.keys()) {
         return Err(InstallError::InvalidRecord(
             "app predecessor inventory does not name exactly its retained generations".to_owned(),
         ));
@@ -235,99 +198,45 @@ fn app_operation_inventory(
         .collect())
 }
 
-fn validate_retirement_inventory(plan: &InstallPlan, migratable: bool) -> Result<(), InstallError> {
-    if migratable {
-        if !plan.retirements.is_empty() || plan.rollback_archive.is_some() {
-            return Err(InstallError::InvalidRecord(
-                "version-7 install plan carries version-8 migration state".to_owned(),
-            ));
-        }
-    } else {
-        let retired_generations = if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
-        {
-            plan.retirements
-                .iter()
-                .rev()
-                .take_while(|retirement| app::generation_file(&retirement.path).is_some())
-                .count()
-        } else {
-            0
-        };
-        let (fixed, retired) = plan
-            .retirements
-            .split_at(plan.retirements.len() - retired_generations);
-        let mut expected = vec![RETIRED_XTASK_PATH, RETIRED_XTASK_GUARD_PATH];
-        if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION) {
-            expected.push(RETIRED_FOLD_STORE_PATH);
-        }
-        // Only a plan without symbols may discard a retained bundle.
-        if matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
-            && plan.symbols.is_none()
-            && fixed
-                .get(expected.len()..expected.len() + symbols::DISCARD_PATHS.len())
-                .is_some_and(|retirements| {
-                    retirements
-                        .iter()
-                        .zip(symbols::DISCARD_PATHS)
-                        .all(|(retirement, path)| retirement.path == path)
-                })
-        {
-            expected.extend(symbols::DISCARD_PATHS);
-        }
-        let Some((fixed, migrated)) = fixed.split_at_checked(expected.len()) else {
-            return Err(InstallError::InvalidRecord(
-                "install retirement inventory is not exact and ordered".to_owned(),
-            ));
-        };
-        if fixed
+fn validate_retirement_inventory(plan: &InstallPlan) -> Result<(), InstallError> {
+    let retired_generations = plan
+        .retirements
+        .iter()
+        .rev()
+        .take_while(|retirement| app::generation_file(&retirement.path).is_some())
+        .count();
+    let (fixed, retired) = plan
+        .retirements
+        .split_at(plan.retirements.len() - retired_generations);
+    let mut expected = vec![
+        RETIRED_XTASK_PATH,
+        RETIRED_XTASK_GUARD_PATH,
+        RETIRED_FOLD_STORE_PATH,
+    ];
+    // Only a plan without symbols may discard a retained bundle.
+    if plan.symbols.is_none()
+        && fixed
+            .get(expected.len()..expected.len() + symbols::DISCARD_PATHS.len())
+            .is_some_and(|retirements| {
+                retirements
+                    .iter()
+                    .zip(symbols::DISCARD_PATHS)
+                    .all(|(retirement, path)| retirement.path == path)
+            })
+    {
+        expected.extend(symbols::DISCARD_PATHS);
+    }
+    if fixed.len() != expected.len()
+        || fixed
             .iter()
             .zip(expected)
             .any(|(retirement, path)| retirement.path != path)
-        {
-            return Err(InstallError::InvalidRecord(
-                "install retirement inventory is not exact and ordered".to_owned(),
-            ));
-        }
-        record::validate_migration_retirements(plan, migrated)?;
-        validate_retired_generations(plan, retired)?;
-    }
-    if plan
-        .retirements
-        .iter()
-        .any(|retirement| retirement.rollback.is_some())
-        && plan.rollback_archive.is_none()
     {
         return Err(InstallError::InvalidRecord(
-            "install retirement rollback witness has no rollback archive".to_owned(),
+            "install retirement inventory is not exact and ordered".to_owned(),
         ));
     }
-    if plan.retirements.iter().any(|retirement| {
-        matches!(
-            (&retirement.rollback, &retirement.superseded),
-            (Some(rollback), Some(superseded)) if rollback != superseded
-        )
-    }) {
-        return Err(InstallError::InvalidRecord(
-            RETIREMENT_WITNESS_MISMATCH.to_owned(),
-        ));
-    }
-    if let Some(archive) = &plan.rollback_archive {
-        archive.validate_structure()?;
-        let manifest_version = matches!(plan.version, PLAN_VERSION | PREVIOUS_RECORD_VERSION);
-        if manifest_version && archive.is_inline() {
-            return Err(InstallError::InvalidRecord(
-                "current install plan embeds rollback payload bytes".to_owned(),
-            ));
-        }
-        if !manifest_version && !archive.is_inline() {
-            return Err(InstallError::InvalidRecord(
-                "historical install plan carries a current rollback manifest".to_owned(),
-            ));
-        }
-    }
-    if let Some(rollback) = plan.staged_rollback_state()? {
-        plan.validate_rollback_state(&rollback)?;
-    }
+    validate_retired_generations(plan, retired)?;
     Ok(())
 }
 
@@ -391,7 +300,7 @@ fn validate_plan_destinations(
         }
     }
     for retirement in &plan.retirements {
-        validate_retirement(retirement, plan.version)?;
+        validate_retirement(retirement)?;
         if !destinations.insert((Location::CommonGit, retirement.destination.clone())) {
             return Err(InstallError::InvalidRecord(
                 "install plan duplicates a retirement destination".to_owned(),
@@ -401,21 +310,15 @@ fn validate_plan_destinations(
     Ok(())
 }
 
-fn validate_retirement(retirement: &Retirement, plan_version: u16) -> Result<(), InstallError> {
+fn validate_retirement(retirement: &Retirement) -> Result<(), InstallError> {
     validate_relative(&retirement.path)?;
     validate_relative(&retirement.destination)?;
     let expected_parent = Path::new(&retirement.parent.ancestor).join(&retirement.parent.missing);
-    let manifest_version = matches!(plan_version, PLAN_VERSION | PREVIOUS_RECORD_VERSION);
-    let current_discard = (manifest_version
-        && (retirement.path == RETIRED_FOLD_STORE_PATH
-            || symbols::DISCARD_PATHS.contains(&retirement.path.as_str())))
-        || (matches!(plan_version, PLAN_VERSION | PREVIOUS_RECORD_VERSION)
-            && app::generation_file(&retirement.path).is_some());
+    let current_discard = retirement.path == RETIRED_FOLD_STORE_PATH
+        || symbols::DISCARD_PATHS.contains(&retirement.path.as_str())
+        || app::generation_file(&retirement.path).is_some();
     let invalid_discard = if current_discard {
-        !retirement.discard
-            || retirement.previous.is_some()
-            || retirement.observed.is_some()
-            || retirement.rollback.is_some()
+        !retirement.discard || retirement.previous.is_some() || retirement.observed.is_some()
     } else {
         retirement.discard
     };

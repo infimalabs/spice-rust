@@ -259,10 +259,9 @@ pub struct Operation {
 /// One legacy side-channel path removed after every live Spice asset exists.
 ///
 /// Retirements are deliberately separate from [`Operation`]: they publish no
-/// current asset and therefore never re-enter the install inventory. The exact
-/// Reversible retirements keep the exact prior image so reversal restores a
-/// complete pre-migration installation. An explicitly discarded obsolete file
-/// keeps only its bounded comparison witness and is never restored.
+/// current asset and therefore never re-enter the install inventory. Reversible
+/// retirements keep the exact prior image so reversal restores the preceding
+/// installation; an explicitly discarded obsolete file is never restored.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Retirement {
@@ -275,8 +274,6 @@ pub struct Retirement {
     pub(super) observed: Option<ObservedFile>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) superseded: Option<GeneratedImage>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(super) rollback: Option<GeneratedImage>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub(super) discard: bool,
 }
@@ -332,13 +329,6 @@ impl Retirement {
         self.discard
             && !self.parent.missing.is_empty()
             && next.is_none_or(|next| next.parent != self.parent)
-    }
-
-    pub(super) fn rollback_witness(&self) -> Option<&GeneratedImage> {
-        if self.discard {
-            return None;
-        }
-        self.rollback.as_ref().or(self.superseded.as_ref())
     }
 }
 
