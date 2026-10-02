@@ -70,20 +70,18 @@ pub enum CanvasDestination {
 /// explicit scoped variant and mapping here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TeamDestination {
-    Dash,
     Work,
     Chat,
 }
 
 impl TeamDestination {
     /// Every team-scoped destination, left to right.
-    pub const ALL: [Self; 3] = [Self::Dash, Self::Work, Self::Chat];
+    pub const ALL: [Self; 2] = [Self::Work, Self::Chat];
 
     /// Corresponding destination in the global Canvas vocabulary.
     #[must_use]
     pub const fn canvas(self) -> CanvasDestination {
         match self {
-            Self::Dash => CanvasDestination::Dash,
             Self::Work => CanvasDestination::Work,
             Self::Chat => CanvasDestination::Chat,
         }

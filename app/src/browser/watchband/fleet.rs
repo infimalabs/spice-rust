@@ -2,10 +2,9 @@
 
 use super::*;
 
-/// The three one-click views of one live team.
+/// The two one-click views of one live team.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(in crate::browser) enum TeamMode {
-    Dash,
     Work,
     #[default]
     Chat,
@@ -14,7 +13,6 @@ pub(in crate::browser) enum TeamMode {
 impl TeamMode {
     pub(super) const fn key(self) -> &'static str {
         match self {
-            Self::Dash => "Dash",
             Self::Work => "Work",
             Self::Chat => "Chat",
         }
@@ -22,7 +20,6 @@ impl TeamMode {
 
     const fn from_destination(destination: TeamDestination) -> Self {
         match destination {
-            TeamDestination::Dash => Self::Dash,
             TeamDestination::Work => Self::Work,
             TeamDestination::Chat => Self::Chat,
         }
@@ -43,7 +40,6 @@ pub(super) struct FleetRender<'a, 'w> {
     pub(super) topology: Rc<Vec<(CanonicalUuid, Vec<CanonicalUuid>)>>,
     pub(super) quote_agents: Rc<crate::composer_markdown::QuoteAgents>,
     pub(super) surface: UseStateHandle<SurfaceData>,
-    pub(super) timeline_request: Callback<TeamFlowPageRequest>,
     pub(super) sender: &'a SenderHandle,
     pub(super) drafts: &'a UseReducerHandle<ComposerDrafts>,
     pub(super) submissions: &'a SubmissionHandle,
@@ -75,8 +71,8 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
         can_arrange: false,
     };
     let dismiss = team_menu_dismissal(render.team_controls);
-    // Work and Dash stand in the populated surface's mode-pane frame, so the
-    // first team swaps contents without resizing the pane or squeezing chrome.
+    // Work stands in the populated surface's mode-pane frame, so the first
+    // team swaps contents without resizing the pane or squeezing chrome.
     let mode_pane = |content: Html| {
         html! {
             <div class="team-mode-pane" data-mode={mode.key()} data-active="true" aria-hidden="false">
@@ -104,19 +100,6 @@ pub(super) fn render_empty_fleet(fleet: &NodeRef, render: &FleetRender<'_, '_>) 
                             empty("No teams are assigned. Open Import agent to create an agent.")
                         }
                         TeamMode::Work => mode_pane(render_tasks(render, &empty_team, &[], None)),
-                        TeamMode::Dash => mode_pane(render_details(
-                            &render.surface,
-                            render.runtime,
-                            &empty_team,
-                            &[],
-                            DashRender {
-                                select: render.select_task,
-                                request: &render.timeline_request,
-                                controls: render.team_controls,
-                                work: render.work,
-                                sender: render.sender,
-                            },
-                        )),
                     }}
                 </div>
             </section>
@@ -147,6 +130,13 @@ pub(super) fn render_populated_fleet(
                 let mode = render.team_controls
                     .current(team.lane, team.subscription)
                     .mode;
+                let attention = attention::TeamAttention::new(
+                    render.runtime,
+                    &team_standings,
+                    render.work,
+                    render.sender,
+                    render.select_task,
+                );
                 html! {
                     <section
                         key={team.lane.to_string()}
@@ -192,38 +182,22 @@ pub(super) fn render_populated_fleet(
                                     render.controls,
                                     &render.surface,
                                     render.select_task,
+                                    &attention,
                                 )}
                             </div>
-                            if mode != TeamMode::Chat {
+                            if mode == TeamMode::Work {
                                 <div
                                     class="team-mode-pane"
                                     data-mode={mode.key()}
                                     data-active="true"
                                     aria-hidden="false"
                                 >
-                                    {match mode {
-                                        TeamMode::Work => render_tasks(
-                                            render,
-                                            team,
-                                            &team_standings,
-                                            Some(render.team_settled),
-                                        ),
-                                        TeamMode::Dash => render_details(
-                                            &render.surface,
-                                            render.runtime,
-                                            team,
-                                            &team_standings,
-                                            DashRender {
-                                                select: render.select_task,
-                                                request: &render.timeline_request,
-                                                controls: render.team_controls,
-                                                work: render.work,
-                                                sender: render.sender,
-                                            },
-                                        ),
-
-                                        TeamMode::Chat => Html::default(),
-                                    }}
+                                    {render_tasks(
+                                        render,
+                                        team,
+                                        &team_standings,
+                                        Some(render.team_settled),
+                                    )}
                                 </div>
                             }
                         </div>
@@ -502,7 +476,6 @@ fn mode_badge(mode: TeamMode, standings: &[Standing]) -> Option<String> {
             .iter()
             .filter(|standing| standing.handle.is_some())
             .count(),
-        TeamMode::Dash => standings.len(),
     };
     watchband::badge(count)
 }

@@ -24,16 +24,6 @@ const RETURN_STATE: &str = "canvasReturn";
 /// message links and direction recipient badges.
 const WORK_RETURN_LINKS: &str = "a.work-message-link[href], a.team-direction-recipient-link[href]";
 
-/// Preserve the exact Dash row and Flow position a Chat target leaves.
-pub(super) fn remember_team_return(event: &web_sys::MouseEvent, team: CanonicalUuid) -> bool {
-    remember_return(
-        event,
-        "a[data-dash-return][href]",
-        "[data-dash-return-origin]",
-        Some((team, TeamMode::Dash)),
-    )
-}
-
 /// The element holding a followed card link and its offset inside its scrolling
 /// surface at that moment. Team modes and Chat lanes scroll independently, so
 /// the browser cannot restore this position itself.
@@ -42,7 +32,6 @@ struct ReturnAnchor {
     offset: f64,
     team: Option<wire::CanonicalUuid>,
     mode: Option<TeamMode>,
-    flow_scroll: Option<i32>,
     /// Distinguishes one recorded departure from a later one on the same entry.
     nonce: f64,
 }
@@ -57,7 +46,6 @@ impl ReturnAnchor {
         let mode = field("mode")
             .and_then(|mode| mode.as_string())
             .and_then(|mode| match mode.as_str() {
-                "dash" => Some(TeamMode::Dash),
                 "work" => Some(TeamMode::Work),
                 "chat" => Some(TeamMode::Chat),
                 _ => None,
@@ -67,9 +55,6 @@ impl ReturnAnchor {
             offset: field("offset")?.as_f64()?,
             team,
             mode,
-            flow_scroll: field("flowScroll")
-                .and_then(|scroll| scroll.as_f64())
-                .map(|scroll| scroll as i32),
             nonce: field("nonce")?.as_f64()?,
         })
     }
@@ -79,16 +64,6 @@ impl ReturnAnchor {
         let Some(card) = document.get_element_by_id(&self.card) else {
             return false;
         };
-        if let Some(scroll) = self.flow_scroll
-            && let Some(flow) = card
-                .closest(".team-surface")
-                .ok()
-                .flatten()
-                .and_then(|team| team.query_selector(".team-dash-flow-body").ok().flatten())
-                .and_then(|flow| flow.dyn_into::<web_sys::HtmlElement>().ok())
-        {
-            flow.set_scroll_top(scroll);
-        }
         let Some((plane, offset)) = return_offset(&card) else {
             return false;
         };
@@ -212,23 +187,11 @@ fn remember_return(
     }
     if let Some((team, mode)) = team_mode {
         let mode = match mode {
-            TeamMode::Dash => "dash",
             TeamMode::Work => "work",
             TeamMode::Chat => "chat",
         };
         let _ = js_sys::Reflect::set(&anchor, &"team".into(), &JsValue::from(team.to_string()));
         let _ = js_sys::Reflect::set(&anchor, &"mode".into(), &JsValue::from(mode));
-        if mode == "dash"
-            && let Some(scroll) = origin
-                .closest(".team-surface")
-                .ok()
-                .flatten()
-                .and_then(|team| team.query_selector(".team-dash-flow-body").ok().flatten())
-                .and_then(|flow| flow.dyn_into::<web_sys::HtmlElement>().ok())
-                .map(|flow| flow.scroll_top())
-        {
-            let _ = js_sys::Reflect::set(&anchor, &"flowScroll".into(), &JsValue::from(scroll));
-        }
     }
     let _ = js_sys::Reflect::set(&state, &RETURN_STATE.into(), &anchor);
     if history.replace_state(&state, "").is_err() {

@@ -1,4 +1,5 @@
-//! What needs the operator in one team right now: the Dash attention band.
+//! What needs the operator in one team right now, listed per member in each
+//! lane menu.
 //!
 //! A pure function of the admitted lane, board, inbox, and consent reads, with
 //! no clock and no DOM. Time-dependent items carry the instant from which they
@@ -90,8 +91,6 @@ pub struct AttentionItem {
     pub lane: CanonicalUuid,
     /// Member name as the roster shows it.
     pub label: String,
-    /// Member accent slot.
-    pub accent: usize,
     /// Epoch millisecond from which the item needs the operator; absent when
     /// it already does.
     pub from: Option<i64>,
@@ -138,7 +137,6 @@ pub fn team_attention(
                 AttentionItem {
                     lane,
                     label: standing.label.clone(),
-                    accent: standing.accent,
                     from,
                     subject,
                 },

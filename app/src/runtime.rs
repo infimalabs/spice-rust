@@ -32,7 +32,6 @@ mod message_cards;
 mod publication;
 mod scoped;
 mod stream;
-mod task_timeline;
 mod team_settled;
 mod work_history;
 pub use consent::ConsentRuling;
@@ -46,9 +45,6 @@ pub use member_control::{MemberCommand, MemberControlState, MemberRequest, Membe
 pub(crate) use publication::CanvasSurface;
 use scoped::ScopedValue;
 pub use stream::{StreamApplication, StreamDirective, StreamTerminal};
-#[cfg(any(target_arch = "wasm32", test, rust_analyzer))]
-pub(crate) use task_timeline::TaskTimelineRequest;
-pub use task_timeline::{TaskTimelineKey, TaskTimelineState};
 pub use team_settled::{TeamSettledRequest, TeamSettledState};
 pub use work_history::{WorkHistoryRequest, WorkHistoryState, work_history_completion_cutoff};
 pub(crate) type QuoteTasks = BTreeMap<String, Vec<wire::TaskHandle>>;
@@ -475,8 +471,6 @@ pub struct CanvasRuntime {
     lanes: ScopedValue<LaneView>,
     task_details: BTreeMap<wire::TaskStamp, TaskDetailState>,
     task_relations: BTreeMap<TaskRelationsKey, TaskRelationsState>,
-    task_timelines: BTreeMap<TaskTimelineKey, TaskTimelineState>,
-    task_timeline_revision: u64,
     task_relations_revision: u64,
     direction_history: DirectionHistoryState,
     work_history: WorkHistoryState,
@@ -526,8 +520,6 @@ impl CanvasRuntime {
             task_details: BTreeMap::new(),
             task_relations: BTreeMap::new(),
             task_relations_revision: 0,
-            task_timelines: BTreeMap::new(),
-            task_timeline_revision: 0,
             direction_history: DirectionHistoryState::default(),
             work_history: WorkHistoryState::default(),
             team_settled: BTreeMap::new(),
@@ -599,8 +591,6 @@ impl CanvasRuntime {
             self.task_relations
                 .retain(|_, state| refresh_task_relations(state, false));
             self.task_relations_revision = self.task_relations_revision.saturating_add(1);
-            task_timeline::invalidate_all(&mut self.task_timelines);
-            self.task_timeline_revision = self.task_timeline_revision.saturating_add(1);
             false
         } else {
             *self = Self::new(accepted);
@@ -1117,7 +1107,6 @@ pub struct Stale {
     task_details: BTreeSet<wire::TaskStamp>,
     task_relation_kinds: BTreeSet<TaskRelationKind>,
     direction_history: bool,
-    task_timelines: bool,
 }
 
 impl Stale {
@@ -1149,7 +1138,6 @@ impl Stale {
             }
             Some(("consent", _)) => self.consent = true,
             Some(("task", _)) => {
-                self.task_timelines = true;
                 self.board = true;
                 self.task_relation_kinds.extend([
                     TaskRelationKind::Origin,
@@ -1161,7 +1149,6 @@ impl Stale {
             }
             // A claim binds a task to a lane, so both sides of that join move.
             Some(("claim", _)) => {
-                self.task_timelines = true;
                 self.board = true;
                 self.lanes = true;
                 self.task_relation_kinds.insert(TaskRelationKind::Claim);
@@ -1197,14 +1184,6 @@ impl Stale {
         self.task_relation_kinds.clear();
     }
 
-    /// Refresh only the mutable newest page; retained older cursors are immutable.
-    #[cfg(any(target_arch = "wasm32", rust_analyzer))]
-    pub(crate) fn resolve_task_timelines(&self, runtime: &mut CanvasRuntime, changed: bool) {
-        if changed && self.task_timelines {
-            task_timeline::invalidate_all(&mut runtime.task_timelines);
-            runtime.task_timeline_revision = runtime.task_timeline_revision.saturating_add(1);
-        }
-    }
     /// Re-read the newest matching Direction page after any steering mutation.
     #[cfg(any(target_arch = "wasm32", rust_analyzer))]
     pub(crate) fn resolve_direction_history(&self, runtime: &mut CanvasRuntime, changed: bool) {
@@ -1273,7 +1252,6 @@ impl Stale {
             || !self.task_details.is_empty()
             || !self.task_relation_kinds.is_empty()
             || self.direction_history
-            || self.task_timelines
     }
 }
 /// Projects current-read invalidation from live facts or complete backlog tails, never history pages.

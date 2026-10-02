@@ -16,30 +16,7 @@ pub(in crate::browser) fn render_composer_vendor_icon(
     standing: &Standing,
     surface: &'static str,
 ) -> Html {
-    let label = watchband::standing_title(standing);
-    render_vendor_icon(standing, surface, label.clone(), Some(label))
-}
-
-/// The model glyph in a Dash roster slot, without a native hover surface.
-///
-/// Raw seat identity belongs to the slot's explicit disclosure. Keeping the
-/// icon's accessible name to the model also prevents its tooltip from covering
-/// neighbouring members.
-pub(in crate::browser) fn render_dash_vendor_icon(standing: &Standing) -> Html {
-    render_vendor_icon(
-        standing,
-        "team-dash",
-        watchband::model_display(standing.model.as_deref()),
-        None,
-    )
-}
-
-fn render_vendor_icon(
-    standing: &Standing,
-    surface: &'static str,
-    mut label: String,
-    mut title: Option<String>,
-) -> Html {
+    let mut label = watchband::standing_title(standing);
     let fast_mode = standing.thread.is_some() && standing.fast_mode;
     let (mark, provider) = match watchband::emblem(standing.model.as_deref()) {
         Emblem::Provider(provider) => {
@@ -57,10 +34,8 @@ fn render_vendor_icon(
     };
     if fast_mode && provider.is_some() {
         label.push_str("; Fast mode");
-        if let Some(title) = &mut title {
-            title.push_str("; Fast mode");
-        }
     }
+    let title = label.clone();
     let provider_class =
         provider.map(|provider| format!("composer-vendor-icon--{}", provider.key()));
     html! {

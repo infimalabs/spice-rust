@@ -105,6 +105,8 @@ pub(super) struct AgentMenu<'a> {
     pub(super) topology_revision: u64,
     pub(super) topology: &'a [(CanonicalUuid, Vec<CanonicalUuid>)],
     pub(super) sender: &'a SenderHandle,
+    /// This member's due attention items with their controls.
+    pub(super) attention: Html,
 }
 
 fn element_target(target: Option<web_sys::EventTarget>) -> Option<web_sys::Element> {
@@ -400,6 +402,7 @@ pub(super) fn render(menu: AgentMenu<'_>) -> Html {
         topology_revision,
         topology,
         sender,
+        attention,
     } = menu;
     let (team, lane) = (standing.team, member.lane);
     let split = agent_split_control(team, lane, can_arrange, topology_revision, topology, sender);
@@ -447,7 +450,8 @@ pub(super) fn render(menu: AgentMenu<'_>) -> Html {
                     <strong>{standing.label.clone()}</strong>
                     {render_presence(runtime, member, standing)}
                 </header>
-                {super::member_controls::render(runtime, member, standing, command, "menu")}
+                {attention}
+                {super::member_controls::render(runtime, member, standing, command)}
                 <ul class="agent-menu-rows">
                     {render_task(standing, select)}
                     {render_activity(runtime, standing)}

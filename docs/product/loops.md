@@ -661,7 +661,7 @@ block-beta
   columns 1
   G["CANVAS VIEW RAIL, agents | flow | topology"]
   C["AGENTS VIEW, one console per live team"]
-  R["team mode rail, compose | tasks | info, badges are live counts"]
+  R["team mode rail, work | chat, badges are live counts"]
   W["COMPOSE, one member shard per lane, status face + composer"]
   A["AUTONOMY, speech | lifetime | submit, submit names the lifetime"]
   S["status line, age + latest action"]
