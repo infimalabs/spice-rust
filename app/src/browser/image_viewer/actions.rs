@@ -30,32 +30,6 @@ fn refusal(action: Action, exportable: bool, copy_refusal: Option<&String>) -> O
     }
 }
 
-/// Copy `source` to the clipboard as PNG from a card's own control, reporting
-/// through `toaster`. Call it inside the trusted click.
-pub(in crate::browser) fn copy_image(source: AttrValue, toaster: toast::Toaster) {
-    let refused = refusal(
-        Action::Copy,
-        export::readable(&source),
-        clipboard::image_refusal().as_ref(),
-    );
-    if let Some(refusal) = refused {
-        toaster.settled(refusal);
-        return;
-    }
-    toaster.pending("Copying image");
-    let operation = export::copy(source);
-    spawn_local(async move {
-        let result = match operation {
-            Ok(promise) => JsFuture::from(promise).await,
-            Err(error) => Err(error),
-        };
-        toaster.settled(match result {
-            Ok(_) => "Image copied as PNG".to_owned(),
-            Err(error) => format!("Copy failed: {}", clipboard::error_text(&error)),
-        });
-    });
-}
-
 #[function_component(Actions)]
 pub(super) fn actions(props: &ActionsProps) -> Html {
     let busy = use_state_eq(|| false);
