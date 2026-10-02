@@ -26,7 +26,8 @@
   --canvas-motion-fast: 120ms; --canvas-motion-settle: 180ms; --canvas-ease-standard: ease-out;
   /* A single image alone in a lane message card; task cards cap at the same size. */
   --mosaic-image-large-size: 15.75rem;
-  --accent-0: #1b4332;
+  /* Slot 0 is the product green itself, in both themes. */
+  --accent-0: var(--accent);
   --accent-1: #495dac;
   --accent-2: #8b5f00;
   --accent-3: #b3402a;
@@ -58,7 +59,6 @@
     --danger-soft: #482522;
     --triage: #e0734f;
     --shadow: 0 1px 2px rgb(0 0 0 / 24%);
-    --accent-0: #95d5b2;
     --accent-1: #8ea2ff;
     --accent-2: #f2c14e;
     --accent-3: #e0734f;

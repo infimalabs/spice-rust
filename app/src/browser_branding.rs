@@ -61,7 +61,8 @@ impl Tone {
     const fn color(self) -> &'static str {
         match self {
             Self::Loading => "#9aa29b",
-            Self::Current => "#68c89d",
+            // The dark theme's standard `--accent` green.
+            Self::Current => "#74c69d",
             Self::Stale => "#e8b84e",
             Self::Disconnected => "#ef7358",
         }
