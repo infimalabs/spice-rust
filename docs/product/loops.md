@@ -716,8 +716,12 @@ block-beta
    attribution, including unnamed members; accent is redundant continuity rather
    than sole identity.
 - **Card controls are an island in the prose.** An agent card's badges and
-   actions float as one group in the top inline-end corner of its message, so
-   prose fills the lines beside them and regains the full width below. A column
+   actions float as one group in the top inline-end corner of its message, sized
+   to the badges and buttons it shows and never to a hidden placeholder, so prose
+   fills the lines beside them and regains the full width below. A leading quote
+   keeps its full width under the island while its lines wrap beside it. Cards
+   reserve height in one-line rows, so a card's committed height exceeds its
+   content by less than one line, and that spare opens below the prose. A column
    too narrow for the island and a readable line stacks it above the prose.
 - **Autonomy is never implicit.** The submit control carries the lifetime's own
   name, so intent cannot be sent without its autonomy being visible in the same

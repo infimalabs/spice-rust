@@ -445,10 +445,11 @@
   padding-block-end: var(--message-card-inset);
   overflow: clip;
 }
-/* The normal face fills the card's committed height. Its message flow rests on
-   the card's bottom edge, so spare committed height opens above the content and
-   never below it. The flow is its own block formatting context: the controls
-   island floats in its top inline-end corner and the prose wraps beside it. */
+/* The normal face fills the card's committed height. Its message flow starts at
+   the card's top edge, level with the controls island, so spare committed height
+   opens below the final line and never above the content. The flow is its own
+   block formatting context: the island floats in its top inline-end corner and
+   the prose wraps beside it. */
 .team-surface .mosaic-message-normal {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -461,7 +462,7 @@
     opacity var(--canvas-motion-fast) var(--canvas-ease-standard),
     transform var(--canvas-motion-settle) var(--canvas-ease-standard);
 }
-.team-surface .mosaic-message-normal > :is(.message-flow, .message-body) { align-self: end; }
+.team-surface .mosaic-message-normal > :is(.message-flow, .message-body) { align-self: start; }
 .team-surface .message-flow { display: flow-root; min-width: 0; }
 .team-surface .mosaic-message-task-layer {
   position: absolute;
@@ -635,6 +636,20 @@
 }
 .markdown-body blockquote:has(.message-quote-signoff:not(:empty)) {
   display: flow-root;
+}
+/* In a card's flow a quote without images is no formatting context of its own:
+   it runs under the controls island at full width while the island shortens
+   the lines beside it, and a clearing tail contains its floated signoff. A
+   quote with images lays out as a flex row, itself a formatting context, so it
+   clears the island instead of narrowing beside it. */
+.team-surface .message-flow :is(blockquote, .message-quote-card):not(:has(.message-image)) {
+  display: block;
+}
+.team-surface .message-flow :is(blockquote, .message-quote-card):not(:has(.message-image))::after {
+  display: block; clear: both; content: "";
+}
+.team-surface .message-flow :is(blockquote, .message-quote-card):has(.message-image) {
+  clear: inline-end;
 }
 .markdown-body .message-quote-card {
   display: flow-root;

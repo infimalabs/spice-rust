@@ -52,9 +52,8 @@ pub struct Geometry {
     pub base_span: usize,
     /// Number of base lanes available at this width.
     pub lane_count: usize,
-    /// Type-ramp lines in one vertical module.
-    pub module_lines: usize,
-    /// Integer vertical module height.
+    /// Integer vertical module height: one type-ramp line, so a committed card
+    /// exceeds its measured content by less than one line.
     pub module: i32,
     /// Shared rounded track edges, including both outer edges.
     pub edges: Vec<i32>,
@@ -71,8 +70,7 @@ impl Geometry {
         let column_width = (width - (TRACK_COUNT - 1) as f64 * f64::from(gap)) / TRACK_COUNT as f64;
         let base_span = base_span(column_width, f64::from(gap), min_lane);
         let lane_count = TRACK_COUNT / base_span;
-        let module_lines = module_lines(lane_count);
-        let module = (module_lines as f64 * MODULE_LINE_HEIGHT_REM * rem).round() as i32;
+        let module = (MODULE_LINE_HEIGHT_REM * rem).round() as i32;
         let edges = (0..=TRACK_COUNT)
             .map(|track| (track as f64 * (column_width + f64::from(gap))).round() as i32)
             .collect();
@@ -82,7 +80,6 @@ impl Geometry {
             column_width,
             base_span,
             lane_count,
-            module_lines,
             module,
             edges,
         }
@@ -117,14 +114,6 @@ fn base_span(column_width: f64, gap: f64, min_lane: f64) -> usize {
         .into_iter()
         .find(|span| *span as f64 * column_width + (*span - 1) as f64 * gap >= min_lane)
         .unwrap_or(TRACK_COUNT)
-}
-
-fn module_lines(lane_count: usize) -> usize {
-    match lane_count {
-        3.. => 3,
-        2 => 2,
-        _ => 1,
-    }
 }
 
 /// One measured width/height option offered to the placement key.
