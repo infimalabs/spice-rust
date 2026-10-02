@@ -203,12 +203,15 @@ pub(super) fn notes_preview(
     }
 }
 
-/// One publish preview: the complete typed plan, the file retaining it, and
-/// the bounded text an operator authorizes from.
+/// One publish preview: every authorizing plan field, a bounded excerpt of
+/// its curated notes, and the file retaining the complete plan.
 #[derive(Debug, Serialize)]
 pub(crate) struct PlanPreview {
+    /// The plan's encoded fields except `notes_document`, which only the
+    /// retained plan file carries whole.
     #[serde(flatten)]
-    pub(crate) plan: ReleasePlan,
+    plan: serde_json::Map<String, serde_json::Value>,
+    pub(crate) notes_preview: NotesExcerpt,
     /// The retained complete plan, named by its key.
     pub(crate) export: Export,
     #[serde(skip)]
@@ -216,8 +219,55 @@ pub(crate) struct PlanPreview {
 }
 
 impl PlanPreview {
+    /// Project one retained plan for authorization.
+    pub(super) fn new(plan: &ReleasePlan, export: Export, command: &[String]) -> Self {
+        let notes_preview = NotesExcerpt::new(&plan.notes_document);
+        let text = plan_text(plan, &notes_preview, &export, command);
+        let mut fields = match serde_json::to_value(plan) {
+            Ok(serde_json::Value::Object(fields)) => fields,
+            _ => unreachable!("a release plan encodes as an object"),
+        };
+        fields.remove("notes_document");
+        Self {
+            plan: fields,
+            notes_preview,
+            export,
+            text,
+        }
+    }
+
     pub(crate) fn text(&self) -> Option<&str> {
         Some(&self.text)
+    }
+}
+
+/// The first curated note lines and what the plan file holds beyond them.
+#[derive(Debug, Serialize)]
+pub(crate) struct NotesExcerpt {
+    /// Byte length of the complete curated document.
+    pub(crate) bytes: usize,
+    /// Lines in the complete curated document.
+    pub(crate) lines: usize,
+    /// The first lines, each clipped to a bounded width.
+    pub(crate) shown: Vec<ClippedText>,
+    /// Lines only the retained plan file carries.
+    pub(crate) withheld_lines: usize,
+}
+
+impl NotesExcerpt {
+    fn new(document: &str) -> Self {
+        let lines = document.lines().count();
+        let shown = document
+            .lines()
+            .take(NOTE_LINES)
+            .map(|line| wire::output::clip(line, NOTE_LINE_BYTES))
+            .collect::<Vec<_>>();
+        Self {
+            bytes: document.len(),
+            lines,
+            withheld_lines: lines - shown.len(),
+            shown,
+        }
     }
 }
 
@@ -250,15 +300,13 @@ pub(super) fn plan_preview(
                 .map_err(|error| super::refusal::<PlanPreview>("release::plan-unencodable", &error))
         })
         .and_then(|bytes| spice::export::export(&path, &bytes).map_err(Outcome::Refusal));
-    let export = match retained {
-        Ok(export) => export,
-        Err(outcome) => return outcome,
-    };
-    let text = plan_text(&plan, &export, command);
-    Outcome::Reply(wire::Reply {
-        position: wire::ReplyPosition::Direct {},
-        body: PlanPreview { plan, export, text },
-    })
+    match retained {
+        Ok(export) => Outcome::Reply(wire::Reply {
+            position: wire::ReplyPosition::Direct {},
+            body: PlanPreview::new(&plan, export, command),
+        }),
+        Err(outcome) => outcome,
+    }
 }
 
 fn short(commit: &str) -> &str {
@@ -274,7 +322,12 @@ fn present(observed: Option<&String>) -> String {
 
 /// Every plan field authorization rests on; only the curated note bytes are
 /// bounded, and the line that bounds them names the file holding them whole.
-pub(super) fn plan_text(plan: &ReleasePlan, export: &Export, command: &[String]) -> String {
+fn plan_text(
+    plan: &ReleasePlan,
+    notes: &NotesExcerpt,
+    export: &Export,
+    command: &[String],
+) -> String {
     let observations = &plan.observations;
     let mut text = format!(
         "release publish preview: {} {} (nothing published)\n\
@@ -335,23 +388,20 @@ pub(super) fn plan_text(plan: &ReleasePlan, export: &Export, command: &[String])
             registry.version, registry.release_commit, registry.package
         );
     }
-    let lines = plan.notes_document.lines().collect::<Vec<_>>();
     let _ = write!(
         text,
         "\nnotes {} ({} bytes, {} lines):",
-        plan.notes,
-        plan.notes_document.len(),
-        lines.len()
+        plan.notes, notes.bytes, notes.lines
     );
-    for line in lines.iter().take(NOTE_LINES) {
-        let _ = write!(text, "\n  | {}", wire::output::clip(line, NOTE_LINE_BYTES));
+    for line in &notes.shown {
+        let _ = write!(text, "\n  | {line}");
     }
-    if let Some(withheld) = lines
-        .len()
-        .checked_sub(NOTE_LINES)
-        .filter(|count| *count > 0)
-    {
-        let _ = write!(text, "\n  {withheld} more lines in the plan file");
+    if notes.withheld_lines > 0 {
+        let _ = write!(
+            text,
+            "\n  {} more lines in the plan file",
+            notes.withheld_lines
+        );
     }
     let _ = write!(
         text,
