@@ -92,6 +92,54 @@ fn media_text_distinguishes_mixed_and_image_only_results() {
     );
 }
 
+/// Reading back an operator's attachment shows no second copy of that image,
+/// while images a lane reads from anywhere else keep their card.
+#[test]
+fn a_read_of_a_steering_attachment_does_not_repeat_the_operator_image() {
+    let media = wire::Media::from_base64("capture.png", "image/png", "iVBORw0KGgo=")
+        .expect("fixture image admits");
+    let image_result = || {
+        listen::ToolMoment::Result(listen::ToolOutcome {
+            result: listen::ToolResult::Succeeded,
+            output: None,
+            exit_code: None,
+            media: vec![media.clone()],
+            external_media: Vec::new(),
+        })
+    };
+    let digest = "106b88688d8fe98f675979cff3d3e7f093a123e9df68e923b581bf6fd0db162a";
+    let directive = "a817f232-b702-4925-9eef-f4b958b9186c";
+    let attachment = |owner: CanonicalUuid| {
+        format!(r#"{{"path":"/repo/.spice-rs/steering-media/{owner}/{directive}/0-{digest}.png"}}"#)
+    };
+    let shown = |arguments: &str| {
+        let mut previews = CallPreviews::default();
+        activity(
+            lane(1),
+            &tool(VENDOR_ID, call("read", arguments)),
+            &mut previews,
+        );
+        let result = tool(VENDOR_ID, image_result());
+        activity(lane(1), &result, &mut previews);
+        result_media(lane(1), &result, &mut previews)
+    };
+
+    assert!(
+        shown(&attachment(lane(1))).is_empty(),
+        "the lane's own steering attachment is already shown with its directive",
+    );
+    assert_eq!(
+        shown(&attachment(lane(2))),
+        vec![media.clone()],
+        "another lane's projection layout is not this lane's attachment",
+    );
+    assert_eq!(
+        shown(r#"{"path":"/repo/docs/capture.png"}"#),
+        vec![media.clone()],
+        "an image the lane reads elsewhere keeps its card",
+    );
+}
+
 /// A call reads as the work being done, not as the tool's bare name.
 ///
 /// The strip exists so an operator can tell one shell call from the next, and
