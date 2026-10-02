@@ -30,6 +30,8 @@ static NEXT_REPLACEMENT: AtomicU64 = AtomicU64::new(0);
 
 mod capture;
 pub use capture::{BackupGeneration, BackupMember, BackupSource};
+mod reader;
+pub use reader::ArtifactReader;
 
 /// Inputs for one task artifact publication.
 pub struct AddRequest<'a> {
@@ -861,8 +863,29 @@ fn validate_object(
 }
 
 fn validate_payload(subject: &str, bytes: &[u8], artifact: &Artifact) -> Result<(), Error> {
-    let observed = Digest::compute(Domain::TaskArtifactPayload, bytes);
-    if u64::try_from(bytes.len()).ok() != Some(artifact.bytes) || observed != artifact.digest {
+    validate_payload_identity(
+        subject,
+        (
+            u64::try_from(bytes.len()).expect("in-memory length fits u64"),
+            Digest::compute(Domain::TaskArtifactPayload, bytes),
+        ),
+        artifact,
+    )?;
+    if artifact.media_type.is_text() && std::str::from_utf8(bytes).is_err() {
+        return Err(Error::corrupt(
+            subject,
+            format!("artifact {} text is not UTF-8", artifact.id),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_payload_identity(
+    subject: &str,
+    (bytes, observed): (u64, Digest),
+    artifact: &Artifact,
+) -> Result<(), Error> {
+    if bytes != artifact.bytes || observed != artifact.digest {
         return Err(Error::corrupt(
             subject,
             format!(
@@ -870,18 +893,8 @@ fn validate_payload(subject: &str, bytes: &[u8], artifact: &Artifact) -> Result<
                     "artifact {} declares {} bytes and digest {}, ",
                     "observed {} bytes and digest {}"
                 ),
-                artifact.id,
-                artifact.bytes,
-                artifact.digest,
-                bytes.len(),
-                observed
+                artifact.id, artifact.bytes, artifact.digest, bytes, observed
             ),
-        ));
-    }
-    if artifact.media_type.is_text() && std::str::from_utf8(bytes).is_err() {
-        return Err(Error::corrupt(
-            subject,
-            format!("artifact {} text is not UTF-8", artifact.id),
         ));
     }
     Ok(())

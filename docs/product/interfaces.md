@@ -283,6 +283,9 @@ boundaries, other payloads as hex, and a short window names the next. No form
 writes raw payload bytes to the terminal. `--output PATH` is the exact export:
 the whole payload, verified against its retained digest after the write. A
 payload that no longer matches its digest is neither shown nor extracted.
+Validation hashes only the selected payload through fixed memory; previews
+retain only their requested window, and exact extraction streams through the
+atomic export rather than retaining a source or destination copy.
 
 The occupant's `job` tool is the one non-CLI read on this contract. Its
 default `list` is every job still owed to the lane, oldest first: running, or
