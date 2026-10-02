@@ -387,17 +387,19 @@ fn one_outcome_reaches_one_stream_in_either_form() {
 ///
 /// Placement is a parser detail with a silent failure: a position spice does
 /// not recognise renders a sentence to a caller who asked for a document, and
-/// that caller finds out by failing to parse what arrived.
+/// that caller finds out by failing to parse what arrived. The command runs
+/// outside any repository, so it refuses before reaching a resident or board.
 #[test]
 fn the_renderer_flag_is_read_wherever_it_is_written() {
-    let expected = invoke(&["--json", "task", "next"]);
+    let scratch = Scratch::new("renderer-flag");
+    let expected = invoke_at(&["--json", "task", "next"], scratch.path());
     assert!(expected.err.starts_with(b"{"), "the leading form is JSON");
 
     for argv in [
         &["task", "--json", "next"][..],
         &["task", "next", "--json"][..],
     ] {
-        let spoken = invoke(argv);
+        let spoken = invoke_at(argv, scratch.path());
         assert_eq!(spoken.code, expected.code, "{argv:?}");
         assert_eq!(spoken.out, expected.out, "{argv:?}");
         assert_eq!(spoken.err, expected.err, "{argv:?}");

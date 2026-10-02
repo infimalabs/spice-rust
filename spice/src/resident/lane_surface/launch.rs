@@ -68,8 +68,6 @@ pub(in crate::resident) fn occupant_launch(
         })?;
     let repository = launch_repository(paths, worktree)?;
     // Run ahead of configuration load so the launch reads the advanced tree.
-    // Keep this call at the live seam: `xtask/tests/git_boundaries.rs` proves
-    // both that every launch reaches it and that its exact note is published.
     let git = spice::task_git::advance_at_launch(&repository).to_string();
     let resolved = spice::config::load_repository(&repository, &[])
         .map_err(|error| configuration_refusal(&error))?;

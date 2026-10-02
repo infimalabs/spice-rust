@@ -1,9 +1,8 @@
 //! The low-cost structural command wrapper.
 //!
-//! This module names nothing but the standard library, and the bound is
-//! measured rather than asserted: `steer/tests/bound.rs` reads this file and
-//! refuses any import that leaves std. The wrapper hands the command through
-//! with one spawn and refuses nothing.
+//! This module names nothing but the standard library, since it sits in front
+//! of every command an agent runs. The wrapper hands the command through with
+//! one spawn and refuses nothing.
 
 use std::ffi::OsStr;
 use std::io;
