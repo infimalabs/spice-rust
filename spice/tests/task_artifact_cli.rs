@@ -249,7 +249,7 @@ fn task_artifact_cli_and_backup_restore_preserve_provenance() {
     else {
         panic!("artifact list returned another answer after rehome")
     };
-    assert_eq!(artifacts, [first.clone(), second.clone()]);
+    assert_eq!(artifacts, [second.clone(), first.clone()], "newest first");
     resident.stop(&fixture);
     assert_backup_restore(&fixture, &rehomed, first, second);
 }
@@ -531,7 +531,11 @@ fn assert_artifact_surface(
     let ArtifactAnswer::Listed { artifacts, .. } = listed.body else {
         panic!("artifact list returned another answer")
     };
-    assert_eq!(artifacts, vec![first.clone(), second.clone()]);
+    assert_eq!(
+        artifacts,
+        vec![second.clone(), first.clone()],
+        "newest first"
+    );
 
     (first, second)
 }
@@ -592,7 +596,8 @@ fn assert_backup_restore(
     };
     let mut expected = vec![first, second];
     expected.extend(retained);
-    assert_eq!(artifacts, expected);
+    expected.reverse();
+    assert_eq!(artifacts, expected, "newest first");
 }
 
 fn seed_retained_generation(fixture: &Fixture, task: &TaskHandle) -> Vec<artifact::Artifact> {
