@@ -19,7 +19,7 @@ pub(super) async fn bootstrap(
         Err(error) => {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                format!("canvas app unavailable: {error}"),
+                format!("app unavailable: {error}"),
             )
                 .into_response();
         }

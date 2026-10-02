@@ -132,7 +132,7 @@ pub(super) fn operation_path(
         return Ok(None);
     };
     let generation = generation.ok_or_else(|| {
-        InstallError::InvalidRecord("Canvas operation has no generation identity".to_owned())
+        InstallError::InvalidRecord("app operation has no generation identity".to_owned())
     })?;
     Ok(Some(format!("{GENERATIONS_PATH}/{generation}/{file}")))
 }
@@ -220,7 +220,7 @@ fn packaged_files(
     }) {
         let path = root.join("app").join(file);
         let metadata = fs::symlink_metadata(&path)
-            .map_err(|error| InstallError::io("inspect appliance Canvas asset", &path, error))?;
+            .map_err(|error| InstallError::io("inspect appliance app asset", &path, error))?;
         if !metadata.file_type().is_file() {
             return Err(InstallError::PathShape(path));
         }
@@ -234,7 +234,7 @@ fn packaged_files(
             return Err(InstallError::BinaryContextChanged);
         }
         let bytes = fs::read(&path)
-            .map_err(|error| InstallError::io("read appliance Canvas asset", &path, error))?;
+            .map_err(|error| InstallError::io("read appliance app asset", &path, error))?;
         if entry.mode != 0o644
             || entry.bytes != bytes.len() as u64
             || entry.digest != Digest::compute(Domain::DistArtifact, &bytes)

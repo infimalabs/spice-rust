@@ -203,7 +203,7 @@ impl Source {
         if self.rows == 0 {
             return Err(Failure::Fault(protocol_fault(
                 "stream::pack-limit-invalid",
-                "canvas stream packing requires at least one row",
+                "stream packing requires at least one row",
             )));
         }
         let subjects = admit_subjects(&accepted.actor, subjects)?;

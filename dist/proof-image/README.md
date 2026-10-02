@@ -101,7 +101,7 @@ archive instead of rebuilding:
 spice dev xtask -- proof-image load target/proof-image/spice-proof-image.tar
 ```
 
-This image does not build or own the interactive Canvas stage. Each worktree
+This image does not build or own the interactive app stage. Each worktree
 builds that stage natively with `spice dev xtask -- app` into ignored
 `dist/stage-app`; the command atomically publishes one complete immutable
 generation, and the resident serves only those worktree-local bytes.

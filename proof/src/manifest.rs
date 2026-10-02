@@ -271,7 +271,7 @@ fn admit_target_payload(
     )?;
     require_binding(value.target == entry.target, index, "payload target")?;
     require_binding(value.source == manifest.source, index, "payload source")?;
-    require_binding(value.app == *app, index, "Canvas generation identity")?;
+    require_binding(value.app == *app, index, "app generation identity")?;
     if let Some((native_target, native)) = native {
         require_binding(
             value.target != native_target || value.native == *native,
@@ -356,7 +356,7 @@ fn admit_shared_payload(
                     .inventory
                     .iter()
                     .filter(|entry| entry.path.starts_with("app/"))),
-            "Canvas inventory",
+            "app inventory",
         ),
         (observed.pins == first.pins, "toolchain and container pins"),
     ] {
@@ -505,7 +505,7 @@ where
                             .inventory
                             .iter()
                             .filter(|entry| entry.path.starts_with("app/"))),
-                    "Canvas inventory",
+                    "app inventory",
                 ),
                 (
                     admitted.value().pins == first.pins,

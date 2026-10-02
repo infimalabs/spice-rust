@@ -14,13 +14,13 @@ pub(super) fn admit_app(
         .find(|asset| asset.file == wire::manifest::CANVAS_APP_HTML)
         .ok_or(PackageError::Binding {
             index,
-            field: "Canvas shell",
+            field: "app shell",
         })?;
     let html = shell.member.read_bounded(PACKAGE_DOCUMENT_LIMIT)?;
     let renderers =
         wire::manifest::renderer::from_html(&html).map_err(|_| PackageError::Binding {
             index,
-            field: "Canvas renderer declaration",
+            field: "app renderer declaration",
         })?;
     let mut expected = wire::manifest::renderer::filenames(&renderers).collect::<Vec<_>>();
     expected.sort_unstable();
@@ -32,7 +32,7 @@ pub(super) fn admit_app(
     {
         return Err(PackageError::Binding {
             index,
-            field: "Canvas package inventory",
+            field: "app package inventory",
         });
     }
     let mut renderer_bytes = 0_u64;
@@ -45,14 +45,14 @@ pub(super) fn admit_app(
                 .binary_search_by_key(&file, |member| member.file)
                 .map_err(|_| PackageError::Binding {
                     index,
-                    field: "Canvas renderer declaration",
+                    field: "app renderer declaration",
                 })?];
             renderer_bytes = renderer_bytes
                 .checked_add(asset.member.length)
                 .filter(|total| *total <= wire::manifest::renderer::MAX_BYTES)
                 .ok_or(PackageError::Binding {
                     index,
-                    field: "Canvas renderer byte bound",
+                    field: "app renderer byte bound",
                 })?;
             let bytes = asset
                 .member
@@ -60,14 +60,14 @@ pub(super) fn admit_app(
             if Digest::compute(Domain::InstallArtifact, &bytes) != member.digest {
                 return Err(PackageError::Binding {
                     index,
-                    field: "Canvas renderer bytes",
+                    field: "app renderer bytes",
                 });
             }
         }
         let Some(entry) = payload.inventory.iter().find(|entry| entry.path == path) else {
             return Err(PackageError::Binding {
                 index,
-                field: "Canvas payload inventory",
+                field: "app payload inventory",
             });
         };
         if entry.mode != DATA_MODE
@@ -76,7 +76,7 @@ pub(super) fn admit_app(
         {
             return Err(PackageError::Binding {
                 index,
-                field: "Canvas asset",
+                field: "app asset",
             });
         }
     }

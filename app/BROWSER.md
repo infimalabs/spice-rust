@@ -1,8 +1,8 @@
-# Canvas browser checks
+# Browser checks
 
 ## Browser evidence follows the host system theme
 
-Use the repository-owned `launchCanvasBrowser` helper for disposable Canvas
+Use the repository-owned `launchCanvasBrowser` helper for disposable app
 browser checks. It detects the host appearance and gives the headless context
 the matching `prefers-color-scheme`; callers do not repeat theme setup:
 
@@ -13,7 +13,7 @@ import launchCanvasBrowser from "./app/browser/canvas.mjs";
 const canvas = await launchCanvasBrowser(chromium);
 try {
   await canvas.page.goto(canvasUrl);
-  // Inspect or capture the actual Canvas surface.
+  // Inspect or capture the actual app surface.
 } finally {
   await canvas.close();
 }
@@ -23,7 +23,7 @@ An intentional theme-matrix check overrides `contextOptions.colorScheme`.
 Ordinary screenshots and visual checks retain the system default. The returned
 `colorScheme` and `colorSchemeSource` report the selected value and whether it
 came from `"system"` detection or `"explicit"` configuration. This browser
-preference never changes an explicit Canvas preference: a stored
+preference never changes an explicit app preference: a stored
 `spice:canvas-theme` still wins.
 
 ```js
@@ -35,8 +35,8 @@ const lightCanvas = await launchCanvasBrowser(chromium, {
 ## Browser branding and remaining work
 
 The tab and menu use the predecessor's brand: the short lowercase name `spice`,
-placed last. Canvas is the codename of the Wasm app and stays out of
-user-facing names, which matters in a tab where only a few characters show. The
+placed last. The Wasm app carries no separate product name in
+user-facing text, which matters in a tab where only a few characters show. The
 predecessor Python Spice (`spice.git`, `spice/serve/web.py` and
 `spice/serve/static/app.audio.js`) had three branding conventions, and each is
 decided here:
@@ -47,14 +47,14 @@ decided here:
   brand configuration key.
 - It shipped a static raster set: `favicon.ico`, 16/32px PNGs,
   `apple-touch-icon`, and `site.webmanifest`. Rejected: one generated SVG icon
-  carries the live count, which a static file cannot. Canvas is a loopback
+  carries the live count, which a static file cannot. spice is a loopback
   operator tab, not a home-screen install. Until the Wasm app's first branding
   effect runs, the tab shows the browser's default icon.
 - During speech playback it retitled the tab with the speaking agent first
   (`main-b - spice`). The shape is adopted: the changing state leads and the
   brand trails after ` - `. The speech trigger is not; the title holds the
   remaining-task count and stays stable instead of flipping with each
-  utterance, while Canvas marks the speaking message card `now-playing`.
+  utterance, while the app marks the speaking message card `now-playing`.
 
 Titles read `5 tasks - spice`, `1 task - spice`, `7 tasks (stale) - spice`,
 `Loading - spice`, and `Disconnected - spice`; the static page title is
@@ -83,7 +83,7 @@ Interactive joins stop at six members. A seventh-member edge target is shown
 as unavailable and sends no command. Press Enter or Space on the pip stack, or
 tap it, for the equivalent **Swap positions** and **Join into** menu. Every
 accepted interaction sends the complete topology at the revision currently
-drawn by Canvas; cancellation, a changed revision, or a removed source clears
+drawn by the app; cancellation, a changed revision, or a removed source clears
 the lift without sending.
 
 ## Team composer controls
@@ -104,7 +104,7 @@ label's 9px without clipping.
 
 Both sliders take one stop per arrow press on every engine: Up and Right
 raise, Down and Left lower. A native vertical range in WebKit and Firefox
-raises on Left, so Canvas handles Left and Right itself rather than inheriting
+raises on Left, so the app handles Left and Right itself rather than inheriting
 each engine's mapping.
 
 ## Lane menu
@@ -133,7 +133,7 @@ watermark, and Dash agent tiles keep their full-size provider emblem.
 ## Rich team directions
 
 The team-local **Work** tab renders each direction from its complete admitted
-body. Markdown links, internal Canvas routes, quotes, diagrams, and image
+body. Markdown links, internal app routes, quotes, diagrams, and image
 references use the same sanitized renderer and image viewer as Chat. Embedded
 images resolve from their admitted bytes, keep their authored names and
 alternatives, and are not repeated as loose attachments.
@@ -171,22 +171,22 @@ permalink and advances on its own visible-unit deadlines. Authored Markdown
 links retain the ordinary accent, and quoted-source ages keep their separate
 quote presentation.
 
-## Profile Canvas latency in Firefox
+## Profile app latency in Firefox
 
-Canvas exposes opt-in User Timing diagnostics without changing route parsing.
-Open the ordinary Canvas URL, run
+The app exposes opt-in User Timing diagnostics without changing route parsing.
+Open the ordinary app URL, run
 `sessionStorage.setItem("spice:canvas-trace", "1"); location.reload()` in its
 developer console, and leave that tab open for the capture. A traced page
 installs `window.__spiceCanvasTrace`; an ordinary page does not attach the
 native input listeners or create timing entries.
 
 Build the current browser body with `spice dev xtask -- app` and serve that
-generation through the development Canvas. Then capture two short runs of the
+generation through the development resident. Then capture two short runs of the
 same interaction:
 
 1. Open `about:profiling` in Firefox, select the **Web Developer** preset, and
    start the profiler.
-2. In the traced Canvas tab, run `window.__spiceCanvasTrace.clear()` in the
+2. In the traced app tab, run `window.__spiceCanvasTrace.clear()` in the
    developer console immediately before the scenario.
 3. Perform one fixed scenario: use the same loaded board, focus the same
    composer, enter or dictate the same text, and trigger the same resident
@@ -195,7 +195,7 @@ same interaction:
 4. For the loaded comparison, start
    `spice dev cargo -- check --locked -p spice` in another terminal and perform
    the scenario while that real compile is active. Stop and save the profile.
-5. Wait for the command and all compiler processes to exit. Clear the Canvas
+5. Wait for the command and all compiler processes to exit. Clear the app
    trace, repeat the identical scenario without compilation, then stop and save
    the settled profile.
 6. In each Firefox profile, use the Marker Chart and filter for

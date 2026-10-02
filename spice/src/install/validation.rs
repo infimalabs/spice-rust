@@ -133,13 +133,13 @@ fn app_operation_inventory(
         || (plan.version != PLAN_VERSION && !plan.app_predecessors.is_empty())
     {
         return Err(InstallError::InvalidRecord(
-            "Canvas predecessor inventory exceeds its schema or bound".to_owned(),
+            "app predecessor inventory exceeds its schema or bound".to_owned(),
         ));
     }
     let Some(current) = &plan.app else {
         if !plan.app_predecessors.is_empty() {
             return Err(InstallError::InvalidRecord(
-                "Canvas predecessors have no current generation".to_owned(),
+                "app predecessors have no current generation".to_owned(),
             ));
         }
         return Ok(Vec::new());
@@ -151,14 +151,12 @@ fn app_operation_inventory(
         }
         let generation =
             app::generation_spelling(operation.asset, &operation.path).ok_or_else(|| {
-                InstallError::InvalidRecord(
-                    "Canvas asset has no canonical generation path".to_owned(),
-                )
+                InstallError::InvalidRecord("app asset has no canonical generation path".to_owned())
             })?;
         if !groups.contains_key(generation) {
             generation.parse::<Digest>().map_err(|_| {
                 InstallError::InvalidRecord(
-                    "Canvas asset has an invalid generation identity".to_owned(),
+                    "app asset has an invalid generation identity".to_owned(),
                 )
             })?;
         }
@@ -168,7 +166,7 @@ fn app_operation_inventory(
             .insert(operation.asset)
         {
             return Err(InstallError::InvalidRecord(
-                "Canvas generation repeats an asset".to_owned(),
+                "app generation repeats an asset".to_owned(),
             ));
         }
     }
@@ -187,12 +185,12 @@ fn app_operation_inventory(
             .count();
         if missing || renderers > wire::manifest::renderer::MAX_FILES {
             return Err(InstallError::InvalidRecord(
-                "Canvas generation is incomplete or exceeds its bound".to_owned(),
+                "app generation is incomplete or exceeds its bound".to_owned(),
             ));
         }
     }
     let current_assets = groups.remove(current.as_str()).ok_or_else(|| {
-        InstallError::InvalidRecord("install plan omits its current Canvas generation".to_owned())
+        InstallError::InvalidRecord("install plan omits its current app generation".to_owned())
     })?;
     // Recency lives only in the ordered inventory; operations keep one
     // canonical digest order, so the inventory must name exactly the retained
@@ -206,8 +204,7 @@ fn app_operation_inventory(
         && (listed.len() != plan.app_predecessors.len() || !listed.iter().eq(groups.keys()))
     {
         return Err(InstallError::InvalidRecord(
-            "Canvas predecessor inventory does not name exactly its retained generations"
-                .to_owned(),
+            "app predecessor inventory does not name exactly its retained generations".to_owned(),
         ));
     }
     let expected = groups
@@ -227,7 +224,7 @@ fn app_operation_inventory(
         })
     {
         return Err(InstallError::InvalidRecord(
-            "Canvas generations are not canonical and current-last".to_owned(),
+            "app generations are not canonical and current-last".to_owned(),
         ));
     }
     Ok(expected
@@ -345,7 +342,7 @@ fn validate_retired_generations(
             || prior.is_some_and(|prior| prior >= (generation, asset))
         {
             return Err(InstallError::InvalidRecord(
-                "retired Canvas generations are not exact, ordered discards".to_owned(),
+                "retired app generations are not exact, ordered discards".to_owned(),
             ));
         }
         prior = Some((generation, asset));
@@ -542,7 +539,7 @@ pub(super) fn fixed_content_differs_from_current_build(
 
 fn asset_name(asset: Asset) -> &'static str {
     if app::file(asset).is_some() {
-        return "Canvas generation asset";
+        return "app generation asset";
     }
     match asset {
         Asset::Exclusions => "retired exclusions asset",
@@ -555,7 +552,7 @@ fn asset_name(asset: Asset) -> &'static str {
         Asset::HookBash => "Bash startup hook",
         Asset::HookWrapperSpice => "Spice shell wrapper",
         Asset::Skill => "generated skill",
-        Asset::CanvasCurrent => "Canvas generation pointer",
+        Asset::CanvasCurrent => "app generation pointer",
         Asset::Binary => "Spice executable",
         Asset::SymbolsInfo => "retained dSYM Info.plist",
         Asset::SymbolsDwarf => "retained dSYM DWARF image",

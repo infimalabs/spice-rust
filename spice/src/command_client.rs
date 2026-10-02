@@ -498,7 +498,7 @@ fn refreshable_fault<'a>(
                 Availability::Held => Ok(Some(fault)),
                 Availability::Available => Err(environment_fault_value(
                     "canvas::publisher-gone",
-                    "no resident holds the runtime lock or publishes Canvas discovery; run `spice up` from this repository to restore resident commands",
+                    "no resident holds the runtime lock or publishes its discovery; run `spice up` from this repository to restore resident commands",
                 )),
             }
         }
@@ -790,7 +790,7 @@ fn discovery_unavailable(error: io::Error) -> Fault {
 fn discovery_replaced() -> Fault {
     environment_fault_value(
         "canvas::discovery-replaced",
-        "canvas discovery changed identity while the current generation was acquired",
+        "resident discovery changed identity while the current generation was acquired",
     )
 }
 

@@ -373,7 +373,7 @@ atomic export rather than retaining a source or destination copy.
 
 The occupant's `job` tool is the one non-CLI read on this contract. Its
 default `list` is every job still owed to the lane, oldest first: running, or
-ended and not yet heard. That is the set Canvas shows as Kept jobs, and it
+ended and not yet heard. That is the set spice shows as Kept jobs, and it
 says `no jobs running or awaiting delivery` when empty. Jobs whose ending was
 delivered are read only through `history`, newest first, under the
 `JOB_HISTORY` surface: `limit` defaults to 20 and runs 1 to 100, anything else
@@ -561,7 +561,7 @@ list is a pre-publication state rather than a missing voice. A system request
 waits for `voiceschanged` under its own bound and then speaks once with the
 configured voice; a published list that omits that voice refuses while naming
 the voices the browser does offer, and no other voice is ever substituted.
-While system synthesis plays, Canvas names the voice the browser reported and
+While system synthesis plays, spice names the voice the browser reported and
 a failed utterance carries the browser's own error code.
 
 **Invariant —** The clip is played back under the media type the backend

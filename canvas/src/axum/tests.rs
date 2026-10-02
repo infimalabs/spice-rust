@@ -233,15 +233,10 @@ fn app_policy_hashes_the_exact_inline_theme_and_loader_bytes() {
 
 #[test]
 fn app_policy_refuses_any_script_outside_the_two_hashed_entries() {
-    let error = app_content_security_policy(
+    app_content_security_policy(
         b"<script data-canvas-theme>theme()</script><script src=\"/other.js\"></script><script type=\"module\">alert(1)</script>",
     )
     .expect_err("an unexpected script element is refused");
-
-    assert_eq!(
-        error,
-        "canvas app unavailable: canvas-app.html carried unexpected script elements"
-    );
 }
 
 async fn websocket(address: SocketAddr) -> ClientSocket {

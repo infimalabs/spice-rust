@@ -147,7 +147,7 @@ pub(super) fn watch_environment(
     .map_err(|error| {
         environment_fault(
             "demo::readiness-watcher-unavailable",
-            format!("the canvas readiness watcher could not be created: {error}"),
+            format!("the resident readiness watcher could not be created: {error}"),
         )
     })?;
     watcher
@@ -156,7 +156,7 @@ pub(super) fn watch_environment(
             environment_fault(
                 "demo::readiness-watch-refused",
                 format!(
-                    "{} could not be watched for canvas discovery: {error}",
+                    "{} could not be watched for resident discovery: {error}",
                     environment.root.display()
                 ),
             )
@@ -277,7 +277,7 @@ pub(super) fn wait_for_discovery(
                 return Err(environment_fault(
                     "demo::readiness-scan-failed",
                     format!(
-                        "{} could not be scanned for canvas discovery: {error}",
+                        "{} could not be scanned for resident discovery: {error}",
                         environment.root.display()
                     ),
                 )
@@ -288,7 +288,7 @@ pub(super) fn wait_for_discovery(
             Err(RecvTimeoutError::Timeout) => {
                 return Err(environment_fault(
                     "demo::resident-readiness-timeout",
-                    format!("canvas discovery was not published within {READY_DEADLINE:?}"),
+                    format!("resident discovery was not published within {READY_DEADLINE:?}"),
                 )
                 .into());
             }

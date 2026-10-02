@@ -718,9 +718,9 @@ impl fmt::Display for AppSourceError {
                     path.display()
                 )
             }
-            Self::Inventory(reason) => write!(formatter, "canvas app inventory invalid: {reason}"),
+            Self::Inventory(reason) => write!(formatter, "app inventory invalid: {reason}"),
             Self::Generation(reason) => {
-                write!(formatter, "canvas app generation invalid: {reason}")
+                write!(formatter, "app generation invalid: {reason}")
             }
         }
     }
@@ -816,12 +816,12 @@ pub enum PublishError {
 impl fmt::Display for PublishError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Encode(error) => write!(formatter, "canvas discovery did not encode: {error}"),
+            Self::Encode(error) => write!(formatter, "resident discovery did not encode: {error}"),
             Self::Atomic(error) => error.fmt(formatter),
             Self::Io { path, source } => {
                 write!(
                     formatter,
-                    "canvas discovery write failed at {}: {source}",
+                    "resident discovery write failed at {}: {source}",
                     path.display()
                 )
             }

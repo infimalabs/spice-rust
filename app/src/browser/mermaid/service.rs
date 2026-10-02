@@ -152,7 +152,7 @@ impl Service {
         let id = service
             .serial
             .checked_add(1)
-            .ok_or("Renderer request limit reached; reload Canvas")?;
+            .ok_or("Renderer request limit reached; reload spice")?;
         service.serial = id;
         let key = Key {
             kind,
@@ -285,7 +285,7 @@ impl Service {
         // this event loop; recovery runs only once the browser can execute it.
         self.deadline = Some(Timeout::new(RESPONSE_MILLIS, move || {
             if let Some(shared) = weak.upgrade() {
-                Self::close(&shared, "Renderer did not respond; retry or reload Canvas");
+                Self::close(&shared, "Renderer did not respond; retry or reload spice");
             }
         }));
     }

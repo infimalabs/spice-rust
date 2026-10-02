@@ -147,7 +147,7 @@ packaged dispatch that returns a complete report, including a non-admitting
 Staging report. They receive the captured selection paths and source digest as
 metadata, execute with the live repository root as their working directory, and
 must establish their own source binding before reading bytes when they require
-captured-source semantics. A preexecuted Rust typecheck, Canvas web typecheck, or
+captured-source semantics. A preexecuted Rust typecheck, app web typecheck, or
 complexity policy refusal returns `change-gate-policy-regressed` before a complete
 report and therefore prevents configured-command execution.
 `pre_commit_builtins = false` omits the packaged battery, not the configured
@@ -459,7 +459,7 @@ The one private immutable tree retained by the run is the sole selected-source
 authority. An arm consumes that tree directly or derives a verified exact sealed
 mirror with separate outputs. Selected bytes never come from or overwrite the
 caller's live source paths. Declared mirrors, caches, and outputs may live beneath
-the checkout's `target`, including Canvas's exact `target/xtask-app-source`
+the checkout's `target`, including the app's exact `target/xtask-app-source`
 mirror.
 
 ```mermaid

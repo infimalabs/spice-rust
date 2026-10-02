@@ -69,7 +69,7 @@ impl DiscoveryRead {
         let parent = path.parent().ok_or_else(|| {
             environment_fault_value(
                 "canvas::discovery-unavailable",
-                "canvas discovery has no repository runtime parent",
+                "resident discovery has no repository runtime parent",
             )
         })?;
         let parent_metadata = secure_metadata(parent, DiscoveryKind::Runtime)?;
@@ -79,7 +79,7 @@ impl DiscoveryRead {
         if file_identity.len > MAX_DISCOVERY_BYTES {
             return Err(protocol_fault_value(
                 "canvas::discovery-malformed",
-                "canvas discovery exceeds the current bounded document size",
+                "resident discovery exceeds the current bounded document size",
             ));
         }
         before_open();
@@ -100,7 +100,7 @@ impl DiscoveryRead {
         let value = wire::decode(&bytes).map_err(|_| {
             protocol_fault_value(
                 "canvas::discovery-malformed",
-                "canvas discovery does not match the current wire shape",
+                "resident discovery does not match the current wire shape",
             )
         })?;
         let read = Self {
@@ -152,7 +152,7 @@ impl DiscoveryRead {
             Availability::Held => self.require_publishing_holder(),
             Availability::Available => Err(environment_fault_value(
                 "canvas::publisher-gone",
-                "canvas discovery outlived the resident that published it",
+                "resident discovery outlived the resident that published it",
             )),
         }
     }
@@ -187,7 +187,7 @@ impl DiscoveryRead {
         }
         Err(environment_fault_value(
             "canvas::publisher-replaced",
-            "the resident holding the lock did not publish this canvas discovery",
+            "the resident holding the lock did not publish this discovery",
         ))
     }
 
@@ -286,20 +286,20 @@ pub(super) fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> Result
     if !shape_matches {
         return Err(environment_fault_value(
             "canvas::discovery-insecure",
-            "canvas discovery path is not a real repository-owned file",
+            "resident discovery path is not a real repository-owned file",
         ));
     }
     let owner = rustix::process::geteuid().as_raw();
     if metadata.uid() != owner {
         return Err(environment_fault_value(
             "canvas::discovery-non-owner",
-            "canvas discovery path is not owned by the effective user",
+            "resident discovery path is not owned by the effective user",
         ));
     }
     if matches!(kind, DiscoveryKind::File) && metadata.mode() & 0o077 != 0 {
         return Err(environment_fault_value(
             "canvas::discovery-insecure",
-            "canvas discovery is readable or writable by group or other",
+            "resident discovery is readable or writable by group or other",
         ));
     }
     Ok(())
@@ -314,7 +314,7 @@ pub(super) fn require_secure(metadata: &Metadata, kind: DiscoveryKind) -> Result
     if !shape_matches {
         return Err(environment_fault_value(
             "canvas::discovery-insecure",
-            "canvas discovery path is not a real repository-owned file",
+            "resident discovery path is not a real repository-owned file",
         ));
     }
     Ok(())

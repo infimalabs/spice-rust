@@ -233,19 +233,19 @@ impl PendingKind {
 impl std::fmt::Display for ActionAdmissionError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unavailable => formatter.write_str("Canvas action delivery is unavailable."),
-            Self::Identity => formatter.write_str("Canvas could not reserve a command identity."),
+            Self::Unavailable => formatter.write_str("Action delivery is unavailable."),
+            Self::Identity => formatter.write_str("spice could not reserve a command identity."),
             Self::Records => write!(
                 formatter,
-                "Canvas already retains {ACTION_RECORD_LIMIT} unsent actions; wait for delivery before retrying."
+                "{ACTION_RECORD_LIMIT} unsent actions are already retained; wait for delivery before retrying."
             ),
             Self::Payload => write!(
                 formatter,
-                "Canvas unsent action payloads exceed the {ACTION_PAYLOAD_LIMIT}-byte limit."
+                "Unsent action payloads exceed the {ACTION_PAYLOAD_LIMIT}-byte limit."
             ),
             Self::History => write!(
                 formatter,
-                "Canvas already retains {HISTORY_RECORD_LIMIT} distinct history requests."
+                "{HISTORY_RECORD_LIMIT} distinct history requests are already retained."
             ),
         }
     }

@@ -66,7 +66,7 @@ fire-and-hope, and the operator becomes the durable store.
 ### Decline is a first-class answer
 
 Both ACK and NAK retire the item; NAK records `declined`, and decline is taught
-beside ACK in the agent readouts and worktree skill. In Canvas the resident
+beside ACK in the agent readouts and worktree skill. In the app the resident
 consumes the marker before publication, so both render as ordinary Markdown
 with the lane accent.
 
@@ -234,7 +234,7 @@ instruction.
 
 ## UI components
 
-### The Canvas view rail
+### The view rail
 
 Dash, Work, and Chat are the sole global panel names, routed as `#/dash`,
 `#/work`, and `#/chat`, and a team surface offers only Work and Chat, opening on
@@ -282,7 +282,7 @@ nearest to running out at the top, with equal amounts kept in capacity order.
 Usage therefore moves layer surfaces and positions, never colors; a failed
 refresh desaturates them. The
 button's two-pixel ring and shadow are neutral, gold for Fast mode, blue for an
-available Canvas update, and red for both; quota colors never change.
+available app update, and red for both; quota colors never change.
 
 Inside the open menu, each open team shows every member row, so a team of one
 is one row tall and a team of three shows all three; membership is content,
@@ -486,7 +486,7 @@ composer. Presence and its age, and the copyable channel, occupant, session, and
 worktree identifiers, complete the panel beside Create new team and Leave all
 teams.
 
-The panel is among the smallest controls in Canvas, so it spends no pixel twice.
+The panel is among the smallest controls in spice, so it spends no pixel twice.
 Its head is one line: label, presence state, and age. The held handle and
 lease countdown live in the Task row. Every control is a bounded one-line
 button, and buttons grow to share their row; the model field takes its own row
@@ -585,7 +585,7 @@ to use without pretending to have settled.
 
 Each live team's rail keeps its selected mode per team, and selection replaces
 the pane without transition. A rail tab centres its label alone and hangs its
-count badge after it, as the canvas navigation does, so a badge appearing,
+count badge after it, as the global view rail does, so a badge appearing,
 vanishing, or gaining a digit never moves a label. Work never mounts the
 message plane. In Chat, member columns own horizontal overflow and the
 browser keeps native ownership of every vertical gesture. The composer

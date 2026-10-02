@@ -263,7 +263,7 @@ fn build_artifacts<B: Builder>(
     if embedded != app {
         return Err(StageError::Build {
             step: BuildStep::Embed,
-            source: BuildError::new("Canvas generation changed during embedding"),
+            source: BuildError::new("app generation changed during embedding"),
         });
     }
     let native = builder

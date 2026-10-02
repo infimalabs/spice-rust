@@ -228,10 +228,10 @@ pub enum CapabilityError {
 impl fmt::Display for CapabilityError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
-            Self::Duplicate => "canvas capability is already registered",
+            Self::Duplicate => "app capability is already registered",
             Self::ResidentIsNotInteractive => "resident actor cannot own an interactive capability",
-            Self::NotOperator => "canvas discovery requires an operator capability",
-            Self::Unavailable => "canvas capability registry is unavailable",
+            Self::NotOperator => "resident discovery requires an operator capability",
+            Self::Unavailable => "app capability registry is unavailable",
         })
     }
 }
@@ -760,7 +760,7 @@ impl Server {
         if !requested.ip().is_loopback() && !access.allows_non_loopback() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::PermissionDenied,
-                "a non-loopback canvas listener requires explicit access",
+                "a non-loopback app listener requires explicit access",
             ));
         }
         let app_generation = app
@@ -769,7 +769,7 @@ impl Server {
         if version.app != *app_generation.identity() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "Canvas version app identity disagrees with the current served generation",
+                "app identity disagrees with the current served generation",
             ));
         }
         let listener = listener::listen_exclusively(requested).await?;
@@ -892,7 +892,7 @@ async fn app(
         Err(error) => {
             return (
                 StatusCode::SERVICE_UNAVAILABLE,
-                format!("canvas app unavailable: {error}"),
+                format!("app unavailable: {error}"),
             )
                 .into_response();
         }
@@ -1127,25 +1127,25 @@ fn speech_error(status: StatusCode, message: impl Into<String>) -> Response {
 }
 
 fn app_content_security_policy(html: &[u8]) -> Result<HeaderValue, &'static str> {
-    let html = std::str::from_utf8(html)
-        .map_err(|_| "canvas app unavailable: canvas-app.html was not UTF-8")?;
+    let html =
+        std::str::from_utf8(html).map_err(|_| "app unavailable: canvas-app.html was not UTF-8")?;
     let (before_theme, rest) = html
         .split_once(INLINE_THEME_OPEN)
-        .ok_or("canvas app unavailable: canvas-app.html did not carry one inline theme resolver")?;
+        .ok_or("app unavailable: canvas-app.html did not carry one inline theme resolver")?;
     let (theme, after_theme) = rest
         .split_once(INLINE_MODULE_CLOSE)
-        .ok_or("canvas app unavailable: canvas-app.html did not close its inline theme resolver")?;
+        .ok_or("app unavailable: canvas-app.html did not close its inline theme resolver")?;
     let (between, rest) = after_theme
         .split_once(INLINE_MODULE_OPEN)
-        .ok_or("canvas app unavailable: canvas-app.html did not carry one inline module loader")?;
+        .ok_or("app unavailable: canvas-app.html did not carry one inline module loader")?;
     let (module, after_module) = rest
         .split_once(INLINE_MODULE_CLOSE)
-        .ok_or("canvas app unavailable: canvas-app.html did not close its inline module loader")?;
+        .ok_or("app unavailable: canvas-app.html did not close its inline module loader")?;
     if [before_theme, between, after_module]
         .iter()
         .any(|section| section.contains(SCRIPT_OPEN) || section.contains(INLINE_MODULE_CLOSE))
     {
-        return Err("canvas app unavailable: canvas-app.html carried unexpected script elements");
+        return Err("app unavailable: canvas-app.html carried unexpected script elements");
     }
     let theme_hash =
         base64::engine::general_purpose::STANDARD.encode(Sha256::digest(theme.as_bytes()));
@@ -1155,7 +1155,7 @@ fn app_content_security_policy(html: &[u8]) -> Result<HeaderValue, &'static str>
         &theme_hash,
         &module_hash,
     ]))
-    .map_err(|_| "canvas app unavailable: its content security policy was not one HTTP value")
+    .map_err(|_| "app unavailable: its content security policy was not one HTTP value")
 }
 
 fn renderer_content_security_policy(html: &[u8]) -> Result<HeaderValue, &'static str> {

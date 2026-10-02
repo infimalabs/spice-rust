@@ -181,7 +181,7 @@ impl CanvasNotice {
     #[must_use]
     pub(crate) const fn label(self) -> &'static str {
         match self {
-            Self::LoadingCanvas => "Loading Canvas",
+            Self::LoadingCanvas => "Loading spice",
             Self::OpeningResident => "Opening resident",
             Self::Reconnecting => "Reconnecting",
             Self::LoadingAgents => "Loading agents",
@@ -886,9 +886,7 @@ pub(crate) fn normalize_canvas_location(search: &str, hash: &str) -> NormalizedC
     NormalizedCanvasLocation {
         route: CanvasRoute::destination(CanvasDestination::Chat),
         replace: true,
-        notice: Some(format!(
-            "Unrecognized Canvas route `{search}{hash}`; opened Chat."
-        )),
+        notice: Some(format!("Unrecognized route `{search}{hash}`; opened Chat.")),
     }
 }
 

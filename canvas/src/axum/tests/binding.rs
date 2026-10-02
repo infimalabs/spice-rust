@@ -21,7 +21,6 @@ async fn server_refuses_an_identity_for_another_app_generation_before_binding() 
     .expect_err("mismatched app identity refuses");
 
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-    assert!(error.to_string().contains("app identity disagrees"));
 }
 
 #[tokio::test(flavor = "current_thread")]

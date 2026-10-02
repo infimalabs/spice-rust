@@ -676,14 +676,14 @@ the push-down is immediate and untweened.
 
 ---
 
-## The Canvas surface hierarchy
+## The spice surface hierarchy
 
 What the operator actually manipulates, stated as a component contract.
 
 ```mermaid
 block-beta
   columns 1
-  G["CANVAS VIEW RAIL, agents | flow | topology"]
+  G["VIEW RAIL, agents | flow | topology"]
   C["AGENTS VIEW, one console per live team"]
   R["team mode rail, work | chat, badges are live counts"]
   W["COMPOSE, one member shard per lane, status face + composer"]
@@ -694,7 +694,7 @@ block-beta
 
 **Contract**
 
-- **The Canvas rail is the global view vocabulary.** Agents is the conversation
+- **The view rail is the global view vocabulary.** Agents is the conversation
    surface; Flow and Topology are the complete closed analytical axes. A pane
    belongs to one of those axes rather than inventing a third.
 - **The team console is the unit of tiling in Agents.** Consoles sit side by

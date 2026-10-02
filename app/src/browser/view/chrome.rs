@@ -202,7 +202,7 @@ fn render_operator_link(render: &CommandBarRender<'_>, runtime: Option<&CanvasRu
 /// wears the team toolbar's own rail classes and lands on the same band.
 fn render_navigation(render: &CommandBarRender<'_>, runtime: Option<&CanvasRuntime>) -> Html {
     html! {
-        <nav class="canvas-navigation canvas-control-rail team-mode-rail" aria-label="Canvas views">
+        <nav class="canvas-navigation canvas-control-rail team-mode-rail" aria-label="Views">
             {for CanvasDestination::ALL.map(|destination| {
                 let navigate = render.navigate.clone();
                 let menu_open = render.menu_open.clone();

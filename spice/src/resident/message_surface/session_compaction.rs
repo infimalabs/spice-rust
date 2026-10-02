@@ -296,7 +296,7 @@ impl SessionCompactions {
         self.reported.insert(lane, key);
         let _ = writeln!(
             diagnostic,
-            "canvas session compaction unavailable for lane {lane}: {detail}",
+            "session compaction unavailable for lane {lane}: {detail}",
         );
     }
 }

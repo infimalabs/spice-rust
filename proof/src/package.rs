@@ -575,7 +575,7 @@ pub fn admit_package_tree(members: &[PackageMember]) -> Result<AdmittedPackage, 
     let renderers =
         wire::manifest::renderer::from_html(&html).map_err(|_| PackageError::Binding {
             index: 0,
-            field: "Canvas renderer declaration",
+            field: "app renderer declaration",
         })?;
     let mut app = wire::manifest::renderer::filenames(&renderers)
         .map(|file| {
@@ -660,7 +660,7 @@ fn assemble_package_index(input: &PackageInput<'_>) -> Result<AdmittedPackage, P
             if generation != &admitted.app || inventory != &admitted.app_inventory {
                 return Err(PackageError::Binding {
                     index,
-                    field: "shared Canvas generation",
+                    field: "shared app generation",
                 });
             }
         } else {
@@ -1239,7 +1239,7 @@ mod tests {
         assert!(matches!(
             build_package(app.input()),
             Err(PackageError::Binding {
-                field: "Canvas asset",
+                field: "app asset",
                 ..
             })
         ));
