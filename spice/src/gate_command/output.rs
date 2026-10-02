@@ -192,9 +192,9 @@ impl<'a> PhaseLog<'a> {
         }
     }
 
-    /// Every byte the work wrote.
-    pub(super) fn capture(&self) -> &[u8] {
-        &self.capture
+    /// Every byte the work wrote, without copying it.
+    pub(super) fn into_capture(self) -> Vec<u8> {
+        self.capture
     }
 
     fn recognize(&mut self, end: usize) {
@@ -750,7 +750,7 @@ mod tests {
         );
         write_in_pieces(&mut log, NOISY_RUN);
 
-        assert_eq!(log.capture(), NOISY_RUN.as_bytes());
+        assert_eq!(log.into_capture(), NOISY_RUN.as_bytes());
         assert_eq!(
             shared.text(),
             concat!(
@@ -791,7 +791,7 @@ mod tests {
             .map(|line| format!("{line}\n"))
             .collect::<String>();
         assert_eq!(shared.text(), protocol);
-        assert_eq!(log.capture(), NOISY_RUN.as_bytes());
+        assert_eq!(log.into_capture(), NOISY_RUN.as_bytes());
     }
 
     #[test]
