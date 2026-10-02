@@ -202,9 +202,7 @@ fn render_available(
                     )}
                 }
             </div>
-            if let Some(notice) = scope_notice {
-                <p class="work-detail-scope" role="status">{notice}</p>
-            }
+            <crate::browser::toast::Notice message={scope_notice.map(AttrValue::from)} />
             <section class="work-detail-section">
                 <h3>{"Contract"}</h3>
                 {task_detail::render_contract(statement, |task| board_has(render.work, task), true)}

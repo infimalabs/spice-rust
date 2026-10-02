@@ -45,7 +45,7 @@ pub(in crate::browser) use fleet::{TeamMode, use_team_menu_escape};
 pub(in crate::browser) use mosaic_view::LIFECYCLE_CARD_PREFIX;
 pub(crate) use mosaic_view::use_markdown_image_resolution_events;
 use mosaic_view::{ActivityCard, CardLayout, HistorySender, MosaicPlane};
-pub(in crate::browser) use state::{ComposerAction, ComposerDrafts};
+pub(in crate::browser) use state::{ComposerAction, ComposerDrafts, use_composer_issue_toast};
 use team_drag::team_dragging;
 pub(super) use team_drag::{TeamDragState, use_team_drag_state};
 use team_flow::{PageRequest as TeamFlowPageRequest, TeamFlow};
@@ -953,9 +953,6 @@ fn render_composer_body(
                 {onpaste}
             />
             {render_composer_vendor_icon(standing, "composer")}
-            if let Some(issue) = &draft.issue {
-                <p class="composer-issue" role="status">{issue.clone()}</p>
-            }
         </div>
     }
 }

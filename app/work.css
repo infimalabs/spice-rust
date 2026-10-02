@@ -64,16 +64,6 @@
 .work-arrangement-group > .team-mode-rail { flex: none; }
 .work-arrangement-group .team-mode { white-space: nowrap; }
 
-.work-board-state {
-  margin: 0 0 14px;
-  padding: 9px 11px;
-  border: 1px solid var(--warning);
-  border-radius: var(--canvas-radius-compact);
-  background: var(--warning-soft);
-  color: var(--warning);
-  font-size: .78rem;
-}
-
 /* Team lanes share one label column sized to the longest lane label, so each
    lane's state rule lands on one line. Global lanes are one full-width track:
    their heading rides in the first card's gutter, leaving no label column. */
@@ -678,17 +668,6 @@
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
-
-.work-detail-scope {
-  margin: 14px 22px 0;
-  padding: 9px 11px;
-  border: 1px solid var(--warning);
-  border-radius: var(--canvas-radius-compact);
-  background: var(--warning-soft);
-  color: var(--warning);
-  font-size: .76rem;
-}
-.work-detail-scope { margin: 0 0 18px; }
 
 .work-detail-section {
   padding: 18px 0;

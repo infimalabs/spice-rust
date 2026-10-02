@@ -293,10 +293,14 @@ section ([a changing
 region holds its largest
 footprint](invariants/lifecycle.md#surface-a-changing-region-holds-its-largest-footprint)).
 
-Action-delivery refusals and best-effort speech failures use the shared root
-toast, above every destination and outside page flow, clearing after a fixed
-dwell. Validation, failures with an explicit retry, and durable degraded state
-stay beside what they qualify.
+Action-delivery refusals, composer refusals (image intake, a restored wake, an
+unreserved renewal), best-effort speech failures, and transient conditions (a
+Work board held at its last snapshot while reconnecting, an open task that has
+left the active scope) use the shared root toast, above every destination and
+outside page flow, clearing after a fixed dwell. A condition toasts when it
+begins, not on every reconnect attempt. Validation, failures with an explicit
+retry, empty or unavailable page content, and durable degraded state stay
+beside what they qualify.
 
 ### The global Dash page
 

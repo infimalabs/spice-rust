@@ -618,8 +618,7 @@ fn apply_lane_response(
     Ok((refresh, applied))
 }
 
-/// Prefix of every renewal refusal shown in the lane composer, so a later
-/// success clears only the issue this family raised.
+/// Prefix of every renewal refusal.
 const RENEWAL_ISSUE: &str = "Could not renew this agent";
 
 /// Answers to commands a member's own controls issue, each settling the
@@ -638,10 +637,13 @@ fn apply_member_response(
             requested,
             member,
         } => {
-            let issue =
-                apply_lane_renewal_response(session, handles, team, lane, requested, bytes)?;
-            if let Some(member) = member {
-                runtime.settle_member_command(&member, issue);
+            let issue = apply_lane_renewal_response(session, team, lane, requested, bytes)?;
+            // A member reservation reports its settlement through Dash
+            // feedback; any other renewal has only this toast.
+            match (member, issue) {
+                (Some(member), issue) => runtime.settle_member_command(&member, issue),
+                (None, Some(issue)) => handles.refusals.settled(issue),
+                (None, None) => {}
             }
             CommandApplication::ordinary(true)
         }
@@ -693,7 +695,6 @@ fn apply_member_response(
 /// Apply one renewal answer, returning the refusal it reported, if any.
 fn apply_lane_renewal_response(
     session: &Session,
-    handles: &SurfaceHandles,
     team: CanonicalUuid,
     lane: CanonicalUuid,
     requested: bool,
@@ -714,28 +715,12 @@ fn apply_lane_renewal_response(
                     "agent renewal response for {team}/{lane} did not settle requested={requested}",
                 ));
             }
-            handles
-                .composer_drafts
-                .dispatch(ComposerAction::ClearIssue {
-                    lane: lane.to_string(),
-                    quote: None,
-                    family: RENEWAL_ISSUE,
-                });
             Ok(None)
         }
-        outcome => {
-            // The control itself only knows durable lane state, so the refusal
-            // of this one attempt lands beside it as the lane composer issue,
-            // exactly where a refused wake already reports.
-            let issue = outcome_issue(RENEWAL_ISSUE, outcome)
-                .expect("the refused or faulted renewal outcome has an issue");
-            handles.composer_drafts.dispatch(ComposerAction::SetIssue {
-                lane: lane.to_string(),
-                quote: None,
-                issue: issue.clone(),
-            });
-            Ok(Some(issue))
-        }
+        outcome => Ok(Some(
+            outcome_issue(RENEWAL_ISSUE, outcome)
+                .expect("the refused or faulted renewal outcome has an issue"),
+        )),
     }
 }
 
@@ -845,11 +830,7 @@ fn restore_lane_submissions(
             drafts: restored,
             current,
         });
-    handles.composer_drafts.dispatch(ComposerAction::SetIssue {
-        lane: lane.to_string(),
-        quote: None,
-        issue: issue.to_owned(),
-    });
+    handles.refusals.settled(issue.to_owned());
 }
 
 fn restore_submissions(

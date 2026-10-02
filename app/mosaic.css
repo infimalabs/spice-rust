@@ -29,8 +29,6 @@
   border-radius: 50%;
 }
 
-.composer-issue { margin: 0; color: var(--danger); font-size: .76rem; }
-
 .markdown-body {
   --mosaic-quote-inline: 5px;
   --mosaic-quote-pad-block: 4px; --mosaic-quote-radius: 12px;

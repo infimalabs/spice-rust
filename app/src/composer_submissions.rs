@@ -250,7 +250,6 @@ fn draft_bytes(draft: &ComposerDraft) -> usize {
         draft
             .body
             .capacity()
-            .saturating_add(draft.issue.as_ref().map_or(0, String::capacity))
             .saturating_add(draft_images_bytes(&draft.attachments))
             .saturating_add(
                 draft
@@ -264,7 +263,6 @@ fn draft_bytes(draft: &ComposerDraft) -> usize {
                 .saturating_add(quote.preview.capacity())
                 .saturating_add(quote.body.capacity())
                 .saturating_add(draft_images_bytes(&quote.attachments))
-                .saturating_add(quote.issue.as_ref().map_or(0, String::capacity))
         },
     )
 }

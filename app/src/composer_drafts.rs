@@ -51,7 +51,6 @@ pub(crate) struct ComposerDraft {
     pub(crate) body: String,
     pub(crate) quotes: Vec<QuoteDraft>,
     pub(crate) attachments: Vec<DraftImage>,
-    pub(crate) issue: Option<String>,
 }
 
 /// One canonical quoted source and the reply being composed beneath it.
@@ -63,7 +62,6 @@ pub(crate) struct QuoteDraft {
     pub(crate) display_millis: i64,
     pub(crate) body: String,
     pub(crate) attachments: Vec<DraftImage>,
-    pub(crate) issue: Option<String>,
     order: u64,
 }
 
@@ -182,7 +180,6 @@ impl DraftStore {
             display_millis,
             body: String::new(),
             attachments: Vec::new(),
-            issue: None,
             order,
         });
         sort_quotes(&mut draft.quotes);
@@ -281,7 +278,6 @@ impl DraftStore {
             body: draft.body.clone(),
             quotes: Vec::new(),
             attachments: draft.attachments.clone(),
-            issue: draft.issue.clone(),
         };
         Some(PreparedSubmission {
             message: compose(&snapshot),
@@ -299,7 +295,6 @@ impl DraftStore {
         let remove = self.0.get_mut(target).is_some_and(|draft| {
             draft.body.clear();
             draft.attachments.clear();
-            draft.issue = None;
             draft.quotes.is_empty()
         });
         if remove {
@@ -332,7 +327,6 @@ impl DraftStore {
                 restored.preview = current_quote.preview;
                 restored.display_millis = current_quote.display_millis;
                 restored.attachments.extend(current_quote.attachments);
-                restored.issue = current_quote.issue.or(restored.issue.take());
             } else {
                 quotes.push(current_quote);
             }
@@ -344,7 +338,6 @@ impl DraftStore {
                 body,
                 quotes,
                 attachments,
-                issue: current.issue.or(snapshot.issue),
             },
         );
     }

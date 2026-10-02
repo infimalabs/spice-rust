@@ -13,7 +13,15 @@ use crate::composer_drafts::{ComposerDraft, DraftImage, DraftStore};
 use crate::image_annotation::Shape;
 
 #[derive(Clone, Default, PartialEq)]
-pub(in crate::browser) struct ComposerDrafts(pub(super) DraftStore);
+pub(in crate::browser) struct ComposerDrafts(pub(super) DraftStore, Option<ComposerIssue>);
+
+/// The latest composer refusal. Its serial distinguishes a repeat of the same
+/// text, so every refusal is announced again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ComposerIssue {
+    serial: u64,
+    text: String,
+}
 
 pub(in crate::browser) enum ComposerAction {
     AddQuote {
@@ -46,17 +54,9 @@ pub(in crate::browser) enum ComposerAction {
         media: DirectiveAttachment,
         shapes: Rc<Vec<Shape>>,
     },
-    SetIssue {
-        lane: String,
-        quote: Option<String>,
+    /// Announce a refusal of composer input through the shared toast.
+    Report {
         issue: String,
-    },
-    /// Clear an issue only when the named family raised it, so an unrelated
-    /// composer issue survives a success elsewhere.
-    ClearIssue {
-        lane: String,
-        quote: Option<String>,
-        family: &'static str,
     },
     Clear {
         lane: String,
@@ -111,18 +111,15 @@ impl Reducible for ComposerDrafts {
                         .iter()
                         .map(|quote| quote.attachments.len())
                         .sum::<usize>();
-                if let Some((attachments, issue)) = attachment_state_mut(draft, quote.as_deref()) {
-                    if attachment_count >= MAX_ATTACHMENTS {
-                        *issue = Some("Maximum images attached.".to_owned());
-                    } else {
-                        attachments.push(DraftImage::new(id, attachment));
-                        *issue = None;
-                    }
+                if attachment_count >= MAX_ATTACHMENTS {
+                    next.report("Maximum images attached.".to_owned());
+                } else if let Some(attachments) = attachment_state_mut(draft, quote.as_deref()) {
+                    attachments.push(DraftImage::new(id, attachment));
                 }
             }
             ComposerAction::RemoveAttachment { lane, quote, id } => {
                 let draft = next.0.draft_mut(lane);
-                if let Some((attachments, _)) = attachment_state_mut(draft, quote.as_deref()) {
+                if let Some(attachments) = attachment_state_mut(draft, quote.as_deref()) {
                     attachments.retain(|image| image.id != id);
                 }
             }
@@ -141,18 +138,7 @@ impl Reducible for ComposerDrafts {
                     return self;
                 }
             }
-            ComposerAction::SetIssue { lane, quote, issue } => {
-                if let Some((_, current_issue)) =
-                    attachment_state_mut(next.0.draft_mut(lane), quote.as_deref())
-                {
-                    *current_issue = Some(issue);
-                }
-            }
-            ComposerAction::ClearIssue {
-                lane,
-                quote,
-                family,
-            } => clear_issue_family(next.0.draft_mut(lane), quote.as_deref(), family),
+            ComposerAction::Report { issue } => next.report(issue),
             ComposerAction::Clear { lane } => {
                 next.0.clear(&lane);
             }
@@ -178,31 +164,33 @@ impl Reducible for ComposerDrafts {
     }
 }
 
-fn clear_issue_family(draft: &mut ComposerDraft, quote: Option<&str>, family: &str) {
-    if let Some((_, issue)) = attachment_state_mut(draft, quote)
-        && issue
-            .as_deref()
-            .is_some_and(|text| text.starts_with(family))
-    {
-        *issue = None;
-    }
-}
-
 fn attachment_state_mut<'a>(
     draft: &'a mut ComposerDraft,
     quote_identity: Option<&str>,
-) -> Option<(&'a mut Vec<DraftImage>, &'a mut Option<String>)> {
+) -> Option<&'a mut Vec<DraftImage>> {
     match quote_identity {
-        None => Some((&mut draft.attachments, &mut draft.issue)),
+        None => Some(&mut draft.attachments),
         Some(identity) => draft
             .quotes
             .iter_mut()
             .find(|quote| quote.identity == identity)
-            .map(|quote| (&mut quote.attachments, &mut quote.issue)),
+            .map(|quote| &mut quote.attachments),
     }
 }
 
 impl ComposerDrafts {
+    fn report(&mut self, text: String) {
+        let serial = self
+            .1
+            .as_ref()
+            .map_or(0, |issue| issue.serial.wrapping_add(1));
+        self.1 = Some(ComposerIssue { serial, text });
+    }
+
+    fn issue(&self) -> Option<&ComposerIssue> {
+        self.1.as_ref()
+    }
+
     pub(in crate::browser) fn image(
         &self,
         lane: &str,
@@ -218,4 +206,16 @@ impl ComposerDrafts {
     pub(in crate::browser) fn is_unsafe(&self) -> bool {
         self.0.is_unsafe()
     }
+}
+
+/// Announce each composer refusal through the root toast, so the refusal
+/// fades on its own instead of shifting the composer it concerns.
+#[hook]
+pub(in crate::browser) fn use_composer_issue_toast(drafts: &UseReducerHandle<ComposerDrafts>) {
+    let toaster = crate::browser::toast::use_toaster();
+    use_effect_with(drafts.issue().cloned(), move |issue| {
+        if let Some(issue) = issue {
+            toaster.settled(issue.text.clone());
+        }
+    });
 }
