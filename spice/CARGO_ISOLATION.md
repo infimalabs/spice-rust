@@ -56,6 +56,26 @@ seven-day grace, retains all generations if any home has uncertain liveness,
 and reports malformed links, records, modes, file types, or digests rather than
 repairing or deleting them.
 
+Both surfaces forward the exact argument vector, environment, and exit status
+but are failure-focused on the terminal. Cargo's standard error, and its
+standard output unless that output is the command's product, are retained as
+one complete `<git-common>/.spice-rs/cargo-output/DIGEST.log` capture (newest
+64 kept); progress is a 30-second heartbeat naming Cargo's current step. Success
+prints one standard-error line with identity, outcome, timing, test, crate, and
+warning counts, and the capture path. Failure adds the last 40 lines (at most
+4 KiB, control bytes replaced) with how many lines and earlier bytes were
+withheld, the capture path and size, and an exact `grep` inspection command.
+Product output is delivered to standard output byte for byte and also
+retained: every `dev xtask` task, and Cargo's `run`, `metadata`, `tree`,
+`pkgid`, `locate-project`, `read-manifest`, `verify-project`, `version`,
+`help`, `config`, `search`, and `info`, help and version requests, JSON
+`--message-format`, and `test`/`bench` with `-- --list`. Other subcommands,
+including repository aliases, are captured. `--verbose` before `--` streams
+captured lines live, each clipped, up to 200 lines. A child terminated by a
+signal, such as a shell deadline, reports the signal with its tail. Under a
+supervising pre-commit worker, which parses its configured leaf's protocol and
+captures it itself, the child's streams stay verbatim.
+
 Each Rust `dev cargo` process holds a unique kernel-backed reader pin from
 before store preparation unlocks until its native Cargo child exits. Cleanup
 retains every actively pinned generation, removes unlocked records left by a

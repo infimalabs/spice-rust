@@ -14,7 +14,7 @@ use spice::repository::Repository;
 mod battery;
 mod commit_message;
 mod mutation;
-mod output;
+pub(crate) mod output;
 mod pre_commit;
 mod prove;
 mod reference_transaction;
