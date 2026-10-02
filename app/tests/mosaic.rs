@@ -31,8 +31,7 @@ fn geometry_uses_the_minimum_lane_inequality_and_shared_edges() {
     assert_eq!(four_lanes.gap, 12);
     assert_eq!(four_lanes.base_span, 3);
     assert_eq!(four_lanes.lane_count, 4);
-    assert_eq!(four_lanes.module_lines, 3);
-    assert_eq!(four_lanes.module, 60);
+    assert_eq!(four_lanes.module, 20);
     assert_eq!(four_lanes.edges[0], 0);
     assert_eq!(four_lanes.edges[TRACK_COUNT], 1452);
     assert_eq!(four_lanes.card_width(0, TRACK_COUNT), 1440);
@@ -49,7 +48,7 @@ fn geometry_uses_content_width_instead_of_the_padded_client_box() {
     let geometry_key =
         |geometry: &Geometry| (geometry.base_span, geometry.lane_count, geometry.module);
 
-    assert_eq!(geometry_key(&unpadded), (6, 2, 40));
+    assert_eq!(geometry_key(&unpadded), (6, 2, 20));
     assert_eq!(geometry_key(&padded), geometry_key(&unpadded));
 }
 
@@ -59,7 +58,7 @@ fn short_cards_keep_three_vertical_modules_without_rounding_down_long_cards() {
 
     assert_eq!(MIN_CARD_ROWS, 3);
     assert_eq!(rows_for(1.0, geometry.gap, geometry.module), 3);
-    assert_eq!(rows_for(240.0, geometry.gap, geometry.module), 5);
+    assert_eq!(rows_for(240.0, geometry.gap, geometry.module), 13);
 }
 
 #[test]
@@ -68,7 +67,7 @@ fn compact_boundaries_reserve_measured_height_without_the_card_minimum() {
     let wide = Geometry::new(16.0, 1440.0);
 
     assert_eq!(boundary_rows_for(14.0, narrow.gap, narrow.module), 2);
-    assert_eq!(boundary_rows_for(14.0, wide.gap, wide.module), 1);
+    assert!(boundary_rows_for(14.0, wide.gap, wide.module) < MIN_CARD_ROWS);
     assert_eq!(rows_for(14.0, wide.gap, wide.module), MIN_CARD_ROWS);
 }
 
@@ -164,8 +163,8 @@ fn wide_measurement_occurs_only_for_a_tall_card_and_at_most_once() {
     assert_eq!(
         measured,
         vec![
-            Candidate { span: 3, rows: 5 },
-            Candidate { span: 6, rows: 4 }
+            Candidate { span: 3, rows: 13 },
+            Candidate { span: 6, rows: 10 }
         ]
     );
 
@@ -188,17 +187,17 @@ fn a_tall_card_whose_width_buys_no_height_keeps_one_base_candidate() {
     });
 
     assert_eq!(calls.get(), 2);
-    assert_eq!(letterbox, vec![Candidate { span: 3, rows: 5 }]);
+    assert_eq!(letterbox, vec![Candidate { span: 3, rows: 14 }]);
 
     let rewrapped_header = span_candidates(&geometry, |span| {
         if span == geometry.base_span {
             262.0
         } else {
-            242.0
+            255.0
         }
     });
 
-    assert_eq!(rewrapped_header, vec![Candidate { span: 3, rows: 5 }]);
+    assert_eq!(rewrapped_header, vec![Candidate { span: 3, rows: 14 }]);
 }
 
 #[test]

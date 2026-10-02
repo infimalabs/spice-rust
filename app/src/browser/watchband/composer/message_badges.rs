@@ -1,26 +1,15 @@
 use super::*;
 
+/// A card carries FINAL only once its record proves the turn ended. A live
+/// prose card raised later gains the badge then; nothing holds its footprint
+/// beforehand, so the controls island never widens with an invisible chip.
 pub(super) fn render(message: &wire::AgentMessage) -> Html {
-    if message.final_answer {
-        return html! {
-            <span class="message-badges" role="list" aria-label="Message classifications">
-                {render_badge("FINAL", "final", None)}
-            </span>
-        };
-    }
-    if message.activity != wire::AgentActivityKind::Prose {
+    if !message.final_answer {
         return Html::default();
     }
-    // A live vendor stream lands its prose before the record that proves the
-    // turn ended, so this card may still be raised to FINAL by a later
-    // revision. Holding the badge's footprint from the first paint keeps that
-    // flip a change of color alone: the controls island keeps its width, the
-    // prose keeps its wrap beside it, and the card keeps its measured rows.
     html! {
-        <span class="message-badges message-badges--reserved" aria-hidden="true">
-            <span class="message-badge message-badge--reserved">
-                <span class="message-badge-label">{"FINAL"}</span>
-            </span>
+        <span class="message-badges" role="list" aria-label="Message classifications">
+            {render_badge("FINAL", "final", None)}
         </span>
     }
 }

@@ -946,7 +946,7 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .lane-mosaic-plane {
   --mosaic-edge-gutter: 11px;
   --mosaic-gap: .75rem;
-  --mosaic-module: 3.75rem;
+  --mosaic-module: 1.25rem;
   /* Rust copies the integer geometry into custom properties through CSSOM.
      Typed attr() collapses this plane in Firefox, while style attributes are
      deliberately refused by the Canvas CSP. */
@@ -999,8 +999,6 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .lane-mosaic-plane .mosaic-message-card[data-mosaic-measurement-clone="true"] {
   visibility: hidden; pointer-events: none; transition: none;
 }
-.lane-mosaic-plane[data-lanes="2"] { --mosaic-module: 2.5rem; }
-.lane-mosaic-plane[data-lanes="1"] { --mosaic-module: 1.25rem; }
 .lane-mosaic-plane .mosaic-message-card {
   position: absolute;
   top: calc(
@@ -1066,12 +1064,12 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 }
 .team-surface .mosaic-message-card p { line-height: 1.25; }
 /* The card's controls are a corner island in the wall of its message flow: they
-   float at the top inline-end, the prose fills the lines beside them and regains
-   the full width below. Below the narrow-column threshold the island takes its
-   own row instead. */
+   float at the top inline-end, sized to their visible chips and buttons alone,
+   and the prose fills the lines beside them and regains the full width below.
+   Below the narrow-column threshold the island takes its own row instead. */
 .team-surface .mosaic-message-card .message-controls {
   display: flex; float: inline-end; align-items: center; gap: 6px;
-  min-height: 32px; min-width: 0; max-inline-size: 100%;
+  min-width: 0; max-inline-size: 100%;
   margin-block-end: .25rem; margin-inline-start: .5rem;
   color: var(--muted); font-size: 12px;
 }
@@ -1086,20 +1084,21 @@ html[data-command-modifier-held="true"][data-shift-modifier-held="true"]
 .team-surface .message-controls-actions {
   flex-wrap: nowrap;
   justify-content: flex-end;
-  min-height: 32px;
 }
 .team-surface .message-controls-identity {
   display: inline-flex; flex: 1 1 auto; align-items: flex-end;
   min-width: 0; gap: 6px;
 }
 /* Narrow-column threshold: a card this narrow cannot hold the island and a
-   readable line beside it, so the island stacks above the prose. */
+   readable line beside it, so the island stacks above the prose as a row. */
 @container (max-width: 16rem) {
   .team-surface .mosaic-message-card .message-controls {
     float: none;
     justify-content: space-between;
+    min-height: 32px;
     margin: 0 0 .5rem;
   }
+  .team-surface .message-controls-actions { min-height: 32px; }
 }
 .relative-age {
   display: block;
@@ -1145,11 +1144,6 @@ a.relative-age {
   font-weight: 700;
   text-transform: uppercase;
   white-space: nowrap;
-}
-/* A prose card holds the FINAL badge's footprint before the turn-ending
-   record raises it, so the flip repaints colors and never moves the footer. */
-.team-surface .message-badges--reserved .message-badge--reserved {
-  visibility: hidden;
 }
 .team-surface .message-badge-count {
   padding: 0 5px;
