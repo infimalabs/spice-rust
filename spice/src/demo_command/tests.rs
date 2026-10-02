@@ -17,18 +17,26 @@ use super::*;
 
 static NEXT_FIXTURE: AtomicU64 = AtomicU64::new(0);
 
+const FIXTURE_APP_IDENTITY: &str =
+    "5555555555555555555555555555555555555555555555555555555555555555";
+
 /// A staged lane app the seed copies into the demo root, so the stage
 /// itself lives only as long as the seed that reads it.
 fn fixture_app() -> (Scratch, serve::AppSource) {
     let root = Scratch::new("app");
-    let stage = root.0.join(serve::APP_STAGE);
-    let identity = "5555555555555555555555555555555555555555555555555555555555555555";
+    stage_fixture_app(&root.0, FIXTURE_APP_IDENTITY, "demo fixture app");
+    let source = serve::AppSource::resolve(&root.0).expect("demo fixture app resolves");
+    (root, source)
+}
+
+fn stage_fixture_app(root: &Path, identity: &str, marker: &str) {
+    let stage = root.join(serve::APP_STAGE);
     let generation = stage.join(serve::APP_STAGE_GENERATIONS).join(identity);
     fs::create_dir_all(&generation).expect("demo fixture app generation");
     for asset in serve::APP.assets() {
         fs::write(
             generation.join(asset.file()),
-            format!("demo fixture app {}\n", asset.file()),
+            format!("{marker} {}\n", asset.file()),
         )
         .expect("demo fixture app asset");
     }
@@ -37,8 +45,6 @@ fn fixture_app() -> (Scratch, serve::AppSource) {
         format!("{identity}\n"),
     )
     .expect("demo fixture app pointer");
-    let source = serve::AppSource::resolve(&root.0).expect("demo fixture app resolves");
-    (root, source)
 }
 
 fn seed_test_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Environment> {
@@ -82,6 +88,59 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+#[test]
+fn new_seed_copies_the_invoking_linked_worktree_app() {
+    const APPLIANCE_IDENTITY: &str =
+        "4444444444444444444444444444444444444444444444444444444444444444";
+    const LINKED_IDENTITY: &str =
+        "6666666666666666666666666666666666666666666666666666666666666666";
+
+    let scratch = Scratch::new("linked-app-source");
+    let appliance = scratch.child("appliance-source");
+    let common = appliance.join(".git");
+    let linked_git = common.join("worktrees/invoking-lane");
+    fs::create_dir_all(&linked_git).unwrap();
+    stage_fixture_app(&appliance, APPLIANCE_IDENTITY, "appliance app");
+
+    let linked = scratch.child("invoking-lane");
+    fs::create_dir(&linked).unwrap();
+    fs::write(
+        linked.join(".git"),
+        format!("gitdir: {}\n", linked_git.display()),
+    )
+    .unwrap();
+    fs::write(linked_git.join("commondir"), "../..\n").unwrap();
+    stage_fixture_app(&linked, LINKED_IDENTITY, "linked app");
+    let nested_start = linked.join("nested/current-directory");
+    fs::create_dir_all(&nested_start).unwrap();
+
+    let demo = scratch.child("demo");
+    seed_environment_from(Some(&demo), Path::new("/opt/spice"), &nested_start)
+        .expect("linked-worktree demo seed succeeds");
+
+    let copied_stage = demo.join(serve::APP_STAGE);
+    assert_eq!(
+        fs::read_to_string(copied_stage.join(serve::APP_STAGE_CURRENT)).unwrap(),
+        format!("{LINKED_IDENTITY}\n")
+    );
+    assert_eq!(
+        fs::read_to_string(
+            copied_stage
+                .join(serve::APP_STAGE_GENERATIONS)
+                .join(LINKED_IDENTITY)
+                .join(wire::manifest::APP_MODULE),
+        )
+        .unwrap(),
+        format!("linked app {}\n", wire::manifest::APP_MODULE)
+    );
+    assert!(
+        !copied_stage
+            .join(serve::APP_STAGE_GENERATIONS)
+            .join(APPLIANCE_IDENTITY)
+            .exists()
+    );
 }
 
 #[test]

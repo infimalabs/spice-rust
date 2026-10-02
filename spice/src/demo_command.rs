@@ -246,30 +246,44 @@ where
 }
 
 fn seed_environment(root: Option<&Path>, executable: &Path) -> DemoResult<Environment> {
+    let working = std::env::current_dir().map_err(|error| {
+        environment_fault(
+            "demo::source-repository-unavailable",
+            format!("current directory: {error}"),
+        )
+    })?;
+    seed_environment_from(root, executable, &working)
+}
+
+fn seed_environment_from(
+    root: Option<&Path>,
+    executable: &Path,
+    source_start: &Path,
+) -> DemoResult<Environment> {
     require_utf8(executable, "current spice executable")?;
     let (root, automatic) = prepare_root(root)?;
-    let result = seed_prepared_root(&root, executable, automatic);
+    let result = seed_prepared_root(&root, executable, automatic, source_start);
     result.map_err(|failure| preserve_failure(&root, executable, *failure).into())
 }
 
-fn seed_prepared_root(root: &Path, executable: &Path, automatic: bool) -> DemoResult<Environment> {
+fn seed_prepared_root(
+    root: &Path,
+    executable: &Path,
+    automatic: bool,
+    source_start: &Path,
+) -> DemoResult<Environment> {
     born_repository(root)?;
-    let source_root = application_source_root()?;
-    let source = serve::AppSource::resolve(source_root)
+    let source_root = application_source_root(source_start)?;
+    let source = serve::AppSource::resolve(&source_root)
         .map_err(|error| environment_fault("demo::app-unavailable", error.to_string()))?;
     finish_seed_prepared_root(root, executable, automatic, &source)
 }
 
-fn application_source_root() -> DemoResult<&'static Path> {
-    option_env!("SPICE_WORKSPACE_TEST_WRITABLE_ROOT") // env-policy: allow
-        .map(Path::new)
-        .or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).parent())
-        .ok_or_else(|| {
-            environment_fault(
-                "demo::source-repository-unavailable",
-                "the spice crate has no workspace parent".to_owned(),
-            )
-            .into()
+fn application_source_root(start: &Path) -> DemoResult<PathBuf> {
+    spice::repository::Repository::discover(start)
+        .map(|repository| repository.worktree_root().to_path_buf())
+        .map_err(|error| {
+            environment_fault("demo::source-repository-unavailable", error.to_string()).into()
         })
 }
 
